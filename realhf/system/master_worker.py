@@ -45,6 +45,8 @@ class MasterWorker(worker_base.Worker):
     def _configure(self, config: config_pkg.MasterWorker):
         self.config = config
 
+        seeding.set_random_seed(self.config.base_seed + self.config.n_model_workers)
+
         self.__model_topos: Dict[ModelName, topology.PipeModelDataParallelTopology] = (
             config.model_topos
         )
