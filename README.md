@@ -77,7 +77,7 @@ bash ./examples/train_1.5B_n16_on_ray.sh $MODEL_PATH $DATA_PATH/prompts_for_r1_d
 
 ```bash
 # Evaluation
-cd evalutation
+cd evaluation
 python3 eval_and_aggregate.py --model_path $MODEL_PATH --max_gen_tokens 32768
 ```
 
