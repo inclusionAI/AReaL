@@ -1,4 +1,7 @@
-FROM nvcr.io/nvidia/pytorch:24.07-py3 AS gpu
+FROM nvcr.io/nvidia/pytorch:24.07-py3 AS v0.1.0
+LABEL maintainer="AReaL Team" \
+      description="AReaL: A Reproducible and Efficient Large Language Model Training Framework" \
+      version="0.1.0"
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt update
@@ -47,3 +50,29 @@ RUN git clone --depth=1 https://github.com/QwenLM/Qwen2.5-Math /qwen2_5-math && 
 RUN python3 -m venv /sympy
 RUN /sympy/bin/pip install /latex2sympy
 RUN /sympy/bin/pip install regex numpy tqdm datasets python_dateutil sympy==1.12 antlr4-python3-runtime==4.11.1 word2number Pebble timeout-decorator prettytable
+
+FROM v0.1.0 as v0.2.0
+LABEL maintainer="AReaL Team" \
+      description="AReaL: A Reproducible and Efficient Large Language Model Training Framework" \
+      version="0.2.0"
+
+WORKDIR /
+
+RUN pip uninstall pynvml cugraph-dgl dask-cuda cugraph-service-server raft-dask cugraph cuml cugraph-pyg -y && \
+    pip install -U six==1.16 transformers==4.48.3 opencv-python-headless==4.7.0.72 \
+        pipdeptree setuptools importlib_metadata packaging platformdirs \
+        typing_extensions wheel zipp nvidia-ml-py
+
+ENV TORCH_CUDA_ARCH_LIST="8.0 8.9 9.0 9.0a" FLASHINFER_ENABLE_AOT=1
+
+RUN pip install -v -U git+https://github.com/facebookresearch/xformers.git@v0.0.28.post3#egg=xformers
+
+RUN git clone --recursive -b v0.2.2.post1 https://github.com/flashinfer-ai/flashinfer && \
+    pip install --no-build-isolation --verbose /flashinfer
+
+RUN git clone -b v0.4.0.post2 https://github.com/sgl-project/sglang.git && \
+    cd /sglang/sgl-kernel && make build && \
+    pip install /sglang/sgl-kernel/ --force-reinstall --no-build-isolation && \
+    cd /sglang && pip3 install -e "python[all]"
+
+RUN pip3 install triton==3.1.0 torchao==0.7.0
