@@ -47,7 +47,7 @@ In the following table, we show the convergence time under different resource se
 
 
 #### SOTA 7B model using RL in math reasoning
-| **Model ** | **AIME 2024** | **AIME 2025** | **GPQA-Diamond** |
+| **Model** | **AIME 2024** | **AIME 2025** | **GPQA-Diamond** |
 | :---: | :---: | :---: | :---: |
 | O1-Preview | 56.7 | - |  |
 | R1-Distill-Qwen-7B | 55.0 | 39.7 | 47.1 |
