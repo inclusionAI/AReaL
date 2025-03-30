@@ -14,7 +14,7 @@
 | 内存    | 1 TB    |每节点 1 TB|每节点 1 TB    |每节点 1 TB    |每节点 1 TB    |
 | 通信    | NVSwitch    |NVSwitch+RoCE 带宽 3.2 Tbps|NVSwitch+RoCE 带宽 3.2 Tbps|NVSwitch+RoCE 带宽 3.2 Tbps|NVSwitch+RoCE 带宽 3.2 Tbps|
 | 存储    | 1TB    |共享存储（NAS）10TB |共享存储（NAS）10TB |共享存储（NAS）10TB |共享存储（NAS）10TB |
-|总训练时间（小时）|520|150|50|680|200|
+|总训练时间（小时）| **230** | **70** | **25** | **290** | **80** |
 
 关于硬件要求的说明：
 
@@ -24,11 +24,6 @@
 
 -  所有训练均采用 16K 的 Context Length
 
--  总训练时间 = Epoch 数量 * 每个 Epoch 的 Step 数量 * 单步训练时间
-
-    - Epoch 数量默认为 10
-    - 每个 Epoch 的 Step 数量与数据集大小和 Batch Size 有关。比如数据集为 40315 条，Batch Size 为 1024 时，每个 Epoch 需要训练 40315 / 1024 = 39.37 步，最终一个 Epoch 最少训练 39 步，最多训练 40 步。
-    - 单步训练时间与 GPU 卡数有关
 
 ## 软件要求
 
@@ -110,9 +105,9 @@ wget https://huggingface.co/datasets/inclusionAI/AReaL-RL-Data/resolve/main/data
 ```
 mkdir -p /storage/models
 cd /storage/models
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
 GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+cd DeepSeek-R1-Distill-Qwen-7B
+git lfs pull
 ```
 
 你也可以在安装 PyPI 和 huggingface_hub 后利用 huggingface CLI 进行下载，具体请参考[官方文档](https://huggingface.co/docs/huggingface_hub/guides/cli)

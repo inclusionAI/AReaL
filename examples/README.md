@@ -13,15 +13,11 @@ Check if your hardware meets these minimum requirements:
 | Memory | 1 TB |1 TB per node|1 TB per node| 1 TB per node |1 TB per node|
 | Network | NVSwitch |NVSwitch + RoCE 3.2 Tbps|NVSwitch + RoCE 3.2 Tbps| NVSwitch + RoCE 3.2 Tbps |NVSwitch + RoCE 3.2 Tbps|
 | Storage | 1TB |Shared storage (NAS) 10TB|Shared storage (NAS) 10TB| Shared storage (NAS) 10TB |Shared storage (NAS) 10TB|
-| **Total Time (Hours)** | **520** | **150** | **50** | **680** | **200** |
+| **Total Time (Hours)** | **230** | **70** | **25** | **290** | **80** |
 
 Notes:
 - GPUs need to have 80GB memory. Other GPU models with similar specs are acceptable.
 - Single-node training can use local storage, but multi-node training requires shared storage.
-- Total Training Time = Number of Epochs × Number of Steps per Epoch × Training Time per Step
-  - Number of Epochs defaults to 10.
-  - Number of steps per epoch depends on the dataset size and batch size. For example, with a dataset of 40,315 samples and a batch size of 1024, each epoch requires training for 40,315 / 1024 = 39.37 steps. Ultimately, an epoch will involve a minimum of 39 steps and a maximum of 40 steps of training.
-  - Training Time per Step depends on the number of GPUs used.
 
 ## Software Requirements
 This tutorial provides a Docker image. Below are the tested software versions:
@@ -104,9 +100,9 @@ We train based on open-source models, which can be downloaded directly from Hugg
 ```
 mkdir -p /storage/models
 cd /storage/models
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
 GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+cd DeepSeek-R1-Distill-Qwen-7B
+git lfs pull
 ```
 
 You can also use the HuggingFace CLI to download after installing PyPI and huggingface_hub. Refer to the [official documentation](https://huggingface.co/docs/huggingface_hub/guides/cli) for details.
