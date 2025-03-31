@@ -111,7 +111,7 @@ We also appreciate all the pioneer works from the community, particularly the [R
 
 ## Citation
 ```plain
-@inproceedings{mei2024realhf,
+@inproceedings{mei2025real,
   author       = {Mei, Zhiyu and Fu, Wei and Li, Kaiwei and Wang, Guangju and Zhang, Huanchen and Wu, Yi},
   title        = {ReaL: Efficient RLHF Training of Large Language Models with Parameter Reallocation},
   booktitle    = {Proceedings of the Eighth Conference on Machine Learning and Systems,
