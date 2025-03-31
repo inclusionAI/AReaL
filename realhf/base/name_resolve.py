@@ -897,7 +897,11 @@ def make_repository(type_="nfs", **kwargs):
 
 # DEFAULT_REPOSITORY_TYPE = "redis" if socket.gethostname().startswith("frl") else "nfs"
 DEFAULT_REPOSITORY_TYPE = "nfs"
-if etcd3 is not None and cluster.spec.name in ["wa180"]:
+if (
+    etcd3 is not None
+    and cluster.spec.name in ["wa180", "na132", "su18"]
+    and os.getenv("REAL_ETCD_ADDR", None) is not None
+):
     DEFAULT_REPOSITORY_TYPE = "etcd3"
 DEFAULT_REPOSITORY = make_repository(DEFAULT_REPOSITORY_TYPE)
 add = DEFAULT_REPOSITORY.add

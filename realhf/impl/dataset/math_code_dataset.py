@@ -128,9 +128,7 @@ class MATHCodePromptDataset(torch.utils.data.Dataset):
         self.ids = [
             str(self.ids[idx]) + f"@idx:{idx}-{util.dp_rank}" for idx in indices
         ]
-        self.tasks_ids = [
-            self.tasks_ids[idx] for idx in indices
-        ]
+        self.tasks_ids = [self.tasks_ids[idx] for idx in indices]
         if "scores" in data[0]:
             self.base_scores = [self.base_scores[idx] for idx in indices]
 
