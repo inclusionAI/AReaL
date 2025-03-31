@@ -27,6 +27,14 @@ We are excited to release AReaL v0.2 (boba), featuring three major milestones:
 
 *Table 1: The performance of AReaL-boba-RL-7B and AReaL-boba-SFT-32B. We obtain SOTA 7B model using RL on math reasoning. Although our dataset primarily consists of math and logic problems, we observed that RL training led to measurable improvements on the challenging STEM benchmark GPQA. Additionally, We train a highly competitive 32B model using only 200 data samples, replicating **QwQ-32B's** inference performance on AIME 2024.*
 
+<span id="eval_detail"></span>
+We declare that the reported numbers are based on our re-testing, with each number representing the average results of 32 sampling responses. The evaluation code is available in our [evaluation](/evaluation/) folder.
+
+For the baselines and the SFT model AReaL-boba-SFT-32B, we follow the recommended configuration (temperature = 0.6, top_p = 0.95, suggested by DeepSeek) and use the default R1-Distill-Qwen template for prompts. For the RL-trained models, we retaine the same temperature as during RL rollout (1.0).
+
+Notably, during GPQA testing, we found that all answers are "A." To address this bias, we randomized the answer options.
+
+
 ### Training Speed Comparison
 
 ![throughput_comparision_with_v0.1.0.png](/assets/thpt_comparison.png) 

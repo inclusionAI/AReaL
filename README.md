@@ -52,7 +52,7 @@ In the following table, we show the convergence time under different resource se
 
 We use **R1-Distill-Qwen-7B** as our base model. After RL training, the pass@1 scores on AIME 2024 and AIME 2025 improve by 6.9 and 8.6 points, respectively, achieving SOTA performance among 7B models in mathematical reasoning. We have released the training data at [AReaL-boba-106k](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-106k.jsonl).  
 
-Although our dataset primarily consists of math and logic problems, we observed that RL training led to measurable improvements on the challenging STEM benchmark GPQA. We plan to open-source more datasets in the future, including code, STEM, and other domains.
+Although our dataset primarily consists of math and logic problems, we observed that RL training led to measurable improvements on the challenging STEM benchmark GPQA. We plan to open-source more datasets in the future, including code, STEM, and other domains. All the reported numbers are re-evaluated using our evaluation code with more details in our [blog](blog/AReaL_v0_2.md#eval_detail). 
 
 #### Approaching QwQ-32B performances using only 200 data samples
 | **Model** | **AIME 2024** |
