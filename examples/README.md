@@ -5,19 +5,20 @@
 Check if your hardware meets these minimum requirements:
 
 
-|**Model Size**| **1.5B** |**1.5B**|**1.5B**| **7B** | **7B** |
-|---|:---:|:---:|:---:|:---:|:---:|
-| **Nodes** | **1** | **4** | **16** | **4** | **16** |
-| GPU | 8x H800 |8x H800 per node| 8x H800 per node |8x H800 per node| 8x H800 per node |
-| CPU | 48 cores |48 cores per node|48 cores per node| 48 cores per node |48 cores per node|
-| Memory | 1 TB |1 TB per node|1 TB per node| 1 TB per node |1 TB per node|
-| Network | NVSwitch |NVSwitch + RoCE 3.2 Tbps|NVSwitch + RoCE 3.2 Tbps| NVSwitch + RoCE 3.2 Tbps |NVSwitch + RoCE 3.2 Tbps|
-| Storage | 1TB |Shared storage (NAS) 10TB|Shared storage (NAS) 10TB| Shared storage (NAS) 10TB |Shared storage (NAS) 10TB|
-| **Total Time (Hours)** | **230** | **70** | **25** | **290** | **80** |
+|**Model Size**| **1.5B** |**1.5B**|**1.5B**|          **7B**           | **7B** | **32B** |
+|---|:---:|:---:|:---:|:-------------------------:|:---:|:---:|
+| **Nodes** | **1** | **4** | **16** |           **4**           | **16** | **16** |
+| GPU | 8x H800 |8x H800 per node| 8x H800 per node |     8x H800 per node      | 8x H800 per node | 8x H800 per node |
+| CPU | 48 cores |48 cores per node|48 cores per node|     48 cores per node     | 48 cores per node| 48 cores per node|
+| Memory | 1 TB |1 TB per node|1 TB per node|       1 TB per node       | 1 TB per node| 1 TB per node|
+| Network | NVSwitch |NVSwitch + RoCE 3.2 Tbps|NVSwitch + RoCE 3.2 Tbps| NVSwitch + RoCE 3.2 Tbps  | NVSwitch + RoCE 3.2 Tbps| NVSwitch + RoCE 3.2 Tbps|
+| Storage | 1TB |Shared storage (NAS) 10TB|Shared storage (NAS) 10TB| Shared storage (NAS) 10TB |Shared storage (NAS) 10TB| Shared storage (NAS) 10TB|
+| **Single-step Time (seconds)** | **3461** | **997** | **391** |         **2275**     | **815** | **6707**|
 
 Notes:
 - GPUs need to have 80GB memory. Other GPU models with similar specs are acceptable.
 - Single-node training can use local storage, but multi-node training requires shared storage.
+- The training for both 1.5B and 7B utilizes a Context Length of 18K, while the training for 32B adopts a Context Length of 29K. 
 
 ## Software Requirements
 This tutorial provides a Docker image. Below are the tested software versions:
