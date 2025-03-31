@@ -368,6 +368,9 @@ class MasterWorker(worker_base.Worker):
         epoch = self.__rpc_ctrl.step_info.epoch + 1
         epoch_step = self.__rpc_ctrl.step_info.epoch_step + 1
         global_step = self.__rpc_ctrl.step_info.global_step + 1
+        if is_new_epoch:
+            epoch += 1
+            epoch_step = 1
         s = f"The next step is epoch {epoch}/{self.config.exp_ctrl.total_train_epochs} "
         s += f"step {epoch_step}/{self._steps_per_epoch} "
         s += f"(global step {global_step}). "
