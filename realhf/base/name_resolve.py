@@ -543,7 +543,10 @@ class Etcd3NameRecordRepository(NameRecordRepository):
     """
 
     # Default configuration
-    host, port = os.getenv("REAL_ETCD_ADDR", "localhost:2379").split(":")
+    try:
+        host, port = os.getenv("REAL_ETCD_ADDR", "").split(":")
+    except ValueError:
+        host, port = "localhost", 2379
     ETCD_HOST = host
     ETCD_PORT = int(port)
     ETCD_USER = None
@@ -900,7 +903,7 @@ DEFAULT_REPOSITORY_TYPE = "nfs"
 if (
     etcd3 is not None
     and cluster.spec.name in ["wa180", "na132", "su18"]
-    and os.getenv("REAL_ETCD_ADDR", None) is not None
+    and os.getenv("REAL_ETCD_ADDR", "")
 ):
     DEFAULT_REPOSITORY_TYPE = "etcd3"
 DEFAULT_REPOSITORY = make_repository(DEFAULT_REPOSITORY_TYPE)
