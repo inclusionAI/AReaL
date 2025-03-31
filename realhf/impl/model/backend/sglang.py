@@ -415,7 +415,9 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
         ports = [None for _ in range(constants.data_parallel_world_size())]
         while any(port is None for port in ports) or len(set(ports)) != len(ports):
             dist.all_gather_object(
-                ports, network.find_free_port(), group=constants.data_parallel_group()
+                ports,
+                network.find_free_port(low=20000, high=40000),
+                group=constants.data_parallel_group(),
             )
         additional_args["port"] = ports[constants.data_parallel_rank()]
 
