@@ -297,11 +297,13 @@ class SGLangConfig:
     # NOTE: to avoid the illegal memory access error
     attention_backend: Optional[str] = "triton"
     sampling_backend: Optional[str] = None
-    context_length: Optional[int] = None
-    mem_fraction_static: Optional[float] = None
+    context_length: Optional[int] = 32768
+    mem_fraction_static: Optional[float] = 0.9
     max_running_requests: Optional[int] = None
-    max_total_tokens: Optional[int] = None
-    chunked_prefill_size: Optional[int] = None
+    # NOTE: chunked_prefill_size is by default 8192 on GPUs with 80GB mem in SGLang,
+    # but we disable it to avoid precision issues
+    chunked_prefill_size: Optional[int] = -1
+    max_prefill_tokens: int = 32768
     max_prefill_tokens: int = 16384
     schedule_policy: str = "lpm"
     schedule_conservativeness: float = 1.0
