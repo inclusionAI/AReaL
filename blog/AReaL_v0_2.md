@@ -30,7 +30,7 @@ We are excited to release AReaL v0.2 (boba), featuring three major milestones:
 <span id="eval_detail"></span>
 We declare that the reported numbers are based on our re-testing, with each number representing the average results of 32 sampling responses. The evaluation code is available in our [evaluation](/evaluation/) folder.
 
-For the baselines and the SFT model AReaL-boba-SFT-32B, we follow the recommended configuration (temperature = 0.6, top_p = 0.95, Suggested by DeepSeek) and use the default R1-Distill-Qwen template for prompts. For the RL-trained models, we retaine the same temperature as during RL rollout (1.0).
+For the baselines and the SFT model AReaL-boba-SFT-32B, we follow the recommended configuration (temperature = 0.6, top_p = 0.95, suggested by DeepSeek) and use the default R1-Distill-Qwen template for prompts. For the RL-trained models, we retaine the same temperature as during RL rollout (1.0).
 
 Notably, during GPQA testing, we found that all answers are "A." To address this bias, we randomized the answer options.
 
