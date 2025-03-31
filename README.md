@@ -1,15 +1,10 @@
 <h1 align="center">
-<em>AReaL</em>: A fully open-sourced and inclusive RL project for large reasoning models
+<em>AReaL</em>: Ant Reasoning Reinforcement Learning for LLMs
 </h1>
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="/assets/logo.png">
-    <img alt="ReaL" src="/assets/logo.png" width="20%">
-  </picture>
-</p>
+<img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
 
-AReaL (Ant Reasoning RL) is an open-sourced and efficient reinforcement learning training system for large reasoning models developed at **the RL Lab, Ant Research**, built upon the open-source project [RealHF](https://github.com/openpsi-project/ReaLHF). We fully commit to open-source by opening training details, data and infra required to reproduce the results along with the model itself. AReaL aims to help everyone build their own AI agents easily and affordably. Our team loves milk tea as it is delicious, customizable and affordable. We hope you all enjoy our project just like how you enjoy a real-world milk-tea (cheers). 
+AReaL (Ant Reasoning RL) is a fully open-sourced, scalable, and efficient reinforcement learning training system for large language models developed at **the RL Lab, Ant Research**, built upon the open-source project [RealHF](https://github.com/openpsi-project/ReaLHF). We fully commit to open-source by releasing training details, data, and infra required to reproduce all the models with the desired performances. AReaL aims to help everyone build their own AI agents easily and affordably. Our team loves milk tea as it is delicious, customizable, and affordable. We hope you all enjoy our project just like how you enjoy A-ReaL-milk-tea.🧋 
 
 **AReaL Highlights**
 
@@ -47,7 +42,7 @@ In the following table, we show the convergence time under different resource se
 
 
 #### SOTA 7B model using RL in math reasoning
-| **Model ** | **AIME 2024** | **AIME 2025** | **GPQA-Diamond** |
+| **Model** | **AIME 2024** | **AIME 2025** | **GPQA-Diamond** |
 | :---: | :---: | :---: | :---: |
 | O1-Preview | 56.7 | - |  |
 | R1-Distill-Qwen-7B | 55.0 | 39.7 | 47.1 |
@@ -57,7 +52,7 @@ In the following table, we show the convergence time under different resource se
 
 We use **R1-Distill-Qwen-7B** as our base model. After RL training, the pass@1 scores on AIME 2024 and AIME 2025 improve by 6.9 and 8.6 points, respectively, achieving SOTA performance among 7B models in mathematical reasoning. We have released the training data at [AReaL-boba-106k](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-106k.jsonl).  
 
-Although our dataset primarily consists of math and logic problems, we observed that RL training led to measurable improvements on the challenging STEM benchmark GPQA. We plan to open-source more datasets in the future, including code, STEM, and other domains.
+Although our dataset primarily consists of math and logic problems, we observed that RL training led to measurable improvements on the challenging STEM benchmark GPQA. We plan to open-source more datasets in the future, including code, STEM, and other domains. All the reported numbers are re-evaluated using our evaluation code with more details in our [blog](blog/AReaL_v0_2.md#eval_detail). 
 
 #### Approaching QwQ-32B performances using only 200 data samples
 | **Model** | **AIME 2024** |
@@ -67,7 +62,7 @@ Although our dataset primarily consists of math and logic problems, we observed 
 | [AReaL-boba-SFT-32B 🤗](https://huggingface.co/inclusionAI/AReaL-boba-SFT-32B) | 78.8 |
 
 
-Building upon **R1-Distill-Qwen-32B**, we replicate **QwQ-32B's** inference performance on AIME 2024 using just **200 data points **via Supervised Fine-Tuning (SFT). We have released the training data at [AReaL-boba-SFT-200](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-SFT-200.jsonl).
+Building upon **R1-Distill-Qwen-32B**, we replicate **QwQ-32B's** inference performance on AIME 2024 using just **200 data points** via Supervised Fine-Tuning (SFT). We have released the training data at [AReaL-boba-SFT-200](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-SFT-200.jsonl).
 
 ## Getting Started
 ### Quick Start
@@ -110,13 +105,13 @@ AReaL is under active development. We will have major releases in a weekly manne
 ## Acknowledgement
 We would like to remark that major contributors are from **RL Lab at Ant Research** and **Institute for Interdisciplinary Information Sciences, Tsinghua University**.
 
-Our team has also received invaluable assistance from the Super Computing Technology (SCT) team at Ant Group, particularly in the realm of large-scale cluster operations and maintenance. 
+Our team has also received invaluable assistance from the Super Computing Technology (SCT) team at Ant Group, particularly in large-scale cluster operations and maintenance. 
 
-We also appreciate all the pioneer works from the community, particularly the [ReaLHF](https://github.com/openpsi-project/ReaLHF) project from OpenPsi Inc. and those other projects, including but not limited to, [DeepScaleR](https://github.com/agentica-project/deepscaler), [Open-Reasoner-Zero](https://github.com/Open-Reasoner-Zero/Open-Reasoner-Zero/), [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF), [verl](https://github.com/volcengine/verl), [SGLang](https://github.com/sgl-project/sglang), [QwQ](https://github.com/QwenLM/QwQ),  [Light-R1](https://github.com/Qihoo360/Light-R1), and [DAPO](https://github.com/BytedTsinghua-SIA/DAPO).
+We also appreciate all the pioneer works from the community, particularly the [ReaLHF](https://github.com/openpsi-project/ReaLHF) project from OpenPsi Inc. and many other projects, including but not limited to, [DeepScaleR](https://github.com/agentica-project/deepscaler), [Open-Reasoner-Zero](https://github.com/Open-Reasoner-Zero/Open-Reasoner-Zero/), [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF), [verl](https://github.com/volcengine/verl), [SGLang](https://github.com/sgl-project/sglang), [QwQ](https://github.com/QwenLM/QwQ),  [Light-R1](https://github.com/Qihoo360/Light-R1), and [DAPO](https://github.com/BytedTsinghua-SIA/DAPO).
 
 ## Citation
 ```plain
-@inproceedings{mei2024realhf,
+@inproceedings{mei2025real,
   author       = {Mei, Zhiyu and Fu, Wei and Li, Kaiwei and Wang, Guangju and Zhang, Huanchen and Wu, Yi},
   title        = {ReaL: Efficient RLHF Training of Large Language Models with Parameter Reallocation},
   booktitle    = {Proceedings of the Eighth Conference on Machine Learning and Systems,

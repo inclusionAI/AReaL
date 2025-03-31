@@ -17,7 +17,7 @@ We are excited to release AReaL v0.2 (boba), featuring three major milestones:
 | :---: | :---: | :---: | :---: |
 | R1-Distill-Qwen-7B | 55.0 | 39.7 | 47.1 |
 | Light-R1-7B-DS | 56.7 | 44.9 | 40.9 |
-| [AReaL-boba-RL-7B 🤗](https://huggingface.co/inclusionAI/AReaL-boba-RL-7B) | **61.9** | **48.3** | **47.6  ** |
+| [AReaL-boba-RL-7B 🤗](https://huggingface.co/inclusionAI/AReaL-boba-RL-7B) | **61.9** | **48.3** | **47.6** |
 | **Model (32B)** | **AIME 2024** | **AIME 2025** | **GPQA-Diamond** |
 | R1-Distill-Qwen-32B | 72.6 | 54.9 | 63.2 |
 | QwQ-32B | 78.9 | 70.2 | 64.6 |
@@ -25,7 +25,15 @@ We are excited to release AReaL v0.2 (boba), featuring three major milestones:
 | [AReaL-boba-SFT-32B 🤗](https://huggingface.co/inclusionAI/AReaL-boba-SFT-32B) | 78.8 | 62.1 | 60.1 |
 
 
-*Table 1: The performance of [AReaL-boba-RL-7B](https://huggingface.co/inclusionAI/AReaL-boba-RL-7B) and [AReaL-boba-SFT-32B](https://huggingface.co/inclusionAI/AReaL-boba-SFT-32B). We obtain SOTA 7B model using RL on math reasoning. Although our dataset primarily consists of math and logic problems, we observed that RL training led to measurable improvements on the challenging STEM benchmark GPQA. Additionally, We train a highly competitive 32B model using only 200 data samples, replicating **QwQ-32B's** inference performance on AIME 2024.*
+*Table 1: The performance of AReaL-boba-RL-7B and AReaL-boba-SFT-32B. We obtain SOTA 7B model using RL on math reasoning. Although our dataset primarily consists of math and logic problems, we observed that RL training led to measurable improvements on the challenging STEM benchmark GPQA. Additionally, We train a highly competitive 32B model using only 200 data samples, replicating **QwQ-32B's** inference performance on AIME 2024.*
+
+<span id="eval_detail"></span>
+We declare that the reported numbers are based on our re-testing, with each number representing the average results of 32 sampling responses. The evaluation code is available in our [evaluation](/evaluation/) folder.
+
+For the baselines and the SFT model AReaL-boba-SFT-32B, we follow the recommended configuration (temperature = 0.6, top_p = 0.95, suggested by DeepSeek) and use the default R1-Distill-Qwen template for prompts. For the RL-trained models, we retaine the same temperature as during RL rollout (1.0).
+
+Notably, during GPQA testing, we found that all answers are "A." To address this bias, we randomized the answer options.
+
 
 ### Training Speed Comparison
 
@@ -88,8 +96,6 @@ During the training phase, we compute advantages using GAE and normalize them ac
 | PPO Minibatches | 4 |
 | Learning Rate | 2e-5 |
 | Adam ε | 1e-5 |
-| Batch Size | 8,192 |
-
 
 This configuration balances convergence speed with training stability, avoiding collapse risks from higher learning rates or smaller ε values.
 
@@ -117,17 +123,14 @@ To ensure reliable pass@1 estimation, we:
 + Maintain training temperature (1.0) for RL models
 
 ## Conclusion & Future Work
-Our results demonstrate that **high-quality data is equally critical as algorithmic innovations**.  
-When conducting RL training on a powerful base model, we require more challenging problems to facilitate learning. Therefore, we integrate resources from multiple recent open-source projects and filter problems by difficulty. A straightforward strategy for data filtering involves removing problems that the base model consistently solves correctly across multiple sampling attempts, as these no longer contribute to improving the model's performance.
+Our results demonstrate that **high-quality data is equally critical as algorithmic innovations**. When conducting RL training on a powerful base model, we require more challenging problems to facilitate learning. Therefore, we integrate resources from multiple recent open-source projects and filter problems by difficulty. A straightforward strategy for data filtering involves removing problems that the base model consistently solves correctly across multiple sampling attempts, as they no longer contribute to improving the model's performance.
 
-AReaL delivers stable and fast training with cutting-edge model performances. Since initial release, we've continuously improved system efficiency, training stability, and accessibility.
-
-All aforementioned techniques have been implemented in AReaL, with **reproducible configurations** for various model sizes and different hardware setups.
+AReaL delivers stable and fast training with cutting-edge model performances. Since initial release, we've continuously improved system efficiency, training stability, and accessibility. All aforementioned techniques have been implemented in AReaL, with [**reproducible configurations**](/examples/configs/) for various model sizes and different hardware setups.
 
 Looking ahead, the AReaL team will:
 
-+ Further optimize system performance
-+ Introduce new features
++ Further optimize the RL training throughput
++ Introduce new algorithmic features
 + Continue open-sourcing training data
 + Expand to broader reasoning tasks
 
