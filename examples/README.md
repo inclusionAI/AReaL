@@ -21,7 +21,7 @@ Check if your hardware meets these minimum requirements:
 Notes:
 - GPUs need to have 80GB memory. Other GPU models with similar specs are acceptable.
 - Single-node training can use local storage, but multi-node training requires shared storage.
-- We haven't successfully train a powerful 32B model, so we cannot estimation the required steps and time.
+- We haven't successfully train a powerful 32B model, so we cannot estimate the required steps and time.
 
 ## Software Requirements
 This tutorial provides a Docker image. Below are the tested software versions:
