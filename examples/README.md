@@ -13,7 +13,7 @@ Check if your hardware meets these minimum requirements:
 | Memory | 1 TB |1 TB per node|1 TB per node|       1 TB per node       | 1 TB per node| 1 TB per node|
 | Network | NVSwitch |NVSwitch + RoCE 3.2 Tbps|NVSwitch + RoCE 3.2 Tbps| NVSwitch + RoCE 3.2 Tbps  | NVSwitch + RoCE 3.2 Tbps| NVSwitch + RoCE 3.2 Tbps|
 | Storage | 1TB |Shared storage (NAS) 10TB|Shared storage (NAS) 10TB| Shared storage (NAS) 10TB |Shared storage (NAS) 10TB| Shared storage (NAS) 10TB|
-| batchsize*groupsize | 512x16 | 512x16 | 512x16 | 512x16  | 512x16 | 512*32|
+| BatchSize x GroupSize | 512x16 | 512x16 | 512x16 | 512x16  | 512x16 | 512x32|
 | **Single-step Time (seconds)** | **3461** | **997** | **391** |         **2275**     | **815** | **6707**|
 | **#Steps Until Convergence**           | **~250**  |**~250**  |**~250**  |**~400**  |**~400**  | -  |
 | **Total Time (Hours)**          |   **~240**   |   **~69**    |   **~27**    |  **~252**  |  **~90**   | - |
