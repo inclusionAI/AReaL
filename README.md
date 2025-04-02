@@ -34,11 +34,11 @@ Thanks to a series of system-level optimizations, AReaL v0.2 improves its end-to
 
 In the following table, we show the convergence time under different resource settings:
 
-| **Model Size** | **1.5B** | **1.5B** | **1.5B** | **7B** | **7B** | **32B (SFT)** |
-| --- | :---: | :---: | :---: | :---: | :---: | :---: |
-| #GPU | 8 | 32 | 128 | 32 | 128 | 64 |
-| Step | 250 | 250 | 250 | 400 | 400 | 300 |
-| Time (h) | ~230 | ~70 | ~25 | ~290 | ~80 | ~3.5 |
+| **Model Size** | **1.5B** | **1.5B** | **1.5B** | **7B** | **7B** |**32B (SFT)** |
+| --- |:--------:|:--------:|:--------:|:------:|:------:|:-------:|
+| #GPU |    8     |    32    |   128    |   32   |  128   |  64 |
+| Step |   250    |   250    |   250    |  400   |  400   |  300 |
+| Time (h) |   ~240   |   ~69    |   ~27    |  ~252  |  ~90   |  ~3.5 |
 
 
 #### SOTA 7B model using RL in math reasoning
