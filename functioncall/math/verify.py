@@ -3,10 +3,10 @@ import os
 import time
 from typing import List
 
-from functioncall.base import logging
 from functioncall.base.call import batch_function_call
+from realhf.base import logging
 
-logger = logging.getLogger("Functioncall")
+logger = logging.getLogger("function call")
 
 
 def math_verify(

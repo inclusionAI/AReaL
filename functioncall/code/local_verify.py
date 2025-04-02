@@ -7,10 +7,10 @@ import traceback
 from io import StringIO
 from typing import Dict, List
 
-from functioncall.base import logging
 from functioncall.code.function.testing_util import run_test
+from realhf.base import logging
 
-logger = logging.getLogger("Functioncall")
+logger = logging.getLogger("function call")
 
 
 def capture_stdout(code):
@@ -109,7 +109,6 @@ def code_verify(id2info, generateds, query_ids, debug=False):
                 logger.debug(f"id:{query_id}, Results were not all True: {metadata}")
                 result.append(0)
             else:
-                # print(f"id:{problem["problem_id"]}, result : {curr_res}")
                 result.append(1)
 
         except Exception as e:
