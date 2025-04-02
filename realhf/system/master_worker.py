@@ -374,9 +374,11 @@ class MasterWorker(worker_base.Worker):
         s = f"The next step is epoch {epoch}/{self.config.exp_ctrl.total_train_epochs} "
         s += f"step {epoch_step}/{self._steps_per_epoch} "
         s += f"(global step {global_step}). "
-        s += f"Should save a checkpoint for recover? {self.__rpc_ctrl.should_ckpt}. "
-        s += f"Should save a persistent checkpoint for evaluation? {self.__rpc_ctrl.should_save}. "
+        s += f"Should checkpoint? {self.__rpc_ctrl.should_ckpt}. "
+        s += f"Should save? {self.__rpc_ctrl.should_save}. "
         s += f"Should run evaluation? {self.__rpc_ctrl.should_eval}. "
+        s += f"Is the first step in epoch? {is_new_epoch}. "
+        s += f"Is the last step in epoch? {is_epoch_last_step}. "
         self.logger.info(s)
 
         # Traverse over the dataflow graph for once.
