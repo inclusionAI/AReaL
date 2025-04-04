@@ -271,23 +271,7 @@ class MemoryNameRecordRepository(NameRecordRepository):
 
 class NfsNameRecordRepository(NameRecordRepository):
     RECORD_ROOT = f"{cluster_spec.fileroot}/name_resolve/"
-    LOCK_FILE = f"{cluster_spec.fileroot}/name_resolve/LOCK"
     os.makedirs(RECORD_ROOT, exist_ok=True)
-
-    @staticmethod
-    def locked(fn: Callable) -> Callable:
-        def fn_(*args, **kwargs):
-            import fcntl
-
-            with open(NfsNameRecordRepository.LOCK_FILE, "w") as fd:
-                fcntl.flock(fd, fcntl.LOCK_EX)
-                try:
-                    res = fn(*args, **kwargs)
-                finally:
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-            return res
-
-        return fn_
 
     def __init__(self, **kwargs):
         self.__to_delete = set()
@@ -300,7 +284,6 @@ class NfsNameRecordRepository(NameRecordRepository):
     def __file_path(name):
         return os.path.join(NfsNameRecordRepository.__dir_path(name), "ENTRY")
 
-    @locked
     def add(
         self,
         name,
@@ -309,6 +292,8 @@ class NfsNameRecordRepository(NameRecordRepository):
         keepalive_ttl=None,
         replace=False,
     ):
+        if not name:
+            raise ValueError("Name cannot be empty")
         path = self.__file_path(name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if os.path.isfile(path) and not replace:
@@ -320,7 +305,6 @@ class NfsNameRecordRepository(NameRecordRepository):
         if delete_on_exit:
             self.__to_delete.add(name)
 
-    @locked
     def delete(self, name):
         path = self.__file_path(name)
         if not os.path.isfile(path):
@@ -344,7 +328,6 @@ class NfsNameRecordRepository(NameRecordRepository):
         else:
             logger.info("No such name resolve path: %s", dir_path)
 
-    @locked
     def get(self, name):
         path = self.__file_path(name)
         if not os.path.isfile(path):
@@ -377,7 +360,11 @@ class NfsNameRecordRepository(NameRecordRepository):
         rs = []
         if os.path.isdir(dir_path):
             for item in os.listdir(dir_path):
-                rs.append(os.path.join(name_root, item))
+                try:
+                    self.get(os.path.join(name_root, item))
+                    rs.append(os.path.join(name_root, item))
+                except NameEntryNotFoundError:
+                    pass
         rs.sort()
         return rs
 
