@@ -292,6 +292,8 @@ class NfsNameRecordRepository(NameRecordRepository):
         keepalive_ttl=None,
         replace=False,
     ):
+        if not name:
+            raise ValueError("Name cannot be empty")
         path = self.__file_path(name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if os.path.isfile(path) and not replace:
@@ -358,7 +360,11 @@ class NfsNameRecordRepository(NameRecordRepository):
         rs = []
         if os.path.isdir(dir_path):
             for item in os.listdir(dir_path):
-                rs.append(os.path.join(name_root, item))
+                try:
+                    self.get(os.path.join(name_root, item))
+                    rs.append(os.path.join(name_root, item))
+                except NameEntryNotFoundError:
+                    pass
         rs.sort()
         return rs
 
