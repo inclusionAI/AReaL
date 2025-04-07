@@ -42,6 +42,8 @@ from realhf.base import (
 
 logger = logging.getLogger("SGLang backend")
 
+SGLANG_INIT_TIMEOUT = 300
+
 
 def remove_prefix(text: str, prefix: str) -> str:
     return text[len(prefix) :] if text.startswith(prefix) else text
@@ -245,7 +247,7 @@ class SGLangGenerationEngine(PipelinableEngine):
         from sglang.utils import get_exception_traceback
 
         success = False
-        for _ in range(120):
+        for _ in range(SGLANG_INIT_TIMEOUT):
             await asyncio.sleep(1)
             try:
                 res = requests.get(
