@@ -3,11 +3,17 @@ import logging
 import os
 import random
 import time
-from realhf.base import constants
+from enum import Enum
 from statistics import median
 from typing import Any, Dict
 import aiohttp
-from realhf.base import logging
+
+try:
+    from realhf.base import logging, constants
+except Exception:
+    import logging
+
+    constants = None
 
 logger = logging.getLogger("function call")
 
@@ -17,15 +23,39 @@ FUNCTIONCALL_SERVICE_DOMAIN = os.getenv(
 )
 
 
+class Language(Enum):
+    PYTHON = 0
+    JAVA = 1
+    CPP = 2
+    C = 3
+    MATH = 4
+    SQL = 5
+    GO = 6
+    NODEJS = 7
+    CSHARP = 8
+    TYPESCRIPT = 9
+    JAVASCRIPT = 10
+
+    def __str__(self):
+        return f"{self.name.lower()}"
+
+
 def calculate_percentile(elapsed_times, percentile):
     sorted_times = sorted(elapsed_times)
     index = int(len(sorted_times) * (percentile / 100))
     return sorted_times[min(index, len(sorted_times) - 1)]
 
 
+def has_system_error(response_json):
+    for result in response_json.get("results", []):
+        if result.get("errorType", "") == "SystemError":
+            return True, result
+    return False, None
+
+
 async def async_invoke_function(
     session: aiohttp.ClientSession,
-    function_name: str,
+    url: str,
     timeout: aiohttp.ClientTimeout,
     payload: Dict[str, Any] = None,
     max_retries: int = 100,
@@ -34,15 +64,12 @@ async def async_invoke_function(
 ):
     if payload is None:
         payload = {}
-    url = f"{FUNCTIONCALL_SERVICE_DOMAIN}/hapis/faas.hcs.io/v1/functions/{function_name}/invoke"
-    params = {"invocationType": "RequestResponse"}
 
     retries = 0
     while retries < max_retries:
         try:
             async with session.post(
                 url,
-                params=params,
                 json=payload,
                 timeout=timeout,
             ) as response:
@@ -53,8 +80,15 @@ async def async_invoke_function(
                     )
 
                 try:
-                    result = await response.json()
-                    return result, response.headers
+                    response_json = await response.json()
+
+                    exist, err_info = has_system_error(response_json)
+                    if exist:
+                        raise Exception(
+                            f'SystemError detected, uid: {response_json.get("uid")}, err: {err_info}'
+                        )
+
+                    return response_json, response.headers
                 except aiohttp.ContentTypeError as e:
                     raise Exception("Invalid JSON response") from e
 
@@ -73,7 +107,6 @@ async def async_invoke_function(
         if retries > max_retries:
             return None, None
 
-        # 指数退避 + 随机抖动
         sleep_time = min(
             initial_retry_interval * (2**retries) + random.uniform(0, 5),
             max_retry_interval,
@@ -81,9 +114,7 @@ async def async_invoke_function(
         await asyncio.sleep(sleep_time)
 
 
-async def batch_function_call_async(
-    payload_list, function_name, timeout, concurrency=1500
-):
+async def batch_function_call_async(payload_list, url, timeout, concurrency=1500):
     connector = aiohttp.TCPConnector(
         limit=concurrency,
     )
@@ -95,14 +126,12 @@ async def batch_function_call_async(
                 return None
             async with semaphore:
                 st = time.monotonic()
-                result = await async_invoke_function(
-                    session, function_name, timeout, payload
-                )
+                result = await async_invoke_function(session, url, timeout, payload)
                 return result, time.monotonic() - st
 
         tasks = [limited_task(payload) for payload in payload_list]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-
+        results = results if results else []
         data_list = []
         elapsed_times = []
         max_elapsed = -1
@@ -119,20 +148,17 @@ async def batch_function_call_async(
         p90 = calculate_percentile(elapsed_times, 90)
         p99 = calculate_percentile(elapsed_times, 99)
         logger.info(
-            f"Longest functioncall {function_name} took {max_elapsed:.4f} seconds, header: {max_elapsed_header}, timeout: {timeout}, connector: {id(connector)}, Active connections: {len(connector._conns)}, p50: {p50}, p90: {p90}, p99: {p99}"
+            f"Longest functioncall took {max_elapsed:.4f} seconds, header: {max_elapsed_header}, timeout: {timeout}, connector: {id(connector)}, Active connections: {len(connector._conns)}, p50: {p50}, p90: {p90}, p99: {p99}"
         )
 
         return data_list
 
 
-def get_function_name(runtime_type):
-    if runtime_type == "python_code":
-        return "realhf_code_verify"
-    if runtime_type == "python_live_code_bench":
-        return "python_live_code_bench"
-    elif runtime_type == "python_math":
-        return "python_math"
-    return "empty_code"
+def get_runtime_name(runtime, language):
+    if runtime:
+        return runtime
+    else:
+        return str(language).lower() + "-default"
 
 
 def caculate_concurrency():
@@ -144,21 +170,19 @@ def caculate_concurrency():
     return concurrency_for_one_exp // dp
 
 
-def batch_function_call(payload_list, runtime_type, timeout):
+def batch_function_call(payload_list, task_type, timeout):
     start_time = time.time()
-    function_name = get_function_name(runtime_type)
+    url = f"{FUNCTIONCALL_SERVICE_DOMAIN}/apis/functioncalls"
 
     concurrency = caculate_concurrency()
     logger.info(
-        f"Batch function call start, runtime type: {runtime_type}, batch size: {len(payload_list)}, time: {time.ctime(start_time)} ms, concurrency: {concurrency}"
+        f"Batch function call start, task type: {task_type}, request count: {len(payload_list)}, time: {time.ctime(start_time)} ms, concurrency: {concurrency}"
     )
     result = asyncio.run(
-        batch_function_call_async(
-            payload_list, function_name, timeout, concurrency=concurrency
-        )
+        batch_function_call_async(payload_list, url, timeout, concurrency=concurrency)
     )
     execution_time = time.time() - start_time
     logger.info(
-        f"Batch function call done, runtime type: {runtime_type}, batch size: {len(payload_list)}, cost: {execution_time * 1000:.0f} ms"
+        f"Batch function call done, task type: {task_type}, batch size: {len(payload_list)}, cost: {execution_time * 1000:.0f} ms"
     )
     return result
