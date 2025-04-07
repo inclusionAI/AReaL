@@ -678,7 +678,7 @@ class MegatronTrainBackend(model_api.ModelBackend, MegatronConfig):
         # Deleting models directly will not release the memory.
         # We must disable hooks at first.
         if pkg_version.is_version_greater_or_equal("megatron.core", "0.11.0"):
-            model.module.module.engine.ddp.disable_forward_pre_hook()
+            model.module.engine.ddp.disable_forward_pre_hook()
         else:
             optimizer = model.module.engine.optim
             if self.ddp.use_distributed_optimizer and self.ddp.overlap_param_gather:
@@ -688,6 +688,19 @@ class MegatronTrainBackend(model_api.ModelBackend, MegatronConfig):
         assert isinstance(model.module, ReaLMegatronEngine)
         optimizer = model.module.engine.optim
         param_state = optimizer.get_parameter_state_fs_bucket_space()
+        assert isinstance(optimizer, DistributedOptimizer)
+        if pkg_version.is_version_greater_or_equal("megatron.core", "0.11.0"):
+            # Fix the keyerror: "padding"
+            for gbuf_idx, gbuf_range_maps in enumerate(optimizer.gbuf_ranges):
+                assert len(gbuf_range_maps) == 1, "single dtype supported, for now."
+                for dtype, gbuf_range_map_for_all_buckets in gbuf_range_maps.items():
+                    for bucket_idx, gbuf_range_map in enumerate(
+                        gbuf_range_map_for_all_buckets
+                    ):
+                        bucket_state = param_state[gbuf_idx][dtype][bucket_idx]
+                        for elem in bucket_state:
+                            elem["padding"] = False
+
         sd = optimizer.state_dict()
         dp = constants.data_parallel_rank()
         pp = constants.pipe_parallel_rank()
@@ -715,7 +728,8 @@ class MegatronTrainBackend(model_api.ModelBackend, MegatronConfig):
         optimizer.load_state_dict(sd)
 
         param_state = torch.load(
-            pathlib.Path(load_dir) / f"megatron_optim_param_sd_d{dp}p{pp}t{tp}.mckpt"
+            pathlib.Path(load_dir) / f"megatron_optim_param_sd_d{dp}p{pp}t{tp}.mckpt",
+            weights_only=False,
         )
         optimizer.load_parameter_state_from_fs_bucket_space(param_state)
 

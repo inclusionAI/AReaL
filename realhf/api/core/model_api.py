@@ -369,7 +369,7 @@ class FinetuneSpec:
         return (
             self.dataset_size
             - version.global_step * self.train_batch_size % self.dataset_size
-        ) < self.train_batch_size
+        ) <= self.train_batch_size
 
     def inc_version(self, version: StepInfo) -> StepInfo:
         if self.is_new_epoch(version):

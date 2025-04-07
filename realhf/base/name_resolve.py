@@ -621,7 +621,7 @@ class Etcd3NameRecordRepository(NameRecordRepository):
         name,
         value,
         delete_on_exit=True,
-        keepalive_ttl=300,
+        keepalive_ttl=None,
         replace=False,
     ):
         """Add a key-value pair to etcd with optional TTL.
