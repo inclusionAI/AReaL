@@ -310,6 +310,15 @@ class SGLangConfig:
     cpu_offload_gb: int = 0
     hybrid_train: bool = False
 
+    # logging
+    log_level: str = "info"
+    log_level_http: Optional[str] = None
+    log_requests: bool = False
+    log_requests_level: int = 0
+    show_time_cost: bool = False
+    enable_metrics: bool = False  # Exports Prometheus-like metrics
+    decode_log_interval: int = 40  # How often (in tokens) to log decode progress.
+
 
 @dataclass
 class DistributedDataParallelConfig:
