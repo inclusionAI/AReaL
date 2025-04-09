@@ -152,7 +152,7 @@ def test_get_subtree(nfs_repo):
     nfs_repo.add("test_root/sub/key3", "value3")
 
     values = nfs_repo.get_subtree("test_root")
-    assert set(values) == {"value1", "value2"}
+    assert set(values) == {"value1", "value2", "value3"}
 
 
 def test_find_subtree(nfs_repo):
