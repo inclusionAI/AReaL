@@ -163,6 +163,9 @@ def sglang_server_process(server_args_dict):
     from sglang.srt.server_args import ServerArgs
     from sglang.srt.utils import kill_process_tree
 
+    if pkg_version.is_version_less("sglang", "0.4.4"):
+        server_args_dict.pop("log_requests_level")
+
     if pkg_version.is_version_less("sglang", "0.4.3"):
         from sglang.srt.server import launch_server
 
