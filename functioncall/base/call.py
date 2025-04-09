@@ -57,13 +57,11 @@ async def async_invoke_function(
     session: aiohttp.ClientSession,
     url: str,
     timeout: aiohttp.ClientTimeout,
-    payload: Dict[str, Any] = None,
+    payload: Dict[str, Any] = {},
     max_retries: int = 100,
     initial_retry_interval: float = 0.5,
     max_retry_interval: float = 10.0,
 ):
-    if payload is None:
-        payload = {}
 
     retries = 0
     while retries < max_retries:
@@ -94,13 +92,13 @@ async def async_invoke_function(
 
         except asyncio.TimeoutError as e:
             logger.warning(
-                f"Request timeout after {timeout}s, URL: {url}, Headers: {session.headers}"
+                f'Request timeout after {timeout}s, uid: {payload.get("uid")}, URL: {url}, Headers: {session.headers}'
             )
             break
 
         except Exception as e:
             logger.error(
-                f"Async invocation failed on attempt {retries + 1}:{str(e)}, URL: {url}, Headers: {session.headers}"
+                f"Async invocation failed on attempt {retries + 1}:{str(e)}, payload: {payload}, URL: {url}, Headers: {session.headers}"
             )
 
         retries += 1
@@ -117,6 +115,8 @@ async def async_invoke_function(
 async def batch_function_call_async(payload_list, url, timeout, concurrency=1500):
     connector = aiohttp.TCPConnector(
         limit=concurrency,
+        ttl_dns_cache=300,  # DNS cache
+        keepalive_timeout=80,  # keepalive_timeout need to be smaller than the middle link idle-timeout
     )
     async with aiohttp.ClientSession(connector=connector) as session:
         semaphore = asyncio.Semaphore(concurrency)
@@ -136,10 +136,12 @@ async def batch_function_call_async(payload_list, url, timeout, concurrency=1500
         elapsed_times = []
         max_elapsed = -1
         max_elapsed_header = None
+        max_elapsed_uid = ""
         for (data, header), elapsed in results:
             if elapsed > max_elapsed:
                 max_elapsed = elapsed
                 max_elapsed_header = header
+                max_elapsed_uid = data.get("uid")
             data_list.append(data)
             elapsed_times.append(elapsed)
             # logger.debug(f"functioncall took {elapsed:.4f} seconds, header: {header}.)")
@@ -148,7 +150,7 @@ async def batch_function_call_async(payload_list, url, timeout, concurrency=1500
         p90 = calculate_percentile(elapsed_times, 90)
         p99 = calculate_percentile(elapsed_times, 99)
         logger.info(
-            f"Longest functioncall took {max_elapsed:.4f} seconds, header: {max_elapsed_header}, timeout: {timeout}, connector: {id(connector)}, Active connections: {len(connector._conns)}, p50: {p50}, p90: {p90}, p99: {p99}"
+            f"Longest functioncall took {max_elapsed:.4f} seconds, header: {max_elapsed_header}, timeout: {timeout}, uid: {max_elapsed_uid}, Active connections: {len(connector._conns)}, p50: {p50}, p90: {p90}, p99: {p99}"
         )
 
         return data_list
@@ -162,7 +164,8 @@ def get_runtime_name(runtime, language):
 
 
 def caculate_concurrency():
-    concurrency_for_one_exp = 3000
+    # use 5000 cpu cores for one exp by default
+    concurrency_for_one_exp = 5000
     try:
         dp = constants.data_parallel_world_size()
     except Exception as e:

@@ -54,7 +54,7 @@ def process_code_data(file_path: str) -> List[Dict]:
         processed.append(
             {
                 "task": "code",
-                "id": str(item["id"]),
+                "query_id": str(item["id"]),
                 "prompt": item["context"],
                 "input_output": json.dumps(
                     {

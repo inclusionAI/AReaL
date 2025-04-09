@@ -43,7 +43,7 @@ def math_verify(
             "uid": construct_uid("math", i, end_idx),
             "language": str(Language.MATH).upper(),
             "runtime": get_runtime_name(None, str(Language.MATH)),
-            "code": 'print("hello math")',
+            "code": 'print("hello math!")',
             "testcases": [{}] * (end_idx - i),  # required filed
             "timeout": 5,
             "isFastFail": True,
@@ -92,7 +92,6 @@ if __name__ == "__main__":
         "answers": ["\\boxed{-\\frac{2}{3}}"],
         "solutions": [
             "1. **Apply the operation $\\otimes$ to the innermost parentheses first:**\n   \\[\n   (1 \\otimes 2) \\otimes 3 = \\left(\\frac{1^2}{2}\\right) \\otimes 3 = \\frac{1}{2} \\otimes 3\n   \\]\n   \\[\n   1 \\otimes (2 \\otimes 3) = 1 \\otimes \\left(\\frac{2^2}{3}\\right) = 1 \\otimes \\frac{4}{3}\n   \\]\n\n2. **Calculate each part using the definition of $\\otimes$:**\n   \\[\n   \\frac{1}{2} \\otimes 3 = \\frac{\\left(\\frac{1}{2}\\right)^2}{3} = \\frac{\\frac{1}{4}}{3} = \\frac{1}{12}\n   \\]\n   \\[\n   1 \\otimes \\frac{4}{3} = \\frac{1^2}{\\frac{4}{3}} = \\frac{1}{\\frac{4}{3}} = \\frac{3}{4}\n   \\]\n\n3. **Subtract the two results:**\n   \\[\n   \\left(\\frac{1}{12}\\right) - \\left(\\frac{3}{4}\\right) = \\frac{1}{12} - \\frac{9}{12} = -\\frac{8}{12} = -\\frac{2}{3}\n   \\]\n\n4. **Conclude with the final answer:**\n   \\[\n   \\boxed{A}\n   \\]",
-            "\\boxed{-\\frac{2}{3}}",
             "\\boxed{-\\frac{2}{3}}",
         ],
     }

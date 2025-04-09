@@ -3,20 +3,15 @@ import os
 import random
 from collections import defaultdict
 from datetime import datetime
-from functioncall.base.utils import logger, constants
+from functioncall.base.utils import logger, load_jsonl, construct_uid
 from functioncall.base.call import batch_function_call, Language, get_runtime_name
 
 
-def construct_uid(query_id: str, start_idx: int, end_idx: int):
-    try:
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        trial_time = (
-            f"{constants.experiment_name()}-{constants.trial_name()}-{timestamp}"
-        )
-    except Exception as e:
-        trial_time = "test"
-    uid = f"{trial_time}-{query_id}-case-{start_idx}-{end_idx}"
-    return uid
+def round_up_memory(memory):
+    if memory <= 0:
+        return 0
+    rounded = ((memory + 255) // 256) * 256
+    return 0 if rounded > 1024 else rounded
 
 
 def construct_testcases(
@@ -32,7 +27,7 @@ def construct_testcases(
             result.append({"input": input, "expectedOutput": output})
             continue
 
-        oss_basepath = "https://antsys-hcsfaas-images-dev.cn-heyuan-alipay-office.oss-alipay.aliyuncs.com/areal/datasets/loj_0331"
+        oss_basepath = "http://antsys-hcsfaas-images-dev.cn-heyuan-alipay-office.oss-alipay.aliyuncs.com/"
         input_url = (
             input if input.startswith("http") else os.path.join(oss_basepath, input)
         )
@@ -52,11 +47,16 @@ def load_problems_with_testcase_batch(
         problem = id2info[query_id]
         # parse one problem
         language = problem.get("language", "PYTHON").upper()
+        timeout = min(
+            100, max(0.1, float(problem.get("timeout", timeout_for_testcase)))
+        )  # [0.1, 100] s
+        memory = round_up_memory(problem.get("memory", 0))
         input_output = json.loads(problem["input_output"])
         fn_name = input_output.get("fn_name", "")
         remote = input_output.get("remote", False)
         inputs = input_output.get("inputs", [])
         outputs = input_output.get("outputs", [])
+
         assert len(inputs) == len(
             outputs
         ), f"Inputs({len(inputs)}) and outputs({len(outputs)}) mismatch for {query_id}"
@@ -89,7 +89,8 @@ def load_problems_with_testcase_batch(
                 "isFastFail": isFastFail,
                 "isRemote": remote,
                 "testcases": testcases,
-                "timeout": timeout_for_testcase,
+                "timeout": timeout,
+                "memory": memory,
                 "query_index": idx,
             }
             problem_list.append(sub_problem)
@@ -98,7 +99,12 @@ def load_problems_with_testcase_batch(
 
 
 def code_verify(
-    id2info, generateds, query_ids, debug=False, timeout=1000, timeout_for_testcase=6
+    id2info,
+    generateds,
+    query_ids,
+    timeout=1000,
+    timeout_for_testcase=6,
+    test_case_batch_size=20,
 ):
     assert len(generateds) == len(query_ids), (
         len(generateds),
@@ -111,7 +117,7 @@ def code_verify(
         query_ids,
         generateds,
         timeout_for_testcase,
-        test_case_batch_size=20,
+        test_case_batch_size,
     )
 
     logger.info(
@@ -140,40 +146,11 @@ def code_verify(
     return results
 
 
-def load_jsonl(file_path: str):
-    """Load JSONL file with validation"""
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return [json.loads(line) for line in f]
-    except FileNotFoundError:
-        print(f"ERROR: JSONL file not found: {file_path}")
-        raise
-    except json.JSONDecodeError as e:
-        print(f"ERROR: JSON parsing failed in {file_path}: {str(e)}")
-        raise
-
-
 if __name__ == "__main__":
-    # data_list = [
-    #     {
-    #         "task": "code",
-    #         "query_id": "",
-    #         "prompt": "",
-    #         "solutions": [
-    #             'from operator import *\n\nfrom typing import *\n\nclass Solution:\n    def solveNQueens(self, n: int) -> List[List[str]]:\n        def generateBoard():\n            board = list()\n            for i in range(n):\n                row[queens[i]] = "Q"\n                board.append("".join(row))\n                row[queens[i]] = "."\n            return board\n\n        def solve(row: int, columns: int, diagonals1: int, diagonals2: int):\n            if row == n:\n                board = generateBoard()\n                solutions.append(board)\n            else:\n                availablePositions = ((1 << n) - 1) & (~(columns | diagonals1 | diagonals2))\n                while availablePositions:\n                    position = availablePositions & (-availablePositions)\n                    availablePositions = availablePositions & (availablePositions - 1)\n                    column = bin(position - 1).count("1")\n                    queens[row] = column\n                    solve(row + 1, columns | position, (diagonals1 | position) << 1, (diagonals2 | position) >> 1)\n\n        solutions = list()\n        queens = [-1] * n\n        row = ["."] * n\n        solve(0, 0, 0, 0)\n        return solutions\n# Test case 1: Smallest case, n = 1\n# There is only one queen, so the only solution is a board with a single \'Q\'.\nsolution = Solution()\nassert solution.solveNQueens(1) == [[\'Q\']]\n'
-    #         ],
-    #         "input_output": '{"inputs":[],"outputs":[],"fn_name":"","remote":false}',
-    #         "language": "PYTHON",
-    #     }
-    # ]
-
     data_list = load_jsonl("functioncall/test/test_dataset.jsonl")
     id2info = defaultdict(dict)
     for item in data_list:
-        query_id = str(item["query_id"])
-        id2info[query_id] = item
-        # id2info[query_id]["input_output"]["remote"] = True
-        # id2info[query_id]["language"] = "PYTHON"
+        id2info[item["query_id"]] = item
 
     def create_test_params(count=10):
         query_ids = []
@@ -191,48 +168,8 @@ if __name__ == "__main__":
 
         return generateds, query_ids
 
-    generateds, query_ids = create_test_params(10)
-    # generateds, query_ids = ["s = input()\nprint(s)\n"], ["loj_6053"]
+    generateds, query_ids = create_test_params(100)
+    scale = 1
     print(f"generateds:, query_ids:{query_ids}")
-    result = code_verify(id2info, generateds, query_ids, True)
-    print(result)
-
-
-if __name__ == "__main__1":
-    data_list = load_jsonl(
-        "/Users/jun/Documents/code/AReaL/functioncall/loj_6053/loj_code.jsonl"
-    )
-    id2info = defaultdict(dict)
-    for item in data_list:
-        query_id = str(item["id"])
-        id2info[query_id] = item
-        # id2info[query_id]["input_output"]["remote"] = True
-        id2info[query_id]["language"] = "PYTHON"
-
-    def create_test_params(count=10):
-        query_ids = []
-        generateds = []
-        cnt = 0
-
-        file_path = "/storage/openpsi/users/meijun.mei/datasets/Scenario.codegeneration_10_0.2_eval_all.json"
-        raw_data = []
-        with open(file_path, "r", encoding="utf-8") as f:
-            raw_data = [line for line in json.load(f)]
-
-        for d in raw_data:
-            if cnt >= count:
-                break
-            if not d["code_list"] or d["question_id"] not in id2info:
-                continue
-            query_ids.append(d["question_id"])
-            generateds.append(d["code_list"][0])
-            cnt += 1
-
-        return generateds, query_ids
-
-    # generateds, query_ids = create_test_params(10)
-
-    generateds, query_ids = ["s = input()\nprint(s)\n"], ["loj_6053"]
-    print(f"generateds:, query_ids:{query_ids}")
-    result = code_verify(id2info, generateds, query_ids, True)
+    result = code_verify(id2info, generateds * scale, query_ids * scale)
     print(result)

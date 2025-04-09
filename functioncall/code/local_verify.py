@@ -6,11 +6,10 @@ import time
 import traceback
 from io import StringIO
 from typing import Dict, List
+from collections import defaultdict
 
 from functioncall.code.function.testing_util import run_test
-from realhf.base import logging
-
-logger = logging.getLogger("function call")
+from functioncall.base.utils import logger, load_jsonl
 
 
 def capture_stdout(code):
@@ -47,7 +46,7 @@ def _temp_run(problem, generation, debug, result):
 
     execution_time = time.time() - start_time
     logger.info(
-        f'[_temp_run] query_id: {problem["problem_id"]}, start_time: {str(start_time)}, Time elapsed: {execution_time * 1000:.0f} ms'
+        f'[_temp_run] query_id: {problem["query_id"]}, start_time: {str(start_time)}, Time elapsed: {execution_time * 1000:.0f} ms'
     )
 
 
@@ -87,7 +86,7 @@ def check_correctness(problem, generation, timeout, debug=False):
 
     execution_time = time.time() - start_time
     logger.info(
-        f'[check_correctness] query_id: {problem["problem_id"]}, start_time: {str(start_time)}, Time elapsed: {execution_time * 1000:.0f} ms'
+        f'[check_correctness] query_id: {problem["query_id"]}, start_time: {str(start_time)}, Time elapsed: {execution_time * 1000:.0f} ms'
     )
     return result[0]
 
@@ -102,7 +101,7 @@ def code_verify(id2info, generateds, query_ids, debug=False):
         logger.debug(f"run_batch_code, query_id: {query_id}")
         try:
             curr_res, metadata = check_correctness(
-                problem=problem, generation=generated, timeout=6000, debug=debug
+                problem=problem, generation=generated, timeout=6000
             )
 
             if any(x != True for x in curr_res):
@@ -122,25 +121,30 @@ def code_verify(id2info, generateds, query_ids, debug=False):
 
 
 if __name__ == "__main__":
-    path = "/storage/openpsi/data/code/apps/test.jsonl"
-    data = []
-    with open(path, "r") as f:
-        code_data = [json.loads(l) for l in f.readlines()]
+    data_list = load_jsonl("functioncall/test/test_dataset.jsonl")
+    id2info = defaultdict(dict)
+    for item in data_list:
+        id2info[item["query_id"]] = item
 
-    id2info = {}
-    solutions = []
-    query_ids = []
-    for i in range(10):
-        problem = code_data[i]
-        problem["problem_id"] = problem["id"]
-        id2info[problem["problem_id"]] = problem
-        solutions.append(json.loads(problem["solutions"])[0])
-        query_ids.append(problem["id"])
+    def create_test_params(count=0):
+        query_ids = []
+        generateds = []
+        cnt = 0
 
-    result = code_verify(
-        id2info,
-        solutions,
-        query_ids,
-        debug=False,
-    )
+        for d in data_list:
+            if count > 0 and cnt >= count:
+                break
+            if not d["solutions"] or d["language"] != "PYTHON":
+                continue
+            query_ids.append(d["query_id"])
+            generateds.extend(d["solutions"])
+            cnt += 1
+            print(d["language"])
+
+        return generateds, query_ids
+
+    generateds, query_ids = create_test_params()
+    scale = 1
+    print(f"generateds:, query_ids:{query_ids}")
+    result = code_verify(id2info, generateds * scale, query_ids * scale)
     print(result)
