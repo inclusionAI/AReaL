@@ -1068,6 +1068,54 @@ class PPOMATHExperimentOptions:
     )
 
 
+@dataclass
+class MathCodeEvalOptions:
+    gen_config: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
+
+    actor: ModelTrainEvalConfig = field(
+        default_factory=ModelTrainEvalConfig,
+        metadata={"help": "Primary LLM configuration."},
+    )
+    rew: ModelTrainEvalConfig = field(
+        default_factory=ModelTrainEvalConfig,
+        metadata={"help": "Reward model configuration."},
+    )
+
+    actor_gen: MFCConfig = field(
+        default_factory=MFCConfig, metadata={"help": "Rollout MFC configuration."}
+    )
+    rew_inf: MFCConfig = field(
+        default_factory=MFCConfig, metadata={"help": "InfReward MFC configuration."}
+    )
+
+    dataset: PromptOnlyDatasetConfig = field(
+        default_factory=PromptOnlyDatasetConfig,
+        metadata={"help": "Dataset configuration."},
+    )
+
+    group_size: int = field(
+        default=1,
+        metadata={"help": "Number of answers retained per prompt (best-of-n)."},
+    )
+    rw_type: Optional[str] = field(
+        default="sparse",
+        metadata={
+            "help": "Type of reward processing. Only `sparse` is valid for now.",
+            "choices": ["sparse"],
+        },
+    )
+    check_xml_format: bool = field(
+        default=False, metadata={"help": "Validate XML format in generated responses."}
+    )
+
+    check_verifier_status: bool = field(
+        default=False,
+        metadata={"help": "Raise error if reward is all-zero (verifier bug check)."},
+    )
+
+
 ## A helper function to visualize the helper messages. ##
 from rich.console import Console
 from rich.highlighter import RegexHighlighter
