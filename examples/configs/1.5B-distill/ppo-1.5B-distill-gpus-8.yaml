@@ -3,6 +3,7 @@ trial_name: 512x16
 mode: ray
 wandb:
   mode: disabled
+metric_discovery_port: 17997
 recover_mode: auto
 recover_retries: 10
 allocation_mode: 'sglang.d4p1m1+d2p2m1'
@@ -27,6 +28,7 @@ actor:
   sglang:
     mem_fraction_static: 0.8
     triton_attention_num_kv_splits: 16
+    enable_metrics: True
 critic:
   type:
     _class: qwen2

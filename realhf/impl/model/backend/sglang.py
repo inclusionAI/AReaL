@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import json
 import os
+import socket
 import sys
 import time
 import traceback
@@ -35,6 +36,8 @@ from realhf.base import (
     constants,
     gpu_utils,
     logging,
+    name_resolve,
+    names,
     network,
     pkg_version,
     seeding,
@@ -185,6 +188,7 @@ def sglang_server_process(server_args_dict):
     )
 
     try:
+        logger.info(f"SGLang Server Args: {server_args}")
         launch_server(server_args)
     finally:
         kill_process_tree(os.getpid(), include_parent=False)
@@ -220,6 +224,23 @@ class SGLangGenerationEngine(PipelinableEngine):
         }
 
         asyncio.run(self.wait_server())
+
+        if server_args_dict["enable_metrics"]:
+            dp_rank = constants.data_parallel_rank()
+            pp_rank = constants.pipe_parallel_rank()
+            mp_rank = constants.model_parallel_rank()
+            metric_server_name = f"d{dp_rank}p{pp_rank}m{mp_rank}"
+            key = names.metric_server(
+                constants.experiment_name(),
+                constants.trial_name(),
+                "sglang",
+                metric_server_name,
+            )
+            host_ip = server_args_dict["host"]
+            host_port = server_args_dict["port"]
+            address = f"{host_ip}:{host_port}"
+            name_resolve.add(key, address, keepalive_ttl=1200, delete_on_exit=True)
+            logger.info(f"SGLang {metric_server_name} metrics URL: {address}")
 
         self.request_timeout = request_timeout
 
@@ -426,8 +447,9 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
             )
         additional_args["port"] = ports[constants.data_parallel_rank()]
 
+        host_ip = socket.gethostbyname(socket.gethostname())
         server_args_dict = dict(
-            host="localhost",
+            host="localhost" if not self.enable_metrics else host_ip,
             # Model and tokenizer
             tokenizer_path=self.model_path,
             tokenizer_mode="auto",

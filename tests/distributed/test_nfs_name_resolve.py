@@ -152,7 +152,7 @@ def test_get_subtree(nfs_repo):
     nfs_repo.add("test_root/sub/key3", "value3")
 
     values = nfs_repo.get_subtree("test_root")
-    assert set(values) == {"value1", "value2"}
+    assert set(values) == {"value1", "value2", "value3"}
 
 
 def test_find_subtree(nfs_repo):
@@ -239,8 +239,9 @@ def test_watch_names(nfs_repo):
         callback_called = True
 
     nfs_repo.add("test_key", "test_value")
-    nfs_repo.watch_names("test_key", callback)
+    nfs_repo.watch_names("test_key", callback, 1)
 
+    time.sleep(5)  # Give watcher thread time to execute
     # Delete the key to trigger callback
     nfs_repo.delete("test_key")
 

@@ -348,9 +348,15 @@ class NfsNameRecordRepository(NameRecordRepository):
         dir_path = self.__dir_path(name_root)
         rs = []
         if os.path.isdir(dir_path):
-            for item in os.listdir(dir_path):
+            for root, _, files in os.walk(dir_path):
                 try:
-                    rs.append(self.get(os.path.join(name_root, item)))
+                    if len(files) != 1:
+                        continue
+                    if files[0] != "ENTRY":
+                        continue
+                    key = root.removeprefix(self.RECORD_ROOT)
+                    key = key.removeprefix("/")
+                    rs.append(self.get(key))
                 except NameEntryNotFoundError:
                     pass
         return rs
