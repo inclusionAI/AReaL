@@ -309,6 +309,7 @@ class SGLangConfig:
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
     hybrid_train: bool = False
+    enable_metrics: bool = False
 
     # logging
     log_level: str = "info"
@@ -788,6 +789,10 @@ class BaseExperimentConfig:
         metadata={
             "help": "Debug mode. False disables assertions for better performance."
         },
+    )
+    metric_discovery_port: int = field(
+        default=0,
+        metadata={"help": "Discovery port for prometheus metrics service discovery."},
     )
     partition: str = field(
         default="dev", metadata={"help": "SLURM partition for running the experiment."}

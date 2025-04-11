@@ -10,7 +10,9 @@ import getpass
 import json
 import os
 import re
+import socket
 import sys
+import threading
 import time
 import traceback
 from dataclasses import asdict
@@ -21,6 +23,7 @@ import colorama
 import ray
 import ray.util.queue as rq
 import torch
+from flask import Flask, jsonify
 from omegaconf import OmegaConf
 
 import realhf.api.core.system_api as system_api
@@ -55,6 +58,36 @@ class ControllerExitStatus(enum.Enum):
     FAIL = 101
     LOST = 102
     UNKNOWN = 404
+
+
+app = Flask(__name__)
+
+
+@app.route("/discovery", methods=["GET"])
+def discovery():
+    key = names.metric_server_root(constants.experiment_name(), constants.trial_name())
+    addresses = name_resolve.get_subtree(key)
+
+    result = []
+    if len(addresses) > 0:
+        result.append(
+            {
+                "targets": addresses,
+                "labels": {
+                    "experiment": constants.experiment_name(),
+                    "trial": constants.trial_name(),
+                },
+            }
+        )
+
+    logger.info(f"Discover metric servers: {result}")
+    return jsonify(result)
+
+
+def start_metric_discovery_server(port: int):
+    host_ip = socket.gethostbyname(socket.gethostname())
+    logger.info(f"Start metric discovery server: http://{host_ip}:{port}/discovery")
+    app.run(debug=False, use_reloader=False, host="0.0.0.0", port=port)
 
 
 class Controller:
@@ -123,6 +156,13 @@ class Controller:
                 logger.info(f"Configuration has {len(config)} {name}.")
 
     def start(self, experiment: system_api.Experiment, ignore_worker_error=False):
+        if experiment.metric_discovery_port > 0:
+            server_thread = threading.Thread(
+                target=start_metric_discovery_server,
+                args=(experiment.metric_discovery_port,),
+            )
+            server_thread.start()
+
         if ignore_worker_error:
             check_worker_status = ()
             remove_worker_status = (

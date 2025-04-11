@@ -58,3 +58,4 @@ etcd3
 protobuf<3.21
 rich
 orjson>=3.10.16
+flask

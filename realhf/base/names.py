@@ -64,3 +64,11 @@ def distributed_master(experiment_name, trial_name, model_name):
 
 def model_version(experiment_name, trial_name, model_name):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/model_version/{model_name}"
+
+
+def metric_server_root(experiment_name, trial_name):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/metrics"
+
+
+def metric_server(experiment_name, trial_name, group, name):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/metrics/{group}/{name}"
