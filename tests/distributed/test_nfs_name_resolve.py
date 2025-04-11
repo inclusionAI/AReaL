@@ -239,8 +239,9 @@ def test_watch_names(nfs_repo):
         callback_called = True
 
     nfs_repo.add("test_key", "test_value")
-    nfs_repo.watch_names("test_key", callback)
+    nfs_repo.watch_names("test_key", callback, 1)
 
+    time.sleep(5)  # Give watcher thread time to execute
     # Delete the key to trigger callback
     nfs_repo.delete("test_key")
 
