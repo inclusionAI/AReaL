@@ -324,6 +324,7 @@ class MasterWorker(worker_base.Worker):
             model_configs=self.__model_configs,
             ctrl=self.__rpc_ctrl,
             summary_writer=self.__summary_writer,
+            shuffle_dataset=self.config.shuffle_dataset,
         )
         if self.__recover_run:
             self.func_executor.data_loading_dp_idx = (
