@@ -357,6 +357,11 @@ class PipeTrainInstrSetForMegatron(PipeTrainInstrSet):
         if update_successful:
             incr = version_steps - self.engine.lr_scheduler.num_steps
             self.engine.lr_scheduler.step(incr)
+            grad_norm = torch.tensor(
+                grad_norm, device=constants.current_device(), dtype=torch.float32
+            )
+            dist.all_reduce(grad_norm, group=constants.tp_and_pp_group())
+            grad_norm /= constants.tp_and_pp_world_size()
         if constants.data_parallel_rank() == 0 and constants.model_parallel_rank() == 0:
             logger.info(
                 f"Model name {constants.model_name()}, "
@@ -366,7 +371,15 @@ class PipeTrainInstrSetForMegatron(PipeTrainInstrSet):
                 f"Current loss scale: {self.engine.optim.get_loss_scale()}. "
                 f"Learning rate: {[param_group['lr'] for param_group in self.engine.optim.param_groups]}. "
             )
-        return update_successful, grad_norm, num_zeros_in_grad
+        stat = dict(
+            update_successful=float(update_successful),
+            grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
+            loss_scale=float(self.engine.optim.get_loss_scale()),
+        )
+        for i, param_group in enumerate(self.engine.optim.param_groups):
+            stat[f"param_group{i}/lr"] = param_group["lr"]
+        # NOTE: we only have one optimizer step for each stage, so micro_batch_id can be 0
+        tensor_buffer.put("stats", 0, stat)
 
 
 class ReaLMegatronEngine(model_api.PipelinableEngine):
@@ -448,7 +461,6 @@ class ReaLMegatronEngine(model_api.PipelinableEngine):
                 )
             no_sync_ctx = self.engine.ddp.no_sync()
             no_sync_ctx.__enter__()
-            stat = collections.defaultdict(int)
             for i, mb_input in enumerate(mb_inputs):
                 if i == len(mb_inputs) - 1:
                     no_sync_ctx.__exit__(None, None, None)
@@ -464,7 +476,7 @@ class ReaLMegatronEngine(model_api.PipelinableEngine):
                     cu_seqlens=cu_seqlens,
                     max_seqlen=max_seqlen,
                 ).logits
-                loss, _stat = loss_fn(model_output, mb_input)
+                loss = loss_fn(model_output, mb_input)
                 loss_scale = loss_weight_fn(mb_inputs[i]) / total_loss_weight
                 if token_normalize_scope == "global":
                     # Megatron will average gradients across DP ranks.
@@ -476,13 +488,9 @@ class ReaLMegatronEngine(model_api.PipelinableEngine):
                 loss *= loss_scale
                 with cuda_tmarked("bwd", CUDATimeMarkType.backward):
                     loss.backward()
-                for k, v in _stat.items():
-                    stat[k] += v
 
             self.engine.finalize_grads()
-            self._step(version_steps)
-
-            return stat
+            return self._step(version_steps)
 
     @torch.no_grad()
     def forward(
@@ -521,10 +529,16 @@ class ReaLMegatronEngine(model_api.PipelinableEngine):
     # wrapper for profiler
     @cuda_tmarked("opt", CUDATimeMarkType.optim_step)
     def _step(self, version_steps):
+        # omit the number of zeros in grads
         update_successful, grad_norm, _ = self.engine.optim.step()
         if update_successful:
             incr = version_steps - self.engine.lr_scheduler.num_steps
             self.engine.lr_scheduler.step(incr)
+            grad_norm = torch.tensor(
+                grad_norm, device=constants.current_device(), dtype=torch.float32
+            )
+            dist.all_reduce(grad_norm, group=constants.tp_and_pp_group())
+            grad_norm /= constants.tp_and_pp_world_size()
         if constants.data_parallel_rank() == 0 and constants.model_parallel_rank() == 0:
             logger.info(
                 f"Megatron backend update success? {update_successful}. "
@@ -532,6 +546,14 @@ class ReaLMegatronEngine(model_api.PipelinableEngine):
                 f"Current loss scale: {self.engine.optim.get_loss_scale()}. "
                 f"Learning rate: {[param_group['lr'] for param_group in self.engine.optim.param_groups]}. "
             )
+        stat = dict(
+            update_successful=float(update_successful),
+            grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
+            loss_scale=float(self.engine.optim.get_loss_scale()),
+        )
+        for i, param_group in enumerate(self.engine.optim.param_groups):
+            stat[f"param_group{i}/lr"] = param_group["lr"]
+        return stat
 
 
 @dataclasses.dataclass

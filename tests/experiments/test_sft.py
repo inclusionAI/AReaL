@@ -7,13 +7,8 @@ import pytest
 
 from realhf.api.cli_args import (
     ExperimentSaveEvalControl,
-    GenerationHyperparameters,
-    MFCConfig,
-    MicroBatchSpec,
     ModelTrainEvalConfig,
-    ParallelismConfig,
-    PPOHyperparameters,
-    PromptOnlyDatasetConfig,
+    PromptAnswerDatasetConfig,
 )
 from realhf.base import cluster, testing
 from realhf.experiments.common.sft_exp import SFTConfig
@@ -74,6 +69,7 @@ def test_sft(tmp_path_factory, tokenizer, save_path, cpu_hf_model, dp, pp, tp):
 
     minbs = 32
     exp_cfg = SFTConfig(
+        exp_ctrl=ExperimentSaveEvalControl(eval_freq_steps=2),
         experiment_name=testing._DEFAULT_EXPR_NAME,
         trial_name=testing._DEFAULT_TRIAL_NAME,
         mode="local",
@@ -86,8 +82,8 @@ def test_sft(tmp_path_factory, tokenizer, save_path, cpu_hf_model, dp, pp, tp):
             backend="mock_train",
         ),
         dataset=PromptAnswerDatasetConfig(
-            train_path=str(save_path / "dataset.json"),
-            valid_path=str(save_path / "dataset.json"),
+            train_path=str(save_path / "dataset.jsonl"),
+            valid_path=str(save_path / "dataset.jsonl"),
             max_seqlen=128,
             train_bs_n_seqs=minbs,
             valid_bs_n_seqs=minbs,

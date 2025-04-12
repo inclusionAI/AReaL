@@ -742,8 +742,9 @@ class ModelWorker(worker_base.Worker):
                 ret = self.__handle_one_rpc_hook(hook, hook_data)
                 if hook == "evaluate":
                     assert request.handle_name == "train_step", request.handle_name
+                    assert isinstance(ret, dict), ret
                     assert isinstance(res, dict), res
-                    res.update({f"eval_{k}": v for k, v in ret.items()})
+                    res.update(ret)
 
         # update param realloc step after handling post hooks
         if request.handle_name == "train_step":

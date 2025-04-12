@@ -101,6 +101,7 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
                 "generation_size": self.generation_size,
                 "group_adv_norm": self.group_adv_norm,
                 "mask_too_long": self.mask_too_long,
+                "c_clip": self.ppo.c_clip,
             },
         )
 

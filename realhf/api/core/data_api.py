@@ -824,3 +824,23 @@ def gather_stat(src: List[Dict]) -> Dict:
                 f"before returning: ({[x.get(k, None) for x in src]}, {v})."
             )
     return res
+
+
+def tabulate_stats(data: Dict[str, float], col=4) -> str:
+    from tabulate import tabulate
+
+    items = list(data.items())
+    # Calculate how many rows we'll need
+    row_count = (len(items) + col - 1) // col
+
+    # Reorganize items in column-major order
+    column_major = []
+    for i in range(row_count):
+        row = []
+        for j in range(col):
+            index = i + j * row_count
+            if index < len(items):
+                row.extend(items[index])
+        column_major.append(row)
+
+    return tabulate(column_major, floatfmt=".4e", tablefmt="fancy_grid")

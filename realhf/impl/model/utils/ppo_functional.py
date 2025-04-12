@@ -54,6 +54,7 @@ def actor_loss_fn(
     advantages: torch.FloatTensor,
     eps_clip: float,
     loss_mask: Optional[torch.BoolTensor] = None,
+    c_clip: Optional[float] = None,
 ) -> Tuple[torch.Tensor, Dict]:
     """Compute PPO actor loss function.
 
@@ -65,6 +66,8 @@ def actor_loss_fn(
         old_logprobs (torch.FloatTensor): Old log probabilities of actions.
         advantages (torch.FloatTensor): GAE (normalized) advantages.
         eps_clip (float): Clip ratio of PPO.
+        c_clip (float | None): The dual clip factor.
+            Check https://arxiv.org/pdf/1912.09729 for details.
         loss_mask (Optional[torch.BoolTensor], optional): Mask for loss computation.
             1 if valid else 0. Defaults to None.
 
@@ -85,41 +88,39 @@ def actor_loss_fn(
         loss_mask_count = loss_mask.count_nonzero() or 1
         # For numerical stability.
         ratio = torch.where(loss_mask, torch.exp(logprobs - old_logprobs), 0)
-        approx_kl = torch.where(loss_mask, (logprobs - old_logprobs).detach(), 0.0)
     else:
         ratio = torch.exp(logprobs - old_logprobs)
-        approx_kl = (logprobs - old_logprobs).detach()
 
     clipped_ratio = torch.clamp(ratio, 1.0 - eps_clip, 1.0 + eps_clip)
     pg_loss1 = -advantages * ratio
     pg_loss2 = -advantages * clipped_ratio
-
-    if loss_mask is not None:
-        pg_loss = (
-            torch.where(loss_mask, torch.max(pg_loss1, pg_loss2), 0).sum()
-            / loss_mask_count
-        )
-    else:
-        pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-
     clip_mask = pg_loss1.detach() < pg_loss2.detach()
-    if loss_mask is not None:
-        proportion_clipped = (
-            clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
-        )
-        importance_weight = (
-            torch.where(loss_mask, ratio.detach(), 0).sum() / loss_mask_count
-        )
-        approx_kl = approx_kl.sum() / loss_mask_count
+
+    pg_loss = torch.max(pg_loss1, pg_loss2)
+    if c_clip is not None:
+        assert c_clip > 1.0, c_clip
+        pg_loss3 = torch.sign(advantages) * c_clip * advantages
+        dual_clip_mask = pg_loss3.detach() < pg_loss.detach()
+        pg_loss = torch.min(pg_loss, pg_loss3)
     else:
-        proportion_clipped = clip_mask.count_nonzero()
-        importance_weight = ratio.detach().mean()
-        approx_kl = approx_kl.mean()
+        dual_clip_mask = torch.zeros_like(clip_mask)
+
+    logging_loss = pg_loss.detach()
+    if loss_mask is not None:
+        pg_loss = torch.where(loss_mask, pg_loss, 0).sum() / loss_mask_count
+    else:
+        pg_loss = pg_loss.mean()
+
+    if loss_mask is not None:
+        clip_mask.logical_and_(loss_mask)
+        dual_clip_mask.logical_and_(loss_mask)
     # Remain torch.CudaTensor here for all-reduce after train step.
     stat = dict(
-        clip_ratio=proportion_clipped,
-        importance_weight=importance_weight,
-        approx_kl=approx_kl,
+        loss=logging_loss,
+        importance_weight=ratio.detach(),
+        approx_kl=(logprobs - old_logprobs).detach(),
+        clip_mask=clip_mask,
+        dual_clip_mask=dual_clip_mask,
     )
 
     return pg_loss, stat
@@ -187,17 +188,14 @@ def critic_loss_fn(
     with torch.no_grad():
         clip_mask = value_loss_clipped.detach() > value_loss_original.detach()
         if loss_mask is not None:
-            mask_count = loss_mask.count_nonzero() or 1
-            proportion_clipped = (
-                clip_mask.logical_and_(loss_mask).count_nonzero() / mask_count
-            )
-        else:
-            proportion_clipped = clip_mask.count_nonzero()
+            clip_mask.logical_and_(loss_mask)
 
-        stat = dict(clip_ratio=proportion_clipped)
+        stat = dict(clip_mask=clip_mask, loss=value_loss.detach())
 
     if loss_mask is not None:
-        value_loss = torch.where(loss_mask, value_loss, 0).sum() / mask_count
+        value_loss = (
+            torch.where(loss_mask, value_loss, 0).sum() / loss_mask.count_nonzero()
+        )
     else:
         value_loss = value_loss.mean()
 
@@ -354,6 +352,10 @@ def get_packed_advantages_and_returns(
     short1cu_seqlens: torch.IntTensor,
     seq_no_eos_mask: torch.FloatTensor,
 ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
+    if rewards.get_device() == -1:
+        return pygae1d_nolp_misalign(
+            rewards, values, short1cu_seqlens, seq_no_eos_mask, gamma, lam
+        )
     try:
         return cugae1d_nolp_misalign_func(
             rewards,

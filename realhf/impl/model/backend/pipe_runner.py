@@ -670,10 +670,9 @@ class PipeTrainForwardCommInstrSet:
             input_cache: SequenceSample = tensor_buffer.get(
                 "input_cache", micro_batch_id, remove=True
             )
-            loss, stats = loss_fn(model_output, input_cache)
+            loss = loss_fn(model_output, input_cache)
             loss = loss * tensor_buffer.get("loss_scale", micro_batch_id)
             tensor_buffer.put("losses", micro_batch_id, loss)
-            tensor_buffer.put("stats", micro_batch_id, stats)
 
     def _exec_send_activations(
         module: ReaLModel,
@@ -1057,13 +1056,14 @@ class PipelineRunner:
             pipe_schedule=sched,
         )
 
-        agg_stats = None
+        agg_stats = {}
+
+        stat = tensor_buffer.get("stats", 0, raise_error=False)
+        stats = [None for _ in range(constants.pipe_parallel_world_size())]
+        dist.all_gather_object(stats, stat, group=constants.pipe_parallel_cpu_group())
+
         if constants.is_last_pipe_stage():
-            stats = []
-            for mbid in range(n_pp_mbs):
-                stats.append(tensor_buffer.get("stats", mbid))
-            agg_stats = dict()
             for key in stats[0].keys():
-                agg_stats[key] = torch.stack([stat[key] for stat in stats]).sum()
+                agg_stats[key] = sum([stat[key] for stat in stats]) / len(stats)
 
         return agg_stats
