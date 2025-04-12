@@ -327,7 +327,7 @@ class DistributedDataParallelConfig:
     Refer to Megatron-LM documentation for details.
     """
 
-    grad_reduce_in_fp32: bool = False
+    grad_reduce_in_fp32: bool = True
     overlap_grad_reduce: bool = True
     overlap_param_gather: bool = False
     align_param_gather: bool = False
@@ -396,7 +396,7 @@ class ModelTrainEvalConfig:
         default=True, metadata={"help": "Enable memory-saving gradient checkpointing"}
     )
     bf16: bool = field(
-        default=False, metadata={"help": "Use bf16 precision (otherwise fp16)"}
+        default=True, metadata={"help": "Use bf16 precision (otherwise fp16)"}
     )
 
     # Backend-Specific Configurations
