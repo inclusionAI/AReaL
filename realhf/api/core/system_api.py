@@ -119,6 +119,7 @@ class ModelWorker:
     datasets: Optional[List[Union[str, DatasetAbstraction]]] = None
     use_dataset_cache: bool = False
     dataset_cahce_root: str = constants.DATASET_CACHE_PATH
+    shuffle_dataset: bool = True
     cuda_cache_cleanliness: bool = True
     cuda_cache_clear_freq: int = 10
     torch_cache_mysophobia: bool = False
@@ -146,6 +147,7 @@ class MasterWorker:
     exp_ctrl: ExperimentSaveEvalControl
     # main components
     n_model_workers: int
+    shuffle_dataset: bool = True
     model_rpcs: List[dfg.MFCDef] = None
     model_topos: Dict[ModelName, topology.ProcessTopology] = None
     msid2mwid: Dict[ModelShardID | str, int] = None
@@ -193,6 +195,7 @@ class ExperimentConfig:
                 base_seed=self.model_worker[0].base_seed,
                 exp_ctrl=self.exp_ctrl,
                 n_model_workers=len(self.model_worker),
+                shuffle_dataset=self.model_worker[0].shuffle_dataset,
             )
         ]
 

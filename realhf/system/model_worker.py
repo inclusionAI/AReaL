@@ -327,7 +327,7 @@ class ModelWorker(worker_base.Worker):
                 # NOTE: This is *NOT* the actual batch size for training.
                 # It is just a proper size to load data to workers.
                 batch_size=10240,
-                shuffle=True,
+                shuffle=self.config.shuffle_dataset,
                 generator=g,
             )
 
@@ -613,7 +613,7 @@ class ModelWorker(worker_base.Worker):
                     # NOTE: This is *NOT* the actual batch size for training.
                     # It is just a proper size to load data to workers.
                     batch_size=10240,
-                    shuffle=True,
+                    shuffle=self.config.shuffle_dataset,
                     generator=g,
                 )
                 self.__data_generator = enumerate(self.__dataloader)

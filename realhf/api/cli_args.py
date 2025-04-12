@@ -906,6 +906,9 @@ class BaseExperimentConfig:
     mem_per_model_worker: int = field(
         default=90000, metadata={"help": "Memory per model worker (MB)."}
     )
+    shuffle_dataset: bool = field(
+        default=True, metadata={"help": "Shuffle in each epoch."}
+    )
 
 
 ## Configurations for practical experiments. ##

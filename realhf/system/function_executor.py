@@ -32,6 +32,7 @@ class FunctionExecutor:
         model_configs: Dict[str, None | ReaLModelConfig],
         ctrl: RPCCorountineControl,
         summary_writer: SummaryWriter | None,
+        shuffle_dataset: bool,
     ):
 
         self.func_calls: Dict[str, ModelFunctionCall] = {}
@@ -67,6 +68,7 @@ class FunctionExecutor:
         self.buffer = buffer
 
         self.data_loading_dp_idx = -1
+        self.shuffle_dataset = shuffle_dataset
 
         # Sort all MFCs in the topological order and
         # calculate the width of each level.
@@ -162,9 +164,10 @@ class FunctionExecutor:
 
             all_data = filtered_data
 
-            # We load data in a round-robin manner across different DP ranks,
-            # so we also need to shuffle the data to fuse different dataset splits.
-            random.shuffle(all_data)
+            if self.shuffle_dataset:
+                # We load data in a round-robin manner across different DP ranks,
+                # so we also need to shuffle the data to fuse different dataset splits.
+                random.shuffle(all_data)
 
             if len(all_data) > 0:
                 # Update resource tracker for planning data redistribution.
