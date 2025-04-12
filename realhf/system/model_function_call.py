@@ -439,15 +439,18 @@ class ModelFunctionCall:
             res = data_api.gather_stat(responses)
 
         if rpc.log_return_value:
-            logger.info(f"RPC name {rpc.name} returns {res}")
-
-            if isinstance(res, Dict):
+            if isinstance(res, dict):
+                logger.info(
+                    f"RPC name {rpc.name} returns\n{data_api.tabulate_stats(res)}"
+                )
                 wandb.log(res, step=ctrl.step_info.global_step)
                 if self.summary_writer is not None:
                     for key, val in res.items():
                         self.summary_writer.add_scalar(
                             f"{key}", val, ctrl.step_info.global_step
                         )
+            else:
+                logger.info(f"RPC name {rpc.name} returns\n{res}")
 
         logger.info(
             f"Model rpc {rpc.name} finished. "

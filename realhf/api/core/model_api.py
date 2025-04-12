@@ -391,11 +391,11 @@ class PipelinableEngine(abc.ABC):
         self,
         input_: SequenceSample,
         mb_spec: MicroBatchSpec,
-        loss_fn: Callable[[torch.Tensor, SequenceSample], Tuple[torch.Tensor, Dict]],
+        loss_fn: Callable[[torch.Tensor, SequenceSample], torch.Tensor],
         loss_weight_fn: Callable[[torch.Tensor, SequenceSample], float],
         version_steps: int,
         token_normalize_scope: Literal["global", "dp"] = "global",
-    ) -> Tuple[torch.Tensor, Dict] | None:
+    ) -> Dict:
         """Update the model with a batch of data and a loss function.
 
         :param input_: The input data. It should contain at least the key ``packed_input_ids``,
@@ -403,8 +403,8 @@ class PipelinableEngine(abc.ABC):
             entries required to compute the loss.
         :type input_: SequenceSample
         :param loss_fn: The loss function. It takes the output of the forward pass and the
-            input data, returning the loss and a dictionary of statistics.
-        :type loss_fn: Callable[[torch.Tensor, SequenceSample], Tuple[torch.Tensor, Dict]]
+            input data, returning the loss.
+        :type loss_fn: Callable[[torch.Tensor, SequenceSample], torch.Tensor]
         :param loss_weight_fn: This function is used to calculate the number of valid tokens
             when normalizing loss across micro batches and DP ranks. Can be `lambda: 1`
             if just taking the average over batches.
@@ -412,12 +412,6 @@ class PipelinableEngine(abc.ABC):
         :param version_steps: The global step counter for this experiment,
             used by the backend to determine the learning rate schedule.
         :type version_steps: int
-        :param num_micro_batches: The number of micro-batches to split the batch into.
-            Gradients will be accumulated across micro-batches, and only one update will
-            occur. For pipelined training, micro-batches are processed together by the engine,
-            which automatically schedules the forward and backward passes. For non-pipelined
-            training, forward and backward passes are executed iteratively over mini-batches
-            to accumulate gradients. If None, the batch will not be split.
         :param global_normalize_scope: The scope of token-wise loss normalization. Choices:
             global: average across all micro batches across DP ranks.
             dp: average across micro batches in current DP rank.
@@ -431,8 +425,8 @@ class PipelinableEngine(abc.ABC):
         self,
         input_: SequenceSample,
         mb_spec: MicroBatchSpec,
-        loss_fn: Callable[[torch.Tensor, SequenceSample], Tuple[torch.Tensor, Dict]],
-    ) -> Tuple[torch.Tensor, Dict] | None:
+        loss_fn: Callable[[torch.Tensor, SequenceSample], torch.Tensor],
+    ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function.
 
         This method wraps :meth:`forward` with a customized ``post_hook`` and ``aggregate_fn``.
@@ -442,22 +436,21 @@ class PipelinableEngine(abc.ABC):
             entries required to compute the loss.
         :type input_: SequenceSample
         :param loss_fn: The loss function. It takes the output of the forward pass and the
-            input data, returning the loss and a dictionary of statistics.
-        :type loss_fn: Callable[[torch.Tensor, SequenceSample], Tuple[torch.Tensor, Dict]]
-        :return: The aggregated scalar loss and a dictionary of statistics from the last pipeline
-            stage. Returns None otherwise.
-        :rtype: Tuple[torch.Tensor, Dict]
+            input data, returning the loss.
+        :type loss_fn: Callable[[torch.Tensor, SequenceSample], torch.Tensor]
+        :return: The aggregated scalar loss if on the last pipe stage.
+        :rtype: torch.Tensor | None
         """
 
-        def agg(xs: List[Tuple[torch.Tensor, Dict]]):
-            losses, stats = zip(*xs)
-            return sum(losses), {k: sum(s[k] for s in stats) for k in stats[0].keys()}
+        def _loss_fn(out, inp_):
+            # To prevent calling data reordering.
+            return float(loss_fn(out, inp_))
 
         return self.forward(
             input_=input_,
             mb_spec=mb_spec,
-            post_hook=loss_fn,
-            aggregate_fn=agg,
+            post_hook=_loss_fn,
+            aggregate_fn=sum,
         )
 
     def forward(
@@ -511,11 +504,6 @@ class PipelinableEngine(abc.ABC):
         :type tokenizer: transformers.PreTrainedTokenizerFast
         :param gconfig: The generation hyperparameters.
         :type gconfig: GenerationHyperparameters
-        :param num_micro_batches: The number of micro-batches to split the batch into.
-            Regardless of pipelining, mini-batches will be processed one-by-one by the module.
-            This approach helps reduce GPU memory usage for hidden states and KV-caches.
-            If None, the batch will not be split.
-        :type num_micro_batches: Optional[int]
         :return: For the last pipeline stage, returns the generated tokens, log probabilities, and optionally the logits mask.
             See :class:`GenerationHyperparameters` for more details about the logits mask.
             Returns None for other stages.

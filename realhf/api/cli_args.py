@@ -541,6 +541,12 @@ class PPOHyperparameters:
     eps_clip: float = field(
         default=0.2, metadata={"help": "Clipping factor for policy ratio"}
     )
+    c_clip: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "Dual clipping factor for policy ratio, must > 1.0. None disables dual clipping."
+        },
+    )
     value_eps_clip: float = field(
         default=0.2, metadata={"help": "Clipping factor for value updates"}
     )

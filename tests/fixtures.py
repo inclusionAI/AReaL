@@ -64,8 +64,9 @@ def dataset(request, save_path):
             ],
         )
         dataset.append(d)
-    with open(str(save_path / "dataset.json"), "w") as f:
-        json.dump(dataset, f)
+    with open(str(save_path / "dataset.jsonl"), "w") as f:
+        for d in dataset:
+            f.write(json.dumps(d) + "\n")
     return dataset
 
 

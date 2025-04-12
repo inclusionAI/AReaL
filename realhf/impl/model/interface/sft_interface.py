@@ -2,6 +2,7 @@
 # Copyright 2024 Wei Fu & Zhiyu Mei
 # Licensed under the Apache License, Version 2.0 (the "License").
 
+import dataclasses
 from typing import Dict, Literal
 
 import torch
@@ -10,8 +11,8 @@ import torch.utils.data
 import tqdm
 
 import realhf.api.core.model_api as model_api
-import realhf.base.constants as constants
 from realhf.api.core.data_api import MicroBatchSpec, SequenceSample
+from realhf.base import constants, stats_tracker
 from realhf.base.datapack import flat2d
 from realhf.impl.model.nn.real_llm_api import ReaLModel
 from realhf.impl.model.utils.functional import (
@@ -36,7 +37,7 @@ def compute_packed_sft_loss(
     prompt_mask = prompt_mask[shift_one_indices]
     logprobs = torch.where(prompt_mask, 0, logprobs)
 
-    loss_sum = -logprobs.sum()
+    loss = -logprobs.sum() / prompt_mask.logical_not().count_nonzero()
 
     with torch.no_grad():
         seqlogp = torch.zeros(
@@ -49,45 +50,39 @@ def compute_packed_sft_loss(
                 cu_seqlens,
                 logprobs.shape,
             )
-            seqlogp[i] = torch.where(m, 0.0, logp).sum() / (
+            seqlogp[i] = torch.where(m, 0.0, logp.detach()).sum() / (
                 m.numel() - m.count_nonzero()
             )
 
-    logging_ppl = (-seqlogp).exp().sum()
-    token_denorm = prompt_mask.numel() - prompt_mask.count_nonzero()
-    seq_denorm = torch.tensor(
-        [cu_seqlens.shape[0] - 1], dtype=torch.float32, device=logits.device
+    ## Loggin stats
+    stats_tracker.denominator(
+        n_seqs=torch.ones(
+            cu_seqlens.shape[0] - 1, dtype=torch.bool, device=logprobs.device
+        ),
+        n_tokens=torch.ones(logits.shape[0], dtype=torch.bool, device=logits.device),
+        n_valid_tokens=prompt_mask.logical_not(),
+        prompt_tokens=prompt_mask,
     )
-
-    # Logging loss and perplexity.
-    logging_loss = loss_sum.detach().clone()
-    logging_token_denorm = token_denorm.detach().clone().float()
+    stats_tracker.stat(ppl=(-seqlogp).exp().float(), denominator="n_seqs")
+    stats_tracker.stat(loss=-logprobs.detach(), denominator="n_valid_tokens")
+    vocab_min_logits = logits.detach().min(-1).values.float()
+    vocab_max_logits = logits.detach().max(-1).values.float()
     dist.all_reduce(
-        logging_ppl, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
-    )
-    dist.all_reduce(
-        logging_loss,
-        op=dist.ReduceOp.SUM,
-        group=constants.data_parallel_group(),
-    )
-    dist.all_reduce(
-        seq_denorm, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
+        vocab_min_logits, group=constants.model_parallel_group(), op=dist.ReduceOp.MIN
     )
     dist.all_reduce(
-        logging_token_denorm,
-        op=dist.ReduceOp.SUM,
-        group=constants.data_parallel_group(),
+        vocab_max_logits, group=constants.model_parallel_group(), op=dist.ReduceOp.MAX
+    )
+    stats_tracker.stat(
+        vocab_min_logits=vocab_min_logits,
+        vocab_max_logits=vocab_max_logits,
+        denominator="n_tokens",
     )
 
-    loss = loss_sum / token_denorm
-    return loss, {
-        "loss": logging_loss,
-        "ppl": logging_ppl,
-        "n_tokens": logging_token_denorm,
-        "n_seqs": seq_denorm,
-    }
+    return loss
 
 
+@dataclasses.dataclass
 class SFTInterface(model_api.ModelInterface):
     token_normalize_scope: Literal["global", "dp"] = "global"
 
@@ -98,32 +93,22 @@ class SFTInterface(model_api.ModelInterface):
 
         module.train()
 
-        stat = module.train_batch(
-            input_=data,
-            loss_fn=compute_packed_sft_loss,
-            loss_weight_fn=lambda x: x.data["prompt_mask"]
-            .logical_not()
-            .count_nonzero(),
-            token_normalize_scope=self.token_normalize_scope,
-            mb_spec=mb_spec,
-            version_steps=model.version.global_step,
-        )
+        with stats_tracker.scope("sft"):
+            stats = module.train_batch(
+                input_=data,
+                loss_fn=compute_packed_sft_loss,
+                loss_weight_fn=lambda x: x.data["prompt_mask"]
+                .logical_not()
+                .count_nonzero(),
+                token_normalize_scope=self.token_normalize_scope,
+                mb_spec=mb_spec,
+                version_steps=model.version.global_step,
+            )
+            stats_tracker.scalar(**stats)
 
         model.inc_version()
 
-        res = dict()
-        global_stats = constants.log_global_stats_tracker(
-            return_dict=True, clear_stats_after_logging=True
-        )
-        if stat:
-            res = dict(
-                loss=float(stat["loss"]) / int(stat["n_tokens"]),
-                ppl=float(stat["ppl"]) / int(stat["n_seqs"]),
-                n_tokens=int(stat["n_tokens"]),
-                n_seqs=int(stat["n_seqs"]),
-                **global_stats,
-            )
-        return res
+        return stats_tracker.export()
 
     def save(self, model: model_api.Model, save_dir: str):
         module = model.module
@@ -144,36 +129,18 @@ class SFTInterface(model_api.ModelInterface):
         module = model_.module
 
         module.eval()
-        losses = n_seqs = ppl = n_tokens = 0
 
         for step, x in enumerate(tqdm.tqdm(eval_dataloader)):
             x: SequenceSample
 
-            res = module.eval_batch(
-                input_=x.to_device(device),
-                loss_fn=compute_packed_sft_loss,
-                mb_spec=MicroBatchSpec(),
-            )
+            with stats_tracker.scope("sft-eval"):
+                module.eval_batch(
+                    input_=x.to_device(device),
+                    loss_fn=compute_packed_sft_loss,
+                    mb_spec=MicroBatchSpec(),
+                )
 
-            if res is not None:
-                _, stat = res
-                losses += stat["loss"]
-                n_tokens += stat["n_tokens"]
-                n_seqs += stat["n_seqs"]
-                ppl += stat["ppl"]
-
-        global_stats = constants.log_global_stats_tracker(
-            return_dict=True, clear_stats_after_logging=True
-        )
-        if res is not None:
-            return dict(
-                loss=float(losses / n_tokens),
-                ppl=float(ppl / n_seqs),
-                n_tokens=int(n_tokens),
-                n_seqs=int(n_seqs),
-                **global_stats,
-            )
-        return dict()
+        return stats_tracker.export()
 
 
 model_api.register_interface("sft", SFTInterface)
