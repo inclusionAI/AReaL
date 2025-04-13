@@ -181,10 +181,21 @@ class SequenceSample:
 
     @field_validator("ids")
     @classmethod
-    def _validate_ids(cls, ids: List[Hashable]) -> List[Hashable]:
+    def _validate_ids(cls, ids: List[Hashable]) -> List[str]:
+        ids = list(map(str, ids))
         if len(ids) != len(set(ids)):
             raise ValueError(f"IDs contain duplicates: {ids}.")
         return ids
+
+    @field_validator("trailing_shapes")
+    @classmethod
+    def _validate_trailing_shapes(
+        cls, trailing_shapes: Dict
+    ) -> Dict[str, Tuple | None]:
+        for k, v in trailing_shapes.items():
+            if v is not None:
+                trailing_shapes[k] = tuple(v)
+        return trailing_shapes
 
     @field_validator("keys")
     @classmethod
@@ -655,6 +666,44 @@ class SequenceSample:
             yield
         finally:
             cls.__init__ = original_init
+
+    def as_json_compatible(self) -> Dict:
+        return dict(
+            ids=self.ids,
+            keys=list(self.keys),
+            trailing_shapes={
+                k: tuple(v) if v is not None else None
+                for k, v in self.trailing_shapes.items()
+            },
+            dtypes={k: str(v) if v is not None else v for k, v in self.dtypes.items()},
+            seqlens=self.seqlens,
+            data={
+                k: v.cpu().numpy().tolist() if v is not None else None
+                for k, v in self.data.items()
+            },
+            metadata=self.metadata,
+        )
+
+    @classmethod
+    def from_json_compatible(cls, data: Dict):
+        dtypes = {}
+        for k, dtype_str in data["dtypes"].items():
+            if dtype_str is not None:
+                dtypes[k] = getattr(torch, dtype_str.split(".")[1])
+            else:
+                dtypes[k] = None
+        return cls(
+            ids=data["ids"],
+            keys=set(data["keys"]),
+            trailing_shapes=data["trailing_shapes"],
+            dtypes=dtypes,
+            seqlens=data["seqlens"],
+            data={
+                k: torch.tensor(v, dtype=dtypes[k]) if v is not None else v
+                for k, v in data["data"].items()
+            },
+            metadata=data["metadata"],
+        )
 
 
 @dataclasses.dataclass
