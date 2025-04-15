@@ -105,7 +105,7 @@ def run_test(sample, test=None, debug=False, timeout=6):
 
     which_type = CODE_TYPE.call_based
     if in_outs:
-        if in_outs.get("fn_name") is None:
+        if in_outs.get("fn_name", "") == "":
             which_type = CODE_TYPE.standard_input  # Standard input
             method_name = None
         else:
@@ -116,7 +116,8 @@ def run_test(sample, test=None, debug=False, timeout=6):
         print(f"loaded input_output = {datetime.now().time()}")
 
     if test is None:
-        assert False, "should not happen: test code is none"
+        return [False] * len(in_outs["inputs"]), {"error": "no test code provided"}
+        # assert False, "should not happen: test code is none"
         return in_outs, {"error": "no test code provided"}
     elif test is not None:
         results = []
@@ -760,7 +761,7 @@ def reliability_guard(maximum_memory_bytes=None):
 
     subprocess.Popen = None  # type: ignore
 
-    __builtins__["help"] = None
+    # __builtins__["help"] = None
 
     import sys
 
@@ -769,3 +770,22 @@ def reliability_guard(maximum_memory_bytes=None):
     sys.modules["resource"] = None
     sys.modules["psutil"] = None
     sys.modules["tkinter"] = None
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--tmp_id", type=str, required=True)
+    args = parser.parse_args()
+
+    all_input_data = []
+    with open(f"/tmp/{args.tmp_id}-input.json", "r") as temp_file:
+        input_data = json.load(temp_file)
+
+    result, info = run_test(**input_data)
+    saved_result = {"result": result, "info": info}
+    with open(f"/tmp/{args.tmp_id}-output.json", "w", encoding="utf-8") as temp_file:
+        json.dump(saved_result, temp_file)
+
+    # print(saved_result)

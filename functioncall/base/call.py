@@ -3,15 +3,14 @@ import logging
 import os
 import random
 import time
-import traceback
 from statistics import median
 from typing import Any, Dict
 
 import aiohttp
 
-from functioncall.base import logging
+from realhf.base import constants, logging
 
-logger = logging.getLogger("Functioncall")
+logger = logging.getLogger("function call")
 
 FUNCTIONCALL_SERVICE_DOMAIN = os.getenv(
     "FUNCTIONCALL_SERVICE_DOMAIN",
@@ -64,7 +63,7 @@ async def async_invoke_function(
             logger.warning(
                 f"Request timeout after {timeout}s, URL: {url}, Headers: {session.headers}"
             )
-            break
+            return None, None
 
         except Exception as e:
             logger.error(
@@ -77,7 +76,7 @@ async def async_invoke_function(
 
         # 指数退避 + 随机抖动
         sleep_time = min(
-            initial_retry_interval * (2**retries) + random.uniform(0, 0.1),
+            initial_retry_interval * (2**retries) + random.uniform(0, 5),
             max_retry_interval,
         )
         await asyncio.sleep(sleep_time)
@@ -86,7 +85,9 @@ async def async_invoke_function(
 async def batch_function_call_async(
     payload_list, function_name, timeout, concurrency=1500
 ):
-    connector = aiohttp.TCPConnector(limit=0)
+    connector = aiohttp.TCPConnector(
+        limit=concurrency,
+    )
     async with aiohttp.ClientSession(connector=connector) as session:
         semaphore = asyncio.Semaphore(concurrency)
 
@@ -119,7 +120,7 @@ async def batch_function_call_async(
         p90 = calculate_percentile(elapsed_times, 90)
         p99 = calculate_percentile(elapsed_times, 99)
         logger.info(
-            f"Longest functioncall {function_name} took {max_elapsed:.4f} seconds, header: {max_elapsed_header}, timeout: {timeout}, p50: {p50}, p90: {p90}, p99: {p99}"
+            f"Longest functioncall {function_name} took {max_elapsed:.4f} seconds, header: {max_elapsed_header}, timeout: {timeout}, connector: {id(connector)}, Active connections: {len(connector._conns)}, p50: {p50}, p90: {p90}, p99: {p99}"
         )
 
         return data_list
@@ -135,11 +136,27 @@ def get_function_name(runtime_type):
     return "empty_code"
 
 
+def caculate_concurrency():
+    concurrency_for_one_exp = 3000
+    try:
+        dp = constants.data_parallel_world_size()
+    except Exception as e:
+        dp = 16
+    return concurrency_for_one_exp // dp
+
+
 def batch_function_call(payload_list, runtime_type, timeout):
     start_time = time.time()
     function_name = get_function_name(runtime_type)
+
+    concurrency = caculate_concurrency()
+    logger.info(
+        f"Batch function call start, runtime type: {runtime_type}, batch size: {len(payload_list)}, time: {time.ctime(start_time)} ms, concurrency: {concurrency}"
+    )
     result = asyncio.run(
-        batch_function_call_async(payload_list, function_name, timeout)
+        batch_function_call_async(
+            payload_list, function_name, timeout, concurrency=concurrency
+        )
     )
     execution_time = time.time() - start_time
     logger.info(
