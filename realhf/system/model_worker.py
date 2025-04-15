@@ -119,7 +119,7 @@ class ModelWorker(worker_base.Worker):
 
         self.__worker_index = cfg.worker_info.worker_index
 
-        seeding.set_random_seed(cfg.base_seed + self.__worker_index)
+        seeding.set_random_seed(cfg.base_seed, self.__worker_index)
 
         # Reveal process group identity of this worker to world.
         gpu_utils.reveal_pg_identity(

@@ -10,7 +10,7 @@ import torch.distributed as dist
 
 import realhf.api.core.model_api as model_api
 import realhf.impl.model.utils.ppo_functional as ppo_functional
-from realhf.api.core.data_api import MicroBatchSpec, SequenceSample
+from realhf.api.core.data_api import MicroBatchSpec, SequenceSample, SequenceSplitSpec
 from realhf.base import constants, logging, stats_tracker
 from realhf.base.datapack import flat2d
 from realhf.impl.dataset.math_parser import parse_lines_in_parallel
@@ -222,6 +222,8 @@ class PPOActorInterface(model_api.ModelInterface):
     use_dense_reward: bool = False
     reward_delta: bool = True
     token_normalize_scope: Literal["global", "dp"] = "global"
+
+    sample_reuse: int = 1
 
     def __post_init__(self):
         if self.adaptive_kl_ctl:
@@ -503,8 +505,6 @@ class PPOActorInterface(model_api.ModelInterface):
         # We call module.eval() because dropout causes the computation of incorrect of log probs.
         module.eval()
 
-        old_logp: torch.FloatTensor = input_.data["packed_logprobs"].float()
-        ref_logp: torch.FloatTensor = input_.data["packed_ref_logprobs"].float()
         prompt_mask = input_.data["prompt_mask"]
         input_lens = torch.tensor(
             flat2d(input_.seqlens["packed_input_ids"]), device=model.device
@@ -524,6 +524,13 @@ class PPOActorInterface(model_api.ModelInterface):
                 input_.data["packed_input_ids"], dtype=torch.float32
             )
         seq_no_eos_mask = input_.data["seq_no_eos_mask"]
+        if self.kl_adapter.value == 0:
+            ref_logp: torch.FloatTensor = reward_score.new_zeros(
+                int(input_lens.sum()) - len(input_lens)
+            )
+        else:
+            ref_logp: torch.FloatTensor = input_.data["packed_ref_logprobs"].float()
+        old_logp: torch.FloatTensor = input_.data["packed_logprobs"].float()
 
         if not self.disable_value:
             if self.value_norm:
@@ -641,7 +648,7 @@ class PPOActorInterface(model_api.ModelInterface):
                 advantages = torch.cat(adv_list, 0)
 
         # Prepare data to be splitted into mini-batches.
-        input_ = SequenceSample.from_default(
+        flat_input = SequenceSample.from_default(
             ids=list(range(input_.bs * self.group_size)),
             data=dict(
                 advantages=advantages,
@@ -651,14 +658,6 @@ class PPOActorInterface(model_api.ModelInterface):
                 kl_rewards=kl_rewards,
             ),
             seqlens=[int(x) for x in input_lens.cpu().numpy().tolist()],
-        )
-        # NOTE: We cannot randomly shuffle data here because
-        # data must have the same shape across different pipeline stages.
-        datas, *_ = input_.split(MicroBatchSpec(n_mbs=self.n_minibatches))
-        logger.info(
-            f"PPO minibatch split (size {self.n_minibatches}): "
-            f"#seqs: {[s.bs for s in datas]}, "
-            f"#tokens: {[sum([sum(lens) for lens in s.seqlens[s._get_split_key()]]) for s in datas]}"
         )
 
         if self.use_dense_reward:
@@ -679,11 +678,22 @@ class PPOActorInterface(model_api.ModelInterface):
             if self.use_dense_reward:
                 stats["dense_reward"] = dense_reward_score
             stats_tracker.stat(**stats, denominator="n_valid_tokens")
-            stats_tracker.stat(
+            seq_stats = dict(
                 no_eos_ratios=seq_no_eos_mask.float(),
                 task_reward=reward_score,
                 prompt_len=prompt_lens.float(),
                 seq_len=input_lens.float(),
+            )
+            if "version_start" in input_.data:
+                seq_stats["head_offpolicyness"] = (
+                    model.version.global_step - input_.data["version_start"]
+                ).float()
+            if "version_end" in input_.data:
+                seq_stats["tail_offpolicyness"] = (
+                    model.version.global_step - input_.data["version_end"]
+                ).float()
+            stats_tracker.stat(
+                **seq_stats,
                 denominator="n_seqs",
             )
 
@@ -700,26 +710,41 @@ class PPOActorInterface(model_api.ModelInterface):
                     temperature=self.gconfig.temperature,
                 )
 
-            for mb_i, data in enumerate(datas):
-                with stats_tracker.scope(f"mb{mb_i}"):
-                    train_stat = module.train_batch(
-                        input_=data,
-                        mb_spec=mb_spec,
-                        version_steps=model.version.global_step,
-                        loss_fn=_loss_fn,
-                        loss_weight_fn=lambda x: x.data[
-                            "ppo_loss_mask"
-                        ].count_nonzero(),
-                        token_normalize_scope=self.token_normalize_scope,
+            for reuse in range(self.sample_reuse):
+                with stats_tracker.scope(f"reuse{reuse}"):
+                    # NOTE: We split PPO minibatches in terms of #seqs instead of #tokens.
+                    flat_input = SequenceSample.shuffled(flat_input)
+                    bs = flat_input.bs
+                    sizes = [0 for _ in range(self.n_minibatches)]
+                    for idx in range(bs):
+                        sizes[idx % self.n_minibatches] += 1
+                    spec = SequenceSplitSpec(sizes=sizes)
+                    datas = flat_input.split_with_spec(spec)
+                    logger.info(
+                        f"PPO minibatch split (size {self.n_minibatches}): "
+                        f"#seqs: {[s.bs for s in datas]}, "
+                        f"#tokens: {[sum([sum(lens) for lens in s.seqlens[s._get_split_key()]]) for s in datas]}"
                     )
-                    stats_tracker.scalar(**train_stat)
+                    for mb_i, data in enumerate(datas):
+                        with stats_tracker.scope(f"mb{mb_i}"):
+                            train_stat = module.train_batch(
+                                input_=data,
+                                mb_spec=mb_spec,
+                                version_steps=model.version.global_step,
+                                loss_fn=_loss_fn,
+                                loss_weight_fn=lambda x: x.data[
+                                    "ppo_loss_mask"
+                                ].count_nonzero(),
+                                token_normalize_scope=self.token_normalize_scope,
+                            )
+                            stats_tracker.scalar(**train_stat)
 
-        stats_tracker.scalar(
-            disable_value=self.disable_value,
-            mask_no_eos_with_zero=self.mask_no_eos_with_zero,
-            c_clip=self.c_clip if self.c_clip is not None else float("nan"),
-            eps_clip=self.eps_clip,
-        )
+            stats_tracker.scalar(
+                disable_value=self.disable_value,
+                mask_no_eos_with_zero=self.mask_no_eos_with_zero,
+                c_clip=self.c_clip if self.c_clip is not None else float("nan"),
+                eps_clip=self.eps_clip,
+            )
         model.inc_version()
 
         return stats_tracker.export()
@@ -900,6 +925,8 @@ class PPOCriticInterface(model_api.ModelInterface):
     reward_delta: bool = True
     token_normalize_scope: Literal["global", "dp"] = "global"
 
+    sample_reuse: int = 1
+
     def __post_init__(self):
         if self.adaptive_kl_ctl:
             assert self.adaptive_kl_target is not None
@@ -992,8 +1019,6 @@ class PPOCriticInterface(model_api.ModelInterface):
         # We call module.eval() because dropout causes the computation of incorrect of log probs.
         module.eval()
 
-        old_logp: torch.FloatTensor = input_.data["packed_logprobs"].float()
-        ref_logp: torch.FloatTensor = input_.data["packed_ref_logprobs"].float()
         prompt_mask = input_.data["prompt_mask"]
         input_lens = torch.tensor(
             flat2d(input_.seqlens["packed_input_ids"]), device=model.device
@@ -1004,6 +1029,13 @@ class PPOCriticInterface(model_api.ModelInterface):
             dense_reward_score = input_.data["dense_rewards"].float()
         values = input_.data["values"].float()
         seq_no_eos_mask = input_.data["seq_no_eos_mask"]
+        if self.kl_adapter.value == 0:
+            ref_logp: torch.FloatTensor = reward_score.new_zeros(
+                int(input_lens.sum()) - len(input_lens)
+            )
+        else:
+            ref_logp: torch.FloatTensor = input_.data["packed_ref_logprobs"].float()
+        old_logp: torch.FloatTensor = input_.data["packed_logprobs"].float()
 
         if self.value_norm:
             denormalized_values = self.rms.denormalize(values)
@@ -1084,7 +1116,7 @@ class PPOCriticInterface(model_api.ModelInterface):
             normalized_returns = returns
 
         # Prepare data to be splitted into mini-batches.
-        input_ = SequenceSample.from_default(
+        flat_input = SequenceSample.from_default(
             ids=list(range(input_.bs * self.group_size)),
             data=dict(
                 returns=normalized_returns,
@@ -1094,14 +1126,6 @@ class PPOCriticInterface(model_api.ModelInterface):
                 kl_rewards=kl_rewards,
             ),
             seqlens=[int(x) for x in input_lens.cpu().numpy().tolist()],
-        )
-        # NOTE: We cannot randomly shuffle data here because
-        # data must have the same shape across different pipeline stages.
-        datas, *_ = input_.split(MicroBatchSpec(n_mbs=self.n_minibatches))
-        logger.info(
-            f"PPO minibatch split (size {self.n_minibatches}): "
-            f"#seqs: {[s.bs for s in datas]}, "
-            f"#tokens: {[sum([sum(lens) for lens in s.seqlens[s._get_split_key()]]) for s in datas]}"
         )
 
         # Logging.
@@ -1119,19 +1143,34 @@ class PPOCriticInterface(model_api.ModelInterface):
                 )
 
             # Run mini-batched PPO training!
-            for mb_i, data in enumerate(datas):
-                with stats_tracker.scope(f"mb{mb_i}"):
-                    stats = module.train_batch(
-                        input_=data,
-                        mb_spec=mb_spec,
-                        version_steps=model.version.global_step,
-                        loss_fn=_loss_fn,
-                        loss_weight_fn=lambda x: x.data[
-                            "ppo_loss_mask"
-                        ].count_nonzero(),
-                        token_normalize_scope=self.token_normalize_scope,
+            for reuse in range(self.sample_reuse):
+                with stats_tracker.scope(f"reuse{reuse}"):
+                    # NOTE: We split PPO minibatches in terms of #seqs instead of #tokens.
+                    flat_input = SequenceSample.shuffled(flat_input)
+                    bs = flat_input.bs
+                    sizes = [0 for _ in range(self.n_minibatches)]
+                    for idx in range(bs):
+                        sizes[idx % self.n_minibatches] += 1
+                    spec = SequenceSplitSpec(sizes=sizes)
+                    datas = flat_input.split_with_spec(spec)
+                    logger.info(
+                        f"PPO minibatch split (size {self.n_minibatches}): "
+                        f"#seqs: {[s.bs for s in datas]}, "
+                        f"#tokens: {[sum([sum(lens) for lens in s.seqlens[s._get_split_key()]]) for s in datas]}"
                     )
-                    stats_tracker.scalar(**stats)
+                    for mb_i, data in enumerate(datas):
+                        with stats_tracker.scope(f"mb{mb_i}"):
+                            stats = module.train_batch(
+                                input_=data,
+                                mb_spec=mb_spec,
+                                version_steps=model.version.global_step,
+                                loss_fn=_loss_fn,
+                                loss_weight_fn=lambda x: x.data[
+                                    "ppo_loss_mask"
+                                ].count_nonzero(),
+                                token_normalize_scope=self.token_normalize_scope,
+                            )
+                            stats_tracker.scalar(**stats)
 
         model.inc_version()
 

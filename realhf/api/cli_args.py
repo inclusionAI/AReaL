@@ -553,6 +553,12 @@ class PPOHyperparameters:
     early_stop_imp_ratio: float = field(
         default=5.0, metadata={"help": "Early stop threshold for importance ratio"}
     )
+    actor_sample_reuse: int = field(
+        default=1, metadata={"help": "The data reuse (aka PPO epoch) for actor."}
+    )
+    critic_sample_reuse: int = field(
+        default=1, metadata={"help": "The data reuse (aka PPO epoch) for critic."}
+    )
 
     # Reward Processing
     max_reward_clip: float = field(

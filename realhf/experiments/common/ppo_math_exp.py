@@ -61,7 +61,9 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
         }
         if self.ppo.disable_value:
             models.pop("critic")
-        if self.ppo.fuse_rew_ref:
+        if self.ppo.kl_ctl == 0:
+            models.pop("ref")
+        if self.ppo.fuse_rew_ref and self.ppo.kl_ctl != 0:
             models.pop("reward")
         return models
 
@@ -101,6 +103,7 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
                 "generation_size": self.generation_size,
                 "group_adv_norm": self.group_adv_norm,
                 "mask_too_long": self.mask_too_long,
+                "sample_reuse": self.ppo.actor_sample_reuse,
                 "c_clip": self.ppo.c_clip,
             },
         )
@@ -111,6 +114,7 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
                 **copy.deepcopy(self.ppo_kwargs),
                 "group_size": self.group_size,
                 "mask_too_long": self.mask_too_long,
+                "sample_reuse": self.ppo.critic_sample_reuse,
             },
         )
         critic_interface.args.pop("eps_clip")
@@ -229,6 +233,8 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
         ]
         if self.ppo.disable_value:
             train_actor_inputs.remove("values")
+        if self.ppo.kl_ctl == 0:
+            train_actor_inputs.remove("packed_ref_logprobs")
         train_actor = MFCDef(
             name="actor_train",
             model_name="actor",
@@ -243,6 +249,17 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
             n_seqs=self.dataset.train_bs_n_seqs,
         )
 
+        train_critic_inputs = [
+            "packed_input_ids",
+            "packed_logprobs",
+            "packed_ref_logprobs",
+            "rewards",
+            "values",
+            "prompt_mask",
+            "seq_no_eos_mask",
+        ]
+        if self.ppo.kl_ctl == 0:
+            train_critic_inputs.remove("packed_ref_logprobs")
         train_critic = MFCDef(
             name="critic_train",
             model_name="critic",
@@ -251,15 +268,7 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
             interface_impl=critic_interface,
             model_type=self.critic.type,
             model_path=self.critic.path,
-            input_keys=(
-                "packed_input_ids",
-                "packed_logprobs",
-                "packed_ref_logprobs",
-                "rewards",
-                "values",
-                "prompt_mask",
-                "seq_no_eos_mask",
-            ),
+            input_keys=tuple(train_critic_inputs),
             log_return_value=True,
             min_n_seqs_per_pass=self.ppo.ppo_n_minibatches / self.group_size,
             n_seqs=self.dataset.train_bs_n_seqs,
@@ -279,7 +288,9 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
             rpcs.pop("critic_train")
         if not self.ppo.recompute_logprob:
             rpcs.pop("actor_inf")
-        if self.ppo.fuse_rew_ref:
+        if self.ppo.kl_ctl == 0:
+            rpcs.pop("ref_inf")
+        if self.ppo.fuse_rew_ref and self.ppo.kl_ctl != 0:
             rpcs.pop("rew_inf")
         return rpcs
 
@@ -299,7 +310,9 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
             allocs.pop("critic_train")
         if not self.ppo.recompute_logprob:
             allocs.pop("actor_inf")
-        if self.ppo.fuse_rew_ref:
+        if self.ppo.kl_ctl == 0:
+            allocs.pop("ref_inf")
+        if self.ppo.fuse_rew_ref and self.ppo.kl_ctl != 0:
             allocs.pop("rew_inf")
         return allocs
 
