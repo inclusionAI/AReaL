@@ -35,6 +35,25 @@ def save_file(output_path: str, processed_data: list):
         for item in processed_data:
             f.write(json.dumps(item) + "\n")
 
+def process_math_data(file_path: str) -> List[Dict]:
+    """Process math dataset from JSON/JSONL file"""
+    if not file_path:
+        return []
+
+    raw_data = load_jsonl(file_path)
+    processed = []
+
+    for index, item in enumerate(raw_data):
+        processed.append(
+            {
+                "task": "math",
+                "query_id": str(item.get("query_id", f"math-{index}")),
+                "prompt": item["context"],
+                "solutions": [item["groundtruth"]],
+            }
+        )
+
+    return processed
 
 def process_code_data(file_path: str) -> List[Dict]:
     """Process code dataset from JSONL file"""
@@ -60,10 +79,12 @@ def process_code_data(file_path: str) -> List[Dict]:
                     {
                         "inputs": [io.get("input") for io in input_output],
                         "outputs": [io.get("output") for io in input_output],
-                        # "fn_name": item.get("metadata", {}).get("fn_name", ""),
+                        "fn_name": item.get("metadata", {}).get("fn_name", ""),
+                        "remote": False
                     }
                 ),
                 "solutions": [item["groundtruth"]],
+                "language": "PYTHON",
                 "timeout": seconds,
                 "memory": memory,
             }
@@ -78,6 +99,7 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--code", help="Path to code dataset (JSONL)")
+    parser.add_argument("--math", help="Path to math dataset (JSONL)")
     parser.add_argument("--output", help="Output file path (JSONL)")
 
     args = parser.parse_args()
@@ -88,17 +110,23 @@ def main():
     processed_data = []
     stats = defaultdict(int)
 
-    code_data = process_code_data(args.code)
-    logger.info(f"Loaded {len(code_data)} code items")
-    processed_data.extend(code_data)
-    stats["code"] = len(code_data)
-
+    if args.code:
+        code_data = process_code_data(args.code)
+        logger.info(f"Loaded {len(code_data)} code items")
+        processed_data.extend(code_data)
+        stats["code"] = len(code_data)
+    if args.math:
+        math_data = process_math_data(args.math)
+        logger.info(f"Loaded {len(math_data)} math items")
+        processed_data.extend(math_data)
+        stats["math"] = len(math_data)
+    
+    random.shuffle(processed_data)
     save_file(args.output, processed_data)
     logger.info("\nProcessing Complete:")
     logger.info(f"Total items: {len(processed_data)}")
     logger.info(f"Code items: {stats['code']}")
     logger.info(f"Math items: {stats['math']}")
-    logger.info(f"Invalid items: {stats['invalid']}")
 
 
 if __name__ == "__main__":

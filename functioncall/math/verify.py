@@ -1,11 +1,12 @@
 import json
 import os
 import time
-from typing import List
 from collections import defaultdict
 from datetime import datetime
-from functioncall.base.utils import logger, construct_uid
-from functioncall.base.call import batch_function_call, Language, get_runtime_name
+from typing import List
+
+from functioncall.base.call import Language, batch_function_call, get_runtime_name
+from functioncall.base.utils import construct_uid, logger
 
 
 def math_verify(

@@ -1,16 +1,18 @@
-import math
-import os
 import copy
 import json
+import logging
+import math
+import os
+import pickle
+import sys
 import time
 from collections import defaultdict
-import sys
-from multiprocessing import Pool, Manager, cpu_count, shared_memory
-from typing import List, Dict, Any
-import pickle
-import numpy as np
-import logging
 from datetime import datetime
+from multiprocessing import Manager, Pool, cpu_count, shared_memory
+from typing import Any, Dict, List
+
+import numpy as np
+
 from functioncall.code.verify import code_verify
 
 logger = logging.getLogger("function call")
@@ -202,7 +204,9 @@ def parse_sol_id(sol_id):
 
 
 def statics_result(result, query_ids):
-    result_statistics = defaultdict(lambda: {"query_id": "", "pass": True, "solutions": []})
+    result_statistics = defaultdict(
+        lambda: {"query_id": "", "pass": True, "solutions": []}
+    )
     for i, query_id in enumerate(query_ids):
         org_id, sol_idx = parse_sol_id(query_id)
         result_statistics[org_id]["query_id"] = org_id
@@ -242,7 +246,9 @@ def standard_dataset_eval(
 
         # metrics
         case_size = sys.getsizeof(item["input_output"])
-        assert case_size < 500*1024, f"'input_output' exceeds 500KB ({case_size} bytes). Use remote testcase instead."
+        assert (
+            case_size < 500 * 1024
+        ), f"'input_output' exceeds 500KB ({case_size} bytes). Use remote testcase instead."
         cnt += len(item["solutions"])
         case_size = len(json.loads(item["input_output"]).get("inputs", []))
         testcase_in_dataset += case_size

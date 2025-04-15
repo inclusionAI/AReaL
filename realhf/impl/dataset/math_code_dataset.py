@@ -3,10 +3,11 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import json
+import sys
 import traceback
 from collections import defaultdict
 from typing import Callable, Dict, Hashable, List, Optional
-import sys
+
 import numpy as np
 import torch.utils.data
 

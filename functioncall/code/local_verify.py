@@ -7,11 +7,11 @@ import sys
 import time
 import traceback
 import uuid
+from collections import defaultdict
 from io import StringIO
 from typing import Dict, List
-from collections import defaultdict
 
-from functioncall.base.utils import logger, load_jsonl
+from functioncall.base.utils import load_jsonl, logger
 from realhf.base import logging
 
 SINGLE_CASE_EXEC_TIMEOUT = 6

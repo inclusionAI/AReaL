@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 
 try:
-    from realhf.base import logging, constants
+    from realhf.base import constants, logging
 
     logger = logging.getLogger("function call")
 except Exception:

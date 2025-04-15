@@ -6,10 +6,11 @@ import time
 from enum import Enum
 from statistics import median
 from typing import Any, Dict
+
 import aiohttp
 
 try:
-    from realhf.base import logging, constants
+    from realhf.base import constants, logging
 except Exception:
     import logging
 
@@ -24,9 +25,9 @@ FUNCTIONCALL_SERVICE_DOMAIN = os.getenv(
 
 def check_payload(payload):
     if not payload:
-        return False, {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "empty payload", 'errorType': 'UnknownError'}]}
+        return False, {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "Empty payload", 'errorType': 'UnknownError'}]}
     if not payload.get("code"):
-        return False, {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "empty code", 'errorType': 'UnknownError'}]}
+        return False, {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "Empty code", 'errorType': 'UnknownError'}]}
     return True, {}
 
 class Language(Enum):
@@ -63,7 +64,7 @@ async def async_invoke_function(
     session: aiohttp.ClientSession,
     url: str,
     timeout: aiohttp.ClientTimeout,
-    payload: Dict[str, Any] = {},
+    payload: Dict[str, Any] = None,
     max_retries: int = 100,
     initial_retry_interval: float = 0.5,
     max_retry_interval: float = 10.0,
@@ -100,16 +101,16 @@ async def async_invoke_function(
             logger.warning(
                 f'Request timeout after {timeout}s, uid: {payload.get("uid")}, URL: {url}'
             )
-            return None, None
+            return {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "Function call timed out.", 'errorType': 'UnknownError'}]}
 
         except Exception as e:
             logger.error(
-                f"Async invocation failed on attempt {retries + 1}:{str(e)}, uid: {payload.get("uid")}, URL: {url}"
+                f"Async invocation failed on attempt {retries + 1}:{str(e)}, uid: {payload.get('uid')}, URL: {url}"
             )
 
         retries += 1
         if retries > max_retries:
-            return {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "exceed max retries for function", 'errorType': 'UnknownError'}]}
+            return {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "Function call exceed max retries.", 'errorType': 'UnknownError'}]}
 
         sleep_time = min(
             initial_retry_interval * (2**retries) + random.uniform(0, 5),

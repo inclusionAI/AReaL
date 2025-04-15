@@ -3,9 +3,13 @@ import os
 import random
 from collections import defaultdict
 from datetime import datetime
-from functioncall.base.utils import logger, load_jsonl, construct_uid
-from functioncall.base.call import batch_function_call, Language, get_runtime_name
 
+from functioncall.base.call import Language, batch_function_call, get_runtime_name
+from functioncall.base.utils import construct_uid, load_jsonl, logger
+
+SINGLE_CASE_EXEC_TIMEOUT = 6
+TEST_CASE_BATCH_SIZE = 1
+FUNCTIONCALL_TIMEOUT = 1000
 
 def round_up_memory(memory):
     if memory <= 0:
@@ -22,17 +26,17 @@ def construct_testcases(
         return result
 
     for i in range(*index):
-        input, output = inputs[i].strip(), outputs[i].strip()
+        input_, output_ = inputs[i].strip(), outputs[i].strip()
         if not remote:
-            result.append({"input": input, "expectedOutput": output})
+            result.append({"input": input_, "expectedOutput": output_})
             continue
 
         oss_basepath = "http://antsys-hcsfaas-images-dev.cn-heyuan-alipay-office.oss-alipay.aliyuncs.com/"
         input_url = (
-            input if input.startswith("http") else os.path.join(oss_basepath, input)
+            input_ if input_.startswith("http") else os.path.join(oss_basepath, input_)
         )
         output_url = (
-            output if input.startswith("http") else os.path.join(oss_basepath, output)
+            output_ if output_.startswith("http") else os.path.join(oss_basepath, output_)
         )
 
         result.append({"input": input_url, "expectedOutput": output_url})
@@ -40,7 +44,7 @@ def construct_testcases(
 
 
 def load_problems_with_testcase_batch(
-    id2info, query_ids, generateds, timeout_for_testcase, test_case_batch_size=1
+    id2info, query_ids, generateds, timeout_for_testcase, test_case_batch_size
 ):
     problem_list = []
     for idx, query_id in enumerate(query_ids):
@@ -101,9 +105,9 @@ def code_verify(
     id2info,
     generateds,
     query_ids,
-    timeout=1000,
-    timeout_for_testcase=6,
-    test_case_batch_size=20,
+    timeout=FUNCTIONCALL_TIMEOUT,
+    timeout_for_testcase=SINGLE_CASE_EXEC_TIMEOUT,
+    test_case_batch_size=TEST_CASE_BATCH_SIZE,
 ):
     assert len(generateds) == len(query_ids), (
         len(generateds),
@@ -133,7 +137,7 @@ def code_verify(
         if rsp and rsp.get("success", False):
             value = 1
         else:
-            print(
+            logger.debug(
                 f'Functioncall code verify not passed, uid: {rsp.get("uid")}, query id: {query_id}, results: {rsp}'
             )
 
@@ -146,7 +150,7 @@ def code_verify(
 
 
 if __name__ == "__main__":
-    data_list = load_jsonl("functioncall/test/test_dataset.jsonl")
+    data_list = load_jsonl("functioncall/test/test_success_dataset.jsonl")
     id2info = defaultdict(dict)
     for item in data_list:
         id2info[item["query_id"]] = item
