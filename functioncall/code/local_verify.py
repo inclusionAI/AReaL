@@ -7,10 +7,11 @@ import sys
 import time
 import traceback
 import uuid
+from collections import defaultdict
 from io import StringIO
 from typing import Dict, List
 
-from functioncall.code.function.testing_util import run_test
+from functioncall.base.utils import load_jsonl, logger
 from realhf.base import logging
 
 SINGLE_CASE_EXEC_TIMEOUT = 6
@@ -119,41 +120,29 @@ def code_verify(id2info, generateds, query_ids, debug=False):
 
 
 if __name__ == "__main__":
-    from .verify import defaultdict, load_jsonl
-
-    data4 = load_jsonl("input.jsonl")
-
+    data_list = load_jsonl("functioncall/test/test_success_dataset.jsonl")
     id2info = defaultdict(dict)
-    for item in data4:
-        query_id = str(item["query_id"])
-        id2info[query_id] = item
+    for item in data_list:
+        id2info[item["query_id"]] = item
 
     def create_test_params(count=10):
         query_ids = []
         generateds = []
         cnt = 0
 
-        file_path = "lcb_code.json"
-        raw_data = []
-        with open(file_path, "r", encoding="utf-8") as f:
-            raw_data = [line for line in json.load(f)]
-
-        for d in raw_data:
+        for d in data_list:
             if cnt >= count:
                 break
-            if not d["code_list"] or d["question_id"] not in id2info:
+            if not d["solutions"] or d["query_id"] not in id2info:
                 continue
-            # if "fn_name" in json.loads(id2info[d["question_id"]]['input_output']):
-            #     breakpoint()
-            for cur_code in d["code_list"]:
-                query_ids.append(d["question_id"])
-                generateds.append(cur_code)
-                cnt += 1
-                break
+            query_ids.append(d["query_id"])
+            generateds.extend(d["solutions"])
+            cnt += 1
 
         return generateds, query_ids
 
-    generateds, query_ids = create_test_params(10)
-    print(f"generateds:, query_ids:{query_ids}, {len(query_ids)}")
-    result = code_verify(id2info, generateds, query_ids, False)
+    generateds, query_ids = create_test_params(100)
+    scale = 1
+    print(f"generateds:, query_ids:{query_ids}")
+    result = code_verify(id2info, generateds * scale, query_ids * scale)
     print(result)
