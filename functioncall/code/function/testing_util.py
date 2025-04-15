@@ -103,9 +103,9 @@ def run_test(sample, test=None, debug=False, timeout=6):
     except ValueError:
         in_outs = None
 
-    fn_name = in_outs.get("fn_name", "")
+    which_type = CODE_TYPE.call_based
     if in_outs:
-        if len(fn_name) == 0:
+        if in_outs.get("fn_name", "") == "":
             which_type = CODE_TYPE.standard_input  # Standard input
             method_name = None
         else:
