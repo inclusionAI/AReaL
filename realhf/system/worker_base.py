@@ -20,7 +20,6 @@ logger = logging.getLogger("worker")
 
 _MAX_SOCKET_CONCURRENCY = 1000
 WORKER_WAIT_FOR_CONTROLLER_SECONDS = 3600
-WORKER_JOB_STATUS_LINGER_SECONDS = 1800
 
 
 class WorkerException(Exception):
@@ -185,7 +184,6 @@ class WorkerServer:
                 worker_name=self.__worker_name,
             ),
             value=status.value,
-            keepalive_ttl=WORKER_JOB_STATUS_LINGER_SECONDS,  # Job Status lives one minutes after worker exit.
             replace=True,
             delete_on_exit=False,
         )

@@ -403,19 +403,10 @@ def update_aux_losses_tracker(
         layer_number (int): Layer index of the loss.
         num_layers (int): The number of total layers.
     """
+    from realhf.base.stats_tracker import MOE_AUX_LOSSES
+
     assert name in aux_loss_names, f"Invalid aux loss name: {name}."
-    losses = constants.get_from_global_stats_tracker(name)
+    losses = MOE_AUX_LOSSES.get(name, None)
     if losses is None:
         losses = torch.zeros(num_layers, device=loss.device)
     losses[layer_number] += loss.detach()
-    constants.save_to_global_stats_tracker(
-        name, losses, hook=avg_aux_loss, stats_key=name
-    )
-
-
-def avg_aux_loss(stats_key):
-    loss: torch.Tensor = constants.get_from_global_stats_tracker(stats_key)
-    dist.all_reduce(loss, group=constants.pipe_parallel_group())
-    loss = loss.mean()
-    dist.all_reduce(loss, op=dist.ReduceOp.SUM, group=constants.data_parallel_group())
-    constants.save_to_global_stats_tracker(stats_key, float(loss))

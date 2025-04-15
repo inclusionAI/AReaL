@@ -119,7 +119,7 @@ class ModelWorker(worker_base.Worker):
 
         self.__worker_index = cfg.worker_info.worker_index
 
-        seeding.set_random_seed(cfg.base_seed + self.__worker_index)
+        seeding.set_random_seed(cfg.base_seed, self.__worker_index)
 
         # Reveal process group identity of this worker to world.
         gpu_utils.reveal_pg_identity(
@@ -327,7 +327,7 @@ class ModelWorker(worker_base.Worker):
                 # NOTE: This is *NOT* the actual batch size for training.
                 # It is just a proper size to load data to workers.
                 batch_size=10240,
-                shuffle=True,
+                shuffle=self.config.shuffle_dataset,
                 generator=g,
             )
 
@@ -613,7 +613,7 @@ class ModelWorker(worker_base.Worker):
                     # NOTE: This is *NOT* the actual batch size for training.
                     # It is just a proper size to load data to workers.
                     batch_size=10240,
-                    shuffle=True,
+                    shuffle=self.config.shuffle_dataset,
                     generator=g,
                 )
                 self.__data_generator = enumerate(self.__dataloader)
@@ -742,8 +742,9 @@ class ModelWorker(worker_base.Worker):
                 ret = self.__handle_one_rpc_hook(hook, hook_data)
                 if hook == "evaluate":
                     assert request.handle_name == "train_step", request.handle_name
+                    assert isinstance(ret, dict), ret
                     assert isinstance(res, dict), res
-                    res.update({f"eval_{k}": v for k, v in ret.items()})
+                    res.update(ret)
 
         # update param realloc step after handling post hooks
         if request.handle_name == "train_step":

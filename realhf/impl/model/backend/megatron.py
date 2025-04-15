@@ -357,6 +357,11 @@ class PipeTrainInstrSetForMegatron(PipeTrainInstrSet):
         if update_successful:
             incr = version_steps - self.engine.lr_scheduler.num_steps
             self.engine.lr_scheduler.step(incr)
+            grad_norm = torch.tensor(
+                grad_norm, device=constants.current_device(), dtype=torch.float32
+            )
+            dist.all_reduce(grad_norm, group=constants.tp_and_pp_group())
+            grad_norm /= constants.tp_and_pp_world_size()
         if constants.data_parallel_rank() == 0 and constants.model_parallel_rank() == 0:
             logger.info(
                 f"Model name {constants.model_name()}, "
@@ -366,7 +371,15 @@ class PipeTrainInstrSetForMegatron(PipeTrainInstrSet):
                 f"Current loss scale: {self.engine.optim.get_loss_scale()}. "
                 f"Learning rate: {[param_group['lr'] for param_group in self.engine.optim.param_groups]}. "
             )
-        return update_successful, grad_norm, num_zeros_in_grad
+        stat = dict(
+            update_successful=float(update_successful),
+            grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
+            loss_scale=float(self.engine.optim.get_loss_scale()),
+        )
+        for i, param_group in enumerate(self.engine.optim.param_groups):
+            stat[f"param_group{i}/lr"] = param_group["lr"]
+        # NOTE: we only have one optimizer step for each stage, so micro_batch_id can be 0
+        tensor_buffer.put("stats", 0, stat)
 
 
 class ReaLMegatronEngine(model_api.PipelinableEngine):
@@ -448,7 +461,6 @@ class ReaLMegatronEngine(model_api.PipelinableEngine):
                 )
             no_sync_ctx = self.engine.ddp.no_sync()
             no_sync_ctx.__enter__()
-            stat = collections.defaultdict(int)
             for i, mb_input in enumerate(mb_inputs):
                 if i == len(mb_inputs) - 1:
                     no_sync_ctx.__exit__(None, None, None)
@@ -464,7 +476,7 @@ class ReaLMegatronEngine(model_api.PipelinableEngine):
                     cu_seqlens=cu_seqlens,
                     max_seqlen=max_seqlen,
                 ).logits
-                loss, _stat = loss_fn(model_output, mb_input)
+                loss = loss_fn(model_output, mb_input)
                 loss_scale = loss_weight_fn(mb_inputs[i]) / total_loss_weight
                 if token_normalize_scope == "global":
                     # Megatron will average gradients across DP ranks.
@@ -476,13 +488,9 @@ class ReaLMegatronEngine(model_api.PipelinableEngine):
                 loss *= loss_scale
                 with cuda_tmarked("bwd", CUDATimeMarkType.backward):
                     loss.backward()
-                for k, v in _stat.items():
-                    stat[k] += v
 
             self.engine.finalize_grads()
-            self._step(version_steps)
-
-            return stat
+            return self._step(version_steps)
 
     @torch.no_grad()
     def forward(
@@ -521,10 +529,16 @@ class ReaLMegatronEngine(model_api.PipelinableEngine):
     # wrapper for profiler
     @cuda_tmarked("opt", CUDATimeMarkType.optim_step)
     def _step(self, version_steps):
+        # omit the number of zeros in grads
         update_successful, grad_norm, _ = self.engine.optim.step()
         if update_successful:
             incr = version_steps - self.engine.lr_scheduler.num_steps
             self.engine.lr_scheduler.step(incr)
+            grad_norm = torch.tensor(
+                grad_norm, device=constants.current_device(), dtype=torch.float32
+            )
+            dist.all_reduce(grad_norm, group=constants.tp_and_pp_group())
+            grad_norm /= constants.tp_and_pp_world_size()
         if constants.data_parallel_rank() == 0 and constants.model_parallel_rank() == 0:
             logger.info(
                 f"Megatron backend update success? {update_successful}. "
@@ -532,6 +546,14 @@ class ReaLMegatronEngine(model_api.PipelinableEngine):
                 f"Current loss scale: {self.engine.optim.get_loss_scale()}. "
                 f"Learning rate: {[param_group['lr'] for param_group in self.engine.optim.param_groups]}. "
             )
+        stat = dict(
+            update_successful=float(update_successful),
+            grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
+            loss_scale=float(self.engine.optim.get_loss_scale()),
+        )
+        for i, param_group in enumerate(self.engine.optim.param_groups):
+            stat[f"param_group{i}/lr"] = param_group["lr"]
+        return stat
 
 
 @dataclasses.dataclass
@@ -678,7 +700,7 @@ class MegatronTrainBackend(model_api.ModelBackend, MegatronConfig):
         # Deleting models directly will not release the memory.
         # We must disable hooks at first.
         if pkg_version.is_version_greater_or_equal("megatron.core", "0.11.0"):
-            model.module.module.engine.ddp.disable_forward_pre_hook()
+            model.module.engine.ddp.disable_forward_pre_hook()
         else:
             optimizer = model.module.engine.optim
             if self.ddp.use_distributed_optimizer and self.ddp.overlap_param_gather:
@@ -688,6 +710,19 @@ class MegatronTrainBackend(model_api.ModelBackend, MegatronConfig):
         assert isinstance(model.module, ReaLMegatronEngine)
         optimizer = model.module.engine.optim
         param_state = optimizer.get_parameter_state_fs_bucket_space()
+        assert isinstance(optimizer, DistributedOptimizer)
+        if pkg_version.is_version_greater_or_equal("megatron.core", "0.11.0"):
+            # Fix the keyerror: "padding"
+            for gbuf_idx, gbuf_range_maps in enumerate(optimizer.gbuf_ranges):
+                assert len(gbuf_range_maps) == 1, "single dtype supported, for now."
+                for dtype, gbuf_range_map_for_all_buckets in gbuf_range_maps.items():
+                    for bucket_idx, gbuf_range_map in enumerate(
+                        gbuf_range_map_for_all_buckets
+                    ):
+                        bucket_state = param_state[gbuf_idx][dtype][bucket_idx]
+                        for elem in bucket_state:
+                            elem["padding"] = False
+
         sd = optimizer.state_dict()
         dp = constants.data_parallel_rank()
         pp = constants.pipe_parallel_rank()
@@ -715,7 +750,8 @@ class MegatronTrainBackend(model_api.ModelBackend, MegatronConfig):
         optimizer.load_state_dict(sd)
 
         param_state = torch.load(
-            pathlib.Path(load_dir) / f"megatron_optim_param_sd_d{dp}p{pp}t{tp}.mckpt"
+            pathlib.Path(load_dir) / f"megatron_optim_param_sd_d{dp}p{pp}t{tp}.mckpt",
+            weights_only=False,
         )
         optimizer.load_parameter_state_from_fs_bucket_space(param_state)
 

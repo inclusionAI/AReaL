@@ -297,16 +297,28 @@ class SGLangConfig:
     # NOTE: to avoid the illegal memory access error
     attention_backend: Optional[str] = "triton"
     sampling_backend: Optional[str] = None
-    context_length: Optional[int] = None
-    mem_fraction_static: Optional[float] = None
+    context_length: Optional[int] = 32768
+    mem_fraction_static: Optional[float] = 0.9
     max_running_requests: Optional[int] = None
-    max_total_tokens: Optional[int] = None
-    chunked_prefill_size: Optional[int] = None
+    # NOTE: chunked_prefill_size is by default 8192 on GPUs with 80GB mem in SGLang,
+    # but we disable it to avoid precision issues
+    chunked_prefill_size: Optional[int] = -1
+    max_prefill_tokens: int = 32768
     max_prefill_tokens: int = 16384
     schedule_policy: str = "lpm"
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
     hybrid_train: bool = False
+    enable_metrics: bool = False
+
+    # logging
+    log_level: str = "info"
+    log_level_http: Optional[str] = None
+    log_requests: bool = False
+    log_requests_level: int = 0
+    show_time_cost: bool = False
+    enable_metrics: bool = False  # Exports Prometheus-like metrics
+    decode_log_interval: int = 40  # How often (in tokens) to log decode progress.
 
 
 @dataclass
@@ -315,7 +327,7 @@ class DistributedDataParallelConfig:
     Refer to Megatron-LM documentation for details.
     """
 
-    grad_reduce_in_fp32: bool = False
+    grad_reduce_in_fp32: bool = True
     overlap_grad_reduce: bool = True
     overlap_param_gather: bool = False
     align_param_gather: bool = False
@@ -384,7 +396,7 @@ class ModelTrainEvalConfig:
         default=True, metadata={"help": "Enable memory-saving gradient checkpointing"}
     )
     bf16: bool = field(
-        default=False, metadata={"help": "Use bf16 precision (otherwise fp16)"}
+        default=True, metadata={"help": "Use bf16 precision (otherwise fp16)"}
     )
 
     # Backend-Specific Configurations
@@ -529,11 +541,23 @@ class PPOHyperparameters:
     eps_clip: float = field(
         default=0.2, metadata={"help": "Clipping factor for policy ratio"}
     )
+    c_clip: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "Dual clipping factor for policy ratio, must > 1.0. None disables dual clipping."
+        },
+    )
     value_eps_clip: float = field(
         default=0.2, metadata={"help": "Clipping factor for value updates"}
     )
     early_stop_imp_ratio: float = field(
         default=5.0, metadata={"help": "Early stop threshold for importance ratio"}
+    )
+    actor_sample_reuse: int = field(
+        default=1, metadata={"help": "The data reuse (aka PPO epoch) for actor."}
+    )
+    critic_sample_reuse: int = field(
+        default=1, metadata={"help": "The data reuse (aka PPO epoch) for critic."}
     )
 
     # Reward Processing
@@ -778,6 +802,10 @@ class BaseExperimentConfig:
             "help": "Debug mode. False disables assertions for better performance."
         },
     )
+    metric_discovery_port: int = field(
+        default=0,
+        metadata={"help": "Discovery port for prometheus metrics service discovery."},
+    )
     partition: str = field(
         default="dev", metadata={"help": "SLURM partition for running the experiment."}
     )
@@ -883,6 +911,9 @@ class BaseExperimentConfig:
     )
     mem_per_model_worker: int = field(
         default=90000, metadata={"help": "Memory per model worker (MB)."}
+    )
+    shuffle_dataset: bool = field(
+        default=True, metadata={"help": "Shuffle in each epoch."}
     )
 
 
@@ -1054,6 +1085,54 @@ class PPOMATHExperimentOptions:
     )
     dataset_max_filter_percentage: float = field(
         default=0.0, metadata={"help": "Maximum percentage of dataset to each filter."}
+    )
+
+
+@dataclass
+class MathCodeEvalOptions:
+    gen_config: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
+
+    actor: ModelTrainEvalConfig = field(
+        default_factory=ModelTrainEvalConfig,
+        metadata={"help": "Primary LLM configuration."},
+    )
+    rew: ModelTrainEvalConfig = field(
+        default_factory=ModelTrainEvalConfig,
+        metadata={"help": "Reward model configuration."},
+    )
+
+    actor_gen: MFCConfig = field(
+        default_factory=MFCConfig, metadata={"help": "Rollout MFC configuration."}
+    )
+    rew_inf: MFCConfig = field(
+        default_factory=MFCConfig, metadata={"help": "InfReward MFC configuration."}
+    )
+
+    dataset: PromptOnlyDatasetConfig = field(
+        default_factory=PromptOnlyDatasetConfig,
+        metadata={"help": "Dataset configuration."},
+    )
+
+    group_size: int = field(
+        default=1,
+        metadata={"help": "Number of answers retained per prompt (best-of-n)."},
+    )
+    rw_type: Optional[str] = field(
+        default="sparse",
+        metadata={
+            "help": "Type of reward processing. Only `sparse` is valid for now.",
+            "choices": ["sparse"],
+        },
+    )
+    check_xml_format: bool = field(
+        default=False, metadata={"help": "Validate XML format in generated responses."}
+    )
+
+    check_verifier_status: bool = field(
+        default=False,
+        metadata={"help": "Raise error if reward is all-zero (verifier bug check)."},
     )
 
 

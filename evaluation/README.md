@@ -29,7 +29,7 @@ Evaluate AReaL-boba-RL-7B:
 python eval_and_aggregate.py \
 --model_path ${MODEL_PATH} \
 --output_path ${OUTPUT_PATH} \
---data_names aime24,aime25 \
+--data_names aime24,aime25,gpqa_diamond \
 --prompt_type AReaL-boba \
 --output_path outputs --temperature 1.0
 ```
@@ -39,7 +39,7 @@ Evaluate AReaL-boba-SFT-32B:
 python eval_and_aggregate.py \
 --model_path ${MODEL_PATH} \
 --output_path ${OUTPUT_PATH} \
---data_names aime24,aime25 \
+--data_names aime24,aime25,gpqa_diamond \
 --prompt_type AReaL-boba-SFT \
 --samples_per_node 2 --num_sample_nodes 16 \
 --output_path outputs --temperature 0.6

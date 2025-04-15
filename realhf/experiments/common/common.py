@@ -110,7 +110,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
 
         Should be implemented in all subclasses.
         """
-        return NotImplementedError(f"datasets is not implemented in {self.__class__}")
+        raise NotImplementedError(f"datasets is not implemented in {self.__class__}")
 
     @property
     def eval_dataset(self) -> DatasetAbstraction | None:
@@ -394,6 +394,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                 base_seed=self.seed,
                 shards=[],
                 datasets=self.datasets,
+                shuffle_dataset=self.shuffle_dataset,
                 torch_cache_mysophobia=self.torch_cache_mysophobia,
                 cuda_cache_cleanliness=self.cache_clear_freq is not None,
                 cuda_cache_clear_freq=self.cache_clear_freq,

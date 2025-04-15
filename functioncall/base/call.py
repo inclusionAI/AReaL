@@ -94,7 +94,7 @@ async def async_invoke_function(
             logger.warning(
                 f'Request timeout after {timeout}s, uid: {payload.get("uid")}, URL: {url}, Headers: {session.headers}'
             )
-            break
+            return None, None
 
         except Exception as e:
             logger.error(

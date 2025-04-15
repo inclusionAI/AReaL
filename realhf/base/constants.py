@@ -190,16 +190,12 @@ _global_memory_buffer: GlobalMemoryBuffer = GlobalMemoryBuffer()
 _fake_mp_world_size = None
 _fake_mp_rank = None
 
-# GLOBAL_STATS_TRACKER is used to track and log training stats that cannot be gracefully obtained via model outputs
-# in interface implementations, e.g. load balancing loss in each MoE layer.
-GLOBAL_STATS_TRACKER = defaultdict(dict)
-GLOBAL_STATS_TRACKER_LOG_HOOKS = defaultdict(dict)
 
 # TODO: As in Megatron, we can set NCCL group options. Is it necessary?
 
 
 def reset_run():
-    global _model_name, _grids, _pgroups, _pgroup_ranks, _self_group, _rank_mapping, _global_memory_buffer, _fake_mp_world_size, _fake_mp_rank, GLOBAL_STATS_TRACKER, GLOBAL_STATS_TRACKER_LOG_HOOKS
+    global _model_name, _grids, _pgroups, _pgroup_ranks, _self_group, _rank_mapping, _global_memory_buffer, _fake_mp_world_size, _fake_mp_rank
     _model_name = None
     _grids = {}
     _pgroups = {}
@@ -209,8 +205,6 @@ def reset_run():
     _global_memory_buffer = GlobalMemoryBuffer()
     _fake_mp_world_size = None
     _fake_mp_rank = None
-    GLOBAL_STATS_TRACKER = defaultdict(dict)
-    GLOBAL_STATS_TRACKER_LOG_HOOKS = defaultdict(dict)
 
 
 @contextlib.contextmanager
@@ -453,6 +447,10 @@ def pipe_parallel_group():
     return grid().get_pipe_parallel_group()
 
 
+def pipe_parallel_cpu_group():
+    return grid().pp_proc_group_gloo
+
+
 def is_last_pipe_stage():
     return pipe_parallel_rank() == pipe_parallel_world_size() - 1
 
@@ -579,77 +577,3 @@ def get_env_vars(**kwargs):
         "REAL_PACKAGE_PATH": str(get_repo_path()),
         **BASE_ENVIRONS,
     }
-
-
-################# logging related #################
-
-
-def save_to_global_stats_tracker(
-    key: str, value: Any, hook: Optional[Callable] = None, **hook_kwargs
-):
-    """Save kv-pair to global stats tracker for current model.
-
-    :param key: Key
-    :type key: str
-    :param value: Value
-    :type value: Any
-    :param hook: Hook function to be called before logging the stats in `log_global_stats_tracker`.
-        For example, this hook can be used to gather and average stats across parallel ranks.
-    :type hook: Optional[Callable]
-    :param hook_kwargs: Keyword arguments to be passed to the hook function.
-    """
-    if _model_name is None:
-        raise RuntimeError("Global constant `model_name` is accessed before set.")
-    GLOBAL_STATS_TRACKER[_model_name][key] = value
-    if hook is not None:
-        GLOBAL_STATS_TRACKER_LOG_HOOKS[_model_name][key] = (hook, hook_kwargs)
-
-
-def get_from_global_stats_tracker(key: str):
-    if _model_name is None:
-        raise RuntimeError("Global constant `model_name` is accessed before set.")
-    return GLOBAL_STATS_TRACKER[_model_name].get(key, None)
-
-
-def clear_global_stats_tracker():
-    if _model_name is None:
-        raise RuntimeError("Global constant `model_name` is accessed before set.")
-    global GLOBAL_STATS_TRACKER
-    GLOBAL_STATS_TRACKER[_model_name] = dict()
-
-
-def log_global_stats_tracker(
-    return_dict: bool = True, clear_stats_after_logging: bool = True
-):
-    """Log the global stats tracker and optionally return the stats as a
-    dictionary. This method is expected to be called in interface
-    implementations.
-
-    :param return_dict: Whether to return the stats as a dictionary.
-    :type return_dict: bool
-    :param clear_stats_after_logging: Whether to clear the stats after
-        logging.
-    :type clear_stats_after_logging: bool
-    """
-    if _model_name is None:
-        raise RuntimeError("Global constant `model_name` is accessed before set.")
-    stats = GLOBAL_STATS_TRACKER[_model_name]
-    hooks = GLOBAL_STATS_TRACKER_LOG_HOOKS[_model_name]
-    for key in stats.keys():
-        hook, hook_kwargs = hooks.get(key, None)
-        if hook is not None:
-            hook(**hook_kwargs)
-
-    res = {}
-    if not return_dict:
-        logger.info(f"Logging global stats tracker:")
-    for key, value in stats.items():
-        res[key] = value
-        if not return_dict:
-            logger.info(f"{key}: {value}")
-
-    if clear_stats_after_logging:
-        clear_global_stats_tracker()
-
-    if return_dict:
-        return res

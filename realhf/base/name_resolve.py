@@ -194,6 +194,7 @@ class MemoryNameRecordRepository(NameRecordRepository):
 
     def __init__(self, log_events=False):
         self.__store = {}
+        self.__to_delete = set()
         self.__log_events = log_events
 
     def add(
@@ -204,12 +205,16 @@ class MemoryNameRecordRepository(NameRecordRepository):
         keepalive_ttl=None,
         replace=False,
     ):
+        if not name:
+            raise ValueError(f"Invalid name: {name}")
+        name = os.path.normpath(name)
         if self.__log_events:
             print(f"NameResolve: add {name} {value}")
         if name in self.__store and not replace:
             raise NameEntryExistsError(f"K={name} V={self.__store[name]} V2={value}")
-        assert isinstance(value, str)
-        self.__store[name] = value
+        self.__store[name] = str(value)
+        if delete_on_exit:
+            self.__to_delete.add(name)
 
     def touch(self, name, value, new_time_to_live):
         raise NotImplementedError()
@@ -219,6 +224,8 @@ class MemoryNameRecordRepository(NameRecordRepository):
             print(f"NameResolve: delete {name}")
         if name not in self.__store:
             raise NameEntryNotFoundError(f"K={name}")
+        if name in self.__to_delete:
+            self.__to_delete.remove(name)
         del self.__store[name]
 
     def clear_subtree(self, name_root):
@@ -231,9 +238,12 @@ class MemoryNameRecordRepository(NameRecordRepository):
                 or name == name_root
                 or name.startswith(name_root + "/")
             ):
+                if name in self.__to_delete:
+                    self.__to_delete.remove(name)
                 del self.__store[name]
 
     def get(self, name):
+        name = os.path.normpath(name)
         if name not in self.__store:
             raise NameEntryNotFoundError(f"K={name}")
         r = self.__store[name]
@@ -259,35 +269,25 @@ class MemoryNameRecordRepository(NameRecordRepository):
         if self.__log_events:
             print(f"NameResolve: find_subtree {name_root}")
         rs = []
-        for name, value in self.__store.items():
-            if name.startswith(name_root):
+        for name in self.__store:
+            if (
+                name_root == "/"
+                or name == name_root
+                or name.startswith(name_root + "/")
+            ):
                 rs.append(name)
         rs.sort()
         return rs
 
     def reset(self):
-        self.__store = {}
+        for name in self.__to_delete:
+            self.__store.pop(name)
+        self.__to_delete = set()
 
 
 class NfsNameRecordRepository(NameRecordRepository):
     RECORD_ROOT = f"{cluster_spec.fileroot}/name_resolve/"
-    LOCK_FILE = f"{cluster_spec.fileroot}/name_resolve/LOCK"
     os.makedirs(RECORD_ROOT, exist_ok=True)
-
-    @staticmethod
-    def locked(fn: Callable) -> Callable:
-        def fn_(*args, **kwargs):
-            import fcntl
-
-            with open(NfsNameRecordRepository.LOCK_FILE, "w") as fd:
-                fcntl.flock(fd, fcntl.LOCK_EX)
-                try:
-                    res = fn(*args, **kwargs)
-                finally:
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-            return res
-
-        return fn_
 
     def __init__(self, **kwargs):
         self.__to_delete = set()
@@ -300,7 +300,6 @@ class NfsNameRecordRepository(NameRecordRepository):
     def __file_path(name):
         return os.path.join(NfsNameRecordRepository.__dir_path(name), "ENTRY")
 
-    @locked
     def add(
         self,
         name,
@@ -309,6 +308,9 @@ class NfsNameRecordRepository(NameRecordRepository):
         keepalive_ttl=None,
         replace=False,
     ):
+        if not name:
+            raise ValueError("Name cannot be empty")
+        name = os.path.normpath(name)
         path = self.__file_path(name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if os.path.isfile(path) and not replace:
@@ -320,7 +322,6 @@ class NfsNameRecordRepository(NameRecordRepository):
         if delete_on_exit:
             self.__to_delete.add(name)
 
-    @locked
     def delete(self, name):
         path = self.__file_path(name)
         if not os.path.isfile(path):
@@ -344,8 +345,8 @@ class NfsNameRecordRepository(NameRecordRepository):
         else:
             logger.info("No such name resolve path: %s", dir_path)
 
-    @locked
     def get(self, name):
+        name = os.path.normpath(name)
         path = self.__file_path(name)
         if not os.path.isfile(path):
             raise NameEntryNotFoundError(path)
@@ -365,9 +366,15 @@ class NfsNameRecordRepository(NameRecordRepository):
         dir_path = self.__dir_path(name_root)
         rs = []
         if os.path.isdir(dir_path):
-            for item in os.listdir(dir_path):
+            for root, _, files in os.walk(dir_path):
                 try:
-                    rs.append(self.get(os.path.join(name_root, item)))
+                    if len(files) != 1:
+                        continue
+                    if files[0] != "ENTRY":
+                        continue
+                    key = root.removeprefix(self.RECORD_ROOT)
+                    key = key.removeprefix("/")
+                    rs.append(self.get(key))
                 except NameEntryNotFoundError:
                     pass
         return rs
@@ -376,8 +383,17 @@ class NfsNameRecordRepository(NameRecordRepository):
         dir_path = self.__dir_path(name_root)
         rs = []
         if os.path.isdir(dir_path):
-            for item in os.listdir(dir_path):
-                rs.append(os.path.join(name_root, item))
+            for root, _, files in os.walk(dir_path):
+                try:
+                    if len(files) != 1:
+                        continue
+                    if files[0] != "ENTRY":
+                        continue
+                    key = root.removeprefix(self.RECORD_ROOT)
+                    key = key.removeprefix("/")
+                    rs.append(key)
+                except NameEntryNotFoundError:
+                    pass
         rs.sort()
         return rs
 
@@ -543,7 +559,10 @@ class Etcd3NameRecordRepository(NameRecordRepository):
     """
 
     # Default configuration
-    host, port = os.getenv("REAL_ETCD_ADDR", "localhost:2379").split(":")
+    try:
+        host, port = os.getenv("REAL_ETCD_ADDR", "").split(":")
+    except ValueError:
+        host, port = "localhost", 2379
     ETCD_HOST = host
     ETCD_PORT = int(port)
     ETCD_USER = None
@@ -590,6 +609,8 @@ class Etcd3NameRecordRepository(NameRecordRepository):
         )
         self._keepalive_thread.start()
 
+        self._to_delete = set()
+
         logger.info(f"Connected to etcd3 at {self._host}:{self._port}")
 
     def __del__(self):
@@ -618,7 +639,7 @@ class Etcd3NameRecordRepository(NameRecordRepository):
         name,
         value,
         delete_on_exit=True,
-        keepalive_ttl=300,
+        keepalive_ttl=None,
         replace=False,
     ):
         """Add a key-value pair to etcd with optional TTL.
@@ -633,7 +654,9 @@ class Etcd3NameRecordRepository(NameRecordRepository):
         Raises:
             NameEntryExistsError: If the key already exists and replace is False
         """
-        name = name.rstrip("/")
+        if not name:
+            raise ValueError(f"Invalid name: {name}")
+        name = os.path.normpath(name)
         value = str(value)
 
         with self._lock:
@@ -651,9 +674,12 @@ class Etcd3NameRecordRepository(NameRecordRepository):
                 lease_id = self._create_lease(keepalive_ttl)
                 # Encode the string value to bytes
                 self._client.put(name, value.encode("utf-8"), lease=lease_id)
+                self._to_delete.add(name)
             else:
                 # Encode the string value to bytes
                 self._client.put(name, value.encode("utf-8"))
+                if delete_on_exit:
+                    self._to_delete.add(name)
 
             # Store entry information for keepalive management
             self._entries[name] = self._Entry(
@@ -678,6 +704,8 @@ class Etcd3NameRecordRepository(NameRecordRepository):
         """
         with self._lock:
             self._delete_locked(name)
+            if name in self._to_delete:
+                self._to_delete.remove(name)
 
     def _delete_locked(self, name):
         """Delete a key from etcd with lock already acquired.
@@ -770,6 +798,7 @@ class Etcd3NameRecordRepository(NameRecordRepository):
         Raises:
             NameEntryNotFoundError: If the key doesn't exist
         """
+        name = os.path.normpath(name)
         with self._lock:
             return self._get_locked(name)
 
@@ -794,13 +823,14 @@ class Etcd3NameRecordRepository(NameRecordRepository):
         """Delete all keys added via this repository instance."""
         with self._lock:
             count = 0
-            for name in list(self._entries):
-                try:
-                    self._delete_locked(name)
-                    count += 1
-                except NameEntryNotFoundError:
-                    pass
-            self._entries = {}
+            for name in self._to_delete:
+                if name in self._entries:
+                    try:
+                        self._delete_locked(name)
+                        count += 1
+                    except NameEntryNotFoundError:
+                        pass
+            self._to_delete = set()
             logger.info(f"Reset {count} saved etcd entries")
 
     def _keepalive_thread_run(self):
@@ -841,6 +871,17 @@ class Etcd3NameRecordRepository(NameRecordRepository):
         if isinstance(names, str):
             names = [names]
 
+        q = queue.Queue(maxsize=len(names))
+        for _ in range(len(names) - 1):
+            q.put(0)
+
+        def wrap_call_back():
+            try:
+                q.get_nowait()
+            except queue.Empty:
+                logger.info(f"Key {names} is gone. Executing callback {call_back}")
+                call_back()
+
         # Use etcd's native watch capability for more efficient watching
         for name in names:
             # First wait for the key to exist
@@ -848,7 +889,7 @@ class Etcd3NameRecordRepository(NameRecordRepository):
 
             # Start watching for key deletion
             watch_id = self._client.add_watch_callback(
-                name, lambda event: self._watch_callback(event, call_back)
+                name, lambda event: self._watch_callback(event, wrap_call_back)
             )
 
             # Store watch ID for cleanup
@@ -897,7 +938,11 @@ def make_repository(type_="nfs", **kwargs):
 
 # DEFAULT_REPOSITORY_TYPE = "redis" if socket.gethostname().startswith("frl") else "nfs"
 DEFAULT_REPOSITORY_TYPE = "nfs"
-if etcd3 is not None and cluster.spec.name in ["wa180"]:
+if (
+    etcd3 is not None
+    and cluster.spec.name in ["wa180", "na132", "su18"]
+    and os.getenv("REAL_ETCD_ADDR", "")
+):
     DEFAULT_REPOSITORY_TYPE = "etcd3"
 DEFAULT_REPOSITORY = make_repository(DEFAULT_REPOSITORY_TYPE)
 add = DEFAULT_REPOSITORY.add

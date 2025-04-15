@@ -1,9 +1,7 @@
 # Copyright 2025 Ant Group Inc.
 
-import collections
 import dataclasses
-import math
-from contextlib import contextmanager
+import random
 from typing import *
 
 import torch
@@ -79,6 +77,8 @@ class MockPipeTrainInstrSet(PipeTrainInstrSet):
         step_id: int,
     ):
         self.optim.step()
+        # NOTE: we only have one optimizer step for each stage, so micro_batch_id can be 0
+        tensor_buffer.put("stats", 0, dict(random_stat=random.random()))
 
 
 class AdamWithLossScale(torch.optim.Adam):
@@ -150,7 +150,6 @@ class MockTrainEngine(model_api.PipelinableEngine):
                 f"pp_size={constants.pipe_parallel_world_size()}, "
                 f"#tokens per mbs: {[mb.data['packed_input_ids'].shape[0] for mb in mb_inputs]}"
             )
-        stat = collections.defaultdict(int)
         for i, mb_input in enumerate(mb_inputs):
             input_lens = torch.tensor(
                 flat2d(mb_input.seqlens["packed_input_ids"]),
@@ -164,15 +163,13 @@ class MockTrainEngine(model_api.PipelinableEngine):
                 cu_seqlens=cu_seqlens,
                 max_seqlen=max_seqlen,
             ).logits
-            loss, _stat = loss_fn(model_output, mb_input)
+            loss = loss_fn(model_output, mb_input)
             loss_scale = loss_weight_fn(mb_inputs[i]) / total_loss_weight
             if token_normalize_scope == "global":
                 loss_scale *= constants.data_parallel_world_size()
             loss *= loss_scale
-            for k, v in _stat.items():
-                stat[k] += v
 
-        return stat
+        return dict(random_stat=random.random())
 
     @torch.no_grad()
     def forward(

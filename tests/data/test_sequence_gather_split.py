@@ -249,6 +249,13 @@ def test_gather_split(sample_type: str, dp: int):
     for s1, s2 in zip(samples, ss):
         recursive_assert_equal(s1, s2)
 
+    # Test json serialize
+    import orjson
+
+    bytes = orjson.dumps(x.as_json_compatible())
+    y = SequenceSample.from_json_compatible(orjson.loads(bytes))
+    recursive_assert_equal(x, y)
+
     # Test split to the finest granularity
     total_bs = sum(batch_sizes)
     ss, _, backward_indices = x.split(MicroBatchSpec(n_mbs=x.bs))

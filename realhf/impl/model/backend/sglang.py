@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import json
 import os
+import socket
 import sys
 import time
 import traceback
@@ -35,12 +36,16 @@ from realhf.base import (
     constants,
     gpu_utils,
     logging,
+    name_resolve,
+    names,
     network,
     pkg_version,
     seeding,
 )
 
 logger = logging.getLogger("SGLang backend")
+
+SGLANG_INIT_TIMEOUT = 300
 
 
 def remove_prefix(text: str, prefix: str) -> str:
@@ -161,6 +166,9 @@ def sglang_server_process(server_args_dict):
     from sglang.srt.server_args import ServerArgs
     from sglang.srt.utils import kill_process_tree
 
+    if pkg_version.is_version_less("sglang", "0.4.4"):
+        server_args_dict.pop("log_requests_level")
+
     if pkg_version.is_version_less("sglang", "0.4.3"):
         from sglang.srt.server import launch_server
 
@@ -180,6 +188,7 @@ def sglang_server_process(server_args_dict):
     )
 
     try:
+        logger.info(f"SGLang Server Args: {server_args}")
         launch_server(server_args)
     finally:
         kill_process_tree(os.getpid(), include_parent=False)
@@ -216,6 +225,23 @@ class SGLangGenerationEngine(PipelinableEngine):
 
         asyncio.run(self.wait_server())
 
+        if server_args_dict["enable_metrics"]:
+            dp_rank = constants.data_parallel_rank()
+            pp_rank = constants.pipe_parallel_rank()
+            mp_rank = constants.model_parallel_rank()
+            metric_server_name = f"d{dp_rank}p{pp_rank}m{mp_rank}"
+            key = names.metric_server(
+                constants.experiment_name(),
+                constants.trial_name(),
+                "sglang",
+                metric_server_name,
+            )
+            host_ip = server_args_dict["host"]
+            host_port = server_args_dict["port"]
+            address = f"{host_ip}:{host_port}"
+            name_resolve.add(key, address, keepalive_ttl=1200, delete_on_exit=True)
+            logger.info(f"SGLang {metric_server_name} metrics URL: {address}")
+
         self.request_timeout = request_timeout
 
         # offload weights/cache
@@ -245,7 +271,7 @@ class SGLangGenerationEngine(PipelinableEngine):
         from sglang.utils import get_exception_traceback
 
         success = False
-        for _ in range(120):
+        for _ in range(SGLANG_INIT_TIMEOUT):
             await asyncio.sleep(1)
             try:
                 res = requests.get(
@@ -415,12 +441,15 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
         ports = [None for _ in range(constants.data_parallel_world_size())]
         while any(port is None for port in ports) or len(set(ports)) != len(ports):
             dist.all_gather_object(
-                ports, network.find_free_port(), group=constants.data_parallel_group()
+                ports,
+                network.find_free_port(low=20000, high=40000),
+                group=constants.data_parallel_group(),
             )
         additional_args["port"] = ports[constants.data_parallel_rank()]
 
+        host_ip = socket.gethostbyname(socket.gethostname())
         server_args_dict = dict(
-            host="localhost",
+            host="localhost" if not self.enable_metrics else host_ip,
             # Model and tokenizer
             tokenizer_path=self.model_path,
             tokenizer_mode="auto",

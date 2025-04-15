@@ -53,7 +53,7 @@ class MasterWorker(worker_base.Worker):
     def _configure(self, config: config_pkg.MasterWorker):
         self.config = config
 
-        seeding.set_random_seed(self.config.base_seed + self.config.n_model_workers)
+        seeding.set_random_seed(self.config.base_seed, self.config.n_model_workers)
 
         self.__model_topos: Dict[ModelName, topology.ProcessTopology] = (
             config.model_topos
@@ -324,6 +324,7 @@ class MasterWorker(worker_base.Worker):
             model_configs=self.__model_configs,
             ctrl=self.__rpc_ctrl,
             summary_writer=self.__summary_writer,
+            shuffle_dataset=self.config.shuffle_dataset,
         )
         if self.__recover_run:
             self.func_executor.data_loading_dp_idx = (
@@ -368,12 +369,17 @@ class MasterWorker(worker_base.Worker):
         epoch = self.__rpc_ctrl.step_info.epoch + 1
         epoch_step = self.__rpc_ctrl.step_info.epoch_step + 1
         global_step = self.__rpc_ctrl.step_info.global_step + 1
+        if is_new_epoch:
+            epoch += 1
+            epoch_step = 1
         s = f"The next step is epoch {epoch}/{self.config.exp_ctrl.total_train_epochs} "
         s += f"step {epoch_step}/{self._steps_per_epoch} "
         s += f"(global step {global_step}). "
-        s += f"Should save a checkpoint for recover? {self.__rpc_ctrl.should_ckpt}. "
-        s += f"Should save a persistent checkpoint for evaluation? {self.__rpc_ctrl.should_save}. "
+        s += f"Should checkpoint? {self.__rpc_ctrl.should_ckpt}. "
+        s += f"Should save? {self.__rpc_ctrl.should_save}. "
         s += f"Should run evaluation? {self.__rpc_ctrl.should_eval}. "
+        s += f"Is the first step in epoch? {is_new_epoch}. "
+        s += f"Is the last step in epoch? {is_epoch_last_step}. "
         self.logger.info(s)
 
         # Traverse over the dataflow graph for once.
