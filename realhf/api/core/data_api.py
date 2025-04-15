@@ -39,7 +39,7 @@ from pydantic import field_validator, model_validator
 
 from realhf.api.cli_args import MicroBatchSpec
 from realhf.api.core import config as config_api
-from realhf.base import constants, datapack, logging
+from realhf.base import constants, datapack, logging, seeding
 from realhf.base.cluster import spec as cluster_spec
 
 logger = logging.getLogger("api.data")
@@ -506,6 +506,18 @@ class SequenceSample:
             self.data.update(other.data)
         self.seqlens.update(other.seqlens)
         self.metadata.update(other.metadata)
+
+    @staticmethod
+    def shuffled(sample: "SequenceSample") -> "SequenceSample":
+        """Create a shuffled sample.
+        Define it as a staticmethod because it is an out-of-place operation.
+        (Think about the difference between `sorted` and `l.sort()`).
+        """
+        seed = seeding.get_shuffle_seed()
+        rng = np.random.RandomState(seed)
+        indices = np.arange(sample.bs)
+        rng.shuffle(indices)
+        return SequenceSample.reorder(sample, indices)
 
     @staticmethod
     def _resolve_seqlen_from_key(key, seqlens: List[int]) -> List[torch.Tensor]:

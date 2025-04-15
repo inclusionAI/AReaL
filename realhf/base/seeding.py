@@ -2,6 +2,7 @@
 # Copyright 2024 Wei Fu & Zhiyu Mei
 # Licensed under the Apache License, Version 2.0 (the "License").
 
+import hashlib
 import os
 import random
 
@@ -10,10 +11,14 @@ import torch
 import transformers
 
 _SEED = None
+_BASE_SEED = None
+_SHUFFLER = None
 
 
-def set_random_seed(seed):
-    global _SEED
+def set_random_seed(base_seed, offset=0):
+    global _SEED, _BASE_SEED
+    _BASE_SEED = base_seed
+    seed = base_seed + offset
     _SEED = seed
     os.environ["PYTHONHASHSEED"] = str(seed)
     transformers.set_seed(seed)
@@ -28,3 +33,21 @@ def set_random_seed(seed):
 def get_seed() -> int:
     global _SEED
     return _SEED
+
+
+class Shuffler:
+    def __init__(self, key="default"):
+        self.cnt = 0
+        self.base_key = key
+
+    def next_shuffle(self) -> int:
+        shuffle_key = f"{self.base_key}_{self.cnt}"
+        self.cnt += 1
+        return int(hashlib.sha256(shuffle_key.encode()).hexdigest(), 16) & 0xFFFFFFFF
+
+
+def get_shuffle_seed() -> int:
+    global _BASE_SEED, _SHUFFLER
+    if _SHUFFLER is None:
+        _SHUFFLER = Shuffler(f"AReaL-seed{_BASE_SEED}")
+    return _SHUFFLER.next_shuffle()
