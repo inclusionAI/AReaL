@@ -3,15 +3,13 @@ import os
 import random
 from collections import defaultdict
 
-from functioncall.base import logging
 from functioncall.base.call import batch_function_call
+from realhf.base import logging
 
-logger = logging.getLogger("Functioncall")
+logger = logging.getLogger("function call")
 
 
-def load_problems_with_testcase_batch(
-    id2info, query_ids, debug=False, test_case_batch_size=None
-):
+def load_problems_with_testcase_batch(id2info, query_ids, test_case_batch_size=None):
     problem_map = defaultdict(list)
     for idx, query_id in enumerate(query_ids):
         problem = id2info[query_id]
@@ -42,8 +40,6 @@ def load_problems_with_testcase_batch(
                 "input_output": json.dumps(batch_io),
                 "batche_index": batch_idx,
             }
-            if debug:
-                sub_problem["solutions"] = problem.get("solutions", [])
             problem_map[query_id].append(sub_problem)
 
     return problem_map
@@ -61,7 +57,6 @@ def code_verify(
     global_problems = load_problems_with_testcase_batch(
         id2info,
         query_ids,
-        debug=True,
         test_case_batch_size=20,
     )
     for idx, query_id in enumerate(query_ids):
@@ -77,8 +72,8 @@ def code_verify(
                 }
             )
 
-    logger.debug(
-        f"code_verify, payload_list size: {len(payload_list)}, query size: {len(query_ids)}, query_id_0: {query_ids[0]}"
+    logger.info(
+        f"code_verify start, payload_list size: {len(payload_list)}, query size: {len(query_ids)}, query_id_0: {query_ids[0]}"
     )
     rsp_list = batch_function_call(payload_list, "python_code", timeout=timeout)
 
@@ -97,32 +92,54 @@ def code_verify(
 
         results[query_index] = results[query_index] and value
 
+    logger.info(
+        f"code_verify finished, payload_list size: {len(payload_list)}, query size: {len(query_ids)}, result size: {len(results)}"
+    )
     return results
 
 
 if __name__ == "__main__":
-    path = "/storage/openpsi/data/code/apps/codeparrot-apps-test.jsonl"
-    data = []
-    with open(path, "r") as f:
-        code_data = [json.loads(l) for l in f.readlines()]
 
-    id2info = {}
+    def load_jsonl(file_path: str):
+        """Load JSONL file with validation"""
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return [json.loads(line) for line in f]
+        except FileNotFoundError:
+            print(f"ERROR: JSONL file not found: {file_path}")
+            raise
+        except json.JSONDecodeError as e:
+            print(f"ERROR: JSON parsing failed in {file_path}: {str(e)}")
+            raise
+
+    data4 = load_jsonl("input.jsonl")
+    id2info = defaultdict(dict)
+    for item in data4:
+        query_id = str(item["query_id"])
+        id2info[query_id] = item
 
     def create_test_params(count=10):
-        global id2info
         query_ids = []
         generateds = []
         cnt = 0
-        while cnt < count:
-            d = random.choice(code_data)
-            if not d["solutions"]:
+
+        file_path = "lcb_code.json"
+        raw_data = []
+        with open(file_path, "r", encoding="utf-8") as f:
+            raw_data = [line for line in json.load(f)]
+
+        for d in raw_data:
+            if cnt >= count:
+                break
+            if not d["code_list"] or d["question_id"] not in id2info:
                 continue
-            id2info[d["id"]] = d
-            query_ids.append(d["id"])
-            generateds.append(d["solutions"][0])
+            query_ids.append(d["question_id"])
+            generateds.append(d["code_list"][0])
             cnt += 1
+
         return generateds, query_ids
 
-    generateds, query_ids = create_test_params(100)
+    generateds, query_ids = create_test_params(10)
+    print(f"generateds:, query_ids:{query_ids}")
     result = code_verify(id2info, generateds, query_ids, True)
     print(result)

@@ -62,7 +62,7 @@ def extract_python_code(text, min_length=20, strict_syntax=True):
         valid_blocks.append(clean_block)
 
     if not valid_blocks:
-        logger.warning(f"failed to extract python code from {text}")
+        # logger.warning(f"failed to extract python code from {text}")
         return None
     # return the last code block
     return valid_blocks[-1]
