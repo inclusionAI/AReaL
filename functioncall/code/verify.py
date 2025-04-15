@@ -48,7 +48,7 @@ def load_problems_with_testcase_batch(
         # parse one problem
         language = problem.get("language", "PYTHON").upper()
         timeout = min(
-            100, max(0.1, float(problem.get("timeout", timeout_for_testcase)))
+            100, max(0.1, float(problem.get("timeout", timeout_for_testcase)) * 1.5)
         )  # [0.1, 100] s
         memory = round_up_memory(problem.get("memory", 0))
         input_output = json.loads(problem["input_output"])
@@ -67,9 +67,8 @@ def load_problems_with_testcase_batch(
 
         is_ut = len(inputs) == 0
 
-        # python + non-ut will choose fastFail,
-        isFastFail = language == Language.PYTHON and not is_ut
-
+        # isFastFail means the function call returns immediately as soon as any testcase fails.
+        isFastFail = True
         # create batches for testcases
         case_size = 1 if is_ut else len(inputs)
         test_case_batch_size = min(max(1, test_case_batch_size), case_size)

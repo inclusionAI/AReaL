@@ -10,6 +10,7 @@ from typing import List, Dict, Any
 import pickle
 import numpy as np
 import logging
+from datetime import datetime
 from functioncall.code.verify import code_verify
 
 logger = logging.getLogger("function call")
@@ -268,23 +269,24 @@ def standard_dataset_eval(
     )
 
     result_statistics = statics_result(result, query_ids)
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     save_jsonl(
         result_statistics,
-        os.path.basename(dataset_path) + ".stat",
+        os.path.basename(dataset_path) + f"{timestamp}.stat",
     )
 
 
 if __name__ == "__main__":
     # lcb_dataset_eval()
 
+    standard_dataset_eval(
+        "/storage/openpsi/users/meijun.mei/datasets/loj_0410_format2.jsonl",
+        code_count=0,
+        dry_run=False,
+    )
+
     # standard_dataset_eval(
-    #     "/storage/openpsi/users/meijun.mei/datasets/loj_0410_format2.jsonl",
+    #     "/storage/openpsi/data/code/live_code_bench_for_test/live_code_bench_v4_v5-for-test-remote.jsonl",
     #     code_count=0,
     #     dry_run=False,
     # )
-
-    standard_dataset_eval(
-        "/storage/openpsi/data/code/live_code_bench_for_test/live_code_bench_v4_v5-for-test-remote.jsonl",
-        code_count=1,
-        dry_run=False,
-    )

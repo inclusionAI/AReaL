@@ -11,7 +11,7 @@ import colorlog
 
 LOG_FORMAT = "%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s"
 DATE_FORMAT = "%Y%m%d-%H:%M:%S"
-LOGLEVEL = logging.DEBUG
+LOGLEVEL = logging.INFO
 
 # NOTE: To use colorlog we should not call colorama.init() anywhere.
 # The available color names are black, red, green, yellow, blue, purple, cyan and white
