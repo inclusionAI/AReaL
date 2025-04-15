@@ -159,7 +159,7 @@ if __name__ == "__main__":
         for d in data_list:
             if cnt >= count:
                 break
-            if not d["solutions"] or d["query_id"] not in id2info:
+            if d["query_id"] not in id2info:
                 continue
             query_ids.append(d["query_id"])
             generateds.extend(d["solutions"])

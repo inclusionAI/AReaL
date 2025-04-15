@@ -22,6 +22,12 @@ FUNCTIONCALL_SERVICE_DOMAIN = os.getenv(
     "",
 )
 
+def check_payload(payload):
+    if not payload:
+        return False, {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "empty payload", 'errorType': 'UnknownError'}]}
+    if not payload.get("code"):
+        return False, {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "empty code", 'errorType': 'UnknownError'}]}
+    return True, {}
 
 class Language(Enum):
     PYTHON = 0
@@ -86,24 +92,24 @@ async def async_invoke_function(
                             f'SystemError detected, uid: {response_json.get("uid")}, err: {err_info}'
                         )
 
-                    return response_json, response.headers
+                    return response_json
                 except aiohttp.ContentTypeError as e:
                     raise Exception("Invalid JSON response") from e
 
         except asyncio.TimeoutError as e:
             logger.warning(
-                f'Request timeout after {timeout}s, uid: {payload.get("uid")}, URL: {url}, Headers: {session.headers}'
+                f'Request timeout after {timeout}s, uid: {payload.get("uid")}, URL: {url}'
             )
             return None, None
 
         except Exception as e:
             logger.error(
-                f"Async invocation failed on attempt {retries + 1}:{str(e)}, payload: {payload}, URL: {url}, Headers: {session.headers}"
+                f"Async invocation failed on attempt {retries + 1}:{str(e)}, uid: {payload.get("uid")}, URL: {url}"
             )
 
         retries += 1
         if retries > max_retries:
-            return None, None
+            return {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "exceed max retries for function", 'errorType': 'UnknownError'}]}
 
         sleep_time = min(
             initial_retry_interval * (2**retries) + random.uniform(0, 5),
@@ -122,8 +128,9 @@ async def batch_function_call_async(payload_list, url, timeout, concurrency=1500
         semaphore = asyncio.Semaphore(concurrency)
 
         async def limited_task(payload):
-            if not payload:
-                return None
+            ok, err_rsp = check_payload(payload)
+            if not ok:
+                return err_rsp, 0
             async with semaphore:
                 st = time.monotonic()
                 result = await async_invoke_function(session, url, timeout, payload)
@@ -135,22 +142,19 @@ async def batch_function_call_async(payload_list, url, timeout, concurrency=1500
         data_list = []
         elapsed_times = []
         max_elapsed = -1
-        max_elapsed_header = None
         max_elapsed_uid = ""
-        for (data, header), elapsed in results:
+        for data, elapsed in results:
             if elapsed > max_elapsed:
                 max_elapsed = elapsed
-                max_elapsed_header = header
                 max_elapsed_uid = data.get("uid")
             data_list.append(data)
             elapsed_times.append(elapsed)
-            # logger.debug(f"functioncall took {elapsed:.4f} seconds, header: {header}.)")
 
         p50 = median(elapsed_times)
         p90 = calculate_percentile(elapsed_times, 90)
         p99 = calculate_percentile(elapsed_times, 99)
         logger.info(
-            f"Longest functioncall took {max_elapsed:.4f} seconds, header: {max_elapsed_header}, timeout: {timeout}, uid: {max_elapsed_uid}, Active connections: {len(connector._conns)}, p50: {p50}, p90: {p90}, p99: {p99}"
+            f"Longest functioncall took {max_elapsed:.4f} seconds, timeout: {timeout}, uid: {max_elapsed_uid}, Active connections: {len(connector._conns)}, p50: {p50}, p90: {p90}, p99: {p99}"
         )
 
         return data_list
