@@ -11,6 +11,7 @@ SINGLE_CASE_EXEC_TIMEOUT = 6
 TEST_CASE_BATCH_SIZE = 1
 FUNCTIONCALL_TIMEOUT = 1000
 
+
 def round_up_memory(memory):
     if memory <= 0:
         return 0
@@ -36,7 +37,9 @@ def construct_testcases(
             input_ if input_.startswith("http") else os.path.join(oss_basepath, input_)
         )
         output_url = (
-            output_ if output_.startswith("http") else os.path.join(oss_basepath, output_)
+            output_
+            if output_.startswith("http")
+            else os.path.join(oss_basepath, output_)
         )
 
         result.append({"input": input_url, "expectedOutput": output_url})

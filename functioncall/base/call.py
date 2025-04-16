@@ -23,12 +23,30 @@ FUNCTIONCALL_SERVICE_DOMAIN = os.getenv(
     "",
 )
 
+
 def check_payload(payload):
     if not payload:
-        return False, {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "Empty payload", 'errorType': 'UnknownError'}]}
+        return False, {
+            "uid": payload.get("uid", ""),
+            "success": False,
+            "results": [
+                {
+                    "success": False,
+                    "reason": "Empty payload",
+                    "errorType": "UnknownError",
+                }
+            ],
+        }
     if not payload.get("code"):
-        return False, {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "Empty code", 'errorType': 'UnknownError'}]}
+        return False, {
+            "uid": payload.get("uid", ""),
+            "success": False,
+            "results": [
+                {"success": False, "reason": "Empty code", "errorType": "UnknownError"}
+            ],
+        }
     return True, {}
+
 
 class Language(Enum):
     PYTHON = 0
@@ -101,7 +119,17 @@ async def async_invoke_function(
             logger.warning(
                 f'Request timeout after {timeout}s, uid: {payload.get("uid")}, URL: {url}'
             )
-            return {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "Function call timed out.", 'errorType': 'UnknownError'}]}
+            return {
+                "uid": payload.get("uid", ""),
+                "success": False,
+                "results": [
+                    {
+                        "success": False,
+                        "reason": "Function call timed out.",
+                        "errorType": "UnknownError",
+                    }
+                ],
+            }
 
         except Exception as e:
             logger.error(
@@ -110,7 +138,17 @@ async def async_invoke_function(
 
         retries += 1
         if retries > max_retries:
-            return {'uid': payload.get('uid', ""), 'success': False, 'results': [{'success': False, 'reason': "Function call exceed max retries.", 'errorType': 'UnknownError'}]}
+            return {
+                "uid": payload.get("uid", ""),
+                "success": False,
+                "results": [
+                    {
+                        "success": False,
+                        "reason": "Function call exceed max retries.",
+                        "errorType": "UnknownError",
+                    }
+                ],
+            }
 
         sleep_time = min(
             initial_retry_interval * (2**retries) + random.uniform(0, 5),
