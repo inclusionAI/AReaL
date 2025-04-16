@@ -60,7 +60,9 @@ def process_code_data(file_path: str) -> List[Dict]:
         )
 
         case_size = sys.getsizeof(processed[-1]["input_output"])
-        assert case_size < 500*1024, f"'input_output' exceeds 500KB ({case_size} bytes). Use remote testcase instead."
+        assert (
+            case_size < 500 * 1024
+        ), f"'input_output' exceeds 500KB ({case_size} bytes). Use remote testcase instead."
 
     return processed
 

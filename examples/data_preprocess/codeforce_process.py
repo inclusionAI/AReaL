@@ -35,6 +35,7 @@ def save_file(output_path: str, processed_data: list):
         for item in processed_data:
             f.write(json.dumps(item) + "\n")
 
+
 def process_math_data(file_path: str) -> List[Dict]:
     """Process math dataset from JSON/JSONL file"""
     if not file_path:
@@ -54,6 +55,7 @@ def process_math_data(file_path: str) -> List[Dict]:
         )
 
     return processed
+
 
 def process_code_data(file_path: str) -> List[Dict]:
     """Process code dataset from JSONL file"""
@@ -80,7 +82,7 @@ def process_code_data(file_path: str) -> List[Dict]:
                         "inputs": [io.get("input") for io in input_output],
                         "outputs": [io.get("output") for io in input_output],
                         "fn_name": item.get("metadata", {}).get("fn_name", ""),
-                        "remote": False
+                        "remote": False,
                     }
                 ),
                 "solutions": [item["groundtruth"]],
@@ -120,7 +122,7 @@ def main():
         logger.info(f"Loaded {len(math_data)} math items")
         processed_data.extend(math_data)
         stats["math"] = len(math_data)
-    
+
     random.shuffle(processed_data)
     save_file(args.output, processed_data)
     logger.info("\nProcessing Complete:")
