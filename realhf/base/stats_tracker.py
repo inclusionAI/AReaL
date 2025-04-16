@@ -1,5 +1,6 @@
 from collections import defaultdict
 from enum import Enum, auto
+from typing import Dict
 
 import torch
 import torch.distributed as dist
@@ -101,7 +102,7 @@ class DistributedStatsTracker:
             raise ValueError("reduce_type must be a ReduceType enum")
         self.reduce_types[key] = reduce_type
 
-    def export(self, key=None, reduce_group=None, reset=True):
+    def export(self, key=None, reduce_group=None, reset=True) -> Dict[str, float]:
         """Get aggregated statistics"""
         self._amend_moe_losses()
         if reduce_group is None:
@@ -129,6 +130,9 @@ class DistributedStatsTracker:
             self.denominators = {}
             self.reduce_types = {}
             self.stats = defaultdict(list)
+        results = {
+            k: v.cpu().item() if torch.is_tensor(v) else v for k, v in results.items()
+        }
         return results
 
     def _amend_moe_losses(self):
