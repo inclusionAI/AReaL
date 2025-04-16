@@ -30,7 +30,7 @@ def construct_uid(query_id: str, start_idx: int, end_idx: int):
         trial_name = f"{constants.experiment_name()}-{constants.trial_name()}"
     except Exception as e:
         trial_name = "test"
-    uid = f"{timestamp}-{trial_name}-{query_id}-case-{start_idx}-{end_idx}"
+    uid = f"[{timestamp}-{trial_name}]-{query_id}-[{start_idx}-{end_idx}]"
     return uid
 
 
