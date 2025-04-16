@@ -210,7 +210,7 @@ def caculate_concurrency():
     # use 5000 cpu cores for one exp by default
     concurrency_for_one_exp = 5000
     try:
-        dp = constants.data_parallel_world_size()
+        dp = constants.parallelism_group_size()
     except Exception as e:
         dp = 16
     return concurrency_for_one_exp // dp
