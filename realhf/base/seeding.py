@@ -15,10 +15,14 @@ _BASE_SEED = None
 _SHUFFLER = None
 
 
-def set_random_seed(base_seed, offset=0):
+def _seed_from_key(key: str) -> int:
+    return int(hashlib.sha256(key.encode()).hexdigest(), 16) & 0xFFFFFFFF
+
+
+def set_random_seed(base_seed, key):
     global _SEED, _BASE_SEED
     _BASE_SEED = base_seed
-    seed = base_seed + offset
+    seed = base_seed + _seed_from_key(key)
     _SEED = seed
     os.environ["PYTHONHASHSEED"] = str(seed)
     transformers.set_seed(seed)
@@ -32,6 +36,7 @@ def set_random_seed(base_seed, offset=0):
 
 def get_seed() -> int:
     global _SEED
+    assert _SEED is not None
     return _SEED
 
 
@@ -43,7 +48,7 @@ class Shuffler:
     def next_shuffle(self) -> int:
         shuffle_key = f"{self.base_key}_{self.cnt}"
         self.cnt += 1
-        return int(hashlib.sha256(shuffle_key.encode()).hexdigest(), 16) & 0xFFFFFFFF
+        return _seed_from_key(shuffle_key)
 
 
 def get_shuffle_seed() -> int:
