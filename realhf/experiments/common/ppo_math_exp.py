@@ -29,7 +29,6 @@ logger = logging.getLogger("PPO Math exp", "colored")
 
 @dataclasses.dataclass
 class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
-
     @property
     def ppo_kwargs(self):
         return dict(
@@ -82,7 +81,11 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
             )
 
         domain = os.getenv("FUNCTIONCALL_SERVICE_DOMAIN", "")
-        if domain and (not (domain.startswith("http://") and ":" in domain)):
+        if (
+            domain
+            and (not (domain.startswith("http://") and ":" in domain))
+            and (not (domain.startswith("https://") and ":" in domain))
+        ):
             raise RuntimeError(
                 "function call address FUNCTIONCALL_SERVICE_DOMAIN is invalid."
             )
