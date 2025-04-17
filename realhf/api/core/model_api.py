@@ -34,45 +34,105 @@ class ZeroTotalLossWeightException(Exception):
 
 
 @dataclasses.dataclass
+class GenReqMeta:
+    ## Meta info used to schedule the request. ##
+    prompt_len: int
+    group_size: int
+    new_token_budget: int
+    predicted_new_tokens: int | None
+
+
+@dataclasses.dataclass
 class APIGenerateInput:
+    # The unique query id of this prompt
     qid: Hashable
-    group_idx: int
+    # prompt token ids
     prompt_ids: List[int]
+    # prompt token ids + generated prefix, the input to server
     input_ids: List[int]
+    # the sampling params to server, may limit n=1 and max_new_tokens
+    # for partial rollout
     gconfig: GenerationHyperparameters
+    # stop tokens, usually EOS and PAD
     stop_token_ids: List[int] = dataclasses.field(default_factory=list)
-    return_logprob: bool = False
+    # whether to return logprobs
+    return_logprob: bool = True
+    # logprobs of preivous generation
+    # length len(input_ids) - len(prompt_ids)
+    prev_logprobs: List[float] = dataclasses.field(default_factory=list)
+    # the weight version when submitting this request
+    version_start: int = -1
+
+    # other metadata
+    metadata: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
 class APIGenerateOutput:
+    ## input re-export ##
     qid: Hashable
-    group_idx: int
     prompt_ids: List[int]
     input_ids: List[int]
-    output_ids: List[int] = dataclasses.field(default_factory=list)
-    output_logprobs: List[int] = dataclasses.field(default_factory=list)
-    no_eos: bool = True
-    success: bool = False
-    latency: float = 0.0
-    ttft: float = 0.0  # Time to first token
+    gconfig: GenerationHyperparameters
+    prev_logprobs: List[float] = dataclasses.field(default_factory=list)
+    version_start: int = -1
+    metadata: Dict[str, Any] = dataclasses.field(default_factory=dict)
+
+    ## outputs. To be amended by the reply. ##
+    # output token ids
+    output_ids: List[List[int]] = dataclasses.field(default_factory=list)
+    # output logprobs with the same length as output_ids
+    output_logprobs: List[List[float]] = dataclasses.field(default_factory=list)
+    # the weight version when finishing this request
+    version_end: List[int] = dataclasses.field(default_factory=list)
+    # whether truncated
+    no_eos: List[bool] = dataclasses.field(default_factory=list)
+
+    # statistics
+    latency: float = float("inf")
+    ttft: float = float("inf")  # Time to first token
     itl: List[float] = dataclasses.field(
         default_factory=list
     )  # List of inter-token latencies
-    error: str = ""
 
     @classmethod
     def from_input(cls, inp: APIGenerateInput):
         return cls(
             qid=inp.qid,
-            group_idx=inp.group_idx,
             prompt_ids=inp.prompt_ids,
             input_ids=inp.input_ids,
+            gconfig=inp.gconfig,
+            prev_logprobs=inp.prev_logprobs,
+            version_start=inp.version_start,
+            metadata=inp.metadata,
+        )
+
+    @staticmethod
+    def concat(outputs: List["APIGenerateOutput"]):
+        return APIGenerateOutput(
+            qid=outputs[0].qid,
+            prompt_ids=outputs[0].prompt_ids,
+            input_ids=outputs[0].input_ids,
+            gconfig=outputs[0].gconfig,
+            prev_logprobs=outputs[0].prev_logprobs,
+            version_start=outputs[0].version_start,
+            metadata=outputs[0].metadata,
+            output_ids=sum([o.output_ids for o in outputs], []),
+            output_logprobs=sum([o.output_logprobs for o in outputs], []),
+            version_end=sum([o.version_end for o in outputs], []),
+            no_eos=sum([o.no_eos for o in outputs], []),
+            latency=max([o.latency for o in outputs]),
+            ttft=max([o.ttft for o in outputs]),
+            itl=sum([o.itl for o in outputs], []),
         )
 
     @property
-    def output_len(self):
+    def group_size(self):
         return len(self.output_ids)
+
+    @property
+    def output_lens(self):
+        return [len(x) for x in self.output_ids]
 
     @property
     def input_len(self):
@@ -83,26 +143,74 @@ class APIGenerateOutput:
         return len(self.prompt_ids)
 
     @property
-    def gen_len(self):
-        return self.output_len + self.input_len - self.prompt_len
+    def gen_lens(self):
+        return [len(x) + self.input_len - self.prompt_len for x in self.output_ids]
+
+    def get_logprobs(self) -> List[List[float]]:
+        logprobs = []
+        for logp in self.output_logprobs:
+            assert len(self.prev_logprobs) == self.input_len - self.prompt_len, (
+                len(self.prev_logprobs),
+                self.input_len,
+                self.prompt_len,
+            )
+            logprobs.append([0.0] * (self.prompt_len - 1) + self.prev_logprobs + logp)
+        return logprobs
 
 
 @dataclasses.dataclass
 class BundledGenerationOutputs:
+    ## Used for collecting generation outputs for env interaction or training. ##
+
+    # unique query id in the dataset
     qid: Hashable
+    # prompt token ids
     prompt_ids: List[int]
+    # output token ids excluding the prompt
+    output_ids: List[List[int]]
+    # whole sequences including the prompt
     seqs: List[List[int]]
+    # whole logprobs, one token shorter than seq
+    # logps at prompt tokens are zero
+    logprobs: List[List[float]]
+    # whether truncated
     no_eos: List[bool]
+    # server weight version when starting generation
+    version_start: List[int]
+    # server weight version when generation ends
+    version_end: List[int]
 
     @classmethod
-    def from_single(cls, outputs: List[APIGenerateOutput]):
+    def from_api_outputs(cls, outputs: List[APIGenerateOutput]):
         assert len(set(o.qid for o in outputs)) == 1
+        prompt_len = len(outputs[0].prompt_ids)
+        seqs = []
+        logprobs = []
+        version_starts = []
+        for o in outputs:
+            for out in o.output_ids:
+                seqs.append(o.input_ids + out)
+            for logp in o.get_logprobs():
+                logprobs.append(logp)
+            version_starts += [o.version_start] * o.group_size
         return cls(
             qid=outputs[0].qid,
             prompt_ids=outputs[0].prompt_ids,
-            seqs=[o.input_ids + o.output_ids for o in outputs],
-            no_eos=[o.no_eos for o in outputs],
+            seqs=seqs,
+            output_ids=[seq[prompt_len:] for seq in seqs],
+            logprobs=logprobs,
+            no_eos=sum([o.no_eos for o in outputs], []),
+            version_start=version_starts,
+            version_end=sum([o.version_end for o in outputs], []),
         )
+
+    @property
+    def output_logprobs(self):
+        return [lp[self.prompt_len - 1 :] for lp in self.logprobs]
+
+    @property
+    def output_lens(self):
+        return [len(out) for out in self.output_ids]
 
     @property
     def seqlens(self):
@@ -113,7 +221,10 @@ class BundledGenerationOutputs:
         return len(self.prompt_ids)
 
 
-AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
+AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(
+    total=6 * 60 * 60,
+    connect=300,
+)
 
 
 class LLMAPIClient:
@@ -128,7 +239,7 @@ class LLMAPIClient:
         self.semaphore: asyncio.Semaphore
 
     async def __aenter__(self):
-        conn = aiohttp.TCPConnector(limit=0, ttl_dns_cache=300)
+        conn = aiohttp.TCPConnector(limit=0, ttl_dns_cache=300, force_close=True)
         self.session = aiohttp.ClientSession(
             timeout=AIOHTTP_TIMEOUT,
             connector=conn,
