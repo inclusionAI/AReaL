@@ -51,7 +51,6 @@ class RPCCorountineControl:
 
     # recover information
     used_hash_vals_this_epoch: List[int] = dataclasses.field(default_factory=list)
-    hash_vals_to_ignore_in_recover: List[int] = dataclasses.field(default_factory=list)
 
 
 class ModelFunctionCall:

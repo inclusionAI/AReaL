@@ -622,6 +622,12 @@ class ModelWorker(worker_base.Worker):
             # Defer data that has not been used in the previous epoch.
             data_loaded = []
             for x in cur_sample.unpack():
+                if (
+                    self.__recover_run
+                    and x.ids[0] in self.__recover_info.hash_vals_to_ignore
+                ):
+                    self.__recover_info.hash_vals_to_ignore.remove(x.ids[0])
+                    continue
                 if self.data_manager.has_data(x.ids[0]):
                     continue
                 data_loaded.append(x)
@@ -767,9 +773,15 @@ class ModelWorker(worker_base.Worker):
                 model_name.role,
             )
             with constants.model_scope(model_name):
-                dist.barrier(group=constants.parallelism_group())
+                dist.barrier(group=constants.cpu_parallelism_group())
                 if constants.parallelism_rank() == 0:
-                    name_resolve.add_subentry(name, str(self._last_param_realloc_step))
+                    name_resolve.add(
+                        name,
+                        str(self._last_param_realloc_step),
+                        delete_on_exit=False,
+                        keepalive_ttl=30,
+                        replace=True,
+                    )
 
         self.__reply_queue.put_nowait((request, res))
         sample_count = data.bs if isinstance(data, data_api.SequenceSample) else 1

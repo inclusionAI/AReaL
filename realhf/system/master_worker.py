@@ -15,13 +15,6 @@ import numpy as np
 import wandb
 from tensorboardX import SummaryWriter
 
-try:
-    import uvloop
-
-    uvloop.install()
-except (ModuleNotFoundError, ImportError):
-    pass
-
 import realhf.api.core.dfg as dfg
 import realhf.api.core.model_api as model_api
 import realhf.api.core.system_api as config_pkg
@@ -129,11 +122,6 @@ class MasterWorker(worker_base.Worker):
             # NOTE: We should accumulate the used data hashes in the same epoch
             # to prevent loading data used before.
             used_hash_vals_this_epoch=(
-                copy.deepcopy(self.__recover_info.hash_vals_to_ignore)
-                if self.__recover_run
-                else list()
-            ),
-            hash_vals_to_ignore_in_recover=(
                 copy.deepcopy(self.__recover_info.hash_vals_to_ignore)
                 if self.__recover_run
                 else list()
