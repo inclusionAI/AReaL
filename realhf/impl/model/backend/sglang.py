@@ -317,7 +317,6 @@ class SGLangGenerationEngine(PipelinableEngine):
                     prompt_ids=prompt_token_ids,
                     input_ids=prompt_token_ids,
                     gconfig=gconfig,
-                    raw_gconfig=gconfig,
                     stop_token_ids=[tokenizer.pad_token_id, tokenizer.eos_token_id],
                     return_logprob=True,
                 )
@@ -437,7 +436,7 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
         ) != len(datapack.flat2d(ports)):
             dist.all_gather_object(
                 ports,
-                network.find_free_port(low=20000, high=40000),
+                network.find_multiple_free_ports(2, low=20000, high=40000),
                 group=constants.data_parallel_group(),
             )
         api_server_port, dist_port = ports[constants.data_parallel_rank()]
