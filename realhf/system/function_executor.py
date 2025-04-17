@@ -112,57 +112,43 @@ class FunctionExecutor:
             self.ctrl.ids_to_clear.clear()
 
     async def load_data(self):
-        src_rpc = self.src_rpc
-        src_rpc_model_name = src_rpc.model_name
         buffer = self.buffer
         ctrl = self.ctrl
 
-        dp_idx = self.data_loading_dp_idx
         received_ids = set()
 
         while self.buffer.size < max(rpc.n_seqs for rpc in self.rpcs):
 
-            dp_idx += 1
-            dp_idx %= self.src_dp_size
-
             resps = await self.stream.call_async(
-                handlers=[f"__data{dp_idx}__"],
+                handlers=[f"__data{dp_idx}__" for dp_idx in range(self.src_dp_size)],
                 handle_type="fetch",
-                datas=[None],
+                datas=[None for _ in range(self.src_dp_size)],
                 verbose=False,
             )
-            x: DataBatchMeta | None = resps[0]
 
-            if x is None:
-                continue
-            if x.meta_sample is None:
-                continue
+            all_data = []
+            data_cnt = []
+            gpu_id_data = {}
+            for dp_rank, x in enumerate(resps):
+                x: DataBatchMeta | None
 
-            all_data = x.meta_sample.unpack()
+                if x is None:
+                    data_cnt.append(0)
+                    continue
+                if x.meta_sample is None:
+                    data_cnt.append(0)
+                    continue
 
-            filtered_data = []
-            ids_to_ignore = []
-            for xx in x.meta_sample.unpack():
-                async with ctrl.lock:
-                    if xx.ids[0] in ctrl.hash_vals_to_ignore_in_recover:
-                        ctrl.hash_vals_to_ignore_in_recover.remove(xx.ids[0])
-                        ids_to_ignore.append(xx.ids[0])
-                    else:
+                for xx in x.meta_sample.unpack():
+                    async with ctrl.lock:
                         if xx.ids[0] in received_ids:
                             raise ValueError(f"Duplicate data id {xx.ids[0]}.")
                         received_ids.add(xx.ids[0])
-                        filtered_data.append(xx)
 
-            if ids_to_ignore:
-                # Clear ignored data.
-                self.stream.request(
-                    handlers=list(range(self.n_model_workers)),
-                    handle_type="clear_data_cache",
-                    datas=[ids_to_ignore for _ in list(range(self.n_model_workers))],
-                    no_syn=True,
-                )
-
-            all_data = filtered_data
+                gpu_id = self.stream.route_to(f"__data{dp_rank}__")
+                all_data += x.meta_sample.unpack()
+                gpu_id_data[gpu_id] = x.meta_sample.unpack()
+                data_cnt.append(x.meta_sample.bs)
 
             if self.shuffle_dataset:
                 # We load data in a round-robin manner across different DP ranks,
@@ -171,26 +157,26 @@ class FunctionExecutor:
 
             if len(all_data) > 0:
                 # Update resource tracker for planning data redistribution.
-                gpu_id = self.stream.route_to(f"__data{dp_idx}__")
-                for k in all_data[0].keys:
-                    await self.storage_tracker.add_data(
-                        gpu_id,
-                        [x.ids[0] for x in all_data],
-                        k,
-                        is_owner=True,
-                    )
+                for gpu_id, data in gpu_id_data.items():
+                    for k in data[0].keys:
+                        await self.storage_tracker.add_data(
+                            gpu_id,
+                            [d.ids[0] for d in data],
+                            k,
+                            is_owner=True,
+                        )
 
                 # Store into buffer!
                 buffer_indices = await buffer.put_batch(all_data)
                 assert len(buffer_indices) == len(all_data)
 
-            blogger.info(
-                f"Master worker loaded {len(all_data)} pieces of data from DP rank {dp_idx}. "
-                f"Remaining number of data to ignore: {len(self.ctrl.hash_vals_to_ignore_in_recover)}. "
-                f"Current buffer size: {buffer.size}/{buffer.max_size}. "
-            )
-
-        self.data_loading_dp_idx = dp_idx
+                blogger.info(
+                    f"Master worker loaded {len(all_data)} pieces of data from all dp ranks: "
+                    f"{data_cnt} from each rank. "
+                    f"Current buffer size: {buffer.size}/{buffer.max_size}. "
+                )
+            else:
+                await asyncio.sleep(1)
 
     def execute_step(self):
         logger.info("Waiting for the finish of the execution graph.")
