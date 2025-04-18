@@ -70,7 +70,10 @@ class MathSingleStepAgent(Agent):
 
         # single-step env
         _, success, *_ = await env.step((qid, answers))
-        rewards = [(float(r) - self.reward_bias) * self.reward_scaling for r in success]
+        rewards = [
+            ((float(r) - 0.5) * 2 - self.reward_bias) * self.reward_scaling
+            for r in success
+        ]
 
         self.log_rewards_to_file(
             str(qid),

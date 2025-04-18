@@ -1,3 +1,4 @@
+import os
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from typing import Dict, List, Optional, Tuple, Type, Union
 
@@ -309,16 +310,85 @@ class SGLangConfig:
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
     hybrid_train: bool = False
-    enable_metrics: bool = False
 
     # logging
     log_level: str = "info"
-    log_level_http: Optional[str] = None
+    log_level_http: Optional[str] = "warning"
     log_requests: bool = False
     log_requests_level: int = 0
     show_time_cost: bool = False
-    enable_metrics: bool = False  # Exports Prometheus-like metrics
-    decode_log_interval: int = 40  # How often (in tokens) to log decode progress.
+    enable_metrics: bool = True  # Exports Prometheus-like metrics
+    decode_log_interval: int = 1000  # How often (in tokens) to log decode progress.
+
+    # Use staticmethod to make OmegaConf happy.
+    @staticmethod
+    def build_cmd(
+        sglang_config: "SGLangConfig",
+        model_path,
+        tp_size,
+        server_index,
+        base_gpu_id,
+    ):
+        from realhf.base import constants, network, pkg_version, seeding
+        from realhf.experiments.common.utils import asdict as conf_as_dict
+
+        args: Dict = conf_as_dict(sglang_config)
+        args.pop("hybrid_train")
+        args["random_seed"] = seeding.get_seed()
+
+        host_ip = network.gethostip()
+        host = "localhost" if not sglang_config.enable_metrics else host_ip
+        args = dict(
+            host=host,
+            model_path=model_path,
+            # Model and tokenizer
+            tokenizer_path=model_path,
+            tokenizer_mode="auto",
+            load_format="auto",
+            trust_remote_code=True,
+            kv_cache_dtype="auto",
+            device="cuda",
+            served_model_name=f"{constants.experiment_name()}/{constants.trial_name()}/{model_path}",
+            is_embedding=False,
+            skip_tokenizer_init=True,
+            # Other runtime options
+            tp_size=tp_size,
+            # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
+            base_gpu_id=base_gpu_id,
+            file_storage_path=os.path.join(
+                constants.SGLANG_CACHE_PATH,
+                f"sglang_storage{server_index}",
+            ),
+            # Data parallelism
+            dp_size=1,  # TODO: check whether we require SGLang dp
+            load_balance_method="round_robin",
+            # Expert parallelism
+            ep_size=1,  # TODO: check
+            nnodes=1,
+            node_rank=0,
+            **args,
+        )
+
+        if pkg_version.is_version_less("sglang", "0.4.4"):
+            args.pop("log_requests_level")
+        if pkg_version.is_version_less("sglang", "0.4.3"):
+            args.pop("enable_nccl_nvls")
+            args.pop("triton_attention_num_kv_splits")
+            args.pop("cuda_graph_bs")
+            args.pop("enable_memory_saver")
+            args.pop("allow_auto_truncate")
+            args.pop("file_storage_path")
+
+        flags = []
+        for k, v in args.items():
+            if v is None or v is False or v == "":
+                continue
+            if v is True:
+                flags.append(f"--{k.replace('_','-')} ")
+                continue
+            flags.append(f"--{k.replace('_','-')} {v}")
+        flags = " ".join(flags)
+        return f"python3 -m sglang.launch_server {flags}"
 
 
 @dataclass

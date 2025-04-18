@@ -4,7 +4,7 @@
 
 import dataclasses
 import os
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import realhf.api.core.dfg as dfg
 from realhf.api.cli_args import (
@@ -14,7 +14,9 @@ from realhf.api.cli_args import (
     WandBConfig,
 )
 from realhf.api.core.config import (
+    AgentAbstraction,
     DatasetAbstraction,
+    EnvServiceAbstraction,
     ModelAbstraction,
     ModelName,
     ModelShardID,
@@ -23,7 +25,9 @@ from realhf.api.core.config import (
 from realhf.base import constants, topology
 from realhf.base.cluster import spec as cluster_spec
 
-_LLM_GPU_IMAGE = cluster_spec.gpu_image
+# TODO: use different images
+_LLM_GPU_TRAIN_IMAGE = cluster_spec.gpu_image
+_LLM_GPU_INFER_IMAGE = cluster_spec.gpu_image
 _LLM_CPU_IMAGE = cluster_spec.cpu_image
 
 
@@ -62,7 +66,43 @@ class Scheduling:
                 "cpu": 2,
                 "gpu": 1,
                 "mem": 60 * 1024,
-                "container_image": _LLM_GPU_IMAGE,
+                "container_image": _LLM_GPU_TRAIN_IMAGE,
+                **kwargs,
+            }
+        )
+
+    @staticmethod
+    def generation_server_default(**kwargs):
+        return Scheduling(
+            **{
+                "cpu": 4,
+                "gpu": 1,
+                "mem": 60 * 1024,
+                "container_image": _LLM_GPU_INFER_IMAGE,
+                **kwargs,
+            }
+        )
+
+    @staticmethod
+    def gserver_manager_default(**kwargs):
+        return Scheduling(
+            **{
+                "cpu": 4,
+                "gpu": 0,
+                "mem": 10 * 1024,
+                "container_image": _LLM_GPU_TRAIN_IMAGE,
+                **kwargs,
+            }
+        )
+
+    @staticmethod
+    def rollout_worker_default(**kwargs):
+        return Scheduling(
+            **{
+                "cpu": 4,
+                "gpu": 0,
+                "mem": 20 * 1024,
+                "container_image": _LLM_GPU_TRAIN_IMAGE,
                 **kwargs,
             }
         )
@@ -127,8 +167,8 @@ class ModelWorker:
     model_rpcs: List[dfg.MFCDef] = None
     model_topos: Dict[ModelName, topology.ProcessTopology] = None
     msid2mwid: Dict[ModelShardID, int] = None
-    data_transfer_pairs: List[Tuple[str, str]] = None
-    sync_param_pairs: List[Tuple[str, str]] = None
+    data_transfer_pairs: List[Tuple[ModelName, ModelName]] = None
+    sync_param_pairs: List[Tuple[ModelName, ModelName]] = None
     # profiling
     profile_mode: bool = False
     worker_info: Optional[WorkerInformation] = None
@@ -139,6 +179,41 @@ class ModelWorker:
             raise ValueError(
                 f"ModelWorker cannot have multiple shards of the same model name: {model_names}."
             )
+
+
+@dataclasses.dataclass
+class GenerationServer:
+    base_seed: int
+    backend_type: str
+    backend_args: Any
+    model_path: str
+    tp_size: int
+    worker_info: WorkerInformation = None
+
+
+@dataclasses.dataclass
+class GserverManager:
+    model_name: ModelName
+    n_servers: int
+    schedule_policy: str
+    worker_info: WorkerInformation = None
+
+
+@dataclasses.dataclass
+class RolloutWorker:
+    base_seed: int
+    model_name: ModelName
+    max_head_offpolicyness: int
+    train_batch_size: int
+    tokenizer_path: str
+    new_tokens_per_chunk: int
+    max_concurrent_rollouts: int
+    env: EnvServiceAbstraction
+    agent: AgentAbstraction
+    datasets: List[Union[str, DatasetAbstraction]]
+    use_dataset_cache: bool = False
+    dataset_cahce_root: str = constants.DATASET_CACHE_PATH
+    worker_info: WorkerInformation = None
 
 
 @dataclasses.dataclass
@@ -164,12 +239,11 @@ class TasksGroup:
 
 @dataclasses.dataclass
 class ExperimentScheduling:
-    model_worker: Union[List[TasksGroup], TasksGroup] = dataclasses.field(
-        default_factory=list
-    )
-    master_worker: Union[List[TasksGroup], TasksGroup] = dataclasses.field(
-        default_factory=list
-    )
+    model_worker: TasksGroup
+    master_worker: TasksGroup
+    generation_server: TasksGroup | None = None
+    gserver_manager: TasksGroup | None = None
+    rollout_worker: TasksGroup | None = None
     controller_image: str = _LLM_CPU_IMAGE
 
 
@@ -181,6 +255,9 @@ class ExperimentConfig:
     # dataflow
     model_rpcs: List[dfg.MFCDef]
     model_worker: List[ModelWorker] = dataclasses.field(default_factory=list)
+    generation_server: List[GenerationServer] = dataclasses.field(default_factory=list)
+    gserver_manager: List[GserverManager] = dataclasses.field(default_factory=list)
+    rollout_worker: List[RolloutWorker] = dataclasses.field(default_factory=list)
     # master_worker will be set automatically
     master_worker: Optional[List[MasterWorker]] = None
     # automatic evaluation
@@ -262,12 +339,12 @@ class ExperimentConfig:
         return getattr(self, worker_type)[worker_index]
 
     def set_worker_information(self, experiment_name, trial_name):
-        if len(self.model_worker) > 0:
-            assert len(self.master_worker) == 1
-
         for worker_type, workers in [
             ("model_worker", self.model_worker),
             ("master_worker", self.master_worker),
+            ("gserver_manager", self.gserver_manager),
+            ("rollout_worker", self.rollout_worker),
+            ("generation_server", self.generation_server),
         ]:
             if len(workers) == 0:
                 continue
