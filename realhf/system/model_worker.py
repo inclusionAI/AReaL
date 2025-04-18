@@ -54,6 +54,7 @@ from realhf.impl.model.utils import cuda_graph
 from realhf.system import request_reply_stream, worker_base
 from realhf.system.data_manager import DataManager
 from realhf.system.redistributor import RedistribStep
+from realhf.system.stream_dataset import PullerStreamDataset
 
 # NOTE: Register all implemented datasets and models.
 import realhf.impl.dataset  # isort:skip
@@ -143,6 +144,27 @@ class ModelWorker(worker_base.Worker):
         self.__enable_memory_dump = os.getenv("REAL_DUMP_MEMORY", "0") == "1"
         self.__performance_recorder = dict()
 
+        # Add an additional subscript pattern for source RPCs.
+        self.__has_dataset = False
+        self.__dataset_dp_size = self.__dataset_dp_rank = 0
+        sub_patterns = [s.id for s in self.config.shards]
+        src_rpc = [rpc for rpc in self.config.model_rpcs if rpc.is_src][0]
+        self.__src_rpc_model_name = src_rpc.model_name
+        for s in self.config.shards:
+            _pp_size = s.id.topo.get_dim("pipe")
+            if not (s.id.mp_rank == 0 and s.id.pp_rank == _pp_size - 1):
+                continue
+            if src_rpc.model_name == s.id.model_name:
+                self.__has_dataset = True
+                self.__dataset_dp_size = s.id.topo.get_dim("data")
+                self.__dataset_dp_rank = s.id.dp_rank
+                sub_patterns.append(f"__data{self.__dataset_dp_rank}__")
+                break
+
+        if self.__has_dataset:
+            name = names.stream_pullers(self.__experiment_name, self.__trial_name)
+            name_resolve.add_subentry(name, str(self.__dataset_dp_rank))
+
         return r
 
     def _get_recover_ckpt_path(self, role: str):
@@ -220,22 +242,6 @@ class ModelWorker(worker_base.Worker):
         return self.__backends[constants.model_name()]
 
     def __lazy_setup(self):
-        # Add an additional subscript pattern for source RPCs.
-        self.__has_dataset = False
-        self.__dataset_dp_size = self.__dataset_dp_rank = 0
-        sub_patterns = [s.id for s in self.config.shards]
-        src_rpc = [rpc for rpc in self.config.model_rpcs if rpc.is_src][0]
-        self.__src_rpc_model_name = src_rpc.model_name
-        for s in self.config.shards:
-            _pp_size = s.id.topo.get_dim("pipe")
-            if not (s.id.mp_rank == 0 and s.id.pp_rank == _pp_size - 1):
-                continue
-            if src_rpc.model_name == s.id.model_name:
-                self.__has_dataset = True
-                self.__dataset_dp_size = s.id.topo.get_dim("data")
-                self.__dataset_dp_rank = s.id.dp_rank
-                sub_patterns.append(f"__data{self.__dataset_dp_rank}__")
-                break
 
         # Build stream connecting with master workers.
         self.__stream = request_reply_stream.make_worker_stream(
@@ -321,19 +327,22 @@ class ModelWorker(worker_base.Worker):
 
             g = torch.Generator()
             g.manual_seed(seeding.get_seed())
-            self.__dataloader = torch.utils.data.DataLoader(
-                self.__dataset,
-                collate_fn=data_api.SequenceSample.gather,
-                # NOTE: This is *NOT* the actual batch size for training.
-                # It is just a proper size to load data to workers.
-                batch_size=10240,
+            dataloader_kwargs = dict(
                 shuffle=self.config.shuffle_dataset,
                 generator=g,
             )
+            if not isinstance(self.__dataset, PullerStreamDataset):
+                dataloader_kwargs["collate_fn"] = data_api.SequenceSample.gather
+                # NOTE: This is *NOT* the actual batch size for training.
+                # It is just a proper size to load data to workers.
+                dataloader_kwargs["batch_size"] = 10240
+            else:
+                dataloader_kwargs["batch_size"] = None
+            self.__dataloader = torch.utils.data.DataLoader(
+                self.__dataset, **dataloader_kwargs
+            )
 
-            self.__raw_samples = []
-            for tmp_sample in self.__dataloader:
-                self.__raw_samples += tmp_sample.meta().unpack()
+            self.dataset_size = len(self.__dataset)
 
             self.__data_generator = enumerate(self.__dataloader)
 
@@ -471,13 +480,6 @@ class ModelWorker(worker_base.Worker):
             for model_name in self.__models.keys()
         }
 
-        # By intention, must be smaller than -1.
-        self._last_param_realloc_step = -100
-        if self.__recover_run:
-            self._last_param_realloc_step = (
-                self.__recover_info.last_step_info.global_step
-            )
-
     def __handle_one_rpc_hook(self, hook: str, hook_data: Any):
         ret = None
 
@@ -607,21 +609,31 @@ class ModelWorker(worker_base.Worker):
                     )
                 g = torch.Generator()
                 g = g.set_state(self.__dataloader.generator.get_state())
-                self.__dataloader = torch.utils.data.DataLoader(
-                    self.__dataset,
-                    collate_fn=data_api.SequenceSample.gather,
-                    # NOTE: This is *NOT* the actual batch size for training.
-                    # It is just a proper size to load data to workers.
-                    batch_size=10240,
+                dataloader_kwargs = dict(
                     shuffle=self.config.shuffle_dataset,
                     generator=g,
+                )
+                if not isinstance(self.__dataset, PullerStreamDataset):
+                    dataloader_kwargs["collate_fn"] = data_api.SequenceSample.gather
+                    # NOTE: This is *NOT* the actual batch size for training.
+                    # It is just a proper size to load data to workers.
+                    dataloader_kwargs["batch_size"] = 10240
+                else:
+                    dataloader_kwargs["batch_size"] = None
+                self.__dataloader = torch.utils.data.DataLoader(
+                    self.__dataset, **dataloader_kwargs
                 )
                 self.__data_generator = enumerate(self.__dataloader)
                 self.__dataset_batch_counter, cur_sample = next(self.__data_generator)
 
-            # Defer data that has not been used in the previous epoch.
+            if isinstance(cur_sample, data_api.SequenceSample):
+                samples = cur_sample.unpack()
+            else:
+                assert isinstance(cur_sample, list), type(cur_sample)
+                samples = cur_sample
+
             data_loaded = []
-            for x in cur_sample.unpack():
+            for x in samples:
                 if (
                     self.__recover_run
                     and x.ids[0] in self.__recover_info.hash_vals_to_ignore
@@ -645,7 +657,7 @@ class ModelWorker(worker_base.Worker):
             )
         elif request.handle_name == "spec":
             # Raw dataset without filtering.
-            res = self.__raw_samples
+            res = self.dataset_size
         elif request.handle_name == "clear_data_cache":
             with cuda_tmarked("clear_data_cache", CUDATimeMarkType.misc):
                 ids = request.data
@@ -754,12 +766,13 @@ class ModelWorker(worker_base.Worker):
 
         # update param realloc step after handling post hooks
         if request.handle_name == "train_step":
-            self._last_param_realloc_step = max(self._last_param_realloc_step + 1, 1)
+            global_step = self.__models[model_name].version.global_step
             realloc_dir = os.path.join(
                 constants.PARAM_REALLOC_PATH,
                 constants.experiment_name(),
                 constants.trial_name(),
                 model_name.role,
+                str(global_step),
             )
             save_meta = dict(
                 model_name=model_name,
@@ -777,7 +790,7 @@ class ModelWorker(worker_base.Worker):
                 if constants.parallelism_rank() == 0:
                     name_resolve.add(
                         name,
-                        str(self._last_param_realloc_step),
+                        str(global_step),
                         delete_on_exit=False,
                         keepalive_ttl=30,
                         replace=True,
@@ -1050,11 +1063,13 @@ class ModelWorker(worker_base.Worker):
                 m.contiguous_param = dummy_tensor
                 return
 
+            global_step = self.__models[from_model_name].version.global_step
             realloc_dir = os.path.join(
                 constants.PARAM_REALLOC_PATH,
                 constants.experiment_name(),
                 constants.trial_name(),
                 from_model_name.role,
+                str(global_step),
             )
             if from_model_name in self.__unwrapped_models:
                 save_meta = dict(

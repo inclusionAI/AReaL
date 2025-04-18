@@ -6,7 +6,7 @@ import orjson
 import zmq
 from zmq.utils.strtypes import asbytes
 
-from realhf.base import logging
+from realhf.base import logging, name_resolve, names, network
 
 logger = logging.getLogger("ZMQ Push-Pull Stream")
 
@@ -97,7 +97,7 @@ class ZMQJsonPuller:
         self.poller = zmq.Poller()
         self.poller.register(self.socket, zmq.POLLIN)
 
-    def pull(self, timeout_ms: Optional[int] = None) -> JSONType:
+    def pull(self, timeout_ms: Optional[int] = None):
         """
         Pull and decode JSON data with configurable timeout.
 
@@ -126,3 +126,52 @@ class ZMQJsonPuller:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+
+def grouping(num_senders, num_receivers):
+    groups = {}
+    assert num_senders >= num_receivers
+    # Each PULL gets multiple PUSH
+    senders_per_receiver = num_senders // num_receivers
+    for receiver_id in range(num_receivers):
+        start = receiver_id * senders_per_receiver
+        end = (receiver_id + 1) * senders_per_receiver
+        groups[receiver_id] = list(range(start, end))
+    # Distribute remaining senders
+    remaining = num_senders % num_receivers
+    for i in range(remaining):
+        groups[i].append(num_receivers * senders_per_receiver + i)
+    return groups
+
+
+class NameResolvingZmqPusher(ZMQJsonPusher):
+    def __init__(self, experiment_name, trial_name, pusher_index, pusher_cnt, **kwargs):
+        pullers = name_resolve.get_subtree(
+            names.stream_pullers(experiment_name, trial_name)
+        )
+        pullers = list(map(int, pullers))
+        puller_cnt = len(pullers)
+        assert sorted(pullers) == list(range(puller_cnt))
+        groups = grouping(pusher_cnt, puller_cnt)
+        puller_index = None
+        for puller_index, pusher_indices in groups.items():
+            if pusher_index in pusher_indices:
+                break
+        assert puller_index is not None
+        name = names.push_pull_stream(
+            experiment_name, trial_name, stream_name=f"puller{puller_index}"
+        )
+        addr = name_resolve.wait(name)
+        host, port = addr.split(":")
+        super().__init__(host, int(port), **kwargs)
+
+
+class NameResolvingZmqPuller(ZMQJsonPuller):
+    def __init__(self, experiment_name, trial_name, puller_index, **kwargs):
+        name = names.push_pull_stream(
+            experiment_name, trial_name, stream_name=f"puller{puller_index}"
+        )
+        host, port = network.gethostip(), network.find_free_port()
+        addr = f"{host}:{port}"
+        name_resolve.add(name, addr)
+        super().__init__(host, port, **kwargs)

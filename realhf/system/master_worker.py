@@ -210,22 +210,15 @@ class MasterWorker(worker_base.Worker):
         src_rpc_dp_size = src_rpc_topo.get_dim("data")
 
         # Request training specification from data workers.
-        all_data = sum(
+        self._dataset_size = sum(
             self.__stream.call(
                 handlers=[f"__data{i}__" for i in range(src_rpc_dp_size)],
                 datas=[None for i in range(src_rpc_dp_size)],
                 handle_type="spec",
             ),
-            [],
         )
 
-        # NOTE: For dynamic datasets, we still count epoch according to the initial number of data,
-        # such that the learning rate decay is not affected.
-        seqlens = [max(sum(v[0]) for v in x.seqlens.values()) for x in all_data]
-        self._dataset_size = len(all_data)
         self._steps_per_epoch = self._dataset_size // src_rpc.n_seqs
-        self._avg_tokens_per_batch = sum(seqlens) / self._steps_per_epoch
-        self._dataset_ids = [copy.deepcopy(x.ids[0]) for x in all_data]
 
         # Request model configs from model workers.
         # Return None if the model is not a ReaLModel.
@@ -444,7 +437,6 @@ class MasterWorker(worker_base.Worker):
         s = f"Epoch {epoch}/{self.config.exp_ctrl.total_train_epochs} "
         s += f"step {epoch_step}/{self._steps_per_epoch} "
         s += f"(global step {global_step}) finishes. "
-        s += f"Average #tokens per batch is {self._avg_tokens_per_batch:.0f}. "
         s += f"#End to end# execution time: *{e2e_time:.3f}*s. "
         s += f"Total time consumption: {time_since_configure:.3f}s. "
         if len(self.e2e_time_history) > 2:
