@@ -87,7 +87,7 @@ class NameRecordRepository:
         The values is retrievable by get_subtree() given that no other
         entries use the name prefix.
         """
-        sub_name = name.rstrip("/") + "/" + str(uuid.uuid4())[:8]
+        sub_name = os.path.join(os.path.normpath(name), str(uuid.uuid4())[:8])
         self.add(sub_name, value, **kwargs)
         return sub_name
 
@@ -231,7 +231,7 @@ class MemoryNameRecordRepository(NameRecordRepository):
     def clear_subtree(self, name_root):
         if self.__log_events:
             print(f"NameResolve: clear_subtree {name_root}")
-        name_root = name_root.rstrip("/")
+        name_root = os.path.normpath(name_root)
         for name in list(self.__store):
             if (
                 name_root == "/"
@@ -254,7 +254,7 @@ class MemoryNameRecordRepository(NameRecordRepository):
     def get_subtree(self, name_root):
         if self.__log_events:
             print(f"NameResolve: get_subtree {name_root}")
-        name_root = name_root.rstrip("/")
+        name_root = os.path.normpath(name_root)
         rs = []
         for name, value in self.__store.items():
             if (
@@ -736,7 +736,7 @@ class Etcd3NameRecordRepository(NameRecordRepository):
         """
         with self._lock:
             count = 0
-            name_root = name_root.rstrip("/")
+            name_root = os.path.normpath(name_root)
             # Get all keys with the prefix
             for key_metadata_tuple in self._client.get_prefix(name_root):
                 key = key_metadata_tuple[1].key.decode(
@@ -762,7 +762,7 @@ class Etcd3NameRecordRepository(NameRecordRepository):
         """
         with self._lock:
             rs = []
-            name_root = name_root.rstrip("/")
+            name_root = os.path.normpath(name_root)
             for value_metadata_tuple in self._client.get_prefix(name_root):
                 value = value_metadata_tuple[0].decode("utf-8")  # Extract the value
                 rs.append(value)

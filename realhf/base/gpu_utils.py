@@ -137,18 +137,28 @@ def isolate_cuda_device(
     # logger.info(f"Rank {rank} discovers local peers with global ranks {local_peers}")
 
     local_peer_index = local_peers.index(str(rank))
-    if len(os.environ["CUDA_VISIBLE_DEVICES"].split(",")) == len(local_peers):
-        local_gpu_id = list(map(int, os.environ["CUDA_VISIBLE_DEVICES"].split(",")))[
-            local_peer_index
-        ]
-    elif len(os.environ["CUDA_VISIBLE_DEVICES"].split(",")) == 1:
-        local_gpu_id = int(os.environ["CUDA_VISIBLE_DEVICES"])
+    n_local_peers = len(local_peers)
+    visible_devices = os.environ["CUDA_VISIBLE_DEVICES"].split(",")
+    n_visible_devices = len(visible_devices)
+    if n_visible_devices == 0:
+        raise RuntimeError(
+            f"No visible cuda devices: {os.environ['CUDA_VISIBLE_DEVICES']}"
+        )
+    if n_visible_devices == n_local_peers:
+        local_gpu_id = visible_devices[local_peer_index]
+    elif n_visible_devices == 1:
+        local_gpu_id = os.environ["CUDA_VISIBLE_DEVICES"]
+    elif n_visible_devices % n_local_peers == 0:
+        # A process occupies multiple GPUs, e.g., TP generation server
+        factor = n_visible_devices // n_local_peers
+        local_gpu_id = visible_devices[factor * local_peer_index]
     else:
         if not os.environ.get("REAL_MODE") == "LOCAL":
             raise RuntimeError(
                 f"Unresolvable CUDA_VISIBLE_DEVICES {os.environ['CUDA_VISIBLE_DEVICES']} on host {network.gethostname()}, "
                 f"local peers (global ranks) {local_peers}, local peer index {local_peer_index}."
             )
+        # In the local mode, all processes use GPUs in a round-robin manner
         devices = os.environ["CUDA_VISIBLE_DEVICES"].split(",")
         local_gpu_id = int(devices[local_peer_index % len(devices)])
 
