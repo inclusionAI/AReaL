@@ -54,7 +54,7 @@ def parse_line(id2info, prompt_str, generated, query_id):
             f.write(json.dumps({"answer": generated, "solution": cur_solution}) + "\n")
 
     venv_python = "/sympy/bin/python3"
-    logger.info(f"math verify working dir: `{os.getcwd()}`")
+    # logger.info(f"math verify working dir: `{os.getcwd()}`")
     pro = subprocess.Popen(
         " ".join(
             [
@@ -131,7 +131,7 @@ def parse_lines_in_parallel(
         all_query_indices.append(query_indices)
 
     venv_python = "/sympy/bin/python3"
-    logger.info(f"math verify working dir: `{os.getcwd()}`")
+    # logger.info(f"math verify working dir: `{os.getcwd()}`")
     procs = []
     for tmp_id in tmp_ids:
         pro = subprocess.Popen(

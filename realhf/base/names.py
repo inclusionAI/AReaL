@@ -87,3 +87,7 @@ def push_pull_stream_root(experiment_name, trial_name):
 def stream_pullers(experiment_name, trial_name):
     # Used to claim identities so that pushers know the number of pullers
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/push_pull_stream_peers/"
+
+
+def gen_servers(experiment_name, trial_name):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/gen_servers"

@@ -198,7 +198,10 @@ def main_start(args, recover_count: int = 0):
         raise e
     logger.info(f"Resetting name resolving repo... Done.")
 
-    logger.info(f"Running configuration: {experiment.__class__.__name__}")
+    logger.info(
+        f"Running configuration: {experiment.__class__.__name__}. "
+        f"The current recover retry: {recover_count + 1}/{args.recover_retries}"
+    )
 
     # Schedule controller
     if args.mode == "ray":
