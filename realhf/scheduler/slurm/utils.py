@@ -264,15 +264,11 @@ class SlurmLaunchInfo:
                 f"GPU per worker {gpu_per_worker}, workers per jobstep (process size in `apps.remote`) {self.wprocs_per_jobstep}, "
                 f"number of jobsteps (instance of running `apps.remote`) {self.n_jobsteps}"
             )
-        elif gpu_per_worker == 0:
-            self.wprocs_per_jobstep = self.wprocs_in_job
-            self.n_jobsteps = 1
-        elif gpu_per_worker == 1:
+        elif gpu_per_worker in [0, 1]:
             self.n_jobsteps = self.wprocs_in_job
             self.wprocs_per_jobstep = 1
         else:
-            self.n_jobsteps = 1
-            self.wprocs_per_jobstep = 1
+            raise ValueError(f"Invalid gpu per worker: {gpu_per_worker}")
 
     @property
     def slurm_name(self) -> str:
