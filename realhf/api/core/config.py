@@ -17,6 +17,18 @@ class DatasetAbstraction:
 
 
 @dataclasses.dataclass
+class EnvServiceAbstraction:
+    type_: str = "null"
+    args: Dict[str, Any] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass
+class AgentAbstraction:
+    type_: str = "null"
+    args: Dict[str, Any] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass
 class ModelWrapperAbstraction:
     type_: str
     args: Dict[str, Any] = dataclasses.field(default_factory=dict)
