@@ -466,7 +466,7 @@ class ModelTrainEvalConfig:
         default=True, metadata={"help": "Enable memory-saving gradient checkpointing"}
     )
     bf16: bool = field(
-        default=True, metadata={"help": "Use bf16 precision (otherwise fp16)"}
+        default=False, metadata={"help": "Use bf16 precision (otherwise fp16)"}
     )
 
     # Backend-Specific Configurations
