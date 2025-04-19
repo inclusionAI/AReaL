@@ -1048,7 +1048,7 @@ class ModelWorker(worker_base.Worker):
             # If the source is not a trainable model, it will not own
             # parameters, so we just release its GPU memory.
             with constants.model_scope(from_model_name):
-                from_model_ranks = constants.parallelism_group_ranks()
+                from_model_ranks = sorted(constants.parallelism_group_ranks())
             if not param_realloc_comm.is_trainable(from_model_name):
                 if dist.get_rank() not in from_model_ranks:
                     return
@@ -1063,7 +1063,22 @@ class ModelWorker(worker_base.Worker):
                 m.contiguous_param = dummy_tensor
                 return
 
-            global_step = self.__models[from_model_name].version.global_step
+            # Get global_step from source model via broadcast,
+            # since there are no global_step information on model workers for generation.
+            if (
+                from_model_name in self.__models
+                and dist.get_rank() == from_model_ranks[0]
+            ):
+                global_step = self.__models[from_model_name].version.global_step
+            else:
+                global_step = 0
+            g = self.__param_realloc_info.param_realloc_model_cpu_group[
+                param_realloc_comm.ParamReallocModelPair(from_model_name, to_model_name)
+            ]
+            global_step = torch.tensor(global_step, device="cpu")
+            dist.broadcast(global_step, src=from_model_ranks[0], group=g)
+            global_step = int(global_step.item())
+
             realloc_dir = os.path.join(
                 constants.PARAM_REALLOC_PATH,
                 constants.experiment_name(),
@@ -1078,9 +1093,6 @@ class ModelWorker(worker_base.Worker):
                     save_dir=realloc_dir,
                 )
                 self.__save_model(save_meta)
-            g = self.__param_realloc_info.param_realloc_model_cpu_group[
-                param_realloc_comm.ParamReallocModelPair(from_model_name, to_model_name)
-            ]
             dist.barrier(group=g)
             if to_model_name in self.__unwrapped_models:
                 load_meta = dict(
