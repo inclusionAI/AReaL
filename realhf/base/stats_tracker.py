@@ -59,7 +59,7 @@ class DistributedStatsTracker:
                 raise ValueError(f"`{key}` must be non-empty")
             full_key = self._get_full_key(key)
             self._set_reduce_type(full_key, ReduceType.SUM)
-            self.stats[full_key].append(value)
+            self.stats[full_key].append(value.detach().clone())
 
     def scalar(self, **kwargs):
         for key, value in kwargs.items():
@@ -95,7 +95,7 @@ class DistributedStatsTracker:
             if reduce_type is not None:
                 self._set_reduce_type(full_key, reduce_type)
 
-            self.stats[full_key].append(value)
+            self.stats[full_key].append(value.detach().clone())
 
     def _set_reduce_type(self, key, reduce_type):
         if not isinstance(reduce_type, ReduceType):

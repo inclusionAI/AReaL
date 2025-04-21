@@ -52,7 +52,7 @@ torch>2.0.0
 black==25.1.0
 cookiecutter>2.1.1
 asyncio
-aiohttp
+aiohttp>=3.11.10
 httpx>=0.28.1
 etcd3
 protobuf<3.21

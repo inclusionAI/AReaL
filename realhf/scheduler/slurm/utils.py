@@ -264,11 +264,9 @@ class SlurmLaunchInfo:
                 f"GPU per worker {gpu_per_worker}, workers per jobstep (process size in `apps.remote`) {self.wprocs_per_jobstep}, "
                 f"number of jobsteps (instance of running `apps.remote`) {self.n_jobsteps}"
             )
-        elif gpu_per_worker in [0, 1]:
+        else:
             self.n_jobsteps = self.wprocs_in_job
             self.wprocs_per_jobstep = 1
-        else:
-            raise ValueError(f"Invalid gpu per worker: {gpu_per_worker}")
 
     @property
     def slurm_name(self) -> str:
@@ -785,12 +783,16 @@ def allocate_resources(
                 # (16 PPUs/8 GPUs by default)
                 batched_requirement = info.resource_requirement
                 batched_ntasks = 1
-                if info.resource_requirement.gpu > 0:
-                    assert task_left % cluster.spec.n_gpus_per_node == 0
-                    batched_ntasks = cluster.spec.n_gpus_per_node
-                    batched_requirement = (
-                        cluster.spec.n_gpus_per_node * info.resource_requirement
-                    )
+                gpu_per_task = info.resource_requirement.gpu
+                if gpu_per_task > 0:
+                    assert (
+                        task_left * gpu_per_task % cluster.spec.n_gpus_per_node == 0
+                    ), (task_left, gpu_per_task)
+                    assert (
+                        cluster.spec.n_gpus_per_node % gpu_per_task == 0
+                    ), gpu_per_task
+                    batched_ntasks = int(cluster.spec.n_gpus_per_node // gpu_per_task)
+                    batched_requirement = batched_ntasks * info.resource_requirement
                 try:
                     resource = resource - batched_requirement
                 except InvalidGPUTypeException:

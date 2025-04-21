@@ -31,6 +31,10 @@ import_module(
     str(pathlib.Path(__file__).resolve().parent.parent / "experiments" / "common"),
     re.compile(r".*_exp\.py$"),
 )
+import_module(
+    str(pathlib.Path(__file__).resolve().parent.parent / "experiments" / "async_exp"),
+    re.compile(r".*_exp\.py$"),
+)
 import realhf.experiments.benchmark.profile_exp
 
 

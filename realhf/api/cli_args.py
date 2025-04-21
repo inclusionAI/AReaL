@@ -987,6 +987,55 @@ class BaseExperimentConfig:
     )
 
 
+## Configuration options of asynchronous experiments. ##
+
+
+@dataclass
+class AsyncRLOptions:
+    new_tokens_per_chunk: int = field(
+        default=1024,
+        metadata={"help": "The lenght of chunked generation."},
+    )
+    max_head_offpolicyness: int = field(
+        default=0,
+        metadata={"help": "Maximum off-policyness tolerance for the first token."},
+    )
+
+    n_rollout_workers: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Number of rollout workers. None defaults to train world size."
+        },
+    )
+    max_concurrent_rollouts: int = field(
+        default=1024,
+        metadata={"help": "Max concurrent rollout jobs in each worker."},
+    )
+    flush_request_timeout: int = field(
+        default=120,
+        metadata={"help": "The timeout of flushing requests upon weight update."},
+    )
+
+    cpus_per_generation_server: int = field(
+        default=4, metadata={"help": "Generation server CPUs."}
+    )
+    mem_per_generation_server: int = field(
+        default=60 * 1024, metadata={"help": "Generation server CPU memory in MB."}
+    )
+    cpus_per_gserver_manager: int = field(
+        default=4, metadata={"help": "Generation manager CPUs."}
+    )
+    mem_per_gserver_manager: int = field(
+        default=10 * 1024, metadata={"help": "Generation manager CPU memory in MB."}
+    )
+    cpus_per_rollout_worker: int = field(
+        default=4, metadata={"help": "Rollout worker CPUs."}
+    )
+    mem_per_rollout_worker: int = field(
+        default=20 * 1024, metadata={"help": "Rollout worker CPU memory in MB."}
+    )
+
+
 ## Configurations for practical experiments. ##
 
 
@@ -1155,6 +1204,19 @@ class PPOMATHExperimentOptions:
     )
     dataset_max_filter_percentage: float = field(
         default=0.0, metadata={"help": "Maximum percentage of dataset to each filter."}
+    )
+
+    success_rate_ub: float = field(
+        default=1.0,
+        metadata={
+            "help": "Success rate higher than this value will be filtered out after generation. Valid for async training."
+        },
+    )
+    success_rate_lb: float = field(
+        default=0.0,
+        metadata={
+            "help": "Success rate lower than this value will be filtered out after generation. Valid for async training."
+        },
     )
 
 
