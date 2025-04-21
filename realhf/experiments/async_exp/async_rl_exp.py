@@ -96,6 +96,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                     cpu=self.cpus_per_master_worker,
                     mem=self.mem_per_master_worker,
                     nodelist=self.nodelist,
+                    exclude=self.exclude,
                 ),
             ),
             model_worker=TasksGroup(
@@ -106,6 +107,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                     gpu_type=cluster_spec.gpu_type,
                     mem=self.mem_per_model_worker,
                     nodelist=self.nodelist,
+                    exclude=self.exclude,
                 ),
             ),
             generation_server=TasksGroup(
@@ -116,6 +118,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                     gpu_type=cluster_spec.gpu_type,
                     mem=self.mem_per_generation_server,
                     nodelist=self.nodelist,
+                    exclude=self.exclude,
                 ),
             ),
             gserver_manager=TasksGroup(
@@ -125,6 +128,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                     gpu_type=cluster_spec.gpu_type,
                     mem=self.mem_per_gserver_manager,
                     nodelist=self.nodelist,
+                    exclude=self.exclude,
                 ),
             ),
             rollout_worker=TasksGroup(
@@ -134,6 +138,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                     gpu_type=cluster_spec.gpu_type,
                     mem=self.mem_per_rollout_worker,
                     nodelist=self.nodelist,
+                    exclude=self.exclude,
                 ),
             ),
         )

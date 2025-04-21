@@ -3,7 +3,6 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import dataclasses
-import json
 import math
 from typing import List, Optional, Tuple, Union
 
@@ -12,11 +11,7 @@ import numpy as np
 from realhf.api.cli_args import ParallelismConfig
 from realhf.api.core.dfg import MFCDef
 from realhf.base.cluster import spec as cluster_spec
-from realhf.base.slurm_utils import (
-    are_ones_contiguous,
-    nodelist_from_nodes,
-    parse_nodelist,
-)
+from realhf.base.slurm_utils import are_ones_contiguous, parse_nodelist
 
 
 @dataclasses.dataclass
@@ -27,22 +22,12 @@ class DeviceMesh:
     # a 2D binary array of current device mesh name
     # shape: (n_nodes, n_gpus_per_node)
     mapping: np.ndarray
-    # For slurm cluster: nodelist string of all
-    # allocated nodes in the cluster
-    global_mesh_name: str = None
-    # For slurm cluster: nodelist string this device mesh
-    name: str = None
-    # cluster info, GPU memory cap in bytes
-    gpu_memory_capacity: int = 80 * (1024**3)
 
     def to_dict(self):
         return dict(
             n_nodes=self.n_nodes,
             n_gpus_per_node=self.n_gpus_per_node,
             mapping=self.mapping.tolist(),
-            global_mesh_name=self.global_mesh_name,
-            name=self.name,
-            gpu_memory_capacity=self.gpu_memory_capacity,
         )
 
     def split(self, split_n_gpus: int) -> Tuple["DeviceMesh", "DeviceMesh"]:
@@ -73,15 +58,11 @@ class DeviceMesh:
                 n_nodes=self.n_nodes,
                 n_gpus_per_node=self.n_gpus_per_node,
                 mapping=sub_mapping1,
-                global_mesh_name=self.global_mesh_name,
-                name=device_mesh_name_from_mapping(self.global_mesh_name, sub_mapping1),
             ),
             DeviceMesh(
                 n_nodes=self.n_nodes,
                 n_gpus_per_node=self.n_gpus_per_node,
                 mapping=sub_mapping2,
-                global_mesh_name=self.global_mesh_name,
-                name=device_mesh_name_from_mapping(self.global_mesh_name, sub_mapping2),
             ),
         )
         assert d1._is_valid_mapping()
@@ -96,34 +77,12 @@ class DeviceMesh:
 
     def __post_init__(self):
         n = cluster_spec.suffix_n_digits
-        if self.global_mesh_name is None:
-            self.global_mesh_name = (
-                f"{cluster_spec.node_name_prefix}[{1:0{n}d}-{self.n_nodes:0{n}d}]"
-                if self.n_nodes > 1
-                else f"{cluster_spec.node_name_prefix}{1:0{n}d}"
-            )
-
-        if self.global_mesh_name is not None and self.name is None:
-            self.name = device_mesh_name_from_mapping(
-                self.global_mesh_name, self.mapping
-            )
         assert self._is_valid_mapping()
 
     def __eq__(self, other: "DeviceMesh"):
-        assert (
-            self.global_mesh_name is None
-            or self.global_mesh_name == other.global_mesh_name
-        ), "Only device meshes that on the same cluster mesh is comparable"
         return np.all(self.mapping == other.mapping)
 
-    def __repr__(self):
-        return f"DeviceMesh({self.name} in {self.global_mesh_name})"
-
     def __op_assertion(self, other: "DeviceMesh"):
-        assert (
-            self.global_mesh_name is None
-            or self.global_mesh_name == other.global_mesh_name
-        ), "operation only support device meshes on the same cluster nodes"
         assert self.n_nodes == other.n_nodes
         assert self.n_gpus_per_node == other.n_gpus_per_node
 
@@ -184,8 +143,6 @@ class DeviceMesh:
                 n_nodes=self.n_nodes,
                 n_gpus_per_node=self.n_gpus_per_node,
                 mapping=sub_mapping,
-                global_mesh_name=self.global_mesh_name,
-                name=device_mesh_name_from_mapping(self.global_mesh_name, sub_mapping),
             )
             for sub_mapping in sub_mappings
         ]
@@ -193,24 +150,15 @@ class DeviceMesh:
     def _is_valid_mapping(self) -> bool:
         if self.mapping.shape != (self.n_nodes, self.n_gpus_per_node):
             raise RuntimeError(
-                f"Invalid mapping shape {self.mapping.shape} " f"{self.name}"
+                f"Invalid mapping shape {self.mapping.shape} n_nodes={self.n_nodes} "
+                f"n_gpus_per_node={self.n_gpus_per_node}"
             )
         if not np.all(np.logical_or(self.mapping == 0, self.mapping == 1)):
             raise RuntimeError(f"Invalid mapping value {self.mapping}")
 
         assert math.log(self.n_gpus_per_node, 2).is_integer()
 
-        one_node_valid_gpus = [
-            2**i for i in range(int(math.log(self.n_gpus_per_node, 2)))
-        ]
-        if self.mapping.sum() < self.n_gpus_per_node:
-            if not any(self.mapping.sum() == g for g in one_node_valid_gpus):
-                raise RuntimeError(
-                    f"Invalid mapping {self.mapping}. "
-                    "If using GPUs less than an entire node, "
-                    "only 1, 2, 4, 8, ... GPUs are allowed."
-                )
-        else:
+        if self.mapping.sum() >= self.n_gpus_per_node:
             if not (
                 self.mapping.sum() % self.n_gpus_per_node == 0
                 and np.all(
@@ -268,28 +216,7 @@ def make_device_mesh_from_name(
         n_nodes=n_nodes,
         n_gpus_per_node=n_gpus_per_node,
         mapping=mapping,
-        global_mesh_name=global_mesh_name,
-        name=name,
     )
-
-
-def device_mesh_name_from_mapping(global_mesh_name: str, mapping: np.ndarray):
-    prefix = cluster_spec.node_name_prefix
-    node_list = parse_nodelist(global_mesh_name, prefix)
-    n_nodes = len(node_list)
-    n_gpus_per_node = mapping.shape[1]
-    assert mapping.shape[0] == n_nodes
-    node_indices, gpu_ids = np.where(mapping == 1)
-
-    if np.sum(mapping) < n_gpus_per_node:
-        node_name = node_list[node_indices[0]]
-        gpu_ids = list(map(str, gpu_ids))
-        return f"{node_name}:{','.join(gpu_ids)}"
-    else:
-        unique_node_indices = np.unique(node_indices)
-        sub_node_list = [node_list[i] for i in unique_node_indices]
-        node_name = nodelist_from_nodes(sub_node_list, prefix)
-        return node_name
 
 
 def find_parallel_strategies(

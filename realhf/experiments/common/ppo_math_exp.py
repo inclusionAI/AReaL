@@ -4,7 +4,6 @@
 import copy
 import dataclasses
 import os
-import pprint
 from typing import Dict
 
 import realhf.base.logging as logging
@@ -356,8 +355,6 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
         resolve_rpc_hooks(
             rpc_allocs, self.models
         )  # inplace modify MFCDefs in rpc allocations
-
-        pprint.pprint(rpc_allocs)
 
         ######### update ref model using ema, ref_ema_eta = 0 means fixed ref model #########
         def _find_rpc(name):
