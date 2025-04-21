@@ -4,6 +4,7 @@
 
 import json
 import random
+import uuid
 
 import pytest
 import torch
@@ -50,9 +51,12 @@ def dataset(request, save_path):
     for i in range(size):
         prompt_len = random.randint(1, max_prompt_len)
         n_pairs = random.randint(1, 5)
+        qid = str(uuid.uuid4())
         d = dict(
-            id=i,
+            id=qid,
+            query_id=qid,
             prompt=generate_random_sentence(prompt_len),
+            solutions=["\\boxed{xxxxx}"],
             answer=generate_random_sentence(random.randint(1, max_resp_len)),
             pos_answers=[
                 generate_random_sentence(random.randint(1, max_resp_len))
@@ -62,6 +66,7 @@ def dataset(request, save_path):
                 generate_random_sentence(random.randint(1, max_resp_len))
                 for _ in range(n_pairs)
             ],
+            task="math",
         )
         dataset.append(d)
     with open(str(save_path / "dataset.jsonl"), "w") as f:

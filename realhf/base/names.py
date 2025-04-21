@@ -91,3 +91,7 @@ def stream_pullers(experiment_name, trial_name):
 
 def gen_servers(experiment_name, trial_name):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/gen_servers"
+
+
+def gen_server_manager(experiment_name, trial_name):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/gen_server_manager"

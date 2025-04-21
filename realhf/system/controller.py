@@ -130,7 +130,9 @@ class Controller:
     ):
         # Scheduling and connecting to workers.
         workers_configs = [
-            (k, getattr(setup, k), getattr(scheduling, k)) for k in WORKER_TYPES
+            (k, getattr(setup, k), getattr(scheduling, k))
+            for k in WORKER_TYPES
+            if len(getattr(setup, k)) > 0
         ]
 
         # Sanity check for scheduling and configuration.
@@ -192,7 +194,11 @@ class Controller:
         for i, setup in enumerate(setups):
             self.__check_consistent_scheduling(scheduling, setup, verbose=(i == 0))
 
-        worker_counts = [(k, len(getattr(setups[0], k))) for k in WORKER_TYPES]
+        worker_counts = [
+            (k, len(getattr(setups[0], k)))
+            for k in WORKER_TYPES
+            if len(getattr(setups[0], k)) > 0
+        ]
 
         name_resolve.add(
             names.trial_registry(self.experiment_name, self.trial_name),
@@ -275,6 +281,8 @@ class Controller:
             )
             try:
                 for name in WORKER_TYPES:
+                    if len(getattr(setup, name)) == 0:
+                        continue
                     worker_infos = [x.worker_info for x in getattr(setup, name)]
                     logger.info(f"Configuring Workers: {name}...")
 
@@ -656,7 +664,9 @@ class RayController:
         if not isinstance(setup, list):
             setup = [setup]
         worker_counts = [
-            (k, len(getattr(setup[0], k)), getattr(scheduling, k)) for k in WORKER_TYPES
+            (k, len(getattr(setup[0], k)), getattr(scheduling, k))
+            for k in WORKER_TYPES
+            if len(getattr(setup[0], k)) > 0
         ]
 
         env_vars = constants.get_env_vars(

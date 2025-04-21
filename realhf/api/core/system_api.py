@@ -196,6 +196,9 @@ class GserverManager:
     model_name: ModelName
     n_servers: int
     schedule_policy: str
+    max_head_offpolicyness: int
+    train_batch_size: int
+    max_concurrent_rollouts: int
     worker_info: WorkerInformation = None
 
 
@@ -203,11 +206,8 @@ class GserverManager:
 class RolloutWorker:
     base_seed: int
     model_name: ModelName
-    max_head_offpolicyness: int
-    train_batch_size: int
     tokenizer_path: str
     new_tokens_per_chunk: int
-    max_concurrent_rollouts: int
     env: EnvServiceAbstraction
     agent: AgentAbstraction
     datasets: List[Union[str, DatasetAbstraction]]
