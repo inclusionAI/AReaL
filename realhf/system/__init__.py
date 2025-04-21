@@ -2,19 +2,25 @@
 # Copyright 2024 Wei Fu & Zhiyu Mei
 # Licensed under the Apache License, Version 2.0 (the "License").
 
+import asyncio
 import importlib
 import os
 import traceback
 from typing import Type
 
-import realhf.api.core.system_api
 import realhf.base.logging as logging
 
 logger = logging.getLogger("system")
 
 # NOTE: Workers are configured in the following order.
 # Take special care when adding a new worker type.
-WORKER_TYPES = ["model_worker", "master_worker"]
+WORKER_TYPES = [
+    "generation_server",
+    "gserver_manager",
+    "model_worker",
+    "master_worker",
+    "rollout_worker",
+]
 
 
 def load_worker(worker_type: str) -> Type:
@@ -55,7 +61,10 @@ def run_worker(
     )
     worker = worker_class(server=server)
     try:
-        worker.run()
+        if worker_type in ["rollout_worker"]:
+            asyncio.run(worker.run_async())
+        else:
+            worker.run()
     except Exception as e:
         logger.error("Worker %s failed with exception: %s", worker_name, e)
         logger.error(traceback.format_exc())

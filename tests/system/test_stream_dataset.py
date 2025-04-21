@@ -64,6 +64,8 @@ def test_load_stream_dataset(prompt_dataset_cfg, tokenizer, mock_puller):
         testing._DEFAULT_EXPR_NAME, testing._DEFAULT_TRIAL_NAME
     )
 
+    testing.clear_name_resolve()
+
     util = data_api.DatasetUtility(
         seed=42,
         dp_rank=0,
@@ -95,6 +97,8 @@ def test_load_stream_dataset(prompt_dataset_cfg, tokenizer, mock_puller):
 def test_puller_stream_dataset_timeout(prompt_dataset_cfg, tokenizer):
     from realhf.system.stream_dataset import PullerStreamDataset
 
+    testing.clear_name_resolve()
+
     util = data_api.DatasetUtility(
         seed=42,
         dp_rank=0,
@@ -113,6 +117,8 @@ def test_puller_stream_dataset_timeout(prompt_dataset_cfg, tokenizer):
 
 def test_puller_stream_dataset_stop_event(prompt_dataset_cfg, tokenizer, mock_puller):
     from realhf.system.stream_dataset import PullerStreamDataset
+
+    testing.clear_name_resolve()
 
     util = data_api.DatasetUtility(
         seed=42,
@@ -133,6 +139,8 @@ def test_puller_stream_dataset_stop_event(prompt_dataset_cfg, tokenizer, mock_pu
 
 def test_puller_stream_dataset_worker_thread_exception(prompt_dataset_cfg, tokenizer):
     from realhf.system.stream_dataset import PullerStreamDataset
+
+    testing.clear_name_resolve()
 
     util = data_api.DatasetUtility(
         seed=42,

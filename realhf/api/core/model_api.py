@@ -34,12 +34,23 @@ class ZeroTotalLossWeightException(Exception):
 
 
 @dataclasses.dataclass
+class GenRespMeta:
+    qid: str
+    accepted: bool
+
+
+@dataclasses.dataclass
 class GenReqMeta:
     ## Meta info used to schedule the request. ##
     prompt_len: int
     group_size: int
     new_token_budget: int
     predicted_new_tokens: int | None
+
+
+@dataclasses.dataclass
+class ModelVersionReq:
+    server_url: str
 
 
 @dataclasses.dataclass
