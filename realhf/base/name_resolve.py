@@ -312,7 +312,14 @@ class NfsNameRecordRepository(NameRecordRepository):
             raise ValueError("Name cannot be empty")
         name = os.path.normpath(name)
         path = self.__file_path(name)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        while True:
+            # To avoid concurrency issues when multiple processes
+            # call makedirs on the same dirname of CPFS.
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                break
+            except (NotADirectoryError, FileNotFoundError):
+                pass
         if os.path.isfile(path) and not replace:
             raise NameEntryExistsError(path)
         local_id = str(uuid.uuid4())[:8]
@@ -403,7 +410,7 @@ class NfsNameRecordRepository(NameRecordRepository):
                 self.delete(name)
             except:
                 pass
-        self.__to_delete = {}
+        self.__to_delete = set()
 
 
 class RedisNameRecordRepository(NameRecordRepository):
