@@ -148,8 +148,9 @@ class ModelWorker(worker_base.Worker):
         self.__has_dataset = False
         self.__dataset_dp_size = self.__dataset_dp_rank = 0
         sub_patterns = [s.id for s in self.config.shards]
-        src_rpc = [rpc for rpc in self.config.model_rpcs if rpc.is_src][0]
-        self.__src_rpc_model_name = src_rpc.model_name
+        self.src_rpc = src_rpc = [rpc for rpc in self.config.model_rpcs if rpc.is_src][
+            0
+        ]
         for s in self.config.shards:
             _pp_size = s.id.topo.get_dim("pipe")
             if not (s.id.mp_rank == 0 and s.id.pp_rank == _pp_size - 1):
@@ -377,7 +378,7 @@ class ModelWorker(worker_base.Worker):
 
                         # Recover indices for dynamic dataset
                         if (
-                            s.id.model_name == src_rpc.model_name
+                            s.id.model_name == self.src_rpc.model_name
                             and self.__has_dataset
                             and hasattr(self.__dataset, "filter")
                         ):
