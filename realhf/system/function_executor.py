@@ -27,7 +27,7 @@ class FunctionExecutor:
         rpcs: List[MFCDef],
         msid2mwid: Dict[ModelShardID, int],
         stream: NameResolvingRequestClient,
-        buffer: AsyncIOSequenceBuffer,
+        buffer: List[AsyncIOSequenceBuffer],
         model_topos: Dict[str, ProcessTopology],
         model_configs: Dict[str, None | ReaLModelConfig],
         ctrl: RPCCorountineControl,
@@ -66,6 +66,7 @@ class FunctionExecutor:
 
         self.stream = stream
         self.buffer = buffer
+        self.buffer_id = 0
 
         self.data_loading_dp_idx = -1
         self.shuffle_dataset = shuffle_dataset
@@ -117,75 +118,80 @@ class FunctionExecutor:
 
         received_ids = set()
 
-        while self.buffer.size < max(rpc.n_seqs for rpc in self.rpcs):
-
-            resps = await self.stream.call_async(
-                handlers=[f"__data{dp_idx}__" for dp_idx in range(self.src_dp_size)],
-                handle_type="fetch",
-                datas=[None for _ in range(self.src_dp_size)],
-                verbose=False,
-            )
-
-            all_data = []
-            data_cnt = []
-            gpu_id_data = {}
-            for dp_rank, x in enumerate(resps):
-                x: DataBatchMeta | None
-
-                if x is None:
-                    data_cnt.append(0)
-                    continue
-                if x.meta_sample is None:
-                    data_cnt.append(0)
-                    continue
-
-                for xx in x.meta_sample.unpack():
-                    async with ctrl.lock:
-                        if xx.ids[0] in received_ids:
-                            raise ValueError(f"Duplicate data id {xx.ids[0]}.")
-                        received_ids.add(xx.ids[0])
-
-                gpu_id = self.stream.route_to(f"__data{dp_rank}__")
-                all_data += x.meta_sample.unpack()
-                gpu_id_data[gpu_id] = x.meta_sample.unpack()
-                data_cnt.append(x.meta_sample.bs)
-
-            if self.shuffle_dataset:
-                # We load data in a round-robin manner across different DP ranks,
-                # so we also need to shuffle the data to fuse different dataset splits.
-                random.shuffle(all_data)
-
-            if len(all_data) > 0:
-                # Update resource tracker for planning data redistribution.
-                for gpu_id, data in gpu_id_data.items():
-                    for k in data[0].keys:
-                        await self.storage_tracker.add_data(
-                            gpu_id,
-                            [d.ids[0] for d in data],
-                            k,
-                            is_owner=True,
-                        )
-
-                # Store into buffer!
-                buffer_indices = await buffer.put_batch(all_data)
-                assert len(buffer_indices) == len(all_data)
-
-                blogger.info(
-                    f"Master worker loaded {len(all_data)} pieces of data from all dp ranks: "
-                    f"{data_cnt} from each rank. "
-                    f"Current buffer size: {buffer.size}/{buffer.max_size}. "
+        for i, buffer in enumerate(self.buffer):
+            while buffer.size < max(rpc.n_seqs for rpc in self.rpcs):
+                resps = await self.stream.call_async(
+                    handlers=[
+                        f"__data{dp_idx}__" for dp_idx in range(self.src_dp_size)
+                    ],
+                    handle_type="fetch",
+                    datas=[i for _ in range(self.src_dp_size)],
+                    verbose=False,
                 )
-            else:
-                await asyncio.sleep(1)
+
+                all_data = []
+                data_cnt = []
+                gpu_id_data = {}
+                for dp_rank, x in enumerate(resps):
+                    x: DataBatchMeta | None
+
+                    if x is None:
+                        data_cnt.append(0)
+                        continue
+                    if x.meta_sample is None:
+                        data_cnt.append(0)
+                        continue
+
+                    for xx in x.meta_sample.unpack():
+                        async with ctrl.lock:
+                            if xx.ids[0] in received_ids:
+                                raise ValueError(f"Duplicate data id {xx.ids[0]}.")
+                            received_ids.add(xx.ids[0])
+
+                    gpu_id = self.stream.route_to(f"__data{dp_rank}__")
+                    all_data += x.meta_sample.unpack()
+                    gpu_id_data[gpu_id] = x.meta_sample.unpack()
+                    data_cnt.append(x.meta_sample.bs)
+
+                if self.shuffle_dataset:
+                    # We load data in a round-robin manner across different DP ranks,
+                    # so we also need to shuffle the data to fuse different dataset splits.
+                    random.shuffle(all_data)
+
+                if len(all_data) > 0:
+                    # Update resource tracker for planning data redistribution.
+                    for gpu_id, data in gpu_id_data.items():
+                        for k in data[0].keys:
+                            await self.storage_tracker.add_data(
+                                gpu_id,
+                                [d.ids[0] for d in data],
+                                k,
+                                is_owner=True,
+                            )
+
+                    # Store into buffer!
+                    buffer_indices = await buffer.put_batch(all_data)
+                    assert len(buffer_indices) == len(all_data)
+
+                    blogger.info(
+                        f"Master worker loaded {len(all_data)} pieces of data from all dp ranks: "
+                        f"{data_cnt} from each rank. "
+                        f"Current buffer size: {buffer.size}/{buffer.max_size}. "
+                    )
+                else:
+                    await asyncio.sleep(1)
 
     def execute_step(self):
         logger.info("Waiting for the finish of the execution graph.")
         loop = asyncio.get_event_loop()
 
-        tasks = [loop.create_task(fc.run()) for fc in self.func_calls.values()] + [
+        tasks = [
+            loop.create_task(fc.run(self.buffer_id)) for fc in self.func_calls.values()
+        ] + [
             loop.create_task(self.flush_calls()),
             loop.create_task(self.load_data()),
             loop.create_task(self.finish_traverse()),
         ]
 
         loop.run_until_complete(asyncio.gather(*tasks))
+        self.buffer_id = (self.buffer_id + 1) % len(self.buffer)

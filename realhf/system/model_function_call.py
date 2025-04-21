@@ -63,7 +63,7 @@ class ModelFunctionCall:
         model_topos: Dict[str, topology.ProcessTopology],
         model_configs: Dict[str, None | ReaLModelConfig],
         ctrl: RPCCorountineControl,
-        buffer: AsyncIOSequenceBuffer,
+        buffer: List[AsyncIOSequenceBuffer],
         redistrib_planner: RedistribPlanner,
         summary_writer: SummaryWriter | None,
     ):
@@ -306,7 +306,7 @@ class ModelFunctionCall:
         ).partitions
         return buf_indices, sample, partitions
 
-    async def run_step(self, buf_indices, sample):
+    async def run_step(self, buf_indices, sample, buffer_id: int):
         rpc = self.rpc
         topo = self.model_topos[rpc.model_name]
         ctrl = self.rpc_ctrl
@@ -475,7 +475,7 @@ class ModelFunctionCall:
             await ctrl.train_count.put(1)
         else:
             logger.info(f"Amending RPC {rpc.name} output keys: {res.keys}")
-            await self.buffer.amend_batch(buf_indices, res.unpack())
+            await self.buffer[buffer_id].amend_batch(buf_indices, res.unpack())
 
         # Wait for all side-effect requests to finish.
         # Side-effect or empty requests are required for data transfer
@@ -483,7 +483,7 @@ class ModelFunctionCall:
         # Wait them after the main request to log the oorrect MFC time.
         await self.stream.gather_async(other_req_ids)
 
-    async def run(self):
+    async def run(self, buffer_id: int):
         rpc = self.rpc
         topo = self.model_topos[rpc.model_name]
 
@@ -494,9 +494,9 @@ class ModelFunctionCall:
 
         consumed = 0
         while True:
-            buf_indices, sample = await self.buffer.get_batch_for_rpc(rpc)
+            buf_indices, sample = await self.buffer[buffer_id].get_batch_for_rpc(rpc)
 
-            await self.run_step(buf_indices, sample)
+            await self.run_step(buf_indices, sample, buffer_id)
             consumed += sample.bs
 
             # Ensure that parent RPCs will not be over-consumed.

@@ -7,6 +7,7 @@ import copy
 import gc
 import os
 import time
+import os
 from typing import Dict
 
 import colorama
@@ -48,9 +49,9 @@ class MasterWorker(worker_base.Worker):
 
         seeding.set_random_seed(self.config.base_seed, "master_worker")
 
-        self.__model_topos: Dict[ModelName, topology.ProcessTopology] = (
-            config.model_topos
-        )
+        self.__model_topos: Dict[
+            ModelName, topology.ProcessTopology
+        ] = config.model_topos
 
         # Build execution graph and initialize concurrency utilities.
         self.__model_rpcs = config.model_rpcs
@@ -263,10 +264,14 @@ class MasterWorker(worker_base.Worker):
 
         self.initialize_models()
 
-        self.__seqbuffer = AsyncIOSequenceBuffer(
-            self.__model_rpcs,
-            max_size=int(os.getenv("REAL_MASTER_BUFFER_SIZE", str(int(1e7)))),
-        )
+        n_datasets = int(os.environ.get("N_DATASETS", "1"))
+        self.__seqbuffer = [
+            AsyncIOSequenceBuffer(
+                self.__model_rpcs,
+                max_size=int(os.getenv("REAL_MASTER_BUFFER_SIZE", str(int(1e7)))),
+            )
+            for _ in range(n_datasets)
+        ]
 
         # wandb init, connect to remote wandb host
         wandb.login()
@@ -427,7 +432,9 @@ class MasterWorker(worker_base.Worker):
         else:
             flops = self.__rpc_ctrl.flops_counter.get_flops()
             tflops = flops / (e2e_time * (10**12))
-            tflops_per_gpu = flops / (e2e_time * self.config.n_model_workers * (10**12))
+            tflops_per_gpu = flops / (
+                e2e_time * self.config.n_model_workers * (10**12)
+            )
         self.__rpc_ctrl.flops_counter.clear()
         #########################################
 
