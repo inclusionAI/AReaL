@@ -941,6 +941,13 @@ class BaseExperimentConfig:
             "Format: 'NODE01:0,1,2,3' or 'NODE[01-02,03,07],COM08'."
         },
     )
+    exclude: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "SLURM nodelist to exclude from allocation. "
+            "Format: 'NODE01:0,1,2,3' or 'NODE[01-02,03,07],COM08'."
+        },
+    )
     seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
     cache_clear_freq: Optional[int] = field(
         default=10,
