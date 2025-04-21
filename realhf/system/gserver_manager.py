@@ -144,7 +144,7 @@ class GserverManager(Worker):
         return None
 
     async def flush_requests_and_update_weights(
-        self, server_url, new_param_path, flush_timeout=60, update_weights_retries=5
+        self, server_url, new_param_path, update_weights_retries=5
     ):
         # HACK: urls are designed for SGLang
         server_index = self.server_urls.index(server_url)
@@ -152,11 +152,18 @@ class GserverManager(Worker):
             running_requests = None
             tik = time.perf_counter()
             while running_requests is None or running_requests > 0:
+                if time.perf_counter() - tik > self.config.flush_request_timeout:
+                    raise RuntimeError(
+                        f"Waiting for flush requests failed. {running_requests} requests "
+                        f"remain after {self.config.flush_request_timeout} secs waiting. "
+                        f"Please try to reduce `new_tokens_per_chunk`."
+                    )
                 if running_requests is not None and running_requests > 0:
                     logger.info(
                         f"Waiting for {running_requests} requests on gen server {server_index}... "
                         f"Time taken so far: {time.perf_counter() - tik:.4f}s"
                     )
+                    await asyncio.sleep(0.5)
                 async with session.get(f"/metrics") as resp:
                     resp.raise_for_status()
                     text = await resp.text()
@@ -164,11 +171,6 @@ class GserverManager(Worker):
                         if line.startswith("sglang:num_running_reqs"):
                             running_requests = float(line.split(" ")[1])
                             break
-                    await asyncio.sleep(0.5)
-                    if time.perf_counter() - tik > flush_timeout:
-                        raise RuntimeError(
-                            f"Waiting for flush requests failed. {running_requests} requests remain."
-                        )
 
             success = False
             for _ in range(update_weights_retries):

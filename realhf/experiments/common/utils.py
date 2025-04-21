@@ -255,7 +255,7 @@ class AllocationType(enum.Enum):
 @dataclasses.dataclass
 class AllocationMode:
     type_: AllocationType
-    parallel_strat: Dict[str, Dict[str, int]]
+    parallel_strat: None | Dict[str, Dict[str, int]]
 
     def is_decoupled(self):
         return self.type_ in [
@@ -275,6 +275,17 @@ class AllocationMode:
 
     def is_global_hybrid(self):
         return self.type_ == AllocationType.GLOBAL_HYBRID
+
+    def get_gen_size(self):
+        assert self.is_decoupled()
+        paras = self.parallel_strat
+        gdp, gpp, gmp = paras["gen"]["d"], paras["gen"]["p"], paras["gen"]["m"]
+        return gdp * gpp * gmp
+
+    def get_gen_tp_size(self):
+        assert self.is_decoupled()
+        paras = self.parallel_strat
+        return paras["gen"]["m"]
 
     @classmethod
     def from_str(cls, allocation_mode: str):

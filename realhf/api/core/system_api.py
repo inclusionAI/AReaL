@@ -25,11 +25,6 @@ from realhf.api.core.config import (
 from realhf.base import constants, topology
 from realhf.base.cluster import spec as cluster_spec
 
-# TODO: use different images
-_LLM_GPU_TRAIN_IMAGE = cluster_spec.gpu_image
-_LLM_GPU_INFER_IMAGE = cluster_spec.gpu_image
-_LLM_CPU_IMAGE = cluster_spec.cpu_image
-
 
 @dataclasses.dataclass
 class Scheduling:
@@ -40,7 +35,7 @@ class Scheduling:
     node_type: str = None
     nodelist: str = None
     exclude: str = None
-    container_image: str = _LLM_CPU_IMAGE
+    container_image: str = cluster_spec.cpu_image
     env_vars: Dict[str, str] = dataclasses.field(default_factory=dict)
     # time utils from "https://slurm.schedmd.com/sbatch.html"
     time_limit: Optional[str] = None  # see  "--time" option for format
@@ -54,7 +49,7 @@ class Scheduling:
                 "cpu": 16,
                 "mem": 20 * 1024,
                 "gpu": 0,
-                "container_image": _LLM_CPU_IMAGE,
+                "container_image": cluster_spec.cpu_image,
                 **kwargs,
             }
         )
@@ -66,7 +61,7 @@ class Scheduling:
                 "cpu": 2,
                 "gpu": 1,
                 "mem": 60 * 1024,
-                "container_image": _LLM_GPU_TRAIN_IMAGE,
+                "container_image": cluster_spec.gpu_image,
                 **kwargs,
             }
         )
@@ -78,7 +73,7 @@ class Scheduling:
                 "cpu": 4,
                 "gpu": 1,
                 "mem": 60 * 1024,
-                "container_image": _LLM_GPU_INFER_IMAGE,
+                "container_image": cluster_spec.gpu_infer_image,
                 **kwargs,
             }
         )
@@ -90,7 +85,7 @@ class Scheduling:
                 "cpu": 4,
                 "gpu": 0,
                 "mem": 10 * 1024,
-                "container_image": _LLM_GPU_TRAIN_IMAGE,
+                "container_image": cluster_spec.gpu_image,
                 **kwargs,
             }
         )
@@ -102,7 +97,7 @@ class Scheduling:
                 "cpu": 4,
                 "gpu": 0,
                 "mem": 20 * 1024,
-                "container_image": _LLM_GPU_TRAIN_IMAGE,
+                "container_image": cluster_spec.gpu_image,
                 **kwargs,
             }
         )
@@ -198,6 +193,7 @@ class GserverManager:
     schedule_policy: str
     max_head_offpolicyness: int
     train_batch_size: int
+    flush_request_timeout: int
     max_concurrent_rollouts: int
     worker_info: WorkerInformation = None
 
@@ -244,7 +240,7 @@ class ExperimentScheduling:
     generation_server: TasksGroup | None = None
     gserver_manager: TasksGroup | None = None
     rollout_worker: TasksGroup | None = None
-    controller_image: str = _LLM_CPU_IMAGE
+    controller_image: str = cluster_spec.cpu_image
 
 
 @dataclasses.dataclass

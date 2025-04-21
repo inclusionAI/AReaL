@@ -45,6 +45,7 @@ class ClusterSpec:
         self.__gpu_type = spec.get("gpu_type", None)
         self.__default_mount = spec.get("default_mount", None)
         self.__gpu_image = spec.get("gpu_image", None)
+        self.__gpu_infer_image = spec.get("gpu_infer_image", self.__gpu_image)
         self.__cpu_image = spec.get("cpu_image", None)
         self.__node_name_prefix = spec.get("node_name_prefix", "NODE")
         # self.__n_nodes decides number of digits in slurm hostnames
@@ -116,9 +117,15 @@ class ClusterSpec:
 
     @property
     def gpu_image(self) -> str:
-        """Return the default image for containers of GPU workers."""
+        """Return the default image for containers of GPU trainer workers."""
         assert self.__loaded
         return self.__gpu_image
+
+    @property
+    def gpu_infer_image(self) -> str:
+        """Return the default image for containers of GPU inference workers."""
+        assert self.__loaded
+        return self.__gpu_infer_image
 
     @property
     def cpu_image(self) -> str:
