@@ -887,7 +887,7 @@ def gather_stat(src: List[Dict]) -> Dict:
     return res
 
 
-def tabulate_stats(data: Dict[str, float], col=4) -> str:
+def tabulate_stats(data: Dict[str, float], col=4, floatfmt=".4e") -> str:
     from tabulate import tabulate
 
     items = list(data.items())
@@ -904,4 +904,4 @@ def tabulate_stats(data: Dict[str, float], col=4) -> str:
                 row.extend(items[index])
         column_major.append(row)
 
-    return tabulate(column_major, floatfmt=".4e", tablefmt="fancy_grid")
+    return tabulate(column_major, floatfmt=floatfmt, tablefmt="fancy_grid")
