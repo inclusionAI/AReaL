@@ -141,6 +141,15 @@ def getLogger(
     return logging.getLogger(name)
 
 
+def log_wandb_tensorboard(data, step=None, summary_writer=None):
+    import wandb
+
+    wandb.log(data, step=step)
+    if summary_writer is not None:
+        for key, val in data.items():
+            summary_writer.add_scalar(f"{key}", val, step)
+
+
 if __name__ == "__main__":
     # The following serves as a color visualization test.
     # The available color names are black, red, green, yellow, blue, purple, cyan and white

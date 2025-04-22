@@ -2,7 +2,6 @@
 # Copyright 2024 Wei Fu & Zhiyu Mei
 # Licensed under the Apache License, Version 2.0 (the "License").
 
-import collections
 import contextlib
 import copy
 import gc
@@ -17,6 +16,7 @@ import shutil
 import socket
 import time
 import uuid
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Hashable, List, Optional, Set, Tuple
 
@@ -537,7 +537,9 @@ class ModelWorker(worker_base.Worker):
         cache = []
         while True:
             try:
-                request, data, handled, res = self.__request_queue.get_nowait()
+                request, data, handled, res, time_record = (
+                    self.__request_queue.get_nowait()
+                )
                 request: request_reply_stream.Payload
                 if not handled:
                     while len(request.pre_hooks) > 0:
@@ -551,11 +553,14 @@ class ModelWorker(worker_base.Worker):
                                     f"The current hook is `{request.pre_hooks[0]}`. "
                                     f"{self.__request_queue.qsize()} requests left to handle their potential pre-hooks."
                                 )
-                        self.__handle_one_rpc_hook(
-                            request.pre_hooks.pop(0),
-                            request.pre_hook_data.pop(0),
-                        )
-                cache.append((request, data, handled, res))
+                        tik = time.perf_counter()
+                        hook = request.pre_hooks.pop(0)
+                        hook_data = request.pre_hook_data.pop(0)
+                        self.__handle_one_rpc_hook(hook, hook_data)
+                        time_record[
+                            f"timeperf/{request.handler.model_name.role}_{request.handle_name}/pre-{hook}"
+                        ] += (time.perf_counter() - tik)
+                cache.append((request, data, handled, res, time_record))
             except queue.Empty:
                 break
 
@@ -689,6 +694,7 @@ class ModelWorker(worker_base.Worker):
         data: Any,
         handled: bool,
         res: Optional[Any],
+        time_record: Dict,
     ) -> worker_base.PollResult:
         tik = time.perf_counter()
 
@@ -753,20 +759,28 @@ class ModelWorker(worker_base.Worker):
                     f"request *{request.handle_name}*"
                     f" in ${time.perf_counter() - tik:.4f}$s"
                 )
+        time_record[
+            f"timeperf/{request.handler.model_name.role}_{request.handle_name}/main"
+        ] += (time.perf_counter() - tik)
 
         # Handle all post hooks right after the main computation
         if len(request.post_hooks) > 0:
             assert len(request.post_hooks) == len(request.post_hook_data)
             for hook, hook_data in zip(request.post_hooks, request.post_hook_data):
+                tik = time.perf_counter()
                 ret = self.__handle_one_rpc_hook(hook, hook_data)
                 if hook == "evaluate":
                     assert request.handle_name == "train_step", request.handle_name
                     assert isinstance(ret, dict), ret
                     assert isinstance(res, dict), res
                     res.update(ret)
+                time_record[
+                    f"timeperf/{request.handler.model_name.role}_{request.handle_name}/post-{hook}"
+                ] += (time.perf_counter() - tik)
 
         # update param realloc step after handling post hooks
         if request.handle_name == "train_step":
+            tik = time.perf_counter()
             global_step = self.__models[model_name].version.global_step
             realloc_dir = os.path.join(
                 constants.PARAM_REALLOC_PATH,
@@ -796,7 +810,11 @@ class ModelWorker(worker_base.Worker):
                         keepalive_ttl=30,
                         replace=True,
                     )
+            time_record[
+                f"timeperf/{request.handler.model_name.role}_{request.handle_name}/param-sync-save"
+            ] += (time.perf_counter() - tik)
 
+        res = (res, time_record)
         self.__reply_queue.put_nowait((request, res))
         sample_count = data.bs if isinstance(data, data_api.SequenceSample) else 1
         self.__request_sample_size[request.request_id] = sample_count
@@ -1270,7 +1288,9 @@ class ModelWorker(worker_base.Worker):
                 self.__ack_cache[r.request_id] = r
             else:
                 if r.no_syn:
-                    self.__request_queue.put_nowait((r, r.data, False, None))
+                    self.__request_queue.put_nowait(
+                        (r, r.data, False, None, defaultdict(int))
+                    )
                 else:
                     self.__stream.post(
                         request_reply_stream.Payload(
@@ -1294,7 +1314,9 @@ class ModelWorker(worker_base.Worker):
                 if ack_id in self.__request_cache:
                     self.__ack_cache.pop(ack_id)
                     req = self.__request_cache.pop(ack_id)
-                    self.__request_queue.put_nowait((req, req.data, False, None))
+                    self.__request_queue.put_nowait(
+                        (req, req.data, False, None, defaultdict(int))
+                    )
 
     def _poll(self):
         if not self.__dist_env_resolved:
@@ -1320,7 +1342,7 @@ class ModelWorker(worker_base.Worker):
         # are executed in the same order across all model workers.
         flush = False
         for _ in range(self.__request_queue.qsize()):
-            request, data, handled, res = self.__request_queue.get_nowait()
+            request, data, handled, res, time_record = self.__request_queue.get_nowait()
             if request.handle_name == "reset":
                 # Pause the worker and wait for the next `configure`
                 # command from the controller.
@@ -1330,7 +1352,9 @@ class ModelWorker(worker_base.Worker):
             elif request.handle_name in NON_BLOCKING_RPCS:
                 self.handle_non_blocking_request(request)
             else:
-                self.__request_queue.put_nowait((request, data, handled, res))
+                self.__request_queue.put_nowait(
+                    (request, data, handled, res, time_record)
+                )
 
         # Non-blocking requests are usually fast, so we can
         # respond them in a batch without affecting the accuracy
@@ -1350,25 +1374,37 @@ class ModelWorker(worker_base.Worker):
             rescheduled_requests = []
             other_requests = []
             for _ in range(self.__request_queue.qsize()):
-                request, data, handled, res = self.__request_queue.get_nowait()
+                request, data, handled, res, time_record = (
+                    self.__request_queue.get_nowait()
+                )
                 if request.handle_name not in ["inference", "generate", "train_step"]:
-                    other_requests.append((request, data, handled, res))
+                    other_requests.append((request, data, handled, res, time_record))
                 else:
                     with constants.model_scope(request.handler.model_name):
                         w = dist.get_world_size(constants.parallelism_group())
-                    rescheduled_requests.append((request, data, handled, res, w))
+                    rescheduled_requests.append(
+                        (request, data, handled, res, time_record, w)
+                    )
             rescheduled_requests.sort(key=lambda x: x[-1])
-            for request, data, handled, res, _ in rescheduled_requests:
-                self.__request_queue.put_nowait((request, data, handled, res))
-            for request, data, handled, res in other_requests:
-                self.__request_queue.put_nowait((request, data, handled, res))
+            for request, data, handled, res, time_record, _ in rescheduled_requests:
+                self.__request_queue.put_nowait(
+                    (request, data, handled, res, time_record)
+                )
+            for request, data, handled, res, time_record in other_requests:
+                self.__request_queue.put_nowait(
+                    (request, data, handled, res, time_record)
+                )
 
             # Execute one MFC them immediately return the result, such that
             # we can correctly log the time consumption in the master worker.
             while True:
                 try:
-                    request, data, handled, res = self.__request_queue.get_nowait()
-                    self.handle_blocking_request(request, data, handled, res)
+                    request, data, handled, res, time_record = (
+                        self.__request_queue.get_nowait()
+                    )
+                    self.handle_blocking_request(
+                        request, data, handled, res, time_record
+                    )
                     r += self.maybe_post_responses()
                 except queue.Empty:
                     break

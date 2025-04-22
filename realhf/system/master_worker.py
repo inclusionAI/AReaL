@@ -439,6 +439,9 @@ class MasterWorker(worker_base.Worker):
         s += f"(global step {global_step}) finishes. "
         s += f"#End to end# execution time: *{e2e_time:.3f}*s. "
         s += f"Total time consumption: {time_since_configure:.3f}s. "
+        logging.log_wandb_tensorboard(
+            {"timeperf/e2e": e2e_time}, step=self.__rpc_ctrl.step_info.global_step
+        )
         if len(self.e2e_time_history) > 2:
             remaining_steps = self._steps_per_epoch - epoch_step
             remaining_epochs = self.__total_train_epochs - epoch
