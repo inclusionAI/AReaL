@@ -235,7 +235,7 @@ class SGLangGenerationEngine(PipelinableEngine):
             host_ip = server_args_dict["host"]
             host_port = server_args_dict["port"]
             address = f"{host_ip}:{host_port}"
-            name_resolve.add(key, address, keepalive_ttl=1200, delete_on_exit=True)
+            name_resolve.add(key, address, keepalive_ttl=None, delete_on_exit=True)
             logger.info(f"SGLang {metric_server_name} metrics URL: {address}")
 
         self.request_timeout = request_timeout
