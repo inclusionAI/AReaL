@@ -63,7 +63,9 @@ class GenerationServer(Worker):
             "sglang",
             f"server{self.worker_index}",
         )
-        name_resolve.add(key, f"{host}:{self.server_port}", keepalive_ttl=None, delete_on_exit=True)
+        name_resolve.add(
+            key, f"{host}:{self.server_port}", keepalive_ttl=None, delete_on_exit=True
+        )
 
         logger.info(f"SGLang server launched at: {self.server_addr}")
 
