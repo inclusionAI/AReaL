@@ -305,7 +305,6 @@ class SGLangConfig:
     # but we disable it to avoid precision issues
     chunked_prefill_size: Optional[int] = -1
     max_prefill_tokens: int = 32768
-    max_prefill_tokens: int = 16384
     schedule_policy: str = "lpm"
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
