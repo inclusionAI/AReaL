@@ -176,7 +176,7 @@ Demands:
  (no resource demands)
 ```
 
-# RL Trainig
+# RL Training
 
 Before starting distributed training, ensure the Ray cluster is up and running properly.
 Then, on the first node (where the Ray Head is located), enter the container:
