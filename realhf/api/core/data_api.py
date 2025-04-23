@@ -44,7 +44,7 @@ from realhf.base.cluster import spec as cluster_spec
 
 logger = logging.getLogger("api.data")
 
-RL_TASKS = ["math", "code", "rlhf"]
+RL_TASKS = ["math", "code", "rlhf", "stem"]
 
 
 def load_hf_tokenizer(
