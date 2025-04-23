@@ -89,6 +89,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
         """
         gen_world_size = AllocationMode.from_str(self.allocation_mode).get_gen_size()
         train_world_size = self.n_nodes * self.n_gpus_per_node - gen_world_size
+        gen_tp_size = AllocationMode.from_str(self.allocation_mode).get_gen_tp_size()
         return ExperimentScheduling(
             master_worker=TasksGroup(
                 count=1,
@@ -111,10 +112,10 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 ),
             ),
             generation_server=TasksGroup(
-                count=gen_world_size,
+                count=gen_world_size // gen_tp_size,
                 scheduling=Scheduling.generation_server_default(
                     cpu=self.cpus_per_generation_server,
-                    gpu=AllocationMode.from_str(self.allocation_mode).get_gen_tp_size(),
+                    gpu=gen_tp_size,
                     gpu_type=cluster_spec.gpu_type,
                     mem=self.mem_per_generation_server,
                     nodelist=self.nodelist,
@@ -295,7 +296,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 model_path=model_cfg.path,
                 tp_size=gen_tp_size,
             )
-            for _ in range(gen_world_size)
+            for _ in range(gen_world_size // gen_tp_size)
         ]
 
     def get_gserver_manager_config(self, rpc_allocs):
