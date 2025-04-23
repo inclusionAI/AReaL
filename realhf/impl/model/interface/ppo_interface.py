@@ -11,10 +11,10 @@ import torch.distributed as dist
 import realhf.api.core.model_api as model_api
 import realhf.impl.model.utils.ppo_functional as ppo_functional
 from realhf.api.core.data_api import (
+    RL_TASKS,
     MicroBatchSpec,
     SequenceSample,
     SequenceSplitSpec,
-    RL_TASKS,
 )
 from realhf.base import constants, logging, stats_tracker
 from realhf.base.datapack import flat2d
