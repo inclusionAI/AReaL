@@ -19,6 +19,7 @@ import realhf.scheduler.client as sched_client
 import realhf.system as system
 from realhf.scheduler.client import JobException, JobState
 from realhf.scheduler.evaluator import AutomaticEvaluator
+from realhf.version import get_full_version_with_dirty_description
 
 logger = logging.getLogger("main", "system")
 
@@ -81,6 +82,7 @@ def _submit_workers(
 
 
 def main_start(args, recover_count: int = 0):
+    logger.info(f"AReaL Version: {get_full_version_with_dirty_description()}")
     if recover_count == 0:
         constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     experiment = config_package.make_experiment(args.experiment_name)

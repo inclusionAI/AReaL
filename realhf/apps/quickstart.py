@@ -25,6 +25,7 @@ from realhf.base.prologue import (
     get_experiment_name,
     get_trial_name,
 )
+from realhf.version import get_full_version_with_dirty_description
 
 # NOTE: Register all implemented experiments inside ReaL.
 import_module(
@@ -67,6 +68,10 @@ def print_help(exp_type):
     console.print("\n[dim]Use [bold]--help[/bold] to show this message again[/dim]")
 
 
+def print_version():
+    console.print(f"AReaL Version: {get_full_version_with_dirty_description()}")
+
+
 def main():
     # Create parser with add_help=False to disable automatic --help
     parser = argparse.ArgumentParser(prog="ReaL Quickstart", add_help=False)
@@ -75,6 +80,7 @@ def main():
     parser.add_argument(
         "--help", action="store_true", help="Show this help message and exit"
     )
+    parser.add_argument("--version", action="store_true", help="Show AReaL version")
 
     subparsers = parser.add_subparsers(dest="cmd", help="sub-command help")
     subparsers.required = True
@@ -97,6 +103,10 @@ def main():
 
     # Parse known args first to check for help
     args = vars(parser.parse_known_args()[0])
+
+    if args["version"]:
+        print_version()
+        return
 
     # Handle help at both main and subcommand levels
     if args["help"]:
