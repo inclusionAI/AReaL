@@ -229,6 +229,7 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
             "packed_logprobs",
             "packed_ref_logprobs",
             "rewards",
+            "task_ids",
             "values",
             "prompt_mask",
             "seq_no_eos_mask",

@@ -10,7 +10,12 @@ import torch.distributed as dist
 
 import realhf.api.core.model_api as model_api
 import realhf.impl.model.utils.ppo_functional as ppo_functional
-from realhf.api.core.data_api import MicroBatchSpec, SequenceSample, SequenceSplitSpec
+from realhf.api.core.data_api import (
+    RL_TASKS,
+    MicroBatchSpec,
+    SequenceSample,
+    SequenceSplitSpec,
+)
 from realhf.base import constants, logging, stats_tracker
 from realhf.base.datapack import flat2d
 from realhf.impl.dataset.math_parser import parse_lines_in_parallel
@@ -515,6 +520,9 @@ class PPOActorInterface(model_api.ModelInterface):
             prompt_lens.append(prompt_mask[s:e].sum())
         prompt_lens = torch.tensor(prompt_lens, device=model.device)
         reward_score = input_.data["rewards"].float()
+        task_ids = input_.data["task_ids"]
+        task_ids = task_ids.repeat(self.group_size, 1).transpose(0, 1).reshape(-1)
+
         if "dense_rewards" in input_.data:
             dense_reward_score = input_.data["dense_rewards"].float()
         if not self.disable_value:
@@ -665,11 +673,27 @@ class PPOActorInterface(model_api.ModelInterface):
 
         ### Logging code starts. ###
         with stats_tracker.scope("ppo_actor"):
+            assert (
+                task_ids.shape == reward_score.shape
+            ), f"task_ids ({task_ids.shape}) and reward_score ({reward_score.shape}) must have the same shape"
+
+            task_denominators = {
+                f"{task}_n_seqs": (task_ids == idx).bool()
+                for idx, task in enumerate(RL_TASKS)
+            }
+
             stats_tracker.denominator(
                 n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
                 n_tokens=torch.ones_like(prompt_mask, dtype=torch.bool),
                 n_valid_tokens=loss_mask.bool(),
+                **task_denominators,
             )
+
+            for task in RL_TASKS:
+                stats_tracker.stat(
+                    **{f"{task}_reward": reward_score}, denominator=f"{task}_n_seqs"
+                )
+
             stats = dict(
                 advantages=advantages,
                 kl_rewards=kl_rewards,
@@ -678,6 +702,7 @@ class PPOActorInterface(model_api.ModelInterface):
             if self.use_dense_reward:
                 stats["dense_reward"] = dense_reward_score
             stats_tracker.stat(**stats, denominator="n_valid_tokens")
+
             seq_stats = dict(
                 no_eos_ratios=seq_no_eos_mask.float(),
                 task_reward=reward_score,

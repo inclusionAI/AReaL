@@ -128,7 +128,7 @@ def dispatch_reward_calculation(task, answers, query_id_strs) -> List:
     global id2info
     assert len(answers) == len(query_id_strs)
     format_rewards = []
-    if task == "math":
+    if task == "math" or task == "stem":
         format_rewards = math_verify_call(id2info, answers, query_id_strs)
     elif task == "code":
         codes = [extract_python_code(_answer) for _answer in answers]
