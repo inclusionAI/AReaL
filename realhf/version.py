@@ -33,13 +33,14 @@ def get_full_version() -> str:
     if __commit__ != "":
         version = f"{__version__}-{__commit__}"
     if __is_dirty__:
-         version = f"{version}-dirty"
+        version = f"{version}-dirty"
     return version
+
 
 def get_full_version_with_dirty_description() -> str:
     version = get_full_version()
     if __is_dirty__:
-         version = f"{version} ('-dirty' means there are uncommitted code changes in git)"
+        version = (
+            f"{version} ('-dirty' means there are uncommitted code changes in git)"
+        )
     return version
-
-print(get_full_version_with_dirty_description())
