@@ -2,10 +2,20 @@ import subprocess
 from pathlib import Path
 
 __version__ = "0.3.0-dev"
+__branch__ = ""
 __commit__ = ""
 __is_dirty__ = False
 
 try:
+    __branch__ = (
+        subprocess.check_output(
+            ["git", "branch", "--show-current"],
+            stderr=subprocess.DEVNULL,
+            cwd=Path(__file__).parent,
+        )
+        .decode("utf-8")
+        .strip()
+    )
     __commit__ = (
         subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
