@@ -277,6 +277,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 env=self.env,
                 agent=self.agent,
                 datasets=self.datasets,
+                rollout_request_timeout=self.flush_request_timeout,
             )
             for _ in range(self.n_rollout_workers or train_world_size)
         ]
