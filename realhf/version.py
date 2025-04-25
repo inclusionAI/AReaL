@@ -15,7 +15,7 @@ try:
         )
         .decode("utf-8")
         .strip()
-            )
+    )
     __commit__ = (
         subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],

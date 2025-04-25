@@ -295,7 +295,7 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
                 f"total recover count {args.recover_retries}"
             )
             time.sleep(args.recover_after)
-            main_start(args,job_group_id=job_group_id, recover_count=recover_count + 1)
+            main_start(args, job_group_id=job_group_id, recover_count=recover_count + 1)
         else:
             raise e
 

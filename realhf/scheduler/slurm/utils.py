@@ -10,8 +10,8 @@ import collections
 import dataclasses
 import datetime
 import getpass
-import math
 import json
+import math
 import os
 import shutil
 import socket
@@ -22,9 +22,9 @@ import pandas as pd
 
 import realhf.base.cluster as cluster
 import realhf.base.logging as logging
+import realhf.version as version
 from realhf.base.constants import LOG_ROOT
 from realhf.scheduler.client import JobException, JobInfo, JobState
-import realhf.version as version
 
 logger = logging.getLogger("scheduler.slurm.utils")
 
@@ -398,14 +398,14 @@ class SlurmLaunchInfo:
                 gres_line = f"--gres=gpu:{cluster.spec.n_gpus_per_node}"
 
         srun_env = os.environ.copy()
-        job_metadata={
-                "user": srun_env.get("EMAILPREFIX",""),
-                "version": version.__version__,
-                "branch": version.__branch__,
-                "commit": version.__commit__,
-                "dirty": version.__is_dirty__,
-                "job_group_id": self.job_group_id,
-                "job_group_index": self.job_group_index,
+        job_metadata = {
+            "user": srun_env.get("EMAILPREFIX", ""),
+            "version": version.__version__,
+            "branch": version.__branch__,
+            "commit": version.__commit__,
+            "dirty": version.__is_dirty__,
+            "job_group_id": self.job_group_id,
+            "job_group_index": self.job_group_index,
         }
         job_metadata_json = json.dumps(job_metadata)
 
