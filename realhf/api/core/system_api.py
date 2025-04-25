@@ -204,6 +204,7 @@ class RolloutWorker:
     model_name: ModelName
     tokenizer_path: str
     new_tokens_per_chunk: int
+    rollout_request_timeout: int
     env: EnvServiceAbstraction
     agent: AgentAbstraction
     datasets: List[Union[str, DatasetAbstraction]]

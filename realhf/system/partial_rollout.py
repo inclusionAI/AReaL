@@ -9,6 +9,7 @@ from dataclasses import asdict
 from typing import Dict, Hashable, List
 
 import aiohttp
+from aiohttp.client import ClientTimeout
 from transformers import PreTrainedTokenizerFast
 
 from realhf.api.cli_args import GenerationHyperparameters
@@ -44,6 +45,7 @@ class PartialRolloutManager:
         reply_queue: asyncio.Queue,
         new_tokens_per_chunk: int,
         tokenizer: PreTrainedTokenizerFast,
+        timeout: int,
     ):
         self.worker_index = worker_index
 
@@ -64,6 +66,7 @@ class PartialRolloutManager:
         self.new_tokens_per_chunk = new_tokens_per_chunk
 
         self.gserver_manager_addr = None
+        self.timeout = timeout
 
     async def _schedule_request(self, req_meta: GenReqMeta):
         if self.gserver_manager_addr is None:
@@ -77,6 +80,7 @@ class PartialRolloutManager:
             async with session.post(
                 f"http://{self.gserver_manager_addr}/schedule_request",
                 json=asdict(req_meta),
+                timeout=ClientTimeout(total=self.timeout, sock_connect=30),
             ) as response:
                 response.raise_for_status()
                 res = await response.json()
@@ -202,6 +206,7 @@ class PartialRolloutManager:
                     async with session.post(
                         f"http://{self.gserver_manager_addr}/get_model_version",
                         json=dict(server_url=s.metadata["server_url"]),
+                        timeout=ClientTimeout(total=self.timeout, sock_connect=30),
                     ) as resp:
                         resp.raise_for_status()
                         cur_version = (await resp.json())["version"]
