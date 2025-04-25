@@ -107,6 +107,7 @@ class MathSingleStepAgent(Agent):
                 "version_start",
                 "version_end",
                 "rewards",
+                "task_ids",
             ],
             ids=[qid],
             dtypes=dict(
@@ -118,6 +119,7 @@ class MathSingleStepAgent(Agent):
                 version_end=torch.int,
                 packed_logprobs=torch.float32,
                 rewards=torch.float32,
+                task_ids=torch.long,
             ),
             trailing_shapes=dict(
                 packed_input_ids=(),
@@ -128,6 +130,7 @@ class MathSingleStepAgent(Agent):
                 version_start=(),
                 packed_logprobs=(),
                 rewards=(),
+                task_ids=(),
             ),
             seqlens=dict(
                 packed_input_ids=[act.seqlens],
@@ -138,6 +141,7 @@ class MathSingleStepAgent(Agent):
                 rewards=[[1 for _ in range(self.gconfig.n)]],
                 version_start=[[1 for _ in range(self.gconfig.n)]],
                 version_end=[[1 for _ in range(self.gconfig.n)]],
+                task_ids=[[1]],
             ),
             data=dict(
                 packed_prompts=torch.tensor(act.prompt_ids, dtype=torch.long),
@@ -159,6 +163,7 @@ class MathSingleStepAgent(Agent):
                     ),
                     dtype=torch.bool,
                 ),
+                task_ids=prompt.data["task_ids"],
             ),
         )
 
