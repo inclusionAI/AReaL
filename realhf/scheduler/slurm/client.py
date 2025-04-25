@@ -38,6 +38,8 @@ class SlurmSchedulerClient(SchedulerClient):
         trial_name: str,
         schedule_strategy: str,
         evaluator: Optional[AutomaticEvaluator],
+        job_group_id: str,
+        job_group_index: int,
     ):
         super().__init__(expr_name, trial_name)
 
@@ -49,6 +51,8 @@ class SlurmSchedulerClient(SchedulerClient):
         self.__submission_counter = defaultdict(int)
         self.__wprocs_counter = defaultdict(int)
         self.__evaluator = evaluator
+        self.__job_group_id = job_group_id
+        self.__job_group_index = job_group_index
 
     def submit(self, worker_type, cmd, **kwargs):
         self.submit_array(worker_type, cmd, count=1, **kwargs)
@@ -98,6 +102,8 @@ class SlurmSchedulerClient(SchedulerClient):
             begin=begin,
             deadline=deadline,
             time_limit=time_limit,
+            job_group_id=self.__job_group_id,
+            job_group_index=self.__job_group_index,
         )
 
         if (

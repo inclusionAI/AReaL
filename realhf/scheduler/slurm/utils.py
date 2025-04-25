@@ -11,6 +11,7 @@ import dataclasses
 import datetime
 import getpass
 import math
+import json
 import os
 import shutil
 import socket
@@ -23,6 +24,7 @@ import realhf.base.cluster as cluster
 import realhf.base.logging as logging
 from realhf.base.constants import LOG_ROOT
 from realhf.scheduler.client import JobException, JobInfo, JobState
+import realhf.version as version
 
 logger = logging.getLogger("scheduler.slurm.utils")
 
@@ -224,6 +226,8 @@ class SlurmLaunchInfo:
     worker_type: str
     worker_submission_idx: int
     wprocs_in_job: int
+    job_group_id: str
+    job_group_index: str
 
     resource_requirement: SlurmResource
     cmd: str
@@ -393,6 +397,18 @@ class SlurmLaunchInfo:
             else:
                 gres_line = f"--gres=gpu:{cluster.spec.n_gpus_per_node}"
 
+        srun_env = os.environ.copy()
+        job_metadata={
+                "user": srun_env.get("EMAILPREFIX",""),
+                "version": version.__version__,
+                "branch": version.__branch__,
+                "commit": version.__commit__,
+                "dirty": version.__is_dirty__,
+                "job_group_id": self.job_group_id,
+                "job_group_index": self.job_group_index,
+        }
+        job_metadata_json = json.dumps(job_metadata)
+
         lines = [
             "#!/bin/bash",
             f"#SBATCH --job-name={self.slurm_name}",
@@ -408,9 +424,9 @@ class SlurmLaunchInfo:
             f"#SBATCH --time={self.time_limit}" if self.time_limit else "",
             f"#SBATCH --begin={self.begin}" if self.begin else "",
             f"#SBATCH --deadline={self.deadline}" if self.deadline else "",
+            f"#SBATCH --comment='{job_metadata_json}'",
         ]
 
-        srun_env = os.environ.copy()
         if self.hostfile:
             srun_env["SLURM_HOSTFILE"] = self.hostfile_path
         # Setup step command.
