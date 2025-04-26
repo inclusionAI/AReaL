@@ -60,7 +60,6 @@ GEN_WORKER_DEFAULT_CAPACITY = 512
 
 @dataclasses.dataclass
 class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
-
     @property
     def generation_config(self) -> GenerationHyperparameters:
         raise NotImplementedError()
@@ -165,9 +164,8 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 shards=[],
                 # NOTE: here we use puller stream to wrap the original dataset
                 datasets=[
-                    DatasetAbstraction(
-                        "puller_stream", args=dict(dataset_cfgs=self.datasets)
-                    )
+                    DatasetAbstraction("puller_stream", args=dict(dataset_cfgs=[d]))
+                    for d in self.datasets
                 ],
                 torch_cache_mysophobia=self.torch_cache_mysophobia,
                 cuda_cache_cleanliness=self.cache_clear_freq is not None,
@@ -275,8 +273,9 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 new_tokens_per_chunk=self.new_tokens_per_chunk,
                 env=self.env,
                 agent=self.agent,
-                datasets=self.datasets,
+                datasets=[d],
             )
+            for d in self.datasets
             for _ in range(self.n_rollout_workers or train_world_size)
         ]
 
