@@ -9,6 +9,7 @@ from typing import Dict, Hashable, List
 import aiohttp
 import numpy as np
 import torch.utils.data
+from aiohttp.client import ClientTimeout
 
 from realhf.api.core.agent_api import make_agent
 from realhf.api.core.data_api import SequenceSample, load_hf_tokenizer, make_dataset
@@ -63,6 +64,7 @@ class RolloutWorker(AsyncWorker):
             reply_queue=self.rollout_response_queue,
             new_tokens_per_chunk=config.new_tokens_per_chunk,
             tokenizer=load_hf_tokenizer(config.tokenizer_path),
+            timeout=self.config.rollout_request_timeout,
         )
         self.push_stream = None
 
@@ -190,7 +192,10 @@ class RolloutWorker(AsyncWorker):
     async def allocate_new_rollout(self) -> bool:
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                f"http://{self.gserver_manager_addr}/allocate_rollout"
+                f"http://{self.gserver_manager_addr}/allocate_rollout",
+                timeout=ClientTimeout(
+                    total=self.config.rollout_request_timeout, sock_connect=30
+                ),
             ) as resp:
                 resp.raise_for_status()
                 res = await resp.json()
@@ -264,7 +269,13 @@ class RolloutWorker(AsyncWorker):
             async with aiohttp.ClientSession(
                 f"http://{self.gserver_manager_addr}"
             ) as session:
-                async with session.post("/finish_rollout", json=info) as resp:
+                async with session.post(
+                    "/finish_rollout",
+                    json=info,
+                    timeout=ClientTimeout(
+                        total=self.config.rollout_request_timeout, sock_connect=30
+                    ),
+                ) as resp:
                     resp.raise_for_status()
                     assert (await resp.json())["success"]
 

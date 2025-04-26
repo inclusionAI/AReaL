@@ -22,7 +22,7 @@ import realhf.system.request_reply_stream as request_reply_stream
 from realhf import ModelShardID
 from realhf.api.core.config import ModelName
 from realhf.api.core.model_api import ReaLModelConfig
-from realhf.base import constants, logging, topology
+from realhf.base import constants, logging, stats_tracker, topology
 from realhf.system.buffer import AsyncIOSequenceBuffer
 from realhf.system.flops_counter import FlopsCounter
 from realhf.system.redistributor import RedistribPlanner, RedistribStep
@@ -411,7 +411,7 @@ class ModelFunctionCall:
 
         # Filter out responses other than DP heads.
         # Other repsonses are duplicated or None.
-        responses = [responses[i] for i in dp_head_indices]
+        responses, time_records = list(zip(*[responses[i] for i in dp_head_indices]))
 
         # If the returned data is a SequenceSample, it is the data returned by
         # model function calls. The data shoulbe be amended into buffer.
@@ -442,18 +442,28 @@ class ModelFunctionCall:
                 logger.info(
                     f"RPC name {rpc.name} returns\n{data_api.tabulate_stats(res)}"
                 )
-                wandb.log(res, step=ctrl.step_info.global_step)
-                if self.summary_writer is not None:
-                    for key, val in res.items():
-                        self.summary_writer.add_scalar(
-                            f"{key}", val, ctrl.step_info.global_step
-                        )
+                logging.log_wandb_tensorboard(
+                    res,
+                    step=ctrl.step_info.global_step,
+                    summary_writer=self.summary_writer,
+                )
             else:
                 logger.info(f"RPC name {rpc.name} returns\n{res}")
 
+        # Log rpc execution time.
+        for time_record in time_records:
+            stats_tracker.scalar(**time_record)
+        time_stats = stats_tracker.export()
+        logging.log_wandb_tensorboard(
+            time_stats,
+            step=ctrl.step_info.global_step,
+            summary_writer=self.summary_writer,
+        )
+
         logger.info(
             f"Model rpc {rpc.name} finished. "
-            f"Run time {time.perf_counter() - tik:.4f}s."
+            f"Request-reply time {time.perf_counter() - tik:.4f}s. "
+            f"Detailed time stats:\n{data_api.tabulate_stats(time_stats, floatfmt='.2f')}."
         )
 
         # If this RPC is the final node in the dataflow graph,

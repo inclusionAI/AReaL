@@ -25,6 +25,7 @@ from realhf.api.quickstart.entrypoint import (
     QUICKSTART_EXPR_CACHE_PATH,
 )
 from realhf.base import cluster, gpu_utils, importing, logging, name_resolve, names
+from realhf.version import get_full_version_with_dirty_description
 
 logger = logging.getLogger("Main-Workers")
 
@@ -250,6 +251,7 @@ def main():
 
     args = parser.parse_args()
 
+    logger.info(f"AReaL Version: {get_full_version_with_dirty_description()}")
     args.func(args)
 
 
