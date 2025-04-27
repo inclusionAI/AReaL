@@ -13,6 +13,8 @@ AReaL (Ant Reasoning RL) is a fully open-sourced, scalable, and efficient reinfo
 + 🔪 **Cutting-Edge Performances:** AReaL can produce models with cutting-edge reasoning capabilities. We are actively working on other domains, such as coding and agent, as well. 
 
 ## News
+**[2025/04/27]** 🔥 We've built a [documentation website](https://deepwiki.com/inclusionAI/AReaL) using the amazing [DeepWiki](https://deepwiki.com/) tool. Check the link to know and ask about AReaL!
+
 **[2025/03/31]** **(v0.2, Boba)** Our milestone release Boba! Please call it A-ReaL-Boba! This release includes much accelerated training with SGLang support and SOTA 7B and 32B models on math reasoning. 
 
 **[2025/02/24]** **(v0.1)** Our initial release includes reproducible results for 1.5B and 7B LRMs. Check our [v0.1 technical blog](/blog/AReaL_v0_1.md).
