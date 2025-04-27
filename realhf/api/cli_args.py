@@ -309,6 +309,7 @@ class SGLangConfig:
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
     hybrid_train: bool = False
+    kv_cache_dtype: str = "auto"
 
     # logging
     log_level: str = "info"
@@ -345,7 +346,6 @@ class SGLangConfig:
             tokenizer_mode="auto",
             load_format="auto",
             trust_remote_code=True,
-            kv_cache_dtype="auto",
             device="cuda",
             served_model_name=f"{constants.experiment_name()}/{constants.trial_name()}/{model_path}",
             is_embedding=False,
