@@ -450,7 +450,6 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
             tokenizer_mode="auto",
             load_format="auto",
             trust_remote_code=True,
-            kv_cache_dtype="auto",
             device="cuda",
             served_model_name=f"{constants.experiment_name()}/{constants.trial_name()}/{constants.model_name().role}",
             is_embedding=False,
