@@ -39,12 +39,12 @@ from pydantic import field_validator, model_validator
 
 from realhf.api.cli_args import MicroBatchSpec
 from realhf.api.core import config as config_api
-from realhf.base import constants, datapack, logging
+from realhf.base import constants, datapack, logging, seeding
 from realhf.base.cluster import spec as cluster_spec
 
 logger = logging.getLogger("api.data")
 
-RL_TASKS = ["math", "code", "rlhf"]
+RL_TASKS = ["math", "code", "rlhf", "stem"]
 
 
 def load_hf_tokenizer(
@@ -181,10 +181,21 @@ class SequenceSample:
 
     @field_validator("ids")
     @classmethod
-    def _validate_ids(cls, ids: List[Hashable]) -> List[Hashable]:
+    def _validate_ids(cls, ids: List[Hashable]) -> List[str]:
+        ids = list(map(str, ids))
         if len(ids) != len(set(ids)):
             raise ValueError(f"IDs contain duplicates: {ids}.")
         return ids
+
+    @field_validator("trailing_shapes")
+    @classmethod
+    def _validate_trailing_shapes(
+        cls, trailing_shapes: Dict
+    ) -> Dict[str, Tuple | None]:
+        for k, v in trailing_shapes.items():
+            if v is not None:
+                trailing_shapes[k] = tuple(v)
+        return trailing_shapes
 
     @field_validator("keys")
     @classmethod
@@ -497,6 +508,18 @@ class SequenceSample:
         self.metadata.update(other.metadata)
 
     @staticmethod
+    def shuffled(sample: "SequenceSample") -> "SequenceSample":
+        """Create a shuffled sample.
+        Define it as a staticmethod because it is an out-of-place operation.
+        (Think about the difference between `sorted` and `l.sort()`).
+        """
+        seed = seeding.get_shuffle_seed()
+        rng = np.random.RandomState(seed)
+        indices = np.arange(sample.bs)
+        rng.shuffle(indices)
+        return SequenceSample.reorder(sample, indices)
+
+    @staticmethod
     def _resolve_seqlen_from_key(key, seqlens: List[int]) -> List[torch.Tensor]:
         if key in [
             "seq_no_eos_mask",
@@ -655,6 +678,44 @@ class SequenceSample:
             yield
         finally:
             cls.__init__ = original_init
+
+    def as_json_compatible(self) -> Dict:
+        return dict(
+            ids=self.ids,
+            keys=list(self.keys),
+            trailing_shapes={
+                k: tuple(v) if v is not None else None
+                for k, v in self.trailing_shapes.items()
+            },
+            dtypes={k: str(v) if v is not None else v for k, v in self.dtypes.items()},
+            seqlens=self.seqlens,
+            data={
+                k: v.cpu().numpy().tolist() if v is not None else None
+                for k, v in self.data.items()
+            },
+            metadata=self.metadata,
+        )
+
+    @classmethod
+    def from_json_compatible(cls, data: Dict):
+        dtypes = {}
+        for k, dtype_str in data["dtypes"].items():
+            if dtype_str is not None:
+                dtypes[k] = getattr(torch, dtype_str.split(".")[1])
+            else:
+                dtypes[k] = None
+        return cls(
+            ids=data["ids"],
+            keys=set(data["keys"]),
+            trailing_shapes=data["trailing_shapes"],
+            dtypes=dtypes,
+            seqlens=data["seqlens"],
+            data={
+                k: torch.tensor(v, dtype=dtypes[k]) if v is not None else v
+                for k, v in data["data"].items()
+            },
+            metadata=data["metadata"],
+        )
 
 
 @dataclasses.dataclass
@@ -824,3 +885,23 @@ def gather_stat(src: List[Dict]) -> Dict:
                 f"before returning: ({[x.get(k, None) for x in src]}, {v})."
             )
     return res
+
+
+def tabulate_stats(data: Dict[str, float], col=4, floatfmt=".4e") -> str:
+    from tabulate import tabulate
+
+    items = list(data.items())
+    # Calculate how many rows we'll need
+    row_count = (len(items) + col - 1) // col
+
+    # Reorganize items in column-major order
+    column_major = []
+    for i in range(row_count):
+        row = []
+        for j in range(col):
+            index = i + j * row_count
+            if index < len(items):
+                row.extend(items[index])
+        column_major.append(row)
+
+    return tabulate(column_major, floatfmt=floatfmt, tablefmt="fancy_grid")

@@ -4,7 +4,7 @@
 
 import dataclasses
 import os
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import realhf.api.core.dfg as dfg
 from realhf.api.cli_args import (
@@ -14,7 +14,9 @@ from realhf.api.cli_args import (
     WandBConfig,
 )
 from realhf.api.core.config import (
+    AgentAbstraction,
     DatasetAbstraction,
+    EnvServiceAbstraction,
     ModelAbstraction,
     ModelName,
     ModelShardID,
@@ -22,9 +24,6 @@ from realhf.api.core.config import (
 )
 from realhf.base import constants, topology
 from realhf.base.cluster import spec as cluster_spec
-
-_LLM_GPU_IMAGE = cluster_spec.gpu_image
-_LLM_CPU_IMAGE = cluster_spec.cpu_image
 
 
 @dataclasses.dataclass
@@ -36,7 +35,7 @@ class Scheduling:
     node_type: str = None
     nodelist: str = None
     exclude: str = None
-    container_image: str = _LLM_CPU_IMAGE
+    container_image: str = cluster_spec.cpu_image
     env_vars: Dict[str, str] = dataclasses.field(default_factory=dict)
     # time utils from "https://slurm.schedmd.com/sbatch.html"
     time_limit: Optional[str] = None  # see  "--time" option for format
@@ -50,7 +49,7 @@ class Scheduling:
                 "cpu": 16,
                 "mem": 20 * 1024,
                 "gpu": 0,
-                "container_image": _LLM_CPU_IMAGE,
+                "container_image": cluster_spec.cpu_image,
                 **kwargs,
             }
         )
@@ -62,7 +61,43 @@ class Scheduling:
                 "cpu": 2,
                 "gpu": 1,
                 "mem": 60 * 1024,
-                "container_image": _LLM_GPU_IMAGE,
+                "container_image": cluster_spec.gpu_image,
+                **kwargs,
+            }
+        )
+
+    @staticmethod
+    def generation_server_default(**kwargs):
+        return Scheduling(
+            **{
+                "cpu": 4,
+                "gpu": 1,
+                "mem": 60 * 1024,
+                "container_image": cluster_spec.gpu_infer_image,
+                **kwargs,
+            }
+        )
+
+    @staticmethod
+    def gserver_manager_default(**kwargs):
+        return Scheduling(
+            **{
+                "cpu": 4,
+                "gpu": 0,
+                "mem": 10 * 1024,
+                "container_image": cluster_spec.gpu_image,
+                **kwargs,
+            }
+        )
+
+    @staticmethod
+    def rollout_worker_default(**kwargs):
+        return Scheduling(
+            **{
+                "cpu": 4,
+                "gpu": 0,
+                "mem": 20 * 1024,
+                "container_image": cluster_spec.gpu_image,
                 **kwargs,
             }
         )
@@ -119,6 +154,7 @@ class ModelWorker:
     datasets: Optional[List[Union[str, DatasetAbstraction]]] = None
     use_dataset_cache: bool = False
     dataset_cahce_root: str = constants.DATASET_CACHE_PATH
+    shuffle_dataset: bool = True
     cuda_cache_cleanliness: bool = True
     cuda_cache_clear_freq: int = 10
     torch_cache_mysophobia: bool = False
@@ -126,8 +162,8 @@ class ModelWorker:
     model_rpcs: List[dfg.MFCDef] = None
     model_topos: Dict[ModelName, topology.ProcessTopology] = None
     msid2mwid: Dict[ModelShardID, int] = None
-    data_transfer_pairs: List[Tuple[str, str]] = None
-    sync_param_pairs: List[Tuple[str, str]] = None
+    data_transfer_pairs: List[Tuple[ModelName, ModelName]] = None
+    sync_param_pairs: List[Tuple[ModelName, ModelName]] = None
     # profiling
     profile_mode: bool = False
     worker_info: Optional[WorkerInformation] = None
@@ -141,11 +177,49 @@ class ModelWorker:
 
 
 @dataclasses.dataclass
+class GenerationServer:
+    base_seed: int
+    backend_type: str
+    backend_args: Any
+    model_path: str
+    tp_size: int
+    worker_info: WorkerInformation = None
+
+
+@dataclasses.dataclass
+class GserverManager:
+    model_name: ModelName
+    n_servers: int
+    schedule_policy: str
+    max_head_offpolicyness: int
+    train_batch_size: int
+    flush_request_timeout: int
+    max_concurrent_rollouts: int
+    worker_info: WorkerInformation = None
+
+
+@dataclasses.dataclass
+class RolloutWorker:
+    base_seed: int
+    model_name: ModelName
+    tokenizer_path: str
+    new_tokens_per_chunk: int
+    rollout_request_timeout: int
+    env: EnvServiceAbstraction
+    agent: AgentAbstraction
+    datasets: List[Union[str, DatasetAbstraction]]
+    use_dataset_cache: bool = False
+    dataset_cahce_root: str = constants.DATASET_CACHE_PATH
+    worker_info: WorkerInformation = None
+
+
+@dataclasses.dataclass
 class MasterWorker:
     base_seed: int
     exp_ctrl: ExperimentSaveEvalControl
     # main components
     n_model_workers: int
+    shuffle_dataset: bool = True
     model_rpcs: List[dfg.MFCDef] = None
     model_topos: Dict[ModelName, topology.ProcessTopology] = None
     msid2mwid: Dict[ModelShardID | str, int] = None
@@ -162,13 +236,12 @@ class TasksGroup:
 
 @dataclasses.dataclass
 class ExperimentScheduling:
-    model_worker: Union[List[TasksGroup], TasksGroup] = dataclasses.field(
-        default_factory=list
-    )
-    master_worker: Union[List[TasksGroup], TasksGroup] = dataclasses.field(
-        default_factory=list
-    )
-    controller_image: str = _LLM_CPU_IMAGE
+    model_worker: TasksGroup
+    master_worker: TasksGroup
+    generation_server: TasksGroup | None = None
+    gserver_manager: TasksGroup | None = None
+    rollout_worker: TasksGroup | None = None
+    controller_image: str = cluster_spec.cpu_image
 
 
 @dataclasses.dataclass
@@ -179,6 +252,9 @@ class ExperimentConfig:
     # dataflow
     model_rpcs: List[dfg.MFCDef]
     model_worker: List[ModelWorker] = dataclasses.field(default_factory=list)
+    generation_server: List[GenerationServer] = dataclasses.field(default_factory=list)
+    gserver_manager: List[GserverManager] = dataclasses.field(default_factory=list)
+    rollout_worker: List[RolloutWorker] = dataclasses.field(default_factory=list)
     # master_worker will be set automatically
     master_worker: Optional[List[MasterWorker]] = None
     # automatic evaluation
@@ -193,6 +269,7 @@ class ExperimentConfig:
                 base_seed=self.model_worker[0].base_seed,
                 exp_ctrl=self.exp_ctrl,
                 n_model_workers=len(self.model_worker),
+                shuffle_dataset=self.model_worker[0].shuffle_dataset,
             )
         ]
 
@@ -259,12 +336,12 @@ class ExperimentConfig:
         return getattr(self, worker_type)[worker_index]
 
     def set_worker_information(self, experiment_name, trial_name):
-        if len(self.model_worker) > 0:
-            assert len(self.master_worker) == 1
-
         for worker_type, workers in [
             ("model_worker", self.model_worker),
             ("master_worker", self.master_worker),
+            ("gserver_manager", self.gserver_manager),
+            ("rollout_worker", self.rollout_worker),
+            ("generation_server", self.generation_server),
         ]:
             if len(workers) == 0:
                 continue

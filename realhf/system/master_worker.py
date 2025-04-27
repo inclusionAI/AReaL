@@ -15,13 +15,6 @@ import numpy as np
 import wandb
 from tensorboardX import SummaryWriter
 
-try:
-    import uvloop
-
-    uvloop.install()
-except (ModuleNotFoundError, ImportError):
-    pass
-
 import realhf.api.core.dfg as dfg
 import realhf.api.core.model_api as model_api
 import realhf.api.core.system_api as config_pkg
@@ -53,7 +46,7 @@ class MasterWorker(worker_base.Worker):
     def _configure(self, config: config_pkg.MasterWorker):
         self.config = config
 
-        seeding.set_random_seed(self.config.base_seed + self.config.n_model_workers)
+        seeding.set_random_seed(self.config.base_seed, "master_worker")
 
         self.__model_topos: Dict[ModelName, topology.ProcessTopology] = (
             config.model_topos
@@ -129,11 +122,6 @@ class MasterWorker(worker_base.Worker):
             # NOTE: We should accumulate the used data hashes in the same epoch
             # to prevent loading data used before.
             used_hash_vals_this_epoch=(
-                copy.deepcopy(self.__recover_info.hash_vals_to_ignore)
-                if self.__recover_run
-                else list()
-            ),
-            hash_vals_to_ignore_in_recover=(
                 copy.deepcopy(self.__recover_info.hash_vals_to_ignore)
                 if self.__recover_run
                 else list()
@@ -222,22 +210,15 @@ class MasterWorker(worker_base.Worker):
         src_rpc_dp_size = src_rpc_topo.get_dim("data")
 
         # Request training specification from data workers.
-        all_data = sum(
+        self._dataset_size = sum(
             self.__stream.call(
                 handlers=[f"__data{i}__" for i in range(src_rpc_dp_size)],
                 datas=[None for i in range(src_rpc_dp_size)],
                 handle_type="spec",
             ),
-            [],
         )
 
-        # NOTE: For dynamic datasets, we still count epoch according to the initial number of data,
-        # such that the learning rate decay is not affected.
-        seqlens = [max(sum(v[0]) for v in x.seqlens.values()) for x in all_data]
-        self._dataset_size = len(all_data)
         self._steps_per_epoch = self._dataset_size // src_rpc.n_seqs
-        self._avg_tokens_per_batch = sum(seqlens) / self._steps_per_epoch
-        self._dataset_ids = [copy.deepcopy(x.ids[0]) for x in all_data]
 
         # Request model configs from model workers.
         # Return None if the model is not a ReaLModel.
@@ -324,6 +305,7 @@ class MasterWorker(worker_base.Worker):
             model_configs=self.__model_configs,
             ctrl=self.__rpc_ctrl,
             summary_writer=self.__summary_writer,
+            shuffle_dataset=self.config.shuffle_dataset,
         )
         if self.__recover_run:
             self.func_executor.data_loading_dp_idx = (
@@ -455,9 +437,11 @@ class MasterWorker(worker_base.Worker):
         s = f"Epoch {epoch}/{self.config.exp_ctrl.total_train_epochs} "
         s += f"step {epoch_step}/{self._steps_per_epoch} "
         s += f"(global step {global_step}) finishes. "
-        s += f"Average #tokens per batch is {self._avg_tokens_per_batch:.0f}. "
         s += f"#End to end# execution time: *{e2e_time:.3f}*s. "
         s += f"Total time consumption: {time_since_configure:.3f}s. "
+        logging.log_wandb_tensorboard(
+            {"timeperf/e2e": e2e_time}, step=self.__rpc_ctrl.step_info.global_step
+        )
         if len(self.e2e_time_history) > 2:
             remaining_steps = self._steps_per_epoch - epoch_step
             remaining_epochs = self.__total_train_epochs - epoch

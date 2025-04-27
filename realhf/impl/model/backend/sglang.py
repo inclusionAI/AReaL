@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import json
 import os
+import socket
 import sys
 import time
 import traceback
@@ -33,8 +34,11 @@ from realhf.api.core.model_api import (
 from realhf.base import (
     cluster,
     constants,
+    datapack,
     gpu_utils,
     logging,
+    name_resolve,
+    names,
     network,
     pkg_version,
     seeding,
@@ -71,97 +75,95 @@ class SGLangAPIClient(LLMAPIClient):
             "stop_token_ids": req.stop_token_ids,
         }
         payload = {
-            "input_ids": req.prompt_ids,
+            "input_ids": req.input_ids,
             "sampling_params": sample_params,
             "return_logprob": req.return_logprob,
             "stream": stream,
         }
 
-        output = APIGenerateOutput.from_input(req)
+        assert not stream, "streaming mode not yet implemented"
+        outputs = [APIGenerateOutput.from_input(req) for _ in range(gconfig.n)]
+        most_recent_timestamps = [time.perf_counter() for _ in range(gconfig.n)]
+        output_idx = 0
 
         # The following code is partially adopted from sglang/bench_serving.py
-        output_ids = []
-        output_logprobs = []
-        finish_reason = {}
-        ttft = 0.0
-        latency = float("inf")
         st = time.perf_counter()
-        most_recent_timestamp = st
-        timeout = aiohttp.ClientTimeout(total=None, connect=30, sock_read=None)
-        try:
-            async with self.session.post(
-                url=self.generate_url,
-                json=payload,
-                timeout=timeout,
-            ) as response:
-                if response.status == 200:
-                    async for chunk_bytes in response.content:
-                        chunk_bytes = chunk_bytes.strip()
-                        if not chunk_bytes:
-                            continue
+        async with self.session.post(url=self.generate_url, json=payload) as response:
+            response.raise_for_status()
+            async for chunk_bytes in response.content:
+                chunk_bytes = chunk_bytes.strip()
+                if not chunk_bytes:
+                    continue
 
-                        chunk = remove_prefix(chunk_bytes.decode("utf-8"), "data: ")
-                        latency = time.perf_counter() - st
-                        if chunk == "[DONE]":
-                            pass
-                        else:
-                            data = json.loads(chunk)
-
-                            # NOTE: Some completion API might have a last
-                            # usage summary response without a token so we
-                            # want to check a token was generated
-                            if data[SGLANG_TOKEN_OUTPUT_IDENTIFIER]:
-                                timestamp = time.perf_counter()
-                                # First token
-                                if ttft == 0.0:
-                                    ttft = time.perf_counter() - st
-                                    output.ttft = ttft
-
-                                # Decoding phase
-                                else:
-                                    output.itl.append(timestamp - most_recent_timestamp)
-
-                                most_recent_timestamp = timestamp
-                                output_ids = data[SGLANG_TOKEN_OUTPUT_IDENTIFIER]
-                                finish_reason = data["meta_info"]["finish_reason"]
-                                output_logprobs = data["meta_info"][
-                                    "output_token_logprobs"
-                                ]
-
-                    assert finish_reason["type"] in ["length", "stop"], finish_reason
-                    output.output_logprobs = [x[0] for x in output_logprobs]
-                    output.output_ids = output_ids
-                    output.no_eos = finish_reason["type"] == "length"
-                    output.success = True
-                    output.latency = latency
+                chunk = remove_prefix(chunk_bytes.decode("utf-8"), "data: ")
+                latency = time.perf_counter() - st
+                if chunk == "[DONE]":
+                    pass
                 else:
-                    output.error = response.reason or ""
-                    output.success = False
-        except Exception as e:
-            output.success = False
-            exc_info = sys.exc_info()
-            output.error = "".join(traceback.format_exception(*exc_info))
-            raise RuntimeError(
-                f"SGLang generation request fails:\n{output.error}"
-            ) from e
+                    datas = json.loads(chunk)
+                    if not isinstance(datas, list):
+                        datas = [datas]
+                    for data in datas:
 
-        return output
+                        output = outputs[output_idx]
+                        timestamp = time.perf_counter()
+                        # First token
+                        if output.ttft == float("inf"):
+                            ttft = time.perf_counter() - st
+                            output.ttft = ttft
+                        # Decoding phase
+                        else:
+                            output.itl.append(
+                                timestamp - most_recent_timestamps[output_idx]
+                            )
 
-    async def async_update_weights_from_disk(self, path):
-        timeout = aiohttp.ClientTimeout(total=300, connect=30, sock_read=None)
-        async with self.session.post(
-            url=self.update_weights_url,
-            json=dict(model_path=path),
-            timeout=timeout,
-        ) as response:
-            if response.status != 200:
-                raise RuntimeError("Update weights failed.")
+                        most_recent_timestamps[output_idx] = timestamp
+                        output.output_ids = [data[SGLANG_TOKEN_OUTPUT_IDENTIFIER]]
+                        finish_reason = data["meta_info"]["finish_reason"]
+                        if req.return_logprob:
+                            output.output_logprobs = [
+                                [
+                                    x[0]
+                                    for x in data["meta_info"]["output_token_logprobs"]
+                                ]
+                            ]
+                        assert finish_reason["type"] in [
+                            "length",
+                            "stop",
+                        ], finish_reason
+                        output.no_eos = [finish_reason["type"] == "length"]
+                        output.latency = latency
+
+                        output_idx += 1
+
+        return APIGenerateOutput.concat(outputs)
+
+    async def async_update_weights_from_disk(self, path, retries=5):
+        for _ in range(retries):
+            async with self.session.post(
+                url=self.update_weights_url,
+                json=dict(model_path=path),
+            ) as resp:
+                if resp.status == 200:
+                    res = await resp.json()
+                    success = res["success"]
+                    if success:
+                        return
+                    logger.warning(
+                        f"Update weights failed: {res['message']}. Retrying."
+                    )
+                logger.warning(f"Update weights failed: {resp.reason}. Retrying.")
+            time.sleep(0.1)
+        raise RuntimeError("Update weights failed.")
 
 
 def sglang_server_process(server_args_dict):
 
     from sglang.srt.server_args import ServerArgs
     from sglang.srt.utils import kill_process_tree
+
+    if pkg_version.is_version_less("sglang", "0.4.4"):
+        server_args_dict.pop("log_requests_level")
 
     if pkg_version.is_version_less("sglang", "0.4.3"):
         from sglang.srt.server import launch_server
@@ -182,6 +184,7 @@ def sglang_server_process(server_args_dict):
     )
 
     try:
+        logger.info(f"SGLang Server Args: {server_args}")
         launch_server(server_args)
     finally:
         kill_process_tree(os.getpid(), include_parent=False)
@@ -216,7 +219,24 @@ class SGLangGenerationEngine(PipelinableEngine):
             "update_weights_from_disk": f"{self.base_url}/update_weights_from_disk",
         }
 
-        asyncio.run(self.wait_server())
+        self.wait_server()
+
+        if server_args_dict["enable_metrics"]:
+            dp_rank = constants.data_parallel_rank()
+            pp_rank = constants.pipe_parallel_rank()
+            mp_rank = constants.model_parallel_rank()
+            metric_server_name = f"d{dp_rank}p{pp_rank}m{mp_rank}"
+            key = names.metric_server(
+                constants.experiment_name(),
+                constants.trial_name(),
+                "sglang",
+                metric_server_name,
+            )
+            host_ip = server_args_dict["host"]
+            host_port = server_args_dict["port"]
+            address = f"{host_ip}:{host_port}"
+            name_resolve.add(key, address, keepalive_ttl=None, delete_on_exit=True)
+            logger.info(f"SGLang {metric_server_name} metrics URL: {address}")
 
         self.request_timeout = request_timeout
 
@@ -241,14 +261,14 @@ class SGLangGenerationEngine(PipelinableEngine):
     def eval(self):
         return self
 
-    async def wait_server(self):
+    def wait_server(self):
         # Wait until the server is launched
         from sglang.srt.utils import kill_process_tree
         from sglang.utils import get_exception_traceback
 
         success = False
         for _ in range(SGLANG_INIT_TIMEOUT):
-            await asyncio.sleep(1)
+            time.sleep(1)
             try:
                 res = requests.get(
                     self.base_url + "/get_model_info", timeout=5, headers={}
@@ -283,7 +303,6 @@ class SGLangGenerationEngine(PipelinableEngine):
             update_weights_url=self.api_urls["update_weights_from_disk"],
         ) as client:
             tasks = []
-            input_queries = []
             for d in input_.unpack():
                 if len(d.seqlens["packed_input_ids"]) > 1:
                     raise RuntimeError(
@@ -293,35 +312,32 @@ class SGLangGenerationEngine(PipelinableEngine):
 
                 prompt_token_ids = d.data["packed_input_ids"].cpu().numpy().tolist()
                 qid = d.ids[0]
-                for group_idx in range(gconfig.n):
-                    req = APIGenerateInput(
-                        qid=qid,
-                        group_idx=group_idx,
-                        prompt_ids=prompt_token_ids,
-                        input_ids=prompt_token_ids,
-                        gconfig=gconfig.new(n=1),
-                        stop_token_ids=[tokenizer.pad_token_id, tokenizer.eos_token_id],
-                        return_logprob=True,
+                req = APIGenerateInput(
+                    qid=qid,
+                    prompt_ids=prompt_token_ids,
+                    input_ids=prompt_token_ids,
+                    gconfig=gconfig,
+                    stop_token_ids=[tokenizer.pad_token_id, tokenizer.eos_token_id],
+                    return_logprob=True,
+                )
+                tasks.append(
+                    client.async_add_generate_request(
+                        req,
+                        stream=stream,
                     )
-                    input_queries.append((qid, group_idx))
-                    tasks.append(
-                        client.async_add_generate_request(
-                            req,
-                            stream=stream,
-                        )
-                    )
+                )
 
             outputs = {}
             for r in asyncio.as_completed(tasks):
                 out = await r
-                outputs[(out.qid, out.group_idx)] = out
+                outputs[out.qid] = out
                 if pbar:
                     pbar.update(1)
 
             if pbar is not None:
                 pbar.close()
 
-            results: List[APIGenerateOutput] = [outputs[key] for key in input_queries]
+            results: List[APIGenerateOutput] = [outputs[key] for key in input_.ids]
 
         # Build the output: generated token ids, generated token scores,
         # and logits mask (which will always be None in sglang).
@@ -329,9 +345,9 @@ class SGLangGenerationEngine(PipelinableEngine):
         batch_logprobs = []
         max_seqlen = -1
         for x in results:
-            max_seqlen = max(max_seqlen, len(x.output_ids))
-            batch_token_ids.append(x.output_ids)
-            batch_logprobs.append(x.output_logprobs)
+            max_seqlen = max(max_seqlen, max(x.output_lens))
+            batch_token_ids += x.output_ids
+            batch_logprobs += x.output_logprobs
 
         # To be consistent with our internal implementation,
         # we should pad generated tokens and logprobs
@@ -415,16 +431,20 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
 
         # For simplicity, we let all DP ranks have different ports.
         ports = [None for _ in range(constants.data_parallel_world_size())]
-        while any(port is None for port in ports) or len(set(ports)) != len(ports):
+        while any(port is None for port in ports) or len(
+            set(datapack.flat2d(ports))
+        ) != len(datapack.flat2d(ports)):
             dist.all_gather_object(
                 ports,
-                network.find_free_port(low=20000, high=40000),
+                network.find_multiple_free_ports(2, low=20000, high=40000),
                 group=constants.data_parallel_group(),
             )
-        additional_args["port"] = ports[constants.data_parallel_rank()]
+        api_server_port, dist_port = ports[constants.data_parallel_rank()]
+        additional_args["port"] = api_server_port
 
+        host_ip = socket.gethostbyname(socket.gethostname())
         server_args_dict = dict(
-            host="localhost",
+            host="localhost" if not self.enable_metrics else host_ip,
             # Model and tokenizer
             tokenizer_path=self.model_path,
             tokenizer_mode="auto",
@@ -449,7 +469,7 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
             # Expert parallelism
             ep_size=1,  # TODO: check
             # Multi-node distributed serving
-            dist_init_addr=None,
+            dist_init_addr=f"{network.gethostip()}:{dist_port}",
             nnodes=1,
             node_rank=0,
             **additional_args,

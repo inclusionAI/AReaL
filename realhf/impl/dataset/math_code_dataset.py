@@ -3,6 +3,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import json
+import sys
 import traceback
 from collections import defaultdict
 from typing import Callable, Dict, Hashable, List, Optional
@@ -17,7 +18,7 @@ logger = logging.getLogger("Math Code Dataset")
 
 
 def check_math_metadata_entries(data):
-    assert data["task"] == "math"
+    assert data["task"] == "math" or data["task"] == "stem"
     assert "query_id" in data
     data["query_id"] = str(data["query_id"])
     assert isinstance(data["prompt"], str)
@@ -34,6 +35,10 @@ def check_code_metadata_entries(data):
     if "problem_id" not in data:
         data["problem_id"] = data["query_id"]
     assert isinstance(data["prompt"], str)
+    case_size = sys.getsizeof(data["input_output"])
+    assert (
+        case_size < 500 * 1024
+    ), f"'input_output' exceeds 500KB ({case_size} bytes). Use remote testcase instead."
     input_output = json.loads(data["input_output"])
     assert len(input_output["inputs"]) == len(input_output["outputs"])
     for inp, out in zip(input_output["inputs"], input_output["outputs"]):
@@ -61,7 +66,7 @@ def load_metadata(path):
                 logger.warning(
                     f'Key "task" not found in the dataset. Use math as default task type.'
                 )
-            if d["task"] == "math":
+            if d["task"] == "math" or d["task"] == "stem":
                 d = check_math_metadata_entries(d)
             elif d["task"] == "code":
                 d = check_code_metadata_entries(d)
@@ -79,7 +84,6 @@ def load_metadata(path):
 
 
 class MATHCodePromptDataset(torch.utils.data.Dataset):
-
     def __init__(
         self,
         util: data_api.DatasetUtility,

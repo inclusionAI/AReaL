@@ -161,7 +161,16 @@ def make(mode, expr_name, trial_name, **kwargs) -> SchedulerClient:
 
         schedule_strategy = kwargs.get("schedule_strategy", "empty_first")
         evaluator = kwargs.get("evaluator", None)
-        return SlurmSchedulerClient(expr_name, trial_name, schedule_strategy, evaluator)
+        job_group_id = kwargs.get("job_group_id", None)
+        job_group_index = kwargs.get("job_group_index", None)
+        return SlurmSchedulerClient(
+            expr_name,
+            trial_name,
+            schedule_strategy,
+            evaluator,
+            job_group_id,
+            job_group_index,
+        )
     elif mode == "local":
         from realhf.scheduler.local.client import LocalSchedulerClient
 

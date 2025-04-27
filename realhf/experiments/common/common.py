@@ -110,7 +110,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
 
         Should be implemented in all subclasses.
         """
-        return NotImplementedError(f"datasets is not implemented in {self.__class__}")
+        raise NotImplementedError(f"datasets is not implemented in {self.__class__}")
 
     @property
     def eval_dataset(self) -> DatasetAbstraction | None:
@@ -154,8 +154,6 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
             n_nodes=self.n_nodes,
             n_gpus_per_node=self.n_gpus_per_node,
             mapping=np.ones((self.n_nodes, self.n_gpus_per_node), dtype=np.int32),
-            global_mesh_name=self.nodelist,
-            name=self.nodelist,
         )
 
     def _heuristic_rpc_allocation(self) -> List[RPCAllocation]:
@@ -190,6 +188,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                     cpu=self.cpus_per_master_worker,
                     mem=self.mem_per_master_worker,
                     nodelist=self.nodelist,
+                    exclude=self.exclude,
                 ),
             ),
             model_worker=TasksGroup(
@@ -200,6 +199,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                     gpu_type=cluster_spec.gpu_type,
                     mem=self.mem_per_model_worker,
                     nodelist=self.nodelist,
+                    exclude=self.exclude,
                 ),
             ),
         )
@@ -351,12 +351,16 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                 )
                 rpc_allocs.append(alloc)
         elif self.allocation_mode == "manual":
+            if self.nodelist is None:
+                raise ValueError(
+                    "The 'nodelist' option must be specified when using manual allocation mode."
+                )
             rpc_allocs: List[RPCAllocation] = [
                 RPCAllocation(
                     rpc=rpc,
                     device_mesh=(
                         make_device_mesh_from_name(
-                            self.global_device_mesh.name,
+                            self.nodelist,
                             self.allocations[rpc_type].device_mesh,
                             self.global_device_mesh.n_gpus_per_node,
                         )
@@ -394,6 +398,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                 base_seed=self.seed,
                 shards=[],
                 datasets=self.datasets,
+                shuffle_dataset=self.shuffle_dataset,
                 torch_cache_mysophobia=self.torch_cache_mysophobia,
                 cuda_cache_cleanliness=self.cache_clear_freq is not None,
                 cuda_cache_clear_freq=self.cache_clear_freq,

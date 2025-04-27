@@ -64,3 +64,34 @@ def distributed_master(experiment_name, trial_name, model_name):
 
 def model_version(experiment_name, trial_name, model_name):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/model_version/{model_name}"
+
+
+def metric_server_root(experiment_name, trial_name):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/metrics"
+
+
+def metric_server(experiment_name, trial_name, group, name):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/metrics/{group}/{name}"
+
+
+def push_pull_stream(experiment_name, trial_name, stream_name):
+    # Used to write addresses
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/push_pull_stream/{stream_name}"
+
+
+def push_pull_stream_root(experiment_name, trial_name):
+    # Used to collect addresses
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/push_pull_stream/"
+
+
+def stream_pullers(experiment_name, trial_name):
+    # Used to claim identities so that pushers know the number of pullers
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/push_pull_stream_peers/"
+
+
+def gen_servers(experiment_name, trial_name):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/gen_servers"
+
+
+def gen_server_manager(experiment_name, trial_name):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/gen_server_manager"

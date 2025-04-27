@@ -62,7 +62,7 @@ def extract_python_code(text, min_length=20, strict_syntax=True):
         valid_blocks.append(clean_block)
 
     if not valid_blocks:
-        logger.warning(f"failed to extract python code from {text}")
+        # logger.warning(f"failed to extract python code from {text}")
         return None
     # return the last code block
     return valid_blocks[-1]
@@ -128,7 +128,7 @@ def dispatch_reward_calculation(task, answers, query_id_strs) -> List:
     global id2info
     assert len(answers) == len(query_id_strs)
     format_rewards = []
-    if task == "math":
+    if task == "math" or task == "stem":
         format_rewards = math_verify_call(id2info, answers, query_id_strs)
     elif task == "code":
         codes = [extract_python_code(_answer) for _answer in answers]

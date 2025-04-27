@@ -25,6 +25,7 @@ from realhf.api.quickstart.entrypoint import (
     QUICKSTART_EXPR_CACHE_PATH,
 )
 from realhf.base import cluster, gpu_utils, importing, logging, name_resolve, names
+from realhf.version import get_full_version_with_dirty_description
 
 logger = logging.getLogger("Main-Workers")
 
@@ -63,7 +64,7 @@ def main_worker(args):
         worker_index_start + args.wprocs_per_jobstep,
         args.wprocs_in_job + args.wproc_offset,
     )
-    if args.worker_type == "master_worker":
+    if args.worker_type in ["master_worker", "rollout_worker", "gserver_manager"]:
         try:
             # CUDA_VISIBLE_DEVICES is set by slurm on PPU nodes
             # we need to remove it on CPU workers
@@ -250,6 +251,7 @@ def main():
 
     args = parser.parse_args()
 
+    logger.info(f"AReaL Version: {get_full_version_with_dirty_description()}")
     args.func(args)
 
 

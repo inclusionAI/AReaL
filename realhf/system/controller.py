@@ -10,7 +10,9 @@ import getpass
 import json
 import os
 import re
+import socket
 import sys
+import threading
 import time
 import traceback
 from dataclasses import asdict
@@ -24,10 +26,47 @@ import torch
 from omegaconf import OmegaConf
 
 import realhf.api.core.system_api as system_api
-from realhf.base import constants, gpu_utils, logging, name_resolve, names
+from realhf.base import constants, gpu_utils, logging, name_resolve, names, pkg_version
 from realhf.base.cluster import spec as cluster_spec
 from realhf.system import WORKER_TYPES, load_worker, worker_base, worker_control
 from realhf.system.worker_base import WorkerServerStatus as Wss
+
+flask_available = False
+if pkg_version.is_available("flask"):
+
+    from flask import Flask, jsonify
+
+    app = Flask(__name__)
+
+    @app.route("/discovery", methods=["GET"])
+    def discovery():
+        key = names.metric_server_root(
+            constants.experiment_name(), constants.trial_name()
+        )
+        addresses = name_resolve.get_subtree(key)
+
+        result = []
+        if len(addresses) > 0:
+            result.append(
+                {
+                    "targets": addresses,
+                    "labels": {
+                        "experiment": constants.experiment_name(),
+                        "trial": constants.trial_name(),
+                    },
+                }
+            )
+
+        logger.info(f"Discover metric servers: {result}")
+        return jsonify(result)
+
+    def start_metric_discovery_server(port: int):
+        host_ip = socket.gethostbyname(socket.gethostname())
+        logger.info(f"Start metric discovery server: http://{host_ip}:{port}/discovery")
+        app.run(debug=False, use_reloader=False, host="0.0.0.0", port=port)
+
+    flask_available = True
+
 
 CONNECTION_RETRY_AFTER_SECONDS = 360
 
@@ -91,7 +130,9 @@ class Controller:
     ):
         # Scheduling and connecting to workers.
         workers_configs = [
-            (k, getattr(setup, k), getattr(scheduling, k)) for k in WORKER_TYPES
+            (k, getattr(setup, k), getattr(scheduling, k))
+            for k in WORKER_TYPES
+            if len(getattr(setup, k)) > 0
         ]
 
         # Sanity check for scheduling and configuration.
@@ -123,6 +164,13 @@ class Controller:
                 logger.info(f"Configuration has {len(config)} {name}.")
 
     def start(self, experiment: system_api.Experiment, ignore_worker_error=False):
+        if flask_available and experiment.metric_discovery_port > 0:
+            server_thread = threading.Thread(
+                target=start_metric_discovery_server,
+                args=(experiment.metric_discovery_port,),
+            )
+            server_thread.start()
+
         if ignore_worker_error:
             check_worker_status = ()
             remove_worker_status = (
@@ -146,7 +194,11 @@ class Controller:
         for i, setup in enumerate(setups):
             self.__check_consistent_scheduling(scheduling, setup, verbose=(i == 0))
 
-        worker_counts = [(k, len(getattr(setups[0], k))) for k in WORKER_TYPES]
+        worker_counts = [
+            (k, len(getattr(setups[0], k)))
+            for k in WORKER_TYPES
+            if len(getattr(setups[0], k)) > 0
+        ]
 
         name_resolve.add(
             names.trial_registry(self.experiment_name, self.trial_name),
@@ -229,6 +281,8 @@ class Controller:
             )
             try:
                 for name in WORKER_TYPES:
+                    if len(getattr(setup, name)) == 0:
+                        continue
                     worker_infos = [x.worker_info for x in getattr(setup, name)]
                     logger.info(f"Configuring Workers: {name}...")
 
@@ -610,7 +664,9 @@ class RayController:
         if not isinstance(setup, list):
             setup = [setup]
         worker_counts = [
-            (k, len(getattr(setup[0], k)), getattr(scheduling, k)) for k in WORKER_TYPES
+            (k, len(getattr(setup[0], k)), getattr(scheduling, k))
+            for k in WORKER_TYPES
+            if len(getattr(setup[0], k)) > 0
         ]
 
         env_vars = constants.get_env_vars(

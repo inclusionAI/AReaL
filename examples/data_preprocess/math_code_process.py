@@ -46,15 +46,23 @@ def process_code_data(file_path: str) -> List[Dict]:
                 "task": "code",
                 "query_id": str(item["id"]),
                 "prompt": item["question"],
+                "solutions": item.get("solutions", []),
                 "input_output": json.dumps(
                     {
                         "inputs": input_output.get("inputs", []),
                         "outputs": input_output.get("outputs", []),
                         "fn_name": item.get("metadata", {}).get("fn_name", ""),
+                        "remote": False,
                     }
                 ),
+                "language": item.get("language", "PYTHON"),
             }
         )
+
+        case_size = sys.getsizeof(processed[-1]["input_output"])
+        assert (
+            case_size < 500 * 1024
+        ), f"'input_output' exceeds 500KB ({case_size} bytes). Use remote testcase instead."
 
     return processed
 
@@ -73,7 +81,7 @@ def process_math_data(file_path: str) -> List[Dict]:
                 "task": "math",
                 "query_id": str(item["query_id"]),
                 "prompt": item["prompt"],
-                "solutions": item["solutions"],
+                "solutions": item.get("solutions", []),
             }
         )
 

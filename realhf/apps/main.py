@@ -7,6 +7,7 @@ import getpass
 import os
 import re
 import time
+import uuid
 from typing import Dict, List, Optional
 
 import realhf.api.core.system_api as config_package
@@ -19,6 +20,7 @@ import realhf.scheduler.client as sched_client
 import realhf.system as system
 from realhf.scheduler.client import JobException, JobState
 from realhf.scheduler.evaluator import AutomaticEvaluator
+from realhf.version import get_full_version_with_dirty_description
 
 logger = logging.getLogger("main", "system")
 
@@ -44,6 +46,8 @@ def _submit_workers(
 
     scheduled_jobs = []
     for sch_cfg in scheduling_configs:
+        if sch_cfg is None:
+            continue
         job_environs = {**environs, **sch_cfg.scheduling.env_vars}
         cmd = sched_client.remote_worker_cmd(expr_name, trial_name, debug, worker_type)
 
@@ -78,7 +82,12 @@ def _submit_workers(
     return scheduled_jobs
 
 
-def main_start(args, recover_count: int = 0):
+def main_start(args, job_group_id: str = "", recover_count: int = 0):
+    if not job_group_id:
+        job_group_id = str(uuid.uuid4())
+    logger.info(f"AReaL Version: {get_full_version_with_dirty_description()}")
+    logger.info(f"AReaL Job Group ID: {job_group_id}")
+    logger.info(f"AReaL Job Group Index: {recover_count}")
     if recover_count == 0:
         constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     experiment = config_package.make_experiment(args.experiment_name)
@@ -177,6 +186,8 @@ def main_start(args, recover_count: int = 0):
         trial_name=trial_name,
         schedule_strategy=args.schedule_strategy,
         evaluator=evaluator,
+        job_group_id=job_group_id,
+        job_group_index=recover_count,
     )
 
     setup = experiment.scheduling_setup()
@@ -198,7 +209,10 @@ def main_start(args, recover_count: int = 0):
         raise e
     logger.info(f"Resetting name resolving repo... Done.")
 
-    logger.info(f"Running configuration: {experiment.__class__.__name__}")
+    logger.info(
+        f"Running configuration: {experiment.__class__.__name__}. "
+        f"The current recover retry: {recover_count + 1}/{args.recover_retries}"
+    )
 
     # Schedule controller
     if args.mode == "ray":
@@ -281,7 +295,7 @@ def main_start(args, recover_count: int = 0):
                 f"total recover count {args.recover_retries}"
             )
             time.sleep(args.recover_after)
-            main_start(args, recover_count=recover_count + 1)
+            main_start(args, job_group_id=job_group_id, recover_count=recover_count + 1)
         else:
             raise e
 

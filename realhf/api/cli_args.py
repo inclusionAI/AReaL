@@ -1,3 +1,4 @@
+import os
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from typing import Dict, List, Optional, Tuple, Type, Union
 
@@ -304,11 +305,89 @@ class SGLangConfig:
     # but we disable it to avoid precision issues
     chunked_prefill_size: Optional[int] = -1
     max_prefill_tokens: int = 32768
-    max_prefill_tokens: int = 16384
     schedule_policy: str = "lpm"
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
     hybrid_train: bool = False
+
+    # logging
+    log_level: str = "info"
+    log_level_http: Optional[str] = "warning"
+    log_requests: bool = False
+    log_requests_level: int = 0
+    show_time_cost: bool = False
+    enable_metrics: bool = True  # Exports Prometheus-like metrics
+    decode_log_interval: int = 1000  # How often (in tokens) to log decode progress.
+
+    # Use staticmethod to make OmegaConf happy.
+    @staticmethod
+    def build_cmd(
+        sglang_config: "SGLangConfig",
+        model_path,
+        tp_size,
+        server_index,
+        base_gpu_id,
+    ):
+        from realhf.base import constants, network, pkg_version, seeding
+        from realhf.experiments.common.utils import asdict as conf_as_dict
+
+        args: Dict = conf_as_dict(sglang_config)
+        args.pop("hybrid_train")
+        args["random_seed"] = seeding.get_seed()
+
+        host_ip = network.gethostip()
+        host = "localhost" if not sglang_config.enable_metrics else host_ip
+        args = dict(
+            host=host,
+            model_path=model_path,
+            # Model and tokenizer
+            tokenizer_path=model_path,
+            tokenizer_mode="auto",
+            load_format="auto",
+            trust_remote_code=True,
+            kv_cache_dtype="auto",
+            device="cuda",
+            served_model_name=f"{constants.experiment_name()}/{constants.trial_name()}/{model_path}",
+            is_embedding=False,
+            skip_tokenizer_init=True,
+            # Other runtime options
+            tp_size=tp_size,
+            # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
+            base_gpu_id=base_gpu_id,
+            file_storage_path=os.path.join(
+                constants.SGLANG_CACHE_PATH,
+                f"sglang_storage{server_index}",
+            ),
+            # Data parallelism
+            dp_size=1,  # TODO: check whether we require SGLang dp
+            load_balance_method="round_robin",
+            # Expert parallelism
+            ep_size=1,  # TODO: check
+            nnodes=1,
+            node_rank=0,
+            **args,
+        )
+
+        if pkg_version.is_version_less("sglang", "0.4.4"):
+            args.pop("log_requests_level")
+        if pkg_version.is_version_less("sglang", "0.4.3"):
+            args.pop("enable_nccl_nvls")
+            args.pop("triton_attention_num_kv_splits")
+            args.pop("cuda_graph_bs")
+            args.pop("enable_memory_saver")
+            args.pop("allow_auto_truncate")
+            args.pop("file_storage_path")
+
+        flags = []
+        for k, v in args.items():
+            if v is None or v is False or v == "":
+                continue
+            if v is True:
+                flags.append(f"--{k.replace('_','-')} ")
+                continue
+            flags.append(f"--{k.replace('_','-')} {v}")
+        flags = " ".join(flags)
+        return f"python3 -m sglang.launch_server {flags}"
 
 
 @dataclass
@@ -317,7 +396,7 @@ class DistributedDataParallelConfig:
     Refer to Megatron-LM documentation for details.
     """
 
-    grad_reduce_in_fp32: bool = False
+    grad_reduce_in_fp32: bool = True
     overlap_grad_reduce: bool = True
     overlap_param_gather: bool = False
     align_param_gather: bool = False
@@ -531,11 +610,23 @@ class PPOHyperparameters:
     eps_clip: float = field(
         default=0.2, metadata={"help": "Clipping factor for policy ratio"}
     )
+    c_clip: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "Dual clipping factor for policy ratio, must > 1.0. None disables dual clipping."
+        },
+    )
     value_eps_clip: float = field(
         default=0.2, metadata={"help": "Clipping factor for value updates"}
     )
     early_stop_imp_ratio: float = field(
         default=5.0, metadata={"help": "Early stop threshold for importance ratio"}
+    )
+    actor_sample_reuse: int = field(
+        default=1, metadata={"help": "The data reuse (aka PPO epoch) for actor."}
+    )
+    critic_sample_reuse: int = field(
+        default=1, metadata={"help": "The data reuse (aka PPO epoch) for critic."}
     )
 
     # Reward Processing
@@ -780,6 +871,10 @@ class BaseExperimentConfig:
             "help": "Debug mode. False disables assertions for better performance."
         },
     )
+    metric_discovery_port: int = field(
+        default=0,
+        metadata={"help": "Discovery port for prometheus metrics service discovery."},
+    )
     partition: str = field(
         default="dev", metadata={"help": "SLURM partition for running the experiment."}
     )
@@ -845,6 +940,13 @@ class BaseExperimentConfig:
             "Format: 'NODE01:0,1,2,3' or 'NODE[01-02,03,07],COM08'."
         },
     )
+    exclude: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "SLURM nodelist to exclude from allocation. "
+            "Format: 'NODE01:0,1,2,3' or 'NODE[01-02,03,07],COM08'."
+        },
+    )
     seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
     cache_clear_freq: Optional[int] = field(
         default=10,
@@ -885,6 +987,58 @@ class BaseExperimentConfig:
     )
     mem_per_model_worker: int = field(
         default=90000, metadata={"help": "Memory per model worker (MB)."}
+    )
+    shuffle_dataset: bool = field(
+        default=True, metadata={"help": "Shuffle in each epoch."}
+    )
+
+
+## Configuration options of asynchronous experiments. ##
+
+
+@dataclass
+class AsyncRLOptions:
+    new_tokens_per_chunk: int = field(
+        default=1024,
+        metadata={"help": "The lenght of chunked generation."},
+    )
+    max_head_offpolicyness: int = field(
+        default=0,
+        metadata={"help": "Maximum off-policyness tolerance for the first token."},
+    )
+
+    n_rollout_workers: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Number of rollout workers. None defaults to train world size."
+        },
+    )
+    max_concurrent_rollouts: int = field(
+        default=1024,
+        metadata={"help": "Max concurrent rollout jobs in each worker."},
+    )
+    flush_request_timeout: int = field(
+        default=120,
+        metadata={"help": "The timeout of flushing requests upon weight update."},
+    )
+
+    cpus_per_generation_server: int = field(
+        default=4, metadata={"help": "Generation server CPUs."}
+    )
+    mem_per_generation_server: int = field(
+        default=60 * 1024, metadata={"help": "Generation server CPU memory in MB."}
+    )
+    cpus_per_gserver_manager: int = field(
+        default=4, metadata={"help": "Generation manager CPUs."}
+    )
+    mem_per_gserver_manager: int = field(
+        default=10 * 1024, metadata={"help": "Generation manager CPU memory in MB."}
+    )
+    cpus_per_rollout_worker: int = field(
+        default=4, metadata={"help": "Rollout worker CPUs."}
+    )
+    mem_per_rollout_worker: int = field(
+        default=20 * 1024, metadata={"help": "Rollout worker CPU memory in MB."}
     )
 
 
@@ -1056,6 +1210,67 @@ class PPOMATHExperimentOptions:
     )
     dataset_max_filter_percentage: float = field(
         default=0.0, metadata={"help": "Maximum percentage of dataset to each filter."}
+    )
+
+    success_rate_ub: float = field(
+        default=1.0,
+        metadata={
+            "help": "Success rate higher than this value will be filtered out after generation. Valid for async training."
+        },
+    )
+    success_rate_lb: float = field(
+        default=0.0,
+        metadata={
+            "help": "Success rate lower than this value will be filtered out after generation. Valid for async training."
+        },
+    )
+
+
+@dataclass
+class MathCodeEvalOptions:
+    gen_config: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
+
+    actor: ModelTrainEvalConfig = field(
+        default_factory=ModelTrainEvalConfig,
+        metadata={"help": "Primary LLM configuration."},
+    )
+    rew: ModelTrainEvalConfig = field(
+        default_factory=ModelTrainEvalConfig,
+        metadata={"help": "Reward model configuration."},
+    )
+
+    actor_gen: MFCConfig = field(
+        default_factory=MFCConfig, metadata={"help": "Rollout MFC configuration."}
+    )
+    rew_inf: MFCConfig = field(
+        default_factory=MFCConfig, metadata={"help": "InfReward MFC configuration."}
+    )
+
+    dataset: PromptOnlyDatasetConfig = field(
+        default_factory=PromptOnlyDatasetConfig,
+        metadata={"help": "Dataset configuration."},
+    )
+
+    group_size: int = field(
+        default=1,
+        metadata={"help": "Number of answers retained per prompt (best-of-n)."},
+    )
+    rw_type: Optional[str] = field(
+        default="sparse",
+        metadata={
+            "help": "Type of reward processing. Only `sparse` is valid for now.",
+            "choices": ["sparse"],
+        },
+    )
+    check_xml_format: bool = field(
+        default=False, metadata={"help": "Validate XML format in generated responses."}
+    )
+
+    check_verifier_status: bool = field(
+        default=False,
+        metadata={"help": "Raise error if reward is all-zero (verifier bug check)."},
     )
 
 

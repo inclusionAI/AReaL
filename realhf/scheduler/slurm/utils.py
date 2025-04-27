@@ -10,6 +10,7 @@ import collections
 import dataclasses
 import datetime
 import getpass
+import json
 import math
 import os
 import shutil
@@ -21,6 +22,7 @@ import pandas as pd
 
 import realhf.base.cluster as cluster
 import realhf.base.logging as logging
+import realhf.version as version
 from realhf.base.constants import LOG_ROOT
 from realhf.scheduler.client import JobException, JobInfo, JobState
 
@@ -224,6 +226,8 @@ class SlurmLaunchInfo:
     worker_type: str
     worker_submission_idx: int
     wprocs_in_job: int
+    job_group_id: str
+    job_group_index: str
 
     resource_requirement: SlurmResource
     cmd: str
@@ -264,14 +268,8 @@ class SlurmLaunchInfo:
                 f"GPU per worker {gpu_per_worker}, workers per jobstep (process size in `apps.remote`) {self.wprocs_per_jobstep}, "
                 f"number of jobsteps (instance of running `apps.remote`) {self.n_jobsteps}"
             )
-        elif gpu_per_worker == 0:
-            self.wprocs_per_jobstep = self.wprocs_in_job
-            self.n_jobsteps = 1
-        elif gpu_per_worker == 1:
-            self.n_jobsteps = self.wprocs_in_job
-            self.wprocs_per_jobstep = 1
         else:
-            self.n_jobsteps = 1
+            self.n_jobsteps = self.wprocs_in_job
             self.wprocs_per_jobstep = 1
 
     @property
@@ -399,6 +397,18 @@ class SlurmLaunchInfo:
             else:
                 gres_line = f"--gres=gpu:{cluster.spec.n_gpus_per_node}"
 
+        srun_env = os.environ.copy()
+        job_metadata = {
+            "user": srun_env.get("EMAILPREFIX", ""),
+            "version": version.__version__,
+            "branch": version.__branch__,
+            "commit": version.__commit__,
+            "dirty": version.__is_dirty__,
+            "job_group_id": self.job_group_id,
+            "job_group_index": self.job_group_index,
+        }
+        job_metadata_json = json.dumps(job_metadata)
+
         lines = [
             "#!/bin/bash",
             f"#SBATCH --job-name={self.slurm_name}",
@@ -414,9 +424,9 @@ class SlurmLaunchInfo:
             f"#SBATCH --time={self.time_limit}" if self.time_limit else "",
             f"#SBATCH --begin={self.begin}" if self.begin else "",
             f"#SBATCH --deadline={self.deadline}" if self.deadline else "",
+            f"#SBATCH --comment='{job_metadata_json}'",
         ]
 
-        srun_env = os.environ.copy()
         if self.hostfile:
             srun_env["SLURM_HOSTFILE"] = self.hostfile_path
         # Setup step command.
@@ -789,12 +799,16 @@ def allocate_resources(
                 # (16 PPUs/8 GPUs by default)
                 batched_requirement = info.resource_requirement
                 batched_ntasks = 1
-                if info.resource_requirement.gpu > 0:
-                    assert task_left % cluster.spec.n_gpus_per_node == 0
-                    batched_ntasks = cluster.spec.n_gpus_per_node
-                    batched_requirement = (
-                        cluster.spec.n_gpus_per_node * info.resource_requirement
-                    )
+                gpu_per_task = info.resource_requirement.gpu
+                if gpu_per_task > 0:
+                    assert (
+                        task_left * gpu_per_task % cluster.spec.n_gpus_per_node == 0
+                    ), (task_left, gpu_per_task)
+                    assert (
+                        cluster.spec.n_gpus_per_node % gpu_per_task == 0
+                    ), gpu_per_task
+                    batched_ntasks = int(cluster.spec.n_gpus_per_node // gpu_per_task)
+                    batched_requirement = batched_ntasks * info.resource_requirement
                 try:
                     resource = resource - batched_requirement
                 except InvalidGPUTypeException:

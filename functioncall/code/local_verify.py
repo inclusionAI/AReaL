@@ -1,16 +1,22 @@
+import concurrent.futures
 import json
-import multiprocessing
 import os
+import signal
+import subprocess
 import sys
 import time
 import traceback
+import uuid
+from collections import defaultdict
 from io import StringIO
 from typing import Dict, List
 
-from functioncall.base import logging
-from functioncall.code.function.testing_util import run_test
+from functioncall.base.utils import load_jsonl, logger
+from realhf.base import logging
 
-logger = logging.getLogger("Functioncall")
+SINGLE_CASE_EXEC_TIMEOUT = 6
+
+logger = logging.getLogger("function call")
 
 
 def capture_stdout(code):
@@ -27,121 +33,116 @@ def capture_stdout(code):
     return fake_stdout.getvalue()
 
 
-def _temp_run(problem, generation, debug, result):
+def call_verify(problem, generation, debug, timeout=SINGLE_CASE_EXEC_TIMEOUT):
+
+    tmp_id = str(uuid.uuid4())
+    input_data = {
+        "sample": problem,
+        "test": generation,
+        "debug": debug,
+        "timeout": timeout,
+    }
+    with open(f"/tmp/{tmp_id}-input.json", "w") as temp_file:
+        json.dump(input_data, temp_file)
     start_time = time.time()
 
+    venv_python = "python3"
+    pro = subprocess.Popen(
+        " ".join(
+            [
+                venv_python,
+                "functioncall/code/function/testing_util.py",
+                "--tmp_id",
+                tmp_id,
+            ]
+        ),
+        shell=True,
+        preexec_fn=os.setsid,
+        stdout=subprocess.DEVNULL,
+    )
     try:
-        if debug:
-            logger.debug(f"Running test for problem: {problem}")
-        r = run_test(sample=problem, test=generation, debug=debug)
-        result.append(r)
-        if debug:
-            logger.debug(f"Test completed with result: {result}")
+        pro.wait(600)
     except Exception as e:
+        pass
+    try:
+        os.killpg(os.getpgid(pro.pid), signal.SIGTERM)
+    except ProcessLookupError:
+        pass
 
+    result = {"result": [False], "info": {}}
+    try:
+        with open(f"/tmp/{tmp_id}-output.json", "r") as f:
+            result = json.load(f)
+    except FileNotFoundError as e:
         logger.warning(
-            f"Error in _temp_run: {e}\n"
-            f"traceback: {''.join(traceback.format_exception(*sys.exc_info()))}\n"
-            f"problem:{problem}"
+            f"{problem['query_id']}: Failed to parse generated answers. FileNotFoundError. Set 0 reward."
         )
+    except Exception as e:
+        logger.warning(
+            f"{problem['query_id']}: Failed to parse generated answers. {e}. Set 0 reward."
+        )
+    finally:
+        if os.path.exists(f"/tmp/{tmp_id}-input.json"):
+            os.remove(f"/tmp/{tmp_id}-input.json")
+        if os.path.exists(f"/tmp/{tmp_id}-output.json"):
+            os.remove(f"/tmp/{tmp_id}-output.json")
 
     execution_time = time.time() - start_time
     logger.info(
-        f'[_temp_run] query_id: {problem["problem_id"]}, start_time: {str(start_time)}, Time elapsed: {execution_time * 1000:.0f} ms'
+        f'[call_verify] query_id: {problem["query_id"]}, start_time: {str(start_time)}, Time elapsed: {execution_time * 1000:.0f} ms'
     )
-
-
-def check_correctness(problem, generation, timeout, debug=False):
-    """Check correctness of code generation with a global timeout.
-    The global timeout is to catch some extreme/rare cases not handled by the timeouts
-    inside `run_test`"""
-    if debug:
-        # FIXME: error variable "problem" is not defined
-        result = capture_stdout(
-            "from functioncall.code.function.testing_util import run_test\n"
-            + "run_test(sample=problem, test=generation, debug=debug)"
-        )
-        return result[0], result[1]
-
-    start_time = time.time()
-    manager = multiprocessing.Manager()
-    result = manager.list()
-    p = multiprocessing.Process(
-        target=_temp_run, args=(problem, generation, debug, result)
-    )
-    p.start()
-    p.join(timeout=timeout + 1)
-    if p.is_alive():
-        if debug:
-            logger.debug(f"Process is still alive. Killing the process.")
-        p.kill()
-    if not result:
-        # Remark: ideally we would consider that all tests failed but we can't access number of tests here easily
-        # so we use 21=the average number of tests for a smaple in the test split instead
-        avg_number_tests = 21
-        result = [[-1 for _ in range(avg_number_tests)], {}]
-        if debug:
-            logger.debug(f"Global timeout occurred, returning default result.")
-    if debug:
-        logger.debug(f"Final result: {result}")
-
-    execution_time = time.time() - start_time
-    logger.info(
-        f'[check_correctness] query_id: {problem["problem_id"]}, start_time: {str(start_time)}, Time elapsed: {execution_time * 1000:.0f} ms'
-    )
-    return result[0]
+    return result["result"], result["info"]
 
 
 def code_verify(id2info, generateds, query_ids, debug=False):
     assert len(generateds) == len(query_ids)
     problems = [id2info[qid] for qid in query_ids]
 
-    result = []
+    final_results = []
 
+    infer_args = []
     for query_id, generated, problem in zip(query_ids, generateds, problems):
-        logger.debug(f"run_batch_code, query_id: {query_id}")
-        try:
-            curr_res, metadata = check_correctness(
-                problem=problem, generation=generated, timeout=6000, debug=debug
-            )
+        infer_args.append((problem, generated, debug, SINGLE_CASE_EXEC_TIMEOUT))
 
-            if any(x != True for x in curr_res):
-                logger.debug(f"id:{query_id}, Results were not all True: {metadata}")
-                result.append(0)
-            else:
-                # print(f"id:{problem["problem_id"]}, result : {curr_res}")
-                result.append(1)
+    run_results = []
+    num_process = max(1, os.cpu_count() // 8)
+    with concurrent.futures.ProcessPoolExecutor(num_process) as executor:
+        run_results = executor.map(call_verify, *zip(*infer_args))
 
-        except Exception as e:
-            exc_info = sys.exc_info()
-            logger.error(
-                f"test framework exception = {repr(e)}{e}\n{traceback.format_exception(*exc_info)}"
-            )
-            result.append(0)
+    for run_result in run_results:
+        curr_res, metadata = run_result
+        if any(x != True for x in curr_res):
+            final_results.append(0)
+        else:
+            final_results.append(1)
 
-    return result
+    return final_results
 
 
 if __name__ == "__main__":
-    path = "/storage/openpsi/data/code/apps/test.jsonl"
-    data = []
-    with open(path, "r") as f:
-        code_data = [json.loads(l) for l in f.readlines()]
+    data_list = load_jsonl("functioncall/test/test_success_dataset.jsonl")
+    id2info = defaultdict(dict)
+    for item in data_list:
+        id2info[item["query_id"]] = item
 
-    id2info = {}
-    solutions = []
-    query_ids = []
-    for i in range(10):
-        problem = code_data[i]
-        problem["problem_id"] = problem["id"]
-        id2info[problem["problem_id"]] = problem
-        solutions.append(json.loads(problem["solutions"])[0])
-        query_ids.append(problem["id"])
+    def create_test_params(count=10):
+        query_ids = []
+        generateds = []
+        cnt = 0
 
-    result = code_verify(
-        id2info,
-        solutions,
-        query_ids,
-        debug=False,
-    )
+        for d in data_list:
+            if cnt >= count:
+                break
+            if not d["solutions"] or d["query_id"] not in id2info:
+                continue
+            query_ids.append(d["query_id"])
+            generateds.extend(d["solutions"])
+            cnt += 1
+
+        return generateds, query_ids
+
+    generateds, query_ids = create_test_params(100)
+    scale = 1
+    print(f"generateds:, query_ids:{query_ids}")
+    result = code_verify(id2info, generateds * scale, query_ids * scale)
     print(result)

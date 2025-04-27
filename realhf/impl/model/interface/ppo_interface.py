@@ -2,21 +2,21 @@
 # Copyright 2024 Wei Fu & Zhiyu Mei
 # Licensed under the Apache License, Version 2.0 (the "License").
 
-import collections
 import dataclasses
-import functools
-import itertools
-import time
-from typing import Dict, Literal, Optional, Tuple
+from typing import Dict, Literal, Optional
 
 import torch
 import torch.distributed as dist
 
 import realhf.api.core.model_api as model_api
-import realhf.base.constants as constants
-import realhf.base.logging as logging
 import realhf.impl.model.utils.ppo_functional as ppo_functional
-from realhf.api.core.data_api import MicroBatchSpec, SequenceSample
+from realhf.api.core.data_api import (
+    RL_TASKS,
+    MicroBatchSpec,
+    SequenceSample,
+    SequenceSplitSpec,
+)
+from realhf.base import constants, logging, stats_tracker
 from realhf.base.datapack import flat2d
 from realhf.impl.dataset.math_parser import parse_lines_in_parallel
 from realhf.impl.model.nn.real_llm_api import ReaLModel
@@ -53,10 +53,11 @@ def _ppo_actor_loss_from_model_outputs(
     input_: SequenceSample,
     kl_adapter: ppo_functional.KLController,  # const
     eps_clip: float,  # const
+    c_clip: float | None,
     early_stop_imp_ratio: Optional[float],  # const
     early_stop_kl: Optional[float],  # const
     temperature: Optional[float] = 1,
-) -> Tuple[torch.FloatTensor, Dict]:
+) -> torch.Tensor:
     """Loss function for ppo actor step, all inputs should be splitted into
     pipeline micro batches, returns loss and logging stats."""
     packed_input_ids = input_.data["packed_input_ids"]
@@ -75,7 +76,6 @@ def _ppo_actor_loss_from_model_outputs(
 
     if temperature is not None:
         logits /= temperature
-    n_tokens = ppo_loss_mask.count_nonzero()
     logprobs = gather_packed_shifted_log_probs(
         logits, cu_seqlens, packed_input_ids
     ).float()
@@ -85,26 +85,72 @@ def _ppo_actor_loss_from_model_outputs(
         advantages=advantages,
         eps_clip=eps_clip,
         loss_mask=ppo_loss_mask,
+        c_clip=c_clip,
     )
 
-    importance_weight = ppo_stat["importance_weight"].float() * n_tokens
-    clip_ratio = ppo_stat["clip_ratio"].float() * n_tokens
-    approx_kl = ppo_stat["approx_kl"].float() * n_tokens
+    # Log training statistics
+    stats_tracker.denominator(
+        n_tokens=torch.ones(logits.shape[0], dtype=torch.bool, device=logits.device),
+        n_valid_tokens=ppo_loss_mask.bool(),
+        clipped_tokens=ppo_stat["clip_mask"],
+        dual_clipped_tokens=ppo_stat["dual_clip_mask"],
+    )
+
+    stats_tracker.stat(
+        importance_weight=ppo_stat["importance_weight"],
+        approx_kl=ppo_stat["approx_kl"],
+        new_logp=logprobs.detach(),
+        old_logp=old_logp,
+        actor_loss=ppo_stat["loss"],
+        clip_ratio=ppo_stat["clip_mask"].float(),
+        dual_clip_ratio=ppo_stat["dual_clip_mask"].float(),
+        denominator="n_valid_tokens",
+    )
+    vocab_min_logits = logits.detach().min(-1).values.float()
+    vocab_max_logits = logits.detach().max(-1).values.float()
+    dist.all_reduce(
+        vocab_min_logits, group=constants.model_parallel_group(), op=dist.ReduceOp.MIN
+    )
+    dist.all_reduce(
+        vocab_max_logits, group=constants.model_parallel_group(), op=dist.ReduceOp.MAX
+    )
+    stats_tracker.stat(
+        vocab_min_logits=vocab_min_logits,
+        vocab_max_logits=vocab_max_logits,
+        denominator="n_tokens",
+    )
+
+    clip_mask = ppo_stat["clip_mask"]
+    dual_clip_mask = ppo_stat["dual_clip_mask"]
+    clipped_new_logp = torch.where(clip_mask, logprobs.detach(), 0.0)
+    dual_clipped_new_logp = torch.where(dual_clip_mask, logprobs.detach(), 0.0)
+    clipped_old_logp = torch.where(clip_mask, old_logp, 0.0)
+    dual_clipped_old_logp = torch.where(dual_clip_mask, old_logp, 0.0)
+    stats_tracker.stat(
+        clipped_new_logp=clipped_new_logp,
+        clipped_old_logp=clipped_old_logp,
+        denominator="clipped_tokens",
+    )
+    stats_tracker.stat(
+        dual_clipped_new_logp=dual_clipped_new_logp,
+        dual_clipped_old_logp=dual_clipped_old_logp,
+        denominator="dual_clipped_tokens",
+    )
 
     # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
     mean_ref_kl = (kl_rewards.detach().float() * ppo_loss_mask).sum()
-    logging_loss = torch.where(ppo_loss_mask, loss.detach().float(), 0.0).sum()
-    dist.all_reduce(n_tokens, group=constants.data_parallel_group())
     dist.all_reduce(mean_ref_kl, group=constants.data_parallel_group())
-    dist.all_reduce(importance_weight, group=constants.data_parallel_group())
-    dist.all_reduce(clip_ratio, group=constants.data_parallel_group())
-    dist.all_reduce(approx_kl, group=constants.data_parallel_group())
-    dist.all_reduce(logging_loss, group=constants.data_parallel_group())
-
+    _imp = (ppo_stat["importance_weight"].float() * ppo_loss_mask).sum()
+    dist.all_reduce(_imp, group=constants.data_parallel_group())
+    _kl = (ppo_stat["approx_kl"].float() * ppo_loss_mask).sum()
+    dist.all_reduce(_kl, group=constants.data_parallel_group())
+    _n_valid_tokens = ppo_loss_mask.count_nonzero().clone()
+    dist.all_reduce(_n_valid_tokens, group=constants.data_parallel_group())
+    mean_ref_kl /= _n_valid_tokens
+    _imp /= _n_valid_tokens
+    _kl /= _n_valid_tokens
     # Early stopping.
-    kl_adapter.update(mean_ref_kl / n_tokens, n_steps=cu_seqlens.shape[0] - 1)
-    _imp = importance_weight / n_tokens
-    _kl = approx_kl / n_tokens
+    kl_adapter.update(mean_ref_kl, n_steps=cu_seqlens.shape[0] - 1)
     if early_stop_imp_ratio is not None and _imp > early_stop_imp_ratio:
         logger.warning(
             f"Current importance ratio {_imp.item():.4f} is larger "
@@ -118,14 +164,7 @@ def _ppo_actor_loss_from_model_outputs(
         )
         loss = loss * 0.0
 
-    stats = dict(
-        ppo_approx_kl=approx_kl,
-        actor_loss=logging_loss,
-        actor_clip_ratio=clip_ratio,
-        importance_weight=importance_weight,
-    )
-
-    return loss, stats
+    return loss
 
 
 def splited_sum_bool_tensor(t: torch.BoolTensor, chunk_size=256 * 1024 * 1024) -> int:
@@ -158,6 +197,7 @@ class PPOActorInterface(model_api.ModelInterface):
     gae_lambda: float = 1.0
 
     eps_clip: float = 0.2
+    c_clip: Optional[float] = None
     value_eps_clip: float = 0.2
     max_reward_clip: float = 5.0
 
@@ -187,6 +227,8 @@ class PPOActorInterface(model_api.ModelInterface):
     use_dense_reward: bool = False
     reward_delta: bool = True
     token_normalize_scope: Literal["global", "dp"] = "global"
+
+    sample_reuse: int = 1
 
     def __post_init__(self):
         if self.adaptive_kl_ctl:
@@ -468,14 +510,19 @@ class PPOActorInterface(model_api.ModelInterface):
         # We call module.eval() because dropout causes the computation of incorrect of log probs.
         module.eval()
 
-        old_logp: torch.FloatTensor = input_.data["packed_logprobs"].float()
-        ref_logp: torch.FloatTensor = input_.data["packed_ref_logprobs"].float()
         prompt_mask = input_.data["prompt_mask"]
         input_lens = torch.tensor(
             flat2d(input_.seqlens["packed_input_ids"]), device=model.device
         )
         cu_seqlens = torch.nn.functional.pad(input_lens.cumsum(0), (1, 0)).int()
+        prompt_lens = []
+        for s, e in zip(cu_seqlens[:-1], cu_seqlens[1:]):
+            prompt_lens.append(prompt_mask[s:e].sum())
+        prompt_lens = torch.tensor(prompt_lens, device=model.device)
         reward_score = input_.data["rewards"].float()
+        task_ids = input_.data["task_ids"]
+        task_ids = task_ids.repeat(self.group_size, 1).transpose(0, 1).reshape(-1)
+
         if "dense_rewards" in input_.data:
             dense_reward_score = input_.data["dense_rewards"].float()
         if not self.disable_value:
@@ -485,6 +532,13 @@ class PPOActorInterface(model_api.ModelInterface):
                 input_.data["packed_input_ids"], dtype=torch.float32
             )
         seq_no_eos_mask = input_.data["seq_no_eos_mask"]
+        if self.kl_adapter.value == 0:
+            ref_logp: torch.FloatTensor = reward_score.new_zeros(
+                int(input_lens.sum()) - len(input_lens)
+            )
+        else:
+            ref_logp: torch.FloatTensor = input_.data["packed_ref_logprobs"].float()
+        old_logp: torch.FloatTensor = input_.data["packed_logprobs"].float()
 
         if not self.disable_value:
             if self.value_norm:
@@ -602,7 +656,7 @@ class PPOActorInterface(model_api.ModelInterface):
                 advantages = torch.cat(adv_list, 0)
 
         # Prepare data to be splitted into mini-batches.
-        input_ = SequenceSample.from_default(
+        flat_input = SequenceSample.from_default(
             ids=list(range(input_.bs * self.group_size)),
             data=dict(
                 advantages=advantages,
@@ -613,108 +667,112 @@ class PPOActorInterface(model_api.ModelInterface):
             ),
             seqlens=[int(x) for x in input_lens.cpu().numpy().tolist()],
         )
-        # NOTE: We cannot randomly shuffle data here because
-        # data must have the same shape across different pipeline stages.
-        datas, *_ = input_.split(MicroBatchSpec(n_mbs=self.n_minibatches))
-        logger.info(
-            f"PPO minibatch split (size {self.n_minibatches}): "
-            f"#seqs: {[s.bs for s in datas]}, "
-            f"#tokens: {[sum([sum(lens) for lens in s.seqlens[s._get_split_key()]]) for s in datas]}"
-        )
 
         if self.use_dense_reward:
             dense_reward_score = dense_reward_score[shift_one_indices]
+
         ### Logging code starts. ###
-        _n_seqs = torch.tensor(
-            [reward_score.shape[0]], dtype=torch.float32, device=model.device
-        )
-        no_eos_ratios = seq_no_eos_mask.sum()
-        # _n_tokens = loss_mask.count_nonzero()
-        _n_tokens = prompt_mask.logical_not().count_nonzero()
-        _n_valid_tokens = loss_mask.count_nonzero()
-        task_reward = reward_score.sum()
-        if self.use_dense_reward:
-            dense_reward = (dense_reward_score * loss_mask).sum()
-        final_reward = (rewards * loss_mask).sum()
-        _advantages = advantages.sum()
-        _kl_rewards = (kl_rewards * loss_mask).sum()
-        prompt_len = prompt_mask.count_nonzero().float()
-        seq_len = input_lens.float().sum()
+        with stats_tracker.scope("ppo_actor"):
+            assert (
+                task_ids.shape == reward_score.shape
+            ), f"task_ids ({task_ids.shape}) and reward_score ({reward_score.shape}) must have the same shape"
 
-        dist.all_reduce(_n_seqs, group=constants.data_parallel_group())
-        dist.all_reduce(no_eos_ratios, group=constants.data_parallel_group())
-        dist.all_reduce(task_reward, group=constants.data_parallel_group())
-        if self.use_dense_reward:
-            dist.all_reduce(dense_reward, group=constants.data_parallel_group())
-        dist.all_reduce(final_reward, group=constants.data_parallel_group())
-        dist.all_reduce(_advantages, group=constants.data_parallel_group())
-        dist.all_reduce(prompt_len, group=constants.data_parallel_group())
-        dist.all_reduce(seq_len, group=constants.data_parallel_group())
-        dist.all_reduce(_n_tokens, group=constants.data_parallel_group())
-        dist.all_reduce(_n_valid_tokens, group=constants.data_parallel_group())
-        dist.all_reduce(_kl_rewards, group=constants.data_parallel_group())
+            task_denominators = {
+                f"{task}_n_seqs": (task_ids == idx).bool()
+                for idx, task in enumerate(RL_TASKS)
+            }
 
-        global_stats = dict(
-            task_reward=float(task_reward / _n_seqs),
-            kl_reward=float(_kl_rewards / _n_tokens),
-            final_reward=float(final_reward / _n_seqs),
-            advantage=float(_advantages / _n_tokens),
-            avg_seq_len=float(seq_len / _n_seqs),
-            avg_prompt_len=float(prompt_len / _n_seqs),
-            n_tokens=int(_n_tokens),
-            n_valid_tokens=int(_n_valid_tokens),
-            n_seqs=int(_n_seqs),
-            no_eos_ratio=float(no_eos_ratios / _n_seqs),
-            disable_value=int(self.disable_value),
-            mask_no_eos_with_zero=int(self.mask_no_eos_with_zero),
-        )
-        if self.use_dense_reward:
-            dense_reward = (float(dense_reward / _n_seqs),)
+            stats_tracker.denominator(
+                n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
+                n_tokens=torch.ones_like(prompt_mask, dtype=torch.bool),
+                n_valid_tokens=loss_mask.bool(),
+                **task_denominators,
+            )
 
-        ### Logging code ends. ###
+            for task in RL_TASKS:
+                stats_tracker.stat(
+                    **{f"{task}_reward": reward_score}, denominator=f"{task}_n_seqs"
+                )
 
-        # Run mini-batched PPO training!
-        train_stats = collections.defaultdict(lambda: 0)
+            stats = dict(
+                advantages=advantages,
+                kl_rewards=kl_rewards,
+                final_reward=rewards,
+            )
+            if self.use_dense_reward:
+                stats["dense_reward"] = dense_reward_score
+            stats_tracker.stat(**stats, denominator="n_valid_tokens")
 
-        for data in datas:
-            stats = module.train_batch(
-                input_=data,
-                mb_spec=mb_spec,
-                version_steps=model.version.global_step,
-                loss_fn=functools.partial(
-                    _ppo_actor_loss_from_model_outputs,
+            seq_stats = dict(
+                no_eos_ratios=seq_no_eos_mask.float(),
+                task_reward=reward_score,
+                prompt_len=prompt_lens.float(),
+                seq_len=input_lens.float(),
+            )
+            if "version_start" in input_.data:
+                seq_stats["head_offpolicyness"] = (
+                    model.version.global_step - input_.data["version_start"]
+                ).float()
+            if "version_end" in input_.data:
+                seq_stats["tail_offpolicyness"] = (
+                    model.version.global_step - input_.data["version_end"]
+                ).float()
+            stats_tracker.stat(
+                **seq_stats,
+                denominator="n_seqs",
+            )
+
+            # Run mini-batched PPO training!
+            def _loss_fn(logits, input_):
+                return _ppo_actor_loss_from_model_outputs(
+                    logits,
+                    input_,
                     kl_adapter=self.kl_adapter,
                     eps_clip=self.eps_clip,
                     early_stop_imp_ratio=self.early_stop_imp_ratio,
                     early_stop_kl=self.early_stop_kl,
+                    c_clip=self.c_clip,
                     temperature=self.gconfig.temperature,
-                ),
-                loss_weight_fn=lambda x: x.data["ppo_loss_mask"].count_nonzero(),
-                token_normalize_scope=self.token_normalize_scope,
-            )
+                )
 
-            if stats:
-                for k, v in stats.items():
-                    train_stats[k] += v
-        cur_epoch = model.version.epoch
+            for reuse in range(self.sample_reuse):
+                with stats_tracker.scope(f"reuse{reuse}"):
+                    # NOTE: We split PPO minibatches in terms of #seqs instead of #tokens.
+                    flat_input = SequenceSample.shuffled(flat_input)
+                    bs = flat_input.bs
+                    sizes = [0 for _ in range(self.n_minibatches)]
+                    for idx in range(bs):
+                        sizes[idx % self.n_minibatches] += 1
+                    spec = SequenceSplitSpec(sizes=sizes)
+                    datas = flat_input.split_with_spec(spec)
+                    logger.info(
+                        f"PPO minibatch split (size {self.n_minibatches}): "
+                        f"#seqs: {[s.bs for s in datas]}, "
+                        f"#tokens: {[sum([sum(lens) for lens in s.seqlens[s._get_split_key()]]) for s in datas]}"
+                    )
+                    for mb_i, data in enumerate(datas):
+                        with stats_tracker.scope(f"mb{mb_i}"):
+                            train_stat = module.train_batch(
+                                input_=data,
+                                mb_spec=mb_spec,
+                                version_steps=model.version.global_step,
+                                loss_fn=_loss_fn,
+                                loss_weight_fn=lambda x: x.data[
+                                    "ppo_loss_mask"
+                                ].count_nonzero(),
+                                token_normalize_scope=self.token_normalize_scope,
+                            )
+                            stats_tracker.scalar(**train_stat)
+
+            stats_tracker.scalar(
+                disable_value=self.disable_value,
+                mask_no_eos_with_zero=self.mask_no_eos_with_zero,
+                c_clip=self.c_clip if self.c_clip is not None else float("nan"),
+                eps_clip=self.eps_clip,
+            )
         model.inc_version()
 
-        # FIXME: It only logs the MoE aux loss of the final PPO mini-batch.
-        global_stats.update(
-            constants.log_global_stats_tracker(
-                return_dict=True, clear_stats_after_logging=True
-            )
-        )
-        if train_stats:
-            train_stats = dict(
-                ppo_approx_kl=float(train_stats["ppo_approx_kl"] / _n_tokens),
-                actor_loss=float(train_stats["actor_loss"] / _n_tokens),
-                actor_clip_ratio=float(train_stats["actor_clip_ratio"] / _n_tokens),
-                importance_weight=float(train_stats["importance_weight"] / _n_tokens),
-            )
-            train_stats = dict(**train_stats, **global_stats)
-
-        return dict(train_stats)
+        return stats_tracker.export()
 
     # Mock methods for profiling only.
     def _mock_inference(
@@ -803,7 +861,7 @@ def _ppo_critic_loss_from_model_outputs(
     value_eps_clip: float,
     kl_adapter: ppo_functional.KLController,
     rms=None,
-) -> Tuple[torch.FloatTensor, Dict]:
+) -> torch.Tensor:
 
     cu_seqlens = (
         torch.nn.functional.pad(
@@ -846,27 +904,23 @@ def _ppo_critic_loss_from_model_outputs(
         denormalized_values = new_values
 
     # Logging.
-    n_tokens = ppo_loss_mask.count_nonzero()
-    mean_ref_kl = (kl_rewards.detach().float() * ppo_loss_mask).sum()
-    logging_loss = loss.detach().float() * n_tokens
-    clip_ratio = loss_stat["clip_ratio"].float() * n_tokens
-    denormalized_values = (
-        torch.where(ppo_loss_mask, denormalized_values, 0.0).sum().detach().float()
+    stats_tracker.denominator(n_valid_tokens=ppo_loss_mask.bool())
+    stats_tracker.stat(
+        value_loss=loss_stat["loss"],
+        clip_ratio=loss_stat["clip_mask"].float(),
+        denormalized_values=denormalized_values.detach().float(),
+        denominator="n_valid_tokens",
     )
-    dist.all_reduce(n_tokens, group=constants.data_parallel_group())
-    dist.all_reduce(mean_ref_kl, group=constants.data_parallel_group())
-    dist.all_reduce(logging_loss, group=constants.data_parallel_group())
-    dist.all_reduce(clip_ratio, group=constants.data_parallel_group())
-    dist.all_reduce(denormalized_values, group=constants.data_parallel_group())
 
     # Update KL coefficient to be consistent with actor.
+    mean_ref_kl = (kl_rewards.detach().float() * ppo_loss_mask).sum()
+    dist.all_reduce(mean_ref_kl, group=constants.data_parallel_group())
+    _n_valid_tokens = ppo_loss_mask.count_nonzero().clone()
+    dist.all_reduce(_n_valid_tokens, group=constants.data_parallel_group())
+    mean_ref_kl /= _n_valid_tokens
     kl_adapter.update(mean_ref_kl, n_steps=cu_seqlens.shape[0] - 1)
 
-    return loss, dict(
-        value_loss=logging_loss,
-        value_clip_ratio=clip_ratio,
-        denormalized_values=denormalized_values,
-    )
+    return loss
 
 
 @dataclasses.dataclass
@@ -895,6 +949,8 @@ class PPOCriticInterface(model_api.ModelInterface):
     use_dense_reward: bool = False
     reward_delta: bool = True
     token_normalize_scope: Literal["global", "dp"] = "global"
+
+    sample_reuse: int = 1
 
     def __post_init__(self):
         if self.adaptive_kl_ctl:
@@ -988,8 +1044,6 @@ class PPOCriticInterface(model_api.ModelInterface):
         # We call module.eval() because dropout causes the computation of incorrect of log probs.
         module.eval()
 
-        old_logp: torch.FloatTensor = input_.data["packed_logprobs"].float()
-        ref_logp: torch.FloatTensor = input_.data["packed_ref_logprobs"].float()
         prompt_mask = input_.data["prompt_mask"]
         input_lens = torch.tensor(
             flat2d(input_.seqlens["packed_input_ids"]), device=model.device
@@ -1000,6 +1054,13 @@ class PPOCriticInterface(model_api.ModelInterface):
             dense_reward_score = input_.data["dense_rewards"].float()
         values = input_.data["values"].float()
         seq_no_eos_mask = input_.data["seq_no_eos_mask"]
+        if self.kl_adapter.value == 0:
+            ref_logp: torch.FloatTensor = reward_score.new_zeros(
+                int(input_lens.sum()) - len(input_lens)
+            )
+        else:
+            ref_logp: torch.FloatTensor = input_.data["packed_ref_logprobs"].float()
+        old_logp: torch.FloatTensor = input_.data["packed_logprobs"].float()
 
         if self.value_norm:
             denormalized_values = self.rms.denormalize(values)
@@ -1080,7 +1141,7 @@ class PPOCriticInterface(model_api.ModelInterface):
             normalized_returns = returns
 
         # Prepare data to be splitted into mini-batches.
-        input_ = SequenceSample.from_default(
+        flat_input = SequenceSample.from_default(
             ids=list(range(input_.bs * self.group_size)),
             data=dict(
                 returns=normalized_returns,
@@ -1091,63 +1152,54 @@ class PPOCriticInterface(model_api.ModelInterface):
             ),
             seqlens=[int(x) for x in input_lens.cpu().numpy().tolist()],
         )
-        # NOTE: We cannot randomly shuffle data here because
-        # data must have the same shape across different pipeline stages.
-        datas, *_ = input_.split(MicroBatchSpec(n_mbs=self.n_minibatches))
-        logger.info(
-            f"PPO minibatch split (size {self.n_minibatches}): "
-            f"#seqs: {[s.bs for s in datas]}, "
-            f"#tokens: {[sum([sum(lens) for lens in s.seqlens[s._get_split_key()]]) for s in datas]}"
-        )
 
         # Logging.
-        returns = torch.where(loss_mask, returns, 0.0).sum()
-        n_tokens = loss_mask.count_nonzero()
-        dist.all_reduce(returns, group=constants.data_parallel_group())
-        dist.all_reduce(n_tokens, group=constants.data_parallel_group())
-        global_stats = dict(returns=float(returns / n_tokens), n_tokens=int(n_tokens))
+        with stats_tracker.scope("ppo_critic"):
+            stats_tracker.denominator(n_valid_tokens=loss_mask)
+            stats_tracker.stat(returns=returns, denominator="n_valid_tokens")
 
-        # Run mini-batched PPO training!
-        train_stats = collections.defaultdict(lambda: 0)
-        for data in datas:
-            stats = module.train_batch(
-                input_=data,
-                mb_spec=mb_spec,
-                version_steps=model.version.global_step,
-                loss_fn=functools.partial(
-                    _ppo_critic_loss_from_model_outputs,
+            def _loss_fn(out, inp):
+                return _ppo_critic_loss_from_model_outputs(
+                    out,
+                    inp,
                     value_eps_clip=self.value_eps_clip,
                     kl_adapter=self.kl_adapter,
                     rms=None if not self.value_norm else self.rms,
-                ),
-                loss_weight_fn=lambda x: x.data["ppo_loss_mask"].count_nonzero(),
-                token_normalize_scope=self.token_normalize_scope,
-            )
+                )
 
-            if stats:
-                for k, v in stats.items():
-                    train_stats[k] += v
+            # Run mini-batched PPO training!
+            for reuse in range(self.sample_reuse):
+                with stats_tracker.scope(f"reuse{reuse}"):
+                    # NOTE: We split PPO minibatches in terms of #seqs instead of #tokens.
+                    flat_input = SequenceSample.shuffled(flat_input)
+                    bs = flat_input.bs
+                    sizes = [0 for _ in range(self.n_minibatches)]
+                    for idx in range(bs):
+                        sizes[idx % self.n_minibatches] += 1
+                    spec = SequenceSplitSpec(sizes=sizes)
+                    datas = flat_input.split_with_spec(spec)
+                    logger.info(
+                        f"PPO minibatch split (size {self.n_minibatches}): "
+                        f"#seqs: {[s.bs for s in datas]}, "
+                        f"#tokens: {[sum([sum(lens) for lens in s.seqlens[s._get_split_key()]]) for s in datas]}"
+                    )
+                    for mb_i, data in enumerate(datas):
+                        with stats_tracker.scope(f"mb{mb_i}"):
+                            stats = module.train_batch(
+                                input_=data,
+                                mb_spec=mb_spec,
+                                version_steps=model.version.global_step,
+                                loss_fn=_loss_fn,
+                                loss_weight_fn=lambda x: x.data[
+                                    "ppo_loss_mask"
+                                ].count_nonzero(),
+                                token_normalize_scope=self.token_normalize_scope,
+                            )
+                            stats_tracker.scalar(**stats)
 
-        cur_epoch = model.version.epoch
         model.inc_version()
 
-        # FIXME: It only logs the MoE aux loss of the final PPO mini-batch.
-        global_stats.update(
-            constants.log_global_stats_tracker(
-                return_dict=True, clear_stats_after_logging=True
-            )
-        )
-        if train_stats:
-            train_stats = dict(
-                value_loss=float(train_stats["value_loss"] / n_tokens),
-                value_clip_ratio=float(train_stats["value_clip_ratio"] / n_tokens),
-                denormalized_values=float(
-                    train_stats["denormalized_values"] / n_tokens
-                ),
-                **global_stats,
-            )
-
-        return dict(train_stats)
+        return stats_tracker.export()
 
     # Mock methods for profiling only.
     def _mock_inference(

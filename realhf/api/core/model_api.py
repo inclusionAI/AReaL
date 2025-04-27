@@ -34,45 +34,116 @@ class ZeroTotalLossWeightException(Exception):
 
 
 @dataclasses.dataclass
+class GenRespMeta:
+    qid: str
+    accepted: bool
+
+
+@dataclasses.dataclass
+class GenReqMeta:
+    ## Meta info used to schedule the request. ##
+    prompt_len: int
+    group_size: int
+    new_token_budget: int
+    predicted_new_tokens: int | None
+
+
+@dataclasses.dataclass
+class ModelVersionReq:
+    server_url: str
+
+
+@dataclasses.dataclass
 class APIGenerateInput:
+    # The unique query id of this prompt
     qid: Hashable
-    group_idx: int
+    # prompt token ids
     prompt_ids: List[int]
+    # prompt token ids + generated prefix, the input to server
     input_ids: List[int]
+    # the sampling params to server, may limit n=1 and max_new_tokens
+    # for partial rollout
     gconfig: GenerationHyperparameters
+    # stop tokens, usually EOS and PAD
     stop_token_ids: List[int] = dataclasses.field(default_factory=list)
-    return_logprob: bool = False
+    # whether to return logprobs
+    return_logprob: bool = True
+    # logprobs of preivous generation
+    # length len(input_ids) - len(prompt_ids)
+    prev_logprobs: List[float] = dataclasses.field(default_factory=list)
+    # the weight version when submitting this request
+    version_start: int = -1
+
+    # other metadata
+    metadata: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
 class APIGenerateOutput:
+    ## input re-export ##
     qid: Hashable
-    group_idx: int
     prompt_ids: List[int]
     input_ids: List[int]
-    output_ids: List[int] = dataclasses.field(default_factory=list)
-    output_logprobs: List[int] = dataclasses.field(default_factory=list)
-    no_eos: bool = True
-    success: bool = False
-    latency: float = 0.0
-    ttft: float = 0.0  # Time to first token
+    gconfig: GenerationHyperparameters
+    prev_logprobs: List[float] = dataclasses.field(default_factory=list)
+    version_start: int = -1
+    metadata: Dict[str, Any] = dataclasses.field(default_factory=dict)
+
+    ## outputs. To be amended by the reply. ##
+    # output token ids
+    output_ids: List[List[int]] = dataclasses.field(default_factory=list)
+    # output logprobs with the same length as output_ids
+    output_logprobs: List[List[float]] = dataclasses.field(default_factory=list)
+    # the weight version when finishing this request
+    version_end: List[int] = dataclasses.field(default_factory=list)
+    # whether truncated
+    no_eos: List[bool] = dataclasses.field(default_factory=list)
+
+    # statistics
+    latency: float = float("inf")
+    ttft: float = float("inf")  # Time to first token
     itl: List[float] = dataclasses.field(
         default_factory=list
     )  # List of inter-token latencies
-    error: str = ""
 
     @classmethod
     def from_input(cls, inp: APIGenerateInput):
         return cls(
             qid=inp.qid,
-            group_idx=inp.group_idx,
             prompt_ids=inp.prompt_ids,
             input_ids=inp.input_ids,
+            gconfig=inp.gconfig,
+            prev_logprobs=inp.prev_logprobs,
+            version_start=inp.version_start,
+            metadata=inp.metadata,
+        )
+
+    @staticmethod
+    def concat(outputs: List["APIGenerateOutput"]):
+        return APIGenerateOutput(
+            qid=outputs[0].qid,
+            prompt_ids=outputs[0].prompt_ids,
+            input_ids=outputs[0].input_ids,
+            gconfig=outputs[0].gconfig,
+            prev_logprobs=outputs[0].prev_logprobs,
+            version_start=outputs[0].version_start,
+            metadata=outputs[0].metadata,
+            output_ids=sum([o.output_ids for o in outputs], []),
+            output_logprobs=sum([o.output_logprobs for o in outputs], []),
+            version_end=sum([o.version_end for o in outputs], []),
+            no_eos=sum([o.no_eos for o in outputs], []),
+            latency=max([o.latency for o in outputs]),
+            ttft=max([o.ttft for o in outputs]),
+            itl=sum([o.itl for o in outputs], []),
         )
 
     @property
-    def output_len(self):
+    def group_size(self):
         return len(self.output_ids)
+
+    @property
+    def output_lens(self):
+        return [len(x) for x in self.output_ids]
 
     @property
     def input_len(self):
@@ -83,26 +154,74 @@ class APIGenerateOutput:
         return len(self.prompt_ids)
 
     @property
-    def gen_len(self):
-        return self.output_len + self.input_len - self.prompt_len
+    def gen_lens(self):
+        return [len(x) + self.input_len - self.prompt_len for x in self.output_ids]
+
+    def get_logprobs(self) -> List[List[float]]:
+        logprobs = []
+        for logp in self.output_logprobs:
+            assert len(self.prev_logprobs) == self.input_len - self.prompt_len, (
+                len(self.prev_logprobs),
+                self.input_len,
+                self.prompt_len,
+            )
+            logprobs.append([0.0] * (self.prompt_len - 1) + self.prev_logprobs + logp)
+        return logprobs
 
 
 @dataclasses.dataclass
 class BundledGenerationOutputs:
+    ## Used for collecting generation outputs for env interaction or training. ##
+
+    # unique query id in the dataset
     qid: Hashable
+    # prompt token ids
     prompt_ids: List[int]
+    # output token ids excluding the prompt
+    output_ids: List[List[int]]
+    # whole sequences including the prompt
     seqs: List[List[int]]
+    # whole logprobs, one token shorter than seq
+    # logps at prompt tokens are zero
+    logprobs: List[List[float]]
+    # whether truncated
     no_eos: List[bool]
+    # server weight version when starting generation
+    version_start: List[int]
+    # server weight version when generation ends
+    version_end: List[int]
 
     @classmethod
-    def from_single(cls, outputs: List[APIGenerateOutput]):
+    def from_api_outputs(cls, outputs: List[APIGenerateOutput]):
         assert len(set(o.qid for o in outputs)) == 1
+        prompt_len = len(outputs[0].prompt_ids)
+        seqs = []
+        logprobs = []
+        version_starts = []
+        for o in outputs:
+            for out in o.output_ids:
+                seqs.append(o.input_ids + out)
+            for logp in o.get_logprobs():
+                logprobs.append(logp)
+            version_starts += [o.version_start] * o.group_size
         return cls(
             qid=outputs[0].qid,
             prompt_ids=outputs[0].prompt_ids,
-            seqs=[o.input_ids + o.output_ids for o in outputs],
-            no_eos=[o.no_eos for o in outputs],
+            seqs=seqs,
+            output_ids=[seq[prompt_len:] for seq in seqs],
+            logprobs=logprobs,
+            no_eos=sum([o.no_eos for o in outputs], []),
+            version_start=version_starts,
+            version_end=sum([o.version_end for o in outputs], []),
         )
+
+    @property
+    def output_logprobs(self):
+        return [lp[self.prompt_len - 1 :] for lp in self.logprobs]
+
+    @property
+    def output_lens(self):
+        return [len(out) for out in self.output_ids]
 
     @property
     def seqlens(self):
@@ -113,7 +232,10 @@ class BundledGenerationOutputs:
         return len(self.prompt_ids)
 
 
-AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
+AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(
+    total=6 * 60 * 60,
+    connect=300,
+)
 
 
 class LLMAPIClient:
@@ -128,7 +250,7 @@ class LLMAPIClient:
         self.semaphore: asyncio.Semaphore
 
     async def __aenter__(self):
-        conn = aiohttp.TCPConnector(limit=0, ttl_dns_cache=300)
+        conn = aiohttp.TCPConnector(limit=0, ttl_dns_cache=300, force_close=True)
         self.session = aiohttp.ClientSession(
             timeout=AIOHTTP_TIMEOUT,
             connector=conn,
@@ -391,11 +513,11 @@ class PipelinableEngine(abc.ABC):
         self,
         input_: SequenceSample,
         mb_spec: MicroBatchSpec,
-        loss_fn: Callable[[torch.Tensor, SequenceSample], Tuple[torch.Tensor, Dict]],
+        loss_fn: Callable[[torch.Tensor, SequenceSample], torch.Tensor],
         loss_weight_fn: Callable[[torch.Tensor, SequenceSample], float],
         version_steps: int,
         token_normalize_scope: Literal["global", "dp"] = "global",
-    ) -> Tuple[torch.Tensor, Dict] | None:
+    ) -> Dict:
         """Update the model with a batch of data and a loss function.
 
         :param input_: The input data. It should contain at least the key ``packed_input_ids``,
@@ -403,8 +525,8 @@ class PipelinableEngine(abc.ABC):
             entries required to compute the loss.
         :type input_: SequenceSample
         :param loss_fn: The loss function. It takes the output of the forward pass and the
-            input data, returning the loss and a dictionary of statistics.
-        :type loss_fn: Callable[[torch.Tensor, SequenceSample], Tuple[torch.Tensor, Dict]]
+            input data, returning the loss.
+        :type loss_fn: Callable[[torch.Tensor, SequenceSample], torch.Tensor]
         :param loss_weight_fn: This function is used to calculate the number of valid tokens
             when normalizing loss across micro batches and DP ranks. Can be `lambda: 1`
             if just taking the average over batches.
@@ -412,12 +534,6 @@ class PipelinableEngine(abc.ABC):
         :param version_steps: The global step counter for this experiment,
             used by the backend to determine the learning rate schedule.
         :type version_steps: int
-        :param num_micro_batches: The number of micro-batches to split the batch into.
-            Gradients will be accumulated across micro-batches, and only one update will
-            occur. For pipelined training, micro-batches are processed together by the engine,
-            which automatically schedules the forward and backward passes. For non-pipelined
-            training, forward and backward passes are executed iteratively over mini-batches
-            to accumulate gradients. If None, the batch will not be split.
         :param global_normalize_scope: The scope of token-wise loss normalization. Choices:
             global: average across all micro batches across DP ranks.
             dp: average across micro batches in current DP rank.
@@ -431,8 +547,8 @@ class PipelinableEngine(abc.ABC):
         self,
         input_: SequenceSample,
         mb_spec: MicroBatchSpec,
-        loss_fn: Callable[[torch.Tensor, SequenceSample], Tuple[torch.Tensor, Dict]],
-    ) -> Tuple[torch.Tensor, Dict] | None:
+        loss_fn: Callable[[torch.Tensor, SequenceSample], torch.Tensor],
+    ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function.
 
         This method wraps :meth:`forward` with a customized ``post_hook`` and ``aggregate_fn``.
@@ -442,22 +558,21 @@ class PipelinableEngine(abc.ABC):
             entries required to compute the loss.
         :type input_: SequenceSample
         :param loss_fn: The loss function. It takes the output of the forward pass and the
-            input data, returning the loss and a dictionary of statistics.
-        :type loss_fn: Callable[[torch.Tensor, SequenceSample], Tuple[torch.Tensor, Dict]]
-        :return: The aggregated scalar loss and a dictionary of statistics from the last pipeline
-            stage. Returns None otherwise.
-        :rtype: Tuple[torch.Tensor, Dict]
+            input data, returning the loss.
+        :type loss_fn: Callable[[torch.Tensor, SequenceSample], torch.Tensor]
+        :return: The aggregated scalar loss if on the last pipe stage.
+        :rtype: torch.Tensor | None
         """
 
-        def agg(xs: List[Tuple[torch.Tensor, Dict]]):
-            losses, stats = zip(*xs)
-            return sum(losses), {k: sum(s[k] for s in stats) for k in stats[0].keys()}
+        def _loss_fn(out, inp_):
+            # To prevent calling data reordering.
+            return float(loss_fn(out, inp_))
 
         return self.forward(
             input_=input_,
             mb_spec=mb_spec,
-            post_hook=loss_fn,
-            aggregate_fn=agg,
+            post_hook=_loss_fn,
+            aggregate_fn=sum,
         )
 
     def forward(
@@ -511,11 +626,6 @@ class PipelinableEngine(abc.ABC):
         :type tokenizer: transformers.PreTrainedTokenizerFast
         :param gconfig: The generation hyperparameters.
         :type gconfig: GenerationHyperparameters
-        :param num_micro_batches: The number of micro-batches to split the batch into.
-            Regardless of pipelining, mini-batches will be processed one-by-one by the module.
-            This approach helps reduce GPU memory usage for hidden states and KV-caches.
-            If None, the batch will not be split.
-        :type num_micro_batches: Optional[int]
         :return: For the last pipeline stage, returns the generated tokens, log probabilities, and optionally the logits mask.
             See :class:`GenerationHyperparameters` for more details about the logits mask.
             Returns None for other stages.
