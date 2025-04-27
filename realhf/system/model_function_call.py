@@ -63,7 +63,7 @@ class ModelFunctionCall:
         model_topos: Dict[str, topology.ProcessTopology],
         model_configs: Dict[str, None | ReaLModelConfig],
         ctrl: RPCCorountineControl,
-        buffer: List[AsyncIOSequenceBuffer],
+        buffers: List[AsyncIOSequenceBuffer],
         redistrib_planner: RedistribPlanner,
         summary_writer: SummaryWriter | None,
     ):
@@ -89,7 +89,7 @@ class ModelFunctionCall:
         )
 
         self.rpc_ctrl = ctrl
-        self.buffer = buffer
+        self.buffers = buffers
         self.redistrib_planner = redistrib_planner
 
         self.summary_writer = summary_writer
@@ -475,7 +475,7 @@ class ModelFunctionCall:
             await ctrl.train_count.put(1)
         else:
             logger.info(f"Amending RPC {rpc.name} output keys: {res.keys}")
-            await self.buffer[buffer_id].amend_batch(buf_indices, res.unpack())
+            await self.buffers[buffer_id].amend_batch(buf_indices, res.unpack())
 
         # Wait for all side-effect requests to finish.
         # Side-effect or empty requests are required for data transfer
@@ -494,7 +494,7 @@ class ModelFunctionCall:
 
         consumed = 0
         while True:
-            buf_indices, sample = await self.buffer[buffer_id].get_batch_for_rpc(rpc)
+            buf_indices, sample = await self.buffers[buffer_id].get_batch_for_rpc(rpc)
 
             await self.run_step(buf_indices, sample, buffer_id)
             consumed += sample.bs

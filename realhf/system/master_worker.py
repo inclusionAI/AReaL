@@ -265,7 +265,7 @@ class MasterWorker(worker_base.Worker):
         self.initialize_models()
 
         n_datasets = int(os.environ.get("N_DATASETS", "1"))
-        self.__seqbuffer = [
+        self.__seqbuffers = [
             AsyncIOSequenceBuffer(
                 self.__model_rpcs,
                 max_size=int(os.getenv("REAL_MASTER_BUFFER_SIZE", str(int(1e7)))),
@@ -305,7 +305,7 @@ class MasterWorker(worker_base.Worker):
             rpcs=self.__model_rpcs,
             msid2mwid=self.config.msid2mwid,
             stream=self.__stream,
-            buffer=self.__seqbuffer,
+            buffers=self.__seqbuffers,
             model_topos=self.__model_topos,
             model_configs=self.__model_configs,
             ctrl=self.__rpc_ctrl,
