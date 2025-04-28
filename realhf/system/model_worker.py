@@ -328,12 +328,14 @@ class ModelWorker(worker_base.Worker):
             ] = []
             for i, d in enumerate(self.__datasets):
                 g = torch.Generator()
-                g.manual_seed(seeding._seed_from_key(f"__dataloader{i}__"))
+                g.manual_seed(
+                    self.config.base_seed + seeding._seed_from_key(f"__dataloader{i}__")
+                )
                 dataloader_kwargs = dict(
                     shuffle=self.config.shuffle_dataset,
                     generator=g,
                 )
-                if not isinstance(self.__datasets, PullerStreamDataset):
+                if not isinstance(d, PullerStreamDataset):
                     dataloader_kwargs["collate_fn"] = data_api.SequenceSample.gather
                     # NOTE: This is *NOT* the actual batch size for training.
                     # It is just a proper size to load data to workers.
@@ -378,25 +380,26 @@ class ModelWorker(worker_base.Worker):
                             )
 
                         # Recover indices for dynamic dataset
-                        if (
-                            s.id.model_name == self.src_rpc.model_name
-                            and self.__has_dataset
-                            and hasattr(self.__datasets, "filter")
-                        ):
-                            dataset_indices_path = os.path.join(
-                                constants.MODEL_SAVE_ROOT,
-                                constants.experiment_name(),
-                                constants.trial_name(),
-                                "dataset_indices",
-                                f"{self._dp_rank}.npy",
-                            )
-                            if os.path.exists(dataset_indices_path):
-                                indices = np.load(dataset_indices_path).tolist()
-                                logger.info(
-                                    f"DP rank {self._dp_rank} updating dataset indices upon recover, "
-                                    f"size {len(self.__datasets.active_indices)} -> {len(indices)}"
+                        for i, d in enumerate(self.__datasets):
+                            if (
+                                s.id.model_name == self.src_rpc.model_name
+                                and self.__has_dataset
+                                and hasattr(d, "filter")
+                            ):
+                                dataset_indices_path = os.path.join(
+                                    constants.MODEL_SAVE_ROOT,
+                                    constants.experiment_name(),
+                                    constants.trial_name(),
+                                    "dataset_indices",
+                                    f"{self._dp_rank}_{i}.npy",
                                 )
-                                self.__datasets.active_indices = indices
+                                if os.path.exists(dataset_indices_path):
+                                    indices = np.load(dataset_indices_path).tolist()
+                                    logger.info(
+                                        f"DP rank {self._dp_rank} updating dataset indices upon recover, "
+                                        f"size {len(d.active_indices)} -> {len(indices)}"
+                                    )
+                                    d.active_indices = indices
 
                 if constants.parallelism_rank() == 0:
                     self.logger.info(
@@ -676,7 +679,10 @@ class ModelWorker(worker_base.Worker):
             )
         elif request.handle_name == "spec":
             # Raw dataset without filtering.
-            res = self.dataset_size
+            res = {
+                "n_datasets": len(self.__datasets),
+                "dataset_size": self.dataset_size,
+            }
         elif request.handle_name == "clear_data_cache":
             with cuda_tmarked("clear_data_cache", CUDATimeMarkType.misc):
                 ids = request.data
