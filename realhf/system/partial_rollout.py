@@ -202,6 +202,15 @@ class PartialRolloutManager:
             if no_eos and gen_len < raw_gconfig.max_new_tokens:
                 # Unfinished request due to chunked generation.
                 # Send it back to continue.
+                req_meta = GenReqMeta(
+                    prompt_len=s.prompt_len,
+                    group_size=raw_gconfig.n,
+                    new_token_budget=self.new_tokens_per_chunk,
+                    predicted_new_tokens=None,
+                    previous_server_url=s.metadata["server_url"],
+                )
+                await self._schedule_request(req_meta)
+
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
                         f"http://{self.gserver_manager_addr}/get_model_version",

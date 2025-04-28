@@ -46,6 +46,7 @@ class GenReqMeta:
     group_size: int
     new_token_budget: int
     predicted_new_tokens: int | None
+    previous_server_url: str = ""
 
 
 @dataclasses.dataclass
