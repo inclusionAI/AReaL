@@ -211,13 +211,14 @@ class MasterWorker(worker_base.Worker):
         src_rpc_dp_size = src_rpc_topo.get_dim("data")
 
         # Request training specification from data workers.
-        self._dataset_size = sum(
-            self.__stream.call(
-                handlers=[f"__data{i}__" for i in range(src_rpc_dp_size)],
-                datas=[None for i in range(src_rpc_dp_size)],
-                handle_type="spec",
-            ),
+        specs = self.__stream.call(
+            handlers=[f"__data{i}__" for i in range(src_rpc_dp_size)],
+            datas=[None for i in range(src_rpc_dp_size)],
+            handle_type="spec",
         )
+        assert all(x["n_datasets"] == specs[0]["n_datasets"] for x in specs), specs
+        self._dataset_size = sum(x["dataset_size"] for x in specs)
+        self._n_datasets = specs[0]["n_datasets"]
 
         self._steps_per_epoch = self._dataset_size // src_rpc.n_seqs
 
@@ -264,13 +265,12 @@ class MasterWorker(worker_base.Worker):
 
         self.initialize_models()
 
-        n_datasets = int(os.environ.get("N_DATASETS", "1"))
         self.__seqbuffers = [
             AsyncIOSequenceBuffer(
                 self.__model_rpcs,
                 max_size=int(os.getenv("REAL_MASTER_BUFFER_SIZE", str(int(1e7)))),
             )
-            for _ in range(n_datasets)
+            for _ in range(self._n_datasets)
         ]
 
         # wandb init, connect to remote wandb host

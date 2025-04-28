@@ -274,10 +274,9 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 new_tokens_per_chunk=self.new_tokens_per_chunk,
                 env=self.env,
                 agent=self.agent,
-                datasets=[d],
+                datasets=self.datasets,
                 rollout_request_timeout=self.flush_request_timeout,
             )
-            for d in self.datasets
             for _ in range(self.n_rollout_workers or train_world_size)
         ]
 
