@@ -318,7 +318,9 @@ class SGLangConfig:
     log_requests_level: int = 0
     show_time_cost: bool = False
     enable_metrics: bool = True  # Exports Prometheus-like metrics
-    decode_log_interval: int = 1000  # How often (in tokens) to log decode progress.
+    # The interval (in decoding iterations) to log throughput
+    # and update prometheus metrics
+    decode_log_interval: int = 1
 
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
@@ -999,7 +1001,7 @@ class BaseExperimentConfig:
 @dataclass
 class AsyncRLOptions:
     new_tokens_per_chunk: int = field(
-        default=1024,
+        default=int(1e10),
         metadata={"help": "The lenght of chunked generation."},
     )
     max_head_offpolicyness: int = field(

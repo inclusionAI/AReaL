@@ -284,10 +284,14 @@ class GserverManager(Worker):
             with self.threading_lock:
                 async with self.async_lock:
                     version = self._last_param_realloc_step
-                    # FIXME: We only implement a round-robin scheduler that
-                    # ignores server status and request metadata
-                    server_idx = self._round_robin_schedule(req_meta)
-            return dict(url=self.server_urls[server_idx], version=max(0, version))
+                    if req_meta.previous_server_url:
+                        server_url = req_meta.previous_server_url
+                    else:
+                        # FIXME: We only implement a round-robin scheduler that
+                        # ignores server status and request metadata
+                        server_idx = self._round_robin_schedule(req_meta)
+                        server_url = self.server_urls[server_idx]
+            return dict(url=server_url, version=max(0, version))
 
         @self.app.post("/get_model_version")
         async def get_model_version(req: ModelVersionReq):

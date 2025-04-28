@@ -1,12 +1,73 @@
+import fcntl
+import json
 import os
+import socket
+import subprocess
 import time
+
+import requests
 
 from realhf.api.cli_args import SGLangConfig
 from realhf.api.core.system_api import GenerationServer as GenerationServerConfig
 from realhf.base import gpu_utils, logging, name_resolve, names, network, seeding
+from realhf.base.cluster import spec as cluster_spec
 from realhf.system.worker_base import PollResult, Worker
 
 logger = logging.getLogger(__name__)
+
+
+def execute_shell_command(command: str) -> subprocess.Popen:
+    """
+    Execute a shell command and return its process handle.
+    """
+    # Replace newline continuations and split the command string.
+    command = command.replace("\\\n", " ").replace("\\", " ")
+    parts = command.split()
+    return subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT)
+
+
+def launch_server_cmd(command: str, port: int = 30000):
+    """
+    Launch the server using the given command.
+    If no port is specified, a free port is reserved.
+    """
+    assert port is not None
+    full_command = f"{command} --port {port}"
+    process = execute_shell_command(full_command)
+    return process, port
+
+
+def terminate_process(process, port=None):
+    """
+    Terminate the process and, if a port was reserved, release it.
+    """
+    from sglang.srt.utils import kill_process_tree
+
+    kill_process_tree(process.pid)
+
+
+def wait_for_server(base_url: str, timeout: int = None) -> None:
+    """Wait for the server to be ready by polling the /v1/models endpoint.
+
+    Args:
+        base_url: The base URL of the server
+        timeout: Maximum time to wait in seconds. None means wait forever.
+    """
+    start_time = time.time()
+    while True:
+        try:
+            response = requests.get(
+                f"{base_url}/v1/models",
+                headers={"Authorization": "Bearer None"},
+            )
+            if response.status_code == 200:
+                time.sleep(5)
+                break
+
+            if timeout and time.time() - start_time > timeout:
+                raise TimeoutError("Server did not become ready within timeout period")
+        except requests.exceptions.RequestException:
+            time.sleep(1)
 
 
 class GenerationServer(Worker):
@@ -43,13 +104,18 @@ class GenerationServer(Worker):
             server_index=self.worker_index,
             base_gpu_id=self.base_gpu_id,
         )
-        from sglang.utils import launch_server_cmd, wait_for_server
 
         host_ip = network.gethostip()
         host = "localhost" if not config.backend_args.enable_metrics else host_ip
 
         # TODO: handle launching error and retry
-        self.server_process, self.server_port = launch_server_cmd(cmd)
+        servers_per_node = max(1, cluster_spec.n_gpus_per_node // self.config.tp_size)
+        ports = network.find_multiple_free_ports(
+            servers_per_node, low=30000, high=40000
+        )
+        port = ports[self.worker_index % servers_per_node]
+
+        self.server_process, self.server_port = launch_server_cmd(cmd, port=port)
         self.server_addr = f"http://{host}:{self.server_port}"
 
         wait_for_server(self.server_addr)
@@ -80,6 +146,5 @@ class GenerationServer(Worker):
 
     def _exit_hook(self, exit_status):
         if self.server_process is not None and self.config.backend_type == "sglang":
-            from sglang.utils import terminate_process
 
             terminate_process(self.server_process)
