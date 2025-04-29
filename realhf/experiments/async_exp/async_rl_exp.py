@@ -60,7 +60,6 @@ GEN_WORKER_DEFAULT_CAPACITY = 512
 
 @dataclasses.dataclass
 class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
-
     @property
     def generation_config(self) -> GenerationHyperparameters:
         raise NotImplementedError()

@@ -321,31 +321,34 @@ class ModelWorker(worker_base.Worker):
                 )
                 for d in self.config.datasets
             ]
-            if len(self.config.datasets) == 1:
-                self.__dataset = datasets[0]
-            else:
-                self.__dataset = torch.utils.data.ConcatDataset(datasets)
+            self.__datasets = datasets
 
-            g = torch.Generator()
-            g.manual_seed(seeding.get_seed())
-            dataloader_kwargs = dict(
-                shuffle=self.config.shuffle_dataset,
-                generator=g,
-            )
-            if not isinstance(self.__dataset, PullerStreamDataset):
-                dataloader_kwargs["collate_fn"] = data_api.SequenceSample.gather
-                # NOTE: This is *NOT* the actual batch size for training.
-                # It is just a proper size to load data to workers.
-                dataloader_kwargs["batch_size"] = 10240
-            else:
-                dataloader_kwargs["batch_size"] = None
-            self.__dataloader = torch.utils.data.DataLoader(
-                self.__dataset, **dataloader_kwargs
-            )
+            self.__dataloaders: List[
+                torch.utils.data.DataLoader[data_api.SequenceSample]
+            ] = []
+            for i, d in enumerate(self.__datasets):
+                g = torch.Generator()
+                g.manual_seed(
+                    self.config.base_seed + seeding._seed_from_key(f"__dataloader{i}__")
+                )
+                dataloader_kwargs = dict(
+                    shuffle=self.config.shuffle_dataset,
+                    generator=g,
+                )
+                if not isinstance(d, PullerStreamDataset):
+                    dataloader_kwargs["collate_fn"] = data_api.SequenceSample.gather
+                    # NOTE: This is *NOT* the actual batch size for training.
+                    # It is just a proper size to load data to workers.
+                    dataloader_kwargs["batch_size"] = 10240
+                else:
+                    dataloader_kwargs["batch_size"] = None
+                self.__dataloaders.append(
+                    torch.utils.data.DataLoader(d, **dataloader_kwargs)
+                )
 
-            self.dataset_size = len(self.__dataset)
+            self.dataset_size = sum(len(d) for d in self.__datasets)
 
-            self.__data_generator = enumerate(self.__dataloader)
+            self.__data_generators = [enumerate(d) for d in self.__dataloaders]
 
         self.__models: Dict[ModelName, model_api.Model] = dict()
         self.__model_is_handle: Dict[ModelName, bool] = dict()
@@ -377,25 +380,26 @@ class ModelWorker(worker_base.Worker):
                             )
 
                         # Recover indices for dynamic dataset
-                        if (
-                            s.id.model_name == self.src_rpc.model_name
-                            and self.__has_dataset
-                            and hasattr(self.__dataset, "filter")
-                        ):
-                            dataset_indices_path = os.path.join(
-                                constants.MODEL_SAVE_ROOT,
-                                constants.experiment_name(),
-                                constants.trial_name(),
-                                "dataset_indices",
-                                f"{self._dp_rank}.npy",
-                            )
-                            if os.path.exists(dataset_indices_path):
-                                indices = np.load(dataset_indices_path).tolist()
-                                logger.info(
-                                    f"DP rank {self._dp_rank} updating dataset indices upon recover, "
-                                    f"size {len(self.__dataset.active_indices)} -> {len(indices)}"
+                        for i, d in enumerate(self.__datasets):
+                            if (
+                                s.id.model_name == self.src_rpc.model_name
+                                and self.__has_dataset
+                                and hasattr(d, "filter")
+                            ):
+                                dataset_indices_path = os.path.join(
+                                    constants.MODEL_SAVE_ROOT,
+                                    constants.experiment_name(),
+                                    constants.trial_name(),
+                                    "dataset_indices",
+                                    f"{self._dp_rank}_{i}.npy",
                                 )
-                                self.__dataset.active_indices = indices
+                                if os.path.exists(dataset_indices_path):
+                                    indices = np.load(dataset_indices_path).tolist()
+                                    logger.info(
+                                        f"DP rank {self._dp_rank} updating dataset indices upon recover, "
+                                        f"size {len(d.active_indices)} -> {len(indices)}"
+                                    )
+                                    d.active_indices = indices
 
                 if constants.parallelism_rank() == 0:
                     self.logger.info(
@@ -537,9 +541,13 @@ class ModelWorker(worker_base.Worker):
         cache = []
         while True:
             try:
-                request, data, handled, res, time_record = (
-                    self.__request_queue.get_nowait()
-                )
+                (
+                    request,
+                    data,
+                    handled,
+                    res,
+                    time_record,
+                ) = self.__request_queue.get_nowait()
                 request: request_reply_stream.Payload
                 if not handled:
                     while len(request.pre_hooks) > 0:
@@ -582,9 +590,13 @@ class ModelWorker(worker_base.Worker):
         elif request.handle_name == "fetch":
             dp_rank = int(re.search(r"__data(\d+)__", request.handler).group(1))
             assert self.__has_dataset
+            assert isinstance(request.data, int), request.data
+            dataset_id = request.data
             # Fetch.
             try:
-                self.__dataset_batch_counter, cur_sample = next(self.__data_generator)
+                self.__dataset_batch_counter, cur_sample = next(
+                    self.__data_generators[dataset_id]
+                )
             except StopIteration:
                 # Upon the first fetch request, filter dataset and create dataloader.
                 eval_scores_path = os.path.join(
@@ -598,39 +610,43 @@ class ModelWorker(worker_base.Worker):
                     constants.experiment_name(),
                     constants.trial_name(),
                     "dataset_indices",
-                    f"{dp_rank}.npy",
+                    f"{dp_rank}_{dataset_id}.npy",
                 )
                 os.makedirs(os.path.dirname(dataset_indices_path), exist_ok=True)
-                if hasattr(self.__dataset, "filter") and os.path.exists(
+                if hasattr(self.__datasets[dataset_id], "filter") and os.path.exists(
                     eval_scores_path
                 ):
                     # Don't filter dataset on the first poll after recover.
                     with open(eval_scores_path, "r", encoding="utf-8") as f:
                         dataset_eval_scores = json.load(f)
-                    self.__dataset.filter(dataset_eval_scores)
+                    self.__datasets[dataset_id].filter(dataset_eval_scores)
                     # Save the dataset indices after filtering
                     np.save(
                         dataset_indices_path,
-                        self.__dataset.active_indices,
+                        self.__datasets[dataset_id].active_indices,
                     )
                 g = torch.Generator()
-                g = g.set_state(self.__dataloader.generator.get_state())
+                g = g.set_state(self.__dataloaders[dataset_id].generator.get_state())
                 dataloader_kwargs = dict(
                     shuffle=self.config.shuffle_dataset,
                     generator=g,
                 )
-                if not isinstance(self.__dataset, PullerStreamDataset):
+                if not isinstance(self.__datasets[dataset_id], PullerStreamDataset):
                     dataloader_kwargs["collate_fn"] = data_api.SequenceSample.gather
                     # NOTE: This is *NOT* the actual batch size for training.
                     # It is just a proper size to load data to workers.
                     dataloader_kwargs["batch_size"] = 10240
                 else:
                     dataloader_kwargs["batch_size"] = None
-                self.__dataloader = torch.utils.data.DataLoader(
-                    self.__dataset, **dataloader_kwargs
+                self.__dataloaders[dataset_id] = torch.utils.data.DataLoader(
+                    self.__datasets[dataset_id], **dataloader_kwargs
                 )
-                self.__data_generator = enumerate(self.__dataloader)
-                self.__dataset_batch_counter, cur_sample = next(self.__data_generator)
+                self.__data_generators[dataset_id] = enumerate(
+                    self.__dataloaders[dataset_id]
+                )
+                self.__dataset_batch_counter, cur_sample = next(
+                    self.__data_generators[dataset_id]
+                )
 
             if isinstance(cur_sample, data_api.SequenceSample):
                 samples = cur_sample.unpack()
@@ -663,7 +679,10 @@ class ModelWorker(worker_base.Worker):
             )
         elif request.handle_name == "spec":
             # Raw dataset without filtering.
-            res = self.dataset_size
+            res = {
+                "n_datasets": len(self.__datasets),
+                "dataset_size": self.dataset_size,
+            }
         elif request.handle_name == "clear_data_cache":
             with cuda_tmarked("clear_data_cache", CUDATimeMarkType.misc):
                 ids = request.data
@@ -1374,9 +1393,13 @@ class ModelWorker(worker_base.Worker):
             rescheduled_requests = []
             other_requests = []
             for _ in range(self.__request_queue.qsize()):
-                request, data, handled, res, time_record = (
-                    self.__request_queue.get_nowait()
-                )
+                (
+                    request,
+                    data,
+                    handled,
+                    res,
+                    time_record,
+                ) = self.__request_queue.get_nowait()
                 if request.handle_name not in ["inference", "generate", "train_step"]:
                     other_requests.append((request, data, handled, res, time_record))
                 else:
@@ -1399,9 +1422,13 @@ class ModelWorker(worker_base.Worker):
             # we can correctly log the time consumption in the master worker.
             while True:
                 try:
-                    request, data, handled, res, time_record = (
-                        self.__request_queue.get_nowait()
-                    )
+                    (
+                        request,
+                        data,
+                        handled,
+                        res,
+                        time_record,
+                    ) = self.__request_queue.get_nowait()
                     self.handle_blocking_request(
                         request, data, handled, res, time_record
                     )
