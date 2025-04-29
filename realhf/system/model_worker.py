@@ -302,6 +302,7 @@ class ModelWorker(worker_base.Worker):
             constants.set_grid(model_name_, grid)
 
         # Set up training dataset for source RPCs.
+        self.__datasets = []
         if self.__has_dataset:
             datasets = [
                 data_api.make_dataset(
