@@ -387,6 +387,10 @@ class SGLangConfig:
             if v is True:
                 flags.append(f"--{k.replace('_','-')} ")
                 continue
+            if isinstance(v, list):
+                values = ' '.join(map(str, v))
+                flags.append(f"--{k.replace('_','-')} {values}")
+                continue
             flags.append(f"--{k.replace('_','-')} {v}")
         flags = " ".join(flags)
         return f"python3 -m sglang.launch_server {flags}"
