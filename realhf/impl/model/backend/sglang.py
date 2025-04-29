@@ -415,7 +415,6 @@ class SGLangGenerationEngine(PipelinableEngine):
 @dataclasses.dataclass
 class SGLangGenerationBackend(ModelBackend, SGLangConfig):
     model_path: str = ""
-    dtype: str = "float16"
 
     def _initialize(self, model: Model, spec: FinetuneSpec) -> Model:
         if constants.pipe_parallel_world_size() != 1:

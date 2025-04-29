@@ -121,6 +121,7 @@ class APIGenerateOutput:
 
     @staticmethod
     def concat(outputs: List["APIGenerateOutput"]):
+        assert len(set([o.qid for o in outputs])) == 1
         return APIGenerateOutput(
             qid=outputs[0].qid,
             prompt_ids=outputs[0].prompt_ids,

@@ -822,13 +822,7 @@ class ModelWorker(worker_base.Worker):
             with constants.model_scope(model_name):
                 dist.barrier(group=constants.cpu_parallelism_group())
                 if constants.parallelism_rank() == 0:
-                    name_resolve.add(
-                        name,
-                        str(global_step),
-                        delete_on_exit=False,
-                        keepalive_ttl=30,
-                        replace=True,
-                    )
+                    name_resolve.add(name, str(global_step), replace=True)
             time_record[
                 f"timeperf/{request.handler.model_name.role}_{request.handle_name}/param-sync-save"
             ] += (time.perf_counter() - tik)

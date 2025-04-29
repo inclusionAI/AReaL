@@ -237,6 +237,7 @@ class vLLMConfig:
     """
 
     max_num_seqs: int = 256
+    dtype: str = "float16"
     kv_cache_type: str = "auto"
     num_scheduler_steps: int = 1
     multi_step_stream_outputs: bool = True
@@ -309,10 +310,11 @@ class SGLangConfig:
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
     hybrid_train: bool = False
+    dtype: str = "float16"
     kv_cache_dtype: str = "auto"
 
     # logging
-    log_level: str = "info"
+    log_level: str = "error"
     log_level_http: Optional[str] = "warning"
     log_requests: bool = False
     log_requests_level: int = 0
@@ -388,7 +390,7 @@ class SGLangConfig:
                 flags.append(f"--{k.replace('_','-')} ")
                 continue
             if isinstance(v, list):
-                values = ' '.join(map(str, v))
+                values = " ".join(map(str, v))
                 flags.append(f"--{k.replace('_','-')} {values}")
                 continue
             flags.append(f"--{k.replace('_','-')} {v}")

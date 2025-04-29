@@ -166,7 +166,6 @@ class vLLMGenerationEngine(model_api.PipelinableEngine, LLM):
 @dataclasses.dataclass
 class vLLMGenerationBackend(vLLMConfig, model_api.ModelBackend):
     model_path: str = ""
-    dtype: str = "bfloat16"
 
     def _initialize(
         self, model: model_api.Model, spec: model_api.FinetuneSpec

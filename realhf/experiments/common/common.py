@@ -464,7 +464,6 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                             gen_backend_name,
                             args=dict(
                                 model_path=model_cfg.path,
-                                dtype="bfloat16" if model_cfg.bf16 else "float16",
                                 **dict_args,
                             ),
                         ),
