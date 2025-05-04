@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 import networkx as nx
 
 import realhf.base.logging as logging
-from realhf.api.cli_args import ModelFamily
 from realhf.api.core.config import (
     ModelInterfaceAbstraction,
     ModelInterfaceType,
@@ -94,13 +93,6 @@ class MFCDef:
     :type min_n_seqs_per_pass: int
     :param log_return_value: Whether to log the return value of the interface implementation.
     :type log_return_value: bool
-    :param model_type: The specification of the LLM, e.g., LLaMA-7B. Used by the profiler and
-        search engine to produce an optimal execution plan. Can be omitted if the search engine
-        is not used.
-    :type model_type: Optional[ModelFamily]
-    :param model_path: The path to the model file. Used to get the config for the search engine.
-        Can be omitted if the search engine is not used.
-    :type model_path: Optional[str]
     """
 
     # The unique identifier of this model function call.
@@ -125,10 +117,6 @@ class MFCDef:
     mb_spec: MicroBatchSpec = dataclasses.field(default_factory=MicroBatchSpec)
     min_n_seqs_per_pass: int | float = 1
     log_return_value: bool = False
-
-    # Only used by search.
-    model_type: Optional[Any | ModelFamily] = None
-    model_path: Optional[str] = None
 
     # Reserved dataclasses.fields. Should not be set by the user.
     _G: nx.DiGraph = None

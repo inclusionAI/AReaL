@@ -246,8 +246,6 @@ class ProfileConfig(CommonExperimentConfig):
                     model_name="default",
                     input_keys=["packed_prompts"],
                     log_return_value=False,
-                    model_type=self._tmp_model.type,
-                    model_path=self._tmp_model.path,
                     balanced_dp=True,
                 )
 

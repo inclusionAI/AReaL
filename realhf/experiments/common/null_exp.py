@@ -39,8 +39,6 @@ class NullSFTConfig(CommonExperimentConfig, SFTExperimentOptions):
             model_name="default",
             input_keys=("packed_input_ids", "prompt_mask"),
             log_return_value=True,
-            model_type=self.model.type,
-            model_path=self.model.path,
         )
         return {"trainDefault": rpc}
 
@@ -88,8 +86,6 @@ class NullPPOConfig(CommonExperimentConfig, NullPPOExperimentOptions):
             model_name="default",
             input_keys=("packed_prompts",),
             output_keys=("rewards",),
-            model_type=self.model.type,
-            model_path=self.model.path,
         )
         rpc = MFCDef(
             n_seqs=self.dataset.train_bs_n_seqs,
@@ -100,8 +96,6 @@ class NullPPOConfig(CommonExperimentConfig, NullPPOExperimentOptions):
             model_name="default",
             input_keys=("packed_prompts", "rewards"),
             log_return_value=True,
-            model_type=self.model.type,
-            model_path=self.model.path,
         )
         return {"trainDefault": rpc, "reward": rw}
 

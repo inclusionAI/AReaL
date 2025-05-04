@@ -246,30 +246,6 @@ if not no_ext and _is_cuda():
     ext_modules.append(interval_op_cuda)
 
 if not no_ext:
-    search_extension = setuptools.Extension(
-        name="realhf._C.mdm_search",
-        sources=[
-            "csrc/search/search.cpp",
-            "csrc/search/rpc.cpp",
-            "csrc/search/device_mesh.cpp",
-            "csrc/search/simulate.cpp",
-        ],
-        language="c++",
-        extra_compile_args=[
-            "-O3",
-            "-Wall",
-            "-shared",
-            "-std=c++11",
-            "-fPIC",
-            "-std=c++17",
-        ],
-        include_dirs=[
-            os.path.join(os.path.abspath(os.path.dirname(__file__)), "csrc", "search"),
-            get_pybind11_include_path(),
-        ],
-    )
-    ext_modules.append(search_extension)
-
     interval_extension = setuptools.Extension(
         name="realhf._C.interval_op",
         sources=[

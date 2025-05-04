@@ -36,8 +36,6 @@ class SFTConfig(CommonExperimentConfig, SFTExperimentOptions):
             model_name="default",
             input_keys=("packed_input_ids", "prompt_mask"),
             log_return_value=True,
-            model_type=self.model.type,
-            model_path=self.model.path,
         )
         return {"trainDefault": rpc}
 
