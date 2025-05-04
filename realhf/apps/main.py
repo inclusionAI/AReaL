@@ -110,10 +110,6 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
         assert (
             args.recover_mode == "disabled"
         ), "Recover mode is not supported for local runs!"
-    # Use search cache for recover runs
-    force_allocation_use_cache = (
-        recover_count > 1 or args.recover_mode == "resume"
-    ) and args.allocation_mode == "search"
     # handle args
     args.ignore_worker_error = (
         args.ignore_worker_error and args.recover_mode == "disabled"
@@ -174,12 +170,8 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
     )
     for k, v in BASE_ENVIRONS.items():
         os.environ[k] = v
-    os.environ["REAL_IS_REMOTE"] = "0" if not force_allocation_use_cache else "1"
 
     # setup experiments
-    if args.allocation_mode == "search":
-        experiment._search()
-
     sched = sched_client.make(
         mode=scheduler_mode(args.mode),
         expr_name=expr_name,
@@ -324,80 +316,6 @@ def main_find_config(args):
         print(exp_name)
 
 
-def main_profile_layers(args):
-    from realhf.api.cli_args import ModelFamily
-
-    _main_profile_layers(
-        ModelFamily(args.model_class, args.model_size, args.is_critic),
-        args.model_path,
-    )
-
-
-def _main_profile_layers(model_family, model_path):
-    from realhf.api.cli_args import ModelFamily
-    from realhf.base.slurm_utils import check_slurm_availability
-    from realhf.base.testing import clear_name_resolve
-
-    expr_name = trial_name = "profile"
-    cmd = (
-        f"python3 -m realhf.apps.profile_layers --expr_name {expr_name} --trial_name {trial_name} "
-        f"--model_path {model_path} --model_name {model_family} "
-    )
-
-    if check_slurm_availability():
-        if not os.environ.get("CLUSTER_SPEC_PATH", ""):
-            raise ValueError(
-                "Environment variable CLUSTER_SPEC_PATH must be set for slurm mode! "
-                "See example/cluster_config.json for a template."
-            )
-        BASE_ENVIRONS = constants.get_env_vars(
-            REAL_MODE="slurm",
-            CLUSTER_SPEC_PATH=os.environ.get("CLUSTER_SPEC_PATH", ""),
-        )
-        clear_name_resolve(expr_name, trial_name)
-        sched = sched_client.make(
-            mode="slurm", expr_name=expr_name, trial_name=trial_name
-        )
-        print(
-            f"Profiling {model_family} layers, model path {model_path}, " f"cmd {cmd}"
-        )
-        sched.submit_array(
-            worker_type="profile_layer",
-            cmd=cmd,
-            count=1,
-            cpu=64,
-            gpu=8,
-            gpu_type="tesla",
-            mem=500000,
-            env_vars=BASE_ENVIRONS,
-            container_image=config_package._LLM_GPU_IMAGE,
-        )
-
-        try:
-            sched.wait(timeout=None)
-        except (
-            KeyboardInterrupt,
-            sched_client.JobException,
-            TimeoutError,
-        ) as e:
-            sched.stop_all()
-            raise e
-    else:
-        try:
-            print(
-                f"Profiling {model_family} layers, model path {model_path}, "
-                f"cmd {cmd}"
-            )
-            clear_name_resolve(expr_name, trial_name)
-            os.system(cmd)
-        except (
-            KeyboardInterrupt,
-            sched_client.JobException,
-            TimeoutError,
-        ) as e:
-            raise e
-
-
 def main():
     parser = argparse.ArgumentParser(prog="ReaLHF")
     subparsers = parser.add_subparsers(dest="cmd", help="sub-command help")
@@ -482,7 +400,7 @@ def main():
         type=str,
         required=False,
         default="pipe_model",
-        choices=["manual", "search", "heuristic", "pipe_model", "pipe_data"],
+        choices=["manual", "heuristic", "pipe_model", "pipe_data"],
         help="Mode of GPU resource/model parallel strategy allocation.",
     )
     subparser.set_defaults(ignore_worker_error=False)
@@ -513,15 +431,6 @@ def main():
     )
     subparser.add_argument("--regex", "-r", type=str, required=True)
     subparser.set_defaults(func=main_find_config)
-
-    subparser = subparsers.add_parser(
-        "profile_layers", help="profile layers of a model."
-    )
-    subparser.add_argument("--model_class", type=str, required=True)
-    subparser.add_argument("--model_size", type=int, required=True)
-    subparser.add_argument("--is_critic", action="store_true")
-    subparser.add_argument("--model_path", type=str, required=True)
-    subparser.set_defaults(func=main_profile_layers)
 
     args = parser.parse_args()
     args.func(args)

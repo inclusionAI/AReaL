@@ -97,8 +97,7 @@ class PromptOnlyDatasetConfig:
 class ModelFamily:
     """Identifier for HuggingFace model types (e.g., llama, gpt2).
 
-    Used for model registration and allocation. The size parameter is specifically
-    relevant for the 'search' allocation mode.
+    Used for model registration and allocation.
     """
 
     _class: str = field(
@@ -106,12 +105,6 @@ class ModelFamily:
             "help": "Model class name (e.g., 'llama'). Must be registered in `register_hf_family`. See "
             "`realhf/api/from_hf` for supported models.",
         }
-    )
-    size: int = field(
-        default=0,
-        metadata={
-            "help": "Model size parameter. Only used by 'search' allocation mode, ignored otherwise",
-        },
     )
     is_critic: bool = field(
         default=False,
@@ -121,8 +114,8 @@ class ModelFamily:
     )
 
     def __repr__(self):
-        """Returns formatted string representation: '{class}-{size}[-critic]'."""
-        s = f"{self._class}-{self.size}"
+        """Returns formatted string representation: '{class}[-critic]'."""
+        s = f"{self._class}"
         if self.is_critic:
             s += "-critic"
         return s
@@ -452,7 +445,7 @@ class ModelTrainEvalConfig:
 
     # Model Architecture Configuration
     type: ModelFamily = field(
-        default=ModelFamily("llama", 7, False),
+        default=ModelFamily("llama", False),
         metadata={"help": "Model family specification"},
     )
     path: str = field(default="", metadata={"help": "Path to HuggingFace checkpoint"})
@@ -855,7 +848,7 @@ class BaseExperimentConfig:
 
     Note:
         - Recovery modes: auto, fault, resume, disabled
-        - Allocation modes: manual, search, heuristic, or pattern-based
+        - Allocation modes: manual, heuristic, or pattern-based
     """
 
     experiment_name: str = field(
@@ -927,12 +920,8 @@ class BaseExperimentConfig:
         default="",
         metadata={
             "help": "GPU parallel strategy allocation mode. "
-            "Options: manual/search/heuristic or pattern-based."
+            "Options: manual/heuristic or pattern-based."
         },
-    )
-    allocation_use_cache: bool = field(
-        default=False,
-        metadata={"help": "Use allocation search cache (search mode only)."},
     )
     n_nodes: int = field(
         default=1, metadata={"help": "Number of nodes for experiment."}

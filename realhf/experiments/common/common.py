@@ -44,7 +44,6 @@ from realhf.api.quickstart.device_mesh import (
 )
 from realhf.base.cluster import spec as cluster_spec
 from realhf.experiments.common.check import (
-    check_is_realhf_native_model_interface,
     check_valid_model_and_path,
     check_valid_optimizer,
     check_valid_parallel_batch_size,
@@ -61,7 +60,6 @@ from realhf.experiments.common.utils import (
     resolve_replica_ids,
     resolve_rpc_hooks,
 )
-from realhf.search_engine.search import search_rpc_allocations
 
 # Register all HF models
 import realhf.api.from_hf  # isort:skip
@@ -145,10 +143,6 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
         return None
 
     @property
-    def search_kwargs(self) -> Dict[str, Any]:
-        return {}
-
-    @property
     def global_device_mesh(self) -> DeviceMesh:
         return DeviceMesh(
             n_nodes=self.n_nodes,
@@ -160,20 +154,6 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
         raise NotImplementedError(
             f"_heuristic_rpc_allocation is not implemented in {self.__class__}"
         )
-
-    def _search(self):
-        # called in both api.main and controller
-        gradient_checkpointing = any(
-            model.gradient_checkpointing for model in self.models.values()
-        )
-        rpc_allocs: List[RPCAllocation] = search_rpc_allocations(
-            device_mesh=self.global_device_mesh,
-            rpcs=list(self.rpcs.values()),
-            gradient_checkpointing=gradient_checkpointing,
-            use_cache=self.allocation_use_cache,
-            **self.search_kwargs,
-        )
-        return rpc_allocs
 
     def scheduling_setup(self) -> ExperimentScheduling:
         """The resourced occupied by each worker.
@@ -221,20 +201,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
         self._check_legal_allocation_options()
 
         rpcs = self.rpcs
-        if self.allocation_mode == "search":
-            # assert self.mode == "slurm"
-            # assumes gradient checkpointing for all training RPCs if one is enabled
-            # for the simplicity of search configurations
-            rpc_allocs = self._search()
-            for rpc_alloc in rpc_allocs:
-                assert isinstance(rpc_alloc.rpc, str)
-                for rpc in rpcs.values():
-                    if rpc.name == rpc_alloc.rpc:
-                        rpc_alloc.rpc = rpc
-                        break
-                else:
-                    raise ValueError(f"RPC {rpc_alloc.rpc} not found in rpcs.")
-        elif self._allocation_mode.is_decoupled():
+        if self._allocation_mode.is_decoupled():
             paras = self._allocation_mode.parallel_strat
 
             gdp, gpp, gmp = paras["gen"]["d"], paras["gen"]["p"], paras["gen"]["m"]
@@ -611,12 +578,9 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                 "please setup slurm for distributed runs."
             )
 
-        if self.n_gpus_per_node != 8 and self.allocation_mode in [
-            "search",
-            "heuristic",
-        ]:
+        if self.n_gpus_per_node != 8 and self.allocation_mode == "heuristic":
             raise ValueError(
-                f"Cannot run search or heuristic allocation with "
+                f"Cannot run heuristic allocation with "
                 f"n_gpus_per_node {self.n_gpus_per_node}, "
                 "please set n_gpus_per_node to 8."
             )
@@ -625,13 +589,6 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
             if rpc_name != rpc.name:
                 raise KeyError(
                     f"RPC name {rpc_name} does not match the name in the MFCDef object {rpc.name}."
-                )
-            if not check_is_realhf_native_model_interface(
-                rpc.interface_impl.type_
-            ) and self.allocation_mode in ["search"]:
-                raise ValueError(
-                    f"RPC {rpc.name} interface is not a realhf native implementation. "
-                    f"The search allocation mode are not available."
                 )
             if self.allocation_mode == "manual" and rpc_name not in self.allocations:
                 if rpc_name not in self.allocations:

@@ -247,9 +247,8 @@ class AllocationType(enum.Enum):
     GLOBAL_HYBRID = 2
     MANUAL = 3
     HEURISTIC = 4
-    SEARCH = 5
-    DECOUPLED_SGLANG = 6
-    DECOUPLED_MOCK = 7
+    DECOUPLED_SGLANG = 5
+    DECOUPLED_MOCK = 6
 
 
 @dataclasses.dataclass
@@ -293,8 +292,6 @@ class AllocationMode:
             return cls(AllocationType.MANUAL, None)
         if allocation_mode == "heuristic":
             return cls(AllocationType.HEURISTIC, None)
-        if allocation_mode == "search":
-            return cls(AllocationType.SEARCH, None)
 
         alloc_3d = AllocationMode.extract_3d_alloc(allocation_mode)
         alloc_hybrid = AllocationMode.extract_key_value_alloc(allocation_mode)

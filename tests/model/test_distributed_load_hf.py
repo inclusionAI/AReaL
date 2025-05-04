@@ -14,8 +14,7 @@ import torch
 import torch.distributed as dist
 import transformers
 
-from realhf.api.cli_args import ModelFamily
-from realhf.api.core.model_api import HF_MODEL_FAMILY_REGISTRY, ReaLModelConfig
+from realhf.api.core.model_api import ReaLModelConfig
 from realhf.base import constants, logging
 from realhf.base.testing import (
     LocalMultiProcessTest,
