@@ -25,28 +25,28 @@ from realhf.system.redistributor import GlobalStorageTracker, RedistribPlanner
 def get_data_manager(
     from_model_name,
     to_model_name,
-    from_pp_dp_mp,
-    to_pp_dp_mp,
+    from_pp_dp_tp,
+    to_pp_dp_tp,
 ):
 
-    from_num_pp, from_num_dp, from_num_mp = from_pp_dp_mp
-    to_num_pp, to_num_dp, to_num_mp = to_pp_dp_mp
+    from_num_pp, from_num_dp, from_num_tp = from_pp_dp_tp
+    to_num_pp, to_num_dp, to_num_tp = to_pp_dp_tp
 
-    from_world_size = from_num_dp * from_num_mp * from_num_pp
-    to_world_size = to_num_dp * to_num_mp * to_num_pp
+    from_world_size = from_num_dp * from_num_tp * from_num_pp
+    to_world_size = to_num_dp * to_num_tp * to_num_pp
 
-    from_topo = topology.PipeDataModelParallelTopology(
+    from_topo = topology.PipeDataTensorParallelTopology(
         num_dp=from_num_dp,
-        num_mp=from_num_mp,
+        num_tp=from_num_tp,
         num_pp=from_num_pp,
         sequence_parallel=False,
         gradient_checkpointing=False,
         max_prompt_len=None,
         gradient_accumulation_fusion=False,
     )
-    to_topo = topology.PipeDataModelParallelTopology(
+    to_topo = topology.PipeDataTensorParallelTopology(
         num_dp=to_num_dp,
-        num_mp=to_num_mp,
+        num_tp=to_num_tp,
         num_pp=to_num_pp,
         sequence_parallel=False,
         gradient_checkpointing=False,
@@ -80,7 +80,7 @@ def get_data_manager(
             k = ModelShardID(
                 _model_name,
                 dp_rank=coord.data,
-                mp_rank=coord.model,
+                tp_rank=coord.tensor,
                 pp_rank=coord.pipe,
                 topo=model_topos[_model_name],
             )
@@ -88,7 +88,7 @@ def get_data_manager(
 
     init_global_constants(
         num_dp=from_num_dp,
-        num_mp=from_num_mp,
+        num_tp=from_num_tp,
         num_pp=from_num_pp,
         topo=from_topo,
         model_name=from_model_name,
@@ -98,7 +98,7 @@ def get_data_manager(
 
     init_global_constants(
         num_dp=to_num_dp,
-        num_mp=to_num_mp,
+        num_tp=to_num_tp,
         num_pp=to_num_pp,
         model_name=to_model_name,
         sequence_parallel=False,
@@ -134,24 +134,24 @@ def recursive_assert_equal(x1, x2):
 
 def _test_data_transfer(
     tmp_path,
-    from_pp_dp_mp: Tuple,
-    to_pp_dp_mp: Tuple,
+    from_pp_dp_tp: Tuple,
+    to_pp_dp_tp: Tuple,
 ):
 
     from_model_name = ModelName("data_transfer_test", 0)
-    from_topo = topology.PipeDataModelParallelTopology(
-        num_pp=from_pp_dp_mp[0],
-        num_mp=from_pp_dp_mp[-1],
-        num_dp=from_pp_dp_mp[1],
+    from_topo = topology.PipeDataTensorParallelTopology(
+        num_pp=from_pp_dp_tp[0],
+        num_tp=from_pp_dp_tp[-1],
+        num_dp=from_pp_dp_tp[1],
         sequence_parallel=True,
         gradient_checkpointing=True,
         gradient_accumulation_fusion=True,
     )
     to_model_name = ModelName("data_transfer_test", 1)
-    to_topo = topology.PipeDataModelParallelTopology(
-        num_pp=to_pp_dp_mp[0],
-        num_mp=to_pp_dp_mp[-1],
-        num_dp=to_pp_dp_mp[1],
+    to_topo = topology.PipeDataTensorParallelTopology(
+        num_pp=to_pp_dp_tp[0],
+        num_tp=to_pp_dp_tp[-1],
+        num_dp=to_pp_dp_tp[1],
         sequence_parallel=True,
         gradient_checkpointing=True,
         gradient_accumulation_fusion=True,
@@ -160,8 +160,8 @@ def _test_data_transfer(
     data_manager = get_data_manager(
         from_model_name,
         to_model_name,
-        from_pp_dp_mp,
-        to_pp_dp_mp,
+        from_pp_dp_tp,
+        to_pp_dp_tp,
     )
     data_manager.setup_process_groups()
 
@@ -172,13 +172,13 @@ def _test_data_transfer(
 
     world_size = dist.get_world_size()
     samples = []
-    for dp_rank in range(from_pp_dp_mp[1]):
+    for dp_rank in range(from_pp_dp_tp[1]):
         gpu_id = data_manager.msid2mwid[
             ModelShardID(
                 from_model_name,
                 dp_rank=dp_rank,
-                mp_rank=0,
-                pp_rank=from_pp_dp_mp[0] - 1,
+                tp_rank=0,
+                pp_rank=from_pp_dp_tp[0] - 1,
                 topo=from_topo,
             )
         ]
@@ -230,7 +230,7 @@ def _test_data_transfer(
             ModelShardID(
                 to_model_name,
                 dp_rank=coord.data,
-                mp_rank=coord.model,
+                tp_rank=coord.tensor,
                 pp_rank=coord.pipe,
                 topo=to_topo,
             )
@@ -260,13 +260,13 @@ parallelism = [(1, 4, 2), (1, 8, 1)]
     os.cpu_count() < 32 or testing.get_free_mem_gb() < 50,
     reason="The parameter reallocation test requires at least 32 CPUs and 50GB memory.",
 )
-@pytest.mark.parametrize("from_pp_dp_mp", [(1, 4, 2)])
-@pytest.mark.parametrize("to_pp_dp_mp", [(1, 8, 1)])
+@pytest.mark.parametrize("from_pp_dp_tp", [(1, 4, 2)])
+@pytest.mark.parametrize("to_pp_dp_tp", [(1, 8, 1)])
 @pytest.mark.distributed
 def test_data_transfer(
     tmp_path,
-    from_pp_dp_mp: Tuple,
-    to_pp_dp_mp: Tuple,
+    from_pp_dp_tp: Tuple,
+    to_pp_dp_tp: Tuple,
 ):
     expr_name = uuid.uuid4()
     trial_name = uuid.uuid4()
@@ -278,7 +278,7 @@ def test_data_transfer(
         trial_name=trial_name,
         timeout_secs=300,
         tmp_path=tmp_path,
-        from_pp_dp_mp=from_pp_dp_mp,
-        to_pp_dp_mp=to_pp_dp_mp,
+        from_pp_dp_tp=from_pp_dp_tp,
+        to_pp_dp_tp=to_pp_dp_tp,
     )
     test_impl.launch()

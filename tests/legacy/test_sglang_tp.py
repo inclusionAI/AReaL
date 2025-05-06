@@ -82,7 +82,7 @@ def test_fn(
     constants.set_experiment_trial_names("slang-test", str(uuid.uuid4()))
     init_global_constants(
         num_dp=dp,
-        num_mp=tp,
+        num_tp=tp,
         num_pp=pp,
         sequence_parallel=False,
         model_name=model_name,
@@ -181,7 +181,7 @@ def test_fn(
                 tokenizer=tokenizer,
                 gconfig=gconfig,
             )
-            if constants.model_parallel_rank() == 0:
+            if constants.tensor_parallel_rank() == 0:
                 # The outputs are Nones for tp_rank > 1 in SGLang
                 _, _, token_match_percent, seq_match_percent = (
                     check_sequences_consistency(gen_tokens1, gen_tokens2)

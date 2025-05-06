@@ -240,7 +240,7 @@ class MultiTaskRewardInterface(model_api.ModelInterface):
             return data
         local_rank = constants.grid().topo.get_rank(
             data=constants.data_parallel_rank(),
-            model=0,
+            tensor=0,
             pipe=constants.pipe_parallel_world_size() - 1,
         )
         dst = constants.to_global_pg_rank(local_rank)

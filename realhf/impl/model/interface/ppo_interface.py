@@ -109,10 +109,10 @@ def _ppo_actor_loss_from_model_outputs(
     vocab_min_logits = logits.detach().min(-1).values.float()
     vocab_max_logits = logits.detach().max(-1).values.float()
     dist.all_reduce(
-        vocab_min_logits, group=constants.model_parallel_group(), op=dist.ReduceOp.MIN
+        vocab_min_logits, group=constants.tensor_parallel_group(), op=dist.ReduceOp.MIN
     )
     dist.all_reduce(
-        vocab_max_logits, group=constants.model_parallel_group(), op=dist.ReduceOp.MAX
+        vocab_max_logits, group=constants.tensor_parallel_group(), op=dist.ReduceOp.MAX
     )
     stats_tracker.stat(
         vocab_min_logits=vocab_min_logits,

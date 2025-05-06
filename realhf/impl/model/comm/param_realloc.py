@@ -43,10 +43,10 @@ def is_trainable(model_name: ModelName) -> bool:
 class ParamReallocPair:
     src: ModelName
     src_dp_rank: int
-    src_mp_rank: int
+    src_tp_rank: int
     src_pp_rank: int
     dst: ModelName
-    dst_mp_rank: int
+    dst_tp_rank: int
     dst_pp_rank: int
 
 
@@ -171,32 +171,34 @@ def _create_param_realloc_groups(
         range(from_topo.get_dim("pipe")), range(to_topo.get_dim("pipe"))
     ):
         # create tensor reshard groups
-        src_mp_size = from_topo.get_dim("model")
-        dst_mp_size = to_topo.get_dim("model")
+        src_tp_size = from_topo.get_dim("tensor")
+        dst_tp_size = to_topo.get_dim("tensor")
 
-        for mp_j in range(dst_mp_size):
+        for tp_j in range(dst_tp_size):
             _all_dst_ranks = filter_match_mwids(
-                dst, to_topo, msid2mwid, pipe=pp_j, model=mp_j
+                dst, to_topo, msid2mwid, pipe=pp_j, tensor=tp_j
             )
-            if src_mp_size > dst_mp_size:
-                factor = src_mp_size // dst_mp_size
-                mp_is = list(range(factor * mp_j, factor * (mp_j + 1)))
+            if src_tp_size > dst_tp_size:
+                factor = src_tp_size // dst_tp_size
+                tp_is = list(range(factor * tp_j, factor * (tp_j + 1)))
                 _all_src_ranks = [
-                    filter_match_mwids(src, from_topo, msid2mwid, model=mp_i, pipe=pp_i)
-                    for mp_i in mp_is
+                    filter_match_mwids(
+                        src, from_topo, msid2mwid, tensor=tp_i, pipe=pp_i
+                    )
+                    for tp_i in tp_is
                 ]
             else:
-                factor = dst_mp_size // src_mp_size
+                factor = dst_tp_size // src_tp_size
                 _all_src_ranks = [
                     filter_match_mwids(
                         src,
                         from_topo,
                         msid2mwid,
-                        model=mp_j // factor,
+                        tensor=tp_j // factor,
                         pipe=pp_i,
                     )
                 ]
-            # All GPUs in _src_ranks have the data required by (pp_j, mp_j)
+            # All GPUs in _src_ranks have the data required by (pp_j, tp_j)
             for _src_ranks in _all_src_ranks:
                 # NOTE: inter-node communication cost is significantly larger than intra-node communication cost.
                 # We only select one sender per host/node to prevent multiple senders occupying the same network bandwidth.
@@ -209,42 +211,42 @@ def _create_param_realloc_groups(
                 )
                 _idle_src_ranks = [r for r in _src_ranks if r not in assignment]
                 for _src_rank in _idle_src_ranks:
-                    dp_i, mp_i = (
+                    dp_i, tp_i = (
                         from_topo.get_coord(
                             mwid2msid[_src_rank][src].parallelism_rank
                         ).data,
                         from_topo.get_coord(
                             mwid2msid[_src_rank][src].parallelism_rank
-                        ).model,
+                        ).tensor,
                     )
                     key = ParamReallocPair(
                         src=src,
                         src_dp_rank=dp_i,
-                        src_mp_rank=mp_i,
+                        src_tp_rank=tp_i,
                         src_pp_rank=pp_i,
                         dst=dst,
-                        dst_mp_rank=mp_j,
+                        dst_tp_rank=tp_j,
                         dst_pp_rank=pp_j,
                     )
                     param_realloc_dst_ranks[key] = []
                     param_realloc_groups[key] = None
                     param_realloc_src_ranks[key] = _src_rank
                 for _src_rank, _dst_ranks in assignment.items():
-                    dp_i, mp_i = (
+                    dp_i, tp_i = (
                         from_topo.get_coord(
                             mwid2msid[_src_rank][src].parallelism_rank
                         ).data,
                         from_topo.get_coord(
                             mwid2msid[_src_rank][src].parallelism_rank
-                        ).model,
+                        ).tensor,
                     )
                     key = ParamReallocPair(
                         src=src,
                         src_dp_rank=dp_i,
-                        src_mp_rank=mp_i,
+                        src_tp_rank=tp_i,
                         src_pp_rank=pp_i,
                         dst=dst,
-                        dst_mp_rank=mp_j,
+                        dst_tp_rank=tp_j,
                         dst_pp_rank=pp_j,
                     )
                     param_realloc_dst_ranks[key] = _dst_ranks
@@ -315,8 +317,8 @@ def setup_param_realloc(
 @dataclasses.dataclass
 class ReparallelizeSenderStep:
     rank: int
-    sender_mp_portion_id: int
-    receiver_mp_portion_id: int
+    sender_tp_portion_id: int
+    receiver_tp_portion_id: int
     param_keys: List[str]
     param_intervals_cpu: List[Tuple[int, int]]
     param_intervals_cuda: torch.Tensor
@@ -330,8 +332,8 @@ class ReparallelizeSenderStep:
 @dataclasses.dataclass
 class ReparallelizeReceiverStep:
     rank: int
-    sender_mp_portion_id: int
-    receiver_mp_portion_id: int
+    sender_tp_portion_id: int
+    receiver_tp_portion_id: int
     sender_param_intervals_cpu: List[Tuple[int, int]]
     sender_param_intervals_cuda: torch.Tensor
     sender_max_interval_size: int
@@ -356,9 +358,9 @@ def _derive_reparallelize_comm_plan(
     pg_info: ParamReallocInfo,
     dtype: Optional[torch.dtype] = torch.float16,
 ) -> List[ReparallelizeReceiverStep | ReparallelizeSenderStep]:
-    src_mp_size = from_topo.get_dim("model")
-    dst_mp_size = to_topo.get_dim("model")
-    assert src_mp_size % dst_mp_size == 0 or dst_mp_size % src_mp_size == 0
+    src_tp_size = from_topo.get_dim("tensor")
+    dst_tp_size = to_topo.get_dim("tensor")
+    assert src_tp_size % dst_tp_size == 0 or dst_tp_size % src_tp_size == 0
     for k, v in dataclasses.asdict(to_model_config).items():
         if k not in ["is_critic"] and v != getattr(from_model_config, k):
             raise ValueError(
@@ -366,8 +368,8 @@ def _derive_reparallelize_comm_plan(
                 f"value in checkpoint is `{v}`, current value is `{getattr(from_model_config, k)}`)."
             )
     if from_model_config.n_kv_heads > 1 and (
-        from_model_config.n_kv_heads % src_mp_size == 0
-    ) != (from_model_config.n_kv_heads % dst_mp_size == 0):
+        from_model_config.n_kv_heads % src_tp_size == 0
+    ) != (from_model_config.n_kv_heads % dst_tp_size == 0):
         raise ValueError("Whether to partition kv heads should remain the same.")
 
     from_layer_mapping = partition_pipeline_layers(
@@ -400,7 +402,7 @@ def _derive_reparallelize_comm_plan(
             from_model_param_specs, _ = build_param_spec(
                 from_layer_indices,
                 from_model_config,
-                mp_size=from_topo.get_dim("model"),
+                tp_size=from_topo.get_dim("tensor"),
                 dp_size=from_topo.get_dim("data"),
                 pp_size=from_topo.get_dim("pipe"),
                 head_param_point_to_embedding=from_model_head_param_point_to_embedding,
@@ -411,7 +413,7 @@ def _derive_reparallelize_comm_plan(
             to_model_param_specs, _ = build_param_spec(
                 to_layer_indices,
                 to_model_config,
-                mp_size=to_topo.get_dim("model"),
+                tp_size=to_topo.get_dim("tensor"),
                 pp_size=to_topo.get_dim("pipe"),
                 dp_size=to_topo.get_dim("data"),
                 head_param_point_to_embedding=to_model_head_param_point_to_embedding,
@@ -428,25 +430,25 @@ def _derive_reparallelize_comm_plan(
         if len(layer_indices) == 0:
             continue
 
-        for mp_i in range(src_mp_size):
-            if dst_mp_size > src_mp_size:
-                factor = dst_mp_size // src_mp_size
-                mp_js = [i + factor * mp_i for i in range(factor)]
-                receiver_mp_portion_id = 0
+        for tp_i in range(src_tp_size):
+            if dst_tp_size > src_tp_size:
+                factor = dst_tp_size // src_tp_size
+                tp_js = [i + factor * tp_i for i in range(factor)]
+                receiver_tp_portion_id = 0
             else:
-                factor = src_mp_size // dst_mp_size
-                mp_js = [mp_i // factor]
-                receiver_mp_portion_id = mp_i % factor
-            for sender_mp_portion_id, mp_j in enumerate(mp_js):
+                factor = src_tp_size // dst_tp_size
+                tp_js = [tp_i // factor]
+                receiver_tp_portion_id = tp_i % factor
+            for sender_tp_portion_id, tp_j in enumerate(tp_js):
 
                 for dp_i in range(src_dp_size):
                     key = ParamReallocPair(
                         src=from_model_name,
                         src_dp_rank=dp_i,
-                        src_mp_rank=mp_i,
+                        src_tp_rank=tp_i,
                         src_pp_rank=pp_i,
                         dst=to_model_name,
-                        dst_mp_rank=mp_j,
+                        dst_tp_rank=tp_j,
                         dst_pp_rank=pp_j,
                     )
                     src = pg_info.param_realloc_src_ranks[key]
@@ -462,10 +464,10 @@ def _derive_reparallelize_comm_plan(
                     )
                     param_size = param_size_from_keys(
                         config=from_model_config,
-                        src_mp_size=src_mp_size,
+                        src_tp_size=src_tp_size,
                         sd_keys=param_keys,
-                        src2dst_tp_size=max(dst_mp_size // src_mp_size, 1),
-                        src2dst_tp_rank=sender_mp_portion_id,
+                        src2dst_tp_size=max(dst_tp_size // src_tp_size, 1),
+                        src2dst_tp_rank=sender_tp_portion_id,
                         head_param_point_to_embedding=from_model_head_param_point_to_embedding,
                     )
                     if torch.distributed.is_initialized():
@@ -474,11 +476,11 @@ def _derive_reparallelize_comm_plan(
                             param_intervals_cpu = param_intervals_from_keys(
                                 model_name=from_model_name,
                                 config=from_model_config,
-                                mp_size=src_mp_size,
+                                tp_size=src_tp_size,
                                 param_spec=from_model_param_specs,
                                 sd_keys=param_keys,
-                                portion_size=max(dst_mp_size // src_mp_size, 1),
-                                portion_rank=sender_mp_portion_id,
+                                portion_size=max(dst_tp_size // src_tp_size, 1),
+                                portion_rank=sender_tp_portion_id,
                                 head_param_point_to_embedding=from_model_head_param_point_to_embedding,
                             )
                             param_intervals_cuda = torch.tensor(
@@ -493,11 +495,11 @@ def _derive_reparallelize_comm_plan(
                             receiver_param_intervals_cpu = param_intervals_from_keys(
                                 model_name=to_model_name,
                                 config=to_model_config,
-                                mp_size=dst_mp_size,
+                                tp_size=dst_tp_size,
                                 param_spec=to_model_param_specs,
                                 sd_keys=param_keys,
-                                portion_size=max(src_mp_size // dst_mp_size, 1),
-                                portion_rank=receiver_mp_portion_id,
+                                portion_size=max(src_tp_size // dst_tp_size, 1),
+                                portion_rank=receiver_tp_portion_id,
                                 head_param_point_to_embedding=to_model_head_param_point_to_embedding,
                             )
                             receiver_param_intervals_cuda = torch.tensor(
@@ -513,8 +515,8 @@ def _derive_reparallelize_comm_plan(
                         comm_plan.append(
                             ReparallelizeReceiverStep(
                                 rank=dst_rank,
-                                sender_mp_portion_id=sender_mp_portion_id,
-                                receiver_mp_portion_id=receiver_mp_portion_id,
+                                sender_tp_portion_id=sender_tp_portion_id,
+                                receiver_tp_portion_id=receiver_tp_portion_id,
                                 param_keys=param_keys,
                                 sender_param_intervals_cpu=param_intervals_cpu,
                                 sender_param_intervals_cuda=param_intervals_cuda,
@@ -532,8 +534,8 @@ def _derive_reparallelize_comm_plan(
                     comm_plan.append(
                         ReparallelizeSenderStep(
                             rank=src,
-                            sender_mp_portion_id=sender_mp_portion_id,
-                            receiver_mp_portion_id=receiver_mp_portion_id,
+                            sender_tp_portion_id=sender_tp_portion_id,
+                            receiver_tp_portion_id=receiver_tp_portion_id,
                             param_keys=param_keys,
                             param_intervals_cpu=param_intervals_cpu,
                             param_intervals_cuda=param_intervals_cuda,

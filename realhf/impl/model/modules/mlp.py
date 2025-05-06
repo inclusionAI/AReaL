@@ -15,7 +15,7 @@ from transformers.activations import ACT2FN
 
 import realhf.base.constants as constants
 import realhf.base.logging as logging
-from realhf.impl.model.parallelism.model_parallel.modules import (
+from realhf.impl.model.parallelism.tensor_parallel.modules import (
     ColumnParallelLinear,
     RowParallelLinear,
     merged_linear_with_grad_accumulation_and_async_allreduce,
@@ -49,10 +49,10 @@ class LayerNormQKVLinear(nn.Module):
         layer_index=None,
     ):
         super().__init__()
-        model_parallel = constants.model_parallel_world_size() > 1
+        tensor_parallel = constants.tensor_parallel_world_size() > 1
         sequence_parallel = constants.sequence_parallel()
         gradient_accumulation_fusion = constants.gradient_accumulation_fusion()
-        if not model_parallel and (sequence_parallel or gradient_accumulation_fusion):
+        if not tensor_parallel and (sequence_parallel or gradient_accumulation_fusion):
             global SEQUENCE_PARALLEL_WARNED
             if not SEQUENCE_PARALLEL_WARNED:
                 logger.warning(
@@ -73,16 +73,16 @@ class LayerNormQKVLinear(nn.Module):
             input_dim, eps=layer_norm_epsilon, dtype=dtype, device=device
         )
 
-        self.model_parallel = model_parallel
+        self.tensor_parallel = tensor_parallel
         self.layer_index = layer_index
-        self.mp_worldsize = constants.model_parallel_world_size()
-        assert n_q_heads % self.mp_worldsize == 0, (
+        self.tp_worldsize = constants.tensor_parallel_world_size()
+        assert n_q_heads % self.tp_worldsize == 0, (
             f"n_q_heads {n_q_heads} must be divisible by "
-            f"mp_worldsize {self.mp_worldsize}"
+            f"tp_worldsize {self.tp_worldsize}"
         )
-        assert n_kv_heads % self.mp_worldsize == 0, (
+        assert n_kv_heads % self.tp_worldsize == 0, (
             f"n_kv_heads {n_kv_heads} must be divisible by "
-            f"mp_worldsize {self.mp_worldsize}"
+            f"tp_worldsize {self.tp_worldsize}"
         )
         hidden_dim = input_dim
         # TODO: we can fuse the forward of qkv attention
@@ -141,9 +141,9 @@ class LayerNormQKVLinear(nn.Module):
             self.v_attn.weight,
             self.v_attn.bias,
         )
-        q = q.view(*q.shape[:-1], self.nq // self.mp_worldsize, self.d)
-        k = k.view(*k.shape[:-1], self.nkv // self.mp_worldsize, self.d)
-        v = v.view(*v.shape[:-1], self.nkv // self.mp_worldsize, self.d)
+        q = q.view(*q.shape[:-1], self.nq // self.tp_worldsize, self.d)
+        k = k.view(*k.shape[:-1], self.nkv // self.tp_worldsize, self.d)
+        v = v.view(*v.shape[:-1], self.nkv // self.tp_worldsize, self.d)
         return q, k, v
 
 
@@ -163,10 +163,10 @@ class LayerNormMLP(nn.Module):
         device: Optional[Union[str, torch.device]] = None,
     ):
         super().__init__()
-        model_parallel = constants.model_parallel_world_size() > 1
+        tensor_parallel = constants.tensor_parallel_world_size() > 1
         sequence_parallel = constants.sequence_parallel()
         gradient_accumulation_fusion = constants.gradient_accumulation_fusion()
-        if not model_parallel and (sequence_parallel or gradient_accumulation_fusion):
+        if not tensor_parallel and (sequence_parallel or gradient_accumulation_fusion):
             global SEQUENCE_PARALLEL_WARNED
             if not SEQUENCE_PARALLEL_WARNED:
                 logger.warning(
@@ -228,12 +228,12 @@ class LlamaLayerNormMLP(nn.Module):
         device: Optional[Union[str, torch.device]] = None,
     ):
         super().__init__()
-        self.model_parallel = constants.model_parallel_world_size() > 1
+        self.tensor_parallel = constants.tensor_parallel_world_size() > 1
         gradient_accumulation_fusion = constants.gradient_accumulation_fusion()
         self.is_expert = is_expert
         # when used as experts the MLP always compute without sequence parallel
         sequence_parallel = constants.sequence_parallel() and not is_expert
-        if not self.model_parallel and (
+        if not self.tensor_parallel and (
             sequence_parallel or gradient_accumulation_fusion
         ):
             global SEQUENCE_PARALLEL_WARNED
@@ -418,13 +418,13 @@ if constants.use_te_impl():
             eps=layer_norm_epsilon,
             sequence_parallel=constants.sequence_parallel(),
             return_bias=False,
-            tp_group=constants.model_parallel_group(),
-            tp_size=constants.model_parallel_world_size(),
+            tp_group=constants.tensor_parallel_group(),
+            tp_size=constants.tensor_parallel_world_size(),
             bias=False,
             normalization="RMSNorm",
             activation="swiglu",
             fuse_wgrad_accumulation=constants.gradient_accumulation_fusion(),
             params_dtype=dtype,
-            set_parallel_mode=constants.model_parallel_world_size() > 1,
+            set_parallel_mode=constants.tensor_parallel_world_size() > 1,
             device=device,
         )

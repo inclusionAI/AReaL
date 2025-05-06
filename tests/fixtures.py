@@ -108,7 +108,7 @@ def maybe_prepare_cpu_env(max_prompt_len: int):
         )
         testing.init_global_constants(
             num_dp=1,
-            num_mp=1,
+            num_tp=1,
             num_pp=1,
             sequence_parallel=False,
             max_prompt_len=max_prompt_len,

@@ -82,7 +82,7 @@ def _split_and_prefill_pipe_input(
             raise PipelineError(
                 "Partitioned seqlens are not equal across pipeline parallel ranks. "
                 f"Current rank (dp={constants.data_parallel_rank()},"
-                f"tp={constants.model_parallel_rank()},pp={constants.pipe_parallel_rank()}), "
+                f"tp={constants.tensor_parallel_rank()},pp={constants.pipe_parallel_rank()}), "
                 f"gathered batch seqlens={_batch_seqlen_all_gathered}, "
                 f"Have you ensured that the order of dataset across ranks is the same?",
             )
@@ -118,7 +118,7 @@ def _split_and_prefill_pipe_input(
         total_len = (
             packed_input_ids.shape[0]
             if not constants.sequence_parallel()
-            else packed_input_ids.shape[0] // constants.model_parallel_world_size()
+            else packed_input_ids.shape[0] // constants.tensor_parallel_world_size()
         )
         mb_seq_lens.append(total_len)
         return (x, ys)
@@ -569,7 +569,7 @@ class PipeGenInstrSet:
                 "batch_lengths", micro_batch_id, remove=False
             )
             batch_length = (
-                batch_length // constants.model_parallel_world_size()
+                batch_length // constants.tensor_parallel_world_size()
                 if constants.sequence_parallel()
                 else batch_length
             )

@@ -85,7 +85,7 @@ def test_fn(
     model_name = ModelName("default", 0)
     init_global_constants(
         num_dp=dp,
-        num_mp=tp,
+        num_tp=tp,
         num_pp=pp,
         sequence_parallel=False,
         model_name=model_name,

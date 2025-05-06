@@ -55,8 +55,8 @@ def genstep(
             unfinished_sequences: Bool tensor indicator of whether a sequence is finished.
                 Shape [bs].
     """
-    if constants.model_parallel_world_size() > 1:
-        from realhf.impl.model.parallelism.model_parallel.mappings import (
+    if constants.tensor_parallel_world_size() > 1:
+        from realhf.impl.model.parallelism.tensor_parallel.mappings import (
             gather_from_tensor_model_parallel_region,
         )
 
@@ -95,20 +95,20 @@ def genstep(
     next_tokens = distrb.mode if gconfig.greedy else distrb.sample()
     logprob = distrb.log_prob(next_tokens)
 
-    if constants.model_parallel_world_size() > 1:
-        if constants.model_parallel_rank() > 0:
+    if constants.tensor_parallel_world_size() > 1:
+        if constants.tensor_parallel_rank() > 0:
             logprob[:] = 0
             next_tokens[:] = 0
         handle = torch.distributed.all_reduce(
             logprob,
             torch.distributed.ReduceOp.SUM,
             async_op=True,
-            group=constants.model_parallel_group(),
+            group=constants.tensor_parallel_group(),
         )
         torch.distributed.all_reduce(
             next_tokens,
             torch.distributed.ReduceOp.SUM,
-            group=constants.model_parallel_group(),
+            group=constants.tensor_parallel_group(),
         )
 
     if tokenizer.eos_token_id is not None:
@@ -139,7 +139,7 @@ def genstep(
         if not logits_mask.any():
             logits_mask = None
 
-    if constants.model_parallel_world_size() > 1:
+    if constants.tensor_parallel_world_size() > 1:
         handle.wait()
 
     return next_tokens, logprob, logits_mask, terminate, unfinished_sequences

@@ -36,7 +36,7 @@ def _vllm_group_rank(group_type: _vLLMGroupType):
     if group_type == _vLLMGroupType.WORLD:
         return constants.tp_and_pp_rank()
     elif group_type == _vLLMGroupType.TP:
-        return constants.model_parallel_rank()
+        return constants.tensor_parallel_rank()
     elif group_type == _vLLMGroupType.PP:
         return constants.pipe_parallel_rank()
 
@@ -45,7 +45,7 @@ def _vllm_group_size(group_type: _vLLMGroupType):
     if group_type == _vLLMGroupType.WORLD:
         return constants.tp_and_pp_world_size()
     elif group_type == _vLLMGroupType.TP:
-        return constants.model_parallel_world_size()
+        return constants.tensor_parallel_world_size()
     elif group_type == _vLLMGroupType.PP:
         return constants.pipe_parallel_world_size()
 
@@ -54,7 +54,7 @@ def _vllm_parallel_group(group_type: _vLLMGroupType):
     if group_type == _vLLMGroupType.WORLD:
         return constants.tp_and_pp_group()
     elif group_type == _vLLMGroupType.TP:
-        return constants.model_parallel_group()
+        return constants.tensor_parallel_group()
     elif group_type == _vLLMGroupType.PP:
         return constants.pipe_parallel_group()
 

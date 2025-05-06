@@ -62,7 +62,7 @@ class PipelinableInferenceEngine(model_api.PipelinableEngine):
                 f"num_layers(this stage)={self.module.num_layers} "
                 f"pp_size={constants.pipe_parallel_world_size()} "
                 f"dp_size={constants.data_parallel_world_size()} "
-                f"mp_size={constants.model_parallel_world_size()} "
+                f"tp_size={constants.tensor_parallel_world_size()} "
             )
         if constants.data_parallel_rank() == 0:
             logger.info(
