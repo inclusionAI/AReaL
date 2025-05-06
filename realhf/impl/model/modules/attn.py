@@ -10,7 +10,7 @@ import torch.utils.checkpoint
 
 import realhf.base.constants as constants
 import realhf.base.logging as logging
-from realhf.impl.model.parallelism.model_parallel.modules import RowParallelLinear
+from realhf.impl.model.parallelism.tensor_parallel.modules import RowParallelLinear
 from realhf.impl.model.utils.functional import (
     apply_rotary_varlen,
     compute_varlen_position_indices,
@@ -82,7 +82,7 @@ class CausalSelfAttentionLayer(nn.Module):
             layer_index=layer_index,
         )
 
-        if constants.model_parallel_world_size() > 1:
+        if constants.tensor_parallel_world_size() > 1:
             self.c_proj = RowParallelLinear(
                 n_q_heads * head_dim,
                 hidden_dim,

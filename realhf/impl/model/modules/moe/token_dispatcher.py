@@ -7,7 +7,7 @@ import torch
 
 import realhf.base.constants as constants
 from realhf.api.core.model_api import ReaLModelConfig
-from realhf.impl.model.parallelism.model_parallel.mappings import (
+from realhf.impl.model.parallelism.tensor_parallel.mappings import (
     gather_from_sequence_parallel_region,
     scatter_to_sequence_parallel_region,
 )

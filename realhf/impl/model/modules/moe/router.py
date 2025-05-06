@@ -8,7 +8,7 @@ import torch.nn.init as init
 
 import realhf.base.constants as constants
 from realhf.api.core.model_api import ReaLModelConfig
-from realhf.impl.model.parallelism.model_parallel.mappings import (
+from realhf.impl.model.parallelism.tensor_parallel.mappings import (
     gather_from_sequence_parallel_region,
 )
 from realhf.impl.model.utils.moe import (
@@ -117,10 +117,10 @@ class TopKRouter(torch.nn.Module):
             torch.Tensor: The activation tensor with the attached gradient function.
         """
         moe_aux_loss_coeff = self.config.moe.aux_loss_coeff
-        moe_aux_loss_coeff /= constants.model_parallel_world_size()
+        moe_aux_loss_coeff /= constants.tensor_parallel_world_size()
         scale_for_logging = 1.0
         if constants.sequence_parallel():
-            scale_for_logging *= constants.model_parallel_world_size()
+            scale_for_logging *= constants.tensor_parallel_world_size()
 
         aux_loss = switch_load_balancing_loss_func(
             probs,
@@ -128,7 +128,7 @@ class TopKRouter(torch.nn.Module):
             self.config.moe.top_k,
             moe_aux_loss_coeff,
             sequence_partition_group=(
-                constants.model_parallel_group()
+                constants.tensor_parallel_group()
                 if constants.sequence_parallel()
                 else None
             ),
@@ -155,7 +155,7 @@ class TopKRouter(torch.nn.Module):
         """
         if self.config.moe.z_loss_coeff > 0:
             moe_z_loss_coeff = (
-                self.config.moe.z_loss_coeff / constants.model_parallel_world_size()
+                self.config.moe.z_loss_coeff / constants.tensor_parallel_world_size()
             )
             z_loss = z_loss_func(logits, moe_z_loss_coeff)
             logits = MoEAuxLossAutoScaler.apply(logits, z_loss)

@@ -52,7 +52,7 @@ class DataManager:
 
         mw_ranks: Dict[ModelName, List[int]] = {}
 
-        # Stores the dp_head (i.e., mp_rank=0, pp_rank=-1) ranks given a model_name.
+        # Stores the dp_head (i.e., tp_rank=0, pp_rank=-1) ranks given a model_name.
         mw_dp_head_ranks: Dict[ModelName, List[int]] = defaultdict(list)
 
         assert msid2mwid is not None
@@ -67,7 +67,7 @@ class DataManager:
                 topo,
                 msid2mwid,
                 pipe=topo.get_dim("pipe") - 1,
-                model=0,
+                tensor=0,
             )
             dp_size = topo.get_dim("data")
             for dp_i in range(dp_size):

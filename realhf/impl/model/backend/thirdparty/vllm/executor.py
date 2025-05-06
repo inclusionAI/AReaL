@@ -213,7 +213,7 @@ class GPUExecutor_(GPUExecutor):
         tok = time.perf_counter()
         after_mem = float(pynvml.nvmlDeviceGetMemoryInfo(handle).used)
         is_dp_head = (
-            constants.is_last_pipe_stage() and constants.model_parallel_rank() == 0
+            constants.is_last_pipe_stage() and constants.tensor_parallel_rank() == 0
         )
         if is_dp_head:
             logger.info(
@@ -241,7 +241,7 @@ class GPUExecutor_(GPUExecutor):
         tok = time.perf_counter()
         after_mem = float(pynvml.nvmlDeviceGetMemoryInfo(handle).used)
         is_dp_head = (
-            constants.is_last_pipe_stage() and constants.model_parallel_rank() == 0
+            constants.is_last_pipe_stage() and constants.tensor_parallel_rank() == 0
         )
         if is_dp_head:
             logger.info(

@@ -317,7 +317,7 @@ class ModelFunctionCall:
         ]
 
         dp_head_indices = [
-            topo.get_rank(data=i, pipe=topo.get_dim("pipe") - 1, model=0)
+            topo.get_rank(data=i, pipe=topo.get_dim("pipe") - 1, tensor=0)
             for i in range(self.dp_size)
         ]
 
@@ -369,7 +369,7 @@ class ModelFunctionCall:
                 h = ModelShardID.from_parallelism_rank(
                     model_name=rpc.model_name, topo=topo, parallelism_rank=i
                 )
-                is_dp_head = h.mp_rank == 0 and h.pp_rank == topo.get_dim("pipe") - 1
+                is_dp_head = h.tp_rank == 0 and h.pp_rank == topo.get_dim("pipe") - 1
                 gpu_id = self.msid2mwid[h]
                 for key in rpc.input_keys:
                     await self.redistrib_planner.storage_tracker.add_data(
@@ -420,7 +420,7 @@ class ModelFunctionCall:
             # Update storage tracker for generated data.
             for dp_rank, x in enumerate(responses):
                 pp_size = topo.get_dim("pipe")
-                ranks = topo.filter_match(data=dp_rank, pipe=pp_size - 1, model=0)
+                ranks = topo.filter_match(data=dp_rank, pipe=pp_size - 1, tensor=0)
                 for rank in ranks:
                     h = config_pkg.ModelShardID.from_parallelism_rank(
                         model_name=rpc.model_name, topo=topo, parallelism_rank=rank
@@ -489,7 +489,7 @@ class ModelFunctionCall:
 
         logger.info(
             f"Running Model RPC, interface_type=#{rpc.interface_type}# "
-            f"(dp,mp,pp) = *({topo.get_dim('data')},{topo.get_dim('model')},{topo.get_dim('pipe')})*"
+            f"(dp,tp,pp) = *({topo.get_dim('data')},{topo.get_dim('tensor')},{topo.get_dim('pipe')})*"
         )
 
         consumed = 0

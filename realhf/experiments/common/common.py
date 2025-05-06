@@ -204,8 +204,8 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
         if self._allocation_mode.is_decoupled():
             paras = self._allocation_mode.parallel_strat
 
-            gdp, gpp, gmp = paras["gen"]["d"], paras["gen"]["p"], paras["gen"]["m"]
-            gen_world_size = gdp * gpp * gmp
+            gdp, gpp, gtp = paras["gen"]["d"], paras["gen"]["p"], paras["gen"]["m"]
+            gen_world_size = gdp * gpp * gtp
             assert (
                 gen_world_size < self.n_gpus_per_node
                 or gen_world_size % self.n_gpus_per_node == 0
@@ -235,7 +235,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                         parallel=ParallelismConfig(
                             data_parallel_size=gdp,
                             pipeline_parallel_size=gpp,
-                            model_parallel_size=gmp,
+                            tensor_parallel_size=gtp,
                             use_sequence_parallel=False,
                         ),
                     )
@@ -243,7 +243,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                 else:
                     rpc_name = rpc.name
                     if rpc_name in paras:
-                        dp, pp, mp = (
+                        dp, pp, tp = (
                             paras[rpc_name]["d"],
                             paras[rpc_name]["p"],
                             paras[rpc_name]["m"],
@@ -254,9 +254,9 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                                 f"RPC {rpc_name} parallel strategy not given, "
                                 "expect a `*` to specify the default parallel strategy."
                             )
-                        dp, pp, mp = paras["*"]["d"], paras["*"]["p"], paras["*"]["m"]
+                        dp, pp, tp = paras["*"]["d"], paras["*"]["p"], paras["*"]["m"]
                     if (
-                        dp * pp * mp + gdp * gpp * gmp
+                        dp * pp * tp + gdp * gpp * gtp
                         != self.n_nodes * self.n_gpus_per_node
                     ):
                         raise ValueError(
@@ -264,7 +264,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                             "does not equal to the number of gpus. "
                             "Note that the device mesh of vLLM/SGLang should be disjoint from the device mesh of other MFCs, "
                             "so their summation should be equal to the total number of gpus. "
-                            f"dp={dp}, pp={pp}, mp={mp}, gen.dp={gdp}, gen.pp={gpp}, gen.mp={gmp}, "
+                            f"dp={dp}, pp={pp}, mp={tp}, gen.dp={gdp}, gen.pp={gpp}, gen.mp={gtp}, "
                             f"n_nodes={self.n_nodes}, n_gpus_per_node={self.n_gpus_per_node}"
                         )
                     alloc = RPCAllocation(
@@ -273,10 +273,10 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                         parallel=ParallelismConfig(
                             data_parallel_size=dp,
                             pipeline_parallel_size=pp,
-                            model_parallel_size=mp,
+                            tensor_parallel_size=tp,
                             use_sequence_parallel=(
                                 rpc.interface_type == ModelInterfaceType.TRAIN_STEP
-                                and mp > 1
+                                and tp > 1
                             ),
                         ),
                     )
@@ -290,7 +290,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
             rpc_allocs = []
             for rpc_name, rpc in self.rpcs.items():
                 if rpc_name in paras:
-                    dp, pp, mp = (
+                    dp, pp, tp = (
                         paras[rpc_name]["d"],
                         paras[rpc_name]["p"],
                         paras[rpc_name]["m"],
@@ -301,18 +301,18 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                             f"RPC {rpc_name} parallel strategy not given, "
                             "expect a `*` to specify the default parallel strategy."
                         )
-                    dp, pp, mp = paras["*"]["d"], paras["*"]["p"], paras["*"]["m"]
-                assert dp * pp * mp == self.n_nodes * self.n_gpus_per_node
+                    dp, pp, tp = paras["*"]["d"], paras["*"]["p"], paras["*"]["m"]
+                assert dp * pp * tp == self.n_nodes * self.n_gpus_per_node
                 alloc = RPCAllocation(
                     rpc=rpc,
                     device_mesh=self.global_device_mesh,
                     parallel=ParallelismConfig(
                         data_parallel_size=dp,
                         pipeline_parallel_size=pp,
-                        model_parallel_size=mp,
+                        tensor_parallel_size=tp,
                         use_sequence_parallel=(
                             rpc.interface_type == ModelInterfaceType.TRAIN_STEP
-                            and mp > 1
+                            and tp > 1
                         ),
                     ),
                 )
@@ -422,7 +422,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                             topo=topo,
                             dp_rank=topo.get_coord(shard_idx).data,
                             pp_rank=topo.get_coord(shard_idx).pipe,
-                            mp_rank=topo.get_coord(shard_idx).model,
+                            tp_rank=topo.get_coord(shard_idx).tensor,
                         ),
                         model=ModelAbstraction(
                             "tokenizer", args=dict(tokenizer_path=model_cfg.path)
@@ -469,16 +469,17 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                     "config_from_hf_converter"
                 ](hf_config)
                 if (
-                    model_config.n_kv_heads % rpc_alloc.parallel.model_parallel_size
+                    model_config.n_kv_heads % rpc_alloc.parallel.tensor_parallel_size
                     != 0
                 ) or (
-                    model_config.n_q_heads % rpc_alloc.parallel.model_parallel_size != 0
+                    model_config.n_q_heads % rpc_alloc.parallel.tensor_parallel_size
+                    != 0
                 ):
                     raise ValueError(
                         f"The number of KV heads {model_config.n_kv_heads} or "
                         f"Q heads {model_config.n_q_heads} is not"
                         f" divisible by the configured TP size "
-                        f"({rpc_alloc.parallel.model_parallel_size}). "
+                        f"({rpc_alloc.parallel.tensor_parallel_size}). "
                         f"Please decrease TP size."
                     )
                 mapping = rpc_alloc.device_mesh.mapping
@@ -538,7 +539,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                                 topo=topo,
                                 dp_rank=topo.get_coord(shard_idx).data,
                                 pp_rank=topo.get_coord(shard_idx).pipe,
-                                mp_rank=topo.get_coord(shard_idx).model,
+                                tp_rank=topo.get_coord(shard_idx).tensor,
                             ),
                             model=model,
                             backend=backend,

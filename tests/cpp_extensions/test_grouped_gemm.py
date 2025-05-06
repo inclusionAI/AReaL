@@ -14,7 +14,7 @@ import realhf.base.testing as testing
 
 # This is a test for grouped_gemm experts implementation of MoE.
 @torch.no_grad()
-def run_grouped_mlp(num_tokens, mp_size, token_dispatch_strategy, seed=1):
+def run_grouped_mlp(num_tokens, tp_size, token_dispatch_strategy, seed=1):
     # inline import to avoid torch re-initialize
     from realhf.api.core.model_api import ReaLModelConfig
     from realhf.impl.model.modules.moe.experts import GroupedMLP, SequentialMLP
@@ -29,7 +29,7 @@ def run_grouped_mlp(num_tokens, mp_size, token_dispatch_strategy, seed=1):
 
     testing.init_global_constants(
         num_dp=1,
-        num_mp=mp_size,
+        num_tp=tp_size,
         num_pp=1,
         sequence_parallel=False,  # grouped gemm does not support sequence parallel
         max_prompt_len=128,  # useless value in this test
@@ -85,14 +85,14 @@ def run_grouped_mlp(num_tokens, mp_size, token_dispatch_strategy, seed=1):
         t2 = time.perf_counter() - st
 
         print(
-            f"rank {constants.model_parallel_rank()}: "
+            f"rank {constants.tensor_parallel_rank()}: "
             f"{token_dispatch_strategy} diff: {(o1 - o2).abs().max()}: time {t1:.4f} {t2:.4f}"
         )
         # NOTE: With some input shapes, there are possibility that
         # GroupedMLP and SequentialMLP produce results of around 2% difference
         # due to grouped_gemm implementation
         assert torch.allclose(o1, o2, rtol=0.02), (
-            constants.model_parallel_rank(),
+            constants.tensor_parallel_rank(),
             token_dispatch_strategy,
             (o1 - o2).abs().max(),
             o1.abs().max(),
@@ -104,20 +104,20 @@ def run_grouped_mlp(num_tokens, mp_size, token_dispatch_strategy, seed=1):
     reason="This test requires GPU to run",
 )
 @pytest.mark.parametrize("num_tokens", [200])
-@pytest.mark.parametrize("mp_size", [1, 2])
+@pytest.mark.parametrize("tp_size", [1, 2])
 @pytest.mark.parametrize("token_dispatch_strategy", ["random"])
 @pytest.mark.gpu
 @pytest.mark.distributed
 def test_grouped_mlp(
     num_tokens,
-    mp_size,
+    tp_size,
     token_dispatch_strategy,
 ):
     test = testing.LocalMultiProcessTest(
-        mp_size,
+        tp_size,
         run_grouped_mlp,
         num_tokens,
-        mp_size,
+        tp_size,
         token_dispatch_strategy,
     )
     test.launch()

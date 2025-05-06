@@ -202,16 +202,17 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                     "config_from_hf_converter"
                 ](hf_config)
                 if (
-                    model_config.n_kv_heads % rpc_alloc.parallel.model_parallel_size
+                    model_config.n_kv_heads % rpc_alloc.parallel.tensor_parallel_size
                     != 0
                 ) or (
-                    model_config.n_q_heads % rpc_alloc.parallel.model_parallel_size != 0
+                    model_config.n_q_heads % rpc_alloc.parallel.tensor_parallel_size
+                    != 0
                 ):
                     raise ValueError(
                         f"The number of KV heads {model_config.n_kv_heads} or "
                         f"Q heads {model_config.n_q_heads} is not"
                         f" divisible by the configured TP size "
-                        f"({rpc_alloc.parallel.model_parallel_size}). "
+                        f"({rpc_alloc.parallel.tensor_parallel_size}). "
                         f"Please decrease TP size."
                     )
                 mapping = rpc_alloc.device_mesh.mapping
@@ -249,7 +250,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                                 topo=topo,
                                 dp_rank=topo.get_coord(shard_idx).data,
                                 pp_rank=topo.get_coord(shard_idx).pipe,
-                                mp_rank=topo.get_coord(shard_idx).model,
+                                tp_rank=topo.get_coord(shard_idx).tensor,
                             ),
                             model=model,
                             backend=backend,

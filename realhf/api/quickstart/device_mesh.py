@@ -224,18 +224,18 @@ def find_parallel_strategies(
 ) -> List[ParallelismConfig]:
     n_gpus = np.sum(device_mesh.mapping)
     res = []
-    for num_mp in [1, 2, 4, 8]:
-        if n_gpus >= num_mp:
-            assert n_gpus % num_mp == 0
-            num_dp_pp = n_gpus // num_mp
+    for num_tp in [1, 2, 4, 8]:
+        if n_gpus >= num_tp:
+            assert n_gpus % num_tp == 0
+            num_dp_pp = n_gpus // num_tp
             num_pp = 1
             while num_pp <= num_dp_pp:
-                num_dp_mp = n_gpus // num_pp
+                num_dp_tp = n_gpus // num_pp
                 valid = (
-                    num_dp_mp in [1, 2, 4, 8] or num_dp_mp % 8 == 0
+                    num_dp_tp in [1, 2, 4, 8] or num_dp_tp % 8 == 0
                 ) and num_dp_pp % num_pp == 0
                 if valid:
-                    res.append(ParallelismConfig(num_pp, num_mp, num_dp_pp // num_pp))
+                    res.append(ParallelismConfig(num_pp, num_tp, num_dp_pp // num_pp))
                 num_pp += 1
     return res
 
@@ -248,7 +248,7 @@ class RPCAllocation:
 
     def __post_init__(self):
         world_size = (
-            self.parallel.model_parallel_size
+            self.parallel.tensor_parallel_size
             * self.parallel.pipeline_parallel_size
             * self.parallel.data_parallel_size
         )

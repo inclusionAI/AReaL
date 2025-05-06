@@ -186,16 +186,12 @@ _self_group = None
 _rank_mapping: Dict["ModelName", Dict["ModelShardID", int]] = {}
 _global_memory_buffer: GlobalMemoryBuffer = GlobalMemoryBuffer()
 
-# used only in scripts and tests
-_fake_mp_world_size = None
-_fake_mp_rank = None
-
 
 # TODO: As in Megatron, we can set NCCL group options. Is it necessary?
 
 
 def reset_run():
-    global _model_name, _grids, _pgroups, _pgroup_ranks, _self_group, _rank_mapping, _global_memory_buffer, _fake_mp_world_size, _fake_mp_rank
+    global _model_name, _grids, _pgroups, _pgroup_ranks, _self_group, _rank_mapping, _global_memory_buffer
     _model_name = None
     _grids = {}
     _pgroups = {}
@@ -203,8 +199,6 @@ def reset_run():
     _self_group = None
     _rank_mapping = {}
     _global_memory_buffer = GlobalMemoryBuffer()
-    _fake_mp_world_size = None
-    _fake_mp_rank = None
 
 
 @contextlib.contextmanager
@@ -284,7 +278,7 @@ def set_rank_mapping(
     else:
         msid2mwid = {k: v for k, v in msid2mwid.items() if k.model_name == model_name}
         _rank_mapping[model_name] = {
-            topo.get_rank(data=s.dp_rank, model=s.mp_rank, pipe=s.pp_rank): mw_id
+            topo.get_rank(data=s.dp_rank, tensor=s.tp_rank, pipe=s.pp_rank): mw_id
             for s, mw_id in msid2mwid.items()
         }
 
@@ -408,7 +402,7 @@ def parallelism_group_ranks():
 
 def parallelism_group_size() -> int:
     """The 3D parallelism group size of a specific model, normally dp_size *
-    pp_size * mp_size."""
+    pp_size * tp_size."""
     import torch.distributed as dist
 
     return dist.get_world_size(group=parallelism_group())
@@ -470,37 +464,25 @@ def prev_pipe_stage():
 
 
 def is_dp_head():
-    return is_last_pipe_stage() and model_parallel_rank() == 0
+    return is_last_pipe_stage() and tensor_parallel_rank() == 0
 
 
-def model_parallel_rank() -> int:
+def tensor_parallel_rank() -> int:
     """Return the rank inside the tensor parallelism group."""
-    try:
-        return grid().get_tensor_model_parallel_rank()
-    except RuntimeError as e:  # used only in scripts and tests
-        if _fake_mp_rank is not None:
-            return _fake_mp_rank
-        else:
-            raise e
+    return grid().get_tensor_model_parallel_rank()
 
 
-def model_parallel_world_size() -> int:
+def tensor_parallel_world_size() -> int:
     """Return the world size of the tensor parallelism group."""
-    try:
-        return grid().get_tensor_model_parallel_world_size()
-    except RuntimeError as e:  # used only in scripts and tests
-        if _fake_mp_world_size is not None:
-            return _fake_mp_world_size
-        else:
-            raise e
+    return grid().get_tensor_model_parallel_world_size()
 
 
-def model_parallel_group():
+def tensor_parallel_group():
     """Return the NCCL tensor parallelism process group."""
     return grid().get_tensor_model_parallel_group()
 
 
-def model_parallel_cpu_group():
+def tensor_parallel_cpu_group():
     """Return the GLOO tensor parallelism process group."""
     return grid().get_tensor_model_parallel_cpu_group()
 
@@ -534,26 +516,6 @@ def data_parallel_world_size() -> int:
 
 def data_parallel_group():
     return grid().get_data_parallel_group()
-
-
-def set_fake_mp_world_size(world_size):
-    # used only in scripts and tests
-    global _fake_mp_world_size
-    _fake_mp_world_size = world_size
-
-
-def set_fake_mp_rank(rank):
-    # used only in scripts and tests
-    global _fake_mp_rank
-    _fake_mp_rank = rank
-
-
-def set_fake_grid(model_name, rank, topo):
-    # used only in scripts and tests
-    from realhf.base.topology import FakeGrid
-
-    global _grids
-    _grids[model_name] = FakeGrid(rank=rank, topo=topo)
 
 
 def get_global_memory_buffer():

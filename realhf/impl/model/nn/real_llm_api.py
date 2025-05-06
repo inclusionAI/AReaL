@@ -167,7 +167,7 @@ class ReaLModel(nn.Module):
         self._param_spec, self._param_size = build_param_spec(
             list(range(self.layer_idx_start, self.layer_idx_end)),
             self.config,
-            mp_size=constants.model_parallel_world_size(),
+            tp_size=constants.tensor_parallel_world_size(),
             pp_size=constants.pipe_parallel_world_size(),
             dp_size=constants.data_parallel_world_size(),
             head_param_point_to_embedding=self.head_param_point_to_embedding,
@@ -282,7 +282,7 @@ class ReaLModel(nn.Module):
                 device=device,
                 dtype=dtype,
             )
-        elif not config.is_critic and constants.model_parallel_world_size() > 1:
+        elif not config.is_critic and constants.tensor_parallel_world_size() > 1:
             l = ParallelActorHead(
                 config.hidden_dim,
                 config.vocab_size,
@@ -428,14 +428,14 @@ class ReaLModel(nn.Module):
             x.cu_seqlens = x.cu_seqlens.int()
 
         # Copy input tensor to a pinned buffer.
-        mp_size = constants.model_parallel_world_size()
+        tp_size = constants.tensor_parallel_world_size()
         batch_length = None
         if ys[0].packed_input_ids is not None:
             batch_length = ys[0].packed_input_ids.shape[0]
         if x.pp_input is not None:
             batch_length = x.pp_input.shape[0]
         assert batch_length is not None
-        padded_batch_length = (batch_length + mp_size - 1) // mp_size * mp_size
+        padded_batch_length = (batch_length + tp_size - 1) // tp_size * tp_size
         pad_size = padded_batch_length - batch_length
 
         if (
@@ -609,7 +609,7 @@ class ReaLModel(nn.Module):
         to_param_spec, to_param_size = build_param_spec(
             to_layer_indices,
             to_model_config,
-            mp_size=to_topo.get_dim("model"),
+            tp_size=to_topo.get_dim("tensor"),
             dp_size=to_topo.get_dim("data"),
             pp_size=to_topo.get_dim("pipe"),
             head_param_point_to_embedding=to_model_head_param_point_to_embedding,

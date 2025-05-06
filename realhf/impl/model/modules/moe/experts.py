@@ -10,11 +10,11 @@ from torch.nn.parameter import Parameter
 import realhf.base.constants as constants
 from realhf.api.core.model_api import ReaLModelConfig
 from realhf.impl.model.modules.mlp import LlamaLayerNormMLP, get_activation_fn
-from realhf.impl.model.parallelism.model_parallel.mappings import (
+from realhf.impl.model.parallelism.tensor_parallel.mappings import (
     copy_to_tensor_model_parallel_region,
     reduce_from_tensor_model_parallel_region,
 )
-from realhf.impl.model.parallelism.model_parallel.utils import divide
+from realhf.impl.model.parallelism.tensor_parallel.utils import divide
 from realhf.impl.model.utils.random import _initialize_affine_weight_gpu
 
 try:
@@ -125,7 +125,7 @@ class GroupedMLP(torch.nn.Module):
         self.activation_func = get_activation_fn(self.config.activation_function)
 
         # How many feature each rank holds for fc1 and fc2, respectively.
-        tp_size = constants.model_parallel_world_size()
+        tp_size = constants.tensor_parallel_world_size()
         intermediate_dim_per_partition = divide(self.config.intermediate_dim, tp_size)
 
         # Note: The current kernel implementations of grouped_gemm
@@ -186,7 +186,7 @@ class GroupedMLP(torch.nn.Module):
     ):
         tokens_per_expert = tokens_per_expert.cpu()
         if permuted_local_hidden_states.nelement() != 0:
-            if constants.model_parallel_world_size() > 1:
+            if constants.tensor_parallel_world_size() > 1:
                 permuted_local_hidden_states = copy_to_tensor_model_parallel_region(
                     permuted_local_hidden_states
                 )
@@ -208,7 +208,7 @@ class GroupedMLP(torch.nn.Module):
             output = grouped_gemm.ops.gmm(
                 inter, self.grouped_down_proj, tokens_per_expert, trans_b=False
             )
-            if constants.model_parallel_world_size() > 1:
+            if constants.tensor_parallel_world_size() > 1:
                 output = reduce_from_tensor_model_parallel_region(output)
         else:
             # No token is allocated for local experts.

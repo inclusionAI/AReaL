@@ -22,8 +22,8 @@ from realhf.base.saveload_utils import (
 )
 from realhf.impl.model.nn.real_llm_api import ReaLModel
 from realhf.impl.model.nn.real_llm_parallel import (
-    mp_merge_key,
-    mp_partition_real_model_state_dict,
+    tp_merge_key,
+    tp_partition_real_model_state_dict,
 )
 
 logger = logging.getLogger("HF Registry")
@@ -141,11 +141,11 @@ class HFModelRegistry:
             partition_tik = time.perf_counter()
             sd = {k: v for k, v in sd.items() if k in required_hf_sd_names}
             sd = self.sd_from_hf_converter(sd, model.config)
-            psd = mp_partition_real_model_state_dict(
+            psd = tp_partition_real_model_state_dict(
                 sd,
                 model.config,
-                constants.model_parallel_world_size(),
-                constants.model_parallel_rank(),
+                constants.tensor_parallel_world_size(),
+                constants.tensor_parallel_rank(),
             )
             return psd, partition_tik - load_tik, time.perf_counter() - partition_tik
 
@@ -222,8 +222,8 @@ class HFModelRegistry:
 
         dp_rank = constants.data_parallel_rank()
         pp_rank = constants.pipe_parallel_rank()
-        mp_rank = constants.model_parallel_rank()
-        mp_size = constants.model_parallel_world_size()
+        tp_rank = constants.tensor_parallel_rank()
+        tp_size = constants.tensor_parallel_world_size()
         pp_size = constants.pipe_parallel_world_size()
         dp_size = constants.data_parallel_world_size()
 
@@ -234,7 +234,7 @@ class HFModelRegistry:
         # of each pipeline stage into smaller shards.
         approx_param_size = (
             sum(v.numel() * v.element_size() for v in model.state_dict().values())
-            * mp_size
+            * tp_size
         )
 
         # By default a shard is at most 1GB. A small size enables parallel saving during training.
@@ -274,9 +274,9 @@ class HFModelRegistry:
                 and k == f"{model.config.n_layers + 1}.weight"
             ):
                 continue
-            gather_list = [torch.zeros_like(v) for _ in range(mp_size)]
-            dist.all_gather(gather_list, v, group=constants.model_parallel_group())
-            gathered = mp_merge_key(k, gather_list, model.config)
+            gather_list = [torch.zeros_like(v) for _ in range(tp_size)]
+            dist.all_gather(gather_list, v, group=constants.tensor_parallel_group())
+            gathered = tp_merge_key(k, gather_list, model.config)
             cpu_sd[k] = gathered.cpu()
 
         t2 = time.perf_counter()
@@ -299,7 +299,7 @@ class HFModelRegistry:
         param_size = param_size.item()
 
         # Save tokenizer and huggingface model config.
-        if pp_rank == 0 and dp_rank == 0 and mp_rank == 0:
+        if pp_rank == 0 and dp_rank == 0 and tp_rank == 0:
             hf_config.save_pretrained(save_dir)
             if tokenizer is not None:
                 tokenizer.save_pretrained(save_dir)
@@ -307,7 +307,7 @@ class HFModelRegistry:
         # Dump parameters to disk.
         if len(pp_stage_n_shards) == 1 and pp_stage_n_shards[0] == 1:
             fn = "pytorch_model.bin"
-            if pp_rank == 0 and dp_rank == 0 and mp_rank == 0:
+            if pp_rank == 0 and dp_rank == 0 and tp_rank == 0:
                 torch.save(hf_sd, os.path.join(save_dir, fn))
         else:
             output_fn = (
@@ -326,8 +326,8 @@ class HFModelRegistry:
             bin_index["weight_map"] = {}
             weight_map = {}
 
-            mesh_size = dp_size * mp_size
-            mesh_idx = dp_rank * mp_size + mp_rank
+            mesh_size = dp_size * tp_size
+            mesh_idx = dp_rank * tp_size + tp_rank
             n_shards_per_gpu = (n_shards + mesh_size - 1) // mesh_size
             if mesh_idx < len(range(0, n_shards, n_shards_per_gpu)):
                 s = list(range(0, n_shards, n_shards_per_gpu))[mesh_idx]
@@ -357,7 +357,7 @@ class HFModelRegistry:
             for wm in weight_map_list:
                 bin_index["weight_map"].update(wm)
 
-            if pp_rank == 0 and dp_rank == 0 and mp_rank == 0:
+            if pp_rank == 0 and dp_rank == 0 and tp_rank == 0:
                 with open(
                     os.path.join(save_dir, "pytorch_model.bin.index.json"), "w"
                 ) as f:

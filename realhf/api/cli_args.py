@@ -129,7 +129,7 @@ class ParallelismConfig:
         Sequence parallelism is only used in combination with tensor-model parallelism.
     """
 
-    model_parallel_size: int = field(
+    tensor_parallel_size: int = field(
         default=1, metadata={"help": "Size of tensor-model parallelism"}
     )
     pipeline_parallel_size: int = field(
@@ -148,7 +148,7 @@ class ParallelismConfig:
     def __str__(self):
         """Returns compact string representation: 'Parallel(mp=X,pp=Y,dp=Z)'."""
         return (
-            f"Parallel(mp={self.model_parallel_size},"
+            f"Parallel(mp={self.tensor_parallel_size},"
             f"pp={self.pipeline_parallel_size},"
             f"dp={self.data_parallel_size})"
         )
@@ -161,7 +161,7 @@ class ParallelismConfig:
             Implemented as static method to avoid OmegaConf compatibility issues.
         """
         return (
-            (this.model_parallel_size == other.model_parallel_size)
+            (this.tensor_parallel_size == other.tensor_parallel_size)
             and (this.pipeline_parallel_size == other.pipeline_parallel_size)
             and (this.data_parallel_size == other.data_parallel_size)
         )

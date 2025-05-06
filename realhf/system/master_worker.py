@@ -240,7 +240,7 @@ class MasterWorker(worker_base.Worker):
         src_rpc_dp_size = src_rpc_topo.get_dim("data")
         src_rpc_pp_size = src_rpc_topo.get_dim("pipe")
         for i in range(src_rpc_dp_size):
-            rank = src_rpc_topo.get_rank(data=i, pipe=src_rpc_pp_size - 1, model=0)
+            rank = src_rpc_topo.get_rank(data=i, pipe=src_rpc_pp_size - 1, tensor=0)
             handler_routing[f"__data{i}__"] = self.config.msid2mwid[
                 config_pkg.ModelShardID.from_parallelism_rank(
                     model_name=src_rpc.model_name,

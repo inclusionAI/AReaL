@@ -100,8 +100,8 @@ class ModelShardID:
     :type model_name: ModelName
     :param dp_rank: The data parallel rank.
     :type dp_rank: int
-    :param mp_rank: The tensor-model parallel rank.
-    :type mp_rank: int
+    :param tp_rank: The tensor-model parallel rank.
+    :type tp_rank: int
     :param pp_rank: The pipeline-model parallel rank.
     :type pp_rank: int
     :param topo: The 3D parallelism topology of this model.
@@ -110,22 +110,22 @@ class ModelShardID:
 
     model_name: ModelName
     dp_rank: int
-    mp_rank: int
+    tp_rank: int
     pp_rank: int
     topo: topology.ProcessTopology
 
     def __post_init__(self):
-        assert self.dp_rank >= 0 and self.mp_rank >= 0 and self.pp_rank >= 0
+        assert self.dp_rank >= 0 and self.tp_rank >= 0 and self.pp_rank >= 0
         if "@" in self.model_name.role:
             raise ValueError("model_name cannot contain @")
         assert self.dp_rank < self.topo.get_dim("data")
-        assert self.mp_rank < self.topo.get_dim("model")
+        assert self.tp_rank < self.topo.get_dim("tensor")
         assert self.pp_rank < self.topo.get_dim("pipe")
 
     @property
     def parallelism_rank(self):
         return self.topo.get_rank(
-            data=self.dp_rank, model=self.mp_rank, pipe=self.pp_rank
+            data=self.dp_rank, tensor=self.tp_rank, pipe=self.pp_rank
         )
 
     @classmethod
@@ -134,14 +134,14 @@ class ModelShardID:
         return cls(
             model_name=model_name,
             dp_rank=c.data,
-            mp_rank=c.model,
+            tp_rank=c.tensor,
             pp_rank=c.pipe,
             topo=topo,
         )
 
     def __repr__(self):
         n = cluster.spec.suffix_n_digits
-        return f"{self.model_name}@pp{self.pp_rank:0{n}d}@mp{self.mp_rank:0{n}d}@dp{self.dp_rank:0{n}d}"
+        return f"{self.model_name}@pp{self.pp_rank:0{n}d}@tp{self.tp_rank:0{n}d}@dp{self.dp_rank:0{n}d}"
 
     def __hash__(self):
         return hash(str(self))
@@ -152,7 +152,7 @@ class ModelShardID:
             return (
                 self.model_name == other.model_name
                 and self.dp_rank == other.dp_rank
-                and self.mp_rank == other.mp_rank
+                and self.tp_rank == other.tp_rank
                 and self.pp_rank == other.pp_rank
             )
         return False

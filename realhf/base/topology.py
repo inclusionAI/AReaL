@@ -65,22 +65,22 @@ def decompose_to_three_factors(n: int) -> List[Tuple[int, int, int]]:
     return factors
 
 
-class PipeDataModelrocessCoord(NamedTuple):
+class PipeDataTensorProcessCoord(NamedTuple):
     pipe: int
     data: int
-    model: int
+    tensor: int
 
 
-class DataPipeModelrocessCoord(NamedTuple):
+class DataPipeTensorProcessCoord(NamedTuple):
     data: int
     pipe: int
-    model: int
+    tensor: int
 
 
 # Explicitly define these class to allow pickling.
 PROCESS_COORD_REGISTRY = {
-    "pipe#data#model": PipeDataModelrocessCoord,
-    "data#pipe#model": DataPipeModelrocessCoord,
+    "pipe#data#tensor": PipeDataTensorProcessCoord,
+    "data#pipe#tensor": DataPipeTensorProcessCoord,
 }
 
 
@@ -327,20 +327,20 @@ def _prime_factors(N):
     return primes
 
 
-class PipeDataModelParallelTopology(ProcessTopology):
+class PipeDataTensorParallelTopology(ProcessTopology):
     """A topology for hybrid pipeline, model, and data parallelism."""
 
     def __init__(
         self,
         num_pp: int,
-        num_mp: int,
+        num_tp: int,
         num_dp: int,
         sequence_parallel: bool,
         gradient_checkpointing: bool,
         gradient_accumulation_fusion: bool,
         max_prompt_len: Optional[int] = None,
     ):
-        super().__init__(axes=["pipe", "data", "model"], dims=[num_pp, num_dp, num_mp])
+        super().__init__(axes=["pipe", "data", "tensor"], dims=[num_pp, num_dp, num_tp])
 
         self.sequence_parallel = sequence_parallel
         self.gradient_checkpointing = gradient_checkpointing
@@ -348,7 +348,7 @@ class PipeDataModelParallelTopology(ProcessTopology):
         self.gradient_accumulation_fusion = gradient_accumulation_fusion
 
 
-class DataPipeModelParallelTopology(ProcessTopology):
+class DataPipeTensorParallelTopology(ProcessTopology):
     """A topology for hybrid data, pipeline, and tensor parallelism.
 
     Note that DP is the most outer dimension. Used for inference only.
@@ -357,12 +357,12 @@ class DataPipeModelParallelTopology(ProcessTopology):
     def __init__(
         self,
         num_pp: int,
-        num_mp: int,
+        num_tp: int,
         num_dp: int,
         sequence_parallel: bool,
         max_prompt_len: Optional[int] = None,
     ):
-        super().__init__(axes=["data", "pipe", "model"], dims=[num_dp, num_pp, num_mp])
+        super().__init__(axes=["data", "pipe", "tensor"], dims=[num_dp, num_pp, num_tp])
         self.sequence_parallel = sequence_parallel
         self.max_prompt_len = max_prompt_len
 
@@ -414,7 +414,7 @@ class ParallelGrid:
 
         self.data_parallel_size = max(self._topo.get_dim("data"), 1)
         self.pipe_parallel_size = max(self._topo.get_dim("pipe"), 1)
-        self.model_parallel_size = max(self._topo.get_dim("model"), 1)
+        self.model_parallel_size = max(self._topo.get_dim("tensor"), 1)
         self.slice_parallel_size = self.model_parallel_size
         assert self._is_grid_valid(), (
             "Invalid Grid",
@@ -520,7 +520,7 @@ class ParallelGrid:
         self.slice_group = None
         self.slice_proc_group = self.slice_proc_group_gloo = None
         self.mp_group = []
-        self.model_groups = self._topo.get_axis_comm_lists("model")
+        self.model_groups = self._topo.get_axis_comm_lists("tensor")
         for g in self.model_groups:
             proc_group = new_or_get_group(ranks=[rank_mapping[x] for x in g])
             # NOTE: We must create the GLOO group for vLLM's usage.
@@ -634,8 +634,8 @@ class ParallelGrid:
     def get_tensor_model_parallel_rank(self):
         if self.global_rank == -1:
             return -1
-        if "model" in self._topo.get_axis_names():
-            return self._topo.get_coord(rank=self.global_rank).model
+        if "tensor" in self._topo.get_axis_names():
+            return self._topo.get_coord(rank=self.global_rank).tensor
         else:
             return 0
 
@@ -662,12 +662,12 @@ class FakeGrid:
 
         self.data_parallel_size = max(self._topo.get_dim("data"), 1)
         self.pipe_parallel_size = max(self._topo.get_dim("pipe"), 1)
-        self.model_parallel_size = max(self._topo.get_dim("model"), 1)
+        self.model_parallel_size = max(self._topo.get_dim("tensor"), 1)
 
-        self.coord: ProcessCoord = self._topo.get_coord(self.rank)
+        self.coord = self._topo.get_coord(self.rank)
         self.dp_id = self.coord.data
         self.pp_id = self.coord.pipe
-        self.mp_id = self.coord.model
+        self.mp_id = self.coord.tensor
 
         self.world_size = (
             self.data_parallel_size * self.pipe_parallel_size * self.model_parallel_size

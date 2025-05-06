@@ -128,29 +128,29 @@ def build_engine(module, model_name, trainable) -> "MockTrainEngine":
 def setup_constants_and_param_realloc(
     from_model_name,
     to_model_name,
-    from_pp_dp_mp,
-    to_pp_dp_mp,
+    from_pp_dp_tp,
+    to_pp_dp_tp,
 ):
     from realhf.impl.model.comm.param_realloc import setup_param_realloc
 
-    from_num_pp, from_num_dp, from_num_mp = from_pp_dp_mp
-    to_num_pp, to_num_dp, to_num_mp = to_pp_dp_mp
+    from_num_pp, from_num_dp, from_num_tp = from_pp_dp_tp
+    to_num_pp, to_num_dp, to_num_tp = to_pp_dp_tp
 
-    from_world_size = from_num_dp * from_num_mp * from_num_pp
-    to_world_size = to_num_dp * to_num_mp * to_num_pp
+    from_world_size = from_num_dp * from_num_tp * from_num_pp
+    to_world_size = to_num_dp * to_num_tp * to_num_pp
 
-    from_topo = topology.PipeDataModelParallelTopology(
+    from_topo = topology.PipeDataTensorParallelTopology(
         num_dp=from_num_dp,
-        num_mp=from_num_mp,
+        num_tp=from_num_tp,
         num_pp=from_num_pp,
         sequence_parallel=False,
         gradient_checkpointing=False,
         max_prompt_len=None,
         gradient_accumulation_fusion=False,
     )
-    to_topo = topology.PipeDataModelParallelTopology(
+    to_topo = topology.PipeDataTensorParallelTopology(
         num_dp=to_num_dp,
-        num_mp=to_num_mp,
+        num_tp=to_num_tp,
         num_pp=to_num_pp,
         sequence_parallel=False,
         gradient_checkpointing=False,
@@ -184,7 +184,7 @@ def setup_constants_and_param_realloc(
             k = ModelShardID(
                 _model_name,
                 dp_rank=coord.data,
-                mp_rank=coord.model,
+                tp_rank=coord.tensor,
                 pp_rank=coord.pipe,
                 topo=model_topos[_model_name],
             )
@@ -192,7 +192,7 @@ def setup_constants_and_param_realloc(
 
     init_global_constants(
         num_dp=from_num_dp,
-        num_mp=from_num_mp,
+        num_tp=from_num_tp,
         num_pp=from_num_pp,
         topo=from_topo,
         model_name=from_model_name,
@@ -202,7 +202,7 @@ def setup_constants_and_param_realloc(
 
     init_global_constants(
         num_dp=to_num_dp,
-        num_mp=to_num_mp,
+        num_tp=to_num_tp,
         num_pp=to_num_pp,
         model_name=to_model_name,
         sequence_parallel=False,
@@ -320,8 +320,8 @@ def _test_para_realloc(
     tmp_path: pathlib.Path,
     model_family_name: str,
     is_critic: bool,
-    from_pp_dp_mp: Tuple,
-    to_pp_dp_mp: Tuple,
+    from_pp_dp_tp: Tuple,
+    to_pp_dp_tp: Tuple,
     n_iterations: int,
     skip_saveload: bool,
 ):
@@ -339,12 +339,12 @@ def _test_para_realloc(
     pg_info = setup_constants_and_param_realloc(
         from_model_name,
         to_model_name,
-        from_pp_dp_mp,
-        to_pp_dp_mp,
+        from_pp_dp_tp,
+        to_pp_dp_tp,
     )
 
     # Create model 1
-    if dist.get_rank() < from_pp_dp_mp[0] * from_pp_dp_mp[1] * from_pp_dp_mp[2]:
+    if dist.get_rank() < from_pp_dp_tp[0] * from_pp_dp_tp[1] * from_pp_dp_tp[2]:
         from_model = create_model(
             tmp_dir=tmp_path,
             model_family_name=model_family_name,
@@ -357,7 +357,7 @@ def _test_para_realloc(
     # Creat model 2
     if (
         dist.get_rank()
-        >= dist.get_world_size() - to_pp_dp_mp[0] * to_pp_dp_mp[1] * to_pp_dp_mp[2]
+        >= dist.get_world_size() - to_pp_dp_tp[0] * to_pp_dp_tp[1] * to_pp_dp_tp[2]
     ):
         to_model = create_model(
             tmp_dir=tmp_path,
@@ -532,19 +532,19 @@ parallelism = [(4, 1, 1), (2, 2, 2), (1, 8, 1), (3, 2, 1), (2, 1, 2), (1, 2, 2)]
 )
 @pytest.mark.parametrize("model_family_name", ["gpt2", "llama"])
 @pytest.mark.parametrize("is_critic", [False, True])
-@pytest.mark.parametrize("from_pp_dp_mp", parallelism)
-@pytest.mark.parametrize("to_pp_dp_mp", parallelism)
+@pytest.mark.parametrize("from_pp_dp_tp", parallelism)
+@pytest.mark.parametrize("to_pp_dp_tp", parallelism)
 @pytest.mark.parametrize("skip_saveload", [False])
 @pytest.mark.distributed
 def test_param_realloc(
     tmp_path: pathlib.Path,
     model_family_name: str,
     is_critic: bool,
-    from_pp_dp_mp: Tuple,
-    to_pp_dp_mp: Tuple,
+    from_pp_dp_tp: Tuple,
+    to_pp_dp_tp: Tuple,
     skip_saveload: bool,
 ):
-    if model_family_name == "gpt2" and (from_pp_dp_mp[-1] > 1 or to_pp_dp_mp[-1] > 1):
+    if model_family_name == "gpt2" and (from_pp_dp_tp[-1] > 1 or to_pp_dp_tp[-1] > 1):
         # Since the vocabulary size of gpt2 is odd,
         # it does not support tensor model parallelism.
         return
@@ -560,8 +560,8 @@ def test_param_realloc(
         tmp_path=tmp_path,
         model_family_name=model_family_name,
         is_critic=is_critic,
-        from_pp_dp_mp=from_pp_dp_mp,
-        to_pp_dp_mp=to_pp_dp_mp,
+        from_pp_dp_tp=from_pp_dp_tp,
+        to_pp_dp_tp=to_pp_dp_tp,
         n_iterations=3,
         skip_saveload=skip_saveload,
     )

@@ -196,14 +196,14 @@ def test_ppo_global_reshard(
         actor_gen=MFCConfig(
             parallel=ParallelismConfig(
                 data_parallel_size=actor_gen[0],
-                model_parallel_size=actor_gen[1],
+                tensor_parallel_size=actor_gen[1],
                 pipeline_parallel_size=actor_gen[2],
             )
         ),
         actor_train=MFCConfig(
             parallel=ParallelismConfig(
                 data_parallel_size=actor_train[0],
-                model_parallel_size=actor_train[1],
+                tensor_parallel_size=actor_train[1],
                 pipeline_parallel_size=actor_train[2],
             ),
         ),
@@ -211,7 +211,7 @@ def test_ppo_global_reshard(
             mb_spec=MicroBatchSpec(max_tokens_per_mb=32),
             parallel=ParallelismConfig(
                 data_parallel_size=critic_inf[0],
-                model_parallel_size=critic_inf[1],
+                tensor_parallel_size=critic_inf[1],
                 pipeline_parallel_size=critic_inf[2],
             ),
         ),
@@ -219,7 +219,7 @@ def test_ppo_global_reshard(
             mb_spec=MicroBatchSpec(max_tokens_per_mb=128),
             parallel=ParallelismConfig(
                 data_parallel_size=rew_inf[0],
-                model_parallel_size=rew_inf[1],
+                tensor_parallel_size=rew_inf[1],
                 pipeline_parallel_size=rew_inf[2],
             ),
         ),
@@ -227,14 +227,14 @@ def test_ppo_global_reshard(
             mb_spec=MicroBatchSpec(max_tokens_per_mb=256),
             parallel=ParallelismConfig(
                 data_parallel_size=ref_inf[0],
-                model_parallel_size=ref_inf[1],
+                tensor_parallel_size=ref_inf[1],
                 pipeline_parallel_size=ref_inf[2],
             ),
         ),
         critic_train=MFCConfig(
             parallel=ParallelismConfig(
                 data_parallel_size=critic_train[0],
-                model_parallel_size=critic_train[1],
+                tensor_parallel_size=critic_train[1],
                 pipeline_parallel_size=critic_train[2],
             ),
         ),
@@ -309,7 +309,7 @@ def test_ppo_param_realloc_sub_device_mesh(
             device_mesh="NODE01:0,1,2,3",
             parallel=ParallelismConfig(
                 data_parallel_size=actor_gen[0],
-                model_parallel_size=actor_gen[1],
+                tensor_parallel_size=actor_gen[1],
                 pipeline_parallel_size=actor_gen[2],
             ),
         ),
@@ -317,7 +317,7 @@ def test_ppo_param_realloc_sub_device_mesh(
             device_mesh="NODE01:4,5,6,7",
             parallel=ParallelismConfig(
                 data_parallel_size=4,
-                model_parallel_size=1,
+                tensor_parallel_size=1,
                 pipeline_parallel_size=1,
             ),
         ),
@@ -325,7 +325,7 @@ def test_ppo_param_realloc_sub_device_mesh(
             device_mesh="NODE01:4,5,6,7",
             parallel=ParallelismConfig(
                 data_parallel_size=critic_inf[0],
-                model_parallel_size=critic_inf[1],
+                tensor_parallel_size=critic_inf[1],
                 pipeline_parallel_size=critic_inf[2],
             ),
         ),
@@ -333,7 +333,7 @@ def test_ppo_param_realloc_sub_device_mesh(
             device_mesh="NODE01:4,5,6,7",
             parallel=ParallelismConfig(
                 data_parallel_size=4,
-                model_parallel_size=1,
+                tensor_parallel_size=1,
                 pipeline_parallel_size=1,
             ),
         ),
@@ -341,7 +341,7 @@ def test_ppo_param_realloc_sub_device_mesh(
             device_mesh="NODE01:4,5,6,7",
             parallel=ParallelismConfig(
                 data_parallel_size=1,
-                model_parallel_size=2,
+                tensor_parallel_size=2,
                 pipeline_parallel_size=2,
             ),
         ),
@@ -349,7 +349,7 @@ def test_ppo_param_realloc_sub_device_mesh(
             device_mesh="NODE01:4,5,6,7",
             parallel=ParallelismConfig(
                 data_parallel_size=2,
-                model_parallel_size=1,
+                tensor_parallel_size=1,
                 pipeline_parallel_size=2,
             ),
         ),
@@ -431,7 +431,7 @@ def test_ppo_save(
         actor_gen=MFCConfig(
             parallel=ParallelismConfig(
                 data_parallel_size=1,
-                model_parallel_size=2,
+                tensor_parallel_size=2,
                 pipeline_parallel_size=1,
             )
         ),
@@ -439,28 +439,28 @@ def test_ppo_save(
             device_mesh="NODE01:0",
             parallel=ParallelismConfig(
                 data_parallel_size=1,
-                model_parallel_size=1,
+                tensor_parallel_size=1,
                 pipeline_parallel_size=1,
             ),
         ),
         critic_inf=MFCConfig(
             parallel=ParallelismConfig(
                 data_parallel_size=2,
-                model_parallel_size=1,
+                tensor_parallel_size=1,
                 pipeline_parallel_size=1,
             )
         ),
         rew_inf=MFCConfig(
             parallel=ParallelismConfig(
                 data_parallel_size=2,
-                model_parallel_size=1,
+                tensor_parallel_size=1,
                 pipeline_parallel_size=1,
             )
         ),
         ref_inf=MFCConfig(
             parallel=ParallelismConfig(
                 data_parallel_size=2,
-                model_parallel_size=1,
+                tensor_parallel_size=1,
                 pipeline_parallel_size=1,
             )
         ),
@@ -468,7 +468,7 @@ def test_ppo_save(
             device_mesh="NODE01:1",
             parallel=ParallelismConfig(
                 data_parallel_size=1,
-                model_parallel_size=1,
+                tensor_parallel_size=1,
                 pipeline_parallel_size=1,
             ),
         ),

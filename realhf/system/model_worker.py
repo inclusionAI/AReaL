@@ -153,7 +153,7 @@ class ModelWorker(worker_base.Worker):
         ]
         for s in self.config.shards:
             _pp_size = s.id.topo.get_dim("pipe")
-            if not (s.id.mp_rank == 0 and s.id.pp_rank == _pp_size - 1):
+            if not (s.id.tp_rank == 0 and s.id.pp_rank == _pp_size - 1):
                 continue
             if src_rpc.model_name == s.id.model_name:
                 self.__has_dataset = True
@@ -195,8 +195,8 @@ class ModelWorker(worker_base.Worker):
         return None
 
     @property
-    def _mp_rank(self) -> int:
-        return constants.model_parallel_rank()
+    def _tp_rank(self) -> int:
+        return constants.tensor_parallel_rank()
 
     @property
     def _pp_rank(self) -> int:
@@ -211,8 +211,8 @@ class ModelWorker(worker_base.Worker):
         return constants.pipe_parallel_world_size()
 
     @property
-    def _mp_size(self) -> int:
-        return constants.model_parallel_world_size()
+    def _tp_size(self) -> int:
+        return constants.tensor_parallel_world_size()
 
     @property
     def _dp_size(self) -> int:
@@ -220,7 +220,7 @@ class ModelWorker(worker_base.Worker):
 
     @property
     def _is_dp_head(self) -> bool:
-        return self._mp_rank == 0 and self._pp_rank == self._pp_size - 1
+        return self._tp_rank == 0 and self._pp_rank == self._pp_size - 1
 
     @property
     def _model(self) -> model_api.Model:
@@ -881,7 +881,7 @@ class ModelWorker(worker_base.Worker):
                 if len(self.__performance_recorder) == 0:
                     self.__performance_recorder["info"] = {
                         "pipeline_size": self._pp_size,
-                        "model_size": self._mp_size,
+                        "model_size": self._tp_size,
                         "data_size": self._dp_size,
                         "rank": constants.parallelism_rank(),
                         "sequence_parallel_enabled": constants.sequence_parallel(),

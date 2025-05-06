@@ -23,8 +23,8 @@ from .real_llm_base import ReaLModelParamKeys
 from .real_llm_parallel import (
     get_real_model_param_shape,
     intervals_partition_fn,
-    mp_partition_key,
     shape_partition_fn,
+    tp_partition_key,
 )
 
 try:
@@ -188,7 +188,7 @@ def set_intervals(
 
 def param_size_from_keys(
     config: model_api.ReaLModelConfig,
-    src_mp_size: int,
+    src_tp_size: int,
     sd_keys: List[str],
     src2dst_tp_size: int,
     src2dst_tp_rank: int,
@@ -202,9 +202,9 @@ def param_size_from_keys(
             and "0.wte.weight" in sd_keys
         ):
             continue
-        new_shape = mp_partition_key(
+        new_shape = tp_partition_key(
             k,
-            get_real_model_param_shape(k, config, src_mp_size),
+            get_real_model_param_shape(k, config, src_tp_size),
             src2dst_tp_rank,
             src2dst_tp_size,
             config,
@@ -218,7 +218,7 @@ def build_param_spec(
     layer_indices: List[int],
     config: model_api.ReaLModelConfig,
     dp_size: int,
-    mp_size: int,
+    tp_size: int,
     pp_size: int,
     head_param_point_to_embedding: bool,
     bucket_size: int = 40000000,
@@ -273,7 +273,7 @@ def build_param_spec(
         if head_param_point_to_embedding and k == f"{config.n_layers + 1}.weight":
             continue
 
-        shape = get_real_model_param_shape(k, config, mp_size)
+        shape = get_real_model_param_shape(k, config, tp_size)
         numel = int(np.prod(shape))
         data_end_index = data_start_index + numel
 
@@ -307,14 +307,14 @@ def param_intervals_from_keys(
     config: model_api.ReaLModelConfig,
     head_param_point_to_embedding: bool,
     param_spec: Dict[str, ContiguousParamSpec],
-    mp_size: int,
+    tp_size: int,
     sd_keys: List[str],
     portion_size: int,
     portion_rank: int,
 ) -> List[int]:
     param_size = param_size_from_keys(
         config=config,
-        src_mp_size=mp_size,
+        src_tp_size=tp_size,
         sd_keys=sd_keys,
         src2dst_tp_size=portion_size,
         src2dst_tp_rank=portion_rank,
@@ -333,13 +333,13 @@ def param_intervals_from_keys(
         if (
             model_name,
             k.split(".", 1)[1],
-            mp_size,
+            tp_size,
             portion_rank,
             portion_size,
         ) not in _FLAT_PARAM_INDICES_CACHE:
-            zero_start_intervals = mp_partition_key(
+            zero_start_intervals = tp_partition_key(
                 k,
-                get_real_model_param_shape(k, config, mp_size),
+                get_real_model_param_shape(k, config, tp_size),
                 portion_rank,
                 portion_size,
                 config,
@@ -349,7 +349,7 @@ def param_intervals_from_keys(
                 (
                     model_name,
                     k.split(".", 1)[1],
-                    mp_size,
+                    tp_size,
                     portion_rank,
                     portion_size,
                 )
@@ -359,7 +359,7 @@ def param_intervals_from_keys(
                 (
                     model_name,
                     k.split(".", 1)[1],
-                    mp_size,
+                    tp_size,
                     portion_rank,
                     portion_size,
                 )

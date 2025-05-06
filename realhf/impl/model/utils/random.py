@@ -13,7 +13,7 @@ from torch.cuda import device as device_ctx_manager
 from torch.utils.checkpoint import detach_variable
 
 import realhf.base.constants as constants
-from realhf.impl.model.parallelism.model_parallel.utils import (
+from realhf.impl.model.parallelism.tensor_parallel.utils import (
     divide,
     gather_split_1d_tensor,
     safely_set_viewless_tensor_data,
@@ -169,10 +169,10 @@ def model_parallel_cuda_manual_seed(seed):
     tensor-model-parallel state: This state is different among a set of model parallel GPUs, but the same across data parallel groups. This is used for example for dropout in model parallel regions.
     """
     # 2718 is just for fun and any POSITIVE value will work.
-    model_parallel_rank = constants.model_parallel_rank()
+    tensor_parallel_rank = constants.tensor_parallel_rank()
     expert_parallel_rank = 0
     offset = seed + 2718
-    tensor_model_parallel_seed = offset + model_parallel_rank
+    tensor_model_parallel_seed = offset + tensor_parallel_rank
     # Data parallel gets the original seed.
     data_parallel_seed = seed
 
@@ -187,7 +187,7 @@ def model_parallel_cuda_manual_seed(seed):
     )
 
     expert_parallel_seed = (
-        seed + 1024 + 100 * expert_parallel_rank + model_parallel_rank
+        seed + 1024 + 100 * expert_parallel_rank + tensor_parallel_rank
     )
     _CUDA_RNG_STATE_TRACKER.add(_EXPERT_PARALLEL_RNG_TRACKER_NAME, expert_parallel_seed)
 
@@ -331,8 +331,8 @@ def _initialize_affine_weight_cpu(
     weight_list = torch.split(
         master_weight, per_partition_per_stride_size, dim=partition_dim
     )
-    rank = constants.model_parallel_rank()
-    world_size = constants.model_parallel_world_size()
+    rank = constants.tensor_parallel_rank()
+    world_size = constants.tensor_parallel_world_size()
     my_weight_list = weight_list[rank::world_size]
 
     with torch.no_grad():
