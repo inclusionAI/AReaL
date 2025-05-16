@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import psutil
 
 import realhf.base.logging as logging
+from realhf.base import gpu_utils
 from realhf.base.constants import LOG_ROOT
 from realhf.scheduler.client import (
     JobException,
@@ -87,7 +88,7 @@ class LocalSchedulerClient(SchedulerClient):
 
         self._gpu_counter = 0
         self._cuda_devices: List[str] = os.environ.get(
-            "CUDA_VISIBLE_DEVICES", ""
+            "CUDA_VISIBLE_DEVICES", ",".join(map(str, range(gpu_utils.gpu_count())))
         ).split(",")
 
         self._job_counter: Dict[str, int] = defaultdict(int)
