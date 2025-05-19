@@ -706,7 +706,8 @@ class MegatronTrainBackend(model_api.ModelBackend, MegatronConfig):
         # Deleting models directly will not release the memory.
         # We must disable hooks at first.
         if pkg_version.is_version_greater_or_equal("megatron.core", "0.11.0"):
-            model.module.engine.ddp.disable_forward_pre_hook()
+            if self.ddp.use_distributed_optimizer and self.ddp.overlap_param_gather:
+                model.module.engine.ddp.disable_forward_pre_hook()
         else:
             optimizer = model.module.engine.optim
             if self.ddp.use_distributed_optimizer and self.ddp.overlap_param_gather:
