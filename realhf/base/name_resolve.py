@@ -618,7 +618,7 @@ class Etcd3NameRecordRepository(NameRecordRepository):
 
         self._to_delete = set()
 
-        logger.info(f"Connected to etcd3 at {self._host}:{self._port}")
+        logger.debug(f"Connected to etcd3 at {self._host}:{self._port}")
 
     def __del__(self):
         """Clean up resources when the object is deleted."""
@@ -945,12 +945,13 @@ def make_repository(type_="nfs", **kwargs):
 
 # DEFAULT_REPOSITORY_TYPE = "redis" if socket.gethostname().startswith("frl") else "nfs"
 DEFAULT_REPOSITORY_TYPE = "nfs"
-if (
-    etcd3 is not None
-    and cluster.spec.name in ["wa180", "na132", "su18"]
-    and os.getenv("REAL_ETCD_ADDR", "")
-):
+if etcd3 is not None and os.getenv("REAL_ETCD_ADDR", ""):
     DEFAULT_REPOSITORY_TYPE = "etcd3"
+if os.getenv("REAL_ETCD_ADDR", "") and etcd3 is None:
+    logger.warning(
+        f"Detected REAL_ETCD_ADDR but etcd3 client is not available. "
+        "Please run `pip install -r requirements.txt` if you want to use etcd name resolve."
+    )
 DEFAULT_REPOSITORY = make_repository(DEFAULT_REPOSITORY_TYPE)
 add = DEFAULT_REPOSITORY.add
 add_subentry = DEFAULT_REPOSITORY.add_subentry

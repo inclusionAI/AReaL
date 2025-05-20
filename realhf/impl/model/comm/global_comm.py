@@ -100,7 +100,7 @@ def setup_global_comm(
 
     if worker_index == 0:
         host_ip = socket.gethostbyname(socket.gethostname())
-        port = network.find_free_port()
+        port = network.find_free_port(experiment_name=expr_name, trial_name=trial_name)
         pg_init_addr = f"tcp://{host_ip}:{port}"
         name_resolve.add(pg_master_name, pg_init_addr, keepalive_ttl=300)
     else:

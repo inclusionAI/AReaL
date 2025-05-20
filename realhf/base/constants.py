@@ -72,6 +72,7 @@ MODEL_SAVE_ROOT = f"{cluster_spec.fileroot}/checkpoints/{getpass.getuser()}"
 LOG_ROOT = f"{cluster_spec.fileroot}/logs/{getpass.getuser()}"
 RECOVER_ROOT = f"{cluster_spec.fileroot}/recover/{getpass.getuser()}"
 SLURM_LOCK_FILE_NAME = f"{cluster_spec.fileroot}/logs/slurm_scheduler.lock"
+PORT_LOCK_FILE_ROOT = f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/ports"
 PYTORCH_KERNEL_CACHE_PATH = (
     f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/torch/kernels"
 )
@@ -120,6 +121,9 @@ BASE_ENVIRONS = {
     "REAL_GPU_MEMORY_KILL_THRESHOLD": os.getenv(
         "REAL_GPU_MEMORY_KILL_THRESHOLD", "0.95"
     ),
+    "LC_ALL": "C",
+    "LANG": "C",
+    "NCCL_DEBUG": "WARN",
 }
 
 # Set PPU-specific environment variables for stable training.
@@ -146,7 +150,6 @@ elif cluster_spec.name == "na132":
         "NCCL_IB_SL": "5",
         "NCCL_IB_TC": "136",
         "NCCL_IB_HCA": "mlx5_bond",
-        "NCCL_DEBUG": "WARN",
         "NCCL_IB_QPS_PER_CONNECTION": "8",
         "NCCL_SET_THREAD_NAME": "1",
         "NCCL_DEBUG_SUBSYS": "INIT,TUNING,GRAPH",
@@ -165,6 +168,7 @@ os.makedirs(DATASET_CACHE_PATH, exist_ok=True)
 os.makedirs(PROFILER_CACHE_PATH, exist_ok=True)
 os.makedirs(TORCH_EXTENSIONS_DIR, exist_ok=True)
 os.makedirs(QUICKSTART_EXPR_CACHE_PATH, exist_ok=True)
+os.makedirs(PORT_LOCK_FILE_ROOT, exist_ok=True)
 os.makedirs(SGLANG_CACHE_PATH, exist_ok=True)
 
 # _model_name will be changed in the model_scope context manager

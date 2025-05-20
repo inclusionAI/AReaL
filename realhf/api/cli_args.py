@@ -290,7 +290,7 @@ class SGLangConfig:
     enable_memory_saver: bool = False
     allow_auto_truncate: bool = False
     # NOTE: to avoid the illegal memory access error
-    attention_backend: Optional[str] = "triton"
+    attention_backend: Optional[str] = "flashinfer"
     sampling_backend: Optional[str] = None
     context_length: Optional[int] = 32768
     mem_fraction_static: Optional[float] = 0.9
@@ -325,6 +325,7 @@ class SGLangConfig:
         tp_size,
         server_index,
         base_gpu_id,
+        dist_init_addr: Optional[str] = None,
     ):
         from realhf.base import constants, network, pkg_version, seeding
         from realhf.experiments.common.utils import asdict as conf_as_dict
@@ -362,6 +363,7 @@ class SGLangConfig:
             ep_size=1,  # TODO: check
             nnodes=1,
             node_rank=0,
+            dist_init_addr=dist_init_addr,
             **args,
         )
 

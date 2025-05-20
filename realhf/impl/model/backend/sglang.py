@@ -435,7 +435,13 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
         ) != len(datapack.flat2d(ports)):
             dist.all_gather_object(
                 ports,
-                network.find_multiple_free_ports(2, low=20000, high=40000),
+                network.find_multiple_free_ports(
+                    2,
+                    low=10000,
+                    high=60000,
+                    experiment_name=constants.experiment_name(),
+                    trial_name=constants.trial_name(),
+                ),
                 group=constants.data_parallel_group(),
             )
         api_server_port, dist_port = ports[constants.data_parallel_rank()]
