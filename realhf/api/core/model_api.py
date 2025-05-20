@@ -800,7 +800,7 @@ class ModelInterface(abc.ABC):
         model: Model,
         data: SequenceSample,
         mb_spec: MicroBatchSpec,
-    ) -> Dict:
+    ) -> Dict | List[Dict]:
         raise NotImplementedError()
 
     # Mock methods for creating data and profiling an individual MFC.
@@ -862,7 +862,7 @@ class NullInterface(ModelInterface):
 
     def train_step(
         self, model: Model, data: SequenceSample, mb_spec: MicroBatchSpec
-    ) -> Dict:
+    ) -> Dict | List[Dict]:
         return {}
 
     def save(self, model: Model, save_dir: str):

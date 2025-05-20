@@ -792,8 +792,10 @@ class ModelWorker(worker_base.Worker):
                 if hook == "evaluate":
                     assert request.handle_name == "train_step", request.handle_name
                     assert isinstance(ret, dict), ret
-                    assert isinstance(res, dict), res
-                    res.update(ret)
+                    if isinstance(res, dict):
+                        res.update(ret)
+                    else:
+                        res[0].update(ret)
                 time_record[
                     f"timeperf/{request.handler.model_name.role}_{request.handle_name}/post-{hook}"
                 ] += (time.perf_counter() - tik)

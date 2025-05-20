@@ -145,6 +145,7 @@ class MasterWorker(worker_base.Worker):
         # for benchmark
         self.e2e_time_history = []
         self.__benchmark_steps = config.exp_ctrl.benchmark_steps
+        self.__benchmark_n_seqs = config.exp_ctrl.benchmark_n_seqs
 
         return config.worker_info
 
@@ -399,20 +400,33 @@ class MasterWorker(worker_base.Worker):
 
         # Pause the worker if experiment or system-wise benchmark completes.
         if (
-            self.__benchmark_steps is not None
-            and self.__rpc_ctrl.step_info.global_step >= self.__benchmark_steps
-        ) or (
-            self.__rpc_ctrl.step_info.global_step * self.__src_rpc.n_seqs
-            >= self.__total_train_epochs * self._dataset_size
+            (
+                self.__benchmark_steps is not None
+                and self.__rpc_ctrl.step_info.global_step >= self.__benchmark_steps
+            )
+            or (
+                self.__rpc_ctrl.step_info.global_step * self.__src_rpc.n_seqs
+                >= self.__total_train_epochs * self._dataset_size
+            )
+            or (
+                self.__benchmark_n_seqs is not None
+                and self.__rpc_ctrl.step_info.global_step
+                * self._ft_spec.train_batch_size
+                >= self.__benchmark_n_seqs
+            )
         ):
             # We don't know whether it is the last step of the current epoch,
             # so we exit at the first step of the next epoch.
-            if self.__benchmark_steps is not None:
+            if (
+                self.__benchmark_steps is not None
+                or self.__benchmark_n_seqs is not None
+            ):
                 logger.info(
                     f"Finished benchmark {self.__benchmark_steps}. "
                     f"Time consumption of this setup: {time_since_configure:.3f}"
                 )
                 logger.info(f"avg #e2e# time *{np.mean(self.e2e_time_history):.3f}*")
+            # TODO: inform generation workers to exit
             return self.experiment_complete_exit()
 
         return worker_base.PollResult(sample_count=1, batch_count=1)
@@ -443,9 +457,7 @@ class MasterWorker(worker_base.Worker):
         s += f"(global step {global_step}) finishes. "
         s += f"#End to end# execution time: *{e2e_time:.3f}*s. "
         s += f"Total time consumption: {time_since_configure:.3f}s. "
-        logging.log_wandb_tensorboard(
-            {"timeperf/e2e": e2e_time}, step=self.__rpc_ctrl.step_info.global_step
-        )
+        logging.log_wandb_tensorboard({"timeperf/e2e": e2e_time})
         if len(self.e2e_time_history) > 2:
             remaining_steps = self._steps_per_epoch - epoch_step
             remaining_epochs = self.__total_train_epochs - epoch

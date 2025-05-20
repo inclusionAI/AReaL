@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import dataclasses
-from typing import Dict, Literal
+from typing import Dict, List, Literal
 
 import torch
 import torch.distributed as dist
@@ -88,7 +88,7 @@ class SFTInterface(model_api.ModelInterface):
 
     def train_step(
         self, model: model_api.Model, data: SequenceSample, mb_spec: MicroBatchSpec
-    ) -> Dict:
+    ) -> Dict | List[Dict]:
         module = model.module
 
         module.train()

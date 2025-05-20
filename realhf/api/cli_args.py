@@ -682,13 +682,13 @@ class PPOHyperparameters:
     value_norm_eps: float = field(
         default=1e-5, metadata={"help": "Epsilon term for numerical stability"}
     )
-
-    # Experimental Features
     recompute_logprob: bool = field(
         default=False,
-        metadata={
-            "help": "Recompute log probabilities after generation. Used mainly for debugging purposes"
-        },
+        metadata={"help": "Recompute logp and replace the logp returned by inference."},
+    )
+    use_decoupled_loss: bool = field(
+        default=False,
+        metadata={"help": "Use the decoupled loss. recompute_logprob must be True."},
     )
 
 
@@ -772,6 +772,13 @@ class ExperimentSaveEvalControl:
         default=None,
         metadata={
             "help": "Terminate training after this number of steps. "
+            "For benchmarking purposes only. None indicates normal training."
+        },
+    )
+    benchmark_n_seqs: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Terminate training after consuming this number of samples. "
             "For benchmarking purposes only. None indicates normal training."
         },
     )

@@ -55,6 +55,7 @@ def actor_loss_fn(
     eps_clip: float,
     loss_mask: Optional[torch.BoolTensor] = None,
     c_clip: Optional[float] = None,
+    proximal_logprobs: Optional[torch.FloatTensor] = None,
 ) -> Tuple[torch.Tensor, Dict]:
     """Compute PPO actor loss function.
 
@@ -83,13 +84,22 @@ def actor_loss_fn(
         old_logprobs = old_logprobs.clone()
     if advantages.is_inference():
         advantages = advantages.clone()
-
-    if loss_mask is not None:
-        loss_mask_count = loss_mask.count_nonzero() or 1
-        # For numerical stability.
-        ratio = torch.where(loss_mask, torch.exp(logprobs - old_logprobs), 0)
+    if proximal_logprobs is not None:
+        assert proximal_logprobs.dtype == torch.float32
+        if proximal_logprobs.is_inference():
+            proximal_logprobs = proximal_logprobs.clone()
+        denorm_logprobs = proximal_logprobs
     else:
-        ratio = torch.exp(logprobs - old_logprobs)
+        denorm_logprobs = old_logprobs
+
+    # create mask
+    if loss_mask is None:
+        loss_mask = torch.ones_like(logprobs, dtype=torch.bool)
+    loss_mask: torch.BoolTensor
+
+    loss_mask_count = loss_mask.count_nonzero() or 1
+    # For numerical stability.
+    ratio = torch.where(loss_mask, torch.exp(logprobs - denorm_logprobs), 0)
 
     clipped_ratio = torch.clamp(ratio, 1.0 - eps_clip, 1.0 + eps_clip)
     pg_loss1 = -advantages * ratio
@@ -104,24 +114,34 @@ def actor_loss_fn(
         pg_loss = torch.min(pg_loss, pg_loss3)
     else:
         dual_clip_mask = torch.zeros_like(clip_mask)
+    if proximal_logprobs is not None:
+        behav_kl = proximal_logprobs - old_logprobs
+        behav_imp_weight = behav_kl.exp()
+        if c_clip is not None:
+            behav_mask = (behav_imp_weight <= c_clip).logical_and(loss_mask)
+        else:
+            behav_mask = loss_mask
+        behav_kl = torch.where(behav_mask, behav_kl, 0.0)
+        behav_imp_weight = torch.where(behav_mask, behav_imp_weight, 0.0)
+        pg_loss = pg_loss * behav_imp_weight
 
     logging_loss = pg_loss.detach()
-    if loss_mask is not None:
-        pg_loss = torch.where(loss_mask, pg_loss, 0).sum() / loss_mask_count
-    else:
-        pg_loss = pg_loss.mean()
+    pg_loss = torch.where(loss_mask, pg_loss, 0).sum() / loss_mask_count
 
-    if loss_mask is not None:
-        clip_mask.logical_and_(loss_mask)
-        dual_clip_mask.logical_and_(loss_mask)
+    clip_mask.logical_and_(loss_mask)
+    dual_clip_mask.logical_and_(loss_mask)
     # Remain torch.CudaTensor here for all-reduce after train step.
     stat = dict(
         loss=logging_loss,
         importance_weight=ratio.detach(),
-        approx_kl=(logprobs - old_logprobs).detach(),
+        approx_kl=(logprobs - denorm_logprobs).detach(),
         clip_mask=clip_mask,
         dual_clip_mask=dual_clip_mask,
     )
+    if proximal_logprobs is not None:
+        stat["behave_imp_weight"] = behav_imp_weight
+        stat["behave_approx_kl"] = behav_kl
+        stat["behave_mask"] = behav_mask
 
     return pg_loss, stat
 
