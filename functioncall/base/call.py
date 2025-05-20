@@ -189,12 +189,13 @@ async def batch_function_call_async(payload_list, url, timeout, concurrency=1500
             data_list.append(data)
             elapsed_times.append(elapsed)
 
-        p50 = median(elapsed_times)
-        p90 = calculate_percentile(elapsed_times, 90)
-        p99 = calculate_percentile(elapsed_times, 99)
-        logger.info(
-            f"Longest functioncall took {max_elapsed:.4f} seconds, timeout: {timeout}, uid: {max_elapsed_uid}, Active connections: {len(connector._conns)}, p50: {p50}, p90: {p90}, p99: {p99}"
-        )
+        if len(elapsed_times) > 0:
+            p50 = median(elapsed_times)
+            p90 = calculate_percentile(elapsed_times, 90)
+            p99 = calculate_percentile(elapsed_times, 99)
+            logger.info(
+                f"Longest functioncall took {max_elapsed:.4f} seconds, timeout: {timeout}, uid: {max_elapsed_uid}, Active connections: {len(connector._conns)}, p50: {p50}, p90: {p90}, p99: {p99}"
+            )
 
         return data_list
 
