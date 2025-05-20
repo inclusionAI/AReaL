@@ -36,7 +36,7 @@ class AsyncPPOMATHConfig(AsyncRLExperimentConfig, PPOMATHConfig):
     @property
     def env(self) -> EnvServiceAbstraction:
         return EnvServiceAbstraction(
-            "math-single-step", args=dict(dataset_path=self.dataset.path)
+            "math-code-single-step", args=dict(dataset_path=self.dataset.path)
         )
 
     @property

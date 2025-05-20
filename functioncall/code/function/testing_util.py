@@ -1,6 +1,7 @@
 import ast
 import faulthandler
 import json
+import os
 import platform
 
 # to run the solution files we're using a timing based approach
@@ -36,6 +37,14 @@ def truncatefn(s, length=300):
         return s
 
     return s[: length // 2] + "...(truncated) ..." + s[-length // 2 :]
+
+
+def load_from_path(l):
+    outputs = []
+    for x in l:
+        with open(x) as f:
+            outputs.append(f.read())
+    return outputs
 
 
 class CODE_TYPE(Enum):
@@ -105,6 +114,13 @@ def run_test(sample, test=None, debug=False, timeout=6):
 
     which_type = CODE_TYPE.call_based
     if in_outs:
+        assert "inputs" in in_outs
+        assert "outputs" in in_outs
+        if os.path.isfile(in_outs["inputs"][0]):
+            assert os.path.isfile(in_outs["outputs"][0])
+            in_outs["inputs"] = load_from_path(in_outs["inputs"])
+            in_outs["outputs"] = load_from_path(in_outs["outputs"])
+
         if in_outs.get("fn_name", "") == "":
             which_type = CODE_TYPE.standard_input  # Standard input
             method_name = None

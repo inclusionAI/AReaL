@@ -59,9 +59,10 @@ def call_verify(problem, generation, debug, timeout=SINGLE_CASE_EXEC_TIMEOUT):
         shell=True,
         preexec_fn=os.setsid,
         stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     try:
-        pro.wait(600)
+        pro.wait(200)
     except Exception as e:
         pass
     try:
