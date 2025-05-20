@@ -362,7 +362,7 @@ class ModelFunctionCall:
         blogger.info(f"Data tranfer plan for `{rpc.name}`: {data_transfer_plan}.")
 
         # Update storage tracker for transferred data.
-        if rpc.is_src:
+        if pattern == "bcast":
             # NOTE: since the data we loaded may be unevenly distributed across DP ranks,
             # we should change the owner of the data to the src RPC.
             for i in range(topo.world_size()):
@@ -414,7 +414,7 @@ class ModelFunctionCall:
         responses, time_records = list(zip(*[responses[i] for i in dp_head_indices]))
 
         # If the returned data is a SequenceSample, it is the data returned by
-        # model function calls. The data shoulbe be amended into buffer.
+        # model function calls. The data should be amended into buffer.
         # Otherwise, it's the train statistics and should be reduced and logged.
         if isinstance(responses[-1], data_api.SequenceSample):
             # Update storage tracker for generated data.
@@ -434,8 +434,14 @@ class ModelFunctionCall:
                             is_owner=True,
                         )
             res = data_api.SequenceSample.gather(responses)
-        else:
+        elif isinstance(responses[0], dict):
             res = data_api.gather_stat(responses)
+        else:
+            assert isinstance(responses[0], list)
+            res = [
+                data_api.gather_stat([r[i] for r in responses])
+                for i in range(len(responses[0]))
+            ]
 
         if rpc.log_return_value:
             if isinstance(res, dict):
@@ -447,6 +453,17 @@ class ModelFunctionCall:
                     step=ctrl.step_info.global_step,
                     summary_writer=self.summary_writer,
                 )
+            elif isinstance(res, list):
+                for j, r in enumerate(res):
+                    logger.info(
+                        f"RPC name {rpc.name} returns ({j}/{len(res)})\n{data_api.tabulate_stats(r)}"
+                    )
+                    offset = len(res) * ctrl.step_info.global_step
+                    logging.log_wandb_tensorboard(
+                        r,
+                        step=offset + j,
+                        summary_writer=self.summary_writer,
+                    )
             else:
                 logger.info(f"RPC name {rpc.name} returns\n{res}")
 
@@ -456,7 +473,6 @@ class ModelFunctionCall:
         time_stats = stats_tracker.export()
         logging.log_wandb_tensorboard(
             time_stats,
-            step=ctrl.step_info.global_step,
             summary_writer=self.summary_writer,
         )
 

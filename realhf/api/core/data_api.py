@@ -547,6 +547,7 @@ class SequenceSample:
             return [[seqlen] for seqlen in seqlens]
         elif key in [
             "packed_logprobs",
+            "prox_logp",
             "logprobs",
             "packed_ref_logprobs",
             "ref_logprobs",

@@ -171,6 +171,9 @@ class DistributedStatsTracker:
         else:
             raise ValueError(f"Unknown reduce type: {reduce_type}")
 
+        keys_to_pop = [k for k, v in result.items() if v is None]
+        for k in keys_to_pop:
+            result.pop(k)
         return result
 
     def _sum_of(self, key, reduce_group):
@@ -209,7 +212,7 @@ class DistributedStatsTracker:
             dist.all_reduce(x, group=reduce_group)
             dist.all_reduce(d, group=reduce_group)
         if d == 0:
-            return 0
+            return None
         return x / d
 
     def _min_of(self, key, reduce_group):
@@ -224,7 +227,7 @@ class DistributedStatsTracker:
         if reduce_group is not None:
             dist.all_reduce(x, group=reduce_group, op=dist.ReduceOp.MIN)
         if torch.isinf(x):
-            return float("nan")
+            return None
         return float(x)
 
     def _max_of(self, key, reduce_group):
@@ -239,7 +242,7 @@ class DistributedStatsTracker:
         if reduce_group is not None:
             dist.all_reduce(x, group=reduce_group, op=dist.ReduceOp.MAX)
         if torch.isinf(x):
-            return float("nan")
+            return None
         return float(x)
 
 

@@ -141,8 +141,17 @@ def getLogger(
     return logging.getLogger(name)
 
 
+_LATEST_WANDB_STEP = 0
+
+
 def log_wandb_tensorboard(data, step=None, summary_writer=None):
     import wandb
+
+    global _LATEST_WANDB_STEP
+    if step is None:
+        step = _LATEST_WANDB_STEP
+    else:
+        _LATEST_WANDB_STEP = max(_LATEST_WANDB_STEP, step)
 
     wandb.log(data, step=step)
     if summary_writer is not None:
