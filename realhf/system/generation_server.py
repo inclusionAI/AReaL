@@ -1,7 +1,4 @@
-import fcntl
-import json
 import os
-import socket
 import subprocess
 import time
 
@@ -70,6 +67,9 @@ def wait_for_server(base_url: str, timeout: int = None) -> None:
             time.sleep(1)
 
 
+PORT_CLEARANCE_PERIOD = 90
+
+
 class GenerationServer(Worker):
     def _configure(self, config: GenerationServerConfig):
         self.config = config
@@ -97,25 +97,37 @@ class GenerationServer(Worker):
         config = self.config
 
         assert config.backend_type == "sglang"
+
+        host_ip = network.gethostip()
+        host = "localhost" if not config.backend_args.enable_metrics else host_ip
+
+        # NOTE: Ports returned by `find_multiple_free_ports` are unique,
+        # but SGLang servers still encounter conflicts.
+        # Use a clearance period to hack over this issue.
+        servers_per_node = cluster_spec.n_gpus_per_node // self.config.tp_size
+        idx_on_this_node = self.worker_index % servers_per_node
+        time.sleep(idx_on_this_node * PORT_CLEARANCE_PERIOD / servers_per_node)
+
+        ports = network.find_multiple_free_ports(
+            2,
+            low=10000,
+            high=60000,
+            experiment_name=self.experiment_name,
+            trial_name=self.trial_name,
+        )
+        server_port = ports[0]
+        nccl_port = ports[1]
+
         cmd = SGLangConfig.build_cmd(
             config.backend_args,
             config.model_path,
             tp_size=config.tp_size,
             server_index=self.worker_index,
             base_gpu_id=self.base_gpu_id,
+            dist_init_addr=f"{host}:{nccl_port}",
         )
 
-        host_ip = network.gethostip()
-        host = "localhost" if not config.backend_args.enable_metrics else host_ip
-
-        # TODO: handle launching error and retry
-        servers_per_node = max(1, cluster_spec.n_gpus_per_node // self.config.tp_size)
-        ports = network.find_multiple_free_ports(
-            servers_per_node, low=30000, high=40000
-        )
-        port = ports[self.worker_index % servers_per_node]
-
-        self.server_process, self.server_port = launch_server_cmd(cmd, port=port)
+        self.server_process, self.server_port = launch_server_cmd(cmd, port=server_port)
         self.server_addr = f"http://{host}:{self.server_port}"
 
         wait_for_server(self.server_addr)

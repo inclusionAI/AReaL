@@ -171,7 +171,9 @@ class NameResolvingZmqPuller(ZMQJsonPuller):
         name = names.push_pull_stream(
             experiment_name, trial_name, stream_name=f"puller{puller_index}"
         )
-        host, port = network.gethostip(), network.find_free_port()
+        host, port = network.gethostip(), network.find_free_port(
+            experiment_name=experiment_name, trial_name=trial_name
+        )
         addr = f"{host}:{port}"
         name_resolve.add(name, addr)
         super().__init__(host, port, **kwargs)
