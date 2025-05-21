@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, Hashable, List, Literal, Optional, Tuple
 import aiohttp
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.utils.data
 import transformers
 
@@ -24,6 +25,7 @@ from realhf.api.core.config import (
     ModelWrapperAbstraction,
 )
 from realhf.api.core.data_api import MicroBatchSpec, SequenceSample, load_hf_tokenizer
+from realhf.base.datapack import flat2d
 from realhf.base.recover import StepInfo
 
 logger = logging.getLogger("model_api")
@@ -37,16 +39,19 @@ class ZeroTotalLossWeightException(Exception):
 class GenRespMeta:
     qid: str
     accepted: bool
+    n_tokens: int
 
 
 @dataclasses.dataclass
 class GenReqMeta:
     ## Meta info used to schedule the request. ##
+    qid: Hashable
     prompt_len: int
     group_size: int
     new_token_budget: int
     predicted_new_tokens: int | None
     previous_server_url: str = ""
+    previous_version: int = -1
 
 
 @dataclasses.dataclass
@@ -863,6 +868,16 @@ class NullInterface(ModelInterface):
     def train_step(
         self, model: Model, data: SequenceSample, mb_spec: MicroBatchSpec
     ) -> Dict | List[Dict]:
+        from realhf.base import constants
+
+        n_tokens = sum(flat2d(data.seqlens[data._get_split_key()]))
+        n_tokens = torch.tensor(
+            n_tokens, dtype=torch.long, device=constants.current_device()
+        )
+        dist.all_reduce(n_tokens, group=constants.data_parallel_group())
+        if constants.parallelism_rank() == 0:
+            logger.info(f"Number of tokens in NullInterface training: {int(n_tokens)}")
+        model.inc_version()
         return {}
 
     def save(self, model: Model, save_dir: str):

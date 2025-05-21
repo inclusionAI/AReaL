@@ -189,10 +189,11 @@ class RolloutWorker(AsyncWorker):
         assert data_id not in self.rollout_tasks
         return cur_sample
 
-    async def allocate_new_rollout(self) -> bool:
+    async def allocate_new_rollout(self, qid) -> bool:
         async with aiohttp.ClientSession() as session:
-            async with session.get(
+            async with session.post(
                 f"http://{self.gserver_manager_addr}/allocate_rollout",
+                json=dict(qid=qid),
                 timeout=ClientTimeout(
                     total=self.config.rollout_request_timeout, sock_connect=30
                 ),
@@ -231,10 +232,10 @@ class RolloutWorker(AsyncWorker):
             self._cur_data = self.load_next_data()
 
         if self._cur_data is not None:
-            can_rollout = await self.allocate_new_rollout()
+            data = self._cur_data
+            qid = data.ids[0]
+            can_rollout = await self.allocate_new_rollout(qid)
             if can_rollout:
-                data = self._cur_data
-                qid = data.ids[0]
                 self.act_queues[qid] = asyncio.Queue(1024)
 
                 task = asyncio.create_task(self.rollout_task(qid, data))
@@ -265,7 +266,11 @@ class RolloutWorker(AsyncWorker):
                 accepted = True
                 self.push_stream.push([traj.as_json_compatible() for traj in trajs])
 
-            info = dict(qid=qid, accepted=accepted)
+            n_tokens = 0
+            for traj in trajs:
+                seqlens = [sum(datapack.flat2d(ss)) for ss in traj.seqlens.values()]
+                n_tokens += max(seqlens)
+            info = dict(qid=qid, accepted=accepted, n_tokens=n_tokens)
             async with aiohttp.ClientSession(
                 f"http://{self.gserver_manager_addr}"
             ) as session:

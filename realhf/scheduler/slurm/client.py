@@ -5,6 +5,7 @@
 import fcntl
 import os
 import re
+import select
 import subprocess
 import threading
 import time
@@ -52,7 +53,11 @@ def monitor_log(
 
         while not stop_event.is_set():
             log_file.seek(position)
-            new_lines = log_file.readlines()
+            try:
+                new_lines = log_file.readlines()
+            except UnicodeDecodeError:
+                time.sleep(0.5)
+                continue
 
             if new_lines:
                 # Update position

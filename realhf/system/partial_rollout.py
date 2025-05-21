@@ -130,6 +130,7 @@ class PartialRolloutManager:
                         group_idx=group_idx,
                         raw_gconfig=raw_gconfig,
                         server_url=url,
+                        version=cur_server_version,
                     ),
                 ),
                 stream=False,
@@ -190,6 +191,7 @@ class PartialRolloutManager:
             s: APIGenerateOutput = await task
             group_idx = s.metadata["group_idx"]
             raw_gconfig = s.metadata["raw_gconfig"]
+            previous_version = s.metadata["version"]
 
             assert s.group_size == 1
             no_eos = s.no_eos[0]
@@ -203,28 +205,24 @@ class PartialRolloutManager:
                 # Unfinished request due to chunked generation.
                 # Send it back to continue.
                 req_meta = GenReqMeta(
+                    qid=s.qid,
                     prompt_len=s.prompt_len,
                     group_size=raw_gconfig.n,
-                    new_token_budget=self.new_tokens_per_chunk,
+                    new_token_budget=raw_gconfig.max_new_tokens,
                     predicted_new_tokens=None,
                     previous_server_url=s.metadata["server_url"],
+                    previous_version=previous_version,
                 )
-                await self._schedule_request(req_meta)
+                info = await self._schedule_request(req_meta)
+                cur_version = info["version"]
+                server_url = info["url"]
 
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        f"http://{self.gserver_manager_addr}/get_model_version",
-                        json=dict(server_url=s.metadata["server_url"]),
-                        timeout=ClientTimeout(total=self.timeout, sock_connect=30),
-                    ) as resp:
-                        resp.raise_for_status()
-                        cur_version = (await resp.json())["version"]
                 if len(s.output_logprobs) > 0:
                     prev_logprobs = s.prev_logprobs + s.output_logprobs[0]
                 else:
                     prev_logprobs = []
                 await self._issue_generation(
-                    s.metadata["server_url"],
+                    server_url,
                     s.qid,
                     group_idx,
                     s.prompt_ids,
@@ -249,9 +247,10 @@ class PartialRolloutManager:
             try:
                 qid, prompt_token_ids, gconfig = self.request_queue.get_nowait()
                 req_meta = GenReqMeta(
+                    qid=qid,
                     prompt_len=len(prompt_token_ids),
                     group_size=gconfig.n,
-                    new_token_budget=self.new_tokens_per_chunk,
+                    new_token_budget=gconfig.max_new_tokens,
                     predicted_new_tokens=None,
                 )
                 dst_server_info = await self._schedule_request(req_meta)

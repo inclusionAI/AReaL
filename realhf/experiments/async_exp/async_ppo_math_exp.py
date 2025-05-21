@@ -6,7 +6,11 @@ from typing import Any, Dict, List, Tuple
 
 import realhf.base.logging as logging
 from realhf.api.cli_args import ModelTrainEvalConfig, PPOMATHExperimentOptions
-from realhf.api.core.config import AgentAbstraction, EnvServiceAbstraction
+from realhf.api.core.config import (
+    AgentAbstraction,
+    EnvServiceAbstraction,
+    ModelInterfaceAbstraction,
+)
 from realhf.api.core.model_api import GenerationHyperparameters
 from realhf.api.quickstart.entrypoint import register_quickstart_exp
 from realhf.experiments.async_exp.async_rl_exp import AsyncRLExperimentConfig
@@ -71,6 +75,11 @@ class AsyncPPOMATHConfig(AsyncRLExperimentConfig, PPOMATHConfig):
             rpcs["ref_inf"].output_keys = ("packed_ref_logprobs",)
         if "rew_inf" in rpcs:
             rpcs.pop("rew_inf")
+        if self.no_training:
+            rpcs["actor_train"].interface_impl = ModelInterfaceAbstraction("null")
+            rpcs["actor_gen"].interface_impl = ModelInterfaceAbstraction("null")
+            if "actor_inf" in rpcs:
+                rpcs["actor_inf"].interface_impl = ModelInterfaceAbstraction("null")
         return rpcs
 
     @property

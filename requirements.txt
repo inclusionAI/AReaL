@@ -36,7 +36,6 @@ ray
 redis
 scipy
 seaborn
-setuptools>=61.0
 tqdm
 networkx==3.3
 matplotlib
@@ -59,3 +58,5 @@ protobuf<3.21
 rich
 orjson>=3.10.16
 flask
+setuptools>=62.3.0,<75.9
+func_timeout

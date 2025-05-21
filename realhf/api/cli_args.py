@@ -1004,9 +1004,15 @@ class BaseExperimentConfig:
 
 @dataclass
 class AsyncRLOptions:
+    schedule_policy: str = field(
+        default="round_robin",
+        metadata={
+            "help": "The request schedule policy during generation. Available options: [round_robin]."
+        },
+    )
     new_tokens_per_chunk: int = field(
         default=int(1e10),
-        metadata={"help": "The lenght of chunked generation."},
+        metadata={"help": "The length of chunked generation."},
     )
     max_head_offpolicyness: int = field(
         default=0,
@@ -1229,6 +1235,12 @@ class PPOMATHExperimentOptions:
         metadata={
             "help": "Success rate lower than this value will be filtered out after generation. Valid for async training."
         },
+    )
+
+    # testing only
+    no_training: bool = field(
+        default=False,
+        metadata={"help": "Run without training. Test-only."},
     )
 
 

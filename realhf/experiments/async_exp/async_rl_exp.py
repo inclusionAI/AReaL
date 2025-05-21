@@ -313,7 +313,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 model_name=model_name,
                 flush_request_timeout=self.flush_request_timeout,
                 n_servers=gen_world_size // gen_tp_size,
-                schedule_policy="round_robin",
+                schedule_policy=self.schedule_policy,
                 max_head_offpolicyness=self.max_head_offpolicyness,
                 train_batch_size=train_rpcs[0].n_seqs,
                 max_concurrent_rollouts=self.max_concurrent_rollouts,
