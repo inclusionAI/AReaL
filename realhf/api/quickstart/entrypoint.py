@@ -8,12 +8,10 @@ import functools
 import inspect
 import json
 import os
-import pickle
-import subprocess
-from typing import Callable, Optional
+from typing import Callable
 
 import hydra
-import omegaconf
+import yaml
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING, OmegaConf
 
@@ -28,6 +26,9 @@ def kind_reminder(config_name, logger, args):
     logger.info(f"Running {config_name} experiment.")
     logger.info(
         f"Logs will be dumped to {os.path.join(LOG_ROOT, args.experiment_name, args.trial_name)}"
+    )
+    logger.info(
+        f"Experiment configs will be dumped to {os.path.join(LOG_ROOT, args.experiment_name, args.trial_name, 'config.yaml')}"
     )
     logger.info(
         f"Model checkpoints will be saved to {os.path.join(MODEL_SAVE_ROOT, args.experiment_name, args.trial_name)}"
@@ -69,7 +70,7 @@ def register_quickstart_exp(config_name: str, exp_cls: Callable):
 
         logger = logging.getLogger("quickstart", "colored")
 
-        print_runtime_helper(OmegaConf.to_object(args))
+        # print_runtime_helper(OmegaConf.to_object(args))
 
         exp_name = args.experiment_name
         if args.trial_name == MISSING:
@@ -79,6 +80,17 @@ def register_quickstart_exp(config_name: str, exp_cls: Callable):
         else:
             trial_name = args.trial_name
         from realhf.apps.main import main_start, main_stop
+
+        config_save_path = os.path.join(
+            LOG_ROOT, args.experiment_name, args.trial_name, "config.yaml"
+        )
+        with open(config_save_path, "w") as f:
+            yaml.dump(
+                dataclasses.asdict(OmegaConf.to_object(args)),
+                f,
+                default_flow_style=False,
+                sort_keys=False,
+            )
 
         kind_reminder(config_name, logger, args)
 

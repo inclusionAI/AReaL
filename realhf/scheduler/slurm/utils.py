@@ -294,21 +294,29 @@ class SlurmLaunchInfo:
 
     @property
     def multiprog_path(self) -> str:
-        return os.path.join(
+        path = os.path.join(
             LOG_ROOT,
             self.exper_name,
             self.trial_name,
+            "slurm",
+            "multiprog",
             f"{self.worker_type}-{self.worker_submission_idx}.multiprog",
         )
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        return path
 
     @property
     def hostfile_path(self) -> str:
-        return os.path.join(
+        path = os.path.join(
             LOG_ROOT,
             self.exper_name,
             self.trial_name,
+            "slurm",
+            "hostfile",
             f"{self.worker_type}-{self.worker_submission_idx}.hostfile",
         )
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        return path
 
     def show_log(self):
         try:
