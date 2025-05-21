@@ -6,12 +6,16 @@ import fcntl
 import os
 import re
 import subprocess
+import threading
 import time
 from collections import defaultdict
 from typing import Dict, List, Literal, Optional, Tuple
 
+import colorama
+
 import realhf.base.logging as logging
 from realhf.base.cluster import spec as cluster_spec
+from realhf.base.constants import LOG_ROOT
 from realhf.base.constants import SLURM_LOCK_FILE_NAME as LOCK_FILE_NAME
 from realhf.scheduler.client import JobException, JobInfo, JobState, SchedulerClient
 from realhf.scheduler.evaluator import AutomaticEvaluator
@@ -27,6 +31,45 @@ logger = logging.getLogger("Slurm-scheduler")
 SCHEDULING_RETRY_INTERVAL_SECONDS = 30
 SCHEDULING_TIMEOUT_MAX_SECONDS = 3600 * 24
 SCHEDULER_WAIT_CHECK_TIME_INTERVAL = 5
+
+
+def monitor_log(
+    job_name: str, log_path: str, output_file: str, stop_event: threading.Event
+):
+    """Monitor a log file and write its contents to the output file with job name prefix."""
+    # Wait for log file to be created
+    while not os.path.exists(log_path) and not stop_event.is_set():
+        time.sleep(0.1)
+
+    if stop_event.is_set():
+        return
+
+    # Open the log file and follow it
+    with open(log_path, "r") as log_file, open(output_file, "a") as out_file:
+        # Store last position
+        position = 0
+        line_pos = 0
+
+        while not stop_event.is_set():
+            log_file.seek(position)
+            new_lines = log_file.readlines()
+
+            if new_lines:
+                # Update position
+                position = log_file.tell()
+
+                worker_type = job_name.split(":")[1]
+                # Write new lines to output file with job name prefix
+                for line in new_lines:
+                    if line.strip():  # Skip empty lines
+                        out_file.write(
+                            f"{colorama.Fore.YELLOW + colorama.Style.DIM}({worker_type} Line {line_pos}){colorama.Style.RESET_ALL} {line}"
+                        )
+                    line_pos += 1
+                out_file.flush()
+
+            # Sleep briefly to avoid CPU spinning
+            time.sleep(0.1)
 
 
 class SlurmSchedulerClient(SchedulerClient):
@@ -248,6 +291,26 @@ class SlurmSchedulerClient(SchedulerClient):
         # before wait, commit all remaining pending jobs
         # TODO: grab global file lock to avoid multi-experiment deadlocks
         self.__allocate_and_commit_pending_jobs()
+        # Start monitoring threads
+        threads = []
+        stop_events = []
+
+        merged_log_path = os.path.join(
+            LOG_ROOT, self.expr_name, self.trial_name, "main.log"
+        )
+
+        for job_name, launch_info in self.__committed_jobs.items():
+            stop_event = threading.Event()
+            stop_events.append(stop_event)
+
+            # Thread for monitoring the log file
+            log_thread = threading.Thread(
+                target=monitor_log,
+                args=(job_name, launch_info.log_path, merged_log_path, stop_event),
+            )
+            threads.append(log_thread)
+            log_thread.start()
+
         # begin wait
         deadline = None if timeout is None else time.time() + timeout
         left = set(self.__committed_jobs.keys())
@@ -256,44 +319,52 @@ class SlurmSchedulerClient(SchedulerClient):
             f"Waiting for {num_jobs_left} jobs. Jobs IDs: "
             f"{','.join(sorted([x.job_info.slurm_id for x in self.__committed_jobs.values()]))}."
         )
-        while len(left) > 0:
-            if len(left) < num_jobs_left:
-                num_jobs_left = len(left)
-                logger.info(f"Waiting for {num_jobs_left} jobs.")
-            if self.__evaluator is not None:
-                self.__evaluator.step()
-            if deadline is not None and time.time() > deadline:
-                raise TimeoutError(
-                    f"Timeout waiting for {self.run_name}: {', '.join(sorted(left))}"
-                )
-            try:
-                self.__update_all()
-            except subprocess.CalledProcessError:
-                logger.warning(
-                    "Calling squeue failed. Check slurm manually if you continue to see this warning."
-                )
-                time.sleep(30)
-                continue
-            for job_slurm_name in list(left):
-                launch_info = self.__committed_jobs[job_slurm_name]
-                if launch_info.slurm_id is None:
+        logger.info(
+            f"All slurm logs will be merged. To check the real-time output, "
+            f"run\n\t`tail -f {merged_log_path}`."
+        )
+        try:
+            while len(left) > 0:
+                if len(left) < num_jobs_left:
+                    num_jobs_left = len(left)
+                    logger.info(f"Waiting for {num_jobs_left} jobs.")
+                if self.__evaluator is not None:
+                    self.__evaluator.step()
+                if deadline is not None and time.time() > deadline:
+                    raise TimeoutError(
+                        f"Timeout waiting for {self.run_name}: {', '.join(sorted(left))}"
+                    )
+                try:
+                    self.__update_all()
+                except subprocess.CalledProcessError:
+                    logger.warning(
+                        "Calling squeue failed. Check slurm manually if you continue to see this warning."
+                    )
+                    time.sleep(30)
                     continue
-                if launch_info.job_info.state in check_status:
-                    launch_info.show_log()
-                    raise JobException(
-                        run_name=self.run_name,
-                        worker_type=launch_info.worker_type,
-                        host=launch_info.job_info.host,
-                        reason=launch_info.job_info.state,
-                    )
-                if launch_info.job_info.state in remove_status:
-                    logger.info(
-                        f"Job {launch_info.slurm_name} is {launch_info.job_info.state}.(Removed)"
-                    )
-                    left.remove(job_slurm_name)
-                    if update:
-                        self.__committed_jobs.pop(job_slurm_name)
-            time.sleep(SCHEDULER_WAIT_CHECK_TIME_INTERVAL)
+                for job_slurm_name in list(left):
+                    launch_info = self.__committed_jobs[job_slurm_name]
+                    if launch_info.slurm_id is None:
+                        continue
+                    if launch_info.job_info.state in check_status:
+                        launch_info.show_log()
+                        raise JobException(
+                            run_name=self.run_name,
+                            worker_type=launch_info.worker_type,
+                            host=launch_info.job_info.host,
+                            reason=launch_info.job_info.state,
+                        )
+                    if launch_info.job_info.state in remove_status:
+                        logger.info(
+                            f"Job {launch_info.slurm_name} is {launch_info.job_info.state}.(Removed)"
+                        )
+                        left.remove(job_slurm_name)
+                        if update:
+                            self.__committed_jobs.pop(job_slurm_name)
+                time.sleep(SCHEDULER_WAIT_CHECK_TIME_INTERVAL)
+        finally:
+            [s.set() for s in stop_events]
+            [t.join() for t in threads]
 
     def __update_all(self):
         states = []
