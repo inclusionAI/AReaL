@@ -138,6 +138,7 @@ class ReaLModelBlock(nn.Module):
             use_attention_bias=config.use_attention_bias,
             use_attn_proj_bias=config.use_attn_proj_bias,
             do_layernorm_before=config.do_layernorm_before,
+            qk_layernorm=config.qk_layernorm,
             apply_rotary=config.apply_rotary,
             rotary_base=config.rotary_base,
             rotary_interleaved=config.rotary_interleaved,
@@ -485,6 +486,12 @@ class ReaLModelParamKeys:
         keys += [f"{idx + 1}.attn.c_proj.weight"]
         if config.use_attn_proj_bias:
             keys += [f"{idx + 1}.attn.c_proj.bias"]
+        if config.qk_layernorm:
+            keys += [f"{idx + 1}.attn.q_ln.weight"]
+            keys += [f"{idx + 1}.attn.k_ln.weight"]
+            if config.layer_norm_type is None:
+                keys += [f"{idx + 1}.attn.q_ln.bias"]
+                keys += [f"{idx + 1}.attn.k_ln.bias"]
         keys += [f"{idx + 1}.mlp.ln.weight"]
         if config.layer_norm_type is None:
             keys += [f"{idx + 1}.mlp.ln.bias"]

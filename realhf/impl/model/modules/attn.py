@@ -17,7 +17,7 @@ from realhf.impl.model.utils.functional import (
     torch_attn_func,
 )
 
-from .mlp import LayerNormQKVLinear
+from .mlp import LayerNormQKVLinear, GemmaRMSNorm, LlamaRMSNorm
 from .rotary import RotaryEmbedding
 
 try:
@@ -53,6 +53,8 @@ class CausalSelfAttentionLayer(nn.Module):
         layer_norm_type: Optional[str] = None,
         # opt applies layer norm after attn
         do_layernorm_before: bool = True,
+        # qk layer norm (Qwen3)
+        qk_layernorm: bool = False,
         # rotary embedding
         apply_rotary: bool = False,
         rotary_base: float = 10000.0,
@@ -99,6 +101,21 @@ class CausalSelfAttentionLayer(nn.Module):
                 dtype=dtype,
                 device=device,
             )
+
+        self.qk_layernorm = qk_layernorm
+        if qk_layernorm:
+            if layer_norm_type is None:
+                layer_norm_fn = nn.LayerNorm
+            elif layer_norm_type == "rms":
+                layer_norm_fn = LlamaRMSNorm
+            elif layer_norm_type == "gemma":
+                layer_norm_fn = GemmaRMSNorm
+            self.q_ln = layer_norm_fn(
+                    head_dim, eps=layer_norm_epsilon, dtype=dtype, device=device
+                )
+            self.k_ln = layer_norm_fn(
+                    head_dim, eps=layer_norm_epsilon, dtype=dtype, device=device
+                )
 
         self.resid_dropout = nn.Dropout(resid_pdrop)
 
@@ -172,6 +189,10 @@ class CausalSelfAttentionLayer(nn.Module):
             scale_factor /= self.d**0.5
 
         q, k, v = self.c_attn(hidden_states)
+
+        if self.qk_layernorm:
+            q = self.q_ln(q)
+            k = self.k_ln(k)
 
         if self.apply_rotary and (k_cache is None or str(q.device) == "cpu"):
             # otherwise, we input rotary cos/sin directly into flash_attn_with_kvcache

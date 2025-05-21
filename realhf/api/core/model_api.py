@@ -443,6 +443,8 @@ class ReaLModelConfig:
     rotary_special_impl: Optional[str] = None
     # for gemma
     normalize_embed: bool = False
+    # for qwen3
+    qk_layernorm: bool = False
     # for opt, it's 2
     abs_position_embedding_offset: int = 0
     do_layernorm_before: bool = True

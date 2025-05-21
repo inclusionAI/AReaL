@@ -225,6 +225,8 @@ def get_real_model_param_shape(
         )
     elif ".ln." in k or ".ln_f." in k:
         return (config.hidden_dim,)
+    elif ".q_ln." in k or ".k_ln." in k:
+        return (config.head_dim,)
     elif k == f"{config.n_layers + 1}.weight":  # output head
         if config.is_critic:
             return (1, config.hidden_dim)
