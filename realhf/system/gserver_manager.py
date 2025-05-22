@@ -17,7 +17,7 @@ from realhf.api.core.system_api import GserverManager as GserverManagerConfig
 from realhf.base import constants, logging, name_resolve, names, network, recover
 from realhf.system.worker_base import PollResult, Worker
 
-logger = logging.getLogger("Generation Manager", "colored")
+logger = logging.getLogger("Generation Manager", "system")
 
 STALENESS_WARNED = defaultdict(lambda: False)
 
@@ -178,30 +178,10 @@ class GserverManager(Worker):
 
         return None
 
-    async def flush_requests(self, server_url, timeout):
-        server_index = self.server_urls.index(server_url)
-        running_requests = None
-        tik = time.perf_counter()
-        while running_requests is None or running_requests > 0:
-            if time.perf_counter() - tik > timeout:
-                raise TimeoutError(
-                    f"Waiting for flush requests failed. {running_requests} requests "
-                    f"remain after {timeout} secs waiting. "
-                    f"Please try to reduce `new_tokens_per_chunk`."
-                )
-            if running_requests is not None and running_requests > 0:
-                logger.info(
-                    f"Waiting for {running_requests} requests on gen server {server_index}... "
-                    f"Time taken so far: {time.perf_counter() - tik:.4f}s"
-                )
-                await asyncio.sleep(0.5)
-            running_requests = await self._get_server_num_running_requests(server_url)
-
     async def flush_requests_and_update_weights(
         self, server_url, new_param_path, update_weights_retries=5
     ):
-        await self.flush_requests(server_url, timeout=self.config.flush_request_timeout)
-
+        server_index = self.server_urls.index(server_url)
         success = False
         for _ in range(update_weights_retries):
             async with aiohttp.ClientSession(
@@ -212,12 +192,16 @@ class GserverManager(Worker):
             ) as session:
                 async with session.post(
                     f"/update_weights_from_disk",
-                    json=dict(model_path=new_param_path),
+                    json=dict(model_path=new_param_path, allow_interrupt=True),
                 ) as resp:
                     if resp.status == 200:
                         res = await resp.json()
                         success = res["success"]
                         if success:
+                            logger.info(
+                                f"{res['num_paused_requests']} requests are interrupted "
+                                f"during updateing weights for server {server_index}: {server_url}"
+                            )
                             return
                         logger.warning(
                             f"Update weights failed: {res['message']}. Retrying."
@@ -432,7 +416,7 @@ class GserverManager(Worker):
                         expected_version = (
                             global_sample_cnt // self.config.train_batch_size
                         )
-                        version = max(self._last_param_realloc_step.values())
+                        version = self._last_param_realloc_step
                         reason += (
                             f" and staled: expected version ({expected_version}) = "
                             f"global sample cnt ({global_sample_cnt}) // batch size ({self.config.train_batch_size}), "

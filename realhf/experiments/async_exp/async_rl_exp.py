@@ -308,6 +308,9 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
         model_name = gen_rpc_alloc.rpc.model_name
         train_rpcs = [alloc.rpc for alloc in rpc_allocs if alloc.rpc.is_train()]
         assert all(rpc.n_seqs == train_rpcs[0].n_seqs for rpc in train_rpcs)
+        max_concurrent_rollouts = self.max_concurrent_rollouts
+        if max_concurrent_rollouts is None:
+            max_concurrent_rollouts = train_rpcs[0].n_seqs
         return [
             GserverManager(
                 model_name=model_name,
@@ -316,7 +319,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 schedule_policy=self.schedule_policy,
                 max_head_offpolicyness=self.max_head_offpolicyness,
                 train_batch_size=train_rpcs[0].n_seqs,
-                max_concurrent_rollouts=self.max_concurrent_rollouts,
+                max_concurrent_rollouts=max_concurrent_rollouts,
             )
         ]
 

@@ -87,7 +87,7 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
         job_group_id = str(uuid.uuid4())
     logger.info(f"AReaL Version: {get_full_version_with_dirty_description()}")
     logger.info(f"AReaL Job Group ID: {job_group_id}")
-    logger.info(f"AReaL Job Group Index: {recover_count}")
+    logger.info(f"AReaL Job Group Index (recover count): {recover_count}")
     if recover_count == 0:
         constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     experiment = config_package.make_experiment(args.experiment_name)

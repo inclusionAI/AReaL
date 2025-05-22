@@ -24,6 +24,17 @@ SCATTER_GROUPS = {}
 logger = logging.getLogger("data_manager", "system")
 
 
+def find_minimal_superset(A: List[Set[int]], B: Set[int]) -> Set[int] | None:
+    min_size = float("inf")
+    result = None
+    for S in A:
+        if B.issubset(S):
+            if len(S) < min_size:
+                min_size = len(S)
+                result = S
+    return result
+
+
 class DataManager:
 
     def __init__(
@@ -228,7 +239,20 @@ class DataManager:
     def _run_gather(
         self, step: RedistribStep, data_infos: Dict[Hashable, SequenceSample]
     ):
-        if dist.get_rank() not in step.srcs:
+        # It's possible that some DP rank is not involved.
+        # Create dummpy data to make the gather happy.
+        gather_ranks = find_minimal_superset(
+            [set(k) for k in GATHER_GROUPS.keys()], set(step.srcs)
+        )
+        assert gather_ranks is not None, (
+            set(step.srcs),
+            [set(k) for k in GATHER_GROUPS.keys()],
+        )
+        gather_ranks = sorted(list(gather_ranks))
+
+        pgroup = GATHER_GROUPS[tuple(gather_ranks)]
+
+        if dist.get_rank() not in gather_ranks:
             return
 
         maxlen = 0
@@ -249,36 +273,47 @@ class DataManager:
                 torch.empty(
                     maxlen, device=constants.current_device(), dtype=torch.float32
                 )
-                for _ in range(len(step.srcs))
+                for _ in gather_ranks
             ]
+            is_valid_gather = [i in step.srcs for i in gather_ranks]
         else:
             gather_list = None
 
-        local_gather_idx = step.srcs.index(dist.get_rank())
-        ids = step.ids[local_gather_idx]
-        for i in ids:
-            self.storage[i].to_device(constants.current_device())
-        samples = [self.storage[i] for i in ids]
-        data = torch.cat(
-            [
-                sample.data[key].float().flatten()
-                for sample in samples
-                for key in step.keys
-            ]
-        )
-        data = self._pad_data(data, maxlen)
+        if dist.get_rank() in step.srcs:
+            local_gather_idx = step.srcs.index(dist.get_rank())
+            ids = step.ids[local_gather_idx]
+            for i in ids:
+                self.storage[i].to_device(constants.current_device())
+            samples = [self.storage[i] for i in ids]
+            data = torch.cat(
+                [
+                    sample.data[key].float().flatten()
+                    for sample in samples
+                    for key in step.keys
+                ]
+            )
+            data = self._pad_data(data, maxlen)
+        else:
+            data = torch.empty(
+                maxlen, device=constants.current_device(), dtype=torch.float32
+            )
 
         dist.gather(
             data,
             gather_list,
             dst=step.root,
-            group=GATHER_GROUPS[tuple(sorted(step.srcs))],
+            group=pgroup,
         )
 
         if dist.get_rank() != step.root:
+            del data
             return
 
-        for ids, buf in zip(step.ids, gather_list):
+        cnt = 0
+        for is_valid, buf in zip(is_valid_gather, gather_list):
+            if not is_valid:
+                continue
+            ids = step.ids[cnt]
             offset = 0
             for i in ids:
                 for key in step.keys:
@@ -302,6 +337,9 @@ class DataManager:
                         self.storage[i].update_(s)
                     else:
                         self.storage[i] = s
+            cnt += 1
+        assert cnt == len(step.srcs) == len(step.ids)
+        del data
 
     def _run_scatter(
         self, step: RedistribStep, data_infos: Dict[Hashable, SequenceSample]

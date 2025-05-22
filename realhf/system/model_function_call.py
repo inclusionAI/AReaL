@@ -348,12 +348,7 @@ class ModelFunctionCall:
             if i not in dests:
                 dests[i] = []
 
-        # NOTE: The data loaded from the dataset may be unevenly distributed across DP ranks.
-        # Only bcast works in this case.
-        if rpc.is_src:
-            pattern = "bcast"
-        else:
-            pattern = "gather-scatter"
+        pattern = "gather-scatter"
         data_transfer_plan = self.redistrib_planner.derive_plan(
             dests,
             keys=rpc.input_keys,

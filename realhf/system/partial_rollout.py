@@ -103,9 +103,14 @@ class PartialRolloutManager:
     ):
         from realhf.impl.model.backend.sglang import SGLangAPIClient
 
+        max_new_tokens = min(raw_gconfig.max_new_tokens, self.new_tokens_per_chunk)
+        max_new_tokens = min(
+            max_new_tokens,
+            raw_gconfig.max_new_tokens - len(input_ids) + len(prompt_ids),
+        )
         gconfig = raw_gconfig.new(
             n=1,
-            max_new_tokens=min(raw_gconfig.max_new_tokens, self.new_tokens_per_chunk),
+            max_new_tokens=max_new_tokens,
         )
         assert self.tokenizer.pad_token_id is not None
         assert self.tokenizer.eos_token_id is not None
@@ -220,7 +225,9 @@ class PartialRolloutManager:
                 if len(s.output_logprobs) > 0:
                     prev_logprobs = s.prev_logprobs + s.output_logprobs[0]
                 else:
-                    prev_logprobs = []
+                    prev_logprobs = s.prev_logprobs
+                    if prev_logprobs is None:
+                        prev_logprobs = []
                 await self._issue_generation(
                     server_url,
                     s.qid,

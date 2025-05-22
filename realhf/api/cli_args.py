@@ -179,7 +179,7 @@ class OptimizerConfig:
         default="adam",
         metadata={"help": "Optimizer type", "choices": ["adam", "empty"]},
     )
-    lr: float = field(default=1e-5, metadata={"help": "Learning rate"})
+    lr: float = field(default=2e-5, metadata={"help": "Learning rate"})
     weight_decay: float = field(default=0.05, metadata={"help": "Weight decay"})
     beta1: float = field(default=0.9, metadata={"help": "Adam beta1 parameter"})
     beta2: float = field(default=0.95, metadata={"help": "Adam beta2 parameter"})
@@ -191,14 +191,14 @@ class OptimizerConfig:
         },
     )
     lr_scheduler_type: str = field(
-        default="cosine",
+        default="constant",
         metadata={
             "help": "Learning rate scheduler type",
             "choices": ["linear", "cosine", "constant"],
         },
     )
     warmup_steps_proportion: float = field(
-        default=0.02,
+        default=0.001,
         metadata={
             "help": "Proportion of training steps for warmup",
         },
@@ -307,7 +307,7 @@ class SGLangConfig:
     kv_cache_dtype: str = "auto"
 
     # logging
-    log_level: str = "error"
+    log_level: str = "warning"
     log_level_http: Optional[str] = "warning"
     log_requests: bool = False
     log_requests_level: int = 0
@@ -1012,7 +1012,9 @@ class AsyncRLOptions:
     )
     new_tokens_per_chunk: int = field(
         default=int(1e10),
-        metadata={"help": "The length of chunked generation."},
+        metadata={
+            "help": "The length of chunked generation. Only valid if inference can't be interrupted."
+        },
     )
     max_head_offpolicyness: int = field(
         default=0,
@@ -1025,9 +1027,11 @@ class AsyncRLOptions:
             "help": "Number of rollout workers. None defaults to train world size."
         },
     )
-    max_concurrent_rollouts: int = field(
-        default=1024,
-        metadata={"help": "Max concurrent rollout jobs in each worker."},
+    max_concurrent_rollouts: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Max concurrent rollouts globally. Defaults to train batch size."
+        },
     )
     flush_request_timeout: int = field(
         default=120,

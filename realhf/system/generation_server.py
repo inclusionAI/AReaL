@@ -1,12 +1,22 @@
 import os
 import subprocess
+import sys
 import time
+from pathlib import Path
 
 import requests
 
 from realhf.api.cli_args import SGLangConfig
 from realhf.api.core.system_api import GenerationServer as GenerationServerConfig
-from realhf.base import gpu_utils, logging, name_resolve, names, network, seeding
+from realhf.base import (
+    gpu_utils,
+    logging,
+    name_resolve,
+    names,
+    network,
+    pkg_version,
+    seeding,
+)
 from realhf.base.cluster import spec as cluster_spec
 from realhf.system.worker_base import PollResult, Worker
 
@@ -28,6 +38,32 @@ def launch_server_cmd(command: str, port: int = 30000):
     Launch the server using the given command.
     If no port is specified, a free port is reserved.
     """
+    p = Path(os.path.dirname(__file__))
+    patch_path = str(
+        p.parent.parent
+        / "patch"
+        / "sglang"
+        / f"v{pkg_version.get_version('sglang')}.patch"
+    )
+
+    target_path = ""
+    sglang_meta = subprocess.check_output(
+        "python3 -m pip show sglang", shell=True
+    ).decode("ascii")
+    for line in sglang_meta.split("\n"):
+        line = line.strip()
+        if line.startswith("Editable project location: "):
+            target_path = str(Path(line.split(": ")[1]).parent)
+
+    if target_path:
+        proc = subprocess.Popen(
+            ["git", "apply", patch_path],
+            cwd=target_path,
+            stderr=sys.stdout,
+            stdout=sys.stdout,
+        )
+        proc.wait()
+        logger.info(f"Applied SGLang patch at {target_path}")
     assert port is not None
     full_command = f"{command} --port {port}"
     process = execute_shell_command(full_command)
