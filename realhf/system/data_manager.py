@@ -98,11 +98,12 @@ class DataManager:
                 list(ranks), backend="nccl" if constants.use_cuda() else "gloo"
             )
 
-            scatter_ranks = tuple(sorted(set([ranks[0]] + mw_ranks[dst])))
-            SCATTER_GROUPS[scatter_ranks] = new_or_get_group(
-                list(scatter_ranks),
-                backend="nccl" if constants.use_cuda() else "gloo",
-            )
+            for rank in ranks:
+                scatter_ranks = tuple(sorted(set([rank] + mw_ranks[dst])))
+                SCATTER_GROUPS[scatter_ranks] = new_or_get_group(
+                    list(scatter_ranks),
+                    backend="nccl" if constants.use_cuda() else "gloo",
+                )
 
             # Construct all src-dst pairs, from any src dp rank to any dst dp rank.
             # Note that a dp rank corresponds to multiple parameter shards (TP+PP),
