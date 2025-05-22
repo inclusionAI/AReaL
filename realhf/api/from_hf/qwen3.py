@@ -28,8 +28,8 @@ from .llama import (
     to_llama_state_dict,
 )
 
+TRANSFRMER_QWEN3_CONFIG = transformers.Qwen3Config  # transformers.Qwen3Config
 
-TRANSFRMER_QWEN3_CONFIG = transformers.Qwen3Config # transformers.Qwen3Config
 
 def convert_config_qwen3(
     hf_config: TRANSFRMER_QWEN3_CONFIG,
@@ -39,7 +39,11 @@ def convert_config_qwen3(
         n_kv_heads=hf_config.num_key_value_heads,
         hidden_dim=hf_config.hidden_size,
         n_q_heads=hf_config.num_attention_heads,
-        head_dim=getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads),
+        head_dim=getattr(
+            hf_config,
+            "head_dim",
+            hf_config.hidden_size // hf_config.num_attention_heads,
+        ),
         intermediate_dim=hf_config.intermediate_size,
         vocab_size=hf_config.vocab_size,
         n_positions=hf_config.max_position_embeddings,
@@ -80,7 +84,7 @@ def convert_config_back_qwen3(
         hidden_act=config.activation_function,
         attention_dropout=config.attn_pdrop,
         rope_theta=config.rotary_base,
-        architectures=["Qwen3ForCausalLM"], # ["Qwen3ForCausalLM"],
+        architectures=["Qwen3ForCausalLM"],  # ["Qwen3ForCausalLM"],
         tie_word_embeddings=config.tied_embedding,
     )
 
@@ -93,65 +97,41 @@ def qwen3_config_maker():
         intermediate_size=TESTING_MODEL_INTERMEDIATE_SIZE,
         num_hidden_layers=TESTING_MODEL_N_LAYERS,
         num_attention_heads=TESTING_MODEL_N_HEADS,
+        head_dim=TESTING_MODEL_HIDDEN_SIZE // TESTING_MODEL_N_HEADS,
         num_key_value_heads=8,
         hidden_act="silu",
         rms_norm_eps=1e-5,
     )
     return convert_config_qwen3(hf_config)
 
+
 def convert_state_dict_qwen3(state_dict: Dict, config: ReaLModelConfig) -> Dict:
+    llama_state_dict = convert_state_dict_llama(state_dict, config)
+    # model.layers.0.self_attn.k_norm.weight -> 1.attn.k_ln.weight
     new_state_dict = {}
-    for k, v in state_dict.items():
-        if k == "model.embed_tokens.weight":
-            new_state_dict["0.wte.weight"] = v
-        elif k == "lm_head.weight":
-            new_state_dict[f"{config.n_layers + 1}.weight"] = v
-        elif k == "model.norm.weight":
-            new_state_dict[f"{config.n_layers}.ln_f.weight"] = v
-        elif "inv_freq" in k:
-            continue
-        else:
-            block_idx = int(k.split(".")[2])
-            name = k.split(".", 3)[3]
-            replace_pairs = [
-                ("self_attn.", "attn."),
-                ("post_attention_layernorm.", "mlp.ln."),
-                ("input_layernorm.", "attn.c_attn.ln."),
-                ("attn.o_proj.", "attn.c_proj."),
-                ("q_proj.", "c_attn.q_attn."),
-                ("k_proj.", "c_attn.k_attn."),
-                ("v_proj.", "c_attn.v_attn."),
-                ("attn.q_norm.", "attn.q_ln."),
-                ("attn.k_norm.", "attn.k_ln."),
-            ]
-            for k1, k2 in replace_pairs:
-                if k1 in name:
-                    name = name.replace(k1, k2)
-            new_state_dict[f"{block_idx + 1}.{name}"] = v
-
-    if use_te_impl():
-        state_dict = new_state_dict
-        new_state_dict = {}
-        te_replace_pairs = [
-            (".mlp.ln.weight", ".mlp.layer_norm_weight"),
-            (".mlp.down_proj.weight", ".mlp.fc2_weight"),
-        ]
-        for k, v in state_dict.items():
-            for k1, k2 in te_replace_pairs:
-                if k1 in k:
-                    k = k.replace(k1, k2)
-            new_state_dict[k] = v
-
-        # fuse gate && up weight
-        for i in range(config.n_layers):
-            gate_w = new_state_dict[f"{i+1}.mlp.gate_proj.weight"]
-            upproj_w = new_state_dict[f"{i+1}.mlp.up_proj.weight"]
-            w = torch.cat([gate_w, upproj_w], dim=0)
-            new_state_dict[f"{i+1}.mlp.fc1_weight"] = w
-            new_state_dict[f"{i+1}.mlp._extra_state"] = None
-            new_state_dict.pop(f"{i+1}.mlp.gate_proj.weight")
-            new_state_dict.pop(f"{i+1}.mlp.up_proj.weight")
+    for k, v in llama_state_dict.items():
+        if "k_norm" in k:
+            k = k.replace("k_norm", "k_ln")
+        if "q_norm" in k:
+            k = k.replace("q_norm", "q_ln")
+        new_state_dict[k] = v
     return new_state_dict
+
+
+def convert_state_dict_back_qwen3(state_dict: Dict, config: ReaLModelConfig) -> Dict:
+    new_sd = to_llama_state_dict(state_dict, config)
+    layer_indices = list(set([int(k.split(".")[0]) for k in state_dict.keys()]))
+    for i in layer_indices:
+        if i == 0 or i == config.n_layers + 1:
+            continue
+        new_sd[f"model.layers.{i - 1}.self_attn.k_norm.weight"] = state_dict[
+            f"{i}.attn.k_ln.weight"
+        ]
+        new_sd[f"model.layers.{i - 1}.self_attn.q_norm.weight"] = state_dict[
+            f"{i}.attn.q_ln.weight"
+        ]
+    return new_sd
+
 
 def qwen3_transformer_block_param_name(config: ReaLModelConfig, idx: int) -> List[str]:
     names = []
@@ -179,14 +159,13 @@ def qwen3_transformer_block_param_name(config: ReaLModelConfig, idx: int) -> Lis
     return names
 
 
-
 register_hf_family(
     name="qwen3",
-    hf_cls_name="Qwen3ForCausalLM", # "Qwen3ForCausalLM"
+    hf_cls_name="Qwen3ForCausalLM",  # "Qwen3ForCausalLM"
     config_from_hf_converter=convert_config_qwen3,
     config_to_hf_converter=convert_config_back_qwen3,
     sd_from_hf_converter=convert_state_dict_qwen3,
-    sd_to_hf_converter=to_llama_state_dict,
+    sd_to_hf_converter=convert_state_dict_back_qwen3,
     embedding_param_names=llama_embedding_layer_names,
     tblock_param_names=qwen3_transformer_block_param_name,
     head_param_names=llama_output_head_param_name,

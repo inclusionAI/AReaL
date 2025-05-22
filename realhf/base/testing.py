@@ -106,9 +106,6 @@ class StandaloneTestingProcess(mp.Process):
                 self.expr_name, self.trial_name, self.rank, backend=self.dist_backend
             )
 
-        # setup some useful constants
-        constants.set_experiment_trial_names(self.expr_name, self.trial_name)
-
         # misc setup
         if constants.use_cuda():
             pynvml.nvmlInit()

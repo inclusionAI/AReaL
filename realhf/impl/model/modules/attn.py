@@ -17,7 +17,7 @@ from realhf.impl.model.utils.functional import (
     torch_attn_func,
 )
 
-from .mlp import LayerNormQKVLinear, GemmaRMSNorm, LlamaRMSNorm
+from .mlp import GemmaRMSNorm, LayerNormQKVLinear, LlamaRMSNorm
 from .rotary import RotaryEmbedding
 
 try:
@@ -69,7 +69,7 @@ class CausalSelfAttentionLayer(nn.Module):
         super().__init__()
         if dtype is None:
             dtype = torch.float16
-        assert hidden_dim % head_dim == 0
+        assert hidden_dim % head_dim == 0, (hidden_dim, head_dim)
         self.c_attn = LayerNormQKVLinear(
             input_dim=hidden_dim,
             head_dim=head_dim,
@@ -111,11 +111,11 @@ class CausalSelfAttentionLayer(nn.Module):
             elif layer_norm_type == "gemma":
                 layer_norm_fn = GemmaRMSNorm
             self.q_ln = layer_norm_fn(
-                    head_dim, eps=layer_norm_epsilon, dtype=dtype, device=device
-                )
+                head_dim, eps=layer_norm_epsilon, dtype=dtype, device=device
+            )
             self.k_ln = layer_norm_fn(
-                    head_dim, eps=layer_norm_epsilon, dtype=dtype, device=device
-                )
+                head_dim, eps=layer_norm_epsilon, dtype=dtype, device=device
+            )
 
         self.resid_dropout = nn.Dropout(resid_pdrop)
 
