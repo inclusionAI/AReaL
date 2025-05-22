@@ -83,7 +83,7 @@ async def async_invoke_function(
     url: str,
     timeout: aiohttp.ClientTimeout,
     payload: Dict[str, Any] = None,
-    max_retries: int = 100,
+    max_retries: int = 2,
     initial_retry_interval: float = 0.5,
     max_retry_interval: float = 10.0,
 ):
@@ -137,7 +137,7 @@ async def async_invoke_function(
             )
 
         retries += 1
-        if retries > max_retries:
+        if retries >= max_retries:
             return {
                 "uid": payload.get("uid", ""),
                 "success": False,
