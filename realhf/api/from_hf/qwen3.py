@@ -2,14 +2,11 @@
 # Copyright 2024 Wei Fu & Zhiyu Mei
 # Licensed under the Apache License, Version 2.0 (the "License").
 
-import os
 from typing import *
 
-import torch
-import transformers
+from transformers.configuration_utils import PretrainedConfig
 
 from realhf.api.core.model_api import ReaLModelConfig, register_hf_family
-from realhf.base.constants import use_te_impl
 from realhf.base.testing import (
     TESTING_MODEL_HEAD_DIM,
     TESTING_MODEL_HIDDEN_SIZE,
@@ -24,15 +21,97 @@ from .llama import (
     convert_state_dict_llama,
     llama_embedding_layer_names,
     llama_output_head_param_name,
-    llama_transformer_block_param_name,
     to_llama_state_dict,
 )
 
-TRANSFRMER_QWEN3_CONFIG = transformers.Qwen3Config  # transformers.Qwen3Config
+
+class Qwen3Config(PretrainedConfig):
+
+    model_type = "qwen3"
+    keys_to_ignore_at_inference = ["past_key_values"]
+
+    # Default tensor parallel plan for base model `Qwen3`
+    base_model_tp_plan = {
+        "layers.*.self_attn.q_proj": "colwise",
+        "layers.*.self_attn.k_proj": "colwise",
+        "layers.*.self_attn.v_proj": "colwise",
+        "layers.*.self_attn.o_proj": "rowwise",
+        "layers.*.mlp.gate_proj": "colwise",
+        "layers.*.mlp.up_proj": "colwise",
+        "layers.*.mlp.down_proj": "rowwise",
+    }
+    base_model_pp_plan = {
+        "embed_tokens": (["input_ids"], ["inputs_embeds"]),
+        "layers": (["hidden_states", "attention_mask"], ["hidden_states"]),
+        "norm": (["hidden_states"], ["hidden_states"]),
+    }
+
+    def __init__(
+        self,
+        vocab_size=151936,
+        hidden_size=4096,
+        intermediate_size=22016,
+        num_hidden_layers=32,
+        num_attention_heads=32,
+        num_key_value_heads=32,
+        head_dim=128,
+        hidden_act="silu",
+        max_position_embeddings=32768,
+        initializer_range=0.02,
+        rms_norm_eps=1e-6,
+        use_cache=True,
+        tie_word_embeddings=False,
+        rope_theta=10000.0,
+        rope_scaling=None,
+        attention_bias=False,
+        use_sliding_window=False,
+        sliding_window=4096,
+        max_window_layers=28,
+        attention_dropout=0.0,
+        **kwargs,
+    ):
+        from transformers.modeling_rope_utils import rope_config_validation
+
+        self.vocab_size = vocab_size
+        self.max_position_embeddings = max_position_embeddings
+        self.hidden_size = hidden_size
+        self.intermediate_size = intermediate_size
+        self.num_hidden_layers = num_hidden_layers
+        self.num_attention_heads = num_attention_heads
+        self.use_sliding_window = use_sliding_window
+        self.sliding_window = (
+            sliding_window  # we check `use_sliding_window` in the modeling code
+        )
+        self.max_window_layers = max_window_layers
+
+        # for backward compatibility
+        if num_key_value_heads is None:
+            num_key_value_heads = num_attention_heads
+
+        self.num_key_value_heads = num_key_value_heads
+        self.head_dim = head_dim
+        self.hidden_act = hidden_act
+        self.initializer_range = initializer_range
+        self.rms_norm_eps = rms_norm_eps
+        self.use_cache = use_cache
+        self.rope_theta = rope_theta
+        self.rope_scaling = rope_scaling
+        self.attention_bias = attention_bias
+        self.attention_dropout = attention_dropout
+        # Validate the correctness of rotary position embeddings parameters
+        # BC: if there is a 'type' field, move it to 'rope_type'.
+        if self.rope_scaling is not None and "type" in self.rope_scaling:
+            self.rope_scaling["rope_type"] = self.rope_scaling["type"]
+        rope_config_validation(self)
+
+        super().__init__(
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs,
+        )
 
 
 def convert_config_qwen3(
-    hf_config: TRANSFRMER_QWEN3_CONFIG,
+    hf_config: Qwen3Config,
 ) -> ReaLModelConfig:
     return ReaLModelConfig(
         n_layers=hf_config.num_hidden_layers,
@@ -70,8 +149,8 @@ def convert_config_qwen3(
 
 def convert_config_back_qwen3(
     config: ReaLModelConfig,
-) -> TRANSFRMER_QWEN3_CONFIG:
-    return TRANSFRMER_QWEN3_CONFIG(
+) -> Qwen3Config:
+    return Qwen3Config(
         vocab_size=config.vocab_size,
         hidden_size=config.hidden_dim,
         intermediate_size=config.intermediate_dim,
@@ -90,14 +169,14 @@ def convert_config_back_qwen3(
 
 
 def qwen3_config_maker():
-    hf_config = TRANSFRMER_QWEN3_CONFIG(
+    hf_config = Qwen3Config(
         vocab_size=TESTING_MODEL_VOCAB_SIZE,
         max_position_embeddings=TESTING_MODEL_N_POSITIONS,
         hidden_size=TESTING_MODEL_HIDDEN_SIZE,
         intermediate_size=TESTING_MODEL_INTERMEDIATE_SIZE,
         num_hidden_layers=TESTING_MODEL_N_LAYERS,
         num_attention_heads=TESTING_MODEL_N_HEADS,
-        head_dim=TESTING_MODEL_HIDDEN_SIZE // TESTING_MODEL_N_HEADS,
+        head_dim=TESTING_MODEL_HEAD_DIM,
         num_key_value_heads=8,
         hidden_act="silu",
         rms_norm_eps=1e-5,
