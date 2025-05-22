@@ -145,7 +145,7 @@ def _save_then_load(
 
 @pytest.mark.parametrize(
     "model_family_name",
-    ["qwen3"],
+    ["gemma", "gpt2", "llama", "qwen2", "mistral", "mixtral", "qwen3"],
 )
 @pytest.mark.parametrize("is_critic", [True, False])
 @pytest.mark.parametrize("init_critic_from_actor", [True, False])
