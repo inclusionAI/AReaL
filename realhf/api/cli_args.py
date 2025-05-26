@@ -1033,7 +1033,7 @@ class AsyncRLOptions:
         },
     )
     flush_request_timeout: int = field(
-        default=120,
+        default=300,
         metadata={"help": "The timeout of flushing requests upon weight update."},
     )
 

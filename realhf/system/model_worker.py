@@ -465,6 +465,7 @@ class ModelWorker(worker_base.Worker):
                 # because we may want to copy huggingface configurations from it, and
                 # th next recover save will remove this symlink.
                 dst_path = Path(model_path).parent / "_tmp_ckpt"
+                shutil.rmtree(dst_path, ignore_errors=True)
                 shutil.copytree(model_path, dst_path)
                 os.unlink(model_path)
                 os.system(f"mv {str(dst_path)} {model_path}")
