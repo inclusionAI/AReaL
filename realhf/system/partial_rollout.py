@@ -80,7 +80,7 @@ class PartialRolloutManager:
             async with session.post(
                 f"http://{self.gserver_manager_addr}/schedule_request",
                 json=asdict(req_meta),
-                timeout=ClientTimeout(total=self.timeout, sock_connect=30),
+                timeout=ClientTimeout(total=self.timeout, sock_connect=self.timeout),
             ) as response:
                 response.raise_for_status()
                 res = await response.json()
