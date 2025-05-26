@@ -277,6 +277,7 @@ class RolloutWorker(AsyncWorker):
 
             self.rollout_stat.running -= 1
 
+            accepted = False
             if len(trajs) > 0:
                 accepted = True
                 self.push_stream.push([traj.as_json_compatible() for traj in trajs])
