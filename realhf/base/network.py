@@ -42,8 +42,8 @@ def find_free_port(
             fcntl.flock(fd, fcntl.LOCK_EX)
             try:
                 with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
-                    s.bind(("", 0))
                     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    s.bind(("", 0))
                     port = s.getsockname()[1]
                     if low <= port <= high and port not in exclude_ports:
                         name_resolve.add_subentry(ports_name, str(port))
