@@ -19,8 +19,7 @@ import realhf.api.core.dfg as dfg
 import realhf.api.core.system_api as config_pkg
 import realhf.base.recover as recover
 import realhf.system.request_reply_stream as request_reply_stream
-from realhf import ModelShardID
-from realhf.api.core.config import ModelName
+from realhf.api.core.config import ModelName, ModelShardID
 from realhf.api.core.model_api import ReaLModelConfig
 from realhf.base import constants, logging, stats_tracker, topology
 from realhf.system.buffer import AsyncIOSequenceBuffer

@@ -181,10 +181,11 @@ class GserverManager(Worker):
                         res = await resp.json()
                         success = res["success"]
                         if success:
-                            logger.info(
-                                f"{res['num_paused_requests']} requests are interrupted "
-                                f"during updateing weights for server {server_index}: {server_url}"
-                            )
+                            if "num_paused_requests" in res:
+                                logger.info(
+                                    f"{res['num_paused_requests']} requests are interrupted "
+                                    f"during updateing weights for server {server_index}: {server_url}"
+                                )
                             return
                         logger.warning(
                             f"Update weights failed: {res['message']}. Retrying."
@@ -241,14 +242,16 @@ class GserverManager(Worker):
                 loop.run_until_complete(asyncio.gather(*tasks))
                 logger.info(f"Generaion server updated weights from: {new_param_path}")
 
-        tasks = [
-            self._get_server_token_usage(server_url) for server_url in self.server_urls
-        ]
-        loop = asyncio.get_event_loop()
-        token_usages = loop.run_until_complete(asyncio.gather(*tasks))
-        with self.threading_lock:
-            for server_url, token_usage in zip(self.server_urls, token_usages):
-                self._server_token_usage[server_url] = token_usage
+        if self.schedule_policy == "least_token_usage":
+            tasks = [
+                self._get_server_token_usage(server_url)
+                for server_url in self.server_urls
+            ]
+            loop = asyncio.get_event_loop()
+            token_usages = loop.run_until_complete(asyncio.gather(*tasks))
+            with self.threading_lock:
+                for server_url, token_usage in zip(self.server_urls, token_usages):
+                    self._server_token_usage[server_url] = token_usage
 
         if time.time() - self._last_thpt_output_time > 30:
             interval = time.time() - self._last_thpt_output_time

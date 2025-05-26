@@ -8,7 +8,7 @@ import json
 import os
 import sys
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import OmegaConf
 
 PROLOGUE_FLAG_NAME = "--config"
 PROLOGUE_FLAG_VAR_NAME = "config"

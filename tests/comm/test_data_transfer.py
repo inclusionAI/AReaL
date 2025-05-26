@@ -253,15 +253,11 @@ def _test_data_transfer(
     print("success")
 
 
-parallelism = [(1, 4, 2), (1, 8, 1)]
+parallelism = [(4, 1, 1), (2, 2, 2), (1, 8, 1), (3, 2, 1), (2, 1, 2), (1, 2, 2)]
 
 
-@pytest.mark.skipif(
-    os.cpu_count() < 32 or testing.get_free_mem_gb() < 50,
-    reason="The parameter reallocation test requires at least 32 CPUs and 50GB memory.",
-)
-@pytest.mark.parametrize("from_pp_dp_tp", [(1, 4, 2)])
-@pytest.mark.parametrize("to_pp_dp_tp", [(1, 8, 1)])
+@pytest.mark.parametrize("from_pp_dp_tp", parallelism)
+@pytest.mark.parametrize("to_pp_dp_tp", parallelism)
 @pytest.mark.distributed
 def test_data_transfer(
     tmp_path,

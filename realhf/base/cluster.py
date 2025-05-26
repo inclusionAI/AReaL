@@ -47,10 +47,10 @@ class ClusterSpec:
         self.__gpu_image = spec.get("gpu_image", None)
         self.__gpu_infer_image = spec.get("gpu_infer_image", self.__gpu_image)
         self.__cpu_image = spec.get("cpu_image", None)
-        self.__node_name_prefix = spec.get("node_name_prefix", "NODE")
+        self.__node_name_prefix = spec.get("node_name_prefix", "slurmd-")
         # self.__n_nodes decides number of digits in slurm hostnames
-        # e.g. if __n_nodes = 32, then the hostnames will be NODE{:02d}
-        #      if __n_nodes = 128, then the hostnames will be NODE{:03d}
+        # e.g. if __n_nodes = 32, then the hostnames will be slurmd-{:02d}
+        #      if __n_nodes = 128, then the hostnames will be slurmd-{:03d}
         self.__n_nodes = int(spec.get("n_nodes", 32))
         self.__n_gpus_per_node = int(spec.get("n_gpus_per_node", 8))
         assert isinstance(self.__n_nodes, int)

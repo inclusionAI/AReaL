@@ -55,7 +55,7 @@ def check_sequences_consistency(
     )
 
 
-def test_fn(
+def _fn(
     rank: int,
     world_size: int,
     path: str,
@@ -194,12 +194,12 @@ def test_fn(
     dist.destroy_process_group()
 
 
-def test_sglang_consistency(tp: int, dp: int, path: str, model_family_name: str):
+def check_sglang_consistency(tp: int, dp: int, path: str, model_family_name: str):
     mp.set_start_method("spawn", force=True)
     world_size = dp * tp
     procs = [
         mp.Process(
-            target=test_fn,
+            target=_fn,
             args=(
                 i,
                 world_size,
@@ -236,7 +236,7 @@ if __name__ == "__main__":
     #     pp=1,
     #     tp=1,
     # )
-    test_sglang_consistency(
+    check_sglang_consistency(
         tp=2,
         dp=2,
         path=path,

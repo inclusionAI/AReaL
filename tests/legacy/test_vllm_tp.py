@@ -59,7 +59,7 @@ def check_sequences_consistency(
     )
 
 
-def test_fn(
+def _fn(
     rank: int,
     world_size: int,
     path: str,
@@ -203,12 +203,12 @@ def test_fn(
         print("success")
 
 
-def test_vllm_tp_consistency(tp: int, dp: int, path: str, model_family_name: str):
+def check_vllm_tp_consistency(tp: int, dp: int, path: str, model_family_name: str):
     mp.set_start_method("spawn", force=True)
     world_size = dp * tp
     procs = [
         mp.Process(
-            target=test_fn,
+            target=_fn,
             args=(
                 i,
                 world_size,
@@ -236,7 +236,7 @@ def test_vllm_tp_consistency(tp: int, dp: int, path: str, model_family_name: str
 if __name__ == "__main__":
     # for model_family_name in _available_model_classes:
     #     path = MODEL_CLASS_TO_PATH[model_family_name]
-    test_vllm_tp_consistency(
+    check_vllm_tp_consistency(
         tp=2,
         dp=2,
         path="/storage/models/Qwen__Qwen2-1.5B-Instruct/",
