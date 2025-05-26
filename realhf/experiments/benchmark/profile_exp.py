@@ -37,21 +37,21 @@ def default_parallel_config(n_gpus: int) -> List[Dict[str, Any]]:
     x = [
         {
             "data_parallel_size": dp,
-            "model_parallel_size": mp,
+            "tensor_parallel_size": tp,
             "pipeline_parallel_size": pp,
-            "use_sequence_parallel": mp > 1,
+            "use_sequence_parallel": tp > 1,
         }
-        for dp, mp, pp in factors
+        for dp, tp, pp in factors
     ]
     x += [
         {
             "data_parallel_size": dp,
-            "model_parallel_size": mp,
+            "tensor_parallel_size": tp,
             "pipeline_parallel_size": pp,
             "use_sequence_parallel": False,
         }
-        for dp, mp, pp in factors
-        if mp > 1
+        for dp, tp, pp in factors
+        if tp > 1
     ]
     return x
 
@@ -122,7 +122,7 @@ class ProfileConfig(CommonExperimentConfig):
                 k
                 in [
                     "data_parallel_size",
-                    "model_parallel_size",
+                    "tensor_parallel_size",
                     "pipeline_parallel_size",
                     "use_sequence_parallel",
                 ]
@@ -130,7 +130,7 @@ class ProfileConfig(CommonExperimentConfig):
             ), pcfg.keys()
             assert (self.n_nodes * self.n_gpus_per_node) == (
                 pcfg.get("data_parallel_size", 1)
-                * pcfg.get("model_parallel_size", 1)
+                * pcfg.get("tensor_parallel_size", 1)
                 * pcfg.get("pipeline_parallel_size", 1)
             )
 
@@ -246,8 +246,6 @@ class ProfileConfig(CommonExperimentConfig):
                     model_name="default",
                     input_keys=["packed_prompts"],
                     log_return_value=False,
-                    model_type=self._tmp_model.type,
-                    model_path=self._tmp_model.path,
                     balanced_dp=True,
                 )
 

@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import dataclasses
-from typing import Dict, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 import torch
 import torch.distributed as dist
@@ -86,6 +86,7 @@ def _ppo_actor_loss_from_model_outputs(
         eps_clip=eps_clip,
         loss_mask=ppo_loss_mask,
         c_clip=c_clip,
+        proximal_logprobs=input_.data.get("prox_logp", None),
     )
 
     # Log training statistics
@@ -106,13 +107,20 @@ def _ppo_actor_loss_from_model_outputs(
         dual_clip_ratio=ppo_stat["dual_clip_mask"].float(),
         denominator="n_valid_tokens",
     )
+    if "behave_imp_weight" in ppo_stat:
+        stats_tracker.denominator(unclipped_behave_tokens=ppo_stat["behave_mask"])
+        stats_tracker.stat(
+            behave_imp_weight=ppo_stat["behave_imp_weight"],
+            behave_approx_kl=ppo_stat["behave_approx_kl"],
+            denominator="unclipped_behave_tokens",
+        )
     vocab_min_logits = logits.detach().min(-1).values.float()
     vocab_max_logits = logits.detach().max(-1).values.float()
     dist.all_reduce(
-        vocab_min_logits, group=constants.model_parallel_group(), op=dist.ReduceOp.MIN
+        vocab_min_logits, group=constants.tensor_parallel_group(), op=dist.ReduceOp.MIN
     )
     dist.all_reduce(
-        vocab_max_logits, group=constants.model_parallel_group(), op=dist.ReduceOp.MAX
+        vocab_max_logits, group=constants.tensor_parallel_group(), op=dist.ReduceOp.MAX
     )
     stats_tracker.stat(
         vocab_min_logits=vocab_min_logits,
@@ -505,7 +513,7 @@ class PPOActorInterface(model_api.ModelInterface):
         model: model_api.Model,
         input_: SequenceSample,
         mb_spec: MicroBatchSpec,
-    ) -> Dict:
+    ) -> Dict | List[Dict]:
         module = model.module
         # We call module.eval() because dropout causes the computation of incorrect of log probs.
         module.eval()
@@ -656,15 +664,20 @@ class PPOActorInterface(model_api.ModelInterface):
                 advantages = torch.cat(adv_list, 0)
 
         # Prepare data to be splitted into mini-batches.
+        flat_data = dict(
+            advantages=advantages,
+            old_logp=old_logp,
+            ppo_loss_mask=loss_mask,
+            packed_input_ids=input_.data["packed_input_ids"],
+            kl_rewards=kl_rewards,
+        )
+        use_prox_logp = "proximal_logprobs" in input_.data
+        if use_prox_logp:
+            flat_data["prox_logp"] = input_.data["proximal_logprobs"].float()
+
         flat_input = SequenceSample.from_default(
             ids=list(range(input_.bs * self.group_size)),
-            data=dict(
-                advantages=advantages,
-                old_logp=old_logp,
-                ppo_loss_mask=loss_mask,
-                packed_input_ids=input_.data["packed_input_ids"],
-                kl_rewards=kl_rewards,
-            ),
+            data=flat_data,
             seqlens=[int(x) for x in input_lens.cpu().numpy().tolist()],
         )
 
@@ -672,6 +685,7 @@ class PPOActorInterface(model_api.ModelInterface):
             dense_reward_score = dense_reward_score[shift_one_indices]
 
         ### Logging code starts. ###
+        all_stats = []
         with stats_tracker.scope("ppo_actor"):
             assert (
                 task_ids.shape == reward_score.shape
@@ -682,12 +696,13 @@ class PPOActorInterface(model_api.ModelInterface):
                 for idx, task in enumerate(RL_TASKS)
             }
 
-            stats_tracker.denominator(
+            global_denominators = dict(
                 n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
                 n_tokens=torch.ones_like(prompt_mask, dtype=torch.bool),
                 n_valid_tokens=loss_mask.bool(),
                 **task_denominators,
             )
+            stats_tracker.denominator(**global_denominators)
 
             for task in RL_TASKS:
                 stats_tracker.stat(
@@ -721,6 +736,22 @@ class PPOActorInterface(model_api.ModelInterface):
                 **seq_stats,
                 denominator="n_seqs",
             )
+            scalars = dict(
+                disable_value=self.disable_value,
+                mask_no_eos_with_zero=self.mask_no_eos_with_zero,
+                eps_clip=self.eps_clip,
+                use_prox_logp=use_prox_logp,
+            )
+            if self.c_clip is not None:
+                scalars["c_clip"] = self.c_clip
+                scalars["use_dual_clip"] = 1
+            else:
+                scalars["use_dual_clip"] = 0
+            stats_tracker.scalar(**scalars)
+
+            global_stats = stats_tracker.export()
+            for k in global_denominators:
+                global_stats.pop(f"ppo_actor/{k}")
 
             # Run mini-batched PPO training!
             def _loss_fn(logits, input_):
@@ -736,43 +767,37 @@ class PPOActorInterface(model_api.ModelInterface):
                 )
 
             for reuse in range(self.sample_reuse):
-                with stats_tracker.scope(f"reuse{reuse}"):
-                    # NOTE: We split PPO minibatches in terms of #seqs instead of #tokens.
-                    flat_input = SequenceSample.shuffled(flat_input)
-                    bs = flat_input.bs
-                    sizes = [0 for _ in range(self.n_minibatches)]
-                    for idx in range(bs):
-                        sizes[idx % self.n_minibatches] += 1
-                    spec = SequenceSplitSpec(sizes=sizes)
-                    datas = flat_input.split_with_spec(spec)
-                    logger.info(
-                        f"PPO minibatch split (size {self.n_minibatches}): "
-                        f"#seqs: {[s.bs for s in datas]}, "
-                        f"#tokens: {[sum([sum(lens) for lens in s.seqlens[s._get_split_key()]]) for s in datas]}"
+                # NOTE: We split PPO minibatches in terms of #seqs instead of #tokens.
+                flat_input = SequenceSample.shuffled(flat_input)
+                bs = flat_input.bs
+                sizes = [0 for _ in range(self.n_minibatches)]
+                for idx in range(bs):
+                    sizes[idx % self.n_minibatches] += 1
+                spec = SequenceSplitSpec(sizes=sizes)
+                datas = flat_input.split_with_spec(spec)
+                logger.info(
+                    f"PPO minibatch split (size {self.n_minibatches}): "
+                    f"#seqs: {[s.bs for s in datas]}, "
+                    f"#tokens: {[sum([sum(lens) for lens in s.seqlens[s._get_split_key()]]) for s in datas]}"
+                )
+                for mb_i, data in enumerate(datas):
+                    train_stat = module.train_batch(
+                        input_=data,
+                        mb_spec=mb_spec,
+                        version_steps=model.version.global_step,
+                        loss_fn=_loss_fn,
+                        loss_weight_fn=lambda x: x.data[
+                            "ppo_loss_mask"
+                        ].count_nonzero(),
+                        token_normalize_scope=self.token_normalize_scope,
                     )
-                    for mb_i, data in enumerate(datas):
-                        with stats_tracker.scope(f"mb{mb_i}"):
-                            train_stat = module.train_batch(
-                                input_=data,
-                                mb_spec=mb_spec,
-                                version_steps=model.version.global_step,
-                                loss_fn=_loss_fn,
-                                loss_weight_fn=lambda x: x.data[
-                                    "ppo_loss_mask"
-                                ].count_nonzero(),
-                                token_normalize_scope=self.token_normalize_scope,
-                            )
-                            stats_tracker.scalar(**train_stat)
+                    stats_tracker.scalar(**train_stat)
+                    all_stats.append(stats_tracker.export())
 
-            stats_tracker.scalar(
-                disable_value=self.disable_value,
-                mask_no_eos_with_zero=self.mask_no_eos_with_zero,
-                c_clip=self.c_clip if self.c_clip is not None else float("nan"),
-                eps_clip=self.eps_clip,
-            )
         model.inc_version()
+        all_stats[0].update(global_stats)
 
-        return stats_tracker.export()
+        return all_stats
 
     # Mock methods for profiling only.
     def _mock_inference(
@@ -1033,7 +1058,7 @@ class PPOCriticInterface(model_api.ModelInterface):
         model: model_api.Model,
         input_: SequenceSample,
         mb_spec: MicroBatchSpec,
-    ) -> Dict:
+    ) -> Dict | List[Dict]:
         assert model.module.module.config.is_critic
 
         if self.disable_value:

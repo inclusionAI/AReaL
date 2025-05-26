@@ -44,7 +44,6 @@ from realhf.api.quickstart.device_mesh import (
 )
 from realhf.base.cluster import spec as cluster_spec
 from realhf.experiments.common.check import (
-    check_is_realhf_native_model_interface,
     check_valid_model_and_path,
     check_valid_optimizer,
     check_valid_parallel_batch_size,
@@ -61,7 +60,6 @@ from realhf.experiments.common.utils import (
     resolve_replica_ids,
     resolve_rpc_hooks,
 )
-from realhf.search_engine.search import search_rpc_allocations
 
 # Register all HF models
 import realhf.api.from_hf  # isort:skip
@@ -145,10 +143,6 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
         return None
 
     @property
-    def search_kwargs(self) -> Dict[str, Any]:
-        return {}
-
-    @property
     def global_device_mesh(self) -> DeviceMesh:
         return DeviceMesh(
             n_nodes=self.n_nodes,
@@ -160,20 +154,6 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
         raise NotImplementedError(
             f"_heuristic_rpc_allocation is not implemented in {self.__class__}"
         )
-
-    def _search(self):
-        # called in both api.main and controller
-        gradient_checkpointing = any(
-            model.gradient_checkpointing for model in self.models.values()
-        )
-        rpc_allocs: List[RPCAllocation] = search_rpc_allocations(
-            device_mesh=self.global_device_mesh,
-            rpcs=list(self.rpcs.values()),
-            gradient_checkpointing=gradient_checkpointing,
-            use_cache=self.allocation_use_cache,
-            **self.search_kwargs,
-        )
-        return rpc_allocs
 
     def scheduling_setup(self) -> ExperimentScheduling:
         """The resourced occupied by each worker.
@@ -221,24 +201,11 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
         self._check_legal_allocation_options()
 
         rpcs = self.rpcs
-        if self.allocation_mode == "search":
-            # assert self.mode == "slurm"
-            # assumes gradient checkpointing for all training RPCs if one is enabled
-            # for the simplicity of search configurations
-            rpc_allocs = self._search()
-            for rpc_alloc in rpc_allocs:
-                assert isinstance(rpc_alloc.rpc, str)
-                for rpc in rpcs.values():
-                    if rpc.name == rpc_alloc.rpc:
-                        rpc_alloc.rpc = rpc
-                        break
-                else:
-                    raise ValueError(f"RPC {rpc_alloc.rpc} not found in rpcs.")
-        elif self._allocation_mode.is_decoupled():
+        if self._allocation_mode.is_decoupled():
             paras = self._allocation_mode.parallel_strat
 
-            gdp, gpp, gmp = paras["gen"]["d"], paras["gen"]["p"], paras["gen"]["m"]
-            gen_world_size = gdp * gpp * gmp
+            gdp, gpp, gtp = paras["gen"]["d"], paras["gen"]["p"], paras["gen"]["m"]
+            gen_world_size = gdp * gpp * gtp
             assert (
                 gen_world_size < self.n_gpus_per_node
                 or gen_world_size % self.n_gpus_per_node == 0
@@ -268,7 +235,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                         parallel=ParallelismConfig(
                             data_parallel_size=gdp,
                             pipeline_parallel_size=gpp,
-                            model_parallel_size=gmp,
+                            tensor_parallel_size=gtp,
                             use_sequence_parallel=False,
                         ),
                     )
@@ -276,7 +243,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                 else:
                     rpc_name = rpc.name
                     if rpc_name in paras:
-                        dp, pp, mp = (
+                        dp, pp, tp = (
                             paras[rpc_name]["d"],
                             paras[rpc_name]["p"],
                             paras[rpc_name]["m"],
@@ -287,9 +254,9 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                                 f"RPC {rpc_name} parallel strategy not given, "
                                 "expect a `*` to specify the default parallel strategy."
                             )
-                        dp, pp, mp = paras["*"]["d"], paras["*"]["p"], paras["*"]["m"]
+                        dp, pp, tp = paras["*"]["d"], paras["*"]["p"], paras["*"]["m"]
                     if (
-                        dp * pp * mp + gdp * gpp * gmp
+                        dp * pp * tp + gdp * gpp * gtp
                         != self.n_nodes * self.n_gpus_per_node
                     ):
                         raise ValueError(
@@ -297,7 +264,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                             "does not equal to the number of gpus. "
                             "Note that the device mesh of vLLM/SGLang should be disjoint from the device mesh of other MFCs, "
                             "so their summation should be equal to the total number of gpus. "
-                            f"dp={dp}, pp={pp}, mp={mp}, gen.dp={gdp}, gen.pp={gpp}, gen.mp={gmp}, "
+                            f"dp={dp}, pp={pp}, mp={tp}, gen.dp={gdp}, gen.pp={gpp}, gen.mp={gtp}, "
                             f"n_nodes={self.n_nodes}, n_gpus_per_node={self.n_gpus_per_node}"
                         )
                     alloc = RPCAllocation(
@@ -306,10 +273,10 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                         parallel=ParallelismConfig(
                             data_parallel_size=dp,
                             pipeline_parallel_size=pp,
-                            model_parallel_size=mp,
+                            tensor_parallel_size=tp,
                             use_sequence_parallel=(
                                 rpc.interface_type == ModelInterfaceType.TRAIN_STEP
-                                and mp > 1
+                                and tp > 1
                             ),
                         ),
                     )
@@ -323,7 +290,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
             rpc_allocs = []
             for rpc_name, rpc in self.rpcs.items():
                 if rpc_name in paras:
-                    dp, pp, mp = (
+                    dp, pp, tp = (
                         paras[rpc_name]["d"],
                         paras[rpc_name]["p"],
                         paras[rpc_name]["m"],
@@ -334,18 +301,18 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                             f"RPC {rpc_name} parallel strategy not given, "
                             "expect a `*` to specify the default parallel strategy."
                         )
-                    dp, pp, mp = paras["*"]["d"], paras["*"]["p"], paras["*"]["m"]
-                assert dp * pp * mp == self.n_nodes * self.n_gpus_per_node
+                    dp, pp, tp = paras["*"]["d"], paras["*"]["p"], paras["*"]["m"]
+                assert dp * pp * tp == self.n_nodes * self.n_gpus_per_node
                 alloc = RPCAllocation(
                     rpc=rpc,
                     device_mesh=self.global_device_mesh,
                     parallel=ParallelismConfig(
                         data_parallel_size=dp,
                         pipeline_parallel_size=pp,
-                        model_parallel_size=mp,
+                        tensor_parallel_size=tp,
                         use_sequence_parallel=(
                             rpc.interface_type == ModelInterfaceType.TRAIN_STEP
-                            and mp > 1
+                            and tp > 1
                         ),
                     ),
                 )
@@ -455,7 +422,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                             topo=topo,
                             dp_rank=topo.get_coord(shard_idx).data,
                             pp_rank=topo.get_coord(shard_idx).pipe,
-                            mp_rank=topo.get_coord(shard_idx).model,
+                            tp_rank=topo.get_coord(shard_idx).tensor,
                         ),
                         model=ModelAbstraction(
                             "tokenizer", args=dict(tokenizer_path=model_cfg.path)
@@ -464,7 +431,6 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                             gen_backend_name,
                             args=dict(
                                 model_path=model_cfg.path,
-                                dtype="bfloat16" if model_cfg.bf16 else "float16",
                                 **dict_args,
                             ),
                         ),
@@ -503,16 +469,17 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                     "config_from_hf_converter"
                 ](hf_config)
                 if (
-                    model_config.n_kv_heads % rpc_alloc.parallel.model_parallel_size
+                    model_config.n_kv_heads % rpc_alloc.parallel.tensor_parallel_size
                     != 0
                 ) or (
-                    model_config.n_q_heads % rpc_alloc.parallel.model_parallel_size != 0
+                    model_config.n_q_heads % rpc_alloc.parallel.tensor_parallel_size
+                    != 0
                 ):
                     raise ValueError(
                         f"The number of KV heads {model_config.n_kv_heads} or "
                         f"Q heads {model_config.n_q_heads} is not"
                         f" divisible by the configured TP size "
-                        f"({rpc_alloc.parallel.model_parallel_size}). "
+                        f"({rpc_alloc.parallel.tensor_parallel_size}). "
                         f"Please decrease TP size."
                     )
                 mapping = rpc_alloc.device_mesh.mapping
@@ -572,7 +539,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                                 topo=topo,
                                 dp_rank=topo.get_coord(shard_idx).data,
                                 pp_rank=topo.get_coord(shard_idx).pipe,
-                                mp_rank=topo.get_coord(shard_idx).model,
+                                tp_rank=topo.get_coord(shard_idx).tensor,
                             ),
                             model=model,
                             backend=backend,
@@ -612,12 +579,9 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                 "please setup slurm for distributed runs."
             )
 
-        if self.n_gpus_per_node != 8 and self.allocation_mode in [
-            "search",
-            "heuristic",
-        ]:
+        if self.n_gpus_per_node != 8 and self.allocation_mode == "heuristic":
             raise ValueError(
-                f"Cannot run search or heuristic allocation with "
+                f"Cannot run heuristic allocation with "
                 f"n_gpus_per_node {self.n_gpus_per_node}, "
                 "please set n_gpus_per_node to 8."
             )
@@ -626,13 +590,6 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
             if rpc_name != rpc.name:
                 raise KeyError(
                     f"RPC name {rpc_name} does not match the name in the MFCDef object {rpc.name}."
-                )
-            if not check_is_realhf_native_model_interface(
-                rpc.interface_impl.type_
-            ) and self.allocation_mode in ["search"]:
-                raise ValueError(
-                    f"RPC {rpc.name} interface is not a realhf native implementation. "
-                    f"The search allocation mode are not available."
                 )
             if self.allocation_mode == "manual" and rpc_name not in self.allocations:
                 if rpc_name not in self.allocations:

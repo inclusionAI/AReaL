@@ -62,7 +62,7 @@ def reveal_pg_identity(expr_name, trial_name, worker_index):
     master_group_name = names.distributed_peer(
         expr_name, trial_name, GLOBAL_PROCESS_GROUP_NAME
     )
-    name_resolve.add_subentry(master_group_name, str(worker_index), keepalive_ttl=300)
+    name_resolve.add_subentry(master_group_name, str(worker_index))
 
 
 def isolate_cuda_device(
@@ -100,12 +100,10 @@ def isolate_cuda_device(
             name_resolve_identifier,
         ),
         rank,
-        keepalive_ttl=60,
     )
     name_resolve.add_subentry(
         names.distributed_peer(experiment_name, trial_name, name_resolve_identifier),
         rank,
-        keepalive_ttl=30,
     )
     logger.debug(
         f"Worker type {worker_type} rank {rank} waiting for peers, world size {world_size}..."

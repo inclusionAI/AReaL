@@ -63,7 +63,7 @@ class ModelFunctionCall:
         model_topos: Dict[str, topology.ProcessTopology],
         model_configs: Dict[str, None | ReaLModelConfig],
         ctrl: RPCCorountineControl,
-        buffer: AsyncIOSequenceBuffer,
+        buffers: List[AsyncIOSequenceBuffer],
         redistrib_planner: RedistribPlanner,
         summary_writer: SummaryWriter | None,
     ):
@@ -89,7 +89,7 @@ class ModelFunctionCall:
         )
 
         self.rpc_ctrl = ctrl
-        self.buffer = buffer
+        self.buffers = buffers
         self.redistrib_planner = redistrib_planner
 
         self.summary_writer = summary_writer
@@ -306,7 +306,7 @@ class ModelFunctionCall:
         ).partitions
         return buf_indices, sample, partitions
 
-    async def run_step(self, buf_indices, sample):
+    async def run_step(self, buf_indices, sample, buffer_id: int):
         rpc = self.rpc
         topo = self.model_topos[rpc.model_name]
         ctrl = self.rpc_ctrl
@@ -317,7 +317,7 @@ class ModelFunctionCall:
         ]
 
         dp_head_indices = [
-            topo.get_rank(data=i, pipe=topo.get_dim("pipe") - 1, model=0)
+            topo.get_rank(data=i, pipe=topo.get_dim("pipe") - 1, tensor=0)
             for i in range(self.dp_size)
         ]
 
@@ -348,12 +348,7 @@ class ModelFunctionCall:
             if i not in dests:
                 dests[i] = []
 
-        # NOTE: The data loaded from the dataset may be unevenly distributed across DP ranks.
-        # Only bcast works in this case.
-        if rpc.is_src:
-            pattern = "bcast"
-        else:
-            pattern = "gather-scatter"
+        pattern = "gather-scatter"
         data_transfer_plan = self.redistrib_planner.derive_plan(
             dests,
             keys=rpc.input_keys,
@@ -362,14 +357,14 @@ class ModelFunctionCall:
         blogger.info(f"Data tranfer plan for `{rpc.name}`: {data_transfer_plan}.")
 
         # Update storage tracker for transferred data.
-        if rpc.is_src:
+        if pattern == "bcast":
             # NOTE: since the data we loaded may be unevenly distributed across DP ranks,
             # we should change the owner of the data to the src RPC.
             for i in range(topo.world_size()):
                 h = ModelShardID.from_parallelism_rank(
                     model_name=rpc.model_name, topo=topo, parallelism_rank=i
                 )
-                is_dp_head = h.mp_rank == 0 and h.pp_rank == topo.get_dim("pipe") - 1
+                is_dp_head = h.tp_rank == 0 and h.pp_rank == topo.get_dim("pipe") - 1
                 gpu_id = self.msid2mwid[h]
                 for key in rpc.input_keys:
                     await self.redistrib_planner.storage_tracker.add_data(
@@ -414,13 +409,13 @@ class ModelFunctionCall:
         responses, time_records = list(zip(*[responses[i] for i in dp_head_indices]))
 
         # If the returned data is a SequenceSample, it is the data returned by
-        # model function calls. The data shoulbe be amended into buffer.
+        # model function calls. The data should be amended into buffer.
         # Otherwise, it's the train statistics and should be reduced and logged.
         if isinstance(responses[-1], data_api.SequenceSample):
             # Update storage tracker for generated data.
             for dp_rank, x in enumerate(responses):
                 pp_size = topo.get_dim("pipe")
-                ranks = topo.filter_match(data=dp_rank, pipe=pp_size - 1, model=0)
+                ranks = topo.filter_match(data=dp_rank, pipe=pp_size - 1, tensor=0)
                 for rank in ranks:
                     h = config_pkg.ModelShardID.from_parallelism_rank(
                         model_name=rpc.model_name, topo=topo, parallelism_rank=rank
@@ -434,8 +429,14 @@ class ModelFunctionCall:
                             is_owner=True,
                         )
             res = data_api.SequenceSample.gather(responses)
-        else:
+        elif isinstance(responses[0], dict):
             res = data_api.gather_stat(responses)
+        else:
+            assert isinstance(responses[0], list)
+            res = [
+                data_api.gather_stat([r[i] for r in responses])
+                for i in range(len(responses[0]))
+            ]
 
         if rpc.log_return_value:
             if isinstance(res, dict):
@@ -447,6 +448,17 @@ class ModelFunctionCall:
                     step=ctrl.step_info.global_step,
                     summary_writer=self.summary_writer,
                 )
+            elif isinstance(res, list):
+                for j, r in enumerate(res):
+                    logger.info(
+                        f"RPC name {rpc.name} returns ({j}/{len(res)})\n{data_api.tabulate_stats(r)}"
+                    )
+                    offset = len(res) * ctrl.step_info.global_step
+                    logging.log_wandb_tensorboard(
+                        r,
+                        step=offset + j,
+                        summary_writer=self.summary_writer,
+                    )
             else:
                 logger.info(f"RPC name {rpc.name} returns\n{res}")
 
@@ -456,7 +468,6 @@ class ModelFunctionCall:
         time_stats = stats_tracker.export()
         logging.log_wandb_tensorboard(
             time_stats,
-            step=ctrl.step_info.global_step,
             summary_writer=self.summary_writer,
         )
 
@@ -475,7 +486,7 @@ class ModelFunctionCall:
             await ctrl.train_count.put(1)
         else:
             logger.info(f"Amending RPC {rpc.name} output keys: {res.keys}")
-            await self.buffer.amend_batch(buf_indices, res.unpack())
+            await self.buffers[buffer_id].amend_batch(buf_indices, res.unpack())
 
         # Wait for all side-effect requests to finish.
         # Side-effect or empty requests are required for data transfer
@@ -483,20 +494,20 @@ class ModelFunctionCall:
         # Wait them after the main request to log the oorrect MFC time.
         await self.stream.gather_async(other_req_ids)
 
-    async def run(self):
+    async def run(self, buffer_id: int):
         rpc = self.rpc
         topo = self.model_topos[rpc.model_name]
 
         logger.info(
             f"Running Model RPC, interface_type=#{rpc.interface_type}# "
-            f"(dp,mp,pp) = *({topo.get_dim('data')},{topo.get_dim('model')},{topo.get_dim('pipe')})*"
+            f"(dp,tp,pp) = *({topo.get_dim('data')},{topo.get_dim('tensor')},{topo.get_dim('pipe')})*"
         )
 
         consumed = 0
         while True:
-            buf_indices, sample = await self.buffer.get_batch_for_rpc(rpc)
+            buf_indices, sample = await self.buffers[buffer_id].get_batch_for_rpc(rpc)
 
-            await self.run_step(buf_indices, sample)
+            await self.run_step(buf_indices, sample, buffer_id)
             consumed += sample.bs
 
             # Ensure that parent RPCs will not be over-consumed.

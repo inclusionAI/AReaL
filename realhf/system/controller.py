@@ -478,9 +478,11 @@ def run_ray_worker(
 
     # NOTE: Importing these will initialize DeepSpeed/CUDA devices.
     # profiler.import_profiler_registers()
-    import realhf.impl.dataset
-    import realhf.impl.model
-    import realhf.system
+    if worker_type != "master_worker":
+        # For master_worker, there could be errors while importing and it is not necessary.
+        import realhf.impl.dataset
+        import realhf.impl.model
+        import realhf.system
 
     worker_name = f"{worker_type}/{idx}"
     server = worker_control.make_server(

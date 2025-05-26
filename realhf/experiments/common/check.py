@@ -70,7 +70,7 @@ def check_valid_parallel_batch_size(rpc_alloc: RPCAllocation):
         mb_spec = rpc.mb_spec
 
         dp_size = rpc_alloc.parallel.data_parallel_size
-        tp_size = rpc_alloc.parallel.model_parallel_size
+        tp_size = rpc_alloc.parallel.tensor_parallel_size
         pp_size = rpc_alloc.parallel.pipeline_parallel_size
 
         factor = 1

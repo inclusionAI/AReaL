@@ -80,7 +80,7 @@ def test_buffer_recover(
         inf=MFCConfig(
             device_mesh="NODE01:0,1,2,3,4,5,6,7",
             parallel=ParallelismConfig(
-                model_parallel_size=2,
+                tensor_parallel_size=2,
                 pipeline_parallel_size=2,
                 data_parallel_size=dp // 2,
             ),
@@ -88,7 +88,7 @@ def test_buffer_recover(
         train=MFCConfig(
             device_mesh="NODE01:8,9,10,11,12,13,14,15",
             parallel=ParallelismConfig(
-                model_parallel_size=2,
+                tensor_parallel_size=2,
                 pipeline_parallel_size=2,
                 data_parallel_size=dp // 2,
             ),

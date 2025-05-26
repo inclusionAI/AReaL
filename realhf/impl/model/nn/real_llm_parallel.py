@@ -42,27 +42,27 @@ if constants.use_te_impl():
 
 def tensor_slice_partition_fn(
     tensor: torch.Tensor,
-    mp_rank: Optional[int],
-    mp_world_size: int,
+    tp_rank: Optional[int],
+    tp_world_size: int,
     dim: Optional[int],
 ) -> Union[List[torch.Tensor], torch.Tensor]:
     """Partition a tensor by slicing along a dimension for tensor-model
     parallelism."""
     if dim is None:
-        splits = [tensor for _ in range(mp_world_size)]
+        splits = [tensor for _ in range(tp_world_size)]
     else:
-        assert tensor.shape[dim] % mp_world_size == 0
-        splits = torch.split(tensor, tensor.shape[dim] // mp_world_size, dim=dim)
-    if mp_rank is None:
+        assert tensor.shape[dim] % tp_world_size == 0
+        splits = torch.split(tensor, tensor.shape[dim] // tp_world_size, dim=dim)
+    if tp_rank is None:
         return [s.contiguous() for s in splits]
     else:
-        return splits[mp_rank].contiguous()
+        return splits[tp_rank].contiguous()
 
 
 def intervals_partition_fn(
     shape: torch.Size,
-    mp_rank: Optional[int],
-    mp_world_size: int,
+    tp_rank: Optional[int],
+    tp_world_size: int,
     dim: Optional[int],
 ) -> Union[List[torch.Tensor], torch.Tensor]:
     """Get the intervals of a MP-partitioned tensor in the flatten view.
@@ -74,34 +74,34 @@ def intervals_partition_fn(
     Used by parameter reallocation. Return a numpy array of shape [N,
     2], where N is the number of intervals.
     """
-    assert mp_rank is not None
+    assert tp_rank is not None
     param_size = int(np.prod(shape))
     if dim is None:
         return np.array([(0, param_size)], dtype=np.int64)
 
     if dim < 0:
         dim = len(shape) + dim
-    assert shape[dim] % mp_world_size == 0
+    assert shape[dim] % tp_world_size == 0
 
     if len(shape) == 1:
         assert dim == 0
-        partition_size = shape[0] // mp_world_size
+        partition_size = shape[0] // tp_world_size
         return np.array(
-            [(partition_size * mp_rank, partition_size * (mp_rank + 1))],
+            [(partition_size * tp_rank, partition_size * (tp_rank + 1))],
             dtype=np.int64,
         )
     else:
         assert len(shape) == 2, shape
         if dim == 0:
-            row_start = mp_rank * shape[0] // mp_world_size
-            row_end = (mp_rank + 1) * shape[0] // mp_world_size
+            row_start = tp_rank * shape[0] // tp_world_size
+            row_end = (tp_rank + 1) * shape[0] // tp_world_size
             return np.array(
                 [(row_start * shape[1], row_end * shape[1])], dtype=np.int64
             )
         else:
             assert dim == 1
-            col_start = mp_rank * shape[1] // mp_world_size
-            col_end = (mp_rank + 1) * shape[1] // mp_world_size
+            col_start = tp_rank * shape[1] // tp_world_size
+            col_end = (tp_rank + 1) * shape[1] // tp_world_size
             return np.arange(shape[0], dtype=np.int64)[:, None] * shape[1] + np.array(
                 [(col_start, col_end)], dtype=np.int64
             )
@@ -109,32 +109,32 @@ def intervals_partition_fn(
 
 def shape_partition_fn(
     shape: torch.Size,
-    mp_rank: Optional[int],
-    mp_world_size: int,
+    tp_rank: Optional[int],
+    tp_world_size: int,
     dim: Optional[int],
 ):
     """Get the partitioned shape of a tensor for tensor-model parallelism."""
     if dim is None:
-        splits = [shape for _ in range(mp_world_size)]
+        splits = [shape for _ in range(tp_world_size)]
     else:
         if dim < 0:
             dim = len(shape) + dim
-        assert shape[dim] % mp_world_size == 0
+        assert shape[dim] % tp_world_size == 0
         splits = [
-            (*shape[:dim], shape[dim] // mp_world_size, *shape[dim + 1 :])
-            for _ in range(mp_world_size)
+            (*shape[:dim], shape[dim] // tp_world_size, *shape[dim + 1 :])
+            for _ in range(tp_world_size)
         ]
-    if mp_rank is None:
+    if tp_rank is None:
         return [s for s in splits]
     else:
-        return splits[mp_rank]
+        return splits[tp_rank]
 
 
-def mp_partition_key(
+def tp_partition_key(
     key: str,
     tensor_or_shape: torch.Tensor | torch.Size,
-    mp_rank: Optional[int],
-    mp_size: Optional[int],
+    tp_rank: Optional[int],
+    tp_size: Optional[int],
     config: model_api.ReaLModelConfig,
     partition_fn: Callable[
         [torch.Tensor, Optional[int], int, Optional[int]],
@@ -149,7 +149,7 @@ def mp_partition_key(
 
     if any([ek in key for ek in EMBEDDING_KEYS]):
         assert "weight" in key
-        return partition_fn(tensor_or_shape, mp_rank, mp_size, dim=0)
+        return partition_fn(tensor_or_shape, tp_rank, tp_size, dim=0)
     elif key == f"{config.n_layers + 1}.weight":  # output head
         if (
             isinstance(tensor_or_shape, torch.Tensor) and tensor_or_shape.shape[0] == 1
@@ -157,88 +157,90 @@ def mp_partition_key(
             not isinstance(tensor_or_shape, torch.Tensor) and tensor_or_shape[0] == 1
         ):
             assert config.is_critic
-            return partition_fn(tensor_or_shape, mp_rank, mp_size, dim=None)
+            return partition_fn(tensor_or_shape, tp_rank, tp_size, dim=None)
         else:
-            return partition_fn(tensor_or_shape, mp_rank, mp_size, dim=0)
+            return partition_fn(tensor_or_shape, tp_rank, tp_size, dim=0)
     elif any([ck in key for ck in COLUMN_LINEAR_KEYS]):
         if (
             ("k_attn" in key) or ("v_attn" in key)
-        ) and config.n_kv_heads % mp_size != 0:
-            return partition_fn(tensor_or_shape, mp_rank, mp_size, dim=None)
+        ) and config.n_kv_heads % tp_size != 0:
+            return partition_fn(tensor_or_shape, tp_rank, tp_size, dim=None)
         # partition both weight and bias
-        return partition_fn(tensor_or_shape, mp_rank, mp_size, dim=0)
+        return partition_fn(tensor_or_shape, tp_rank, tp_size, dim=0)
     elif any([rk in key for rk in ROW_LINEAR_KEYS]):
         # only partition weight
         if "weight" in key:
-            return partition_fn(tensor_or_shape, mp_rank, mp_size, dim=1)
+            return partition_fn(tensor_or_shape, tp_rank, tp_size, dim=1)
         else:
             assert "bias" in key, key
-            return partition_fn(tensor_or_shape, mp_rank, mp_size, dim=None)
+            return partition_fn(tensor_or_shape, tp_rank, tp_size, dim=None)
     else:
-        return partition_fn(tensor_or_shape, mp_rank, mp_size, dim=None)
+        return partition_fn(tensor_or_shape, tp_rank, tp_size, dim=None)
 
 
-def mp_partition_real_model_state_dict(
+def tp_partition_real_model_state_dict(
     state_dict: Dict[str, torch.Tensor],
     config: model_api.ReaLModelConfig,
-    mp_size: int,
-    mp_rank: Optional[int] = None,
+    tp_size: int,
+    tp_rank: Optional[int] = None,
 ) -> Union[Dict, List[Dict]]:
-    """A helper function to partition a state dict using `mp_partition_key`."""
-    if mp_size == 1:
-        if mp_rank is None:
+    """A helper function to partition a state dict using `tp_partition_key`."""
+    if tp_size == 1:
+        if tp_rank is None:
             return [state_dict]
         else:
             return state_dict
 
     new_state_dict = {}
     for k, v in state_dict.items():
-        new_state_dict[k] = mp_partition_key(k, v, mp_rank, mp_size, config)
+        new_state_dict[k] = tp_partition_key(k, v, tp_rank, tp_size, config)
 
-    if mp_rank is None:
+    if tp_rank is None:
         return [
-            {k: v[mp_rank] for k, v in new_state_dict.items()}
-            for mp_rank in range(mp_size)
+            {k: v[tp_rank] for k, v in new_state_dict.items()}
+            for tp_rank in range(tp_size)
         ]
     else:
         return new_state_dict
 
 
 def get_real_model_param_shape(
-    k: str, config: model_api.ReaLModelConfig, mp_size: int
+    k: str, config: model_api.ReaLModelConfig, tp_size: int
 ) -> Tuple:
     if "wte.weight" in k:
-        assert config.vocab_size % mp_size == 0
-        return (config.vocab_size // mp_size, config.hidden_dim)
+        assert config.vocab_size % tp_size == 0
+        return (config.vocab_size // tp_size, config.hidden_dim)
     elif "wpe.weight" in k:
-        assert config.n_positions % mp_size == 0
-        if (config.n_positions + config.abs_position_embedding_offset) % mp_size != 0:
+        assert config.n_positions % tp_size == 0
+        if (config.n_positions + config.abs_position_embedding_offset) % tp_size != 0:
             raise ValueError(
                 f"The dimenstion of position embedding "
                 f"({config.n_positions} + offset {config.abs_position_embedding_offset}) "
-                f"is not divisible by mp_size ({mp_size}). "
+                f"is not divisible by tp_size ({tp_size}). "
                 "Models like this (e.g. OPT-350m) inherently do not support tensor parallelism."
             )
         return (
-            (config.n_positions + config.abs_position_embedding_offset) // mp_size,
+            (config.n_positions + config.abs_position_embedding_offset) // tp_size,
             config.hidden_dim,
         )
     elif ".ln." in k or ".ln_f." in k:
         return (config.hidden_dim,)
+    elif ".q_ln." in k or ".k_ln." in k:
+        return (config.head_dim,)
     elif k == f"{config.n_layers + 1}.weight":  # output head
         if config.is_critic:
             return (1, config.hidden_dim)
-        elif mp_size > 1:
-            assert config.vocab_size % mp_size == 0
-            return (config.vocab_size // mp_size, config.hidden_dim)
+        elif tp_size > 1:
+            assert config.vocab_size % tp_size == 0
+            return (config.vocab_size // tp_size, config.hidden_dim)
         else:
             return (config.vocab_size, config.hidden_dim)
     elif any([ck in k for ck in COLUMN_LINEAR_KEYS]):
         if "k_attn" in k or "v_attn" in k:
             if "weight" in k:
-                if config.n_kv_heads % mp_size == 0:
+                if config.n_kv_heads % tp_size == 0:
                     return (
-                        config.head_dim * config.n_kv_heads // mp_size,
+                        config.head_dim * config.n_kv_heads // tp_size,
                         config.hidden_dim,
                     )
                 else:
@@ -248,27 +250,27 @@ def get_real_model_param_shape(
                     )
             else:
                 assert "bias" in k
-                if config.n_kv_heads % mp_size == 0:
-                    return (config.head_dim * config.n_kv_heads // mp_size,)
+                if config.n_kv_heads % tp_size == 0:
+                    return (config.head_dim * config.n_kv_heads // tp_size,)
                 else:
                     return (config.head_dim * config.n_kv_heads,)
         if "mlp" in k:
             if "weight" in k:
-                return (config.intermediate_dim // mp_size, config.hidden_dim)
+                return (config.intermediate_dim // tp_size, config.hidden_dim)
             else:
                 assert "bias" in k
-                return (config.intermediate_dim // mp_size,)
+                return (config.intermediate_dim // tp_size,)
         if "weight" in k:
-            assert config.n_q_heads % mp_size == 0
-            return (config.n_q_heads * config.head_dim // mp_size, config.hidden_dim)
+            assert config.n_q_heads % tp_size == 0
+            return (config.n_q_heads * config.head_dim // tp_size, config.hidden_dim)
         else:
             assert "bias" in k
-            return (config.n_q_heads * config.head_dim // mp_size,)
+            return (config.n_q_heads * config.head_dim // tp_size,)
     elif any([rk in k for rk in ROW_LINEAR_KEYS]):
         if "mlp" in k and "weight" in k:
-            return (config.hidden_dim, config.intermediate_dim // mp_size)
+            return (config.hidden_dim, config.intermediate_dim // tp_size)
         elif "attn" in k and "weight" in k:
-            return (config.hidden_dim, config.n_q_heads * config.head_dim // mp_size)
+            return (config.hidden_dim, config.n_q_heads * config.head_dim // tp_size)
         elif "bias" in k:
             return (config.hidden_dim,)
         else:
@@ -280,7 +282,7 @@ def get_real_model_param_shape(
         raise NotImplementedError(f"unkown shape of key {k}.")
 
 
-def mp_merge_key(
+def tp_merge_key(
     k: str,
     tensors: List[torch.Tensor],
     config: model_api.ReaLModelConfig,
@@ -297,17 +299,17 @@ def mp_merge_key(
         return tensors[0]
 
 
-def mp_merge_real_model_state_dict(
+def tp_merge_real_model_state_dict(
     state_dicts: List[Dict[str, torch.Tensor]],
     config: model_api.ReaLModelConfig,
 ) -> Dict:
-    mp_size = len(state_dicts)
-    if mp_size == 1:
+    tp_size = len(state_dicts)
+    if tp_size == 1:
         return state_dicts[0]
 
     new_state_dict = {}
     for k in state_dicts[0].keys():
-        new_state_dict[k] = mp_merge_key(k, [sd[k] for sd in state_dicts], config)
+        new_state_dict[k] = tp_merge_key(k, [sd[k] for sd in state_dicts], config)
 
     return new_state_dict
 
@@ -317,37 +319,37 @@ class ReaLModelParamCount:
 
     @staticmethod
     def _derive_count_from_keys(
-        keys: List[str], config: model_api.ReaLModelConfig, mp_size: int
+        keys: List[str], config: model_api.ReaLModelConfig, tp_size: int
     ) -> int:
         count = 0
         for k in keys:
-            count += np.prod(get_real_model_param_shape(k, config, mp_size))
+            count += np.prod(get_real_model_param_shape(k, config, tp_size))
         return int(count)
 
     @staticmethod
-    def embed(config: model_api.ReaLModelConfig, mp_size: int) -> int:
+    def embed(config: model_api.ReaLModelConfig, tp_size: int) -> int:
         return ReaLModelParamCount._derive_count_from_keys(
-            ReaLModelParamKeys.embed(config), config, mp_size
+            ReaLModelParamKeys.embed(config), config, tp_size
         )
 
     @staticmethod
-    def tblock(config: model_api.ReaLModelConfig, idx: int, mp_size: int) -> int:
+    def tblock(config: model_api.ReaLModelConfig, idx: int, tp_size: int) -> int:
         return ReaLModelParamCount._derive_count_from_keys(
-            ReaLModelParamKeys.tblock(config, idx), config, mp_size
+            ReaLModelParamKeys.tblock(config, idx), config, tp_size
         )
 
     @staticmethod
-    def head(config: model_api.ReaLModelConfig, mp_size: int) -> int:
+    def head(config: model_api.ReaLModelConfig, tp_size: int) -> int:
         return ReaLModelParamCount._derive_count_from_keys(
-            ReaLModelParamKeys.head(config), config, mp_size
+            ReaLModelParamKeys.head(config), config, tp_size
         )
 
     @staticmethod
-    def total(config: model_api.ReaLModelConfig, idx: int, mp_size: int) -> int:
+    def total(config: model_api.ReaLModelConfig, idx: int, tp_size: int) -> int:
         return (
-            config.n_layers * ReaLModelParamCount.tblock(config, idx, mp_size)
-            + ReaLModelParamCount.head(config, mp_size)
-            + ReaLModelParamCount.embed(config, mp_size)
+            config.n_layers * ReaLModelParamCount.tblock(config, idx, tp_size)
+            + ReaLModelParamCount.head(config, tp_size)
+            + ReaLModelParamCount.embed(config, tp_size)
         )
 
 
@@ -356,7 +358,7 @@ def partition_pipeline_layers(
     num_stages: int,
     method: str = "parameters",
 ) -> Dict[int, Tuple[int, int]]:
-    # Ignoring mp_size in param count because tensor parallel equally partitions parameters.
+    # Ignoring tp_size in param count because tensor parallel equally partitions parameters.
     # It is irrelevant to how we partition pipeline stages.
     param_counts = (
         [ReaLModelParamCount.embed(config, 1)]

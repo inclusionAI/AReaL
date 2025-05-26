@@ -148,32 +148,31 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
             "packed_logprobs",
             "prompt_mask",
         ]
-        if self.ppo.recompute_logprob:
+        if self.ppo.recompute_logprob and not self.ppo.use_decoupled_loss:
             rollout_output_keys.remove("packed_logprobs")
         rollout = MFCDef(
             name="actor_gen",
             model_name="actor",
             mb_spec=self.actor_gen.mb_spec,
             interface_type=ModelInterfaceType.GENERATE,
-            model_type=self.actor.type,
-            model_path=self.actor.path,
             interface_impl=actor_interface,
             input_keys=("packed_prompts", "task_ids"),
             output_keys=tuple(rollout_output_keys),
             n_seqs=self.dataset.train_bs_n_seqs,
         )
 
+        actor_inf_outputs = ("packed_logprobs",)
+        if self.ppo.use_decoupled_loss:
+            actor_inf_outputs = ("proximal_logprobs",)
         actor_inf = MFCDef(
             name="actor_inf",
             model_name="actor",
             mb_spec=self.actor_inf.mb_spec,
             interface_type=ModelInterfaceType.INFERENCE,
-            model_type=self.actor.type,
-            model_path=self.actor.path,
             interface_impl=actor_interface,
             input_keys=("packed_input_ids",),
-            output_keys=("packed_logprobs",),
-            output_key_remap=dict(logprobs="packed_logprobs"),
+            output_keys=actor_inf_outputs,
+            output_key_remap=dict(logprobs=actor_inf_outputs[0]),
             n_seqs=self.dataset.train_bs_n_seqs,
         )
 
@@ -200,8 +199,6 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
             model_name="ref",
             mb_spec=self.ref_inf.mb_spec,
             interface_type=ModelInterfaceType.INFERENCE,
-            model_type=self.ref.type,
-            model_path=self.ref.path,
             interface_impl=ref_interface,
             min_n_seqs_per_pass=1 / self.group_size,
             input_keys=tuple(inf_ref_inputs),
@@ -216,8 +213,6 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
             mb_spec=self.critic_inf.mb_spec,
             interface_type=ModelInterfaceType.INFERENCE,
             interface_impl=critic_interface,
-            model_type=self.critic.type,
-            model_path=self.critic.path,
             min_n_seqs_per_pass=1 / self.group_size,
             input_keys=("packed_input_ids", "seq_no_eos_mask"),
             output_keys=("values",),
@@ -238,13 +233,13 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
             train_actor_inputs.remove("values")
         if self.ppo.kl_ctl == 0:
             train_actor_inputs.remove("packed_ref_logprobs")
+        if self.ppo.use_decoupled_loss:
+            train_actor_inputs.append("proximal_logprobs")
         train_actor = MFCDef(
             name="actor_train",
             model_name="actor",
             mb_spec=self.actor_train.mb_spec,
             interface_type=ModelInterfaceType.TRAIN_STEP,
-            model_type=self.actor.type,
-            model_path=self.actor.path,
             interface_impl=actor_interface,
             input_keys=tuple(train_actor_inputs),
             log_return_value=True,
@@ -269,8 +264,6 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
             mb_spec=self.critic_train.mb_spec,
             interface_type=ModelInterfaceType.TRAIN_STEP,
             interface_impl=critic_interface,
-            model_type=self.critic.type,
-            model_path=self.critic.path,
             input_keys=tuple(train_critic_inputs),
             log_return_value=True,
             min_n_seqs_per_pass=self.ppo.ppo_n_minibatches / self.group_size,
@@ -289,7 +282,7 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
         if self.ppo.disable_value:
             rpcs.pop("critic_inf")
             rpcs.pop("critic_train")
-        if not self.ppo.recompute_logprob:
+        if not self.ppo.recompute_logprob and not self.ppo.use_decoupled_loss:
             rpcs.pop("actor_inf")
         if self.ppo.kl_ctl == 0:
             rpcs.pop("ref_inf")
@@ -311,7 +304,7 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
         if self.ppo.disable_value:
             allocs.pop("critic_inf")
             allocs.pop("critic_train")
-        if not self.ppo.recompute_logprob:
+        if not self.ppo.recompute_logprob and not self.ppo.use_decoupled_loss:
             allocs.pop("actor_inf")
         if self.ppo.kl_ctl == 0:
             allocs.pop("ref_inf")
@@ -336,14 +329,6 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
     @property
     def tokenizer_name_or_path(self) -> str:
         return self.actor.path
-
-    @property
-    def search_kwargs(self):
-        return {
-            "num_gen_tokens": self.ppo.gen.max_new_tokens,
-            "n_ppo_minibatches": self.ppo.ppo_n_minibatches,
-            "seq_len": self.dataset.max_prompt_len,
-        }
 
     @property
     def max_prompt_len(self):

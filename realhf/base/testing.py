@@ -22,9 +22,9 @@ import torch.utils.data
 from realhf.api.core.data_api import SequenceSample
 from realhf.base import constants, gpu_utils, logging, name_resolve, names, topology
 from realhf.base.topology import (
-    DataPipeModelParallelTopology,
+    DataPipeTensorParallelTopology,
     ParallelGrid,
-    PipeDataModelParallelTopology,
+    PipeDataTensorParallelTopology,
 )
 
 logger = logging.getLogger("testing")
@@ -105,9 +105,6 @@ class StandaloneTestingProcess(mp.Process):
             setup_global_comm(
                 self.expr_name, self.trial_name, self.rank, backend=self.dist_backend
             )
-
-        # setup some useful constants
-        constants.set_experiment_trial_names(self.expr_name, self.trial_name)
 
         # misc setup
         if constants.use_cuda():
@@ -207,7 +204,7 @@ class LocalMultiProcessTest:
 
 def init_global_constants(
     num_dp=1,
-    num_mp=1,
+    num_tp=1,
     num_pp=1,
     topo=None,
     model_name=None,
@@ -227,9 +224,9 @@ def init_global_constants(
 
     if topo is None:
         if is_train:
-            topo = PipeDataModelParallelTopology(
+            topo = PipeDataTensorParallelTopology(
                 num_dp=num_dp,
-                num_mp=num_mp,
+                num_tp=num_tp,
                 num_pp=num_pp,
                 sequence_parallel=sequence_parallel,
                 gradient_checkpointing=gradient_checkpointing,
@@ -237,13 +234,13 @@ def init_global_constants(
                 max_prompt_len=max_prompt_len,
             )
         else:
-            topo = DataPipeModelParallelTopology(
+            topo = DataPipeTensorParallelTopology(
                 num_dp=num_dp,
-                num_mp=num_mp,
+                num_tp=num_tp,
                 num_pp=num_pp,
                 sequence_parallel=sequence_parallel,
             )
-        ws = num_dp * num_mp * num_pp
+        ws = num_dp * num_tp * num_pp
     else:
         ws = topo.world_size()
 

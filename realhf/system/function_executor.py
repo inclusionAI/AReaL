@@ -27,7 +27,7 @@ class FunctionExecutor:
         rpcs: List[MFCDef],
         msid2mwid: Dict[ModelShardID, int],
         stream: NameResolvingRequestClient,
-        buffer: AsyncIOSequenceBuffer,
+        buffers: List[AsyncIOSequenceBuffer],
         model_topos: Dict[str, ProcessTopology],
         model_configs: Dict[str, None | ReaLModelConfig],
         ctrl: RPCCorountineControl,
@@ -58,14 +58,15 @@ class FunctionExecutor:
                 model_topos=model_topos,
                 model_configs=model_configs,
                 ctrl=ctrl,
-                buffer=buffer,
+                buffers=buffers,
                 redistrib_planner=self.redistrib_planner,
                 summary_writer=summary_writer,
             )
             self.func_calls[rpc.name] = func_call
 
         self.stream = stream
-        self.buffer = buffer
+        self.buffers = buffers
+        self.buffer_id = 0
 
         self.data_loading_dp_idx = -1
         self.shuffle_dataset = shuffle_dataset
@@ -111,18 +112,17 @@ class FunctionExecutor:
 
             self.ctrl.ids_to_clear.clear()
 
-    async def load_data(self):
-        buffer = self.buffer
+    async def load_data(self, buffer_id: int):
+        buffer = self.buffers[buffer_id]
         ctrl = self.ctrl
 
         received_ids = set()
 
-        while self.buffer.size < max(rpc.n_seqs for rpc in self.rpcs):
-
+        while buffer.size < max(rpc.n_seqs for rpc in self.rpcs):
             resps = await self.stream.call_async(
                 handlers=[f"__data{dp_idx}__" for dp_idx in range(self.src_dp_size)],
                 handle_type="fetch",
-                datas=[None for _ in range(self.src_dp_size)],
+                datas=[buffer_id for _ in range(self.src_dp_size)],
                 verbose=False,
             )
 
@@ -182,10 +182,13 @@ class FunctionExecutor:
         logger.info("Waiting for the finish of the execution graph.")
         loop = asyncio.get_event_loop()
 
-        tasks = [loop.create_task(fc.run()) for fc in self.func_calls.values()] + [
+        tasks = [
+            loop.create_task(fc.run(self.buffer_id)) for fc in self.func_calls.values()
+        ] + [
             loop.create_task(self.flush_calls()),
-            loop.create_task(self.load_data()),
+            loop.create_task(self.load_data(self.buffer_id)),
             loop.create_task(self.finish_traverse()),
         ]
 
         loop.run_until_complete(asyncio.gather(*tasks))
+        self.buffer_id = (self.buffer_id + 1) % len(self.buffers)

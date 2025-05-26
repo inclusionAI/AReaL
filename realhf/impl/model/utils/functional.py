@@ -210,11 +210,11 @@ def gather_packed_shifted_log_probs(
     """
     labels = torch.nn.functional.pad(labels[1:], (0, 1), value=0)
     leave_one_indices = build_leave_one_indices(logits, cu_seqlens)
-    if constants.model_parallel_world_size() > 1:
+    if constants.tensor_parallel_world_size() > 1:
         # NOTE: logprobs is freaking sensitive to input_ids. If the input sequence is a natural sequence, everything will be fine.
         # However, if we input random token IDs, parallel cross entropy can produce VERY different results than the normal
         # torch.gather based version (e.g., the maximum absolute different can reach ~50).
-        from realhf.impl.model.parallelism.model_parallel.modules import (
+        from realhf.impl.model.parallelism.tensor_parallel.modules import (
             vocab_parallel_cross_entropy,
         )
 
@@ -239,14 +239,16 @@ def gather_packed_shifted_log_probs(
 
 
 def apply_logits_mask(logits: torch.HalfTensor, mask: torch.BoolTensor):
-    assert mask.shape[-1] == logits.shape[-1] * constants.model_parallel_world_size(), (
-        constants.model_parallel_world_size(),
+    assert (
+        mask.shape[-1] == logits.shape[-1] * constants.tensor_parallel_world_size()
+    ), (
+        constants.tensor_parallel_world_size(),
         logits.shape,
         mask.shape,
     )
     parallel_vocab_size = logits.shape[-1]
-    mp_rank = constants.model_parallel_rank()
-    mask = mask[:, mp_rank * parallel_vocab_size : (mp_rank + 1) * parallel_vocab_size]
+    tp_rank = constants.tensor_parallel_rank()
+    mask = mask[:, tp_rank * parallel_vocab_size : (tp_rank + 1) * parallel_vocab_size]
     logits.masked_fill_(mask, torch.finfo(logits.dtype).min)
 
 

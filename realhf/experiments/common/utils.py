@@ -34,8 +34,8 @@ from realhf.api.core.dfg import OffloadHook, ParamReallocHook
 from realhf.api.quickstart.device_mesh import RPCAllocation
 from realhf.base import logging
 from realhf.base.topology import (
-    DataPipeModelParallelTopology,
-    PipeDataModelParallelTopology,
+    DataPipeTensorParallelTopology,
+    PipeDataTensorParallelTopology,
     ProcessTopology,
 )
 
@@ -73,8 +73,8 @@ def get_topo(
     max_prompt_len: Optional[int] = None,
 ) -> ProcessTopology:
     if is_train:
-        return PipeDataModelParallelTopology(
-            num_mp=parallel.model_parallel_size,
+        return PipeDataTensorParallelTopology(
+            num_tp=parallel.tensor_parallel_size,
             num_pp=parallel.pipeline_parallel_size,
             num_dp=parallel.data_parallel_size,
             sequence_parallel=parallel.use_sequence_parallel,
@@ -82,8 +82,8 @@ def get_topo(
             max_prompt_len=max_prompt_len,
             gradient_accumulation_fusion=gradient_accumulation_fusion,
         )
-    return DataPipeModelParallelTopology(
-        num_mp=parallel.model_parallel_size,
+    return DataPipeTensorParallelTopology(
+        num_tp=parallel.tensor_parallel_size,
         num_pp=parallel.pipeline_parallel_size,
         num_dp=parallel.data_parallel_size,
         sequence_parallel=parallel.use_sequence_parallel,
@@ -93,7 +93,7 @@ def get_topo(
 
 def get_world_size(parallel: ParallelismConfig) -> int:
     return (
-        parallel.model_parallel_size
+        parallel.tensor_parallel_size
         * parallel.pipeline_parallel_size
         * parallel.data_parallel_size
     )
@@ -247,9 +247,8 @@ class AllocationType(enum.Enum):
     GLOBAL_HYBRID = 2
     MANUAL = 3
     HEURISTIC = 4
-    SEARCH = 5
-    DECOUPLED_SGLANG = 6
-    DECOUPLED_MOCK = 7
+    DECOUPLED_SGLANG = 5
+    DECOUPLED_MOCK = 6
 
 
 @dataclasses.dataclass
@@ -293,8 +292,6 @@ class AllocationMode:
             return cls(AllocationType.MANUAL, None)
         if allocation_mode == "heuristic":
             return cls(AllocationType.HEURISTIC, None)
-        if allocation_mode == "search":
-            return cls(AllocationType.SEARCH, None)
 
         alloc_3d = AllocationMode.extract_3d_alloc(allocation_mode)
         alloc_hybrid = AllocationMode.extract_key_value_alloc(allocation_mode)

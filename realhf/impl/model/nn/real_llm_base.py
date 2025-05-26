@@ -17,7 +17,7 @@ import transformers
 
 import realhf.base.constants as constants
 import realhf.base.logging as logging
-import realhf.impl.model.parallelism.model_parallel.mappings as tensor_parallel
+import realhf.impl.model.parallelism.tensor_parallel.mappings as tensor_parallel
 from realhf.api.core import model_api
 from realhf.impl.model.modules import (
     CausalSelfAttentionLayer,
@@ -28,9 +28,8 @@ from realhf.impl.model.modules import (
     LlamaRMSNorm,
     OffsetParallelPositionalEmbedding,
     OffsetPositionalEmbedding,
-    scatter_to_sequence_parallel_region,
 )
-from realhf.impl.model.parallelism.model_parallel.modules import (
+from realhf.impl.model.parallelism.tensor_parallel.modules import (
     ColumnParallelLinear,
     ParallelEmbedding,
     gather_from_sequence_parallel_region,
@@ -139,6 +138,7 @@ class ReaLModelBlock(nn.Module):
             use_attention_bias=config.use_attention_bias,
             use_attn_proj_bias=config.use_attn_proj_bias,
             do_layernorm_before=config.do_layernorm_before,
+            qk_layernorm=config.qk_layernorm,
             apply_rotary=config.apply_rotary,
             rotary_base=config.rotary_base,
             rotary_interleaved=config.rotary_interleaved,
@@ -281,8 +281,8 @@ class VocabPositionEmbedding(nn.Module):
         self.n_positions = config.n_positions
         self.hidden_dim = config.hidden_dim
 
-        model_parallel = constants.model_parallel_world_size() > 1
-        if model_parallel:
+        tensor_parallel = constants.tensor_parallel_world_size() > 1
+        if tensor_parallel:
             embed_cls = ParallelEmbedding
         else:
             embed_cls = nn.Embedding
@@ -295,7 +295,7 @@ class VocabPositionEmbedding(nn.Module):
         if self.apply_abs_pos_embed:
             p_embed_cls = (
                 OffsetParallelPositionalEmbedding
-                if model_parallel
+                if tensor_parallel
                 else OffsetPositionalEmbedding
             )
             self.wpe = p_embed_cls(
@@ -416,7 +416,7 @@ class ParallelActorHead(ColumnParallelLinear):
     def _forward(self, x: torch.Tensor):
         weight = self.weight
         if self._norm_head:
-            from realhf.impl.model.parallelism.model_parallel.mappings import (
+            from realhf.impl.model.parallelism.tensor_parallel.mappings import (
                 gather_from_sequence_parallel_region,
             )
 
@@ -431,7 +431,7 @@ class ParallelActorHead(ColumnParallelLinear):
             ).transpose(1, 0)
             head_norm = unnormed_head.norm(dim=0, keepdim=True, p=2)
             normed_head = unnormed_head / (head_norm + 1e-7)
-            weight = scatter_to_sequence_parallel_region(normed_head)
+            weight = tensor_parallel.scatter_to_sequence_parallel_region(normed_head)
 
         output = parallel_lm_logits(
             x,
@@ -486,6 +486,12 @@ class ReaLModelParamKeys:
         keys += [f"{idx + 1}.attn.c_proj.weight"]
         if config.use_attn_proj_bias:
             keys += [f"{idx + 1}.attn.c_proj.bias"]
+        if config.qk_layernorm:
+            keys += [f"{idx + 1}.attn.q_ln.weight"]
+            keys += [f"{idx + 1}.attn.k_ln.weight"]
+            if config.layer_norm_type is None:
+                keys += [f"{idx + 1}.attn.q_ln.bias"]
+                keys += [f"{idx + 1}.attn.k_ln.bias"]
         keys += [f"{idx + 1}.mlp.ln.weight"]
         if config.layer_norm_type is None:
             keys += [f"{idx + 1}.mlp.ln.bias"]

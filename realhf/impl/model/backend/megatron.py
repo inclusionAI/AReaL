@@ -126,7 +126,7 @@ def megatron_ctx():
     # Build the tensor model-parallel groups.
     parallel_state._TENSOR_MODEL_PARALLEL_GROUP = g
     if pkg_version.is_version_greater_or_equal("megatron.core", "0.11.0"):
-        g = constants.model_parallel_group()
+        g = constants.tensor_parallel_group()
         parallel_state._TENSOR_MODEL_PARALLEL_GLOBAL_RANKS = (
             dist.get_process_group_ranks(g)
         )
@@ -155,7 +155,7 @@ def megatron_ctx():
     if pkg_version.is_version_greater_or_equal("megatron.core", "0.11.0"):
         # Build the tensor + context parallel groups
         parallel_state._TENSOR_AND_CONTEXT_PARALLEL_GROUP = (
-            constants.model_parallel_group()
+            constants.tensor_parallel_group()
         )
 
     # Build expert parallel groups.
@@ -173,7 +173,7 @@ def megatron_ctx():
         )
     else:
         parallel_state._TENSOR_AND_EXPERT_PARALLEL_GROUP = (
-            constants.model_parallel_group()
+            constants.tensor_parallel_group()
         )
         parallel_state._DATA_MODULO_EXPERT_PARALLEL_GROUP = (
             constants.data_parallel_group()
@@ -227,7 +227,7 @@ class MegatronEngine:
 
     def _all_reduce_layernorm_grads(self):
         if not (
-            constants.sequence_parallel() and constants.model_parallel_world_size() > 1
+            constants.sequence_parallel() and constants.tensor_parallel_world_size() > 1
         ):
             return
         real_model: ReaLModel = self.ddp.module
@@ -255,7 +255,7 @@ class MegatronEngine:
 
         assert all(x is not None for x in grads)
         coalesced = _flatten_dense_tensors(grads)
-        dist.all_reduce(coalesced, group=constants.model_parallel_group())
+        dist.all_reduce(coalesced, group=constants.tensor_parallel_group())
         for buf, synced in zip(grads, _unflatten_dense_tensors(coalesced, grads)):
             buf.copy_(synced)
 
@@ -362,7 +362,10 @@ class PipeTrainInstrSetForMegatron(PipeTrainInstrSet):
             )
             dist.all_reduce(grad_norm, group=constants.tp_and_pp_group())
             grad_norm /= constants.tp_and_pp_world_size()
-        if constants.data_parallel_rank() == 0 and constants.model_parallel_rank() == 0:
+        if (
+            constants.data_parallel_rank() == 0
+            and constants.tensor_parallel_rank() == 0
+        ):
             logger.info(
                 f"Model name {constants.model_name()}, "
                 f"Pipeline rank {constants.pipe_parallel_rank()}. "
@@ -539,7 +542,10 @@ class ReaLMegatronEngine(model_api.PipelinableEngine):
             )
             dist.all_reduce(grad_norm, group=constants.tp_and_pp_group())
             grad_norm /= constants.tp_and_pp_world_size()
-        if constants.data_parallel_rank() == 0 and constants.model_parallel_rank() == 0:
+        if (
+            constants.data_parallel_rank() == 0
+            and constants.tensor_parallel_rank() == 0
+        ):
             logger.info(
                 f"Megatron backend update success? {update_successful}. "
                 f"Grad Norm: {grad_norm}. "
@@ -700,7 +706,8 @@ class MegatronTrainBackend(model_api.ModelBackend, MegatronConfig):
         # Deleting models directly will not release the memory.
         # We must disable hooks at first.
         if pkg_version.is_version_greater_or_equal("megatron.core", "0.11.0"):
-            model.module.engine.ddp.disable_forward_pre_hook()
+            if self.ddp.use_distributed_optimizer and self.ddp.overlap_param_gather:
+                model.module.engine.ddp.disable_forward_pre_hook()
         else:
             optimizer = model.module.engine.optim
             if self.ddp.use_distributed_optimizer and self.ddp.overlap_param_gather:
@@ -726,7 +733,7 @@ class MegatronTrainBackend(model_api.ModelBackend, MegatronConfig):
         sd = optimizer.state_dict()
         dp = constants.data_parallel_rank()
         pp = constants.pipe_parallel_rank()
-        tp = constants.model_parallel_rank()
+        tp = constants.tensor_parallel_rank()
         # HACK: (bowei) I'm not sure whether there's duplicated information.
         torch.save(
             sd, pathlib.Path(save_dir) / f"megatron_optim_sd_d{dp}p{pp}t{tp}.mckpt"
@@ -742,7 +749,7 @@ class MegatronTrainBackend(model_api.ModelBackend, MegatronConfig):
 
         dp = constants.data_parallel_rank()
         pp = constants.pipe_parallel_rank()
-        tp = constants.model_parallel_rank()
+        tp = constants.tensor_parallel_rank()
 
         sd = torch.load(
             pathlib.Path(load_dir) / f"megatron_optim_sd_d{dp}p{pp}t{tp}.mckpt"

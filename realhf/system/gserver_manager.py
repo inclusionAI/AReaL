@@ -6,18 +6,44 @@ import shutil
 import threading
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import List
 
 import aiohttp
+import numpy as np
 
 from realhf.api.core.model_api import GenReqMeta, GenRespMeta, ModelVersionReq
 from realhf.api.core.system_api import GserverManager as GserverManagerConfig
 from realhf.base import constants, logging, name_resolve, names, network, recover
-from realhf.system.worker_base import AsyncWorker, PollResult, Worker
+from realhf.system.worker_base import PollResult, Worker
 
-logger = logging.getLogger("Generation Manager", "colored")
+logger = logging.getLogger("Generation Manager", "system")
 
 STALENESS_WARNED = defaultdict(lambda: False)
+
+
+@dataclass
+class RolloutStat:
+    submit: int = 0
+    accepted: int = 0
+    running: int = 0
+
+    def inc(self):
+        self.submit += 1
+        self.accepted += 1
+        self.running += 1
+
+    def accept(self):
+        self.running -= 1
+
+    def reject(self):
+        self.running -= 1
+        self.accepted -= 1
+
+
+@dataclass
+class AllocateRolloutInput:
+    qid: str
 
 
 class GserverManager(Worker):
@@ -37,22 +63,29 @@ class GserverManager(Worker):
 
         assert self.config.worker_info.worker_count == 1
 
-        self.async_lock = asyncio.Lock()
         self.threading_lock = threading.Lock()
-        self.n_total_rollouts = 0
-        self.n_running_rollouts = 0
-        self.accepted_rollouts = 0
+        self.rollout_stat = RolloutStat()
 
         self.schedule_policy = config.schedule_policy
 
         self._last_param_realloc_step = 0
 
+        self._qid_to_server_url = {}
+
+        self._server_token_usage = defaultdict(float)
+        self._server_request_counts = defaultdict(int)
+
+        self._last_thpt_output_time = time.time()
+        self._gen_tokens = 0
+
         self.experiment_name = config.worker_info.experiment_name
         self.trial_name = config.worker_info.trial_name
 
         # manager server
-        self.server = None
+        self.manager_http_server = None
         self.thread = None
+
+        self.server_urls = []
 
         # recover info
         self.__recover_run, self.__recover_info = recover.load_recover_info()
@@ -67,10 +100,12 @@ class GserverManager(Worker):
             name_resolve.add(name, self.__recover_info.last_step_info.global_step)
 
             self._loaded_recover_weights = False
-            self.n_total_rollouts = self.accepted_rollouts = (
+            hist_rollouts = (
                 self.config.train_batch_size
                 * self.__recover_info.last_step_info.global_step
             )
+            self.rollout_stat.submit = hist_rollouts
+            self.rollout_stat.accepted = hist_rollouts
 
         return config.worker_info
 
@@ -84,7 +119,7 @@ class GserverManager(Worker):
             if cnt >= timeout:
                 raise TimeoutError("Waiting generation servers timeout.")
         urls = name_resolve.get_subtree(name)
-        assert len(set(urls)) == len(urls), urls
+        assert len(set(urls)) == len(urls), (len(urls), len(set(urls)), urls)
         return urls
 
     def _get_recover_ckpt_path(self, role: str):
@@ -146,49 +181,34 @@ class GserverManager(Worker):
     async def flush_requests_and_update_weights(
         self, server_url, new_param_path, update_weights_retries=5
     ):
-        # HACK: urls are designed for SGLang
         server_index = self.server_urls.index(server_url)
-        async with aiohttp.ClientSession(server_url) as session:
-            running_requests = None
-            tik = time.perf_counter()
-            while running_requests is None or running_requests > 0:
-                if time.perf_counter() - tik > self.config.flush_request_timeout:
-                    raise RuntimeError(
-                        f"Waiting for flush requests failed. {running_requests} requests "
-                        f"remain after {self.config.flush_request_timeout} secs waiting. "
-                        f"Please try to reduce `new_tokens_per_chunk`."
-                    )
-                if running_requests is not None and running_requests > 0:
-                    logger.info(
-                        f"Waiting for {running_requests} requests on gen server {server_index}... "
-                        f"Time taken so far: {time.perf_counter() - tik:.4f}s"
-                    )
-                    await asyncio.sleep(0.5)
-                async with session.get(f"/metrics") as resp:
-                    resp.raise_for_status()
-                    text = await resp.text()
-                    for line in text.split("\n"):
-                        if line.startswith("sglang:num_running_reqs"):
-                            running_requests = float(line.split(" ")[1])
-                            break
-
-            success = False
-            for _ in range(update_weights_retries):
+        success = False
+        for _ in range(update_weights_retries):
+            async with aiohttp.ClientSession(
+                server_url,
+                timeout=aiohttp.ClientTimeout(
+                    total=self.config.flush_request_timeout, sock_connect=30
+                ),
+            ) as session:
                 async with session.post(
                     f"/update_weights_from_disk",
-                    json=dict(model_path=new_param_path),
+                    json=dict(model_path=new_param_path, allow_interrupt=True),
                 ) as resp:
                     if resp.status == 200:
                         res = await resp.json()
                         success = res["success"]
                         if success:
+                            logger.info(
+                                f"{res['num_paused_requests']} requests are interrupted "
+                                f"during updateing weights for server {server_index}: {server_url}"
+                            )
                             return
                         logger.warning(
                             f"Update weights failed: {res['message']}. Retrying."
                         )
                     logger.warning(f"Update weights failed: {resp.reason}. Retrying.")
                 time.sleep(0.1)
-            raise RuntimeError("Update weights failed.")
+        raise RuntimeError("Update weights failed.")
 
     def _round_robin_schedule(self, req_meta: GenReqMeta) -> int:
         if not hasattr(self, "round_robin_idx"):
@@ -197,6 +217,16 @@ class GserverManager(Worker):
         self.round_robin_idx += 1
         self.round_robin_idx %= self.config.n_servers
         return r
+
+    def _least_requests_schedule(self, req_meta: GenReqMeta) -> int:
+        counts = [
+            self._server_request_counts[server_url] for server_url in self.server_urls
+        ]
+        return int(np.argmin(counts))
+
+    def _least_token_usage_schedule(self, req_meta: GenReqMeta) -> int:
+        url = min(self.server_urls, key=lambda k: self._server_token_usage[k])
+        return self.server_urls.index(url)
 
     def _poll(self):
         if not self.thread:
@@ -228,6 +258,23 @@ class GserverManager(Worker):
                 loop.run_until_complete(asyncio.gather(*tasks))
                 logger.info(f"Generaion server updated weights from: {new_param_path}")
 
+        tasks = [
+            self._get_server_token_usage(server_url) for server_url in self.server_urls
+        ]
+        loop = asyncio.get_event_loop()
+        token_usages = loop.run_until_complete(asyncio.gather(*tasks))
+        with self.threading_lock:
+            for server_url, token_usage in zip(self.server_urls, token_usages):
+                self._server_token_usage[server_url] = token_usage
+
+        if time.time() - self._last_thpt_output_time > 30:
+            interval = time.time() - self._last_thpt_output_time
+            logger.info(
+                f"Generation throughput: {self._gen_tokens / interval:.2f} tokens/s"
+            )
+            self._last_thpt_output_time = time.time()
+            self._gen_tokens = 0
+
         # clear old weights
         realloc_root = os.path.join(
             constants.PARAM_REALLOC_PATH,
@@ -237,9 +284,11 @@ class GserverManager(Worker):
         )
         if os.path.exists(realloc_root):
             for realloc_version in os.listdir(realloc_root):
+                # Lock-free is safe here.
+                # Remain one checkpoint for recover.
                 if (
                     os.path.isdir(os.path.join(realloc_root, realloc_version))
-                    and int(realloc_version) < self._last_param_realloc_step
+                    and int(realloc_version) < self._last_param_realloc_step - 1
                 ):
                     shutil.rmtree(os.path.join(realloc_root, realloc_version))
                     logger.info(
@@ -247,29 +296,56 @@ class GserverManager(Worker):
                         f"checkpoint: {os.path.join(realloc_root, realloc_version)}"
                     )
 
-        # TODO: we may want to update server status
-        # in the main thread.
-
-        time.sleep(1)
+        time.sleep(5)
 
         return PollResult(0, 0)
 
-    async def is_staled(self):
-        global_sample_cnt = self.n_total_rollouts
-        expected_version = global_sample_cnt // self.config.train_batch_size
-        staled = (
-            expected_version
-            > self.config.max_head_offpolicyness + self._last_param_realloc_step
+    async def _get_server_token_usage(self, server_url):
+        async with aiohttp.ClientSession(
+            server_url,
+            timeout=aiohttp.ClientTimeout(
+                total=self.config.flush_request_timeout, sock_connect=30
+            ),
+        ) as session:
+            async with session.get("/metrics") as resp:
+                resp.raise_for_status()
+                text = await resp.text()
+                for l in text.split("\n"):
+                    if l.startswith("sglang:num_used_tokens"):
+                        return float(l.split(" ")[1])
+        raise RuntimeError(f"Failed to get token usage metrics from {server_url}")
+
+    async def _get_server_num_running_requests(self, server_url):
+        async with aiohttp.ClientSession(
+            server_url,
+            timeout=aiohttp.ClientTimeout(
+                total=self.config.flush_request_timeout, sock_connect=30
+            ),
+        ) as session:
+            async with session.get(f"/metrics") as resp:
+                resp.raise_for_status()
+                text = await resp.text()
+                for line in text.split("\n"):
+                    if line.startswith("sglang:num_running_reqs"):
+                        return float(line.split(" ")[1])
+        raise RuntimeError(
+            f"Failed to get num running requests metrics from {server_url}"
         )
+
+    def is_staled(self):
+        global_sample_cnt = self.rollout_stat.accepted
+        expected_version = global_sample_cnt // self.config.train_batch_size
+        version = self._last_param_realloc_step
+        staled = expected_version > self.config.max_head_offpolicyness + version
         global STALENESS_WARNED
-        if staled and not STALENESS_WARNED[self._last_param_realloc_step]:
+        if staled and not STALENESS_WARNED[version]:
             logger.warning(
                 f"expected version ({expected_version}) = "
                 f"global sample cnt ({global_sample_cnt}) // batch size ({self.config.train_batch_size}), "
-                f"current version {self._last_param_realloc_step}, "
+                f"current latest version {version}, "
                 f"offpolicyness {self.config.max_head_offpolicyness}. Staled? {staled}"
             )
-            STALENESS_WARNED[self._last_param_realloc_step] = True
+            STALENESS_WARNED[version] = True
         return staled
 
     def _run_routing_service(self):
@@ -282,60 +358,94 @@ class GserverManager(Worker):
         @self.app.post("/schedule_request")
         async def schedule_request(req_meta: GenReqMeta):
             with self.threading_lock:
-                async with self.async_lock:
-                    version = self._last_param_realloc_step
-                    # FIXME: We only implement a round-robin scheduler that
-                    # ignores server status and request metadata
+                if (
+                    req_meta.previous_server_url
+                    and req_meta.previous_version == self._last_param_realloc_step
+                ):
+                    return dict(
+                        url=req_meta.previous_server_url,
+                        version=req_meta.previous_version,
+                    )
+
+                if self.schedule_policy == "round_robin":
                     server_idx = self._round_robin_schedule(req_meta)
-            return dict(url=self.server_urls[server_idx], version=max(0, version))
+                elif self.schedule_policy == "least_token_usage":
+                    server_idx = self._least_token_usage_schedule(req_meta)
+                elif self.schedule_policy == "least_requests":
+                    server_idx = self._least_requests_schedule(req_meta)
+                else:
+                    raise NotImplementedError(
+                        f"Unknown schedule policy {self.schedule_policy}"
+                    )
+
+                server_url = self.server_urls[server_idx]
+                # qid prompt (n samples) use the same dst server
+                self._qid_to_server_url[req_meta.qid] = server_url
+                self._server_request_counts[server_url] += 1
+                self._server_token_usage[server_url] += (
+                    req_meta.prompt_len
+                    + req_meta.new_token_budget * req_meta.group_size * 0.4
+                )
+
+                version = self._last_param_realloc_step
+            return dict(url=server_url, version=version)
 
         @self.app.post("/get_model_version")
         async def get_model_version(req: ModelVersionReq):
             with self.threading_lock:
-                async with self.async_lock:
-                    # FIXME: we may have different versions for different servers
-                    version = self._last_param_realloc_step
+                # FIXME: we may have different versions for different servers
+                version = self._last_param_realloc_step
             return dict(version=version)
 
-        @self.app.get("/allocate_rollout")
-        async def allocate_rollout():
+        @self.app.post("/allocate_rollout")
+        async def allocate_rollout(req: AllocateRolloutInput):
             with self.threading_lock:
-                async with self.async_lock:
-                    has_capacity = (
-                        self.n_running_rollouts < self.config.max_concurrent_rollouts
-                    )
-                    is_staled = await self.is_staled()
-                    reason = ""
-                    if has_capacity and not is_staled:
-                        self.n_running_rollouts += 1
-                        self.n_total_rollouts += 1
-                        return dict(success=True, reason=reason)
-                    else:
-                        if not has_capacity:
-                            reason += f"capacity: {self.n_running_rollouts} >= {self.config.max_concurrent_rollouts}"
-                        if is_staled:
-                            global_sample_cnt = self.n_total_rollouts
-                            expected_version = (
-                                global_sample_cnt // self.config.train_batch_size
-                            )
-                            reason += (
-                                f" and staled: expected version ({expected_version}) = "
-                                f"global sample cnt ({global_sample_cnt}) // batch size ({self.config.train_batch_size}), "
-                                f"current version {self._last_param_realloc_step}, "
-                                f"offpolicyness {self.config.max_head_offpolicyness}."
-                            )
-                        return dict(success=False, reason=reason)
+                has_capacity = (
+                    self.rollout_stat.running < self.config.max_concurrent_rollouts
+                )
+                is_staled = self.is_staled()
+                reason = ""
+                if has_capacity and not is_staled:
+                    self.rollout_stat.inc()
+                    return dict(success=True, reason=reason)
+                else:
+                    if not has_capacity:
+                        reason += f"capacity: {self.rollout_stat.running} >= {self.config.max_concurrent_rollouts}"
+                    if is_staled:
+                        global_sample_cnt = self.rollout_stat.accepted
+                        expected_version = (
+                            global_sample_cnt // self.config.train_batch_size
+                        )
+                        version = self._last_param_realloc_step
+                        reason += (
+                            f" and staled: expected version ({expected_version}) = "
+                            f"global sample cnt ({global_sample_cnt}) // batch size ({self.config.train_batch_size}), "
+                            f"current latest version {version}, "
+                            f"offpolicyness {self.config.max_head_offpolicyness}."
+                        )
+                    return dict(success=False, reason=reason)
 
         @self.app.post("/finish_rollout")
         async def finish_rollout(resp_meta: GenRespMeta):
             with self.threading_lock:
-                async with self.async_lock:
-                    self.n_running_rollouts -= 1
-                    if resp_meta.accepted:
-                        self.accepted_rollouts += 1
-                    return dict(success=True)
+                server_url = self._qid_to_server_url[resp_meta.qid]
+                self._server_request_counts[server_url] -= 1
+                assert (
+                    self._server_request_counts[server_url] >= 0
+                ), "server request count < 0"
+                self._qid_to_server_url.pop(resp_meta.qid)
+                self._gen_tokens += resp_meta.n_tokens
+                if resp_meta.accepted:
+                    self.rollout_stat.accept()
+                else:
+                    self.rollout_stat.reject()
+                return dict(success=True)
 
-        self.manager_addr = f"{network.gethostip()}:{network.find_free_port()}"
+        port = network.find_free_port(
+            experiment_name=self.experiment_name,
+            trial_name=self.trial_name,
+        )
+        self.manager_addr = f"{network.gethostip()}:{port}"
 
         config = uvicorn.Config(
             self.app,
@@ -343,12 +453,12 @@ class GserverManager(Worker):
             port=int(self.manager_addr.split(":")[1]),
             log_level="warning",
         )
-        self.server = uvicorn.Server(config)
-        self.server.run()
+        self.manager_http_server = uvicorn.Server(config)
+        self.manager_http_server.run()
 
     def _exit_hook(self, exit_status):
-        if self.server:
-            self.server.should_exit = True
+        if self.manager_http_server:
+            self.manager_http_server.should_exit = True
         if self.thread:
             self.thread.join(timeout=3)
         logger.info("Server stopped")

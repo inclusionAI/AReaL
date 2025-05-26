@@ -97,8 +97,7 @@ class PromptOnlyDatasetConfig:
 class ModelFamily:
     """Identifier for HuggingFace model types (e.g., llama, gpt2).
 
-    Used for model registration and allocation. The size parameter is specifically
-    relevant for the 'search' allocation mode.
+    Used for model registration and allocation.
     """
 
     _class: str = field(
@@ -106,12 +105,6 @@ class ModelFamily:
             "help": "Model class name (e.g., 'llama'). Must be registered in `register_hf_family`. See "
             "`realhf/api/from_hf` for supported models.",
         }
-    )
-    size: int = field(
-        default=0,
-        metadata={
-            "help": "Model size parameter. Only used by 'search' allocation mode, ignored otherwise",
-        },
     )
     is_critic: bool = field(
         default=False,
@@ -121,8 +114,8 @@ class ModelFamily:
     )
 
     def __repr__(self):
-        """Returns formatted string representation: '{class}-{size}[-critic]'."""
-        s = f"{self._class}-{self.size}"
+        """Returns formatted string representation: '{class}[-critic]'."""
+        s = f"{self._class}"
         if self.is_critic:
             s += "-critic"
         return s
@@ -136,7 +129,7 @@ class ParallelismConfig:
         Sequence parallelism is only used in combination with tensor-model parallelism.
     """
 
-    model_parallel_size: int = field(
+    tensor_parallel_size: int = field(
         default=1, metadata={"help": "Size of tensor-model parallelism"}
     )
     pipeline_parallel_size: int = field(
@@ -155,7 +148,7 @@ class ParallelismConfig:
     def __str__(self):
         """Returns compact string representation: 'Parallel(mp=X,pp=Y,dp=Z)'."""
         return (
-            f"Parallel(mp={self.model_parallel_size},"
+            f"Parallel(mp={self.tensor_parallel_size},"
             f"pp={self.pipeline_parallel_size},"
             f"dp={self.data_parallel_size})"
         )
@@ -168,7 +161,7 @@ class ParallelismConfig:
             Implemented as static method to avoid OmegaConf compatibility issues.
         """
         return (
-            (this.model_parallel_size == other.model_parallel_size)
+            (this.tensor_parallel_size == other.tensor_parallel_size)
             and (this.pipeline_parallel_size == other.pipeline_parallel_size)
             and (this.data_parallel_size == other.data_parallel_size)
         )
@@ -186,7 +179,7 @@ class OptimizerConfig:
         default="adam",
         metadata={"help": "Optimizer type", "choices": ["adam", "empty"]},
     )
-    lr: float = field(default=1e-5, metadata={"help": "Learning rate"})
+    lr: float = field(default=2e-5, metadata={"help": "Learning rate"})
     weight_decay: float = field(default=0.05, metadata={"help": "Weight decay"})
     beta1: float = field(default=0.9, metadata={"help": "Adam beta1 parameter"})
     beta2: float = field(default=0.95, metadata={"help": "Adam beta2 parameter"})
@@ -198,14 +191,14 @@ class OptimizerConfig:
         },
     )
     lr_scheduler_type: str = field(
-        default="cosine",
+        default="constant",
         metadata={
             "help": "Learning rate scheduler type",
             "choices": ["linear", "cosine", "constant"],
         },
     )
     warmup_steps_proportion: float = field(
-        default=0.02,
+        default=0.001,
         metadata={
             "help": "Proportion of training steps for warmup",
         },
@@ -237,6 +230,7 @@ class vLLMConfig:
     """
 
     max_num_seqs: int = 256
+    dtype: str = "float16"
     kv_cache_type: str = "auto"
     num_scheduler_steps: int = 1
     multi_step_stream_outputs: bool = True
@@ -278,7 +272,6 @@ class SGLangConfig:
     enable_nccl_nvls: bool = False
     disable_outlines_disk_cache: bool = False
     disable_custom_all_reduce: bool = False
-    disable_mla: bool = False
     disable_overlap_schedule: bool = False
     enable_mixed_chunk: bool = False
     enable_dp_attention: bool = False
@@ -296,7 +289,7 @@ class SGLangConfig:
     enable_memory_saver: bool = False
     allow_auto_truncate: bool = False
     # NOTE: to avoid the illegal memory access error
-    attention_backend: Optional[str] = "triton"
+    attention_backend: Optional[str] = "flashinfer"
     sampling_backend: Optional[str] = None
     context_length: Optional[int] = 32768
     mem_fraction_static: Optional[float] = 0.9
@@ -309,15 +302,19 @@ class SGLangConfig:
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
     hybrid_train: bool = False
+    dtype: str = "float16"
+    kv_cache_dtype: str = "auto"
 
     # logging
-    log_level: str = "info"
+    log_level: str = "warning"
     log_level_http: Optional[str] = "warning"
     log_requests: bool = False
     log_requests_level: int = 0
     show_time_cost: bool = False
     enable_metrics: bool = True  # Exports Prometheus-like metrics
-    decode_log_interval: int = 1000  # How often (in tokens) to log decode progress.
+    # The interval (in decoding iterations) to log throughput
+    # and update prometheus metrics
+    decode_log_interval: int = 1
 
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
@@ -327,6 +324,7 @@ class SGLangConfig:
         tp_size,
         server_index,
         base_gpu_id,
+        dist_init_addr: Optional[str] = None,
     ):
         from realhf.base import constants, network, pkg_version, seeding
         from realhf.experiments.common.utils import asdict as conf_as_dict
@@ -345,7 +343,6 @@ class SGLangConfig:
             tokenizer_mode="auto",
             load_format="auto",
             trust_remote_code=True,
-            kv_cache_dtype="auto",
             device="cuda",
             served_model_name=f"{constants.experiment_name()}/{constants.trial_name()}/{model_path}",
             is_embedding=False,
@@ -365,6 +362,7 @@ class SGLangConfig:
             ep_size=1,  # TODO: check
             nnodes=1,
             node_rank=0,
+            dist_init_addr=dist_init_addr,
             **args,
         )
 
@@ -384,6 +382,10 @@ class SGLangConfig:
                 continue
             if v is True:
                 flags.append(f"--{k.replace('_','-')} ")
+                continue
+            if isinstance(v, list):
+                values = " ".join(map(str, v))
+                flags.append(f"--{k.replace('_','-')} {values}")
                 continue
             flags.append(f"--{k.replace('_','-')} {v}")
         flags = " ".join(flags)
@@ -444,7 +446,7 @@ class ModelTrainEvalConfig:
 
     # Model Architecture Configuration
     type: ModelFamily = field(
-        default=ModelFamily("llama", 7, False),
+        default=ModelFamily("llama", False),
         metadata={"help": "Model family specification"},
     )
     path: str = field(default="", metadata={"help": "Path to HuggingFace checkpoint"})
@@ -679,13 +681,13 @@ class PPOHyperparameters:
     value_norm_eps: float = field(
         default=1e-5, metadata={"help": "Epsilon term for numerical stability"}
     )
-
-    # Experimental Features
     recompute_logprob: bool = field(
         default=False,
-        metadata={
-            "help": "Recompute log probabilities after generation. Used mainly for debugging purposes"
-        },
+        metadata={"help": "Recompute logp and replace the logp returned by inference."},
+    )
+    use_decoupled_loss: bool = field(
+        default=False,
+        metadata={"help": "Use the decoupled loss. recompute_logprob must be True."},
     )
 
 
@@ -772,6 +774,13 @@ class ExperimentSaveEvalControl:
             "For benchmarking purposes only. None indicates normal training."
         },
     )
+    benchmark_n_seqs: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Terminate training after consuming this number of samples. "
+            "For benchmarking purposes only. None indicates normal training."
+        },
+    )
 
 
 @dataclass
@@ -847,7 +856,7 @@ class BaseExperimentConfig:
 
     Note:
         - Recovery modes: auto, fault, resume, disabled
-        - Allocation modes: manual, search, heuristic, or pattern-based
+        - Allocation modes: manual, heuristic, or pattern-based
     """
 
     experiment_name: str = field(
@@ -919,12 +928,8 @@ class BaseExperimentConfig:
         default="",
         metadata={
             "help": "GPU parallel strategy allocation mode. "
-            "Options: manual/search/heuristic or pattern-based."
+            "Options: manual/heuristic or pattern-based."
         },
-    )
-    allocation_use_cache: bool = field(
-        default=False,
-        metadata={"help": "Use allocation search cache (search mode only)."},
     )
     n_nodes: int = field(
         default=1, metadata={"help": "Number of nodes for experiment."}
@@ -998,9 +1003,17 @@ class BaseExperimentConfig:
 
 @dataclass
 class AsyncRLOptions:
+    schedule_policy: str = field(
+        default="round_robin",
+        metadata={
+            "help": "The request schedule policy during generation. Available options: [round_robin]."
+        },
+    )
     new_tokens_per_chunk: int = field(
-        default=1024,
-        metadata={"help": "The lenght of chunked generation."},
+        default=int(1e10),
+        metadata={
+            "help": "The length of chunked generation. Only valid if inference can't be interrupted."
+        },
     )
     max_head_offpolicyness: int = field(
         default=0,
@@ -1013,9 +1026,11 @@ class AsyncRLOptions:
             "help": "Number of rollout workers. None defaults to train world size."
         },
     )
-    max_concurrent_rollouts: int = field(
-        default=1024,
-        metadata={"help": "Max concurrent rollout jobs in each worker."},
+    max_concurrent_rollouts: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Max concurrent rollouts globally. Defaults to train batch size."
+        },
     )
     flush_request_timeout: int = field(
         default=120,
@@ -1223,6 +1238,12 @@ class PPOMATHExperimentOptions:
         metadata={
             "help": "Success rate lower than this value will be filtered out after generation. Valid for async training."
         },
+    )
+
+    # testing only
+    no_training: bool = field(
+        default=False,
+        metadata={"help": "Run without training. Test-only."},
     )
 
 

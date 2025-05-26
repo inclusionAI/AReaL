@@ -462,8 +462,8 @@ class ExperimentConfig:
                 )
                 self_topo = model_topos[rpc.model_name]
                 if (
-                    self_topo.get_dim("model") % other_topo.get_dim("model") != 0
-                    and other_topo.get_dim("model") % self_topo.get_dim("model") != 0
+                    self_topo.get_dim("tensor") % other_topo.get_dim("tensor") != 0
+                    and other_topo.get_dim("tensor") % self_topo.get_dim("tensor") != 0
                 ):
                     raise ValueError(
                         "To synchronize parameters between two models, "

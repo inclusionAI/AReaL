@@ -60,7 +60,6 @@ GEN_WORKER_DEFAULT_CAPACITY = 512
 
 @dataclasses.dataclass
 class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
-
     @property
     def generation_config(self) -> GenerationHyperparameters:
         raise NotImplementedError()
@@ -203,16 +202,17 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                     "config_from_hf_converter"
                 ](hf_config)
                 if (
-                    model_config.n_kv_heads % rpc_alloc.parallel.model_parallel_size
+                    model_config.n_kv_heads % rpc_alloc.parallel.tensor_parallel_size
                     != 0
                 ) or (
-                    model_config.n_q_heads % rpc_alloc.parallel.model_parallel_size != 0
+                    model_config.n_q_heads % rpc_alloc.parallel.tensor_parallel_size
+                    != 0
                 ):
                     raise ValueError(
                         f"The number of KV heads {model_config.n_kv_heads} or "
                         f"Q heads {model_config.n_q_heads} is not"
                         f" divisible by the configured TP size "
-                        f"({rpc_alloc.parallel.model_parallel_size}). "
+                        f"({rpc_alloc.parallel.tensor_parallel_size}). "
                         f"Please decrease TP size."
                     )
                 mapping = rpc_alloc.device_mesh.mapping
@@ -250,7 +250,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                                 topo=topo,
                                 dp_rank=topo.get_coord(shard_idx).data,
                                 pp_rank=topo.get_coord(shard_idx).pipe,
-                                mp_rank=topo.get_coord(shard_idx).model,
+                                tp_rank=topo.get_coord(shard_idx).tensor,
                             ),
                             model=model,
                             backend=backend,
@@ -308,15 +308,18 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
         model_name = gen_rpc_alloc.rpc.model_name
         train_rpcs = [alloc.rpc for alloc in rpc_allocs if alloc.rpc.is_train()]
         assert all(rpc.n_seqs == train_rpcs[0].n_seqs for rpc in train_rpcs)
+        max_concurrent_rollouts = self.max_concurrent_rollouts
+        if max_concurrent_rollouts is None:
+            max_concurrent_rollouts = train_rpcs[0].n_seqs
         return [
             GserverManager(
                 model_name=model_name,
                 flush_request_timeout=self.flush_request_timeout,
                 n_servers=gen_world_size // gen_tp_size,
-                schedule_policy="round_robin",
+                schedule_policy=self.schedule_policy,
                 max_head_offpolicyness=self.max_head_offpolicyness,
                 train_batch_size=train_rpcs[0].n_seqs,
-                max_concurrent_rollouts=self.max_concurrent_rollouts,
+                max_concurrent_rollouts=max_concurrent_rollouts,
             )
         ]
 

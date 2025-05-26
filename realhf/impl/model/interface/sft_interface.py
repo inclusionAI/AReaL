@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import dataclasses
-from typing import Dict, Literal
+from typing import Dict, List, Literal
 
 import torch
 import torch.distributed as dist
@@ -68,10 +68,10 @@ def compute_packed_sft_loss(
     vocab_min_logits = logits.detach().min(-1).values.float()
     vocab_max_logits = logits.detach().max(-1).values.float()
     dist.all_reduce(
-        vocab_min_logits, group=constants.model_parallel_group(), op=dist.ReduceOp.MIN
+        vocab_min_logits, group=constants.tensor_parallel_group(), op=dist.ReduceOp.MIN
     )
     dist.all_reduce(
-        vocab_max_logits, group=constants.model_parallel_group(), op=dist.ReduceOp.MAX
+        vocab_max_logits, group=constants.tensor_parallel_group(), op=dist.ReduceOp.MAX
     )
     stats_tracker.stat(
         vocab_min_logits=vocab_min_logits,
@@ -88,7 +88,7 @@ class SFTInterface(model_api.ModelInterface):
 
     def train_step(
         self, model: model_api.Model, data: SequenceSample, mb_spec: MicroBatchSpec
-    ) -> Dict:
+    ) -> Dict | List[Dict]:
         module = model.module
 
         module.train()

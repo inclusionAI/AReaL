@@ -145,6 +145,7 @@ class MasterWorker(worker_base.Worker):
         # for benchmark
         self.e2e_time_history = []
         self.__benchmark_steps = config.exp_ctrl.benchmark_steps
+        self.__benchmark_n_seqs = config.exp_ctrl.benchmark_n_seqs
 
         return config.worker_info
 
@@ -210,13 +211,14 @@ class MasterWorker(worker_base.Worker):
         src_rpc_dp_size = src_rpc_topo.get_dim("data")
 
         # Request training specification from data workers.
-        self._dataset_size = sum(
-            self.__stream.call(
-                handlers=[f"__data{i}__" for i in range(src_rpc_dp_size)],
-                datas=[None for i in range(src_rpc_dp_size)],
-                handle_type="spec",
-            ),
+        specs = self.__stream.call(
+            handlers=[f"__data{i}__" for i in range(src_rpc_dp_size)],
+            datas=[None for i in range(src_rpc_dp_size)],
+            handle_type="spec",
         )
+        assert all(x["n_datasets"] == specs[0]["n_datasets"] for x in specs), specs
+        self._dataset_size = sum(x["dataset_size"] for x in specs)
+        self._n_datasets = specs[0]["n_datasets"]
 
         self._steps_per_epoch = self._dataset_size // src_rpc.n_seqs
 
@@ -239,7 +241,7 @@ class MasterWorker(worker_base.Worker):
         src_rpc_dp_size = src_rpc_topo.get_dim("data")
         src_rpc_pp_size = src_rpc_topo.get_dim("pipe")
         for i in range(src_rpc_dp_size):
-            rank = src_rpc_topo.get_rank(data=i, pipe=src_rpc_pp_size - 1, model=0)
+            rank = src_rpc_topo.get_rank(data=i, pipe=src_rpc_pp_size - 1, tensor=0)
             handler_routing[f"__data{i}__"] = self.config.msid2mwid[
                 config_pkg.ModelShardID.from_parallelism_rank(
                     model_name=src_rpc.model_name,
@@ -263,10 +265,13 @@ class MasterWorker(worker_base.Worker):
 
         self.initialize_models()
 
-        self.__seqbuffer = AsyncIOSequenceBuffer(
-            self.__model_rpcs,
-            max_size=int(os.getenv("REAL_MASTER_BUFFER_SIZE", str(int(1e7)))),
-        )
+        self.__seqbuffers = [
+            AsyncIOSequenceBuffer(
+                self.__model_rpcs,
+                max_size=int(os.getenv("REAL_MASTER_BUFFER_SIZE", str(int(1e7)))),
+            )
+            for _ in range(self._n_datasets)
+        ]
 
         # wandb init, connect to remote wandb host
         wandb.login()
@@ -300,7 +305,7 @@ class MasterWorker(worker_base.Worker):
             rpcs=self.__model_rpcs,
             msid2mwid=self.config.msid2mwid,
             stream=self.__stream,
-            buffer=self.__seqbuffer,
+            buffers=self.__seqbuffers,
             model_topos=self.__model_topos,
             model_configs=self.__model_configs,
             ctrl=self.__rpc_ctrl,
@@ -395,20 +400,33 @@ class MasterWorker(worker_base.Worker):
 
         # Pause the worker if experiment or system-wise benchmark completes.
         if (
-            self.__benchmark_steps is not None
-            and self.__rpc_ctrl.step_info.global_step >= self.__benchmark_steps
-        ) or (
-            self.__rpc_ctrl.step_info.global_step * self.__src_rpc.n_seqs
-            >= self.__total_train_epochs * self._dataset_size
+            (
+                self.__benchmark_steps is not None
+                and self.__rpc_ctrl.step_info.global_step >= self.__benchmark_steps
+            )
+            or (
+                self.__rpc_ctrl.step_info.global_step * self.__src_rpc.n_seqs
+                >= self.__total_train_epochs * self._dataset_size
+            )
+            or (
+                self.__benchmark_n_seqs is not None
+                and self.__rpc_ctrl.step_info.global_step
+                * self._ft_spec.train_batch_size
+                >= self.__benchmark_n_seqs
+            )
         ):
             # We don't know whether it is the last step of the current epoch,
             # so we exit at the first step of the next epoch.
-            if self.__benchmark_steps is not None:
+            if (
+                self.__benchmark_steps is not None
+                or self.__benchmark_n_seqs is not None
+            ):
                 logger.info(
                     f"Finished benchmark {self.__benchmark_steps}. "
                     f"Time consumption of this setup: {time_since_configure:.3f}"
                 )
                 logger.info(f"avg #e2e# time *{np.mean(self.e2e_time_history):.3f}*")
+            # TODO: inform generation workers to exit
             return self.experiment_complete_exit()
 
         return worker_base.PollResult(sample_count=1, batch_count=1)
@@ -439,9 +457,7 @@ class MasterWorker(worker_base.Worker):
         s += f"(global step {global_step}) finishes. "
         s += f"#End to end# execution time: *{e2e_time:.3f}*s. "
         s += f"Total time consumption: {time_since_configure:.3f}s. "
-        logging.log_wandb_tensorboard(
-            {"timeperf/e2e": e2e_time}, step=self.__rpc_ctrl.step_info.global_step
-        )
+        logging.log_wandb_tensorboard({"timeperf/e2e": e2e_time})
         if len(self.e2e_time_history) > 2:
             remaining_steps = self._steps_per_epoch - epoch_step
             remaining_epochs = self.__total_train_epochs - epoch

@@ -9,7 +9,7 @@ from functioncall.base.utils import construct_uid, load_jsonl, logger
 
 SINGLE_CASE_EXEC_TIMEOUT = 6
 TEST_CASE_BATCH_SIZE = 1
-FUNCTIONCALL_TIMEOUT = 1000
+FUNCTIONCALL_TIMEOUT = 100
 
 
 def round_up_memory(memory):

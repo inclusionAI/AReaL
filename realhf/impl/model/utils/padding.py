@@ -250,7 +250,7 @@ def pad_sequence_parallel_input(
 ):
     """Sequence parallel requires packed_input_ids has a shape of 1 dimension
     [total_seq_len], and total_seq_len should be divisible by
-    model_parallel_world_size. This function is used to pad packed_input_ids to
+    tensor_parallel_world_size. This function is used to pad packed_input_ids to
     suitable length with an empty sequence, and return new packed_input_ids,
     cu_seqlens and max_seqlen.
 
@@ -262,10 +262,10 @@ def pad_sequence_parallel_input(
     Returns:
         (torch.Tensor, torch.Tensor, int, int): padded (packed_input_ids, cu_seqlens, max_seqlen, pad_size)
     """
-    mp_world_size = constants.model_parallel_world_size()
+    tp_world_size = constants.tensor_parallel_world_size()
     pad_size = 0
-    if len(packed_input_ids) % mp_world_size != 0:
-        pad_size = mp_world_size - len(packed_input_ids) % mp_world_size
+    if len(packed_input_ids) % tp_world_size != 0:
+        pad_size = tp_world_size - len(packed_input_ids) % tp_world_size
         packed_input_ids = torch.nn.functional.pad(
             packed_input_ids, (0, pad_size), value=1
         )
@@ -281,9 +281,9 @@ def pad_sequence_parallel_generate_input(
 ):
     """Only for pipeline generate input when model+seq parallel is enabled. To
     make sure inputs for seq parallel model have a shape with first dimension
-    divisible by model_parallel_world_size, the packed_input_ids should have
-    length divisible by model_parallel_world_size, and contains number of
-    sequences divisible by model_parallel_world_size.
+    divisible by tensor_parallel_world_size, the packed_input_ids should have
+    length divisible by tensor_parallel_world_size, and contains number of
+    sequences divisible by tensor_parallel_world_size.
 
     Args:
         packed_input_ids (torch.Tensor): unpadded packed_input_ids
@@ -293,16 +293,16 @@ def pad_sequence_parallel_generate_input(
     Returns:
         (torch.Tensor, torch.Tensor, int, int, int): padded (packed_input_ids, cu_seqlens, max_seqlen, pad_size, pad_seq_size)
     """
-    mp_world_size = constants.model_parallel_world_size()
+    tp_world_size = constants.tensor_parallel_world_size()
     pad_size, pad_seq_size = 0, 0
     if (
-        len(packed_input_ids) % mp_world_size != 0
-        or (len(cu_seqlens) - 1) % mp_world_size != 0
+        len(packed_input_ids) % tp_world_size != 0
+        or (len(cu_seqlens) - 1) % tp_world_size != 0
     ):
-        pad_size = mp_world_size - len(packed_input_ids) % mp_world_size
-        pad_seq_size = mp_world_size - (len(cu_seqlens) - 1) % mp_world_size
+        pad_size = tp_world_size - len(packed_input_ids) % tp_world_size
+        pad_seq_size = tp_world_size - (len(cu_seqlens) - 1) % tp_world_size
         if pad_size < pad_seq_size:
-            pad_size += mp_world_size
+            pad_size += tp_world_size
         pad_cu_seqlens = torch.tensor(list(range(1, pad_seq_size)) + [pad_size]) + len(
             packed_input_ids
         )

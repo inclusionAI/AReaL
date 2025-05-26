@@ -157,6 +157,7 @@ async def test_schedule_policy(gserver_manager):
     from realhf.api.core.model_api import GenReqMeta
 
     req_meta = GenReqMeta(
+        "1",
         prompt_len=100,
         group_size=2,
         new_token_budget=1024,
@@ -187,6 +188,7 @@ async def test_weight_update(gserver_manager):
     UPDATE_WEIGHTS_CALL_COUNT.clear()
 
     req_meta = GenReqMeta(
+        "2",
         prompt_len=100,
         group_size=2,
         new_token_budget=1024,
@@ -233,6 +235,7 @@ async def test_http_server_endpoints(gserver_manager):
 
     # Test schedule_request endpoint
     req_meta = GenReqMeta(
+        "3",
         prompt_len=100,
         group_size=2,
         new_token_budget=1024,

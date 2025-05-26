@@ -198,8 +198,8 @@ class SGLangGenerationEngine(PipelinableEngine):
         hybrid_train: bool,
         request_timeout: int = 1800,
     ):
-        if constants.model_parallel_rank() != 0:
-            dist.barrier(group=constants.model_parallel_cpu_group())
+        if constants.tensor_parallel_rank() != 0:
+            dist.barrier(group=constants.tensor_parallel_cpu_group())
             return
         # Start the serving process
         self.server_proc = mp.Process(
@@ -224,8 +224,8 @@ class SGLangGenerationEngine(PipelinableEngine):
         if server_args_dict["enable_metrics"]:
             dp_rank = constants.data_parallel_rank()
             pp_rank = constants.pipe_parallel_rank()
-            mp_rank = constants.model_parallel_rank()
-            metric_server_name = f"d{dp_rank}p{pp_rank}m{mp_rank}"
+            tp_rank = constants.tensor_parallel_rank()
+            metric_server_name = f"d{dp_rank}p{pp_rank}t{tp_rank}"
             key = names.metric_server(
                 constants.experiment_name(),
                 constants.trial_name(),
@@ -243,7 +243,7 @@ class SGLangGenerationEngine(PipelinableEngine):
         # offload weights/cache
         self.hybrid_train = hybrid_train
 
-        dist.barrier(group=constants.model_parallel_cpu_group())
+        dist.barrier(group=constants.tensor_parallel_cpu_group())
 
     def __del__(self):
         if hasattr(self, "server_proc"):
@@ -381,8 +381,8 @@ class SGLangGenerationEngine(PipelinableEngine):
                 "NOTE: passing in an arbitrary `min_new_tokens` will lead to a bug for SGLang v0.4.3 "
                 "because we force to skip_tokenizer_init."
             )
-        if constants.model_parallel_rank() != 0:
-            dist.barrier(group=constants.model_parallel_cpu_group())
+        if constants.tensor_parallel_rank() != 0:
+            dist.barrier(group=constants.tensor_parallel_cpu_group())
             return None, None, None
 
         results = asyncio.run(
@@ -393,12 +393,12 @@ class SGLangGenerationEngine(PipelinableEngine):
                 gconfig=gconfig,
             )
         )
-        dist.barrier(group=constants.model_parallel_cpu_group())
+        dist.barrier(group=constants.tensor_parallel_cpu_group())
         return results
 
     def update_weights_from_disk(self, path):
-        if constants.model_parallel_rank() != 0:
-            dist.barrier(group=constants.model_parallel_cpu_group())
+        if constants.tensor_parallel_rank() != 0:
+            dist.barrier(group=constants.tensor_parallel_cpu_group())
             return
 
         async def _fn():
@@ -409,18 +409,17 @@ class SGLangGenerationEngine(PipelinableEngine):
                 await client.async_update_weights_from_disk(path)
 
         asyncio.run(_fn())
-        dist.barrier(group=constants.model_parallel_cpu_group())
+        dist.barrier(group=constants.tensor_parallel_cpu_group())
 
 
 @dataclasses.dataclass
 class SGLangGenerationBackend(ModelBackend, SGLangConfig):
     model_path: str = ""
-    dtype: str = "float16"
 
     def _initialize(self, model: Model, spec: FinetuneSpec) -> Model:
         if constants.pipe_parallel_world_size() != 1:
             raise RuntimeError("SGLang does not support pipe parallel size > 1.")
-        if constants.model_parallel_world_size() > cluster.spec.n_gpus_per_node:
+        if constants.tensor_parallel_world_size() > cluster.spec.n_gpus_per_node:
             raise RuntimeError(
                 "AReaL's SGLang integration does not support model parallel size > n_gpus_per_node."
             )
@@ -436,7 +435,13 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
         ) != len(datapack.flat2d(ports)):
             dist.all_gather_object(
                 ports,
-                network.find_multiple_free_ports(2, low=20000, high=40000),
+                network.find_multiple_free_ports(
+                    2,
+                    low=10000,
+                    high=60000,
+                    experiment_name=constants.experiment_name(),
+                    trial_name=constants.trial_name(),
+                ),
                 group=constants.data_parallel_group(),
             )
         api_server_port, dist_port = ports[constants.data_parallel_rank()]
@@ -450,13 +455,12 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
             tokenizer_mode="auto",
             load_format="auto",
             trust_remote_code=True,
-            kv_cache_dtype="auto",
             device="cuda",
             served_model_name=f"{constants.experiment_name()}/{constants.trial_name()}/{constants.model_name().role}",
             is_embedding=False,
             skip_tokenizer_init=True,
             # Other runtime options
-            tp_size=constants.model_parallel_world_size(),
+            tp_size=constants.tensor_parallel_world_size(),
             # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
             base_gpu_id=int(os.environ["CUDA_VISIBLE_DEVICES"]),
             file_storage_path=os.path.join(

@@ -13,7 +13,7 @@ import realhf.api.from_hf
 import realhf.base.logging as logging
 from realhf.api.core.model_api import HF_MODEL_FAMILY_REGISTRY
 from realhf.base.importing import import_module
-from realhf.base.pkg_version import is_version_less
+from realhf.base.pkg_version import is_available, is_version_less
 from realhf.impl.model.conversion.hf_registry import HFModelRegistry
 from realhf.impl.model.nn.real_llm_api import ReaLModel
 
@@ -27,8 +27,9 @@ import_module(os.path.join(_filepath, "nn"), _p)
 
 # NOTE: skip importing vLLM for now to avoid an
 # "invalid device context" issue for the 25.01 image
-if is_version_less("vllm", "0.6.4"):
+if is_available("vllm") and is_version_less("vllm", "0.6.4"):
     import realhf.impl.model.backend.vllm
+
 import realhf.impl.model.backend.inference
 import realhf.impl.model.backend.megatron
 import realhf.impl.model.backend.mock_train

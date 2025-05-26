@@ -14,8 +14,7 @@ import torch
 import torch.distributed as dist
 import transformers
 
-from realhf.api.cli_args import ModelFamily
-from realhf.api.core.model_api import HF_MODEL_FAMILY_REGISTRY, ReaLModelConfig
+from realhf.api.core.model_api import ReaLModelConfig
 from realhf.base import constants, logging
 from realhf.base.testing import (
     LocalMultiProcessTest,
@@ -43,7 +42,7 @@ def _save_then_load(
     model_family_name: str,
     is_critic: bool,
     init_critic_from_actor: bool,
-    pp_dp_mp: Tuple,
+    pp_dp_tp: Tuple,
     device: torch.device,
 ):
     # NOTE: import here to avoid initializing CUDA context in the main process
@@ -52,10 +51,10 @@ def _save_then_load(
     # os.environ["REAL_SAVE_MAX_SHARD_SIZE_BYTE"] = str(int(1e6))
 
     model_name = f"saveload_test_{model_family_name}"
-    num_pp, num_dp, num_mp = pp_dp_mp
+    num_pp, num_dp, num_tp = pp_dp_tp
     init_global_constants(
         num_dp=num_dp,
-        num_mp=num_mp,
+        num_tp=num_tp,
         num_pp=num_pp,
         model_name=model_name,
     )
@@ -71,7 +70,7 @@ def _save_then_load(
             ReaLModel, f"make_{model_family_name}_config"
         )()
         mconfig.is_critic = is_critic
-        if mconfig.n_kv_heads % num_mp != 0:
+        if mconfig.n_kv_heads % num_tp != 0:
             return
 
         # load from hf model or create a new critic model
@@ -146,20 +145,20 @@ def _save_then_load(
 
 @pytest.mark.parametrize(
     "model_family_name",
-    ["gemma", "gpt2", "llama", "qwen2", "mistral", "mixtral"],
+    ["gemma", "gpt2", "llama", "qwen2", "mistral", "mixtral", "qwen3"],
 )
 @pytest.mark.parametrize("is_critic", [True, False])
 @pytest.mark.parametrize("init_critic_from_actor", [True, False])
-@pytest.mark.parametrize("pp_dp_mp", [(4, 2, 1), (2, 2, 2), (1, 2, 4), (1, 8, 1)])
+@pytest.mark.parametrize("pp_dp_tp", [(4, 2, 1), (2, 2, 2), (1, 2, 4), (1, 8, 1)])
 @pytest.mark.distributed
 def test_save_then_load(
     tmp_path: pathlib.Path,
     model_family_name: str,
     is_critic: bool,
     init_critic_from_actor: bool,
-    pp_dp_mp: Tuple,
+    pp_dp_tp: Tuple,
 ):
-    if model_family_name == "gpt2" and pp_dp_mp[-1] > 1:
+    if model_family_name == "gpt2" and pp_dp_tp[-1] > 1:
         # GPT-2 has an odd vocabulary size, so it doesn't work
         # with tensor-model parallelism.
         return
@@ -176,7 +175,7 @@ def test_save_then_load(
         model_family_name=model_family_name,
         is_critic=is_critic,
         init_critic_from_actor=init_critic_from_actor,
-        pp_dp_mp=pp_dp_mp,
+        pp_dp_tp=pp_dp_tp,
         tmp_path=tmp_path,
         device="cpu",
     )

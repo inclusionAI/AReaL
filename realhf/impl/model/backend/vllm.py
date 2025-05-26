@@ -166,7 +166,6 @@ class vLLMGenerationEngine(model_api.PipelinableEngine, LLM):
 @dataclasses.dataclass
 class vLLMGenerationBackend(vLLMConfig, model_api.ModelBackend):
     model_path: str = ""
-    dtype: str = "bfloat16"
 
     def _initialize(
         self, model: model_api.Model, spec: model_api.FinetuneSpec
@@ -192,7 +191,7 @@ class vLLMGenerationBackend(vLLMConfig, model_api.ModelBackend):
             kv_cache_dtype=self.kv_cache_type,
             device=constants.current_device(),
             # Parallelism.
-            tensor_parallel_size=constants.model_parallel_world_size(),
+            tensor_parallel_size=constants.tensor_parallel_world_size(),
             pipeline_parallel_size=constants.pipe_parallel_world_size(),
             # KV cahce and scheduling.
             num_scheduler_steps=self.num_scheduler_steps,

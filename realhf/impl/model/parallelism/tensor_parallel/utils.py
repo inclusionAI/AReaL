@@ -6,11 +6,7 @@ from typing import List, Sequence
 import numpy as np
 import torch
 
-from realhf.base.constants import (
-    model_parallel_group,
-    model_parallel_rank,
-    model_parallel_world_size,
-)
+import realhf.base.constants as constants
 
 _MODEL_PARALLEL_ATTRIBUTE_DEFAULTS = {
     "tensor_model_parallel": False,
@@ -22,7 +18,7 @@ _MODEL_PARALLEL_ATTRIBUTE_DEFAULTS = {
 def param_is_not_model_parallel_duplicate(param):
     return (
         hasattr(param, "tensor_model_parallel") and param.tensor_model_parallel
-    ) or (model_parallel_rank() == 0)
+    ) or (constants.tensor_parallel_rank() == 0)
 
 
 def set_tensor_model_parallel_attributes(tensor, is_parallel, dim, stride):
@@ -110,8 +106,8 @@ def split_tensor_into_1d_equal_chunks(tensor, new_buffer=False):
                            If False, returns a view into the existing Tensor.
                            Default is False
     """
-    partition_size = torch.numel(tensor) // model_parallel_world_size()
-    start_index = partition_size * model_parallel_rank()
+    partition_size = torch.numel(tensor) // constants.tensor_parallel_world_size()
+    start_index = partition_size * constants.tensor_parallel_rank()
     end_index = start_index + partition_size
     if new_buffer:
         data = torch.empty(
@@ -135,7 +131,7 @@ def gather_split_1d_tensor(tensor):
     Arguments:
         tensor: A Tensor or view of this rank's portion of the data.
     """
-    numel_gathered = torch.numel(tensor) * model_parallel_world_size()
+    numel_gathered = torch.numel(tensor) * constants.tensor_parallel_world_size()
     gathered = torch.empty(
         numel_gathered,
         dtype=tensor.dtype,
@@ -147,7 +143,9 @@ def gather_split_1d_tensor(tensor):
     # as opposed to torch.distributed.all_gather for efficiency reasons.
     # This API calls directly NCCL all-gather versus the former does
     # internal copies and can potentially cause slow down.
-    torch.distributed._all_gather_base(gathered, tensor, group=model_parallel_group())
+    torch.distributed._all_gather_base(
+        gathered, tensor, group=constants.tensor_parallel_group()
+    )
     return gathered
 
 
