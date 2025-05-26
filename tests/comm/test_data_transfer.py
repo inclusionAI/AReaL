@@ -184,7 +184,7 @@ def _test_data_transfer(
         ]
         storage_tracker.add_data_synced(
             gpu_id,
-            ids=[i + dp_rank * world_size for i in range(world_size)],
+            ids=[str(i + dp_rank * world_size) for i in range(world_size)],
             key=key,
             is_owner=True,
         )
@@ -199,7 +199,7 @@ def _test_data_transfer(
         dist.all_reduce(input_ids)
 
         s = SequenceSample.from_default(
-            ids=[i + dp_rank * world_size for i in range(world_size)],
+            ids=[str(i + dp_rank * world_size) for i in range(world_size)],
             seqlens=seqlens.numpy().tolist(),
             data=dict(input_ids=input_ids),
         )
@@ -216,7 +216,7 @@ def _test_data_transfer(
 
     dist.barrier()
 
-    all_ids = list(range(world_size * from_topo.get_dim("data")))
+    all_ids = list(map(str, range(world_size * from_topo.get_dim("data"))))
     np.random.shuffle(all_ids)
     _all_ids = [all_ids]
     dist.broadcast_object_list(_all_ids, src=0)
@@ -236,7 +236,7 @@ def _test_data_transfer(
             )
         ]
         size_per_dp = len(all_ids) // dp_size
-        dests[gpu_id] = [coord.data * size_per_dp + i for i in range(size_per_dp)]
+        dests[gpu_id] = [str(coord.data * size_per_dp + i) for i in range(size_per_dp)]
 
     for gpu_id in range(world_size):
         if gpu_id not in dests:
@@ -268,14 +268,10 @@ def test_data_transfer(
     from_pp_dp_tp: Tuple,
     to_pp_dp_tp: Tuple,
 ):
-    expr_name = uuid.uuid4()
-    trial_name = uuid.uuid4()
     constants.set_force_cpu(True)
     test_impl = LocalMultiProcessTest(
         world_size=16,
         func=_test_data_transfer,
-        expr_name=expr_name,
-        trial_name=trial_name,
         timeout_secs=300,
         tmp_path=tmp_path,
         from_pp_dp_tp=from_pp_dp_tp,

@@ -99,3 +99,7 @@ def used_ports(experiment_name, trial_name, host_name):
 
 def gen_server_manager(experiment_name, trial_name):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/gen_server_manager"
+
+
+def training_samples(experiment_name, trial_name):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/training_samples"

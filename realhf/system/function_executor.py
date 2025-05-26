@@ -10,7 +10,7 @@ from realhf.api.core.config import ModelName, ModelShardID
 from realhf.api.core.data_api import DataBatchMeta, SequenceSample
 from realhf.api.core.dfg import MFCDef
 from realhf.api.core.model_api import ReaLModelConfig
-from realhf.base import logging
+from realhf.base import constants, logging, name_resolve, names
 from realhf.base.topology import ProcessTopology
 from realhf.system.buffer import AsyncIOSequenceBuffer
 from realhf.system.model_function_call import ModelFunctionCall, RPCCorountineControl
@@ -169,6 +169,17 @@ class FunctionExecutor:
                 # Store into buffer!
                 buffer_indices = await buffer.put_batch(all_data)
                 assert len(buffer_indices) == len(all_data)
+
+                training_sample_name = names.training_samples(
+                    constants.experiment_name(), constants.trial_name()
+                )
+                try:
+                    n_samples = int(name_resolve.get(training_sample_name))
+                except name_resolve.NameEntryNotFoundError:
+                    n_samples = 0
+                name_resolve.add(
+                    training_sample_name, str(n_samples + len(all_data)), replace=True
+                )
 
                 blogger.info(
                     f"Master worker loaded {len(all_data)} pieces of data from all dp ranks: "

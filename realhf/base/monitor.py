@@ -33,6 +33,13 @@ logger = logging.getLogger("benchmark")
 IF_MARK = False
 
 
+@dataclasses.dataclass
+class RolloutStat:
+    submitted: int = 0
+    accepted: int = 0
+    running: int = 0
+
+
 def mock_time_mark(name, identifier, t, step):
     if IF_MARK:
         logger.debug(f"*{name}* #{identifier}#  ${t}$ ns step &{step}&")

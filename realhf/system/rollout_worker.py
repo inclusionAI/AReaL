@@ -24,6 +24,7 @@ from realhf.base import (
     recover,
     seeding,
 )
+from realhf.base.monitor import RolloutStat
 from realhf.system.partial_rollout import PartialRolloutManager
 from realhf.system.push_pull_stream import NameResolvingZmqPusher
 from realhf.system.worker_base import AsyncWorker, PollResult
@@ -80,8 +81,9 @@ class RolloutWorker(AsyncWorker):
         self.gserver_manager_addr = None
         self.rollout_tasks: Dict[Hashable, asyncio.Task] = {}
 
-        # recover info
-        self.__recover_run, self.__recover_info = recover.load_recover_info()
+        # Since the rollout worker doesn't compute staleness,
+        # we don't need to recover rollout_stat here.
+        self.rollout_stat = RolloutStat()
 
         return config.worker_info
 
@@ -182,10 +184,8 @@ class RolloutWorker(AsyncWorker):
             self.data_generator = enumerate(self.dataloader)
             return None
 
+        # NOTE: no need to ignore ids during recover, because model workers will do so
         data_id = cur_sample.ids[0]
-        if self.__recover_run and data_id in self.__recover_info.hash_vals_to_ignore:
-            self.__recover_info.hash_vals_to_ignore.remove(data_id)
-            return None
         assert data_id not in self.rollout_tasks
         return cur_sample
 
@@ -195,11 +195,14 @@ class RolloutWorker(AsyncWorker):
                 f"http://{self.gserver_manager_addr}/allocate_rollout",
                 json=dict(qid=qid),
                 timeout=ClientTimeout(
-                    total=self.config.rollout_request_timeout, sock_connect=30
+                    total=self.config.rollout_request_timeout,
+                    sock_connect=self.config.rollout_request_timeout,
                 ),
             ) as resp:
                 resp.raise_for_status()
                 res = await resp.json()
+                if not res["success"]:
+                    logger.info(f"Cannot allocate new rollout because: {res['reason']}")
                 return res["success"]
 
     async def _poll_async(self):
@@ -236,12 +239,23 @@ class RolloutWorker(AsyncWorker):
             qid = data.ids[0]
             can_rollout = await self.allocate_new_rollout(qid)
             if can_rollout:
+                assert qid not in self.act_queues
                 self.act_queues[qid] = asyncio.Queue(1024)
 
                 task = asyncio.create_task(self.rollout_task(qid, data))
+                assert qid not in self.rollout_tasks
                 self.rollout_tasks[qid] = task
 
                 self._cur_data = None
+
+                self.rollout_stat.submitted += 1
+                self.rollout_stat.running += 1
+                logger.info(
+                    f"Submit a new rollout for qid {qid}. "
+                    f"Submit: {self.rollout_stat.submitted}, "
+                    f"running: {self.rollout_stat.running}, "
+                    f"accepted: {self.rollout_stat.accepted}."
+                )
 
         # Run rollouts and wait
         done, *_ = await asyncio.gather(
@@ -261,10 +275,12 @@ class RolloutWorker(AsyncWorker):
             self.rollout_tasks.pop(qid)
             self.act_queues.pop(qid)
 
-            accepted = False
+            self.rollout_stat.running -= 1
+
             if len(trajs) > 0:
                 accepted = True
                 self.push_stream.push([traj.as_json_compatible() for traj in trajs])
+                self.rollout_stat.accepted += 1
 
             n_tokens = 0
             for traj in trajs:
@@ -278,11 +294,18 @@ class RolloutWorker(AsyncWorker):
                     "/finish_rollout",
                     json=info,
                     timeout=ClientTimeout(
-                        total=self.config.rollout_request_timeout, sock_connect=30
+                        total=self.config.rollout_request_timeout,
+                        sock_connect=self.config.rollout_request_timeout,
                     ),
                 ) as resp:
                     resp.raise_for_status()
                     assert (await resp.json())["success"]
+            logger.info(
+                f"Finish rollout for qid {qid}. "
+                f"Submit: {self.rollout_stat.submitted}, "
+                f"running: {self.rollout_stat.running}, "
+                f"accepted: {self.rollout_stat.accepted}."
+            )
 
             for traj in trajs:
                 batch_count += traj.bs

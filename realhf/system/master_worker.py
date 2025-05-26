@@ -142,6 +142,22 @@ class MasterWorker(worker_base.Worker):
                 f"Global Step: {self.__rpc_ctrl.step_info.global_step + 1}."
             )
 
+            # Recover the previous number of training samples
+            train_rpcs = list(
+                filter(
+                    lambda rpc: rpc.interface_type == dfg.ModelInterfaceType.TRAIN_STEP,
+                    self.__model_rpcs,
+                )
+            )
+            train_batch_size = train_rpcs[0].n_seqs
+            hist_samples = (
+                train_batch_size * self.__recover_info.last_step_info.global_step
+            )
+            training_sample_name = names.training_samples(
+                constants.experiment_name(), constants.trial_name()
+            )
+            name_resolve.add(training_sample_name, str(hist_samples), replace=True)
+
         # for benchmark
         self.e2e_time_history = []
         self.__benchmark_steps = config.exp_ctrl.benchmark_steps
