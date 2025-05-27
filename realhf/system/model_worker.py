@@ -670,14 +670,21 @@ class ModelWorker(worker_base.Worker):
                 self.data_manager.store(x)
             assert len(set([x.ids[0] for x in data_loaded])) == len(data_loaded)
 
+            meta_sample = None
+            birth_times = []
             if len(data_loaded) > 0:
-                meta_sample = data_api.SequenceSample.gather(data_loaded).meta()
-            else:
-                meta_sample = None
+                sample = data_api.SequenceSample.gather(data_loaded)
+                meta_sample = sample.meta()
+                if "birth_time" in sample.keys:
+                    birth_times = (
+                        sample.data["birth_time"].flatten().cpu().numpy().tolist()
+                    )
+                    assert len(birth_times) == meta_sample.bs
 
             res = data_api.DataBatchMeta(
                 dp_rank=dp_rank,
                 meta_sample=meta_sample,
+                birth_times=birth_times,
             )
         elif request.handle_name == "spec":
             # Raw dataset without filtering.

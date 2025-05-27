@@ -60,6 +60,7 @@ class AsyncPPOMATHConfig(AsyncRLExperimentConfig, PPOMATHConfig):
             "version_start",
             "version_end",
             "rewards",
+            "birth_time",
         )
         rpcs["actor_train"].input_keys = (
             *rpcs["actor_train"].input_keys,

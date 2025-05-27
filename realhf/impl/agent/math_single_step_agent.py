@@ -4,6 +4,7 @@
 import asyncio
 import json
 import os
+from datetime import datetime
 from typing import List
 
 import colorama
@@ -51,6 +52,7 @@ class MathSingleStepAgent(Agent):
         assert prompt.bs == 1
         prompt_token_ids = prompt.data["packed_prompts"].cpu().numpy().tolist()
         qid = prompt.ids[0]
+        birth_time = int(datetime.now().timestamp() * 1000)
         await obs_queue.put((qid, prompt_token_ids, self.gconfig))
 
         act: BundledGenerationOutputs = await act_queue.get()
@@ -107,6 +109,7 @@ class MathSingleStepAgent(Agent):
                 "version_start",
                 "version_end",
                 "rewards",
+                "birth_time",
             ],
             ids=[qid],
             dtypes=dict(
@@ -118,6 +121,7 @@ class MathSingleStepAgent(Agent):
                 version_end=torch.int,
                 packed_logprobs=torch.float32,
                 rewards=torch.float32,
+                birth_time=torch.long,
             ),
             trailing_shapes=dict(
                 packed_input_ids=(),
@@ -128,6 +132,7 @@ class MathSingleStepAgent(Agent):
                 version_start=(),
                 packed_logprobs=(),
                 rewards=(),
+                birth_time=(),
             ),
             seqlens=dict(
                 packed_input_ids=[act.seqlens],
@@ -138,6 +143,7 @@ class MathSingleStepAgent(Agent):
                 rewards=[[1 for _ in range(self.gconfig.n)]],
                 version_start=[[1 for _ in range(self.gconfig.n)]],
                 version_end=[[1 for _ in range(self.gconfig.n)]],
+                birth_time=[[1]],
             ),
             data=dict(
                 packed_prompts=torch.tensor(act.prompt_ids, dtype=torch.long),
@@ -149,6 +155,7 @@ class MathSingleStepAgent(Agent):
                 rewards=torch.tensor(rewards, dtype=torch.float32),
                 version_start=torch.tensor(act.version_start, dtype=torch.int),
                 version_end=torch.tensor(act.version_end, dtype=torch.int),
+                birth_time=torch.tensor([birth_time], dtype=torch.long),
                 prompt_mask=torch.tensor(
                     sum(
                         [

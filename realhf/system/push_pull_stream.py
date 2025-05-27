@@ -44,16 +44,9 @@ class ZMQJsonPusher:
             TypeError: If data is not JSON-serializable
             zmq.ZMQError: If ZeroMQ operation fails
         """
-        try:
-            # Directly encode to bytes without intermediate string
-            json_bytes = asbytes(orjson.dumps(data))
-            self.socket.send(json_bytes, flags=zmq.NOBLOCK, copy=False)
-        except (TypeError, ValueError) as e:
-            raise TypeError(f"Data not JSON-serializable: {e}")
-        except zmq.ZMQError as e:
-            if e.errno == zmq.EAGAIN:
-                logger.warning("Push operation would block (queue full)")
-            raise
+        # Directly encode to bytes without intermediate string
+        json_bytes = asbytes(orjson.dumps(data))
+        self.socket.send(json_bytes, copy=False)
 
     def close(self) -> None:
         """Clean up resources."""
