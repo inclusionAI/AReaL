@@ -2,7 +2,8 @@
 # Learn more at https://jupyterbook.org/customize/config.html
 
 title: AReaL Documentation
-author: Wei Fu
+author: AReaL Team
+copyright: 2025
 logo: figures/logo.png
 
 # Force re-execution of notebooks on each build.
