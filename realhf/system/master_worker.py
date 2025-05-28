@@ -23,6 +23,7 @@ import realhf.system.request_reply_stream as request_reply_stream
 import realhf.system.worker_base as worker_base
 from realhf.api.core.config import ModelName
 from realhf.api.core.model_api import ReaLModelConfig
+from realhf.api.core.system_api import ExpStatus
 from realhf.base import (
     constants,
     logging,
@@ -343,7 +344,7 @@ class MasterWorker(worker_base.Worker):
             global_step=-1,
         )
 
-    def _poll(self):
+    def __poll(self):
         is_new_epoch = False
 
         if not self.__initialized:
@@ -447,6 +448,18 @@ class MasterWorker(worker_base.Worker):
 
         return worker_base.PollResult(sample_count=1, batch_count=1)
 
+    def _poll(self):
+        name = names.experiment_status(
+            constants.experiment_name(), constants.trial_name()
+        )
+        name_resolve.add(name, ExpStatus.RUNNING, replace=True)
+        try:
+            r = self.__poll()
+        except Exception as e:
+            name_resolve.add(name, ExpStatus.ABORTED, replace=True)
+            raise e
+        return r
+
     def _log_training_stats(self, e2e_time: float, time_since_configure: float):
         # calculate flops
         #########################################
@@ -498,8 +511,15 @@ class MasterWorker(worker_base.Worker):
             + colorama.Style.RESET_ALL
         )
 
+        # Update experiment status to inform other workers
+        name = names.experiment_status(
+            constants.experiment_name(), constants.trial_name()
+        )
+        name_resolve.add(name, ExpStatus.COMPLETE, replace=True)
+
         # Send requests to pause model workers.
         # Model workers will not respond to this message.
+        # FIXME: request to model workers is unnecessary
         self.__stream.request(
             handlers=list(range(self.config.n_model_workers)),
             handle_type="reset",

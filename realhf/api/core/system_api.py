@@ -4,6 +4,7 @@
 
 import dataclasses
 import os
+from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import realhf.api.core.dfg as dfg
@@ -24,6 +25,12 @@ from realhf.api.core.config import (
 )
 from realhf.base import constants, topology
 from realhf.base.cluster import spec as cluster_spec
+
+
+class ExpStatus(Enum):
+    RUNNING = "RUNNING"
+    ABORTED = "ABORTED"
+    COMPLETE = "COMPLETE"
 
 
 @dataclasses.dataclass

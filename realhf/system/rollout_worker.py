@@ -14,6 +14,7 @@ from aiohttp.client import ClientTimeout
 from realhf.api.core.agent_api import make_agent
 from realhf.api.core.data_api import SequenceSample, load_hf_tokenizer, make_dataset
 from realhf.api.core.env_api import make_env
+from realhf.api.core.system_api import ExpStatus
 from realhf.api.core.system_api import RolloutWorker as RolloutWorkerConfig
 from realhf.base import (
     constants,
@@ -214,6 +215,21 @@ class RolloutWorker(AsyncWorker):
             logger.info(
                 f"Rollout worker {self.worker_index} finishes making datasets. "
                 f"Time consumed: {time.perf_counter() - tik}s"
+            )
+
+        # Check experiment finish.
+        name = names.experiment_status(
+            constants.experiment_name(), constants.trial_name()
+        )
+        try:
+            exp_status = name_resolve.wait(name, timeout=300)
+            if exp_status != str(ExpStatus.RUNNING):
+                self.exit()
+                return PollResult(0, 0)
+        except TimeoutError:
+            raise TimeoutError(
+                f"Waiting for experiment status timeout. "
+                "This indicates that the master worker is not running. Exit the worker."
             )
 
         if self.push_stream is None:

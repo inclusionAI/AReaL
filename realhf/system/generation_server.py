@@ -7,8 +7,10 @@ from pathlib import Path
 import requests
 
 from realhf.api.cli_args import SGLangConfig
+from realhf.api.core.system_api import ExpStatus
 from realhf.api.core.system_api import GenerationServer as GenerationServerConfig
 from realhf.base import (
+    constants,
     gpu_utils,
     logging,
     name_resolve,
@@ -187,8 +189,22 @@ class GenerationServer(Worker):
         if self.server_process is None:
             self.launch_server_subprocess()
 
-        # TODO: we may want to collect some metrics from the server
-        time.sleep(0.05)
+        # Check experiment finish.
+        name = names.experiment_status(
+            constants.experiment_name(), constants.trial_name()
+        )
+        try:
+            exp_status = name_resolve.wait(name, timeout=300)
+            if exp_status != str(ExpStatus.RUNNING):
+                self.exit()
+                return PollResult(0, 0)
+        except TimeoutError:
+            raise TimeoutError(
+                f"Waiting for experiment status timeout. "
+                "This indicates that the master worker is not running. Exit the worker."
+            )
+
+        time.sleep(5)
 
         return PollResult(0, 0)
 

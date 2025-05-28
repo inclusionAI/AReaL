@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 import realhf.api.core.system_api as config_package
 import realhf.scheduler.client as sched_client
 import realhf.system as system
+from realhf.api.core.system_api import ExpStatus
 from realhf.base import constants, logging, name_resolve, names, recover
 from realhf.scheduler.client import JobException, JobState
 from realhf.scheduler.evaluator import AutomaticEvaluator
@@ -262,6 +263,29 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
             and recover_count < args.recover_retries
         )
         recover_this = recover_this and reason in recover_states
+
+        # Check whether this exception is caused by experiment finish.
+        name = names.experiment_status(
+            constants.experiment_name(), constants.trial_name()
+        )
+        try:
+            exp_status = name_resolve.get(name)
+            recover_this = recover_this and exp_status != str(ExpStatus.COMPLETE)
+            if exp_status == str(ExpStatus.COMPLETE):
+                logger.warning("*" * 100)
+                logger.warning(
+                    "*"
+                    + f"Will not recover because the experiment has completed! Congrats!".center(
+                        98, " "
+                    )
+                    + "*"
+                )
+                logger.warning("*" * 100)
+        except name_resolve.NameEntryNotFoundError:
+            raise name_resolve.NameEntryNotFoundError(
+                f"Experiment status not found during recover. "
+                "This indicates that the master worker is not running. Exit the recover loop."
+            )
 
         kill_signal = (
             "SIGKILL" if args.mode == "slurm" else "SIGTERM"

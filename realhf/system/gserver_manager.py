@@ -13,6 +13,7 @@ import aiohttp
 import numpy as np
 
 from realhf.api.core.model_api import GenReqMeta, GenRespMeta, ModelVersionReq
+from realhf.api.core.system_api import ExpStatus
 from realhf.api.core.system_api import GserverManager as GserverManagerConfig
 from realhf.base import constants, logging, name_resolve, names, network, recover
 from realhf.base.monitor import RolloutStat
@@ -226,6 +227,21 @@ class GserverManager(Worker):
             name_resolve.add(name, self.manager_addr)
             logger.info(
                 f"GserverManager HTTP service started in background thread at {self.manager_addr}"
+            )
+
+        # Check experiment finish.
+        name = names.experiment_status(
+            constants.experiment_name(), constants.trial_name()
+        )
+        try:
+            exp_status = name_resolve.wait(name, timeout=300)
+            if exp_status != str(ExpStatus.RUNNING):
+                self.exit()
+                return PollResult(0, 0)
+        except TimeoutError:
+            raise TimeoutError(
+                f"Waiting for experiment status timeout. "
+                "This indicates that the master worker is not running. Exit the worker."
             )
 
         # Check weights.
