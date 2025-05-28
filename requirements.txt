@@ -60,5 +60,6 @@ orjson>=3.10.16
 flask
 setuptools>=62.3.0,<75.9
 func_timeout
+uvloop>=0.21.0
 uvicorn>=0.34.2
 fastapi>=0.115.12

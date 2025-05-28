@@ -1046,6 +1046,9 @@ class BaseExperimentConfig:
     shuffle_dataset: bool = field(
         default=True, metadata={"help": "Shuffle in each epoch."}
     )
+    ray_temp_path: str = field(
+        default="/tmp/ray", metadata={"help": "Absolute path for Ray's log."}
+    )
     cluster: ClusterSpecConfig = field(
         default_factory=ClusterSpecConfig,
         metadata={"help": "Cluster specification. Mainly used by slurm."},

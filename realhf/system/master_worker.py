@@ -41,7 +41,7 @@ logger = logging.getLogger("master worker", "system")
 blogger = logging.getLogger("benchmark")
 
 
-class MasterWorker(worker_base.Worker):
+class MasterWorker(worker_base.AsyncWorker):
     global_exp_tik = time.perf_counter()
 
     def _configure(self, config: config_pkg.MasterWorker):
@@ -291,7 +291,8 @@ class MasterWorker(worker_base.Worker):
         ]
 
         # wandb init, connect to remote wandb host
-        wandb.login()
+        if self.wandb_config.mode != "disabled":
+            wandb.login()
         wandb.init(
             mode=self.wandb_config.mode,
             entity=self.wandb_config.entity,
@@ -344,7 +345,7 @@ class MasterWorker(worker_base.Worker):
             global_step=-1,
         )
 
-    def __poll(self):
+    async def __poll_async(self):
         is_new_epoch = False
 
         if not self.__initialized:
@@ -386,7 +387,7 @@ class MasterWorker(worker_base.Worker):
         self.logger.info(s)
 
         # Traverse over the dataflow graph for once.
-        self.func_executor.execute_step()
+        await self.func_executor.execute_step()
 
         # Post-process.
         if self.__rpc_ctrl.should_save or self.__rpc_ctrl.should_ckpt:
@@ -448,13 +449,13 @@ class MasterWorker(worker_base.Worker):
 
         return worker_base.PollResult(sample_count=1, batch_count=1)
 
-    def _poll(self):
+    async def _poll_async(self):
         name = names.experiment_status(
             constants.experiment_name(), constants.trial_name()
         )
         name_resolve.add(name, ExpStatus.RUNNING, replace=True)
         try:
-            r = self.__poll()
+            r = await self.__poll_async()
         except Exception as e:
             name_resolve.add(name, ExpStatus.ABORTED, replace=True)
             raise e

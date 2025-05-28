@@ -32,7 +32,12 @@ def execute_shell_command(command: str) -> subprocess.Popen:
     # Replace newline continuations and split the command string.
     command = command.replace("\\\n", " ").replace("\\", " ")
     parts = command.split()
-    return subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT)
+    return subprocess.Popen(
+        parts,
+        text=True,
+        stdout=sys.stdout,
+        stderr=subprocess.STDOUT,
+    )
 
 
 def launch_server_cmd(command: str, port: int = 30000):

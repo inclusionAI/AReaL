@@ -17,7 +17,7 @@ from realhf.api.core.system_api import ExpStatus
 from realhf.api.core.system_api import GserverManager as GserverManagerConfig
 from realhf.base import constants, logging, name_resolve, names, network, recover
 from realhf.base.monitor import RolloutStat
-from realhf.system.worker_base import PollResult, Worker
+from realhf.system.worker_base import AsyncWorker, PollResult, Worker
 
 logger = logging.getLogger("Generation Manager", "system")
 
@@ -29,7 +29,7 @@ class AllocateRolloutInput:
     qid: str
 
 
-class GserverManager(Worker):
+class GserverManager(AsyncWorker):
     """This worker has the following functionalities:
     1. As a router, it schedules generation requests and returns the
        best server urls to clients for submitting generation requests.
@@ -213,7 +213,7 @@ class GserverManager(Worker):
         url = min(self.server_urls, key=lambda k: self._server_token_usage[k])
         return self.server_urls.index(url)
 
-    def _poll(self):
+    async def _poll_async(self):
         if not self.thread:
             # Find addresses of generation servers
             self.server_urls = self._discover_servers(self.config.n_servers)
@@ -254,8 +254,7 @@ class GserverManager(Worker):
                     self.flush_requests_and_update_weights(base_url, new_param_path)
                     for base_url in self.server_urls
                 ]
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(asyncio.gather(*tasks))
+                await asyncio.gather(*tasks)
                 logger.info(f"Generaion server updated weights from: {new_param_path}")
 
         if self.schedule_policy == "least_token_usage":

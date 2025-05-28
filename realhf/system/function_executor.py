@@ -202,7 +202,7 @@ class FunctionExecutor:
             else:
                 await asyncio.sleep(1)
 
-    def execute_step(self):
+    async def execute_step(self):
         logger.info("Waiting for the finish of the execution graph.")
         loop = asyncio.get_event_loop()
 
@@ -214,5 +214,5 @@ class FunctionExecutor:
             loop.create_task(self.finish_traverse()),
         ]
 
-        loop.run_until_complete(asyncio.gather(*tasks))
+        await asyncio.gather(*tasks)
         self.buffer_id = (self.buffer_id + 1) % len(self.buffers)
