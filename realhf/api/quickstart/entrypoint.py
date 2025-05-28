@@ -16,13 +16,14 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING, OmegaConf
 
 import realhf.api.core.system_api as system_api
-from realhf.api.cli_args import print_runtime_helper
-from realhf.base.constants import LOG_ROOT, MODEL_SAVE_ROOT, QUICKSTART_EXPR_CACHE_PATH
+from realhf.base.constants import init_constants
 from realhf.base.ray_utils import check_ray_availability
 from realhf.base.slurm_utils import check_slurm_availability
 
 
 def kind_reminder(config_name, logger, args):
+    from realhf.base.constants import LOG_ROOT, MODEL_SAVE_ROOT
+
     logger.info(f"Running {config_name} experiment.")
     logger.info(
         f"Logs will be dumped to {os.path.join(LOG_ROOT, args.experiment_name, args.trial_name)}"
@@ -81,9 +82,13 @@ def register_quickstart_exp(config_name: str, exp_cls: Callable):
             trial_name = args.trial_name
         from realhf.apps.main import main_start, main_stop
 
+        init_constants(args)
+        from realhf.base.constants import LOG_ROOT, QUICKSTART_EXPR_CACHE_PATH
+
         config_save_path = os.path.join(
             LOG_ROOT, args.experiment_name, args.trial_name, "config.yaml"
         )
+        os.makedirs(os.path.dirname(config_save_path), exist_ok=True)
         with open(config_save_path, "w") as f:
             yaml.dump(
                 dataclasses.asdict(OmegaConf.to_object(args)),

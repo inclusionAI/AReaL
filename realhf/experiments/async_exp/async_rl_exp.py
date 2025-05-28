@@ -104,7 +104,6 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 scheduling=Scheduling.model_worker_default(
                     cpu=self.cpus_per_model_worker,
                     gpu=1,
-                    gpu_type=cluster_spec.gpu_type,
                     mem=self.mem_per_model_worker,
                     nodelist=self.nodelist,
                     exclude=self.exclude,
@@ -115,7 +114,6 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 scheduling=Scheduling.generation_server_default(
                     cpu=self.cpus_per_generation_server,
                     gpu=gen_tp_size,
-                    gpu_type=cluster_spec.gpu_type,
                     mem=self.mem_per_generation_server,
                     nodelist=self.nodelist,
                     exclude=self.exclude,
@@ -125,7 +123,6 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 count=1,
                 scheduling=Scheduling.gserver_manager_default(
                     cpu=self.cpus_per_gserver_manager,
-                    gpu_type=cluster_spec.gpu_type,
                     mem=self.mem_per_gserver_manager,
                     nodelist=self.nodelist,
                     exclude=self.exclude,
@@ -135,7 +132,6 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 count=self.n_rollout_workers or train_world_size,
                 scheduling=Scheduling.rollout_worker_default(
                     cpu=self.cpus_per_rollout_worker,
-                    gpu_type=cluster_spec.gpu_type,
                     mem=self.mem_per_rollout_worker,
                     nodelist=self.nodelist,
                     exclude=self.exclude,

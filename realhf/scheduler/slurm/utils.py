@@ -67,20 +67,7 @@ class SlurmResource:
     # a data class that represents a slurm resource quota
     mem: int = 0
     cpu: int = 0
-    gpu_type: Optional[Literal["tesla", "geforce", "ppu"]] = None
     gpu: Union[float, int] = 0
-
-    def __check_gpu_type(self, other: SlurmResource) -> str:
-        self_gpu_type = None if self.gpu == 0 else self.gpu_type
-        other_gpu_type = None if other.gpu == 0 else other.gpu_type
-        valid_gpu_type = self_gpu_type == other_gpu_type or (
-            self_gpu_type or other_gpu_type
-        )
-        if not valid_gpu_type:
-            raise InvalidGPUTypeException(
-                f"Cannot add two different gpu types {self_gpu_type}, {other_gpu_type}."
-            )
-        return self_gpu_type if self_gpu_type else other_gpu_type
 
     def __str__(self):
         return (
@@ -93,9 +80,6 @@ class SlurmResource:
             + " \n"
             + "gpu: "
             + str(self.gpu)
-            + " \n"
-            + "gpu_type: "
-            + str(self.gpu_type)
         )
 
     def __mul__(self, other: int) -> SlurmResource:
@@ -106,7 +90,6 @@ class SlurmResource:
             mem=self.mem * other,
             cpu=self.cpu * other,
             gpu=self.gpu * other,
-            gpu_type=self.gpu_type,
         )
 
     def __rmul__(self, other: int) -> SlurmResource:
@@ -120,7 +103,6 @@ class SlurmResource:
             mem=self.mem + other.mem,
             cpu=self.cpu + other.cpu,
             gpu=self.gpu + other.gpu,
-            gpu_type=self.__check_gpu_type(other),
         )
 
     def __sub__(self, other: SlurmResource) -> SlurmResource:
@@ -131,28 +113,19 @@ class SlurmResource:
             mem=self.mem - other.mem,
             cpu=self.cpu - other.cpu,
             gpu=self.gpu - other.gpu,
-            gpu_type=self.__check_gpu_type(other),
         )
 
     def __neg__(self) -> SlurmResource:
         return SlurmResource(
-            mem=-self.mem, cpu=-self.cpu, gpu=-self.gpu, gpu_type=self.gpu_type
+            mem=-self.mem,
+            cpu=-self.cpu,
+            gpu=-self.gpu,
         )
 
     def __eq__(self, other: SlurmResource) -> bool:
-        return (
-            self.mem == other.mem
-            and self.cpu == other.cpu
-            and self.gpu == other.gpu
-            and self.gpu_type == other.gpu_type
-        )
+        return self.mem == other.mem and self.cpu == other.cpu and self.gpu == other.gpu
 
     def __lt__(self, other: SlurmResource) -> bool:
-        if self.gpu_type != other.gpu_type:
-            if self.gpu_type is None:
-                return True
-            if self.gpu_type == "geforce":
-                return self.gpu_type < other.gpu_type
         if self.gpu != other.gpu:
             return self.gpu < other.gpu
         if self.cpu != other.cpu:
@@ -162,8 +135,6 @@ class SlurmResource:
 
     def valid(self) -> bool:
         # check if it is a valid resource requirement
-        if self.gpu_type not in ["geforce", "tesla", "ppu", None]:
-            return False
         if self.mem < 0 or self.cpu < 0 or self.gpu < 0:
             return False
         return True
@@ -207,7 +178,6 @@ class SlurmLaunchInfo:
             this string should be of format 'docker://<image>'.
         container_mounts (str): .
         env_vars (dict): .
-        node_type (str): .
         nodelist (str): .
         exclude (str): .
         partition (str, optional): default to "all".
@@ -234,7 +204,6 @@ class SlurmLaunchInfo:
     container_image: str
     container_mounts: str
     env_vars: dict
-    node_type: str
     nodelist: str
     exclude: str
     partition: Optional[str] = "all"
@@ -377,7 +346,6 @@ class SlurmLaunchInfo:
         cmd = self.cmd
 
         # assert gpu == 1 or gpu == 0, "Slurm job GPU requirement should be resolved to a integer."
-        gpu_type = self.resource_requirement.gpu_type
 
         if self.multiprog:
             with open(self.multiprog_path, "w") as f:
@@ -400,8 +368,8 @@ class SlurmLaunchInfo:
             # In current slurm cluster setup, we can only use "--gres" to
             # allocate PPUs per node. There are no options to allocate customized
             # gres per tasks.
-            if gpu_type == "ppu":
-                gres_line = f"--gres={gpu_type}:{cluster.spec.n_gpus_per_node}"
+            if cluster.spec.gpu_type == "ppu":
+                gres_line = f"--gres=ppu:{cluster.spec.n_gpus_per_node}"
             else:
                 gres_line = f"--gres=gpu:{cluster.spec.n_gpus_per_node}"
 
@@ -596,12 +564,9 @@ def _parse_output_tres_line(tres):
             res.cpu = int(t.split("=")[1])
         elif t.startswith("gres/gpu"):
             prefix, sgpu = t.split("=")
-            if ":" in prefix:
-                res.gpu_type = prefix.split(":")[1]
             res.gpu = int(sgpu)
         elif t.startswith("gres/ppu"):
             prefix, sgpu = t.split("=")
-            res.gpu_type = "ppu"
             res.gpu = int(sgpu)
         elif t.startswith("billing"):
             # slurm default resource to limit number of
@@ -613,7 +578,6 @@ def _parse_output_tres_line(tres):
 
 
 def available_hostnames(
-    node_type: Optional[List[str]] = None,
     nodelist: Optional[str] = None,
     exclude: Optional[str] = None,
     partition: Optional[str] = None,
@@ -684,12 +648,7 @@ def available_hostnames(
     for hn in invalid_hostnames:
         valid_hostnames.remove(hn)
 
-    return list(
-        filter(
-            lambda x: cluster.node_name_is_node_type(x, node_type),
-            valid_hostnames,
-        )
-    )
+    return valid_hostnames
 
 
 def get_all_node_resources() -> Dict[str, SlurmResource]:
@@ -721,15 +680,11 @@ def get_all_node_resources() -> Dict[str, SlurmResource]:
                 ctres = _parse_output_tres_line(l)
             if l.startswith("AllocTRES"):
                 atres = _parse_output_tres_line(l)
-        if ctres.gpu_type is None:
-            ctres.gpu_type = cluster.spec.gpu_type_from_node_name(node_name)
-        if atres.gpu_type is None:
-            atres.gpu_type = ctres.gpu_type
         rres = ctres - atres
         if rres.valid():
             all_rres[node_name] = rres
         else:
-            all_rres[node_name] = SlurmResource(gpu_type=ctres.gpu_type)
+            all_rres[node_name] = SlurmResource()
 
     return all_rres
 
@@ -769,7 +724,6 @@ def allocate_resources(
     prioritized_hosts = set()
     for info_idx, info in enumerate(infos):
         valid_hostnames = available_hostnames(
-            node_type=info.node_type,
             nodelist=info.nodelist,
             exclude=info.exclude,
             partition=info.partition,
@@ -833,10 +787,7 @@ def allocate_resources(
                 allocated[hostname] = tmp - task_left
             all_resources[hostname] = resource
         if task_left > 0:
-            if (
-                info.resource_requirement.gpu_type == "ppu"
-                and info.resource_requirement.gpu > 0
-            ):
+            if cluster.spec.gpu_type == "ppu" and info.resource_requirement.gpu > 0:
                 logger.warning(
                     "For PPU resources, we can only allocate tasks in the "
                     f"granularity of nodes ({cluster.spec.n_gpus_per_node} PPUs)"
@@ -845,7 +796,7 @@ def allocate_resources(
                 f'Unable to allocate {info.n_jobsteps} Jobs with name "{info.slurm_name}". '
                 f"Resource Requirement of this job is: {dataclasses.asdict(info.resource_requirement)}. "
                 f"Valid resources for this job is "
-                f"(according to NodeType={info.node_type}, NodeList={info.nodelist}, "
+                f"(according to NodeList={info.nodelist}, "
                 f"and Exclude={info.exclude}):\n {resource_to_string({k: v for k, v in get_all_node_resources().items() if k in valid_hostnames})}"
             )
             for pinfo in infos[:info_idx]:
@@ -878,7 +829,7 @@ def allocate_resources(
 def show_tesla():
     all_rres = get_all_node_resources()
     hostname = socket.gethostname()
-    for k in available_hostnames(node_type=["a100"]):
+    for k in available_hostnames():
         print(k, all_rres[k])
 
 

@@ -28,14 +28,13 @@ from realhf.base.cluster import spec as cluster_spec
 
 @dataclasses.dataclass
 class Scheduling:
+    # TODO: add partition
     cpu: int
     gpu: int
     mem: int
-    gpu_type: str = "tesla"
-    node_type: str = None
     nodelist: str = None
     exclude: str = None
-    container_image: str = cluster_spec.cpu_image
+    container_image: str = None
     env_vars: Dict[str, str] = dataclasses.field(default_factory=dict)
     # time utils from "https://slurm.schedmd.com/sbatch.html"
     time_limit: Optional[str] = None  # see  "--time" option for format
@@ -241,7 +240,7 @@ class ExperimentScheduling:
     generation_server: TasksGroup | None = None
     gserver_manager: TasksGroup | None = None
     rollout_worker: TasksGroup | None = None
-    controller_image: str = cluster_spec.cpu_image
+    controller_image: str = None
 
 
 @dataclasses.dataclass

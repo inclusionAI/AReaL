@@ -18,8 +18,7 @@ try:
 except Exception:
     etcd3 = None
 
-from realhf.base import cluster, logging, security, timeutil
-from realhf.base.cluster import spec as cluster_spec
+from realhf.base import logging, security, timeutil
 
 logger = logging.getLogger("name-resolve")
 
@@ -286,14 +285,19 @@ class MemoryNameRecordRepository(NameRecordRepository):
 
 
 class NfsNameRecordRepository(NameRecordRepository):
-    RECORD_ROOT = f"{cluster_spec.fileroot}/name_resolve/"
-    os.makedirs(RECORD_ROOT, exist_ok=True)
+    RECORD_ROOT = ""
 
     def __init__(self, **kwargs):
         self.__to_delete = set()
 
     @staticmethod
     def __dir_path(name):
+        if not NfsNameRecordRepository.RECORD_ROOT:
+            from realhf.base.cluster import spec as cluster_spec
+
+            RECORD_ROOT = f"{cluster_spec.fileroot}/name_resolve/"
+            os.makedirs(RECORD_ROOT, exist_ok=True)
+            NfsNameRecordRepository.RECORD_ROOT = RECORD_ROOT
         return os.path.join(NfsNameRecordRepository.RECORD_ROOT, name)
 
     @staticmethod

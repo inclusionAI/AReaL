@@ -11,13 +11,9 @@ import uuid
 from typing import Dict, List, Optional
 
 import realhf.api.core.system_api as config_package
-import realhf.base.constants as constants
-import realhf.base.logging as logging
-import realhf.base.name_resolve as name_resolve
-import realhf.base.names as names
-import realhf.base.recover as recover
 import realhf.scheduler.client as sched_client
 import realhf.system as system
+from realhf.base import constants, logging, name_resolve, names, recover
 from realhf.scheduler.client import JobException, JobState
 from realhf.scheduler.evaluator import AutomaticEvaluator
 from realhf.version import get_full_version_with_dirty_description
@@ -55,7 +51,6 @@ def _submit_workers(
 
         nodelist = sch_cfg.scheduling.nodelist
         exclude = sch_cfg.scheduling.exclude
-        node_type = sch_cfg.scheduling.node_type
         container_image = image_name or sch_cfg.scheduling.container_image
 
         scheduled_jobs.append(
@@ -65,10 +60,8 @@ def _submit_workers(
                 count=sch_cfg.count,
                 cpu=sch_cfg.scheduling.cpu,
                 gpu=sch_cfg.scheduling.gpu,
-                gpu_type=sch_cfg.scheduling.gpu_type,
                 mem=sch_cfg.scheduling.mem,
                 container_image=container_image,
-                node_type=node_type,
                 nodelist=nodelist,
                 exclude=exclude,
                 env_vars=job_environs,
@@ -147,18 +140,15 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
 
     cluster_spec_path = os.environ.get("CLUSTER_SPEC_PATH", "")
     if not cluster_spec_path:
-        if args.mode == "slurm":
-            raise ValueError(
-                "Environment variable CLUSTER_SPEC_PATH must be set for slurm mode! "
-                "See example/cluster_config.json for a template."
-            )
-        logger.warning(
+        logger.info(
             "Environment variable CLUSTER_SPEC_PATH is not set. "
-            "Files of the experiment (logs, checkpoints, cache ...) "
-            "will be saved to temporary directory of the system. "
-            "To change the fileroot, set the fileroot option of your choice in your CLUSTER_SPEC_PATH."
+            "Will use the fileroot specified in CLI args. "
         )
-
+    else:
+        logger.warning(
+            "Environment variable CLUSTER_SPEC_PATH is set. "
+            "Will overwrite the cluster spec in CLI args. "
+        )
     # set env vars
     BASE_ENVIRONS = constants.get_env_vars(
         REAL_MODE=args.mode.upper(),

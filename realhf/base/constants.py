@@ -11,17 +11,18 @@ import os
 import pathlib
 import subprocess
 from collections import defaultdict
+from pathlib import Path
 from typing import *
 
 import numpy as np
 import torch
 
 import realhf.base.logging as logging
-from realhf.base.cluster import spec as cluster_spec
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from realhf.api.cli_args import BaseExperimentConfig
     from realhf.api.core.config import ModelName
     from realhf.api.core.system_api import ModelShardID
     from realhf.base.topology import ParallelGrid, ProcessTopology
@@ -68,108 +69,140 @@ TORCH_FORCE_CPU = False
 
 # constants in experiment instance scope
 LOCAL_CACHE_DIR = "/tmp/realhf"
-MODEL_SAVE_ROOT = f"{cluster_spec.fileroot}/checkpoints/{getpass.getuser()}"
-LOG_ROOT = f"{cluster_spec.fileroot}/logs/{getpass.getuser()}"
-RECOVER_ROOT = f"{cluster_spec.fileroot}/recover/{getpass.getuser()}"
-SLURM_LOCK_FILE_NAME = f"{cluster_spec.fileroot}/logs/slurm_scheduler.lock"
-PORT_LOCK_FILE_ROOT = f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/ports"
 PYTORCH_KERNEL_CACHE_PATH = (
     f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/torch/kernels"
 )
 TRITON_CACHE_PATH = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/triton"
-DATASET_CACHE_PATH = f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/datasets"
-PROFILER_CACHE_PATH = f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/profiler"
-PARAM_REALLOC_PATH = f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/param_realloc"
-SGLANG_CACHE_PATH = f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/sglang"
-TORCH_EXTENSIONS_DIR = (
-    f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/torch/extensions"
-)
-QUICKSTART_EXPR_CACHE_PATH = f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/"
-BASE_ENVIRONS = {
-    # "PYTHONPATH": "/realhf",
-    "REAL_IS_REMOTE": "1",
-    # "NCCL_P2P_DISABLE": "1",
-    # "NCCL_IB_DISABLE": "1",
-    "TRANSFORMERS_OFFLINE": "1",
-    "PYTORCH_KERNEL_CACHE_PATH": PYTORCH_KERNEL_CACHE_PATH,
-    "TRITON_CACHE_DIR": TRITON_CACHE_PATH,
-    "TOKENIZERS_PARALLELISM": "true",
-    "TORCH_EXTENSIONS_DIR": TORCH_EXTENSIONS_DIR,
-    # "TORCH_DISTRIBUTED_DEBUG": "DETAIL",
-    # "NCCL_SOCKET_IFNAME": "ibp71s0",
-    # "GLOO_SOCKET_IFNAME": "ibp71s0",
-    # "TORCH_USE_CUDA_DSA": "1",
-    # "NCCL_IGNORE_DISABLED_P2P": "1",
-    # "CUDA_LAUNCH_BLOCKING": "1",  # NOTE: CUDAGraph Capturing will not work if CUDA_LAUNCH_BLOCKING is set to 1.
-    # "NCCL_COMM_BLOCKING": "1",  # NOTE: CUDAGraph Capturing will not work if NCCL_COMM_BLOCKING is set to 1.
-    # "NCCL_BLOCKING_WAIT": "1",  # NOTE: CUDAGraph Capturing will not work if NCCL_BLOCKING_WAIT is set to 1.
-    # "TORCH_SHOW_CPP_STACKTRACES": "1",
-    # "RAY_DEDUP_LOGS": "0",  # disable ray log deduplication
-    "CUDA_DEVICE_MAX_CONNECTIONS": "1",
-    "OMP_NUM_THREADS": str(min(os.cpu_count(), 32)),
-    # torch.distributed.all_reduce does not free the input tensor until
-    # the synchronization point. This causes the memory usage to grow
-    # as the number of all_reduce calls increases. This env var disables
-    # this behavior.
-    # Related issue:
-    # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
-    "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
-    # Whether to enable time mark to plot timelines.
-    "REAL_CUDA_TMARK": os.getenv("REAL_CUDA_TMARK", "0"),
-    "REAL_DUMP_TRACE": os.getenv("REAL_DUMP_TRACE", "0"),
-    "REAL_DUMP_MEMORY": os.getenv("REAL_DUMP_MEMORY", "0"),
-    "REAL_GPU_MEMORY_KILL_THRESHOLD": os.getenv(
-        "REAL_GPU_MEMORY_KILL_THRESHOLD", "0.95"
-    ),
-    "LC_ALL": "C",
-    "LANG": "C",
-    "NCCL_DEBUG": "WARN",
-}
-
-# Set PPU-specific environment variables for stable training.
-if cluster_spec.name == "wa180":
-    logger.warning("Detected PPU. Amending PPU-related environment variables.")
-    PPU_ENVIRONS = {
-        "NCCL_DEBUG": "INFO",
-        "NCCL_IB_DISABLE": "1",
-        "NCCL_DEBUG_SUBSYS": "INIT",
-        "NCCL_SET_THREAD_NAME": "1",
-        "NCCL_IB_HCA": "",
-        "NCCL_SOCKET_IFNAME": "bond0",
-        "PCCL_STATE_MONITOR_DISABLE": "1",
-    }
-    BASE_ENVIRONS.update(PPU_ENVIRONS)
-elif cluster_spec.name == "na132":
-    # Specific environment variable for h800 cluster na132
-    NV_ENVIRONS = {
-        "NCCL_SOCKET_IFNAME": "bond0",
-        "NCCL_NET_PLUGIN": "",
-        "NCCL_IB_GID_INDEX": "3",
-        "NCCL_IB_TIMEOUT": "2",
-        "NCCL_IB_RETRY_CNT": "7",
-        "NCCL_IB_SL": "5",
-        "NCCL_IB_TC": "136",
-        "NCCL_IB_HCA": "mlx5_bond",
-        "NCCL_IB_QPS_PER_CONNECTION": "8",
-        "NCCL_SET_THREAD_NAME": "1",
-        "NCCL_DEBUG_SUBSYS": "INIT,TUNING,GRAPH",
-    }
-    BASE_ENVIRONS.update(NV_ENVIRONS)
-
-
-# make directories if does not exist
-os.makedirs(PARAM_REALLOC_PATH, exist_ok=True)
-os.makedirs(MODEL_SAVE_ROOT, exist_ok=True)
-os.makedirs(LOG_ROOT, exist_ok=True)
-os.makedirs(RECOVER_ROOT, exist_ok=True)
+QUICKSTART_EXPR_CACHE_PATH = str(Path(__file__).parent.parent.parent / ".cache")
 os.makedirs(PYTORCH_KERNEL_CACHE_PATH, exist_ok=True)
 os.makedirs(TRITON_CACHE_PATH, exist_ok=True)
-os.makedirs(DATASET_CACHE_PATH, exist_ok=True)
-os.makedirs(PROFILER_CACHE_PATH, exist_ok=True)
-os.makedirs(TORCH_EXTENSIONS_DIR, exist_ok=True)
 os.makedirs(QUICKSTART_EXPR_CACHE_PATH, exist_ok=True)
-os.makedirs(PORT_LOCK_FILE_ROOT, exist_ok=True)
-os.makedirs(SGLANG_CACHE_PATH, exist_ok=True)
+
+# Global constants that should be initialized after cluster initialization.
+MODEL_SAVE_ROOT = None
+LOG_ROOT = None
+RECOVER_ROOT = None
+SLURM_LOCK_FILE_NAME = None
+PORT_LOCK_FILE_ROOT = None
+DATASET_CACHE_PATH = None
+PROFILER_CACHE_PATH = None
+PARAM_REALLOC_PATH = None
+SGLANG_CACHE_PATH = None
+TORCH_EXTENSIONS_DIR = None
+BASE_ENVIRONS = None
+
+
+def init_constants(args: "BaseExperimentConfig"):
+    from realhf.base.cluster import init_cluster_spec
+    from realhf.base.cluster import spec as cluster_spec
+
+    init_cluster_spec(args)
+
+    globals_dict = globals()  # Get module's global variables
+
+    kwargs = dict(
+        MODEL_SAVE_ROOT=f"{cluster_spec.fileroot}/checkpoints/{getpass.getuser()}",
+        LOG_ROOT=f"{cluster_spec.fileroot}/logs/{getpass.getuser()}",
+        RECOVER_ROOT=f"{cluster_spec.fileroot}/recover/{getpass.getuser()}",
+        SLURM_LOCK_FILE_NAME=f"{cluster_spec.fileroot}/logs/slurm_scheduler.lock",
+        PORT_LOCK_FILE_ROOT=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/ports",
+        DATASET_CACHE_PATH=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/datasets",
+        PROFILER_CACHE_PATH=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/profiler",
+        PARAM_REALLOC_PATH=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/param_realloc",
+        SGLANG_CACHE_PATH=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/sglang",
+        TORCH_EXTENSIONS_DIR=(
+            f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/torch/extensions"
+        ),
+    )
+    BASE_ENVIRONS = {
+        # "PYTHONPATH": "/realhf",
+        "REAL_IS_REMOTE": "1",
+        # "NCCL_P2P_DISABLE": "1",
+        # "NCCL_IB_DISABLE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "PYTORCH_KERNEL_CACHE_PATH": PYTORCH_KERNEL_CACHE_PATH,
+        "TRITON_CACHE_DIR": TRITON_CACHE_PATH,
+        "TOKENIZERS_PARALLELISM": "true",
+        "TORCH_EXTENSIONS_DIR": kwargs["TORCH_EXTENSIONS_DIR"],
+        # "TORCH_DISTRIBUTED_DEBUG": "DETAIL",
+        # "NCCL_SOCKET_IFNAME": "ibp71s0",
+        # "GLOO_SOCKET_IFNAME": "ibp71s0",
+        # "TORCH_USE_CUDA_DSA": "1",
+        # "NCCL_IGNORE_DISABLED_P2P": "1",
+        # "CUDA_LAUNCH_BLOCKING": "1",  # NOTE: CUDAGraph Capturing will not work if CUDA_LAUNCH_BLOCKING is set to 1.
+        # "NCCL_COMM_BLOCKING": "1",  # NOTE: CUDAGraph Capturing will not work if NCCL_COMM_BLOCKING is set to 1.
+        # "NCCL_BLOCKING_WAIT": "1",  # NOTE: CUDAGraph Capturing will not work if NCCL_BLOCKING_WAIT is set to 1.
+        # "TORCH_SHOW_CPP_STACKTRACES": "1",
+        # "RAY_DEDUP_LOGS": "0",  # disable ray log deduplication
+        "CUDA_DEVICE_MAX_CONNECTIONS": "1",
+        "OMP_NUM_THREADS": str(min(os.cpu_count(), 32)),
+        # torch.distributed.all_reduce does not free the input tensor until
+        # the synchronization point. This causes the memory usage to grow
+        # as the number of all_reduce calls increases. This env var disables
+        # this behavior.
+        # Related issue:
+        # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
+        # Whether to enable time mark to plot timelines.
+        "REAL_CUDA_TMARK": os.getenv("REAL_CUDA_TMARK", "0"),
+        "REAL_DUMP_TRACE": os.getenv("REAL_DUMP_TRACE", "0"),
+        "REAL_DUMP_MEMORY": os.getenv("REAL_DUMP_MEMORY", "0"),
+        "REAL_GPU_MEMORY_KILL_THRESHOLD": os.getenv(
+            "REAL_GPU_MEMORY_KILL_THRESHOLD", "0.95"
+        ),
+        "LC_ALL": "C",
+        "LANG": "C",
+        "NCCL_DEBUG": "WARN",
+    }
+    kwargs["BASE_ENVIRONS"] = BASE_ENVIRONS
+    # Set PPU-specific environment variables for stable training.
+    if cluster_spec.name == "wa180":
+        logger.warning("Detected PPU. Amending PPU-related environment variables.")
+        PPU_ENVIRONS = {
+            "NCCL_DEBUG": "INFO",
+            "NCCL_IB_DISABLE": "1",
+            "NCCL_DEBUG_SUBSYS": "INIT",
+            "NCCL_SET_THREAD_NAME": "1",
+            "NCCL_IB_HCA": "",
+            "NCCL_SOCKET_IFNAME": "bond0",
+            "PCCL_STATE_MONITOR_DISABLE": "1",
+        }
+        kwargs["BASE_ENVIRONS"].update(PPU_ENVIRONS)
+    elif cluster_spec.name == "na132":
+        # Specific environment variable for h800 cluster na132
+        NV_ENVIRONS = {
+            "NCCL_SOCKET_IFNAME": "bond0",
+            "NCCL_NET_PLUGIN": "",
+            "NCCL_IB_GID_INDEX": "3",
+            "NCCL_IB_TIMEOUT": "2",
+            "NCCL_IB_RETRY_CNT": "7",
+            "NCCL_IB_SL": "5",
+            "NCCL_IB_TC": "136",
+            "NCCL_IB_HCA": "mlx5_bond",
+            "NCCL_IB_QPS_PER_CONNECTION": "8",
+            "NCCL_SET_THREAD_NAME": "1",
+            "NCCL_DEBUG_SUBSYS": "INIT,TUNING,GRAPH",
+        }
+        kwargs["BASE_ENVIRONS"].update(NV_ENVIRONS)
+
+    for key, value in kwargs.items():
+        if key not in globals_dict:
+            raise ValueError(f"Invalid constant name: {key}")
+        if globals_dict[key] is not None and globals_dict[key] != value:
+            raise RuntimeError(f"Constant '{key}' already initialized!")
+        globals_dict[key] = value
+
+    # make directories if does not exist
+    os.makedirs(globals_dict["PARAM_REALLOC_PATH"], exist_ok=True)
+    os.makedirs(globals_dict["MODEL_SAVE_ROOT"], exist_ok=True)
+    os.makedirs(globals_dict["LOG_ROOT"], exist_ok=True)
+    os.makedirs(globals_dict["RECOVER_ROOT"], exist_ok=True)
+    os.makedirs(globals_dict["DATASET_CACHE_PATH"], exist_ok=True)
+    os.makedirs(globals_dict["PROFILER_CACHE_PATH"], exist_ok=True)
+    os.makedirs(globals_dict["TORCH_EXTENSIONS_DIR"], exist_ok=True)
+    os.makedirs(globals_dict["PORT_LOCK_FILE_ROOT"], exist_ok=True)
+    os.makedirs(globals_dict["SGLANG_CACHE_PATH"], exist_ok=True)
+
 
 # _model_name will be changed in the model_scope context manager
 _model_name: "ModelName" = None
