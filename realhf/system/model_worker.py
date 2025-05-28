@@ -680,6 +680,11 @@ class ModelWorker(worker_base.Worker):
                         sample.data["birth_time"].flatten().cpu().numpy().tolist()
                     )
                     assert len(birth_times) == meta_sample.bs
+                else:
+                    birth_times = (
+                        time.monotonic_ns()
+                        + np.arange(len(data_loaded), dtype=np.int64)
+                    ).tolist()
 
             res = data_api.DataBatchMeta(
                 dp_rank=dp_rank,
