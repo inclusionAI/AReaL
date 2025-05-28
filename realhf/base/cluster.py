@@ -2,59 +2,60 @@
 # Copyright 2024 Wei Fu & Zhiyu Mei
 # Licensed under the Apache License, Version 2.0 (the "License").
 
-import getpass
 import json
 import os
-import re
-import subprocess
-from typing import Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Dict
 
-CLUSTER_SPEC_PATH = os.environ.get("CLUSTER_SPEC_PATH", "")
-
-
-def get_user_tmp():
-    user = getpass.getuser()
-    user_tmp = os.path.join("/home", user, ".cache", "realhf")
-    os.makedirs(user_tmp, exist_ok=True)
-    return user_tmp
+if TYPE_CHECKING:
+    from realhf.api.cli_args import BaseExperimentConfig
 
 
 class ClusterSpec:
     def __init__(self):
+        # Set default values to comfort ray
+        from realhf.api.cli_args import BaseExperimentConfig
+
+        self.load_spec_from_args(BaseExperimentConfig())
+
         self.__loaded = False
 
     def load_spec_from_file(self, file_path: str):
-        try:
-            with open(file_path, "r") as f:
-                spec: Dict = json.load(f)
-        except FileNotFoundError:
-            if file_path == "":
-                spec = dict(
-                    cluster_type="local",
-                    cluster_name="local",
-                    fileroot=get_user_tmp(),
-                )
-            else:
-                raise FileNotFoundError(f"Cluster spec file not found: {file_path}")
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Cluster spec file not found: {file_path}")
+
+        with open(file_path, "r") as f:
+            spec: Dict = json.load(f)
 
         self.__cluster_type = spec["cluster_type"]
         self.__cluster_name = spec["cluster_name"]
         self.__fileroot = spec["fileroot"]
-        self.__node_type_from_node_name_re = spec.get("node_type_from_node_name", None)
-        self.__gpu_type_from_node_name_re = spec.get("gpu_type_from_node_name", None)
         self.__gpu_type = spec.get("gpu_type", None)
-        self.__default_mount = spec.get("default_mount", None)
+        self.__mount = spec.get("default_mount", None)
         self.__gpu_image = spec.get("gpu_image", None)
         self.__gpu_infer_image = spec.get("gpu_infer_image", self.__gpu_image)
         self.__cpu_image = spec.get("cpu_image", None)
-        self.__node_name_prefix = spec.get("node_name_prefix", "NODE")
+        self.__node_name_prefix = spec.get("node_name_prefix", "slurmd-")
         # self.__n_nodes decides number of digits in slurm hostnames
-        # e.g. if __n_nodes = 32, then the hostnames will be NODE{:02d}
-        #      if __n_nodes = 128, then the hostnames will be NODE{:03d}
+        # e.g. if __n_nodes = 32, then the hostnames will be slurmd-{:02d}
+        #      if __n_nodes = 128, then the hostnames will be slurmd-{:03d}
         self.__n_nodes = int(spec.get("n_nodes", 32))
         self.__n_gpus_per_node = int(spec.get("n_gpus_per_node", 8))
         assert isinstance(self.__n_nodes, int)
 
+        self.__loaded = True
+
+    def load_spec_from_args(self, args: "BaseExperimentConfig"):
+        self.__cluster_type = args.mode
+        self.__cluster_name = args.cluster.cluster_name
+        self.__fileroot = args.cluster.fileroot
+        self.__gpu_type = args.cluster.gpu_type
+        self.__mount = args.cluster.mount
+        self.__gpu_image = args.cluster.gpu_image
+        self.__gpu_infer_image = args.cluster.gpu_infer_image
+        self.__cpu_image = args.cluster.cpu_image
+        self.__node_name_prefix = args.cluster.node_name_prefix
+        self.__n_nodes = args.cluster.n_nodes
+        self.__n_gpus_per_node = args.cluster.n_gpus_per_node
         self.__loaded = True
 
     @property
@@ -66,32 +67,6 @@ class ClusterSpec:
     def gpu_type(self):
         assert self.__loaded
         return self.__gpu_type
-
-    def node_type_from_node_name(self, node_name: str) -> str:
-        """Mapping nodename to slurm node type, including "g1", "g2", "g8",
-        "a100"."""
-        if self.__cluster_type != "slurm":
-            raise NotImplementedError(
-                "Only slurm cluster uses node_type_from_node_name."
-            )
-        assert self.__loaded
-        for regex, node_type in self.__node_type_from_node_name_re.items():
-            if re.match(regex, node_name):
-                return node_type
-        raise NotImplementedError(node_name)
-
-    def gpu_type_from_node_name(self, node_name: str) -> str:
-        """Mapping nodename to slurm GPU type, including "geforce" and
-        "tesla"."""
-        if self.__cluster_type != "slurm":
-            raise NotImplementedError(
-                "Only slurm cluster uses gpu_type_from_node_name."
-            )
-        assert self.__loaded
-        for regex, gpu_type in self.__gpu_type_from_node_name_re.items():
-            if re.match(regex, node_name):
-                return gpu_type
-        raise NotImplementedError(node_name)
 
     @property
     def fileroot(self) -> str:
@@ -109,11 +84,11 @@ class ClusterSpec:
         self.__fileroot = root
 
     @property
-    def default_mount(self) -> str:
+    def mount(self) -> str:
         """Directories that should be mounted to container that runs
         workers."""
         assert self.__loaded
-        return self.__default_mount
+        return self.__mount
 
     @property
     def gpu_image(self) -> str:
@@ -156,23 +131,15 @@ class ClusterSpec:
         return self.__cluster_type
 
 
-def node_name_is_node_type(
-    node_name: str, node_type: Optional[Union[List[str], str]] = None
-) -> bool:
-    assert spec is not None
-    if node_type is None:
-        return True
-    if not isinstance(node_type, list):
-        node_type = [node_type]
-    nt_condition = []
-    for nt in node_type:
-        if nt not in ["g1", "g2", "g8", "a100"]:
-            raise ValueError(f"Unknown node type {nt}.")
-        else:
-            cond = spec.node_type_from_node_name(node_name) == nt
-        nt_condition.append(cond)
-    return any(nt_condition)
-
-
 spec = ClusterSpec()
-spec.load_spec_from_file(CLUSTER_SPEC_PATH)
+
+
+def init_cluster_spec(args: "BaseExperimentConfig"):
+    global spec
+    CLUSTER_SPEC_PATH = os.environ.get("CLUSTER_SPEC_PATH", "")
+    if args.cluster.config_path:
+        spec.load_spec_from_file(args.cluster.config_path)
+    elif CLUSTER_SPEC_PATH:
+        spec.load_spec_from_file(CLUSTER_SPEC_PATH)
+    else:
+        spec.load_spec_from_args(args)

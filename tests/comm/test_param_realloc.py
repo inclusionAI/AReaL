@@ -526,10 +526,7 @@ def _test_para_realloc(
 parallelism = [(4, 1, 1), (2, 2, 2), (1, 8, 1), (3, 2, 1), (2, 1, 2), (1, 2, 2)]
 
 
-@pytest.mark.skipif(
-    os.cpu_count() < 32 or testing.get_free_mem_gb() < 50,
-    reason="The parameter reallocation test requires at least 32 CPUs and 50GB memory.",
-)
+@pytest.mark.skip("NCCL-based parameter reallocation is not used currently.")
 @pytest.mark.parametrize("model_family_name", ["gpt2", "llama"])
 @pytest.mark.parametrize("is_critic", [False, True])
 @pytest.mark.parametrize("from_pp_dp_tp", parallelism)

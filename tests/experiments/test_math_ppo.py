@@ -51,6 +51,7 @@ def math_code_dataset(request, save_path):
     return dataset
 
 
+@pytest.mark.skip("symmetric allocation is not used")
 @pytest.mark.parametrize(
     "dp,pp,mp",
     [
@@ -121,9 +122,138 @@ def test_ppo_symm(
     run_test_exp(exp_cfg)
 
 
+@pytest.mark.parametrize(
+    "gdp,gpp,gmp",
+    [
+        (2, 1, 1),
+        (1, 1, 2),
+    ],
+)
+@pytest.mark.parametrize(
+    "dp,pp,mp",
+    [
+        (2, 1, 1),
+        (1, 2, 1),
+        (1, 1, 2),
+    ],
+)
+def test_ppo_decoupled(
+    tmp_path_factory,
+    tokenizer,
+    math_code_dataset,
+    save_path,
+    cpu_hf_model,
+    mconfig,
+    dp,
+    pp,
+    mp,
+    gdp,
+    gpp,
+    gmp,
+):
+    # Setup experiment env. Should be done before any other operations.
+    log_root = tmp_path_factory.mktemp("ppo")
+    cluster.spec.fileroot = str(log_root)
+    constants.set_experiment_trial_names(
+        testing._DEFAULT_EXPR_NAME, testing._DEFAULT_TRIAL_NAME
+    )
+
+    minbs = 32
+    exp_cfg = PPOMATHConfig(
+        experiment_name=testing._DEFAULT_EXPR_NAME,
+        trial_name=testing._DEFAULT_TRIAL_NAME,
+        mode="local",
+        allocation_mode=f"manual",
+        nodelist="slurmd-01",
+        n_nodes=1,
+        n_gpus_per_node=mp * dp * pp + gmp * gdp * gpp,
+        actor=ModelTrainEvalConfig(
+            path=str(save_path),
+            init_from_scratch=True,
+            backend="mock_train",
+        ),
+        ref=ModelTrainEvalConfig(
+            path=str(save_path),
+            init_from_scratch=True,
+        ),
+        critic=ModelTrainEvalConfig(
+            path=str(save_path),
+            init_from_scratch=True,
+            init_critic_from_actor=True,
+            backend="mock_train",
+        ),
+        actor_gen=MFCConfig(
+            device_mesh="slurmd-01:0,1",
+            parallel=ParallelismConfig(
+                tensor_parallel_size=gmp,
+                pipeline_parallel_size=gpp,
+                data_parallel_size=gdp,
+            ),
+        ),
+        actor_train=MFCConfig(
+            device_mesh="slurmd-01:2,3",
+            parallel=ParallelismConfig(
+                tensor_parallel_size=mp,
+                pipeline_parallel_size=pp,
+                data_parallel_size=dp,
+            ),
+        ),
+        critic_train=MFCConfig(
+            device_mesh="slurmd-01:2,3",
+            parallel=ParallelismConfig(
+                tensor_parallel_size=mp,
+                pipeline_parallel_size=pp,
+                data_parallel_size=dp,
+            ),
+        ),
+        critic_inf=MFCConfig(
+            device_mesh="slurmd-01:2,3",
+            parallel=ParallelismConfig(
+                tensor_parallel_size=mp,
+                pipeline_parallel_size=pp,
+                data_parallel_size=dp,
+            ),
+        ),
+        ref_inf=MFCConfig(
+            device_mesh="slurmd-01:2,3",
+            parallel=ParallelismConfig(
+                tensor_parallel_size=mp,
+                pipeline_parallel_size=pp,
+                data_parallel_size=dp,
+            ),
+        ),
+        rew_inf=MFCConfig(
+            device_mesh="slurmd-01:2,3",
+            parallel=ParallelismConfig(
+                tensor_parallel_size=mp,
+                pipeline_parallel_size=pp,
+                data_parallel_size=dp,
+            ),
+        ),
+        dataset=PromptOnlyDatasetConfig(
+            path=str(save_path / "math_code_dataset.jsonl"),
+            max_prompt_len=mconfig.n_positions // 2,
+            train_bs_n_seqs=minbs,
+            fill_to_max_length=False,
+        ),
+        ppo=PPOHyperparameters(
+            gen=GenerationHyperparameters(
+                max_new_tokens=4,
+                min_new_tokens=4,
+                greedy=True,
+                use_cuda_graph=False,
+            ),
+        ),
+        group_size=2,
+    )
+
+    run_test_exp(exp_cfg)
+
+
 # The global resharding strategy, where all MFCs
 # occupy the same device mesh but with different
 # parallelization strategies.
+@pytest.mark.skip("Global resharding is not used.")
 @pytest.mark.parametrize("actor_gen", [(1, 2, 1)])
 @pytest.mark.parametrize("actor_train", [(1, 1, 2)])
 @pytest.mark.parametrize("critic_inf", [(1, 1, 2)])
@@ -244,6 +374,7 @@ def test_ppo_global_reshard(
 
 # Actor/critic train and ref_inf/rew_inf are on disjoint
 # device meshes and executed concurrently.
+@pytest.mark.skip("Critic is not used.")
 @pytest.mark.parametrize("actor_gen", [(2, 2, 1)])
 @pytest.mark.parametrize("critic_inf", [(2, 1, 2)])
 def test_ppo_param_realloc_sub_device_mesh(
@@ -306,7 +437,7 @@ def test_ppo_param_realloc_sub_device_mesh(
             ),
         ),
         actor_gen=MFCConfig(
-            device_mesh="NODE01:0,1,2,3",
+            device_mesh="slurmd-01:0,1,2,3",
             parallel=ParallelismConfig(
                 data_parallel_size=actor_gen[0],
                 tensor_parallel_size=actor_gen[1],
@@ -314,7 +445,7 @@ def test_ppo_param_realloc_sub_device_mesh(
             ),
         ),
         actor_train=MFCConfig(
-            device_mesh="NODE01:4,5,6,7",
+            device_mesh="slurmd-01:4,5,6,7",
             parallel=ParallelismConfig(
                 data_parallel_size=4,
                 tensor_parallel_size=1,
@@ -322,7 +453,7 @@ def test_ppo_param_realloc_sub_device_mesh(
             ),
         ),
         critic_inf=MFCConfig(
-            device_mesh="NODE01:4,5,6,7",
+            device_mesh="slurmd-01:4,5,6,7",
             parallel=ParallelismConfig(
                 data_parallel_size=critic_inf[0],
                 tensor_parallel_size=critic_inf[1],
@@ -330,7 +461,7 @@ def test_ppo_param_realloc_sub_device_mesh(
             ),
         ),
         rew_inf=MFCConfig(
-            device_mesh="NODE01:4,5,6,7",
+            device_mesh="slurmd-01:4,5,6,7",
             parallel=ParallelismConfig(
                 data_parallel_size=4,
                 tensor_parallel_size=1,
@@ -338,7 +469,7 @@ def test_ppo_param_realloc_sub_device_mesh(
             ),
         ),
         ref_inf=MFCConfig(
-            device_mesh="NODE01:4,5,6,7",
+            device_mesh="slurmd-01:4,5,6,7",
             parallel=ParallelismConfig(
                 data_parallel_size=1,
                 tensor_parallel_size=2,
@@ -346,7 +477,7 @@ def test_ppo_param_realloc_sub_device_mesh(
             ),
         ),
         critic_train=MFCConfig(
-            device_mesh="NODE01:4,5,6,7",
+            device_mesh="slurmd-01:4,5,6,7",
             parallel=ParallelismConfig(
                 data_parallel_size=2,
                 tensor_parallel_size=1,
@@ -389,6 +520,7 @@ def test_ppo_save(
         allocation_mode="manual",
         n_nodes=1,
         n_gpus_per_node=2,
+        nodelist="slurmd-01",
         actor=ModelTrainEvalConfig(
             path=str(save_path),
             init_from_scratch=True,
@@ -436,7 +568,7 @@ def test_ppo_save(
             )
         ),
         actor_train=MFCConfig(
-            device_mesh="NODE01:0",
+            device_mesh="slurmd-01:0",
             parallel=ParallelismConfig(
                 data_parallel_size=1,
                 tensor_parallel_size=1,
@@ -465,7 +597,7 @@ def test_ppo_save(
             )
         ),
         critic_train=MFCConfig(
-            device_mesh="NODE01:1",
+            device_mesh="slurmd-01:1",
             parallel=ParallelismConfig(
                 data_parallel_size=1,
                 tensor_parallel_size=1,

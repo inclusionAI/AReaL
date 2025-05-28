@@ -723,6 +723,7 @@ class SequenceSample:
 class DataBatchMeta:
     dp_rank: int
     meta_sample: SequenceSample | None
+    birth_times: List
 
 
 @dataclasses.dataclass

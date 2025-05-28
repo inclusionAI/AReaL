@@ -184,10 +184,10 @@ def make_device_mesh_from_name(
     """
     DeviceMesh name format: <prefix><node_indices>[:<gpu_ids>]
         slurm_nodelist is the name of slurm nodes the mesh is on, should follow slurm convention,
-        for example "NODE[40-43]" or "NODE[01,11,13-14]" with prefix NODE,
+        for example "slurmd-[40-43]" or "slurmd-[01,11,13-14]" with prefix slurmd-,
         if n_nodes=1, gpu_ids are the gpu id list delimited by comma if n_gpus < n_gpus_per_node,
         for example "0,1,2,3" or "0,1". An example of full device mesh name
-        in this situation is "NODE40:0,1,2,3"
+        in this situation is "slurmd-40:0,1,2,3"
 
     Note: cluster device mesh name must occupy entire nodes.
     """

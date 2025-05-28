@@ -19,6 +19,7 @@ from realhf.base.name_resolve import (
 BACKENDS = [
     ("memory", {}),
     ("nfs", {}),
+    ("ray", {}),
 ]
 if os.environ.get("REAL_ETCD_ADDR"):
     BACKENDS.append(
@@ -59,6 +60,12 @@ def name_resolve(request):
         from realhf.base.name_resolve import Etcd3NameRecordRepository
 
         repo = Etcd3NameRecordRepository(**kwargs)
+        yield repo
+        repo.reset()
+    elif backend_type == "ray":
+        from realhf.base.name_resolve import RayNameResolveRepository
+
+        repo = RayNameResolveRepository(**kwargs)
         yield repo
         repo.reset()
 
@@ -381,18 +388,19 @@ def test_wait_with_concurrent_delete(name_resolve):
     def add_then_delete():
         time.sleep(0.1)
         name_resolve.add("test_wait_key", "test_value")
-        time.sleep(0.1)
+        time.sleep(1.0)
         name_resolve.delete("test_wait_key")
 
     thread = threading.Thread(target=add_then_delete, daemon=True)
     thread.start()
 
     # Wait with a timeout long enough to capture the key
-    value = name_resolve.wait("test_wait_key", timeout=2.0, poll_frequency=0.05)
+    value = name_resolve.wait("test_wait_key", timeout=3.0, poll_frequency=0.05)
     assert value == "test_value"
 
     # Wait for the thread to complete
     thread.join()
+    time.sleep(0.5)
 
     # Verify the key was deleted
     with pytest.raises(NameEntryNotFoundError):

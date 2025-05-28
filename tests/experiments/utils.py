@@ -28,6 +28,9 @@ def run_model_worker(cfg, mw, barrier, expr_name=None):
 
     system_api.ALL_EXPERIMENT_CLASSES = {}
     register_experiment(expr_name or testing._DEFAULT_EXPR_NAME, lambda: cfg)
+    constants.set_experiment_trial_names(
+        mw.worker_info.experiment_name, mw.worker_info.trial_name
+    )
 
     worker = ModelWorker()
     logger.info("Configuring model worker...")

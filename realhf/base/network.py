@@ -28,11 +28,6 @@ def find_free_port(
     """Find a free port within the specified range, excluding certain ports."""
 
     ports_name = names.used_ports(experiment_name, trial_name, gethostip())
-    used_ports = list(map(int, name_resolve.get_subtree(ports_name)))
-    if exclude_ports is None:
-        exclude_ports = set(used_ports)
-    else:
-        exclude_ports = exclude_ports.union(set(used_ports))
 
     free_port = None
     lockfile = os.path.join(constants.PORT_LOCK_FILE_ROOT, gethostip())
@@ -40,10 +35,16 @@ def find_free_port(
         with open(lockfile, "w") as fd:
             # This will block until lock is acquired
             fcntl.flock(fd, fcntl.LOCK_EX)
+            used_ports = list(map(int, name_resolve.get_subtree(ports_name)))
+            assert len(used_ports) == len(set(used_ports))
+            if exclude_ports is None:
+                exclude_ports = set(used_ports)
+            else:
+                exclude_ports = exclude_ports.union(set(used_ports))
             try:
                 with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
-                    s.bind(("", 0))
                     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    s.bind(("", 0))
                     port = s.getsockname()[1]
                     if low <= port <= high and port not in exclude_ports:
                         name_resolve.add_subentry(ports_name, str(port))

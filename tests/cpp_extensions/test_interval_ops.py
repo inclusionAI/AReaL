@@ -2,10 +2,7 @@
 # Copyright 2024 Wei Fu & Zhiyu Mei
 # Licensed under the Apache License, Version 2.0 (the "License").
 
-import os
-import random
 import time
-import uuid
 from typing import *
 
 import numpy as np
@@ -44,6 +41,7 @@ def maybe_synchronize_cuda():
     "n_intervals", list(reversed([1, 100, 500, 1000, 2000, 4000, 10000, 100000]))
 )
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32, torch.float16])
+@pytest.mark.gpu
 def test_get(n_intervals: int, dtype: torch.dtype):
     device = torch.device("cuda")
 

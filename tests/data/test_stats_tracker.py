@@ -100,9 +100,9 @@ def test_denominator_edge_cases(tracker):
     tracker.denominator(mask=zero_mask)
     tracker.stat(denominator="mask", value=torch.FloatTensor([1.0, 2.0]))
     results = tracker.export()
-    assert torch.isnan(torch.tensor(results["value/min"]))  # Should be inf
-    assert torch.isnan(torch.tensor(results["value/max"]))  # Should be -inf
-    assert results["value/avg"] == 0.0
+    assert "value/min" not in results
+    assert "value/max" not in results
+    assert "value/avg" not in results
 
 
 def test_key_specific_export(tracker):

@@ -23,6 +23,7 @@ import realhf.system.request_reply_stream as request_reply_stream
 import realhf.system.worker_base as worker_base
 from realhf.api.core.config import ModelName
 from realhf.api.core.model_api import ReaLModelConfig
+from realhf.api.core.system_api import ExpStatus
 from realhf.base import (
     constants,
     logging,
@@ -40,7 +41,7 @@ logger = logging.getLogger("master worker", "system")
 blogger = logging.getLogger("benchmark")
 
 
-class MasterWorker(worker_base.Worker):
+class MasterWorker(worker_base.AsyncWorker):
     global_exp_tik = time.perf_counter()
 
     def _configure(self, config: config_pkg.MasterWorker):
@@ -141,6 +142,22 @@ class MasterWorker(worker_base.Worker):
                 f"Epoch Step: {self.__rpc_ctrl.step_info.epoch_step + 1} "
                 f"Global Step: {self.__rpc_ctrl.step_info.global_step + 1}."
             )
+
+            # Recover the previous number of training samples
+            train_rpcs = list(
+                filter(
+                    lambda rpc: rpc.interface_type == dfg.ModelInterfaceType.TRAIN_STEP,
+                    self.__model_rpcs,
+                )
+            )
+            train_batch_size = train_rpcs[0].n_seqs
+            hist_samples = (
+                train_batch_size * self.__recover_info.last_step_info.global_step
+            )
+            training_sample_name = names.training_samples(
+                constants.experiment_name(), constants.trial_name()
+            )
+            name_resolve.add(training_sample_name, str(hist_samples), replace=True)
 
         # for benchmark
         self.e2e_time_history = []
@@ -274,7 +291,8 @@ class MasterWorker(worker_base.Worker):
         ]
 
         # wandb init, connect to remote wandb host
-        wandb.login()
+        if self.wandb_config.mode != "disabled":
+            wandb.login()
         wandb.init(
             mode=self.wandb_config.mode,
             entity=self.wandb_config.entity,
@@ -327,7 +345,7 @@ class MasterWorker(worker_base.Worker):
             global_step=-1,
         )
 
-    def _poll(self):
+    async def __poll_async(self):
         is_new_epoch = False
 
         if not self.__initialized:
@@ -369,7 +387,7 @@ class MasterWorker(worker_base.Worker):
         self.logger.info(s)
 
         # Traverse over the dataflow graph for once.
-        self.func_executor.execute_step()
+        await self.func_executor.execute_step()
 
         # Post-process.
         if self.__rpc_ctrl.should_save or self.__rpc_ctrl.should_ckpt:
@@ -431,6 +449,18 @@ class MasterWorker(worker_base.Worker):
 
         return worker_base.PollResult(sample_count=1, batch_count=1)
 
+    async def _poll_async(self):
+        name = names.experiment_status(
+            constants.experiment_name(), constants.trial_name()
+        )
+        name_resolve.add(name, ExpStatus.RUNNING, replace=True)
+        try:
+            r = await self.__poll_async()
+        except Exception as e:
+            name_resolve.add(name, ExpStatus.ABORTED, replace=True)
+            raise e
+        return r
+
     def _log_training_stats(self, e2e_time: float, time_since_configure: float):
         # calculate flops
         #########################################
@@ -482,8 +512,15 @@ class MasterWorker(worker_base.Worker):
             + colorama.Style.RESET_ALL
         )
 
+        # Update experiment status to inform other workers
+        name = names.experiment_status(
+            constants.experiment_name(), constants.trial_name()
+        )
+        name_resolve.add(name, ExpStatus.COMPLETE, replace=True)
+
         # Send requests to pause model workers.
         # Model workers will not respond to this message.
+        # FIXME: request to model workers is unnecessary
         self.__stream.request(
             handlers=list(range(self.config.n_model_workers)),
             handle_type="reset",

@@ -84,6 +84,7 @@ def partial_rollout_manager():
         reply_queue=reply_queue,
         new_tokens_per_chunk=new_tokens_per_chunk,
         tokenizer=mock_tokenizer,
+        timeout=300,
     )
     yield manager
     # Cleanup if needed

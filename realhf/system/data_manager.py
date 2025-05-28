@@ -10,8 +10,8 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
-from realhf import SequenceSample
 from realhf.api.core.config import ModelName, ModelShardID
+from realhf.api.core.data_api import SequenceSample
 from realhf.base import constants, logging
 from realhf.base.topology import ProcessTopology, new_or_get_group
 from realhf.impl.model.comm.global_comm import filter_match_mwids

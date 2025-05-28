@@ -1,3 +1,4 @@
+import getpass
 import os
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from typing import Dict, List, Optional, Tuple, Type, Union
@@ -5,7 +6,6 @@ from typing import Dict, List, Optional, Tuple, Type, Union
 from omegaconf import MISSING
 
 from realhf.base import pkg_version
-from realhf.base.cluster import spec as cluster_spec
 
 ## Data and datasets. ##
 
@@ -847,6 +847,57 @@ class TensorBoardConfig:
     path: Optional[str] = None
 
 
+def get_user_tmp():
+    user = getpass.getuser()
+    user_tmp = os.path.join("/home", user, ".cache", "realhf")
+    os.makedirs(user_tmp, exist_ok=True)
+    return user_tmp
+
+
+@dataclass
+class ClusterSpecConfig:
+    config_path: str = field(
+        default="",
+        metadata={
+            "help": "JSON config path. If not given, use the following CLI args."
+        },
+    )
+    cluster_name: str = field(
+        default="local",
+        metadata={"help": "Name of the cluster. Used to set specific environs."},
+    )
+    fileroot: str = field(
+        default=get_user_tmp(),
+        metadata={
+            "help": "Root for logs and checkpoints. Should be available to all nodes."
+        },
+    )
+    gpu_type: str = field(
+        default="tesla", metadata={"help": "GPU type of the cluster. Used by slurm."}
+    )
+    mount: str = field(
+        default="/storage:/storage", metadata={"help": "Mount path for slurm."}
+    )
+    gpu_image: str = field(default="", metadata={"help": "slurm image for trainers."})
+    cpu_image: str = field(default="", metadata={"help": "slurm image for CPU jobs."})
+    gpu_infer_image: str = field(
+        default="", metadata={"help": "slurm image for LLM inference."}
+    )
+    node_name_prefix: str = field(
+        default="slurmd-", metadata={"help": "Node prefix for a slurm cluster."}
+    )
+    n_nodes: int = field(
+        default=32,
+        metadata={
+            "help": "The size of the cluster. Used to decide slurm hostname suffix."
+        },
+    )
+    n_gpus_per_node: int = field(
+        default=8,
+        metadata={"help": "GPUs per node (physically)."},
+    )
+
+
 @dataclass
 class BaseExperimentConfig:
     """Configuration for quickstart experiments.
@@ -935,21 +986,20 @@ class BaseExperimentConfig:
         default=1, metadata={"help": "Number of nodes for experiment."}
     )
     n_gpus_per_node: int = field(
-        default=cluster_spec.n_gpus_per_node,
-        metadata={"help": "GPUs per node. Total GPUs = n_nodes * n_gpus_per_node."},
+        default=8, metadata={"help": "Number of GPUs per node for this experiment."}
     )
     nodelist: Optional[str] = field(
         default=None,
         metadata={
             "help": "SLURM nodelist for manual allocation. "
-            "Format: 'NODE01:0,1,2,3' or 'NODE[01-02,03,07],COM08'."
+            "Format: 'slurmd-01:0,1,2,3' or 'slurmd-[01-02,03,07],COM08'."
         },
     )
     exclude: Optional[str] = field(
         default=None,
         metadata={
             "help": "SLURM nodelist to exclude from allocation. "
-            "Format: 'NODE01:0,1,2,3' or 'NODE[01-02,03,07],COM08'."
+            "Format: 'slurmd-01:0,1,2,3' or 'slurmd-[01-02,03,07],COM08'."
         },
     )
     seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
@@ -996,6 +1046,13 @@ class BaseExperimentConfig:
     shuffle_dataset: bool = field(
         default=True, metadata={"help": "Shuffle in each epoch."}
     )
+    ray_temp_path: str = field(
+        default="/tmp/ray", metadata={"help": "Absolute path for Ray's log."}
+    )
+    cluster: ClusterSpecConfig = field(
+        default_factory=ClusterSpecConfig,
+        metadata={"help": "Cluster specification. Mainly used by slurm."},
+    )
 
 
 ## Configuration options of asynchronous experiments. ##
@@ -1033,7 +1090,7 @@ class AsyncRLOptions:
         },
     )
     flush_request_timeout: int = field(
-        default=120,
+        default=300,
         metadata={"help": "The timeout of flushing requests upon weight update."},
     )
 

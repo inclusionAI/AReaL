@@ -1,4 +1,5 @@
 import queue
+import sys
 import threading
 import time
 from typing import Any, List, Optional
@@ -12,8 +13,10 @@ from realhf.api.core.data_api import (
     make_dataset,
     register_dataset,
 )
-from realhf.base import constants
+from realhf.base import constants, logging
 from realhf.system.push_pull_stream import NameResolvingZmqPuller
+
+logger = logging.getLogger("StreamDataset")
 
 
 class PullerStreamDataset(Dataset):
@@ -45,15 +48,12 @@ class PullerStreamDataset(Dataset):
         del dataset, datasets
 
         self.pull_timeout_ms = pull_timeout_ms
-        self.data_queue = queue.Queue(maxsize=self.dataset_size)
+        self.data_queue = queue.Queue(maxsize=self.dataset_size * util.world_size)
         self._stop_event = threading.Event()
 
         # Pass ZMQ context (thread-safe) and let worker create the socket
         self.util = util
-        self.worker_thread = threading.Thread(
-            target=self._pull_data_worker,
-            daemon=True,
-        )
+        self.worker_thread = threading.Thread(target=self._pull_data_worker)
         self.worker_thread.start()
 
     def _pull_data_worker(self):
@@ -71,13 +71,19 @@ class PullerStreamDataset(Dataset):
                     processed_data = [
                         SequenceSample.from_json_compatible(x) for x in data
                     ]
-                    self.data_queue.put_nowait(processed_data)
+                    logger.debug(
+                        f"Get data {[x.ids[0] for x in processed_data]} from puller stream."
+                    )
+                    self.data_queue.put(processed_data)
                 except queue.Empty:
+                    logger.debug(f"No data from puller stream.")
                     time.sleep(0.1)
                     continue
         finally:
             # Ensure socket is closed in the same thread
             del stream
+            # Exit if this thread has an error
+            sys.exit(1)
 
     def __getitem__(self, idx: int) -> Optional[Any]:
         samples = []

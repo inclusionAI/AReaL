@@ -13,13 +13,14 @@ import time
 import uuid
 from typing import Callable, List, Optional
 
+import ray
+
 try:
     import etcd3
 except Exception:
     etcd3 = None
 
-from realhf.base import cluster, logging, security, timeutil
-from realhf.base.cluster import spec as cluster_spec
+from realhf.base import logging, security, timeutil
 
 logger = logging.getLogger("name-resolve")
 
@@ -286,14 +287,19 @@ class MemoryNameRecordRepository(NameRecordRepository):
 
 
 class NfsNameRecordRepository(NameRecordRepository):
-    RECORD_ROOT = f"{cluster_spec.fileroot}/name_resolve/"
-    os.makedirs(RECORD_ROOT, exist_ok=True)
+    RECORD_ROOT = ""
 
     def __init__(self, **kwargs):
         self.__to_delete = set()
 
     @staticmethod
     def __dir_path(name):
+        if not NfsNameRecordRepository.RECORD_ROOT:
+            from realhf.base.cluster import spec as cluster_spec
+
+            RECORD_ROOT = f"{cluster_spec.fileroot}/name_resolve/"
+            os.makedirs(RECORD_ROOT, exist_ok=True)
+            NfsNameRecordRepository.RECORD_ROOT = RECORD_ROOT
         return os.path.join(NfsNameRecordRepository.RECORD_ROOT, name)
 
     @staticmethod
@@ -930,6 +936,446 @@ class Etcd3NameRecordRepository(NameRecordRepository):
                 logger.debug(f"Testonly: dropped key: {name}")
 
 
+@ray.remote
+class DistributedKVStore:
+    """Ray actor implementing a distributed key-value store with TTL support."""
+
+    def __init__(self):
+        self.store = {}
+        self.ttl_store = {}  # key -> expiry_time
+        self.lease_store = {}  # key -> lease_id
+        self.lease_counter = 0
+
+    def put(self, key: str, value: str, lease_id: Optional[int] = None):
+        """Store a key-value pair with optional lease."""
+        self.store[key] = value
+        if lease_id is not None:
+            self.lease_store[key] = lease_id
+        return True
+
+    def get(self, key: str):
+        """Get value for a key, checking TTL expiry."""
+        self._cleanup_expired()
+        if key not in self.store:
+            return None
+        return self.store[key]
+
+    def delete(self, key: str):
+        """Delete a key and its associated metadata."""
+        deleted = key in self.store
+        self.store.pop(key, None)
+        self.ttl_store.pop(key, None)
+        self.lease_store.pop(key, None)
+        return deleted
+
+    def get_prefix(self, prefix: str):
+        """Get all key-value pairs with keys matching the prefix."""
+        self._cleanup_expired()
+        result = []
+        normalized_prefix = os.path.normpath(prefix)
+
+        for key, value in self.store.items():
+            normalized_key = os.path.normpath(key)
+            # Check if key matches prefix (exact match or starts with prefix/)
+            if normalized_key == normalized_prefix or normalized_key.startswith(
+                normalized_prefix.rstrip("/") + "/"
+            ):
+                result.append((key, value))
+        return result
+
+    def delete_prefix(self, prefix: str):
+        """Delete all keys matching the prefix."""
+        self._cleanup_expired()
+        normalized_prefix = os.path.normpath(prefix)
+        keys_to_delete = []
+
+        for key in self.store.keys():
+            normalized_key = os.path.normpath(key)
+            if normalized_key == normalized_prefix or normalized_key.startswith(
+                normalized_prefix.rstrip("/") + "/"
+            ):
+                keys_to_delete.append(key)
+
+        for key in keys_to_delete:
+            self.delete(key)
+        return len(keys_to_delete)
+
+    def create_lease(self, ttl_seconds: int):
+        """Create a lease with TTL."""
+        self.lease_counter += 1
+        lease_id = self.lease_counter
+        expiry_time = time.time() + ttl_seconds
+        return lease_id, expiry_time
+
+    def put_with_lease(self, key: str, value: str, ttl_seconds: int):
+        """Store key-value with TTL lease."""
+        lease_id, expiry_time = self.create_lease(ttl_seconds)
+        self.store[key] = value
+        self.ttl_store[key] = expiry_time
+        self.lease_store[key] = lease_id
+        return lease_id
+
+    def refresh_lease(self, key: str, ttl_seconds: int):
+        """Refresh the lease for a key."""
+        if key in self.store and key in self.lease_store:
+            self.ttl_store[key] = time.time() + ttl_seconds
+            return True
+        return False
+
+    def _cleanup_expired(self):
+        """Remove expired keys."""
+        current_time = time.time()
+        expired_keys = []
+
+        for key, expiry_time in self.ttl_store.items():
+            if current_time > expiry_time:
+                expired_keys.append(key)
+
+        for key in expired_keys:
+            self.delete(key)
+
+    def get_all_keys(self):
+        """Get all keys in the store."""
+        self._cleanup_expired()
+        return list(self.store.keys())
+
+
+class RayNameResolveRepository:
+    """Ray-based implementation of NameRecordRepository using distributed actors."""
+
+    KEEPALIVE_POLL_FREQUENCY = 1
+
+    @dataclasses.dataclass
+    class _Entry:
+        value: str
+        lease_id: Optional[int] = None
+        keepalive_ttl: Optional[int] = None
+        keeper: Optional[timeutil.FrequencyControl] = None
+
+    def __init__(self, actor_name: str = "distributed_kv_store", **kwargs):
+        """Initialize Ray-based name record repository.
+
+        Args:
+            actor_name: Name for the Ray actor (for sharing across processes)
+            **kwargs: Additional configuration parameters
+        """
+        super().__init__()
+        self._lock = threading.Lock()
+        self._actor_name = actor_name
+
+        # Initialize Ray if not already done
+        if not ray.is_initialized():
+            ray.init(ignore_reinit_error=True)
+
+        # Try to get existing actor or create new one
+        try:
+            self._kv_store = ray.get_actor(self._actor_name)
+            logger.debug(
+                f"Connected to existing Ray KV store actor: {self._actor_name}"
+            )
+        except ValueError:
+            # Actor doesn't exist, create it
+            self._kv_store = DistributedKVStore.options(
+                name=self._actor_name, lifetime="detached"
+            ).remote()
+            logger.debug(f"Created new Ray KV store actor: {self._actor_name}")
+
+        # Track entries for cleanup and keepalive
+        self._entries = {}
+        self._keepalive_running = True
+        self._keepalive_thread = threading.Thread(
+            target=self._keepalive_thread_run, daemon=True
+        )
+        self._keepalive_thread.start()
+
+        self._to_delete = set()
+
+    def __del__(self):
+        """Clean up resources when the object is deleted."""
+        try:
+            self.reset()
+        except Exception as e:
+            logger.info(
+                f"Exception ignored when deleting RayNameResolveRepository: {e}"
+            )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.reset()
+
+    def add(
+        self,
+        name: str,
+        value: str,
+        delete_on_exit: bool = True,
+        keepalive_ttl: Optional[int] = None,
+        replace: bool = False,
+    ):
+        """Add a key-value pair to the distributed store.
+
+        Args:
+            name: Key name
+            value: Value to store
+            delete_on_exit: Whether to delete the key when this object is destroyed
+            keepalive_ttl: TTL in seconds for the key
+            replace: Whether to replace an existing key
+
+        Raises:
+            NameEntryExistsError: If the key already exists and replace is False
+        """
+        if not name:
+            raise ValueError(f"Invalid name: {name}")
+        name = os.path.normpath(name)
+        value = str(value)
+
+        with self._lock:
+            # Check if key exists when replace=False
+            if not replace:
+                existing_value = ray.get(self._kv_store.get.remote(name))
+                if existing_value is not None:
+                    raise NameEntryExistsError(
+                        f"Key already exists: K={name} V={existing_value}"
+                    )
+
+            # Store with or without TTL
+            lease_id = None
+            if keepalive_ttl is not None and keepalive_ttl > 0:
+                lease_id = ray.get(
+                    self._kv_store.put_with_lease.remote(name, value, keepalive_ttl)
+                )
+                self._to_delete.add(name)
+            else:
+                ray.get(self._kv_store.put.remote(name, value))
+                if delete_on_exit:
+                    self._to_delete.add(name)
+
+            # Store entry information for keepalive management
+            self._entries[name] = self._Entry(
+                value=value,
+                lease_id=lease_id,
+                keepalive_ttl=keepalive_ttl,
+                keeper=(
+                    timeutil.FrequencyControl(frequency_seconds=keepalive_ttl / 3)
+                    if keepalive_ttl
+                    else None
+                ),
+            )
+
+    def add_subentry(self, name: str, value: str, **kwargs):
+        """Add a sub-entry to the key-root `name`."""
+        sub_name = os.path.join(os.path.normpath(name), str(uuid.uuid4())[:8])
+        self.add(sub_name, value, **kwargs)
+        return sub_name
+
+    def delete(self, name: str):
+        """Delete a key from the distributed store.
+
+        Args:
+            name: Key to delete
+
+        Raises:
+            NameEntryNotFoundError: If the key doesn't exist
+        """
+        with self._lock:
+            self._delete_locked(name)
+            if name in self._to_delete:
+                self._to_delete.remove(name)
+
+    def _delete_locked(self, name: str):
+        """Delete a key with lock already acquired."""
+        # Check if key exists
+        existing_value = ray.get(self._kv_store.get.remote(name))
+        if existing_value is None:
+            raise NameEntryNotFoundError(f"No such entry to delete: {name}")
+
+        # Clean up entry tracking
+        if name in self._entries:
+            del self._entries[name]
+
+        # Delete from store
+        ray.get(self._kv_store.delete.remote(name))
+
+    def clear_subtree(self, name_root: str):
+        """Delete all keys with the given prefix."""
+        with self._lock:
+            name_root = os.path.normpath(name_root)
+            count = ray.get(self._kv_store.delete_prefix.remote(name_root))
+
+            # Clean up local tracking for deleted keys
+            keys_to_remove = []
+            for key in self._entries.keys():
+                normalized_key = os.path.normpath(key)
+                if normalized_key == name_root or normalized_key.startswith(
+                    name_root.rstrip("/") + "/"
+                ):
+                    keys_to_remove.append(key)
+
+            for key in keys_to_remove:
+                del self._entries[key]
+
+            logger.debug(f"Deleted {count} entries under {name_root}")
+
+    def get(self, name: str):
+        """Get the value for a key.
+
+        Args:
+            name: Key to retrieve
+
+        Returns:
+            The value as a string
+
+        Raises:
+            NameEntryNotFoundError: If the key doesn't exist
+        """
+        name = os.path.normpath(name)
+        with self._lock:
+            return self._get_locked(name)
+
+    def _get_locked(self, name: str):
+        """Get a value with lock already acquired."""
+        value = ray.get(self._kv_store.get.remote(name))
+        if value is None:
+            raise NameEntryNotFoundError(f"No such entry: {name}")
+        return value
+
+    def get_subtree(self, name_root: str):
+        """Get all values with keys having the given prefix."""
+        with self._lock:
+            name_root = os.path.normpath(name_root)
+            pairs = ray.get(self._kv_store.get_prefix.remote(name_root))
+            values = [value for key, value in pairs]
+            return sorted(values)
+
+    def find_subtree(self, name_root: str):
+        """Find all keys with the given prefix."""
+        with self._lock:
+            name_root = os.path.normpath(name_root)
+            pairs = ray.get(self._kv_store.get_prefix.remote(name_root))
+            keys = [key for key, value in pairs]
+            return sorted(keys)
+
+    def wait(
+        self, name: str, timeout: Optional[float] = None, poll_frequency: float = 1
+    ):
+        """Wait until a name appears.
+
+        Raises:
+            TimeoutError: if timeout exceeds.
+        """
+        start = time.monotonic()
+        while True:
+            try:
+                return self.get(name)
+            except NameEntryNotFoundError:
+                pass
+            if timeout is None or timeout > 0:
+                time.sleep(
+                    poll_frequency + random.random() * 0.1
+                )  # To reduce concurrency.
+            if timeout is not None and time.monotonic() - start > timeout:
+                raise TimeoutError(
+                    f"Timeout waiting for key '{name}' ({self.__class__.__name__})"
+                )
+
+    def reset(self):
+        """Delete all keys added via this repository instance."""
+        self._keepalive_running = False
+        if hasattr(self, "_keepalive_thread"):
+            self._keepalive_thread.join(timeout=5)
+
+        with self._lock:
+            count = 0
+            for name in list(self._to_delete):
+                try:
+                    self._delete_locked(name)
+                    count += 1
+                except NameEntryNotFoundError:
+                    pass
+            self._to_delete = set()
+            self._entries = {}
+            logger.debug(f"Reset {count} saved entries")
+
+    def watch_names(
+        self,
+        names: List[str],
+        call_back: Callable,
+        poll_frequency: float = 15,
+        wait_timeout: float = 300,
+    ):
+        """Watch keys and call back when they are deleted.
+
+        Args:
+            names: Keys to watch
+            call_back: Function to call when any key is deleted
+            poll_frequency: How often to check in seconds
+            wait_timeout: Maximum time to wait for keys to exist
+        """
+        if isinstance(names, str):
+            names = [names]
+
+        q = queue.Queue(maxsize=len(names))
+        for _ in range(len(names) - 1):
+            q.put(0)
+
+        def wrap_call_back():
+            try:
+                q.get_nowait()
+            except queue.Empty:
+                logger.info(f"Key {names} is gone. Executing callback {call_back}")
+                call_back()
+
+        for name in names:
+            t = threading.Thread(
+                target=self._watch_thread_run,
+                args=(name, wrap_call_back, poll_frequency, wait_timeout),
+                daemon=True,
+            )
+            t.start()
+
+    def _watch_thread_run(
+        self, name: str, call_back: Callable, poll_frequency: float, wait_timeout: float
+    ):
+        """Background thread to watch a key for deletion."""
+        self.wait(name, timeout=wait_timeout, poll_frequency=poll_frequency)
+        while True:
+            try:
+                self.get(name)
+                time.sleep(poll_frequency + random.random())
+            except NameEntryNotFoundError:
+                call_back()
+                break
+
+    def _keepalive_thread_run(self):
+        """Background thread to keep leases alive."""
+        while self._keepalive_running:
+            time.sleep(self.KEEPALIVE_POLL_FREQUENCY)
+            with self._lock:
+                for name, entry in list(self._entries.items()):
+                    if (
+                        entry.keeper is not None
+                        and entry.keepalive_ttl is not None
+                        and entry.lease_id is not None
+                        and entry.keeper.check()
+                    ):
+                        try:
+                            # Refresh the lease
+                            success = ray.get(
+                                self._kv_store.refresh_lease.remote(
+                                    name, entry.keepalive_ttl
+                                )
+                            )
+                            if not success:
+                                logger.warning(
+                                    f"Failed to refresh lease for key: {name}"
+                                )
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to refresh lease for key: K={name} V={entry.value}. Error: {e}"
+                            )
+
+
 def make_repository(type_="nfs", **kwargs):
     if type_ == "memory":
         return MemoryNameRecordRepository(**kwargs)
@@ -939,6 +1385,8 @@ def make_repository(type_="nfs", **kwargs):
         return RedisNameRecordRepository(**kwargs)
     elif type_ == "etcd3":
         return Etcd3NameRecordRepository(**kwargs)
+    elif type_ == "ray":
+        return RayNameResolveRepository(**kwargs)
     else:
         raise NotImplementedError(f"No such name resolver: {type_}")
 

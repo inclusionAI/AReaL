@@ -244,7 +244,9 @@ class AsyncIOSequenceBuffer:
             )
         return indices
 
-    async def put_batch(self, samples: List[SequenceSample]):
+    async def put_batch(
+        self, samples: List[SequenceSample], birth_times: List[int] | None = None
+    ):
         n = len(samples)
 
         if n == 0:
@@ -269,9 +271,12 @@ class AsyncIOSequenceBuffer:
 
         # Set a slight difference in birth time to let the order
         # be deterministic.
-        self._birth_time[indices] = time.monotonic_ns() + np.arange(
-            len(indices), dtype=np.int64
-        )
+        if birth_times is None:
+            self._birth_time[indices] = time.monotonic_ns() + np.arange(
+                len(indices), dtype=np.int64
+            )
+        else:
+            self._birth_time[indices] = birth_times
 
         async with self._lock:
             self.__buffer._update_has_keys(indices)

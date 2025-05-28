@@ -76,9 +76,10 @@ def test_buffer_recover(
         trial_name=trial_name,
         mode="local",
         # allocation_mode=f"m1d{dp}p1",
+        nodelist="slurmd-01",
         allocation_mode="manual",
         inf=MFCConfig(
-            device_mesh="NODE01:0,1,2,3,4,5,6,7",
+            device_mesh="slurmd-01:0,1,2,3,4,5,6,7",
             parallel=ParallelismConfig(
                 tensor_parallel_size=2,
                 pipeline_parallel_size=2,
@@ -86,7 +87,7 @@ def test_buffer_recover(
             ),
         ),
         train=MFCConfig(
-            device_mesh="NODE01:8,9,10,11,12,13,14,15",
+            device_mesh="slurmd-01:8,9,10,11,12,13,14,15",
             parallel=ParallelismConfig(
                 tensor_parallel_size=2,
                 pipeline_parallel_size=2,

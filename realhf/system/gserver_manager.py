@@ -13,9 +13,11 @@ import aiohttp
 import numpy as np
 
 from realhf.api.core.model_api import GenReqMeta, GenRespMeta, ModelVersionReq
+from realhf.api.core.system_api import ExpStatus
 from realhf.api.core.system_api import GserverManager as GserverManagerConfig
 from realhf.base import constants, logging, name_resolve, names, network, recover
-from realhf.system.worker_base import PollResult, Worker
+from realhf.base.monitor import RolloutStat
+from realhf.system.worker_base import AsyncWorker, PollResult, Worker
 
 logger = logging.getLogger("Generation Manager", "system")
 
@@ -23,30 +25,11 @@ STALENESS_WARNED = defaultdict(lambda: False)
 
 
 @dataclass
-class RolloutStat:
-    submit: int = 0
-    accepted: int = 0
-    running: int = 0
-
-    def inc(self):
-        self.submit += 1
-        self.accepted += 1
-        self.running += 1
-
-    def accept(self):
-        self.running -= 1
-
-    def reject(self):
-        self.running -= 1
-        self.accepted -= 1
-
-
-@dataclass
 class AllocateRolloutInput:
     qid: str
 
 
-class GserverManager(Worker):
+class GserverManager(AsyncWorker):
     """This worker has the following functionalities:
     1. As a router, it schedules generation requests and returns the
        best server urls to clients for submitting generation requests.
@@ -104,7 +87,7 @@ class GserverManager(Worker):
                 self.config.train_batch_size
                 * self.__recover_info.last_step_info.global_step
             )
-            self.rollout_stat.submit = hist_rollouts
+            self.rollout_stat.submitted = hist_rollouts
             self.rollout_stat.accepted = hist_rollouts
 
         return config.worker_info
@@ -187,7 +170,8 @@ class GserverManager(Worker):
             async with aiohttp.ClientSession(
                 server_url,
                 timeout=aiohttp.ClientTimeout(
-                    total=self.config.flush_request_timeout, sock_connect=30
+                    total=self.config.flush_request_timeout,
+                    sock_connect=self.config.flush_request_timeout,
                 ),
             ) as session:
                 async with session.post(
@@ -198,10 +182,11 @@ class GserverManager(Worker):
                         res = await resp.json()
                         success = res["success"]
                         if success:
-                            logger.info(
-                                f"{res['num_paused_requests']} requests are interrupted "
-                                f"during updateing weights for server {server_index}: {server_url}"
-                            )
+                            if "num_paused_requests" in res:
+                                logger.info(
+                                    f"{res['num_paused_requests']} requests are interrupted "
+                                    f"during updateing weights for server {server_index}: {server_url}"
+                                )
                             return
                         logger.warning(
                             f"Update weights failed: {res['message']}. Retrying."
@@ -228,7 +213,7 @@ class GserverManager(Worker):
         url = min(self.server_urls, key=lambda k: self._server_token_usage[k])
         return self.server_urls.index(url)
 
-    def _poll(self):
+    async def _poll_async(self):
         if not self.thread:
             # Find addresses of generation servers
             self.server_urls = self._discover_servers(self.config.n_servers)
@@ -244,6 +229,21 @@ class GserverManager(Worker):
                 f"GserverManager HTTP service started in background thread at {self.manager_addr}"
             )
 
+        # Check experiment finish.
+        name = names.experiment_status(
+            constants.experiment_name(), constants.trial_name()
+        )
+        try:
+            exp_status = name_resolve.wait(name, timeout=300)
+            if exp_status != str(ExpStatus.RUNNING):
+                self.exit()
+                return PollResult(0, 0)
+        except TimeoutError:
+            raise TimeoutError(
+                f"Waiting for experiment status timeout. "
+                "This indicates that the master worker is not running. Exit the worker."
+            )
+
         # Check weights.
         with self.threading_lock:
             # FIXME: we create a sync point across servers to update weights,
@@ -254,18 +254,19 @@ class GserverManager(Worker):
                     self.flush_requests_and_update_weights(base_url, new_param_path)
                     for base_url in self.server_urls
                 ]
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(asyncio.gather(*tasks))
+                await asyncio.gather(*tasks)
                 logger.info(f"Generaion server updated weights from: {new_param_path}")
 
-        tasks = [
-            self._get_server_token_usage(server_url) for server_url in self.server_urls
-        ]
-        loop = asyncio.get_event_loop()
-        token_usages = loop.run_until_complete(asyncio.gather(*tasks))
-        with self.threading_lock:
-            for server_url, token_usage in zip(self.server_urls, token_usages):
-                self._server_token_usage[server_url] = token_usage
+        if self.schedule_policy == "least_token_usage":
+            tasks = [
+                self._get_server_token_usage(server_url)
+                for server_url in self.server_urls
+            ]
+            loop = asyncio.get_event_loop()
+            token_usages = loop.run_until_complete(asyncio.gather(*tasks))
+            with self.threading_lock:
+                for server_url, token_usage in zip(self.server_urls, token_usages):
+                    self._server_token_usage[server_url] = token_usage
 
         if time.time() - self._last_thpt_output_time > 30:
             interval = time.time() - self._last_thpt_output_time
@@ -304,7 +305,8 @@ class GserverManager(Worker):
         async with aiohttp.ClientSession(
             server_url,
             timeout=aiohttp.ClientTimeout(
-                total=self.config.flush_request_timeout, sock_connect=30
+                total=self.config.flush_request_timeout,
+                sock_connect=self.config.flush_request_timeout,
             ),
         ) as session:
             async with session.get("/metrics") as resp:
@@ -319,7 +321,8 @@ class GserverManager(Worker):
         async with aiohttp.ClientSession(
             server_url,
             timeout=aiohttp.ClientTimeout(
-                total=self.config.flush_request_timeout, sock_connect=30
+                total=self.config.flush_request_timeout,
+                sock_connect=self.config.flush_request_timeout,
             ),
         ) as session:
             async with session.get(f"/metrics") as resp:
@@ -332,8 +335,16 @@ class GserverManager(Worker):
             f"Failed to get num running requests metrics from {server_url}"
         )
 
+    def get_training_sample_cnt(self):
+        name = names.training_samples(self.experiment_name, self.trial_name)
+        try:
+            return int(name_resolve.get(name))
+        except name_resolve.NameEntryNotFoundError:
+            return 0
+
     def is_staled(self):
-        global_sample_cnt = self.rollout_stat.accepted
+        # Use counter written by the trainer, local counter is inaccurate
+        global_sample_cnt = self.get_training_sample_cnt() + self.rollout_stat.running
         expected_version = global_sample_cnt // self.config.train_batch_size
         version = self._last_param_realloc_step
         staled = expected_version > self.config.max_head_offpolicyness + version
@@ -406,13 +417,22 @@ class GserverManager(Worker):
                 is_staled = self.is_staled()
                 reason = ""
                 if has_capacity and not is_staled:
-                    self.rollout_stat.inc()
+                    self.rollout_stat.submitted += 1
+                    self.rollout_stat.running += 1
+                    logger.info(
+                        f"Allocate rollout for qid {req.qid}. "
+                        f"Submitted: {self.rollout_stat.submitted}, "
+                        f"running: {self.rollout_stat.running}, "
+                        f"accepted: {self.rollout_stat.accepted}."
+                    )
                     return dict(success=True, reason=reason)
                 else:
                     if not has_capacity:
                         reason += f"capacity: {self.rollout_stat.running} >= {self.config.max_concurrent_rollouts}"
                     if is_staled:
-                        global_sample_cnt = self.rollout_stat.accepted
+                        global_sample_cnt = (
+                            self.get_training_sample_cnt() + self.rollout_stat.running
+                        )
                         expected_version = (
                             global_sample_cnt // self.config.train_batch_size
                         )
@@ -435,10 +455,15 @@ class GserverManager(Worker):
                 ), "server request count < 0"
                 self._qid_to_server_url.pop(resp_meta.qid)
                 self._gen_tokens += resp_meta.n_tokens
+                self.rollout_stat.running -= 1
                 if resp_meta.accepted:
-                    self.rollout_stat.accept()
-                else:
-                    self.rollout_stat.reject()
+                    self.rollout_stat.accepted += 1
+                logger.info(
+                    f"Finish rollout for qid {resp_meta.qid}. "
+                    f"Running: {self.rollout_stat.running}, "
+                    f"running: {self.rollout_stat.running}, "
+                    f"accepted: {self.rollout_stat.accepted}"
+                )
                 return dict(success=True)
 
         port = network.find_free_port(

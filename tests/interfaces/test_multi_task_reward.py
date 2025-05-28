@@ -86,7 +86,7 @@ def test_multi_task_reward_interface(save_path, tokenizer_path, math_code_datase
         batch_size=4,
         shuffle=True,
     )
-    from realhf.impl.model.interface.rw_interface import MultiTaskRewardInterface
+    from realhf.impl.model.interface.math_rw_interface import MultiTaskRewardInterface
 
     with constants.model_scope(testing.MODEL_NAME):
         interface = MultiTaskRewardInterface(

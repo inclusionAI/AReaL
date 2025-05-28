@@ -161,20 +161,6 @@ def launch_hydra_task(
     if not any("hydra/job_logging=disabled" in x for x in sys.argv):
         sys.argv.insert(2, "hydra/job_logging=disabled")
 
-    if (
-        "--multirun" in sys.argv
-        or "hydra.mode=MULTIRUN" in sys.argv
-        or "-m" in sys.argv
-    ):
-        raise NotImplementedError("Hydra multi-run is not supported.")
-
-    # non-multirun mode, add hydra run dir
-    sys.argv.insert(
-        2,
-        f"hydra.run.dir={cluster_spec.fileroot}/logs/{getpass.getuser()}/"
-        f"{experiment_name}/{trial_name}/hydra-outputs/",
-    )
-
     sys.argv.pop(1)
 
     func()

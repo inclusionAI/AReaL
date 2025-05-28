@@ -436,11 +436,9 @@ def run_ray_worker(
     constants.set_experiment_trial_names(experiment_name, trial_name)
 
     import realhf.api.core.system_api as system_api
-    from realhf.api.quickstart.entrypoint import (
-        QUICKSTART_CONFIG_CLASSES,
-        QUICKSTART_EXPR_CACHE_PATH,
-    )
+    from realhf.api.quickstart.entrypoint import QUICKSTART_CONFIG_CLASSES
     from realhf.base import importing
+    from realhf.base.constants import QUICKSTART_EXPR_CACHE_PATH
 
     if os.path.exists(QUICKSTART_EXPR_CACHE_PATH):
         for exp_cache in os.listdir(QUICKSTART_EXPR_CACHE_PATH):

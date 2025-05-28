@@ -1,0 +1,22 @@
+# Table of contents
+# Learn more at https://jupyterbook.org/customize/toc.html
+
+format: jb-book
+root: intro
+parts:
+  - caption: Tutorial
+    chapters:
+    - file: installation
+    - file: training
+    - file: eval
+    - file: troubleshooting
+  - caption: Developer Manual
+    chapters:
+    - file: developer/exp_launch
+    - file: developer/master_worker
+    - file: developer/model_worker
+    - file: developer/algo_interface
+    - file: developer/allocation_parallel
+  - caption: Contributing
+    chapters:
+    - file: contrib

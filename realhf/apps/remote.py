@@ -20,11 +20,8 @@ from omegaconf import OmegaConf
 
 multiprocessing.set_start_method("spawn", force=True)
 
-from realhf.api.quickstart.entrypoint import (
-    QUICKSTART_CONFIG_CLASSES,
-    QUICKSTART_EXPR_CACHE_PATH,
-)
-from realhf.base import cluster, gpu_utils, importing, logging, name_resolve, names
+from realhf.api.quickstart.entrypoint import QUICKSTART_CONFIG_CLASSES
+from realhf.base import gpu_utils, importing, logging
 from realhf.version import get_full_version_with_dirty_description
 
 logger = logging.getLogger("Main-Workers")
@@ -32,6 +29,7 @@ logger = logging.getLogger("Main-Workers")
 
 def _patch_external_impl(exp_name, trial_name):
     import realhf.api.core.system_api as system_api
+    from realhf.base.constants import QUICKSTART_EXPR_CACHE_PATH
 
     if os.path.exists(QUICKSTART_EXPR_CACHE_PATH):
         for exp_cache in os.listdir(QUICKSTART_EXPR_CACHE_PATH):
@@ -58,6 +56,12 @@ def main_worker(args):
 
     constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     _patch_external_impl(args.experiment_name, args.trial_name)
+
+    # Initialize cluster infor from ENV or CLI args.
+    import realhf.api.core.system_api as system_api
+
+    experiment = system_api.make_experiment(name=args.experiment_name)
+    constants.init_constants(experiment)
 
     worker_index_start = args.jobstep_id * args.wprocs_per_jobstep + args.wproc_offset
     worker_index_end = min(
@@ -174,6 +178,10 @@ def main_controller(args):
         trial_name=args.trial_name,
     )
     experiment = system_api.make_experiment(args.experiment_name)
+
+    # Initialize cluster infor from ENV or CLI args.
+    constants.init_constants(experiment)
+
     controller.start(
         experiment=experiment,
         ignore_worker_error=args.ignore_worker_error,

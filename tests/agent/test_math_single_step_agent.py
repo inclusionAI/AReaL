@@ -85,7 +85,9 @@ async def test_collect_trajectory_happy_path(agent, mock_env, mock_prompt, mock_
     sample = result[0]
     assert sample.ids == [str(123)]
     assert torch.equal(sample.data["packed_prompts"], torch.tensor([1, 2, 3]))
-    assert torch.equal(sample.data["rewards"], torch.tensor([0.8, 1.2]))
+    # r = [0.5, 0.7]
+    # ((r - 0.5) * 2 - bias) * scaling, bias=0.1, scaling=2.0
+    assert torch.equal(sample.data["rewards"], torch.tensor([-0.2, 0.6]))
 
 
 @pytest.mark.asyncio

@@ -6,11 +6,11 @@ from typing import *
 import networkx as nx
 from tensorboardX import SummaryWriter
 
-from realhf.api.core.config import ModelName, ModelShardID
-from realhf.api.core.data_api import DataBatchMeta, SequenceSample
+from realhf.api.core.config import ModelShardID
+from realhf.api.core.data_api import DataBatchMeta, get_shuffle_indices
 from realhf.api.core.dfg import MFCDef
 from realhf.api.core.model_api import ReaLModelConfig
-from realhf.base import logging
+from realhf.base import constants, logging, name_resolve, names, seeding
 from realhf.base.topology import ProcessTopology
 from realhf.system.buffer import AsyncIOSequenceBuffer
 from realhf.system.model_function_call import ModelFunctionCall, RPCCorountineControl
@@ -118,7 +118,10 @@ class FunctionExecutor:
 
         received_ids = set()
 
+        load_data_iter = 0
+
         while buffer.size < max(rpc.n_seqs for rpc in self.rpcs):
+            load_data_iter += 1
             resps = await self.stream.call_async(
                 handlers=[f"__data{dp_idx}__" for dp_idx in range(self.src_dp_size)],
                 handle_type="fetch",
@@ -127,6 +130,7 @@ class FunctionExecutor:
             )
 
             all_data = []
+            all_birth_time = []
             data_cnt = []
             gpu_id_data = {}
             for dp_rank, x in enumerate(resps):
@@ -147,13 +151,21 @@ class FunctionExecutor:
 
                 gpu_id = self.stream.route_to(f"__data{dp_rank}__")
                 all_data += x.meta_sample.unpack()
+                all_birth_time += x.birth_times
                 gpu_id_data[gpu_id] = x.meta_sample.unpack()
                 data_cnt.append(x.meta_sample.bs)
 
             if self.shuffle_dataset:
                 # We load data in a round-robin manner across different DP ranks,
                 # so we also need to shuffle the data to fuse different dataset splits.
-                random.shuffle(all_data)
+                shuffle_indices = get_shuffle_indices(
+                    seeding.get_seed()
+                    + 47 * self.ctrl.step_info.global_step
+                    + 97 * load_data_iter,
+                    len(all_data),
+                )
+                all_data = [all_data[i] for i in shuffle_indices]
+                all_birth_time = [all_birth_time[i] for i in shuffle_indices]
 
             if len(all_data) > 0:
                 # Update resource tracker for planning data redistribution.
@@ -167,8 +179,20 @@ class FunctionExecutor:
                         )
 
                 # Store into buffer!
-                buffer_indices = await buffer.put_batch(all_data)
+                assert len(all_data) == len(all_birth_time)
+                buffer_indices = await buffer.put_batch(all_data, all_birth_time)
                 assert len(buffer_indices) == len(all_data)
+
+                training_sample_name = names.training_samples(
+                    constants.experiment_name(), constants.trial_name()
+                )
+                try:
+                    n_samples = int(name_resolve.get(training_sample_name))
+                except name_resolve.NameEntryNotFoundError:
+                    n_samples = 0
+                name_resolve.add(
+                    training_sample_name, str(n_samples + len(all_data)), replace=True
+                )
 
                 blogger.info(
                     f"Master worker loaded {len(all_data)} pieces of data from all dp ranks: "
@@ -178,7 +202,7 @@ class FunctionExecutor:
             else:
                 await asyncio.sleep(1)
 
-    def execute_step(self):
+    async def execute_step(self):
         logger.info("Waiting for the finish of the execution graph.")
         loop = asyncio.get_event_loop()
 
@@ -190,5 +214,5 @@ class FunctionExecutor:
             loop.create_task(self.finish_traverse()),
         ]
 
-        loop.run_until_complete(asyncio.gather(*tasks))
+        await asyncio.gather(*tasks)
         self.buffer_id = (self.buffer_id + 1) % len(self.buffers)

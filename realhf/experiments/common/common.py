@@ -176,7 +176,6 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                 scheduling=Scheduling.model_worker_default(
                     cpu=self.cpus_per_model_worker,
                     gpu=1,
-                    gpu_type=cluster_spec.gpu_type,
                     mem=self.mem_per_model_worker,
                     nodelist=self.nodelist,
                     exclude=self.exclude,
@@ -573,6 +572,18 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
         )
 
     def _check_legal_allocation_options(self):
+        if self.n_nodes > self.cluster.n_nodes:
+            raise ValueError(
+                f"Number of used nodes {self.n_nodes} should not be larger than the cluster size {self.cluster.n_nodes}"
+            )
+        if self.n_gpus_per_node > self.cluster.n_gpus_per_node:
+            raise ValueError(
+                f"Number of 7used GPUs per node {self.n_gpus_per_node} should not be larger than the cluster limit {self.cluster.n_gpus_per_node}"
+            )
+        if self.n_nodes > 1 and self.n_gpus_per_node != self.cluster.n_gpus_per_node:
+            raise ValueError(
+                f"For distributed experiments, only using all GPUs on each node is allowed."
+            )
         if self.n_nodes > 1 and self.mode == "local":
             raise ValueError(
                 "Cannot run multi-node experiment in local mode, "

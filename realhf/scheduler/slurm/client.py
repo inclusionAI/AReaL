@@ -111,13 +111,11 @@ class SlurmSchedulerClient(SchedulerClient):
         cmd: str,  # XXX: should be None for workers
         count: int,
         cpu: int = 1,
-        gpu_type: str = "geforce",
         gpu: int = 0,
         mem: int = 1024,  # MB
         env_vars: Optional[Dict] = None,
-        container_image: str = cluster_spec.gpu_image,
-        container_mounts: str = cluster_spec.default_mount,
-        node_type: Optional[str] = None,
+        container_image: Optional[str] = None,
+        container_mounts: Optional[str] = None,
         nodelist: Optional[str] = None,
         exclude: Optional[str] = None,
         hostfile: bool = True,
@@ -126,14 +124,14 @@ class SlurmSchedulerClient(SchedulerClient):
         deadline: str = None,
         time_limit: str = None,
     ):
+        container_image = container_image or cluster_spec.cpu_image
+        container_mounts = container_mounts or cluster_spec.mount
         # record launch information, do not submit to slurm until `wait()` is called
         # NOTE: fractional GPU requirement will be resolved automatically in `__post_init__` of SlurnLaunchInfo
         launch_info = SlurmLaunchInfo(
             worker_type=worker_type,
             wprocs_in_job=count,
-            resource_requirement=SlurmResource(
-                mem=mem, cpu=cpu, gpu=gpu, gpu_type=gpu_type
-            ),
+            resource_requirement=SlurmResource(mem=mem, cpu=cpu, gpu=gpu),
             cmd=cmd,
             run_name=self.run_name,
             exper_name=self.expr_name,
@@ -141,7 +139,6 @@ class SlurmSchedulerClient(SchedulerClient):
             container_image=container_image,
             container_mounts=container_mounts,
             env_vars=env_vars,
-            node_type=node_type,
             nodelist=nodelist,
             exclude=exclude,
             hostfile=hostfile,
