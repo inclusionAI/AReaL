@@ -771,8 +771,10 @@ def reliability_guard(maximum_memory_bytes=None):
     sys.modules["psutil"] = None
     sys.modules["tkinter"] = None
 
+
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--tmp_id", type=str, required=True)
     args = parser.parse_args()
@@ -782,11 +784,6 @@ if __name__ == "__main__":
         input_data = json.load(temp_file)
 
     result, info = run_test(**input_data)
-    saved_result = {
-        "result": result,
-        "info": info
-    }
+    saved_result = {"result": result, "info": info}
     with open(f"/tmp/{args.tmp_id}-output.json", "w", encoding="utf-8") as temp_file:
         json.dump(saved_result, temp_file)
-    
-    

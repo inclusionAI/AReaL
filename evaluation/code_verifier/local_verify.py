@@ -9,13 +9,17 @@ import traceback
 import uuid
 from collections import defaultdict
 from io import StringIO
+
 import numpy as np
 
 SINGLE_CASE_EXEC_TIMEOUT = 6
 
-from utils import load_jsonl
 import logging
+
+from utils import load_jsonl
+
 logger = logging.getLogger("function call")
+
 
 def capture_stdout(code):
     original_stdout = sys.stdout
@@ -117,15 +121,16 @@ def code_verify(id2info, generateds, query_ids, debug=False):
 
     return final_results
 
+
 def evaluate(samples):
-    
+
     infer_args = []
     scores = []
     for sample in samples:
-        for pred in sample['pred']:
+        for pred in sample["pred"]:
             problem = {
-                "input_output": sample['input_output'],
-                "query_id": sample['idx']
+                "input_output": sample["input_output"],
+                "query_id": sample["idx"],
             }
             infer_args.append((problem, pred, False, SINGLE_CASE_EXEC_TIMEOUT))
 
@@ -140,19 +145,18 @@ def evaluate(samples):
             scores.append(0)
         else:
             scores.append(1)
-    
+
     idx = 0
     score_mat = []
     for sample in samples:
-        sample['score'] = scores[idx: idx+len(sample['pred'])]
-        assert len(sample['score']) == len(sample['pred'])
-        score_mat.append(sample['score'])
-        idx += len(sample['pred'])
-    
+        sample["score"] = scores[idx : idx + len(sample["pred"])]
+        assert len(sample["score"]) == len(sample["pred"])
+        score_mat.append(sample["score"])
+        idx += len(sample["pred"])
 
-    col_means= np.array(score_mat).mean(axis=0)
+    col_means = np.array(score_mat).mean(axis=0)
     mean_score = list(np.round(col_means * 100, decimals=1))
-    
+
     max_len = max([len(s) for s in score_mat])
 
     for i, s in enumerate(score_mat):
@@ -161,12 +165,11 @@ def evaluate(samples):
     result_json = {
         "num_samples": len(samples),
         "num_scores": len(scores),
-        "empty_samples": len([s for s in samples if not s['pred'][-1]]),
-        "acc": np.mean(mean_score)
+        "empty_samples": len([s for s in samples if not s["pred"][-1]]),
+        "acc": np.mean(mean_score),
     }
 
     return samples, result_json
-
 
 
 if __name__ == "__main__":

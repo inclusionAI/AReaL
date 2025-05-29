@@ -1,11 +1,10 @@
-import os
 import json
+import os
 import random
-import json
-import os
-import numpy as np
 from pathlib import Path
-from typing import Iterable, Union, Any
+from typing import Any, Iterable, Union
+
+import numpy as np
 
 from examples import get_examples
 
@@ -192,27 +191,27 @@ PROMPT_TEMPLATES = {
     ),
     "r1-zero": (
         "A conversation between User and Assistant. The user asks a question, and the Assistant solves it."
-        "The assistant first thinks about the reasoning process in the mind and then provides the user with the answer." 
+        "The assistant first thinks about the reasoning process in the mind and then provides the user with the answer."
         "The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> answer here </answer>. \nUser: \n{input}\nAssistant: \n",
         "{output}",
-        "\n\n"
+        "\n\n",
     ),
     "r1-zero-box": (
         "A conversation between User and Assistant. The user asks a question, and the Assistant solves it."
-        "The assistant first thinks about the reasoning process in the mind and then provides the user with the answer." 
+        "The assistant first thinks about the reasoning process in the mind and then provides the user with the answer."
         "The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> answer here </answer>. \nUser: \n{input}\n"
         "Please put your final answer within \\boxed{{}}.\n"
         "Assistant: \n",
         "{output}",
-        "\n\n"
+        "\n\n",
     ),
     "orz": (
         "A conversation between User and Assistant. The user asks a question, and the Assistant solves it."
-        "The assistant first thinks about the reasoning process in the mind and then provides the user with the answer." 
+        "The assistant first thinks about the reasoning process in the mind and then provides the user with the answer."
         "The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> answer here </answer>. User: You must put your answer inside <answer> </answer> tags, i.e., <answer> answer here </answer>. And your final answer will be extracted automatically by the \\boxed{{}} tag. This is the problem: {input}\n"
         "Assistant: <think>\n",
         "{output}",
-        "\n\n"
+        "\n\n",
     ),
     "qwq": (
         "<|im_start|>system\nYou are a helpful and harmless assistant. You are Qwen developed by Alibaba. You should think step-by-step.<|im_end|>\n"

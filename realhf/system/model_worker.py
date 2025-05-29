@@ -661,6 +661,8 @@ class ModelWorker(worker_base.Worker):
                 if (
                     self.__recover_run
                     and x.ids[0] in self.__recover_info.hash_vals_to_ignore
+                    # Rollout worker has filered once
+                    and not isinstance(self.__datasets[dataset_id], PullerStreamDataset)
                 ):
                     self.__recover_info.hash_vals_to_ignore.remove(x.ids[0])
                     continue

@@ -1,23 +1,23 @@
-import random
-import os, json
 import argparse
-import time
-from vllm import LLM, SamplingParams
-from datetime import datetime
-from tqdm import tqdm
-from code_verifier.local_verify import evaluate
-
-import torch
-import ray
 import itertools
-from transformers import AutoTokenizer, AutoModelForCausalLM
-
-from utils import set_seed, load_jsonl, save_jsonl, construct_prompt
+import json
+import os
+import random
+import time
+from datetime import datetime
 from parser import *
-from trajectory import *
-from data_loader import load_data
-from model_utils import load_hf_lm_and_tokenizer, generate_completions
+
 import numpy as np
+import ray
+import torch
+from code_verifier.local_verify import evaluate
+from data_loader import load_data
+from model_utils import generate_completions, load_hf_lm_and_tokenizer
+from tqdm import tqdm
+from trajectory import *
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from utils import construct_prompt, load_jsonl, save_jsonl, set_seed
+from vllm import LLM, SamplingParams
 
 
 def extract_python_code(text, min_length=20, strict_syntax=False):
@@ -44,10 +44,13 @@ def extract_python_code(text, min_length=20, strict_syntax=False):
     # return the last code block
     return valid_blocks[-1]
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_names", default="lcb", type=str)
-    parser.add_argument("--data_dir", default="/storage/openpsi/data/code/test_set", type=str)
+    parser.add_argument(
+        "--data_dir", default="/storage/openpsi/data/code/test_set", type=str
+    )
     parser.add_argument("--model_name_or_path", default="gpt-4", type=str)
     parser.add_argument("--output_dir", default="./output", type=str)
     parser.add_argument("--prompt_type", default="tool-integrated", type=str)
@@ -82,13 +85,12 @@ def parse_args():
     args.top_p = (
         1 if args.temperature == 0 else args.top_p
     )  # top_p must be 1 when using greedy sampling (vllm)
-    args.top_k = (
-        -1 if args.temperature == 0 else args.top_k
-    )
+    args.top_k = -1 if args.temperature == 0 else args.top_k
 
-    available_gpus = os.environ["CUDA_VISIBLE_DEVICES"].split(",") 
+    available_gpus = os.environ["CUDA_VISIBLE_DEVICES"].split(",")
     args.data_parallel_size = len(available_gpus) // args.tensor_parallel_size
     return args
+
 
 def pass_at_k_v2(data_list, k=8):
 
@@ -100,36 +102,43 @@ def pass_at_k_v2(data_list, k=8):
     # count, right_count = 0, 0
     pass_at_ks = []
     for sample in data_list:
-        assert len(sample['score']) >= k, sample
-        correct = sum(sample['score'])
-        pass_at_ks.append(cur_pass_k(len(sample['score']), correct, k))
-    
+        assert len(sample["score"]) >= k, sample
+        correct = sum(sample["score"])
+        pass_at_ks.append(cur_pass_k(len(sample["score"]), correct, k))
+
     return np.mean(pass_at_ks) * 100
+
 
 def generate_in_parallel(requests, model_args, sampling_params, data_parallel_size):
     @ray.remote
     def run_inference_one_model(
         model_args: dict, sampling_params, requests, cuda_visisble_devices
     ):
-        os.environ['VLLM_LOGGING_LEVEL'] = "ERROR"
-        os.environ['CUDA_VISIBLE_DEVICES'] = ",".join([str(x) for x in cuda_visisble_devices])
+        os.environ["VLLM_LOGGING_LEVEL"] = "ERROR"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
+            [str(x) for x in cuda_visisble_devices]
+        )
         # print("OS.ENVIRON", json.dumps({x: os.environ[x]  for x in sorted(dict(os.environ))}))
         llm = LLM(**model_args)
-        return llm.generate(
-            requests, sampling_params=sampling_params
-        )
+        return llm.generate(requests, sampling_params=sampling_params)
 
     # print("OUT_OS_ENVIRON", json.dumps({x: os.environ[x]  for x in sorted(dict(os.environ))}))
-    all_cuda_visisble_devices = os.environ['CUDA_VISIBLE_DEVICES'].split(",")
+    all_cuda_visisble_devices = os.environ["CUDA_VISIBLE_DEVICES"].split(",")
     requests = [list(x) for x in distribute(data_parallel_size, requests)]
-    inputs = ((model_args, sampling_params, req, cuda_visisble_devices) \
-        for req, cuda_visisble_devices in zip(requests, np.array_split(all_cuda_visisble_devices, data_parallel_size)))
+    inputs = (
+        (model_args, sampling_params, req, cuda_visisble_devices)
+        for req, cuda_visisble_devices in zip(
+            requests, np.array_split(all_cuda_visisble_devices, data_parallel_size)
+        )
+    )
     object_refs = [run_inference_one_model.remote(*x) for x in inputs]
     results = ray.get(object_refs)
     ray.shutdown()
     return undistribute(results)
 
+
 from itertools import islice, tee
+
 
 def distribute(n, iterable):
     """Distribute the items from *iterable* among *n* smaller iterables.
@@ -162,10 +171,11 @@ def distribute(n, iterable):
 
     """
     if n < 1:
-        raise ValueError('n must be at least 1')
+        raise ValueError("n must be at least 1")
 
     children = tee(iterable, n)
     return [islice(it, index, None, n) for index, it in enumerate(children)]
+
 
 def undistribute(iterable):
     """
@@ -231,7 +241,7 @@ def prepare_data(data_name, args):
     output_dir = args.output_dir
     if not os.path.exists(output_dir):
         output_dir = f"outputs/{output_dir}"
-    
+
     eval_dir = f"math_eval_{args.max_tokens_per_call}"
 
     out_file = f"{output_dir}/{eval_dir}/{data_name}/{out_file_prefix}_s{args.start}_e{args.end}_n{args.n_sampling}.jsonl"
@@ -252,12 +262,10 @@ def prepare_data(data_name, args):
             )
 
     # dedepulicate
-    idx2inoutput = {
-        x['idx']: x['input_output'] for x in examples
-    }
+    idx2inoutput = {x["idx"]: x["input_output"] for x in examples}
     processed_samples = {sample["idx"]: sample for sample in processed_samples}
     for sample_idx in processed_samples:
-        processed_samples[sample_idx]['input_output'] = idx2inoutput[sample_idx]
+        processed_samples[sample_idx]["input_output"] = idx2inoutput[sample_idx]
     processed_idxs = list(processed_samples.keys())
     processed_samples = list(processed_samples.values())
     examples = [example for example in examples if example["idx"] not in processed_idxs]
@@ -330,6 +338,7 @@ def setup(args):
     print("\t".join(data_name.ljust(pad, " ") for data_name in data_list))
     print("\t".join([f"{result['acc']:.1f}".ljust(pad, " ") for result in results]))
 
+
 def main(llm, tokenizer, data_name, args):
     available_gpus = os.environ["CUDA_VISIBLE_DEVICES"].split(",")
     examples, processed_samples, out_file = prepare_data(data_name, args)
@@ -337,7 +346,7 @@ def main(llm, tokenizer, data_name, args):
     print("data:", data_name, " ,remain samples:", len(examples))
     # if len(examples) > 0:
     #     print(examples[0])
-    
+
     samples = []
     for example in tqdm(examples, total=len(examples)):
         idx = example["idx"]
@@ -410,31 +419,32 @@ def main(llm, tokenizer, data_name, args):
         prompts = [item[1] for item in current_prompts]
         if args.use_vllm:
             sampling_params = SamplingParams(
-                        temperature=args.temperature,
-                        seed=args.seed,
-                        top_p=args.top_p,
-                        top_k=args.top_k,
-                        max_tokens=args.max_tokens_per_call,
-                        n=args.n_sampling,
-                        stop=stop_words,
-                        stop_token_ids=(
-                            [151645, 151643]
-                            if "qwen2" in args.model_name_or_path.lower()
-                            else None
-                        ),
-                    )
+                temperature=args.temperature,
+                seed=args.seed,
+                top_p=args.top_p,
+                top_k=args.top_k,
+                max_tokens=args.max_tokens_per_call,
+                n=args.n_sampling,
+                stop=stop_words,
+                stop_token_ids=(
+                    [151645, 151643]
+                    if "qwen2" in args.model_name_or_path.lower()
+                    else None
+                ),
+            )
             if args.data_parallel_size <= 1:
 
-                outputs = llm.generate(
-                    prompts[::args.n_sampling],
-                    sampling_params
-                )
+                outputs = llm.generate(prompts[:: args.n_sampling], sampling_params)
             else:
                 outputs = generate_in_parallel(
-                    prompts[::args.n_sampling],
+                    prompts[:: args.n_sampling],
                     llm,
                     sampling_params,
-                    args.data_parallel_size - 1 if len(available_gpus) == 16 else args.data_parallel_size
+                    (
+                        args.data_parallel_size - 1
+                        if len(available_gpus) == 16
+                        else args.data_parallel_size
+                    ),
                 )
 
             outputs = sorted(
@@ -484,9 +494,7 @@ def main(llm, tokenizer, data_name, args):
         code_lens = []
 
     # extract code
-    results = [
-        extract_python_code(code) for code in codes
-    ]
+    results = [extract_python_code(code) for code in codes]
     time_use = time.time() - start_time
     print("time_use", time_use)
     # put results back to examples
@@ -503,18 +511,17 @@ def main(llm, tokenizer, data_name, args):
 
     # add processed samples
     all_samples.extend(processed_samples)
-    all_samples, result_json = evaluate(
-        samples=all_samples
-    )
+    all_samples, result_json = evaluate(samples=all_samples)
 
     if args.n_sampling > 1:
-        result_json[f"pass@{args.n_sampling}"] = pass_at_k_v2(all_samples, k=args.n_sampling)
+        result_json[f"pass@{args.n_sampling}"] = pass_at_k_v2(
+            all_samples, k=args.n_sampling
+        )
         if args.n_sampling > 16:
             result_json[f"pass@16"] = pass_at_k_v2(all_samples, k=16)
         if args.n_sampling > 8:
             result_json[f"pass@8"] = pass_at_k_v2(all_samples, k=8)
         result_json[f"pass@1"] = pass_at_k_v2(all_samples, k=1)
-
 
     # save outputs
     # if len(processed_samples) < len(all_samples) and args.save_outputs:
