@@ -458,7 +458,20 @@ class MultiTaskRewardInterface(model_api.ModelInterface):
 
             return task_results
 
-        task_results = asyncio.run(_run_tasks())
+        def run_in_thread():
+            # Create a new event loop for this thread
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                return new_loop.run_until_complete(_run_tasks())
+            finally:
+                new_loop.close()
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor() as executor:
+            future = executor.submit(run_in_thread)
+            task_results = future.result()
         final_result = self._gather_tasks(task_results, dispatch_indices, data.bs)
         final_result = self._gather_tp_and_pp(input_, final_result, backward_indices)
 
