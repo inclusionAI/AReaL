@@ -689,6 +689,12 @@ class PPOHyperparameters:
         default=False,
         metadata={"help": "Use the decoupled loss. recompute_logprob must be True."},
     )
+    behav_imp_weight_cap: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "We filter out the tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing the loss, must be > 1.0, use_decoupled_loss must be true"
+        },
+    )
 
 
 ## Experiment utilities. ##

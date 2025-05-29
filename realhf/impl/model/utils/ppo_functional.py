@@ -56,6 +56,7 @@ def actor_loss_fn(
     loss_mask: Optional[torch.BoolTensor] = None,
     c_clip: Optional[float] = None,
     proximal_logprobs: Optional[torch.FloatTensor] = None,
+    behav_imp_weight_cap: Optional[torch.FloatTensor] = None,
 ) -> Tuple[torch.Tensor, Dict]:
     """Compute PPO actor loss function.
 
@@ -117,8 +118,10 @@ def actor_loss_fn(
     if proximal_logprobs is not None:
         behav_kl = proximal_logprobs - old_logprobs
         behav_imp_weight = behav_kl.exp()
-        if c_clip is not None:
-            behav_mask = (behav_imp_weight <= c_clip).logical_and(loss_mask)
+        if behav_imp_weight_cap is not None:
+            behav_mask = (behav_imp_weight <= behav_imp_weight_cap).logical_and(
+                loss_mask
+            )
         else:
             behav_mask = loss_mask
         behav_kl = torch.where(behav_mask, behav_kl, 0.0)
