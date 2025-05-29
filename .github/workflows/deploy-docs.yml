@@ -28,7 +28,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.9'  # Adjust version as needed
+        python-version: '3.12'  # Adjust version as needed
         
     - name: Cache pip dependencies
       uses: actions/cache@v3
@@ -52,6 +52,7 @@ jobs:
     - name: Deploy to GitHub Pages
       if: github.ref == 'refs/heads/main'  # Only deploy on main branch
       run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+        git remote set-url origin https://x-access-token:${{ secrets.DEPLOY_TOKEN }}@github.com/${{ github.repository }}.git
         ghp-import -n -p -f docs/_build/html
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
