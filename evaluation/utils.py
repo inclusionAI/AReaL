@@ -1,10 +1,11 @@
+import os
+import json
+import random
 import json
 import os
-import random
-from pathlib import Path
-from typing import Any, Iterable, Union
-
 import numpy as np
+from pathlib import Path
+from typing import Iterable, Union, Any
 
 from examples import get_examples
 
@@ -13,6 +14,7 @@ def set_seed(seed: int = 42) -> None:
     np.random.seed(seed)
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
+    print(f"Random seed set as {seed}")
 
 
 def load_jsonl(file: Union[str, Path]) -> Iterable[Any]:
@@ -143,18 +145,43 @@ PROMPT_TEMPLATES = {
         "{output}",
         "\n\n",
     ),
-    "AReaL-boba-SFT": (
-        "<｜begin▁of▁sentence｜><｜User｜>{input}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<｜Assistant｜><think>\n",
+    "qwen3-think": (
+        "<|im_start|>user\n{input}\nPlease reason step by step, and put your final answer within \\boxed{{}}./think<|im_end|>\n"
+        "<|im_start|>assistant\n<think>",
         "{output}",
         "\n\n",
     ),
-    "AReaL-boba": (
+    "qwen3": (
+        "<|im_start|>user\n{input}\nPlease reason step by step, and put your final answer within \\boxed{{}}./no_think<|im_end|>\n"
+        "<|im_start|>assistant\n<think></think>",
+        "{output}",
+        "\n\n",
+    ),
+    "qwen3-think-pure": (
+        "<|im_start|>user\n{input}\n/think<|im_end|>\n"
+        "<|im_start|>assistant\n<think>",
+        "{output}",
+        "\n\n",
+    ),
+    "deepscaler-fix": (
         "<｜User｜>{input}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<｜Assistant｜><think>\n",
         "{output}",
         "\n\n",
     ),
     "r1-distilled-qwen": (
-        "<｜begin▁of▁sentence｜><｜User｜>{input}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<｜Assistant｜><think>\n",
+        "<｜User｜>{input}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<｜Assistant｜><think>\n",
+        "{output}",
+        "\n\n",
+    ),
+    "nvidia-opencode": (
+        "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n",
+        "<|im_start|>user\nYou are a helpful and harmless assistant. You should think step-by-step before responding to the instruction below. Please use python programming language only.\n\nYou must use ```python for just the final solution code block with the following format:\n```python\n# Your code here\n```\n\n{input}\n<|im_end|>\n",
+        "<|im_start|>assistant\n",
+        "{output}",
+        "\n\n",
+    ),
+    "r1-distilled-pure": (
+        "<｜User｜>{input}<｜Assistant｜><think>\n",
         "{output}",
         "\n\n",
     ),
@@ -165,27 +192,27 @@ PROMPT_TEMPLATES = {
     ),
     "r1-zero": (
         "A conversation between User and Assistant. The user asks a question, and the Assistant solves it."
-        "The assistant first thinks about the reasoning process in the mind and then provides the user with the answer."
+        "The assistant first thinks about the reasoning process in the mind and then provides the user with the answer." 
         "The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> answer here </answer>. \nUser: \n{input}\nAssistant: \n",
         "{output}",
-        "\n\n",
+        "\n\n"
     ),
     "r1-zero-box": (
-        "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. "
-        "The assistant first thinks about the reasoning process in the mind and then provides the user with the answer. "
+        "A conversation between User and Assistant. The user asks a question, and the Assistant solves it."
+        "The assistant first thinks about the reasoning process in the mind and then provides the user with the answer." 
         "The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> answer here </answer>. \nUser: \n{input}\n"
         "Please put your final answer within \\boxed{{}}.\n"
         "Assistant: \n",
         "{output}",
-        "\n\n",
+        "\n\n"
     ),
     "orz": (
         "A conversation between User and Assistant. The user asks a question, and the Assistant solves it."
-        "The assistant first thinks about the reasoning process in the mind and then provides the user with the answer."
+        "The assistant first thinks about the reasoning process in the mind and then provides the user with the answer." 
         "The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> answer here </answer>. User: You must put your answer inside <answer> </answer> tags, i.e., <answer> answer here </answer>. And your final answer will be extracted automatically by the \\boxed{{}} tag. This is the problem: {input}\n"
         "Assistant: <think>\n",
         "{output}",
-        "\n\n",
+        "\n\n"
     ),
     "qwq": (
         "<|im_start|>system\nYou are a helpful and harmless assistant. You are Qwen developed by Alibaba. You should think step-by-step.<|im_end|>\n"

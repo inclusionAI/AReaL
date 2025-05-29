@@ -13,12 +13,13 @@ PROMPT_TYPE=${4:-"qwen-boxed"}
 SPLIT="test"
 NUM_TEST_SAMPLE=-1
 OUTPUT_DIR=${5:-$MODEL_NAME_OR_PATH}
+TASK=${6:-"math"}
 
 # English open datasets
 # DATA_NAME="math_500,math,gsm8k,train_amc_aime,aime24,amc23"
 
 TOKENIZERS_PARALLELISM=false \
-python3 -u math_eval.py \
+python3 -u ${TASK}_eval.py \
     --model_name_or_path ${MODEL_NAME_OR_PATH} \
     --data_name ${DATA_NAME} \
     --output_dir ${OUTPUT_DIR} \

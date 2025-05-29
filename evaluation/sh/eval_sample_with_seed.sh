@@ -20,13 +20,14 @@ OUTPUT_DIR=${7:-$MODEL_NAME_OR_PATH}
 temperature=${8:-"1.0"}
 top_p=${9:-"1.0"}
 top_k=${10:-"-1"}
+TASK=${11:-"math"}
 
 
 # English open datasets
 # DATA_NAME="math_500,math,gsm8k,train_amc_aime,aime24,amc23"
 
 TOKENIZERS_PARALLELISM=false \
-python3 -u math_eval.py \
+python3 -u ${TASK}_eval.py \
     --model_name_or_path ${MODEL_NAME_OR_PATH} \
     --data_name ${DATA_NAME} \
     --output_dir ${OUTPUT_DIR} \

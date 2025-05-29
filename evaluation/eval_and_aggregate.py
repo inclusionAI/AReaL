@@ -9,16 +9,17 @@ from rm_maj_eval import group_pred
 from tqdm import tqdm
 from transformers import AutoTokenizer
 from utils import load_jsonl
+from cf_elo_caculator import calculate_cf_elo_from_samples
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--data_names", default="aime24,aime25", type=lambda x: x.split(",")
+        "--data_names", required=True, type=lambda x: x.split(",")
     )
     parser.add_argument(
         "--model_path",
-        default="/storage/openpsi/models/Qwen__Qwen2-1.5B-Instruct/",
+        required=True,
         type=str,
     )
     parser.add_argument("--output_path", type=str)
@@ -32,9 +33,17 @@ def parse_args():
     parser.add_argument("--temperature", default=0.6, type=float)
     parser.add_argument("--top_p", default=0.95, type=float)
     parser.add_argument("--top_k", default=-1, type=int)
+    parser.add_argument("--task", default="math", type=str)
+    
+    parser.add_argument("--cf_cache_file", type=str, default="./data/codeforces/all_contest_data.json")
+    parser.add_argument("--cf_metadata_path", type=str ,default="./data/codeforces/metadata_cf.json")
+    parser.add_argument("--cf_ratings_path", type=str, default="./data/codeforces/sorted_rating.json")
+    
     args = parser.parse_args()
     if args.output_path is None:
         args.output_path = args.model_path
+
+    args.cf_pass_n = args.num_sample_nodes
     return args
 
 
@@ -73,6 +82,48 @@ def pass_at_k(data_list, k=8):
     return np.mean(pass_at_ks) * 100
 
 
+def calculate_cf_elo_for_dataset(data_name, results, args):
+    if 'codeforces' not in data_name.lower():
+        return None
+    try:
+        print(f"\nCalculating CF ELO rating for dataset {data_name}...")
+        print(f"Dataset contains {len(results)} problems")
+        
+        all_samples = []
+        for idx, sample_data in results.items():
+            sample = {
+                'idx': idx,
+                'score': sample_data['score']
+            }
+            all_samples.append(sample)
+
+        cf_result = calculate_cf_elo_from_samples(
+            all_samples=all_samples,
+            pass_n=args.cf_pass_n,
+            metadata_path=args.cf_metadata_path,
+            ratings_path=args.cf_ratings_path,
+            cache_file_path=args.cf_cache_file,
+            verbose=True
+        )
+        
+        if cf_result:
+            print(f"✓ {data_name} CF ELO calculation success:")
+            print(f"  Estimated percentile: {cf_result['estimated_percentile']:.1f}%")
+            print(f"  Estimated CF rating: {cf_result['estimated_rating']:.0f}")
+            
+            return {
+                'cf_percentile': cf_result['estimated_percentile'],
+                'cf_rating': cf_result['estimated_rating'],
+            }
+        else:
+            print(f"✗ {data_name} CF ELO calculation failed")
+            return None
+
+    except Exception as e:
+        print(f"✗ {data_name} CF ELO calculation error: {e}")
+        return None
+
+
 def get_metrics(fname_pattern, tokenizer, is_greedy):
 
     generated = []
@@ -109,14 +160,16 @@ def get_metrics(fname_pattern, tokenizer, is_greedy):
             "greedy_length": np.mean(lengths),
             "greedy_acc": pass_at_k(results.values(), 1),
             "num_questions": len(lengths),
-        }
+        }, results
     else:
         return {
             "sample_length": np.mean(lengths),
             "sample_pass@1": pass_at_k(results.values(), 1),
-            "pass@8": pass_at_k(results.values(), 8),
-            "pass@16": pass_at_k(results.values(), 16),
-        }
+            "pass@8": pass_at_k(results.values(), 8) if args.num_sample_nodes * args.samples_per_node >= 8 else "-",
+            "pass@16": pass_at_k(results.values(), 16) if args.num_sample_nodes * args.samples_per_node >= 16 else "-",
+            "maj@32": eval_maj_k_metrics(results.values(), 32) if args.num_sample_nodes * args.samples_per_node >= 32 else "-",
+            "pass@32": pass_at_k(results.values(), 32) if args.num_sample_nodes * args.samples_per_node >= 32 else "-",
+        }, results
 
 
 def process_single_data_name(args, data_name, base_dir, tokenizer):
@@ -124,10 +177,10 @@ def process_single_data_name(args, data_name, base_dir, tokenizer):
     greedy_prefix = f"test_{args.prompt_type}_-1_seed0_t0.0_topp1.00_topk-1_s0_e-1_n1"
     sampling_prefix = f"test_{args.prompt_type}_-1_seed*_t{args.temperature:.1f}_topp{args.top_p:.2f}_topk{args.top_k}_s0_e-1_n{args.samples_per_node}"
 
-    greedy_length_metrics = get_metrics(
+    greedy_length_metrics, _ = get_metrics(
         os.path.join(cur_dir, greedy_prefix + ".jsonl"), tokenizer, True
     )
-    sampling_metrics = get_metrics(
+    sampling_metrics, sampling_results = get_metrics(
         os.path.join(cur_dir, sampling_prefix + ".jsonl"), tokenizer, False
     )
 
@@ -140,6 +193,10 @@ def process_single_data_name(args, data_name, base_dir, tokenizer):
         **sampling_metrics,
     )
 
+    cf_elo_result = calculate_cf_elo_for_dataset(data_name, sampling_results, args)
+    if cf_elo_result:
+        output.update(cf_elo_result)
+    
     return output
 
 
@@ -171,6 +228,7 @@ if __name__ == "__main__":
                     ",".join(args.data_names),
                     args.prompt_type,
                     args.output_path,
+                    args.task,
                 ],
                 text=True,
                 stdout=f,
@@ -199,6 +257,7 @@ if __name__ == "__main__":
                         str(args.temperature),
                         str(args.top_p),
                         str(args.top_k),
+                        args.task,
                     ],
                     text=True,
                     stdout=f,
@@ -219,16 +278,51 @@ if __name__ == "__main__":
     else:
         with open(result_path) as f:
             all_results = json.load(f)
+            
+    cf_elo_summary = {}
+    for data_name, result in all_results.items():
+        if any(key.startswith('cf_') for key in result.keys()):
+            cf_elo_summary[data_name] = {
+                'percentile': result.get('cf_percentile'),
+                'rating': result.get('cf_rating'),
+            }
 
     try:
         from prettytable import PrettyTable
-
+        
         table = PrettyTable()
         field_names = ["dataset"] + list(all_results[args.data_names[0]].keys())
         table.field_names = field_names
         for k, v in all_results.items():
-            table.add_row([k, *[round(v[x], 1) for x in field_names[1:]]])
+            formatted_values = []
+            for field in field_names[1:]:
+                value = v.get(field, "-")
+                if isinstance(value, (int, float)) and value != "-":
+                    if field.startswith('cf_') and 'rating' in field:
+                        formatted_values.append(f"{value:.0f}") 
+                    elif field.startswith('cf_'):
+                        formatted_values.append(f"{value:.1f}")
+                    else:
+                        formatted_values.append(f"{value:.1f}")
+                else:
+                    formatted_values.append(str(value))
+            table.add_row([k] + formatted_values)
 
+        if cf_elo_summary:
+            print("\n" + "="*50)
+            print("CODEFORCES ELO rating summary")
+            print("="*50)
+            cf_table = PrettyTable()
+            cf_table.field_names = ["Dataset", "Percentile (%)", "CF Rating"]
+            for data_name, cf_data in cf_elo_summary.items():
+                cf_table.add_row([
+                    data_name,
+                    f"{cf_data['percentile']:.1f}" if cf_data['percentile'] is not None else "-",
+                    f"{cf_data['rating']:.0f}" if cf_data['rating'] is not None else "-",
+                ])
+            print(cf_table)
+            print("="*50)
+        
         print(table)
     except ModuleNotFoundError as e:
 
