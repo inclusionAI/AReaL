@@ -3,8 +3,6 @@ name: Deploy Jupyter Book to GitHub Pages
 on:
   push:
     branches: [ main ]  # Change to your default branch if different
-  pull_request:
-    branches: [ main ]
 
 # Allow one concurrent deployment
 concurrency:
@@ -59,8 +57,6 @@ jobs:
 
   # Deployment job
   deploy:
-    # Only deploy on push to main, not on PRs
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
