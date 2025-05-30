@@ -133,7 +133,7 @@ class AsyncPPOMATHConfig(AsyncRLExperimentConfig, PPOMATHConfig):
 
 ## Run Training
 
-Please follow the guide in [training.md](training.md). Generally, create a YAML configuration and run:
+Please follow the guide in [training.md](training.md). Generally, create a YAML configuration called `math-multi-turn.yaml` under `training/configs/async-ppo` and run:
 
 ```bash
 python3 training/main_async_ppo.py --config-name=math-multi-turn

@@ -1,0 +1,108 @@
+actor:
+  type:
+    _class: qwen2
+  path: /storage/models/deepseek-ai__DeepSeek-R1-Distill-Qwen-1.5B
+  optimizer:
+    type: adam
+    lr: 1.0e-05
+    weight_decay: 0.05
+    beta1: 0.9
+    beta2: 0.95
+    eps: 1.0e-05
+    min_lr_ratio: 0.0
+    lr_scheduler_type: constant
+    warmup_steps_proportion: 0.001
+    offload: false
+    initial_loss_scale: 4294967296.0
+    min_loss_scale: 1.0
+    loss_scale_window: 5.0
+    hysteresis: 2
+    gradient_clipping: 1.0
+  sglang:
+    attention_backend: flashinfer
+    context_length: 32768
+    mem_fraction_static: 0.8
+    max_running_requests: null
+    max_prefill_tokens: 32768
+actor_train:
+  mb_spec:
+    n_mbs: 1
+    max_tokens_per_mb: 32768
+actor_inf:
+  mb_spec:
+    n_mbs: 1
+    max_tokens_per_mb: 32768
+dataset:
+  path: /storage/datasets/boba_106k_0319_qwen3_think.jsonl
+  max_prompt_len: 2048
+  train_bs_n_seqs: 512
+  fill_to_max_length: false
+ppo:
+  gen:
+    n: 1
+    max_new_tokens: 4096
+    min_new_tokens: 0
+    greedy: false
+    top_p: 1.0
+    top_k: 100000000
+    temperature: 1.0
+    use_cuda_graph: true
+    force_cudagraph_recapture: true
+    force_no_logits_mask: true
+  ppo_n_minibatches: 4
+  eps_clip: 0.2
+  c_clip: null
+  value_eps_clip: 0.2
+  early_stop_imp_ratio: 5.0
+  actor_sample_reuse: 1
+  critic_sample_reuse: 1
+  max_reward_clip: 20.0
+  reward_output_scaling: 5.0
+  reward_output_bias: -1.0
+  fuse_rew_ref: true
+  discount: 1.0
+  gae_lambda: 1.0
+  adv_norm: false
+  kl_ctl: 0.0
+  use_adaptive_kl_ctl: false
+  disable_value: true
+  recompute_logprob: true
+  use_decoupled_loss: true
+  behav_imp_weight_cap: null
+group_size: 4
+new_tokens_per_chunk: 1024
+max_head_offpolicyness: 4
+max_concurrent_rollouts: 256
+flush_request_timeout: 300
+experiment_name: multi-turn-rl-math
+trial_name: my-trial
+mode: ray
+partition: dev
+schedule_strategy: empty_first
+wandb:
+  mode: online
+tensorboard:
+  path: null
+image_name: null
+recover_mode: auto
+recover_retries: 0
+recover_after: 10
+ignore_worker_error: false
+allocation_mode: sglang.d32m1p1+d16p2m1
+n_nodes: 8
+n_gpus_per_node: 8
+seed: 1
+cache_clear_freq: 1
+exp_ctrl:
+  total_train_epochs: 5
+  save_freq_steps: 20
+  ckpt_freq_secs: 3600
+torch_cache_mysophobia: true
+shuffle_dataset: true
+ray_temp_path: /tmp/ray
+cluster:
+  config_path: ''
+  cluster_name: local
+  fileroot: /storage/ray/experiments
+turn_level_discount: 1.0
+num_turns: 4
