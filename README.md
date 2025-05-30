@@ -2,6 +2,10 @@
 <em>AReaL</em>: Ant Reasoning Reinforcement Learning for LLMs
 </h1>
 
+<p align="center">
+| <a href="https://inclusionai.github.io/AReaL/"><b>Documentation</b></a> |
+</p>
+
 <img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
 
 AReaL (Ant Reasoning RL) is a fully open-sourced, scalable, and efficient reinforcement learning training system for large language models developed at **the RL Lab, Ant Research**, built upon the open-source project [RealHF](https://github.com/openpsi-project/ReaLHF). We fully commit to open-source by releasing training details, data, and infra required to reproduce all the models with the desired performances. AReaL aims to help everyone build their own AI agents easily and affordably. Our team loves milk tea as it is delicious, customizable, and affordable. We hope you all enjoy our project just like how you enjoy A-ReaL-milk-tea.🧋 
