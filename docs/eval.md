@@ -11,7 +11,7 @@ docker run -d --name areal-eval --privileged --gpus all --network host --shm-siz
 docker exec -it areal-eval bash
 ```
 
-## Install Dependencies and Run Evaluation
+## Install Dependencies
 
 Execute the following commands inside the Docker container:
 
@@ -24,20 +24,58 @@ pip install -r requirements.txt
 pip install vllm==0.8.5 --no-build-isolation
 pip install transformers==4.51.1
 pip install prettytable timeout_decorator
+```
+
+## Run Evaluation
+
+Specify an output_path to save the test results (optional — if not specified, the results will be saved in `model_path`):
+
+```bash
 mkdir -p /storage/ray/eval_output/
+```
+
+### Math Eval
+
+```bash
 nohup python eval_and_aggregate.py \
     --model_path /storage/ray/experiments/checkpoints/root/my-exp/my-trial/epoch1epochstep20globalstep20/ \
     --output_path /storage/ray/eval_output/ \
-    --data_names "math_500,aime24,amc23" \
-    --max_gen_tokens 32768 &> /storage/ray/eval_output/eval_and_aggregate_parallel.log &
+    --max_gen_tokens 32768
+    --data_names math_500,aime24,amc23 \
+    --prompt_type qwen3-think \
+    --task math &> /storage/ray/eval_output/eval_and_aggregate_parallel.log &
+```
+
+### Code Eval
+**Obtaining Data:**
+- Consider the size of code datasets (Because some of test cases are relatively large), we upload all our code datasets to Huggingface: [todo:upload the code dataset to Huggingface]().
+- Once you have downloaded the code dataset, place it under **`./evaluation/data/`**.
+
+**Running Eval:**
+```bash
+nohup python eval_and_aggregate.py \
+ --model_path /storage/ray/experiments/checkpoints/root/my-exp/my-trial/epoch1epochstep20globalstep20/ \
+ --output_path /storage/ray/eval_output/ \
+ --max_gen_tokens 32768 \
+ --data_names codeforces,lcb_v5 \
+ --prompt_type qwen3-think-pure \
+ --num_sample_nodes 8 \
+ --samples_per_node 1 \
+ --n_sampling $((num_sample_nodes * samples_per_node)) \
+ --task code &> /storage/ray/eval_output/eval_and_aggregate_parallel.log &
 ```
 
 ### Command Line Parameters
 
 - **`--model_path`**: Path to the saved model parameters
 - **`--output_path`**: Path to store generated answers and log files during evaluation
-- **`--data_names`**: Dataset(s) to evaluate. Multiple datasets can be separated by commas. Available options: `math_500`, `math`, `gsm8k`, `train_amc_aime`, `aime24`, `amc23`
+- **`--data_names`**: Dataset(s) to evaluate. Multiple datasets can be separated by commas. Available options: 
+    - math: `math_500`, `aime24`, `aime25`, `amc23`
+    - code: `lcb_v5`, `lcb_v5_2410_2502`, `codeforces`, `code_contest_all`
 - **`--max_gen_tokens`**: Maximum length of generated answers (default: 32768)
+- **`--prompt_type`**: Specify the prompt template, for our latest model, we use `qwen3-think` for math dataset, and `qwen3-think-pure` for code dataset.
+- **`--num_sample_nodes`**: Number of multiple sampling seeds to ensure saampling diversity.
+- **`--samples_per_node`**: Number of samples to generate per seed for each problem. 
 
 ## Evaluation Results
 
@@ -59,11 +97,25 @@ The evaluation script will output a results table in the terminal:
 - **`greedy_acc`**: Average accuracy under greedy sampling
 - **`sample_pass@{k}`**: Probability of generating a correct answer within `k` attempts under random sampling
 
+For Codeforces dataset, we use the Elo ranking algorithm to evaluate model performance, referring to [CodeElo](https://github.com/QwenLM/CodeElo) and [rllm](https://github.com/agentica-project/rllm):
+
+```
++------------+----------------+-----------+
+|  Dataset   | Percentile (%) | CF Rating |
++------------+----------------+-----------+
+| codeforces |      17.9      |    590    |
++------------+----------------+-----------+
+```
+
+- **`CF Rating`**: The overall elo rank score of model across 57 Codeforces contests.
+- **`Percentile`**: The Elo ranking percentile of model among all Codeforces users.
+**Note**: As the penalty mechanism may cause fluctuations in Elo rankings, we suggest performing multiple evaluations and regard the average score as the final result.
+
 ## Configuration Details
 
 ### Sampling Parameters
 
-- The evaluation script defaults to averaging 32 samples with temperature 0.6
+- The evaluation script defaults to averaging 32 samples with temperature 1.0. For the code dataset, we set it to 8 samples.
 - We observed that the `enforce_eager` parameter in vLLM significantly impacts evaluation performance
 - When `enforce_eager=True`, we can reproduce the model performance reported in previous work
 - Without this setting, evaluation results may fall below reported performance

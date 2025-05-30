@@ -22,6 +22,7 @@ from realhf.impl.dataset.math_parser import parse_lines_in_parallel
 from realhf.impl.model.nn.real_llm_api import ReaLModel
 from realhf.impl.model.nn.real_llm_generate import concat_prompt_to_generation_output
 from realhf.impl.model.utils.functional import (
+    build_leave_one_indices,
     gather_packed_shifted_log_probs,
     masked_normalization,
 )
@@ -48,12 +49,20 @@ def topk(scores, gen_lengths, k) -> list:
     return [idx for idx, _ in sorted_indices]
 
 
+def calc_entropy(logits, cu_seqlens):
+    leave_one_indices = build_leave_one_indices(logits, cu_seqlens)
+    probs = torch.nn.functional.softmax(logits, dim=-1)
+    entropy = -torch.sum(probs * torch.log(probs + 1e-7), dim=-1)[leave_one_indices]
+    return entropy.detach()
+
+
 def _ppo_actor_loss_from_model_outputs(
     logits: torch.FloatTensor,  # [tot_seqlen, vocab_size]
     input_: SequenceSample,
     kl_adapter: ppo_functional.KLController,  # const
     eps_clip: float,  # const
     c_clip: float | None,
+    behav_imp_weight_cap: float | None,
     early_stop_imp_ratio: Optional[float],  # const
     early_stop_kl: Optional[float],  # const
     temperature: Optional[float] = 1,
@@ -87,7 +96,10 @@ def _ppo_actor_loss_from_model_outputs(
         loss_mask=ppo_loss_mask,
         c_clip=c_clip,
         proximal_logprobs=input_.data.get("prox_logp", None),
+        behav_imp_weight_cap=behav_imp_weight_cap,
     )
+
+    entropy = calc_entropy(logits=logits, cu_seqlens=cu_seqlens)
 
     # Log training statistics
     stats_tracker.denominator(
@@ -102,6 +114,7 @@ def _ppo_actor_loss_from_model_outputs(
         approx_kl=ppo_stat["approx_kl"],
         new_logp=logprobs.detach(),
         old_logp=old_logp,
+        entropy=entropy.float(),
         actor_loss=ppo_stat["loss"],
         clip_ratio=ppo_stat["clip_mask"].float(),
         dual_clip_ratio=ppo_stat["dual_clip_mask"].float(),
@@ -206,6 +219,7 @@ class PPOActorInterface(model_api.ModelInterface):
 
     eps_clip: float = 0.2
     c_clip: Optional[float] = None
+    behav_imp_weight_cap: Optional[float] = None
     value_eps_clip: float = 0.2
     max_reward_clip: float = 5.0
 
@@ -696,11 +710,17 @@ class PPOActorInterface(model_api.ModelInterface):
                 for idx, task in enumerate(RL_TASKS)
             }
 
+            result_denominators = {
+                "correct_n_seqs": (reward_score > 0).bool(),
+                "incorrect_n_seqs": (reward_score <= 0).bool(),
+            }
+
             global_denominators = dict(
                 n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
                 n_tokens=torch.ones_like(prompt_mask, dtype=torch.bool),
                 n_valid_tokens=loss_mask.bool(),
                 **task_denominators,
+                **result_denominators,
             )
             stats_tracker.denominator(**global_denominators)
 
@@ -708,6 +728,13 @@ class PPOActorInterface(model_api.ModelInterface):
                 stats_tracker.stat(
                     **{f"{task}_reward": reward_score}, denominator=f"{task}_n_seqs"
                 )
+
+            stats_tracker.stat(
+                correct_seq_len=input_lens.float(), denominator="correct_n_seqs"
+            )
+            stats_tracker.stat(
+                incorrect_seq_len=input_lens.float(), denominator="incorrect_n_seqs"
+            )
 
             stats = dict(
                 advantages=advantages,
@@ -747,6 +774,8 @@ class PPOActorInterface(model_api.ModelInterface):
                 scalars["use_dual_clip"] = 1
             else:
                 scalars["use_dual_clip"] = 0
+            if self.behav_imp_weight_cap is not None:
+                scalars["behav_imp_weight_cap"] = self.behav_imp_weight_cap
             stats_tracker.scalar(**scalars)
 
             global_stats = stats_tracker.export()
@@ -763,6 +792,7 @@ class PPOActorInterface(model_api.ModelInterface):
                     early_stop_imp_ratio=self.early_stop_imp_ratio,
                     early_stop_kl=self.early_stop_kl,
                     c_clip=self.c_clip,
+                    behav_imp_weight_cap=self.behav_imp_weight_cap,
                     temperature=self.gconfig.temperature,
                 )
 

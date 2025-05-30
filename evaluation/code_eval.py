@@ -7,13 +7,12 @@ import time
 from datetime import datetime
 from parser import *
 
+import numpy as np
 import ray
 import torch
+from code_verifier.local_verify import evaluate
 from data_loader import load_data
-from evaluate import evaluate
 from model_utils import generate_completions, load_hf_lm_and_tokenizer
-from python_executor import PythonExecutor
-from rm_maj_eval import group_pred
 from tqdm import tqdm
 from trajectory import *
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -21,10 +20,37 @@ from utils import construct_prompt, load_jsonl, save_jsonl, set_seed
 from vllm import LLM, SamplingParams
 
 
+def extract_python_code(text, min_length=20, strict_syntax=False):
+    code_pattern = r"(?i)```(?:python|py|cpp|CPP)?\s*\n?(.*?)\n?```"
+    code_blocks = re.findall(code_pattern, text, re.DOTALL)
+    valid_blocks = []
+    for block in code_blocks:
+        clean_block = block.strip()
+        if len(clean_block) < min_length:
+            continue
+
+        # verify code syntax
+        if strict_syntax:
+            try:
+                ast.parse(clean_block, mode="exec")
+            except (SyntaxError, IndentationError):
+                continue
+
+        valid_blocks.append(clean_block)
+
+    if not valid_blocks:
+        # logger.warning(f"failed to extract python code from {text}")
+        return None
+    # return the last code block
+    return valid_blocks[-1]
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_names", default="gsm8k,math", type=str)
-    parser.add_argument("--data_dir", default="./data", type=str)
+    parser.add_argument("--data_names", default="lcb", type=str)
+    parser.add_argument(
+        "--data_dir", default="/storage/openpsi/data/code/test_set", type=str
+    )
     parser.add_argument("--model_name_or_path", default="gpt-4", type=str)
     parser.add_argument("--output_dir", default="./output", type=str)
     parser.add_argument("--prompt_type", default="tool-integrated", type=str)
@@ -66,59 +92,6 @@ def parse_args():
     return args
 
 
-def eval_maj_k_metrics(data_list, k=8):
-    print(f"evaluating maj@{k}")
-
-    count, right_count = 0, 0
-    for sample in data_list:
-        assert len(sample["score"]) >= k, sample
-        groups, majority_pred = group_pred(
-            sample["pred"][:k], strip=False, use_symbol=False
-        )
-        idx = groups[majority_pred][0]
-        right_count += sample["score"][idx]
-        count += 1
-
-    task_acc = right_count / count * 100
-    print(f"maj@{k}: {task_acc:.1f}")
-    return task_acc
-
-
-def pass_at_k(data_list, k=8):
-    print(f"evaluating pass@{k}")
-
-    count, right_count = 0, 0
-    for sample in data_list:
-        assert len(sample["score"]) >= k, sample
-        # assert sum(sample['score']) in [0, k]
-        for x in sample["score"][:k]:
-            if x:
-                right_count += 1
-                break
-        count += 1
-
-    task_acc = right_count / count * 100
-    print(f"pass@{k}: {task_acc:.1f}")
-    return task_acc
-
-
-def pass_at_1(data_list, k=1):
-    assert k == 1
-    print(f"evaluating pass@{k}")
-
-    count, right_count = 0, 0
-    for sample in data_list:
-        assert len(sample["score"]) >= k, sample
-        for x in sample["score"]:
-            right_count += x
-            count += 1
-
-    print("pass_at_1", right_count, count)
-    task_acc = right_count / count * 100
-    print(f"pass@{k}: {task_acc:.1f}")
-    return task_acc
-
-
 def pass_at_k_v2(data_list, k=8):
 
     def cur_pass_k(n, c, k):
@@ -141,7 +114,7 @@ def generate_in_parallel(requests, model_args, sampling_params, data_parallel_si
     def run_inference_one_model(
         model_args: dict, sampling_params, requests, cuda_visisble_devices
     ):
-        os.environ["VLLM_LOGGING_LEVEL"] = "INFO"
+        os.environ["VLLM_LOGGING_LEVEL"] = "ERROR"
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
             [str(x) for x in cuda_visisble_devices]
         )
@@ -164,7 +137,6 @@ def generate_in_parallel(requests, model_args, sampling_params, data_parallel_si
     return undistribute(results)
 
 
-# from more_itertools import distribute
 from itertools import islice, tee
 
 
@@ -196,6 +168,7 @@ def distribute(n, iterable):
 
     If you need the order items in the smaller iterables to match the
     original iterable, see :func:`divide`.
+
     """
     if n < 1:
         raise ValueError("n must be at least 1")
@@ -289,7 +262,10 @@ def prepare_data(data_name, args):
             )
 
     # dedepulicate
+    idx2inoutput = {x["idx"]: x["input_output"] for x in examples}
     processed_samples = {sample["idx"]: sample for sample in processed_samples}
+    for sample_idx in processed_samples:
+        processed_samples[sample_idx]["input_output"] = idx2inoutput[sample_idx]
     processed_idxs = list(processed_samples.keys())
     processed_samples = list(processed_samples.values())
     examples = [example for example in examples if example["idx"] not in processed_idxs]
@@ -306,10 +282,9 @@ def setup(args):
                 model=args.model_name_or_path,
                 tensor_parallel_size=args.tensor_parallel_size,
                 # distributed_executor_backend="ray",
-                trust_remote_code=True,
                 enforce_eager=True,
                 # dtype="float16",
-                disable_custom_all_reduce=True,
+                trust_remote_code=True,
                 disable_sliding_window=True,
                 max_model_len=32768,
                 enable_chunked_prefill=False,
@@ -333,11 +308,9 @@ def setup(args):
                 enable_chunked_prefill=False,
                 swap_space=32,
             )
-        tokenizer = None
-        if args.apply_chat_template:
-            tokenizer = AutoTokenizer.from_pretrained(
-                args.model_name_or_path, trust_remote_code=True
-            )
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.model_name_or_path, trust_remote_code=True
+        )
     else:
         llm, tokenizer = load_hf_lm_and_tokenizer(
             model_name_or_path=args.model_name_or_path,
@@ -366,36 +339,18 @@ def setup(args):
     print("\t".join([f"{result['acc']:.1f}".ljust(pad, " ") for result in results]))
 
 
-def is_multi_choice(answer):
-    for c in answer:
-        if c not in ["A", "B", "C", "D", "E"]:
-            return False
-    return True
-
-
 def main(llm, tokenizer, data_name, args):
+    available_gpus = os.environ["CUDA_VISIBLE_DEVICES"].split(",")
     examples, processed_samples, out_file = prepare_data(data_name, args)
     print("=" * 50)
     print("data:", data_name, " ,remain samples:", len(examples))
-    if len(examples) > 0:
-        print(examples[0])
-
-    # init python executor
-    if "pal" in args.prompt_type:
-        executor = PythonExecutor(get_answer_expr="solution()")
-    else:
-        executor = PythonExecutor(get_answer_from_stdout=True)
+    # if len(examples) > 0:
+    #     print(examples[0])
 
     samples = []
     for example in tqdm(examples, total=len(examples)):
         idx = example["idx"]
 
-        # parse question and answer
-        example["question"] = parse_question(example, data_name)
-        if example["question"] == "":
-            continue
-        gt_cot, gt_ans = parse_ground_truth(example, data_name)
-        example["gt_ans"] = gt_ans
         full_prompt = construct_prompt(example, data_name, args)
 
         if idx == args.start:
@@ -404,30 +359,29 @@ def main(llm, tokenizer, data_name, args):
         sample = {
             "idx": idx,
             "question": example["question"],
-            "gt_cot": gt_cot,
-            "gt": gt_ans,
+            "input_output": example["input_output"],
             "prompt": full_prompt,
         }
 
         # add remain fields
-        for key in [
-            "level",
-            "type",
-            "unit",
-            "solution_type",
-            "choices",
-            "solution",
-            "ques_type",
-            "ans_type",
-            "answer_type",
-            "dataset",
-            "subfield",
-            "filed",
-            "theorem",
-            "answer",
-        ]:
-            if key in example:
-                sample[key] = example[key]
+        # for key in [
+        #     "level",
+        #     "type",
+        #     "unit",
+        #     "solution_type",
+        #     "choices",
+        #     "solution",
+        #     "ques_type",
+        #     "ans_type",
+        #     "answer_type",
+        #     "dataset",
+        #     "subfield",
+        #     "filed",
+        #     "theorem",
+        #     "answer",
+        # ]:
+        #     if key in example:
+        #         sample[key] = example[key]
         samples.append(sample)
 
     # repeat n times
@@ -451,19 +405,6 @@ def main(llm, tokenizer, data_name, args):
     max_func_call = 1 if args.prompt_type in ["cot", "pal"] or args.use_vllm else 4
 
     stop_words = ["</s>", "<|im_end|>", "<|endoftext|>"]
-
-    if args.prompt_type in ["cot"]:
-        stop_words.append("\n\nQuestion:")
-    if args.prompt_type in ["pal", "tool-integrated", "jiuzhang_tora"]:
-        stop_words.extend(["\n\n---", "```output"])
-    elif args.prompt_type in ["wizard_zs", "platypus_fs"]:
-        stop_words.extend(["Instruction", "Response"])
-    elif "jiuzhang" in args.prompt_type:
-        stop_words.append("\n\n## Question")
-    elif "numina" in args.prompt_type:
-        stop_words.append("\n### Problem")
-    elif "pure" in args.prompt_type:
-        stop_words.append("\n\n\n")
 
     # start inference
     # measure time use
@@ -499,7 +440,11 @@ def main(llm, tokenizer, data_name, args):
                     prompts[:: args.n_sampling],
                     llm,
                     sampling_params,
-                    args.data_parallel_size,
+                    (
+                        args.data_parallel_size - 1
+                        if len(available_gpus) == 16
+                        else args.data_parallel_size
+                    ),
                 )
 
             outputs = sorted(
@@ -524,34 +469,7 @@ def main(llm, tokenizer, data_name, args):
         for (i, query), output in zip(current_prompts, outputs):
             output = output.rstrip()
             query += output
-            if args.prompt_type == "pal":
-                remain_prompts.append((i, query))
-                if "```python" in output:
-                    output = extract_program(query)
-                remain_codes.append(output)
-            elif args.prompt_type == "cot":
-                end_prompts.append((i, query))
-            elif "boxed" not in output and output.endswith("```"):
-                program = extract_program(query)
-                remain_prompts.append((i, query))
-                remain_codes.append(program)
-            else:
-                end_prompts.append((i, query))
-
-        # execute the remain prompts
-        remain_results = executor.batch_apply(remain_codes)
-        for k in range(len(remain_prompts)):
-            i, query = remain_prompts[k]
-            res, report = remain_results[k]
-            exec_result = res if res else report
-            if "pal" in args.prompt_type:
-                exec_result = "\\boxed{" + exec_result + "}"
-            exec_result = f"\n```output\n{exec_result}\n```\n"
-            query += exec_result
-            # not end
-            if epoch == max_func_call - 1:
-                query += "\nReach max function call limit."
-            remain_prompts[k] = (i, query)
+            end_prompts.append((i, query))
 
     # unsolved samples
     print("Unsolved samples:", len(remain_prompts))
@@ -570,51 +488,32 @@ def main(llm, tokenizer, data_name, args):
                 code = code.split(stop_word)[0].strip()
         codes.append(code)
 
-    # extract preds
-    results = [
-        run_execute(executor, code, args.prompt_type, data_name) for code in codes
-    ]
+    if len(codes) != 0:
+        code_lens = tokenizer(codes, return_length=True)["length"]
+    else:
+        code_lens = []
+
+    # extract code
+    results = [extract_python_code(code) for code in codes]
     time_use = time.time() - start_time
     print("time_use", time_use)
     # put results back to examples
     all_samples = []
     for i, sample in enumerate(samples):
         code = codes[i * args.n_sampling : (i + 1) * args.n_sampling]
-        result = results[i * args.n_sampling : (i + 1) * args.n_sampling]
-        preds = [item[0] for item in result]
-        reports = [item[1] for item in result]
-        for j in range(len(preds)):
-            if sample["gt"] in ["A", "B", "C", "D", "E"] and preds[j] not in [
-                "A",
-                "B",
-                "C",
-                "D",
-                "E",
-            ]:
-                preds[j] = choice_answer_clean(code[j])
-            elif is_multi_choice(sample["gt"]) and not is_multi_choice(preds[j]):
-                # remove any non-choice char
-                preds[j] = "".join(
-                    [c for c in preds[j] if c in ["A", "B", "C", "D", "E"]]
-                )
+        code_len = code_lens[i * args.n_sampling : (i + 1) * args.n_sampling]
+        preds = results[i * args.n_sampling : (i + 1) * args.n_sampling]
+        # preds = results
 
         sample.pop("prompt")
-        sample.update({"code": code, "pred": preds, "report": reports})
+        sample.update({"code": code, "output_len": code_len, "pred": preds})
         all_samples.append(sample)
 
     # add processed samples
     all_samples.extend(processed_samples)
-    all_samples, result_json = evaluate(
-        samples=all_samples,
-        data_name=data_name,
-        prompt_type=args.prompt_type,
-        execute=True,
-    )
+    all_samples, result_json = evaluate(samples=all_samples)
 
     if args.n_sampling > 1:
-        result_json[f"maj@{args.n_sampling}"] = eval_maj_k_metrics(
-            all_samples, k=args.n_sampling
-        )
         result_json[f"pass@{args.n_sampling}"] = pass_at_k_v2(
             all_samples, k=args.n_sampling
         )
@@ -622,11 +521,13 @@ def main(llm, tokenizer, data_name, args):
             result_json[f"pass@16"] = pass_at_k_v2(all_samples, k=16)
         if args.n_sampling > 8:
             result_json[f"pass@8"] = pass_at_k_v2(all_samples, k=8)
-        result_json["pass@1"] = pass_at_k_v2(all_samples, k=1)
-        result_json["acc"] = result_json["pass@1"]
+        result_json[f"pass@1"] = pass_at_k_v2(all_samples, k=1)
 
     # save outputs
-    if len(processed_samples) < len(all_samples) and args.save_outputs:
+    # if len(processed_samples) < len(all_samples) and args.save_outputs:
+    if args.save_outputs:
+        for sample in all_samples:
+            sample.pop("input_output")
         save_jsonl(all_samples, out_file)
 
     result_json["time_use_in_second"] = time_use

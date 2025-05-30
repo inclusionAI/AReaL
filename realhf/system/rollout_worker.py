@@ -86,6 +86,9 @@ class RolloutWorker(AsyncWorker):
         # we don't need to recover rollout_stat here.
         self.rollout_stat = RolloutStat()
 
+        # recover info
+        self.__recover_run, self.__recover_info = recover.load_recover_info()
+
         return config.worker_info
 
     def make_datasets(self):
@@ -187,6 +190,9 @@ class RolloutWorker(AsyncWorker):
 
         # NOTE: no need to ignore ids during recover, because model workers will do so
         data_id = cur_sample.ids[0]
+        if self.__recover_run and data_id in self.__recover_info.hash_vals_to_ignore:
+            self.__recover_info.hash_vals_to_ignore.remove(data_id)
+            return None
         assert data_id not in self.rollout_tasks
         return cur_sample
 

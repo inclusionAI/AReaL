@@ -385,14 +385,27 @@ class SGLangGenerationEngine(PipelinableEngine):
             dist.barrier(group=constants.tensor_parallel_cpu_group())
             return None, None, None
 
-        results = asyncio.run(
-            self.async_generate(
-                input_=input_,
-                mb_spec=mb_spec,
-                tokenizer=tokenizer,
-                gconfig=gconfig,
-            )
-        )
+        def run_in_thread():
+            # Create a new event loop for this thread
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                return new_loop.run_until_complete(
+                    self.async_generate(
+                        input_=input_,
+                        mb_spec=mb_spec,
+                        tokenizer=tokenizer,
+                        gconfig=gconfig,
+                    )
+                )
+            finally:
+                new_loop.close()
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor() as executor:
+            future = executor.submit(run_in_thread)
+            results = future.result()
         dist.barrier(group=constants.tensor_parallel_cpu_group())
         return results
 
@@ -401,14 +414,13 @@ class SGLangGenerationEngine(PipelinableEngine):
             dist.barrier(group=constants.tensor_parallel_cpu_group())
             return
 
-        async def _fn():
-            async with SGLangAPIClient(
-                generate_url=self.api_urls["generate"],
-                update_weights_url=self.api_urls["update_weights_from_disk"],
-            ) as client:
-                await client.async_update_weights_from_disk(path)
-
-        asyncio.run(_fn())
+        resp = requests.post(
+            url=self.api_urls["update_weights_from_disk"],
+            json=dict(model_path=path),
+        )
+        resp.raise_for_status()
+        res = resp.json()
+        assert res["success"]
         dist.barrier(group=constants.tensor_parallel_cpu_group())
 
 

@@ -107,6 +107,7 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
                 "mask_too_long": self.mask_too_long,
                 "sample_reuse": self.ppo.actor_sample_reuse,
                 "c_clip": self.ppo.c_clip,
+                "behav_imp_weight_cap": self.ppo.behav_imp_weight_cap,
             },
         )
 
