@@ -571,6 +571,15 @@ def get_repo_path() -> pathlib.Path:
 
 
 def get_env_vars(**kwargs):
+    kwargs.update(
+        CLUSTER_SPEC_PATH=os.environ.get("CLUSTER_SPEC_PATH", ""),
+        REAL_DUMP_TRACE=os.environ.get("REAL_DUMP_TRACE", "0"),
+        REAL_RECORD_PERFORMANCE=os.environ.get("REAL_RECORD_PERFORMANCE", "0"),
+        FUNCTIONCALL_SERVICE_DOMAIN=os.getenv("FUNCTIONCALL_SERVICE_DOMAIN", ""),
+        REAL_DUMP_MEMORY=os.environ.get("REAL_DUMP_MEMORY", "0"),
+        REAL_ETCD_ADDR=os.getenv("REAL_ETCD_ADDR", "localhost:2379"),
+        REAL_OSS_TESTCASE_PATH=os.getenv("REAL_OSS_TESTCASE_PATH", ""),
+    )
     return {
         **kwargs,
         "REAL_PACKAGE_PATH": str(get_repo_path()),

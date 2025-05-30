@@ -32,7 +32,11 @@ def construct_testcases(
             result.append({"input": input_, "expectedOutput": output_})
             continue
 
-        oss_basepath = "http://antsys-hcsfaas-images-dev.cn-heyuan-alipay-office.oss-alipay.aliyuncs.com/"
+        oss_basepath = os.getenv("REAL_OSS_TESTCASE_PATH", "")
+        if not oss_basepath:
+            raise FileNotFoundError(
+                "REAL_OSS_TESTCASE_PATH not set. Cannot use FAAS code reward."
+            )
         input_url = (
             input_ if input_.startswith("http") else os.path.join(oss_basepath, input_)
         )
@@ -153,7 +157,9 @@ def code_verify(
 
 
 if __name__ == "__main__":
-    data_list = load_jsonl("functioncall/test/test_success_dataset.jsonl")
+    data_list = load_jsonl(
+        "/storage/openpsi/data/functioncall/test/test_success_dataset.jsonl"
+    )
     id2info = defaultdict(dict)
     for item in data_list:
         id2info[item["query_id"]] = item
