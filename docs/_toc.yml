@@ -6,10 +6,11 @@ root: intro
 parts:
   - caption: Tutorial
     chapters:
-    - file: installation
-    - file: training
-    - file: eval
-    - file: troubleshooting
+    - file: tutorial/installation
+    - file: tutorial/training
+    - file: tutorial/eval
+    - file: tutorial/agent
+    - file: tutorial/troubleshooting
   - caption: Developer Manual
     chapters:
     - file: developer/exp_launch
