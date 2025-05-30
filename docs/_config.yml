@@ -3,7 +3,7 @@
 
 title: AReaL Documentation
 author: AReaL Team
-copyright: 2025
+copyright: "2025"
 logo: figures/logo.png
 
 # Force re-execution of notebooks on each build.
