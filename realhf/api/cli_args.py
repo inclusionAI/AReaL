@@ -955,10 +955,6 @@ class BaseExperimentConfig:
         default_factory=TensorBoardConfig,
         metadata={"help": "TensorBoard configuration. Only 'path' field required."},
     )
-    image_name: Optional[str] = field(
-        default=None,
-        metadata={"help": "Docker image name for controller (SLURM mode only)."},
-    )
     recover_mode: str = field(
         default="disabled",
         metadata={

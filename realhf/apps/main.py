@@ -36,7 +36,6 @@ def _submit_workers(
     worker_type: str,
     scheduling_configs: List[config_package.TasksGroup],
     environs: Dict[str, str],
-    image_name: Optional[str] = None,
 ) -> List[str]:
     if len(scheduling_configs) == 0:
         return []
@@ -52,7 +51,7 @@ def _submit_workers(
 
         nodelist = sch_cfg.scheduling.nodelist
         exclude = sch_cfg.scheduling.exclude
-        container_image = image_name or sch_cfg.scheduling.container_image
+        container_image = sch_cfg.scheduling.container_image
 
         scheduled_jobs.append(
             sched.submit_array(
@@ -214,7 +213,7 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
         gpu=0,
         mem=1024,
         env_vars=BASE_ENVIRONS,
-        container_image=args.image_name or setup.controller_image,
+        container_image=setup.controller_image,
         time_limit=CONTROLLER_TIME_LIMIT,
     )
 
@@ -235,7 +234,6 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
                 name,
                 scheduling_setup,
                 BASE_ENVIRONS,
-                args.image_name,
             )
 
     try:
@@ -366,13 +364,6 @@ def main():
         "--partition",
         default="dev",
         help="slurm partition to schedule the trial",
-    )
-    subparser.add_argument(
-        "--image_name",
-        type=str,
-        required=False,
-        default=None,
-        help="if specified, all workers will use this image. Useful in CI/CD pipeline.",
     )
     subparser.add_argument("--ignore_worker_error", action="store_true")
     subparser.add_argument(

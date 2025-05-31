@@ -13,7 +13,7 @@ from realhf.experiments.async_exp.async_ppo_math_exp import AsyncPPOMATHConfig
 from training.utils import run_experiment
 
 
-@hydra.main(version_base=None, config_path="configs/async-ppo")
+@hydra.main(version_base=None, config_path="configs", config_name="async-ppo")
 def main_ppo_math(args):
     # NOTE: we import logging here to avoid hydra logging overwrite
     import realhf.base.logging as logging

@@ -148,7 +148,7 @@ def init_constants(args: "BaseExperimentConfig"):
         "REAL_DUMP_TRACE": os.getenv("REAL_DUMP_TRACE", "0"),
         "REAL_DUMP_MEMORY": os.getenv("REAL_DUMP_MEMORY", "0"),
         "REAL_GPU_MEMORY_KILL_THRESHOLD": os.getenv(
-            "REAL_GPU_MEMORY_KILL_THRESHOLD", "0.95"
+            "REAL_GPU_MEMORY_KILL_THRESHOLD", "1.0"
         ),
         "LC_ALL": "C",
         "LANG": "C",
