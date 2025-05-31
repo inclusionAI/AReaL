@@ -209,7 +209,9 @@ class RolloutWorker(AsyncWorker):
                 resp.raise_for_status()
                 res = await resp.json()
                 if not res["success"]:
-                    logger.info(f"Cannot allocate new rollout because: {res['reason']}")
+                    logger.debug(
+                        f"Cannot allocate new rollout because: {res['reason']}"
+                    )
                 return res["success"]
 
     async def _poll_async(self):
@@ -272,7 +274,7 @@ class RolloutWorker(AsyncWorker):
 
                 self.rollout_stat.submitted += 1
                 self.rollout_stat.running += 1
-                logger.info(
+                logger.debug(
                     f"Submit a new rollout for qid {qid}. "
                     f"Submit: {self.rollout_stat.submitted}, "
                     f"running: {self.rollout_stat.running}, "
@@ -323,7 +325,7 @@ class RolloutWorker(AsyncWorker):
                 ) as resp:
                     resp.raise_for_status()
                     assert (await resp.json())["success"]
-            logger.info(
+            logger.debug(
                 f"Finish rollout for qid {qid}. "
                 f"Submit: {self.rollout_stat.submitted}, "
                 f"running: {self.rollout_stat.running}, "

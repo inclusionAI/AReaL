@@ -510,7 +510,7 @@ class ModelWorker(worker_base.Worker):
         elif hook == "save":
             self.__save_model(hook_data)
         elif hook == "evaluate":
-            logger.info(f"hook_data: {hook_data}")
+            logger.debug(f"hook_data: {hook_data}")
             with constants.model_scope(hook_data["model_name"]):
                 ret = self._interface.evaluate(self._model, self._eval_dataloader)
             if ret:
@@ -557,7 +557,7 @@ class ModelWorker(worker_base.Worker):
                         assert not handled and res is None
                         with constants.model_scope(request.handler.model_name):
                             if constants.parallelism_rank() == 0:
-                                logger.info(
+                                logger.debug(
                                     f"Model `{request.handler.model_name}` handling "
                                     f"{len(request.pre_hooks)} pre-hook for request `{request.handle_name}`. "
                                     f"The current hook is `{request.pre_hooks[0]}`. "
@@ -714,7 +714,7 @@ class ModelWorker(worker_base.Worker):
                     blogger.debug(
                         f"Model worker {self.__worker_index} cleared cache in {et-st:.4f}s. "
                     )
-            logger.info(
+            logger.debug(
                 "Get clear_data_cache, dump cuda tmark. "
                 f"Remaining data in local storage: {self.data_manager.storage_size()}. "
             )
@@ -742,7 +742,7 @@ class ModelWorker(worker_base.Worker):
         model_name = request.handler.model_name
         with constants.model_scope(model_name):
             if constants.parallelism_rank() == 0:
-                blogger.info(
+                blogger.debug(
                     f"Model #{request.handler.model_name}# "
                     f"starts handling request *{request.handle_name}*."
                 )
@@ -789,7 +789,7 @@ class ModelWorker(worker_base.Worker):
                 and self._is_dp_head
                 and self._dp_rank == 0
             ):
-                blogger.info(
+                blogger.debug(
                     f"Model #{request.handler.model_name}# handle "
                     f"request *{request.handle_name}*"
                     f" in ${time.perf_counter() - tik:.4f}$s"

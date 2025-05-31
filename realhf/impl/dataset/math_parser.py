@@ -4,6 +4,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import uuid
 from typing import *
 
@@ -54,6 +55,10 @@ def parse_line(id2info, prompt_str, generated, query_id):
             f.write(json.dumps({"answer": generated, "solution": cur_solution}) + "\n")
 
     venv_python = "/sympy/bin/python3"
+    if not os.path.exists(venv_python):
+        venv_python = "sympy/bin/python3"
+    if not os.path.exists(venv_python):
+        venv_python = sys.executable
     # logger.info(f"math verify working dir: `{os.getcwd()}`")
     pro = subprocess.Popen(
         " ".join(
@@ -131,6 +136,10 @@ def parse_lines_in_parallel(
         all_query_indices.append(query_indices)
 
     venv_python = "/sympy/bin/python3"
+    if not os.path.exists(venv_python):
+        venv_python = "sympy/bin/python3"
+    if not os.path.exists(venv_python):
+        venv_python = sys.executable
     # logger.info(f"math verify working dir: `{os.getcwd()}`")
     procs = []
     for tmp_id in tmp_ids:

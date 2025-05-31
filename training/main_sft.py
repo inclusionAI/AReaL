@@ -13,7 +13,7 @@ from realhf.experiments.common.sft_exp import SFTConfig
 from training.utils import run_experiment
 
 
-@hydra.main(version_base=None, config_path="configs/sft")
+@hydra.main(version_base=None, config_path="configs", config_name="sft")
 def main(args):
     # NOTE: we import logging here to avoid hydra logging overwrite
     import realhf.base.logging as logging

@@ -62,7 +62,7 @@ class MasterWorker(worker_base.AsyncWorker):
         self.__topo_widths = []
         for generation in nx.topological_generations(self.__model_rpcs[0]._G):
             self.__topo_widths.append(len(generation))
-        logger.info("Topological widths: " + str(self.__topo_widths))
+        logger.debug("Topological widths: " + str(self.__topo_widths))
 
         self.__rpc_srcs = list(filter(lambda rpc: rpc.is_src, self.__model_rpcs))
         self.__rpc_dsts = list(filter(lambda rpc: rpc.is_dst, self.__model_rpcs))
@@ -169,7 +169,7 @@ class MasterWorker(worker_base.AsyncWorker):
     def initialize_models(self):
         # Initialize model backends.
         model_names = list(self.__model_topos.keys())
-        self.logger.info(f"Initialize model backends with order: {model_names}.")
+        self.logger.debug(f"Initialize model backends with order: {model_names}.")
         train_rpcs = list(
             filter(
                 lambda rpc: rpc.interface_type == dfg.ModelInterfaceType.TRAIN_STEP,
@@ -318,7 +318,7 @@ class MasterWorker(worker_base.AsyncWorker):
             self.__summary_writer = SummaryWriter(log_dir=self.tensorboard_config.path)
 
         # Create coroutines for model RPCs.
-        logger.info(f"Creating asyncio coroutines...")
+        logger.debug(f"Creating asyncio coroutines...")
         self.func_executor = FunctionExecutor(
             rpcs=self.__model_rpcs,
             msid2mwid=self.config.msid2mwid,
@@ -334,7 +334,7 @@ class MasterWorker(worker_base.AsyncWorker):
             self.func_executor.data_loading_dp_idx = (
                 self.__recover_info.data_loading_dp_idx
             )
-        logger.info(f"Coroutines created. The master worker is ready to run.")
+        logger.debug(f"Coroutines created. The master worker is ready to run.")
 
         self.__initialized = True
         self._train_start_time = time.perf_counter()

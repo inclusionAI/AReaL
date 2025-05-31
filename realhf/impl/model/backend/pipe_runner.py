@@ -809,7 +809,7 @@ class PipelineRunner:
         )
         mb_inputs, fwd_indices, bwd_indices = input_.split(mb_spec)
         if constants.parallelism_rank() == 0:
-            logger.info(
+            logger.debug(
                 f"MB spec: {mb_spec}, #mbs={len(mb_inputs)}, "
                 f"#tokens: {input_.data['packed_input_ids'].shape[0]}, "
                 f"pp_size={constants.pipe_parallel_world_size()}, "
@@ -886,7 +886,7 @@ class PipelineRunner:
         mb_spec = MicroBatchSpec(n_mbs=self.default_inf_mbs)
         mb_inputs, *_ = input_.split(mb_spec)
         if constants.parallelism_rank() == 0:
-            logger.info(
+            logger.debug(
                 f"MB spec: {mb_spec}, #mbs={len(mb_inputs)}, "
                 f"#tokens: {input_.data['packed_input_ids'].shape[0]}, "
                 f"pp_size={constants.pipe_parallel_world_size()}, "
@@ -1013,7 +1013,7 @@ class PipelineRunner:
             dist.all_reduce(total_loss_weight, group=constants.data_parallel_group())
 
         if constants.parallelism_rank() == 0:
-            logger.info(
+            logger.debug(
                 f"MB spec: {mb_spec}, #mbs={len(mb_inputs)}, "
                 f"#tokens: {input_.data['packed_input_ids'].shape[0]}, "
                 f"pp_size={constants.pipe_parallel_world_size()}, "

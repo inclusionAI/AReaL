@@ -183,7 +183,7 @@ class GserverManager(AsyncWorker):
                         success = res["success"]
                         if success:
                             if "num_paused_requests" in res:
-                                logger.info(
+                                logger.debug(
                                     f"{res['num_paused_requests']} requests are interrupted "
                                     f"during updateing weights for server {server_index}: {server_url}"
                                 )
@@ -419,7 +419,7 @@ class GserverManager(AsyncWorker):
                 if has_capacity and not is_staled:
                     self.rollout_stat.submitted += 1
                     self.rollout_stat.running += 1
-                    logger.info(
+                    logger.debug(
                         f"Allocate rollout for qid {req.qid}. "
                         f"Submitted: {self.rollout_stat.submitted}, "
                         f"running: {self.rollout_stat.running}, "
@@ -458,7 +458,7 @@ class GserverManager(AsyncWorker):
                 self.rollout_stat.running -= 1
                 if resp_meta.accepted:
                     self.rollout_stat.accepted += 1
-                logger.info(
+                logger.debug(
                     f"Finish rollout for qid {resp_meta.qid}. "
                     f"Running: {self.rollout_stat.running}, "
                     f"running: {self.rollout_stat.running}, "

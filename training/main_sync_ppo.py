@@ -13,7 +13,7 @@ from realhf.experiments.common.ppo_math_exp import PPOMATHConfig
 from training.utils import run_experiment
 
 
-@hydra.main(version_base=None, config_path="configs/ppo")
+@hydra.main(version_base=None, config_path="configs", config_name="sync-ppo")
 def main(args):
     # NOTE: we import logging here to avoid hydra logging overwrite
     import realhf.base.logging as logging

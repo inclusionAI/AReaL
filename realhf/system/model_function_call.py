@@ -292,7 +292,7 @@ class ModelFunctionCall:
             samples, forward_indices, _ = sample.split(
                 data_api.MicroBatchSpec(n_mbs=self.dp_size)
             )
-        blogger.info(
+        blogger.debug(
             f"DP split (DP size {self.dp_size}) for RPC {self.rpc.name}: "
             f"#seqs: {[s.bs for s in samples]}, "
             f"#tokens: {[sum([sum(lens) for lens in s.seqlens[s._get_split_key()]]) for s in samples]}"
@@ -353,7 +353,7 @@ class ModelFunctionCall:
             keys=rpc.input_keys,
             pattern=pattern,
         )
-        blogger.info(f"Data tranfer plan for `{rpc.name}`: {data_transfer_plan}.")
+        blogger.debug(f"Data tranfer plan for `{rpc.name}`: {data_transfer_plan}.")
 
         # Update storage tracker for transferred data.
         if pattern == "bcast":
@@ -450,7 +450,7 @@ class ModelFunctionCall:
             elif isinstance(res, list):
                 for j, r in enumerate(res):
                     logger.info(
-                        f"RPC name {rpc.name} returns ({j}/{len(res)})\n{data_api.tabulate_stats(r)}"
+                        f"RPC name {rpc.name} returns ({j + 1}/{len(res)})\n{data_api.tabulate_stats(r)}"
                     )
                     offset = len(res) * ctrl.step_info.global_step
                     logging.log_wandb_tensorboard(
