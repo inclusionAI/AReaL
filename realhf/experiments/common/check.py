@@ -2,7 +2,9 @@
 # Copyright 2024 Wei Fu & Zhiyu Mei
 # Licensed under the Apache License, Version 2.0 (the "License").
 import os
-from typing import List
+from typing import List, Optional
+
+from huggingface_hub import snapshot_download, try_to_load_from_cache
 
 from huggingface_hub import snapshot_download
 
