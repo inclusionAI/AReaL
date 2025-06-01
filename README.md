@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-| <a href="https://inclusionai.github.io/AReaL/"><b>Documentation</b></a> |
+| <a href="https://inclusionai.github.io/AReaL/"><b>Documentation</b></a> | <a href="https://deepwiki.com/inclusionAI/AReaL"><b>Ask DeepWiki</b></a> |
 </p>
 
 <img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
@@ -17,7 +17,6 @@ AReaL (Ant Reasoning RL) is a fully open-sourced, scalable, and efficient reinfo
 + 🔪 **Cutting-Edge Performances:** AReaL can produce models with cutting-edge reasoning capabilities. We are actively working on other domains, such as coding and agent, as well. 
 
 ## News
-**[2025/04/27]** 🔥 We've built a [documentation website](https://deepwiki.com/inclusionAI/AReaL) using the amazing [DeepWiki](https://deepwiki.com/) tool. Check the link to know and ask about AReaL!
 
 **[2025/03/31]** **(v0.2, Boba)** Our milestone release Boba! Please call it A-ReaL-Boba! This release includes much accelerated training with SGLang support and SOTA 7B and 32B models on math reasoning. 
 
@@ -72,23 +71,51 @@ Building upon **R1-Distill-Qwen-32B**, we replicate **QwQ-32B's** inference perf
 
 ## Getting Started
 ### Quick Start
-```bash
-# Train the distilled 7B model
-python3 -m realhf.apps.quickstart ppo-math \
-  --config examples/configs/7B-distill/ppo-7B-distill-gpus-128.yaml
 
-# Evaluate the 7B model
-python evaluation/eval_and_aggregate.py \
+Train Qwen3 1.7B locally:
+
+```bash
+bash examples/env/scripts/setup-pip-deps.sh
+python3 training/main_async_ppo.py \
+    n_nodes=1 n_gpus_per_node=8 \
+    allocation_mode=sglang.d4p1m1+d2p2m1 \
+    cluster.fileroot=/storage/testing/experiments \
+    actor.type._class=qwen3 \
+    actor.path=Qwen/Qwen3-1.7B \
+    ref.type._class=qwen3 \
+    ref.path=Qwen/Qwen3-1.7B \
+    dataset.path=/path/to/dataset/boba_106k_0319.jsonl \
+    dataset.train_bs_n_seqs=32 \
+    group_size=8 \
+    ppo.gen.max_new_tokens=4096 \
+    ppo.ppo_n_minibatches=4 \
+    actor_train.mb_spec.max_tokens_per_mb=32768 \
+    actor_inf.mb_spec.max_tokens_per_mb=32768 \
+    max_concurrent_rollouts=16 \
+    max_head_offpolicyness=4
+```
+
+Evaluation
+
+```bash
+bash examples/env/scripts/setup-eval-pip-deps.sh
+cd evaluation
+# Evaluate the model
+python eval_and_aggregate.py \
   --model_path ${MODEL_PATH} \
   --output_path ${OUTPUT_PATH} \
   --data_names aime24,aime25 \
-  --prompt_type AReaL-boba \
-  --output_path outputs --temperature 1.0
+  --max_gen_tokens 32768 \
+  --data_names codeforces,lcb_v5 \
+  --prompt_type qwen3-think-pure \
+  --temperature 1.0
 ```
 
 ### Resources
-+ [Tutorial](/examples/README.md)
-+ [Tutorial (中文)](/examples/README_zh.md)
+
++ [Installation](https://inclusionai.github.io/AReaL/tutorial/installation.html)
++ [Quickstart](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
++ [Contributing](https://inclusionai.github.io/AReaL/contrib.html)
 
 ## Future Plan
 AReaL is under active development. We will have major releases in a weekly manner. We also highly appreciate efforts from the community as well. Here we highlight our future research and development plan. 
