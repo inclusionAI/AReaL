@@ -1,6 +1,6 @@
 # Quickstart
 
-This guide walks through a simple example of training an LLM to solve math problems.
+This guide walks through a simple example of training an LLM to solve math problems. Please make sure you have properly [installed dependencies and set up the runtime environment](installation.md).
 
 ## Dataset
 

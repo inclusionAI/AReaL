@@ -183,7 +183,7 @@ class GserverManager(AsyncWorker):
                         success = res["success"]
                         if success:
                             if "num_paused_requests" in res:
-                                logger.debug(
+                                logger.info(
                                     f"{res['num_paused_requests']} requests are interrupted "
                                     f"during updateing weights for server {server_index}: {server_url}"
                                 )

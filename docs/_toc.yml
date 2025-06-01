@@ -9,8 +9,10 @@ parts:
     - file: tutorial/installation
     - file: tutorial/quickstart
     - file: tutorial/eval
-    - file: tutorial/agent
     - file: tutorial/troubleshooting
+  - caption: Customization
+    chapters:
+    - file: customization/agent
   - caption: Developer Manual
     chapters:
     - file: developer/exp_launch
