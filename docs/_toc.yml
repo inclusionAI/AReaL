@@ -7,7 +7,7 @@ parts:
   - caption: Tutorial
     chapters:
     - file: tutorial/installation
-    - file: tutorial/training
+    - file: tutorial/quickstart
     - file: tutorial/eval
     - file: tutorial/agent
     - file: tutorial/troubleshooting

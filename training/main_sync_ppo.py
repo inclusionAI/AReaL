@@ -61,4 +61,14 @@ def main(args):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--help", action="store_true")
+    args = parser.parse_args()
+    if args.help:
+        from realhf.api.cli_args import print_config_help
+
+        print_config_help(PPOMATHConfig())
+        exit(0)
     main()

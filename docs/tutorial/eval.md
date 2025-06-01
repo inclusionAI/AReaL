@@ -1,68 +1,60 @@
 # Evaluation
 
-The evaluation code is located in the `evaluation` folder of the repository. Following the previous tutorial, trained checkpoints will be saved under `/storage/ray/experiments/checkpoints/root/`.
+The evaluation code is located in the `evaluation` folder of the repository. Following the previous tutorial, trained checkpoints will be saved under `${fileroot}/checkpoints/${USER}/${experiment_name}/${trial_name}/`.
 
 ## Setup Evaluation Environment
 
-Start a new container to execute the evaluation script. **Note**: Evaluation requires updates to certain Python libraries, so avoid using the training container for this task.
+**Note**: Evaluation requires updates to certain Python libraries, so avoid using the training container or virtual environment for this task.
+
+Under the repo directory, create a new conda environment:
 
 ```bash
-docker run -d --name areal-eval --privileged --gpus all --network host --shm-size 700g -v /storage:/storage ghcr.io/inclusionai/areal-runtime:v0.3.0 /bin/bash -c "tail -f /dev/null"
-docker exec -it areal-eval bash
+conda create -n areal-eval python=3.12
+conda activate areal-eval
 ```
 
-## Install Dependencies
-
-Execute the following commands inside the Docker container:
+Install dependencies:
 
 ```bash
-cd /storage/codes/AReaL/evaluation
-cd latex2sympy
-pip install -e .
-cd ..
-pip install -r requirements.txt 
-pip install vllm==0.8.5 --no-build-isolation
-pip install transformers==4.51.1
-pip install prettytable timeout_decorator
+bash examples/env/scripts/setup-eval-pip-deps.sh
 ```
 
 ## Run Evaluation
 
-Specify an output_path to save the test results (optional — if not specified, the results will be saved in `model_path`):
-
-```bash
-mkdir -p /storage/ray/eval_output/
-```
+Specify an output_path to save the test results. If not specified, the results will be saved in `model_path`:
 
 ### Math Eval
 
 ```bash
+cd evaluation
 nohup python eval_and_aggregate.py \
-    --model_path /storage/ray/experiments/checkpoints/root/my-exp/my-trial/epoch1epochstep20globalstep20/ \
-    --output_path /storage/ray/eval_output/ \
+    --model_path /path/to/checkpoint \
+    --output_path /path/to/outputs \
     --max_gen_tokens 32768
     --data_names math_500,aime24,amc23 \
     --prompt_type qwen3-think \
-    --task math &> /storage/ray/eval_output/eval_and_aggregate_parallel.log &
+    --task math &> eval_and_aggregate_parallel.log &
 ```
 
 ### Code Eval
+
 **Obtaining Data:**
-- Consider the size of code datasets (Because some of test cases are relatively large), we upload all our code datasets to Huggingface: [todo:upload the code dataset to Huggingface]().
+- Consider the size of code datasets (Because some of test cases are relatively large), we upload all our code datasets to [Huggingface](https://huggingface.co/inclusionAI).
 - Once you have downloaded the code dataset, place it under **`./evaluation/data/`**.
 
 **Running Eval:**
 ```bash
+cd evaluation
 nohup python eval_and_aggregate.py \
- --model_path /storage/ray/experiments/checkpoints/root/my-exp/my-trial/epoch1epochstep20globalstep20/ \
- --output_path /storage/ray/eval_output/ \
- --max_gen_tokens 32768 \
- --data_names codeforces,lcb_v5 \
- --prompt_type qwen3-think-pure \
- --num_sample_nodes 8 \
- --samples_per_node 1 \
- --n_sampling $((num_sample_nodes * samples_per_node)) \
- --task code &> /storage/ray/eval_output/eval_and_aggregate_parallel.log &
+    --model_path /path/to/checkpoint \
+    --output_path /path/to/outputs \
+    --max_gen_tokens 32768 \
+    --data_names codeforces,lcb_v5 \
+    --prompt_type qwen3-think-pure \
+    --num_sample_nodes 8 \
+    --samples_per_node 1 \
+    --n_sampling $((num_sample_nodes * samples_per_node)) \
+    --task code &> eval_and_aggregate_parallel.log &
 ```
 
 ### Command Line Parameters
@@ -77,7 +69,9 @@ nohup python eval_and_aggregate.py \
 - **`--num_sample_nodes`**: Number of multiple sampling seeds to ensure saampling diversity.
 - **`--samples_per_node`**: Number of samples to generate per seed for each problem. 
 
-## Evaluation Results
+## Logs and Evaluation Results
+
+Please check the logs under `${output_path}/math_eval_${max_gen_tokens}/logs` to check the log of each worker.
 
 The evaluation script will output a results table in the terminal:
 
@@ -116,10 +110,7 @@ For Codeforces dataset, we use the Elo ranking algorithm to evaluate model perfo
 ### Sampling Parameters
 
 - The evaluation script defaults to averaging 32 samples with temperature 1.0. For the code dataset, we set it to 8 samples.
-- We observed that the `enforce_eager` parameter in vLLM significantly impacts evaluation performance
-- When `enforce_eager=True`, we can reproduce the model performance reported in previous work
-- Without this setting, evaluation results may fall below reported performance
-- Therefore, we enforce `enforce_eager=True` during evaluation
+- We observed that the `enforce_eager` parameter in vLLM significantly impacts evaluation performance. When `enforce_eager=True`, we can reproduce the model performance reported in previous work. Without this setting, evaluation results may fall below reported performance. Therefore, we enforce `enforce_eager=True` during evaluation.
 
 ### Runtime Expectations
 

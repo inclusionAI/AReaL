@@ -1,11 +1,10 @@
 # common
-vllm
 tqdm
 datasets
-torch
-transformers==4.47.0
+transformers==4.51.1
+hf_transfer
+huggingface_hub
 python_dateutil
-flash_attn
 
 # math_eval
 sympy==1.12
@@ -14,4 +13,5 @@ word2number
 Pebble
 prettytable
 timeout-decorator
+timeout_decorator
 wandb
