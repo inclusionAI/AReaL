@@ -1,7 +1,7 @@
 #!/bin/bash
 # basic dependencies
 pip install -U pip
-pip uninstall flash-attn pynvml cugraph-dgl dask-cuda cugraph-service-server raft-dask cugraph cuml cugraph-pyg -y
+pip uninstall deepspeed flash-attn pynvml cugraph-dgl dask-cuda cugraph-service-server raft-dask cugraph cuml cugraph-pyg -y
 pip install "sglang[all]==0.4.6.post4" 
 pip install megatron-core==0.11.0 nvidia-ml-py
 pip install git+https://github.com/garrett4wade/cugae --no-build-isolation --verbose
