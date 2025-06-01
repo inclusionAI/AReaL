@@ -6,8 +6,6 @@ from typing import List, Optional
 
 from huggingface_hub import snapshot_download, try_to_load_from_cache
 
-from huggingface_hub import snapshot_download
-
 from realhf.api.cli_args import ModelTrainEvalConfig, SGLangConfig, vLLMConfig
 from realhf.api.quickstart.device_mesh import RPCAllocation
 from realhf.base import logging
