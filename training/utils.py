@@ -124,15 +124,9 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
     # Initialize ray in the Ray cluster
     env_vars = constants.get_env_vars(
         WADNB_MODE=exp_cfg.wandb.mode,
-        REAL_MODE=os.environ.get("REAL_MODE", ""),
-        CLUSTER_SPEC_PATH=os.environ.get("CLUSTER_SPEC_PATH", ""),
-        REAL_RECOVER_RUN=os.environ.get("REAL_RECOVER_RUN", ""),
-        REAL_SAVE_RECOVER_STATES=os.environ.get("REAL_SAVE_RECOVER_STATES", ""),
-        FUNCTIONCALL_SERVICE_DOMAIN=os.getenv("FUNCTIONCALL_SERVICE_DOMAIN", ""),
-        REAL_DUMP_TRACE=os.environ.get("REAL_DUMP_TRACE", "0"),
-        REAL_RECORD_PERFORMANCE=os.environ.get("REAL_RECORD_PERFORMANCE", "0"),
-        REAL_DUMP_MEMORY=os.environ.get("REAL_DUMP_MEMORY", "0"),
-        REAL_ETCD_ADDR=os.getenv("REAL_ETCD_ADDR", "localhost:2379"),
+        REAL_MODE="ray",
+        REAL_RECOVER_RUN="0",
+        REAL_SAVE_RECOVER_STATES="1",
     )
     runtime_env = {
         "env_vars": env_vars,

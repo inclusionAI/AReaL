@@ -61,5 +61,15 @@ def main_ppo_math(args):
 
 
 if __name__ == "__main__":
-    # Command: python3 training/main_async_ppo.py --config-name async-ppo-1.7b-gpu8
+    import argparse
+
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--help", action="store_true")
+    args = parser.parse_args()
+    if args.help:
+        from realhf.api.cli_args import print_config_help
+
+        print_config_help(AsyncPPOMATHConfig())
+        exit(0)
+
     main_ppo_math()

@@ -153,11 +153,8 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
     # set env vars
     BASE_ENVIRONS = constants.get_env_vars(
         REAL_MODE=args.mode.upper(),
-        CLUSTER_SPEC_PATH=cluster_spec_path,
         REAL_RECOVER_RUN="1" if is_recover_run else "0",
         REAL_SAVE_RECOVER_STATES="1" if save_recover_states else "0",
-        FUNCTIONCALL_SERVICE_DOMAIN=os.getenv("FUNCTIONCALL_SERVICE_DOMAIN", ""),
-        REAL_ETCD_ADDR=os.getenv("REAL_ETCD_ADDR", ""),
     )
     for k, v in BASE_ENVIRONS.items():
         os.environ[k] = v

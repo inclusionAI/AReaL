@@ -43,9 +43,10 @@ The key to resolving this issue is identifying the phase where the error occurs:
 #### During SGLang Generation
 - Decrease the `actor.sglang.mem_fraction_static` parameter
 - Increase the tensor parallelism degree
+- Decrease the `max_concurrent_rollouts` parameter for asynchronous RL
 
 #### During `actor_inf` or `actor_train`
-- **Adjust microbatch size**: Set parameters like `actor_train.mb_spec.max_tokens_per_mb=20480`. This parameter limits tokens per forward/backward pass and can be set as low as the maximum sequence length (including prompt)
+- **Adjust microbatch size**: Decrease the parameter `{actor_train|actor_inf}.mb_spec.max_tokens_per_mb=20480`. This parameter limits tokens per forward/backward pass and can be set as low as the maximum sequence length (including prompt)
 - **Modify parallelism strategy**: Adjust `allocation_mode` by:
   - Reducing data parallelism
   - Increasing tensor or pipeline parallelism
@@ -53,4 +54,4 @@ The key to resolving this issue is identifying the phase where the error occurs:
 
 ### CUDA Error: Out of Memory
 
-This issue may occur during data transfer. Try increasing `mem_per_xx_worker` in the CLI arguments.
+This issue may occur during data transfer. Try increasing `mem_per_model_worker` in the CLI arguments.

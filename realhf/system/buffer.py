@@ -63,7 +63,7 @@ class _TensorDictSequenceBuffer:
                     tuple(sorted(self.__storage[idx].sample.keys)),
                 )
                 if ck not in BUFFER_KEY_WARN_CACHE:
-                    logger.warning(
+                    logger.debug(
                         f"Unexpected keys in the sample. Expected keys from all MFCDef: {self.__keys}. "
                         f"Keys in the current sample: {self.__storage[idx].sample.keys}"
                     )
@@ -300,7 +300,7 @@ class AsyncIOSequenceBuffer:
                 )
 
             can_do_rpcs = {rpc.name: self._can_do_rpc(rpc) for rpc in self.rpcs}
-            logger.info(f"After putting batch, can do RPCs? {can_do_rpcs}.")
+            logger.debug(f"After putting batch, can do RPCs? {can_do_rpcs}.")
 
             self._lock.notify(len(self._rpc_names))
         return indices
@@ -348,7 +348,7 @@ class AsyncIOSequenceBuffer:
     async def get_batch_for_rpc(
         self, rpc: dfg.MFCDef
     ) -> Tuple[List[int], SequenceSample]:
-        logger.info(
+        logger.debug(
             f"MFC {rpc.name} is waiting for its input keys: {rpc.input_keys}..."
         )
         rpc_idx = self._rpc_names.index(rpc.name)
@@ -359,7 +359,7 @@ class AsyncIOSequenceBuffer:
             while not self._can_do_rpc(rpc):
                 await self._lock.wait()
 
-            logger.info(f"Input keys ({rpc.input_keys}) for MFC {rpc.name} are ready!")
+            logger.debug(f"Input keys ({rpc.input_keys}) for MFC {rpc.name} are ready!")
             self._assert_valid_indicator()
 
             ready_indices = np.nonzero(

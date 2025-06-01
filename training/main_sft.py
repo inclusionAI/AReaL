@@ -13,7 +13,7 @@ from realhf.experiments.common.sft_exp import SFTConfig
 from training.utils import run_experiment
 
 
-@hydra.main(version_base=None, config_path="configs/sft")
+@hydra.main(version_base=None, config_path="configs", config_name="sft")
 def main(args):
     # NOTE: we import logging here to avoid hydra logging overwrite
     import realhf.base.logging as logging
@@ -61,5 +61,14 @@ def main(args):
 
 
 if __name__ == "__main__":
-    # Command: python3 training/main_sft.py --config-name sft-7b-gpu8
+    import argparse
+
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--help", action="store_true")
+    args = parser.parse_args()
+    if args.help:
+        from realhf.api.cli_args import print_config_help
+
+        print_config_help(SFTConfig())
+        exit(0)
     main()

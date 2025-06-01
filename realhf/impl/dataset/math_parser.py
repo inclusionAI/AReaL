@@ -4,6 +4,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import uuid
 from typing import *
 
@@ -54,6 +55,10 @@ def parse_line(id2info, prompt_str, generated, query_id):
             f.write(json.dumps({"answer": generated, "solution": cur_solution}) + "\n")
 
     venv_python = "/sympy/bin/python3"
+    if not os.path.exists(venv_python):
+        venv_python = "sympy/bin/python3"
+    if not os.path.exists(venv_python):
+        venv_python = sys.executable
     # logger.info(f"math verify working dir: `{os.getcwd()}`")
     pro = subprocess.Popen(
         " ".join(
@@ -67,6 +72,7 @@ def parse_line(id2info, prompt_str, generated, query_id):
         shell=True,
         preexec_fn=os.setsid,
         stdout=subprocess.DEVNULL,
+        stderr=sys.stdout,
     )
     pro.wait()
     try:
@@ -131,6 +137,10 @@ def parse_lines_in_parallel(
         all_query_indices.append(query_indices)
 
     venv_python = "/sympy/bin/python3"
+    if not os.path.exists(venv_python):
+        venv_python = "sympy/bin/python3"
+    if not os.path.exists(venv_python):
+        venv_python = sys.executable
     # logger.info(f"math verify working dir: `{os.getcwd()}`")
     procs = []
     for tmp_id in tmp_ids:
@@ -148,6 +158,7 @@ def parse_lines_in_parallel(
             shell=True,
             preexec_fn=os.setsid,
             stdout=subprocess.DEVNULL,
+            stderr=sys.stdout,
         )
         procs.append(pro)
     for pro in procs:
@@ -183,7 +194,7 @@ def parse_lines_in_parallel(
 
 if __name__ == "__main__":
     sample = {
-        "answers": ["-\\frac{2}{3}"],
+        "answers": ["\\boxed{-\\frac{2}{3}}"],
         "solutions": [
             "1. **Apply the operation $\\otimes$ to the innermost parentheses first:**\n   \\[\n   (1 \\otimes 2) \\otimes 3 = \\left(\\frac{1^2}{2}\\right) \\otimes 3 = \\frac{1}{2} \\otimes 3\n   \\]\n   \\[\n   1 \\otimes (2 \\otimes 3) = 1 \\otimes \\left(\\frac{2^2}{3}\\right) = 1 \\otimes \\frac{4}{3}\n   \\]\n\n2. **Calculate each part using the definition of $\\otimes$:**\n   \\[\n   \\frac{1}{2} \\otimes 3 = \\frac{\\left(\\frac{1}{2}\\right)^2}{3} = \\frac{\\frac{1}{4}}{3} = \\frac{1}{12}\n   \\]\n   \\[\n   1 \\otimes \\frac{4}{3} = \\frac{1^2}{\\frac{4}{3}} = \\frac{1}{\\frac{4}{3}} = \\frac{3}{4}\n   \\]\n\n3. **Subtract the two results:**\n   \\[\n   \\left(\\frac{1}{12}\\right) - \\left(\\frac{3}{4}\\right) = \\frac{1}{12} - \\frac{9}{12} = -\\frac{8}{12} = -\\frac{2}{3}\n   \\]\n\n4. **Conclude with the final answer:**\n   \\[\n   \\boxed{A}\n   \\]",
             "\\boxed{-\\frac{2}{3}}",

@@ -121,7 +121,9 @@ def code_verify(id2info, generateds, query_ids, debug=False):
 
 
 if __name__ == "__main__":
-    data_list = load_jsonl("functioncall/test/test_success_dataset.jsonl")
+    data_list = load_jsonl(
+        "/storage/openpsi/data/functioncall/test/test_success_dataset.jsonl"
+    )
     id2info = defaultdict(dict)
     for item in data_list:
         id2info[item["query_id"]] = item

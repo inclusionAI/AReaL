@@ -13,7 +13,7 @@ from realhf.experiments.common.ppo_math_exp import PPOMATHConfig
 from training.utils import run_experiment
 
 
-@hydra.main(version_base=None, config_path="configs/ppo")
+@hydra.main(version_base=None, config_path="configs", config_name="sync-ppo")
 def main(args):
     # NOTE: we import logging here to avoid hydra logging overwrite
     import realhf.base.logging as logging
@@ -61,5 +61,14 @@ def main(args):
 
 
 if __name__ == "__main__":
-    # Command: python3 training/main_ppo.py --config-name ppo-1.5b-gpu32
+    import argparse
+
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--help", action="store_true")
+    args = parser.parse_args()
+    if args.help:
+        from realhf.api.cli_args import print_config_help
+
+        print_config_help(PPOMATHConfig())
+        exit(0)
     main()

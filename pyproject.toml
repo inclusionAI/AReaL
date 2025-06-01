@@ -25,6 +25,106 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
 ]
 
+dependencies = [
+    # Core ML/AI libraries
+    "torch>2.0.0",
+    "huggingface_hub",
+    "datasets",
+    "accelerate",
+    "transformers==4.51.1",
+    
+    # Scientific computing
+    "numpy<2.0.0",
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "h5py",
+    
+    # Utilities and data processing
+    "nltk",
+    "sentencepiece",
+    "einops",
+    "tqdm",
+    "rich",
+    "orjson>=3.10.16",
+    "pydantic",
+    "PyYAML",
+    "omegaconf",
+    "hydra-core",
+    "packaging",
+    "tabulate",
+    
+    # Monitoring and logging
+    "wandb",
+    "tensorboardx",
+    "colorama",
+    "colorlog",
+    "psutil",
+    "pynvml",
+    
+    # Performance and compression
+    "ninja",
+    "numba",
+    "blosc",
+    "pybind11>=2.10.0",
+    
+    # Networking and async
+    "networkx==3.3",
+    "aiofiles",
+    "aiohttp>=3.11.10",
+    "httpx>=0.28.1",
+    "pyzmq",
+    "paramiko",
+    "etcd3",
+    "protobuf<3.21",
+    
+    # Distributed computing
+    "ray",
+    "redis",
+    
+    # Web frameworks
+    "fastapi>=0.115.12",
+    "uvicorn>=0.34.2",
+    "uvloop>=0.21.0",
+    "flask",
+    
+    # Build and packaging tools
+    "build>=1.2.1",
+    "wheel>=0.43.0",
+    "setuptools>=62.3.0,<75.9",
+    "cookiecutter>2.1.1",
+    
+    # System utilities
+    "distro-info>=1.0",
+    "python-debian>=0.1.49",
+    "func_timeout",
+    
+    # Development tools (consider moving to optional dependencies)
+    "pytest",
+    "ipython",
+    "jupyter-book",
+    "sphinx",
+    "sphinx-nefertiti",
+    "black==25.1.0",
+    "isort==5.13.2",
+    "clang-format==19.1.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black==25.1.0",
+    "isort==5.13.2",
+    "clang-format==19.1.7",
+]
+
+docs = [
+    "sphinx",
+    "sphinx-nefertiti",
+    "jupyter-book",
+]
+
 [tool.setuptools.dynamic]
 version = {attr = "realhf.__version__"}
 

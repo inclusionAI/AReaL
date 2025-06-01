@@ -86,7 +86,7 @@ class FunctionExecutor:
         for level, w in enumerate(self.topo_widths):
             for _ in range(w):
                 await self.ctrl.topo_level_count.get()
-            logger.info(f"DFG level {level}. Flushing {w} function calls.")
+            logger.debug(f"DFG level {level}. Flushing {w} function calls.")
             self.stream.request(
                 handlers=list(range(self.n_model_workers)), handle_type="flush"
             )
@@ -203,7 +203,7 @@ class FunctionExecutor:
                 await asyncio.sleep(1)
 
     async def execute_step(self):
-        logger.info("Waiting for the finish of the execution graph.")
+        logger.debug("Waiting for the finish of the execution graph.")
         loop = asyncio.get_event_loop()
 
         tasks = [

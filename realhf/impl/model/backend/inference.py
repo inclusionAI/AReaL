@@ -56,7 +56,7 @@ class PipelinableInferenceEngine(model_api.PipelinableEngine):
         unique_params = params_tensor[1]
 
         if constants.parallelism_rank() == 0:
-            logger.info(
+            logger.debug(
                 f"CONFIG: default_train_mbs={self.pipe_runner.default_train_mbs} "
                 f"default_inf_mbs={self.pipe_runner.default_inf_mbs} "
                 f"num_layers(this stage)={self.module.num_layers} "
@@ -65,7 +65,7 @@ class PipelinableInferenceEngine(model_api.PipelinableEngine):
                 f"tp_size={constants.tensor_parallel_world_size()} "
             )
         if constants.data_parallel_rank() == 0:
-            logger.info(
+            logger.debug(
                 f"rank={constants.parallelism_rank()} "
                 f"stage={constants.pipe_parallel_rank()} "
                 f"layers={self.module.num_layers} "
@@ -105,7 +105,7 @@ class PipelinableInferenceEngine(model_api.PipelinableEngine):
             )
         mb_inputs, fwd_indices, bwd_indices = input_.split(mb_spec)
         if constants.parallelism_rank() == 0:
-            logger.info(
+            logger.debug(
                 f"MB spec: {mb_spec}, #mbs={len(mb_inputs)}, "
                 f"#tokens: {input_.data['packed_input_ids'].shape[0]}, "
                 f"pp_size={constants.pipe_parallel_world_size()}, "
@@ -163,7 +163,7 @@ class PipelinableInferenceEngine(model_api.PipelinableEngine):
         # mini-batches, so we split mini-batches in the outer loop.
         mb_inputs, *_ = input_.split(mb_spec)
         if constants.parallelism_rank() == 0:
-            logger.info(
+            logger.debug(
                 f"MB spec: {mb_spec}, #mbs={len(mb_inputs)}, "
                 f"#tokens: {input_.data['packed_input_ids'].shape[0]}, "
                 f"pp_size={constants.pipe_parallel_world_size()}, "

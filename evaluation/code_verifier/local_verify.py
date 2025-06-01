@@ -173,7 +173,7 @@ def evaluate(samples):
 
 
 if __name__ == "__main__":
-    # data_list = load_jsonl("functioncall/test/test_success_dataset.jsonl")
+    # data_list = load_jsonl("/storage/openpsi/data/functioncall/test/test_success_dataset.jsonl")
     data_path = "/storage/openpsi/data/code/deepcoder/deepcoder_0415_v3_verify_new_correct.jsonl"
 
     id2info = defaultdict(dict)

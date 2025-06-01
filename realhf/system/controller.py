@@ -671,14 +671,8 @@ class RayController:
 
         env_vars = constants.get_env_vars(
             REAL_MODE=os.environ.get("REAL_MODE", ""),
-            CLUSTER_SPEC_PATH=os.environ.get("CLUSTER_SPEC_PATH", ""),
             REAL_RECOVER_RUN=os.environ.get("REAL_RECOVER_RUN", ""),
             REAL_SAVE_RECOVER_STATES=os.environ.get("REAL_SAVE_RECOVER_STATES", ""),
-            FUNCTIONCALL_SERVICE_DOMAIN=os.getenv("FUNCTIONCALL_SERVICE_DOMAIN", ""),
-            REAL_DUMP_TRACE=os.environ.get("REAL_DUMP_TRACE", "0"),
-            REAL_RECORD_PERFORMANCE=os.environ.get("REAL_RECORD_PERFORMANCE", "0"),
-            REAL_DUMP_MEMORY=os.environ.get("REAL_DUMP_MEMORY", "0"),
-            REAL_ETCD_ADDR=os.getenv("REAL_ETCD_ADDR", ""),
         )
         runtime_env = {
             "env_vars": env_vars,

@@ -30,49 +30,60 @@ The following hardware configuration has been extensively tested:
 
 ## Runtime Environment
 
-We recommend using Docker with our provided image. The Dockerfile is available in the top-level directory of the AReaL repository.
+**For multi-node training**: Ensure a shared storage path is mounted on every node (and mounted to the container if you are using Docker). This path will be used to save checkpoints and logs.
 
-Pull the Docker image:
+### Option 1: Docker (Recommended)
+
+We recommend using Docker with our provided image. The Dockerfile is available in the top-level directory of the AReaL repository.
 
 ```bash
 docker pull ghcr.io/inclusionai/areal-runtime:v0.3.0
+docker run -it --name areal-node1 \
+   --privileged --gpus all --network host \
+   --shm-size 700g -v /path/to/mount:/path/to/mount \
+   ghcr.io/inclusionai/areal-runtime:v0.3.0 \
+   /bin/bash
 ```
 
-This image includes all training requirements for AReaL.
+### Option 2: Custom Environment Installation
 
-**For multi-node training**: Ensure shared storage is mounted to the `/storage` directory on every node. All downloads and resources will be stored in this directory, and the AReaL container will mount this directory to `/storage` within the container.
+1. Install [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install) or [Anaconda](https://www.anaconda.com/docs/getting-started/anaconda/install).
 
-## Code Setup
-
-Clone the AReaL project code to `/storage/codes`:
+2. Create a conda virtual environment:
 
 ```bash
-mkdir -p /storage/codes
-cd /storage/codes/
+conda create -n areal python=3.12
+conda activate areal
+```
+
+3. Install pip dependencies:
+
+```bash
 git clone https://github.com/inclusionAI/AReaL
-pip install -r AReaL/requirements.txt
+cd AReaL
+bash examples/env/scripts/setup-pip-deps.sh
 ```
 
-## Dataset
+## (Optional) Launch Ray Cluster for Distributed Training
 
-Download the provided training dataset and place it in `/storage/datasets/`:
+On the first node, start the Ray Head:
 
 ```bash
-mkdir -p /storage/datasets/
-cd /storage/datasets/
-wget https://huggingface.co/datasets/inclusionAI/AReaL-RL-Data/resolve/main/data/boba_106k_0319.jsonl?download=true
+ray start --head
 ```
 
-## Model
-
-We train using open-source models available on Hugging Face Hub. Here's an example using Qwen3 (ensure Git LFS is installed):
+On all other nodes, start the Ray Worker:
 
 ```bash
-mkdir -p /storage/models
-cd /storage/models
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/Qwen/Qwen3-1.7B
-cd Qwen3-1.7B
-git lfs pull
+# Replace with the actual IP address of the first node
+RAY_HEAD_IP=xxx.xxx.xxx.xxx
+ray start --address $RAY_HEAD_IP
 ```
 
-**Alternative**: You can also use the Hugging Face CLI to download models after installing the `huggingface_hub` package. Refer to the [official documentation](https://huggingface.co/docs/huggingface_hub/guides/cli) for details.
+You should see the Ray resource status displayed when running `ray status`.
+
+Properly set the `n_nodes` argument in AReaL's training command, then AReaL's training script will automatically detect the resources and allocate workers to the cluster.
+
+## Next Steps
+
+Check the [quickstart section](quickstart.md) to launch your first AReaL job.
