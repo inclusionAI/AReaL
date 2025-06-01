@@ -43,6 +43,9 @@ docker run -it --name areal-node1 \
    --shm-size 700g -v /path/to/mount:/path/to/mount \
    ghcr.io/inclusionai/areal-runtime:v0.3.0 \
    /bin/bash
+git clone https://github.com/inclusionAI/AReaL
+cd AReaL
+pip install -e .
 ```
 
 ### Option 2: Custom Environment Installation
