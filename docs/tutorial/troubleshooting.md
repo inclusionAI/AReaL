@@ -43,7 +43,7 @@ The key to resolving this issue is identifying the phase where the error occurs:
 #### During SGLang Generation
 - Decrease the `actor.sglang.mem_fraction_static` parameter
 - Increase the tensor parallelism degree
-- Decreate the `max_concurrent_rollouts` parameter for asynchronous RL
+- Decrease the `max_concurrent_rollouts` parameter for asynchronous RL
 
 #### During `actor_inf` or `actor_train`
 - **Adjust microbatch size**: Decrease the parameter `{actor_train|actor_inf}.mb_spec.max_tokens_per_mb=20480`. This parameter limits tokens per forward/backward pass and can be set as low as the maximum sequence length (including prompt)

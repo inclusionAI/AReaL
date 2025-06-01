@@ -4,9 +4,9 @@ The evaluation code is located in the `evaluation` folder of the repository. Fol
 
 ## Setup Evaluation Environment
 
-**Note**: Evaluation requires updates to certain Python libraries, so avoid using the training container or virtual environment for this task.
+> **Note**: Evaluation requires updates to certain Python libraries, so avoid using the training container or virtual environment for this task.
 
-Under the repo directory, create a new conda environment:
+From the repository directory, create a new conda environment:
 
 ```bash
 conda create -n areal-eval python=3.12
@@ -21,28 +21,28 @@ bash examples/env/scripts/setup-eval-pip-deps.sh
 
 ## Run Evaluation
 
-Specify an output_path to save the test results. If not specified, the results will be saved in `model_path`:
+Specify an `output_path` to save the test results. If not specified, the results will be saved in `model_path`.
 
-### Math Eval
+### Math Evaluation
 
 ```bash
 cd evaluation
 nohup python eval_and_aggregate.py \
     --model_path /path/to/checkpoint \
     --output_path /path/to/outputs \
-    --max_gen_tokens 32768
+    --max_gen_tokens 32768 \
     --data_names math_500,aime24,amc23 \
     --prompt_type qwen3-think \
     --task math &> eval_and_aggregate_parallel.log &
 ```
 
-### Code Eval
+### Code Evaluation
 
 **Obtaining Data:**
-- Consider the size of code datasets (Because some of test cases are relatively large), we upload all our code datasets to [Huggingface](https://huggingface.co/inclusionAI).
-- Once you have downloaded the code dataset, place it under **`./evaluation/data/`**.
+- Due to the size of code datasets (some test cases are relatively large), we have uploaded all our code datasets to [Hugging Face](https://huggingface.co/inclusionAI).
+- Once you have downloaded the code dataset, place it under `./evaluation/data/`.
 
-**Running Eval:**
+**Running Evaluation:**
 ```bash
 cd evaluation
 nohup python eval_and_aggregate.py \
@@ -62,16 +62,16 @@ nohup python eval_and_aggregate.py \
 - **`--model_path`**: Path to the saved model parameters
 - **`--output_path`**: Path to store generated answers and log files during evaluation
 - **`--data_names`**: Dataset(s) to evaluate. Multiple datasets can be separated by commas. Available options: 
-    - math: `math_500`, `aime24`, `aime25`, `amc23`
-    - code: `lcb_v5`, `lcb_v5_2410_2502`, `codeforces`, `code_contest_all`
+    - Math: `math_500`, `aime24`, `aime25`, `amc23`
+    - Code: `lcb_v5`, `lcb_v5_2410_2502`, `codeforces`, `code_contest_all`
 - **`--max_gen_tokens`**: Maximum length of generated answers (default: 32768)
-- **`--prompt_type`**: Specify the prompt template, for our latest model, we use `qwen3-think` for math dataset, and `qwen3-think-pure` for code dataset.
-- **`--num_sample_nodes`**: Number of multiple sampling seeds to ensure saampling diversity.
-- **`--samples_per_node`**: Number of samples to generate per seed for each problem. 
+- **`--prompt_type`**: Specify the prompt template. For our latest model, we use `qwen3-think` for math datasets and `qwen3-think-pure` for code datasets.
+- **`--num_sample_nodes`**: Number of multiple sampling seeds to ensure sampling diversity.
+- **`--samples_per_node`**: Number of samples to generate per seed for each problem.
 
 ## Logs and Evaluation Results
 
-Please check the logs under `${output_path}/math_eval_${max_gen_tokens}/logs` to check the log of each worker.
+Check `${output_path}/math_eval_${max_gen_tokens}/logs` to review the log of each worker.
 
 The evaluation script will output a results table in the terminal:
 
@@ -91,7 +91,7 @@ The evaluation script will output a results table in the terminal:
 - **`greedy_acc`**: Average accuracy under greedy sampling
 - **`sample_pass@{k}`**: Probability of generating a correct answer within `k` attempts under random sampling
 
-For Codeforces dataset, we use the Elo ranking algorithm to evaluate model performance, referring to [CodeElo](https://github.com/QwenLM/CodeElo) and [rllm](https://github.com/agentica-project/rllm):
+For the Codeforces dataset, we use the Elo ranking algorithm to evaluate model performance, referring to [CodeElo](https://github.com/QwenLM/CodeElo) and [rllm](https://github.com/agentica-project/rllm):
 
 ```
 +------------+----------------+-----------+
@@ -101,9 +101,10 @@ For Codeforces dataset, we use the Elo ranking algorithm to evaluate model perfo
 +------------+----------------+-----------+
 ```
 
-- **`CF Rating`**: The overall elo rank score of model across 57 Codeforces contests.
-- **`Percentile`**: The Elo ranking percentile of model among all Codeforces users.
-**Note**: As the penalty mechanism may cause fluctuations in Elo rankings, we suggest performing multiple evaluations and regard the average score as the final result.
+- **`CF Rating`**: The overall Elo rank score of the model across 57 Codeforces contests.
+- **`Percentile`**: The Elo ranking percentile of the model among all Codeforces users.
+
+> **Note**: As the penalty mechanism may cause fluctuations in Elo rankings, we suggest performing multiple evaluations and taking the average score as the final result.
 
 ## Configuration Details
 

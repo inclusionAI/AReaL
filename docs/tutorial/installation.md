@@ -30,9 +30,9 @@ The following hardware configuration has been extensively tested:
 
 ## Runtime Environment
 
-**For multi-node training**: Ensure a shared storage path is mounted on every node (and mounted to the container if your are using docker). This path will be used to save checkpoints and logs.
+**For multi-node training**: Ensure a shared storage path is mounted on every node (and mounted to the container if you are using Docker). This path will be used to save checkpoints and logs.
 
-### Option 1: Docker
+### Option 1: Docker (Recommended)
 
 We recommend using Docker with our provided image. The Dockerfile is available in the top-level directory of the AReaL repository.
 
@@ -45,18 +45,18 @@ docker run -it --name areal-node1 \
    /bin/bash
 ```
 
-### Option 2: Install in a custom environment
+### Option 2: Custom Environment Installation
 
-0. Install [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install) or [Anaconda](https://www.anaconda.com/docs/getting-started/anaconda/install).
+1. Install [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install) or [Anaconda](https://www.anaconda.com/docs/getting-started/anaconda/install).
 
-1. Create a conda virtual environment
+2. Create a conda virtual environment:
 
 ```bash
 conda create -n areal python=3.12
 conda activate areal
 ```
 
-2. Install pip dependencies
+3. Install pip dependencies:
 
 ```bash
 git clone https://github.com/inclusionAI/AReaL
@@ -64,7 +64,7 @@ cd AReaL
 bash examples/env/scripts/setup-pip-deps.sh
 ```
 
-## (Optinoal) Launch the Ray Cluster for distributed training
+## (Optional) Launch Ray Cluster for Distributed Training
 
 On the first node, start the Ray Head:
 
@@ -82,8 +82,8 @@ ray start --address $RAY_HEAD_IP
 
 You should see the Ray resource status displayed when running `ray status`.
 
-Propertly set the `n_nodes` argument in the AReaL' training command, then AReaL's training script will automatically detect the resources and allocate workers to the cluster.
+Properly set the `n_nodes` argument in AReaL's training command, then AReaL's training script will automatically detect the resources and allocate workers to the cluster.
 
-## Next Step
+## Next Steps
 
 Check the [quickstart section](quickstart.md) to launch your first AReaL job.
