@@ -61,5 +61,4 @@ def main(args):
 
 
 if __name__ == "__main__":
-    # Command: python3 training/main_sft.py --config-name sft-7b-gpu8
     main()

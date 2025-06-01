@@ -4,6 +4,8 @@
 import os
 from typing import List
 
+from huggingface_hub import snapshot_download
+
 from realhf.api.cli_args import ModelTrainEvalConfig, SGLangConfig, vLLMConfig
 from realhf.api.quickstart.device_mesh import RPCAllocation
 from realhf.base import logging
@@ -56,12 +58,39 @@ def check_valid_optimizer(model: ModelTrainEvalConfig):
         )
 
 
-def check_valid_model_and_path(role: str, model: ModelTrainEvalConfig):
-    if not os.path.exists(model.path):
-        raise FileNotFoundError(
-            f"The model path `{model.path}` for `{role}` does not exist locally. "
-            "You must download the HuggingFace checkpoint before loading it."
+def check_valid_model_and_path(role: str, model: ModelTrainEvalConfig, fileroot):
+    """
+    Check if model path exists locally, download from HuggingFace Hub if not.
+
+    Args:
+        role: The role identifier for the model
+        model: ModelTrainEvalConfig object containing model configuration
+
+    Returns:
+        str: The local path to the model (either existing or newly downloaded)
+
+    Raises:
+        Exception: If download fails or other errors occur
+    """
+    if os.path.exists(model.path):
+        return
+
+    logger.info(f"Model path `{model.path}` for `{role}` does not exist locally.")
+
+    # Extract model name from path or use the path as model identifier
+    # Adjust this logic based on how your ModelTrainEvalConfig stores the model identifier
+    model_name = model.path
+
+    target_path = os.path.join(fileroot, "models", model_name.replace("/", "__"))
+    if not os.path.exists(target_path):
+        # If not in cache, download to /models/ directory
+        download_path = snapshot_download(
+            repo_id=model_name,
+            local_dir=target_path,  # Replace '/' to avoid path issues
         )
+    logger.info(f"Model downloaded successfully to: {target_path}")
+    # Update the model object's path to point to the downloaded location
+    model.path = target_path
 
 
 def check_valid_parallel_batch_size(rpc_alloc: RPCAllocation):

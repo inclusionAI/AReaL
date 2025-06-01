@@ -61,5 +61,4 @@ def main(args):
 
 
 if __name__ == "__main__":
-    # Command: python3 training/main_ppo.py --config-name ppo-1.5b-gpu32
     main()

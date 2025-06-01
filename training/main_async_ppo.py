@@ -61,5 +61,4 @@ def main_ppo_math(args):
 
 
 if __name__ == "__main__":
-    # Command: python3 training/main_async_ppo.py --config-name async-ppo-1.7b-gpu8
     main_ppo_math()
