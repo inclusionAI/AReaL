@@ -1,14 +1,4 @@
-import json
-import os
-import shutil
-import signal
-import subprocess
-import sys
-import threading
-from itertools import product
 from pathlib import Path
-
-import psutil
 
 paths = {
     1: "/storage/testing/models/deepseek-ai__DeepSeek-R1-Distill-Qwen-1.5B",
@@ -136,7 +126,8 @@ def get_trial_name(model_size: int, ctx: int, n_nodes: int):
 def build_cmd(model_size: int, ctx: int, n_nodes: int):
     trial_name = get_trial_name(model_size, ctx, n_nodes)
     allocation_mode = get_allocation_mode(model_size=model_size, n_nodes=n_nodes)
-    cli_args = yaml_to_cli_args("benchmark/verl_312a8cb/areal_config.yaml")
+    config_path = Path(__file__).parent / "areal_config.yaml"
+    cli_args = yaml_to_cli_args(str(config_path))
     cmd = (
         ["python3", "training/main_async_ppo.py"]
         + cli_args
