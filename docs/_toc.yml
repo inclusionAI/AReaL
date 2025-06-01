@@ -13,6 +13,7 @@ parts:
   - caption: Customization
     chapters:
     - file: customization/agent
+    - file: customization/dataset
   - caption: Developer Manual
     chapters:
     - file: developer/exp_launch
