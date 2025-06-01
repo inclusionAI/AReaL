@@ -10,6 +10,7 @@ pip install flash-attn --no-build-isolation
 # the sympy virtual env for reward computation
 pip install virtualenv
 python3 -m venv ./sympy
+# equivalent to install `./evaluation/latex2sympy` in the sympy virtual env
 ./sympy/bin/pip install git+https://github.com/QwenLM/Qwen2.5-Math.git#subdirectory=evaluation/latex2sympy
 ./sympy/bin/pip install regex numpy tqdm datasets python_dateutil sympy==1.12 antlr4-python3-runtime==4.11.1 word2number Pebble timeout-decorator prettytable
 
