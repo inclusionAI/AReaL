@@ -1551,7 +1551,7 @@ class ModelWorker(worker_base.Worker):
         # Log GPU utilization and memory statistics.
         utilization = pynvml.nvmlDeviceGetUtilizationRates(self.__nvml_handle)  # bytes
         memory_info = pynvml.nvmlDeviceGetMemoryInfo(self.__nvml_handle)  # bytes
-        kill_threshold = float(os.environ.get("REAL_GPU_MEMORY_KILL_THRESHOLD", "0.95"))
+        kill_threshold = float(os.environ.get("REAL_GPU_MEMORY_KILL_THRESHOLD", "1.0"))
         if memory_info.used / memory_info.total > kill_threshold:
             raise RuntimeError(
                 f"GPU memory excceeds kill threshold {kill_threshold:.2f}. "

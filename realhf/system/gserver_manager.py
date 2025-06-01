@@ -250,11 +250,25 @@ class GserverManager(AsyncWorker):
             # but we can acutally update them individually
             new_param_path = self.check_new_params()
             if new_param_path is not None:
-                tasks = [
-                    self.flush_requests_and_update_weights(base_url, new_param_path)
-                    for base_url in self.server_urls
-                ]
-                await asyncio.gather(*tasks)
+
+                def _run_in_thread():
+                    # Create a new event loop for this thread
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    tasks = [
+                        self.flush_requests_and_update_weights(base_url, new_param_path)
+                        for base_url in self.server_urls
+                    ]
+                    try:
+                        return new_loop.run_until_complete(asyncio.gather(*tasks))
+                    finally:
+                        new_loop.close()
+
+                from concurrent.futures import ThreadPoolExecutor
+
+                with ThreadPoolExecutor() as executor:
+                    future = executor.submit(_run_in_thread)
+                    _ = future.result()
                 logger.info(f"Generaion server updated weights from: {new_param_path}")
 
         if self.schedule_policy == "least_token_usage":
@@ -460,7 +474,7 @@ class GserverManager(AsyncWorker):
                     self.rollout_stat.accepted += 1
                 logger.debug(
                     f"Finish rollout for qid {resp_meta.qid}. "
-                    f"Running: {self.rollout_stat.running}, "
+                    f"Submit: {self.rollout_stat.submitted}, "
                     f"running: {self.rollout_stat.running}, "
                     f"accepted: {self.rollout_stat.accepted}"
                 )

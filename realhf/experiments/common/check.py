@@ -96,8 +96,47 @@ def check_valid_model_and_path(role: str, model: ModelTrainEvalConfig, fileroot)
         snapshot_download(
             repo_id=model_name,
             local_dir=target_path,  # Replace '/' to avoid path issues
-            local_dir_use_symlinks=False,
         )
+    logger.info(f"Model downloaded successfully to: {target_path}")
+    model.path = target_path
+
+
+def _check_huggingface_cache(model_name: str) -> Optional[str]:
+    """
+    Check if a model exists in the HuggingFace cache.
+
+    Args:
+        model_name: The HuggingFace model identifier (e.g., 'bert-base-uncased')
+
+    Returns:
+        Optional[str]: Path to cached model if found, None otherwise
+    """
+    # Try to find the model files in cache
+    # We'll check for common files that should exist in a model repo
+    common_files = [
+        "config.json",
+        "pytorch_model.bin",
+        "model.safetensors",
+        "tf_model.h5",
+    ]
+
+    cached_path = None
+    for filename in common_files:
+        file_path = try_to_load_from_cache(
+            repo_id=model_name, filename=filename, repo_type="model"
+        )
+        if file_path is not None:
+            # Get the directory containing the cached file
+            cached_path = os.path.dirname(file_path)
+            break
+
+    # Verify the cached directory exists and contains model files
+    if cached_path and os.path.exists(cached_path):
+        # Double-check that it's a valid model directory
+        if any(os.path.exists(os.path.join(cached_path, f)) for f in common_files):
+            return cached_path
+
+    return None
 
     logger.info(f"Model downloaded successfully to: {target_path}")
     # Update the model object's path to point to the downloaded location

@@ -619,5 +619,5 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
         for alloc in rpc_allocs:
             check_valid_parallel_batch_size(alloc)
         for role, model in self.models.items():
-            check_valid_model_and_path(role, model)
+            check_valid_model_and_path(role, model, self.cluster.fileroot)
             check_valid_optimizer(model)
