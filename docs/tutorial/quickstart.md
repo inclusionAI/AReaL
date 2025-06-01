@@ -2,44 +2,20 @@
 
 We will go over a simple example of training an LLM to solve math problems.
 
-## Setup
+## Dataset
 
-### Option 1: Docker
-
-We recommend using Docker with our provided image. The Dockerfile is available in the top-level directory of the AReaL repository.
-
-```bash
-docker pull ghcr.io/inclusionai/areal-runtime:v0.3.0
-```
-
-### Option 2: Install in a custom environment
-
-0. Install [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install) or [Anaconda](https://www.anaconda.com/docs/getting-started/anaconda/install).
-
-1. Create a conda virtual environment
-
-```bash
-conda create -n areal python=3.12
-conda activate areal
-```
-
-2. Install pip dependencies
-
-```bash
-git clone https://github.com/inclusionAI/AReaL
-cd AReaL
-bash examples/env/scripts/setup-pip-deps.sh
-```
-
-### Dataset
-
-Use `huggingface-cli`.
+Use `huggingface-cli` to download our open-source dataset.
 
 ```bash
 huggingface-cli download --repo-type=dataset inclusionAI/AReaL-RL-Data
 ```
 
-### Model
+```{note}
+The above command will prompt you the path of the downloaded dataset.
+The user should pass it to the training command.
+```
+
+## Model
 
 We train using open-source models available on Hugging Face Hub. You can either download it in advance or use the model identifier when running the experiment.
 
@@ -49,24 +25,6 @@ huggingface-cli download Qwen/Qwen3-1.7B
 ```
 
 Refer to the [official documentation](https://huggingface.co/docs/huggingface_hub/guides/cli) for using `huggingface-cli`.
-
-## (Optinoal) Launch the Ray Cluster for distributed training
-
-On the first node, start the Ray Head:
-
-```bash
-ray start --head
-```
-
-On all other nodes, start the Ray Worker:
-
-```bash
-# Replace with the actual IP address of the first node
-RAY_HEAD_IP=xxx.xxx.xxx.xxx
-ray start
-```
-
-You should see the Ray resource status displayed when running `ray status`. Propertly set the `n_nodes` argument, then AReaL's training script will automatically detect the resources and allocate workers to the cluster.
 
 ## Training
 
@@ -124,6 +82,8 @@ python3 training/main_sync_ppo.py --help
 
 We recommend using Weights & Biases (wandb) for monitoring. Run `wandb login` or set the `WANDB_API_KEY` environment variable. Set `wandb.mode=True` in your configuration to upload training statistics.
 
+You can also use tensorboard by passing `tensorboard.path`.
+
 The main log will be saved to `${fileroot}/logs/${USER}/${experiment_name}/${trial_name}/main.log` and contains the statistics uploaded to wandb.
 
 ### Key Training Statistics
@@ -138,4 +98,4 @@ The main log will be saved to `${fileroot}/logs/${USER}/${experiment_name}/${tri
 
 ## Next Step
 
-Evaluate your model according to [the tutorial](eval.md) or check the [troubleshooting section](troubleshooting.md) if you encounter any issues.
+[Evaluate your model](eval.md) or check the [troubleshooting section](troubleshooting.md) if you encounter any issues.
