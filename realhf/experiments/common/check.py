@@ -6,8 +6,6 @@ from typing import List, Optional
 
 from huggingface_hub import snapshot_download, try_to_load_from_cache
 
-from huggingface_hub import snapshot_download
-
 from realhf.api.cli_args import ModelTrainEvalConfig, SGLangConfig, vLLMConfig
 from realhf.api.quickstart.device_mesh import RPCAllocation
 from realhf.base import logging
@@ -98,33 +96,9 @@ def check_valid_model_and_path(role: str, model: ModelTrainEvalConfig, fileroot)
         snapshot_download(
             repo_id=model_name,
             local_dir=target_path,  # Replace '/' to avoid path issues
-            local_dir_use_symlinks=False,
         )
-        model.path = target_path
-        return
-
-    # First, check if model exists in HuggingFace cache
-    logger.info(f"Checking HuggingFace cache for model: {model_name}")
-    cached_path = _check_huggingface_cache(model_name)
-    if cached_path:
-        logger.info(f"Found model in HuggingFace cache: {cached_path}")
-        logger.info(f"Creating symlink to {fileroot}/models/ directory...")
-        # Create symlink pointing to cache
-        os.symlink(cached_path, target_path)
-        model.path = target_path
-        return
-
-    # If not in cache, download to /models/ directory
-    logger.info(f"Model not found in cache. Downloading from HuggingFace Hub...")
-    download_path = snapshot_download(
-        repo_id=model_name,
-        local_dir=target_path,  # Replace '/' to avoid path issues
-        local_dir_use_symlinks=False,
-    )
-
-    logger.info(f"Model downloaded successfully to: {download_path}")
-    # Update the model object's path to point to the downloaded location
-    model.path = download_path
+    logger.info(f"Model downloaded successfully to: {target_path}")
+    model.path = target_path
 
 
 def _check_huggingface_cache(model_name: str) -> Optional[str]:
