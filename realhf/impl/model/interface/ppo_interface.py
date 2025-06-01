@@ -49,11 +49,13 @@ def topk(scores, gen_lengths, k) -> list:
     return [idx for idx, _ in sorted_indices]
 
 
+@torch.compile
+@torch.no_grad()
 def calc_entropy(logits, cu_seqlens):
     leave_one_indices = build_leave_one_indices(logits, cu_seqlens)
-    probs = torch.nn.functional.softmax(logits, dim=-1)
+    probs = torch.nn.functional.softmax(logits.detach(), dim=-1)
     entropy = -torch.sum(probs * torch.log(probs + 1e-7), dim=-1)[leave_one_indices]
-    return entropy.detach()
+    return entropy
 
 
 def _ppo_actor_loss_from_model_outputs(
