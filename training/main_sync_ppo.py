@@ -57,6 +57,14 @@ def main(args):
 
     kind_reminder("ppo-math", logger, args)
 
+    logger.warning(
+        f"Synchronous PPO is not recommended for production and customization. "
+        "Run asynchronous PPO with `ppo.recompute_logprob=False`, "
+        "`ppo.use_decoupled_loss=False`, and `max_head_offpolicyness=0` "
+        "will essentially replicate the synchronous PPO behavior, but "
+        "is easier to customize and more stable."
+    )
+
     run_experiment(args, exp_name, trial_name)
 
 
