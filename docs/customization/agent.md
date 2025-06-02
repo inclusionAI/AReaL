@@ -1,6 +1,8 @@
-# Agentic RL
+# Rollout and Agentic RL
 
-This guide provides an example of training a multi-turn math agent using end-to-end RL. The math agent will continuously attempt to think through and solve math problems until it reaches the correct answer.
+This guide provides an example of modifying the rollout behavior for PPO training.
+
+In particular, we implement a multi-turn math agent using end-to-end RL. The math agent will continuously attempt to think through and solve math problems until it reaches the correct answer.
 
 ## Define Your Agent
 
