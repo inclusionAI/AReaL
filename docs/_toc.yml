@@ -14,13 +14,19 @@ parts:
     chapters:
     - file: customization/dataset
     - file: customization/agent
-  - caption: Developer Manual
+  - caption: Code Walkthrough
     chapters:
-    - file: developer/exp_launch
-    - file: developer/master_worker
-    - file: developer/model_worker
-    - file: developer/algo_interface
-    - file: developer/allocation_parallel
+    - file: developer/overview
+    - file: developer/trainer
+      sections:
+        - file: developer/trainer/master_worker
+        - file: developer/trainer/model_worker
+        - file: developer/trainer/algo_interface
+        - file: developer/trainer/allocation_parallel
+    - file: developer/rollout
+      sections:
+        - file: developer/rollout/gserver
+        - file: developer/rollout/rollout_worker
   - caption: References
     chapters:
     - file: references/benchmark
