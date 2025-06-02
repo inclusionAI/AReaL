@@ -73,12 +73,6 @@ def __getitem__(self, idx):
     )
 ```
 
-#### Configuration Parameters:
-
-- `filter_threshold`: Score threshold above which samples may be removed
-- `max_filter_percentage`: Maximum percentage of dataset to filter in one call
-- `active_indices`: Internal list tracking which samples are currently active
-
 ### Dataset Examples
 
 We provide some examples of dataset under `realhf/impl/dataset/`:
