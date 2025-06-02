@@ -12,6 +12,7 @@ parts:
     - file: tutorial/troubleshooting
   - caption: Customization
     chapters:
+    - file: customization/dataset
     - file: customization/agent
   - caption: Developer Manual
     chapters:
