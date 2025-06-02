@@ -12,8 +12,8 @@ parts:
     - file: tutorial/troubleshooting
   - caption: Customization
     chapters:
-    - file: customization/agent
     - file: customization/dataset
+    - file: customization/agent
   - caption: Developer Manual
     chapters:
     - file: developer/exp_launch
