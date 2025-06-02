@@ -21,6 +21,9 @@ parts:
     - file: developer/model_worker
     - file: developer/algo_interface
     - file: developer/allocation_parallel
+  - caption: References
+    chapters:
+    - file: references/benchmark
   - caption: Contributing
     chapters:
     - file: contrib
