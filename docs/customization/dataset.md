@@ -1,4 +1,4 @@
-# Dataset Customization
+# Dataset
 
 This guide provides detailed examples of how to create custom datasets in AReaL for model training.
 

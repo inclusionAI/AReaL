@@ -14,6 +14,7 @@ parts:
     chapters:
     - file: customization/dataset
     - file: customization/agent
+    - file: customization/algorithm
   - caption: Code Walkthrough
     chapters:
     - file: developer/overview

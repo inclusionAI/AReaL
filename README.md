@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-| <a href="https://inclusionai.github.io/AReaL/"><b>Documentation</b></a> | <a href="https://deepwiki.com/inclusionAI/AReaL"><b>Ask DeepWiki</b></a> |
+| <a href="https://arxiv.org/pdf/2505.24298"><b>Paper</b></a> | <a href="https://inclusionai.github.io/AReaL/"><b>Documentation</b></a> | <a href="https://deepwiki.com/inclusionAI/AReaL"><b>Ask DeepWiki</b></a> |
 </p>
 
 <img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
@@ -115,6 +115,11 @@ python eval_and_aggregate.py \
 
 + [Installation](https://inclusionai.github.io/AReaL/tutorial/installation.html)
 + [Quickstart](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
++ [Code Walkthrough](https://inclusionai.github.io/AReaL/developer/overview.html)
++ **Customization Guide**
+  + [Dataset](https://inclusionai.github.io/AReaL/customization/dataset.html)
+  + [Rollout Behavior (Agentic RL)](https://inclusionai.github.io/AReaL/customization/agent.html)
+  + [Training Algorithm](https://inclusionai.github.io/AReaL/customization/algorithm.html)
 + [Contributing](https://inclusionai.github.io/AReaL/contrib.html)
 
 ## Future Plan
@@ -122,15 +127,15 @@ AReaL is under active development. We will have major releases in a weekly manne
 
 ### System Development
 - [x] Support for SGLang.
-- [ ] RL training with coding problems.
-- [ ] Asynchronous generation and RL training.
+- [x] RL training with coding problems.
+- [x] Asynchronous generation and RL training.
 - [ ] Optimizations for distributed training: expert parallel and zero-bubble pipelining.
 - [ ] RL for vision-language models (VLM).
 - [ ] Function calling and agent capabilities.
 
 ### Algorithm Development
 - [x] RL training receipes for 1.5B and 7B models.
-- [ ] A complete RL training receipe for 32B models.
+- [x] A complete RL training receipe for 32B models.
 - [ ] Sample-efficient multi-task RL algorithms.
 - [ ] Agentic capabilities with end-to-end RL.
 - [ ] Stable RL training for larger MOE models.
