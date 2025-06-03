@@ -37,7 +37,6 @@ torch_cache_mysophobia: true
 cache_clear_freq: 1
 
 # Asynchronous RL options
-new_tokens_per_chunk: 10000000000
 max_head_offpolicyness: 4
 n_rollout_workers: null
 max_concurrent_rollouts: null

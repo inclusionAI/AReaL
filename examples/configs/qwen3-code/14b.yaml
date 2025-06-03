@@ -33,7 +33,6 @@ exp_ctrl:
   benchmark_n_seqs: null
 torch_cache_mysophobia: true
 cache_clear_freq: 1
-new_tokens_per_chunk: 1024
 max_head_offpolicyness: 16
 n_rollout_workers: null
 max_concurrent_rollouts: 512
