@@ -8,7 +8,7 @@
 
 <img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
 
-AReaL (Ant Reasoning RL) is an open-sourced **fully asynchronous reinforcement learning training system** for large reasoning models developed at **the RL Lab, Ant Research**, built upon the open-source project [RealHF](https://github.com/openpsi-project/ReaLHF). We fully commit to open-source by opening training details, data and infra required to reproduce the results along with the model itself. AReaL aims to help everyone build their own AI agents easily and affordably. Our team loves milk tea as it is delicious, customizable, and affordable. We hope you all enjoy our project just like how you enjoy a real-world milk tea. 🧋
+AReaL (Ant Reasoning RL) is an open-sourced **fully asynchronous reinforcement learning training system** for large reasoning models developed at **the RL Lab, Ant Research**, built upon the open-source project [RealHF](https://github.com/openpsi-project/ReaLHF). We fully commit to open-source by opening training details, data and infra required to reproduce the results along with the model itself. AReaL aims to help everyone build their own AI agents easily and affordably. Our team loves milk tea as it is delicious, customizable, and affordable. We hope you all enjoy our project just like how you enjoy a real-world milk tea (cheers).
 
 **AReaL Highlights**
 
@@ -30,7 +30,7 @@ AReaL (Ant Reasoning RL) is an open-sourced **fully asynchronous reinforcement l
 In our AReaL-boba² (A-ReaL-double-boba) release, we highlight the top 3 most important features:
 
 + A fully asynchronous RL training pipeline with **system and RL algorithm co-design**, achieving [over 2.77x speedup](https://github.com/inclusionAI/AReaL/tree/main/benchmark) without any performance drop.
-+ SOTA coding models, i.e., a 14B model with a **69.1 score on LCB-v5**. [Reproducible results](https://inclusionai.github.io/AReaL/references/reproduce.htmls/reproduce.html) with fully open-sourced datasets are also provided.
++ SOTA coding models, i.e., a 14B model with a **69.1 score on LCB-v5**. [Reproducible results](https://inclusionai.github.io/AReaL/references/reproduce.html) with fully open-sourced datasets are also provided.
 + Experimental support for **multi-turn** agentic RL training.
 
 For the complete system design and training details, please check [our v0.3 blog](/blog/AReaL_v0_3.md) and our [research paper](about:blank) for a more comprehensive presentation of our system design.

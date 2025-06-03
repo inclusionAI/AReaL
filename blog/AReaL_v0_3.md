@@ -57,6 +57,7 @@ Synchronous systems distribute generation across all devices, reducing the per-G
 We design a system that fully decouples generation and training across separate GPU clusters. This system should be hardware-efficient, scalable, and equipped with the flexibility for a customized RL workflow. We implement these principles in AReaL. Fig.3 presents the architecture and data flow of AREAL. The system comprises 4 core components:
 
 ![](/assets/arch.png)
+
 *Fig.3 The architecture featuring asynchronous generation and training components.*
 
 ### Core Components
@@ -122,6 +123,7 @@ We compared synchronous and asynchronous training on 1.5B and 7B models. Under e
 We ablate interruptible generation and present the resulting generation throughput in Fig.5. Without interruptible generation, the controller must wait for the longest response. In particular, interruptible generation leads to a 12% and 17% throughput increase for 1.5B and 7B models respectively on 4 nodes.
 
 ![](/assets/interrupt_gen_ablation.png)
+
 *Fig.5 Ablation study of interruptible generation.*
 
 #### Algorithm Ablations
@@ -129,6 +131,7 @@ We ablate interruptible generation and present the resulting generation throughp
 We vary the maximum allowed staleness η and compare configurations with and without the decoupled PPO objective. Fig.6 shows the learning curves after 1000 PPO updates, demonstrating that naive PPO fails to match the performance of the synchronous RL oracle (i.e., the performance when η = 0). Even slight staleness can significantly degrade final performance due to the improper clipping center and policy changes during interruptible generation. Furthermore, increasing data staleness consistently degrades learning performance.
 
 ![](/assets/algo_ablation.png)
+
 *Fig.6 Left: Learning curves with naive PPO. Right: Learning curves with decoupled PPO objective.*
 
 | η | **AIME 24** | | **AIME 25** | |
