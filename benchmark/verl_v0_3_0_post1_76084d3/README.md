@@ -8,10 +8,16 @@ We compare against the latest release of verl (v0.3.0.post1) as of May 7, 2025.
 
 ## How to Reproduce
 
+### verl
+
+We provide code and instructions [in this repo](https://github.com/garrett4wade/verl-benchmark/blob/main/readme_benchmark.md).
+
+### AReaL
+
 Run `build_cmd.py` to generate the CLI command to run AReaL:
 
 ```bash
-python3 benchmark/verl_v0_3_1_312a8cb/build_cmd.py --model-size 1 --ctx 32768 --n-nodes 4
+python3 benchmark/verl_v0_3_1_76084d3/build_cmd.py --model-size 1 --ctx 32768 --n-nodes 4
 ```
 
 The above command generates the command to run AReaL with `DeepSeek-R1-Distill-Qwen-1.5B` using 32k context length (31k generation length) on 4 nodes (32 GPUs). You can choose `model_size` from [1, 7, 32] and `n_nodes` from [4, 8, 16, 32, 64].
