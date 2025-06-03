@@ -32,6 +32,8 @@ We now release AReaL v0.3, featuring three major milestones:
 
 *Table 1: Coding Task Performance Comparison. AReaL-boba²-8B/14B-Open denotes training results on open-sourced data. AReaL-boba²-8B/14B models are trained with an additional small amount of internal data and achieve SOTA performance on LiveCodeBench, Codeforce & CodeContests.*
 
+To access our latest models and training data, please visit this (Huggingface Link)[https://huggingface.co/collections/inclusionAI/areal-boba-2-683f0e819ccb7bb2e1b2f2d5].
+
 ## Motivation for Asynchronous RL System
 
 ### Inference devices are underutilized
