@@ -1,10 +1,10 @@
 experiment_name: qwen3-8b-code
 trial_name: my-trial
 seed: 1
-mode: slurm
+mode: ray
 metric_discovery_port: 0
 wandb:
-  mode: online
+  mode: disbled
   entity: null
   project: null
   name: null
