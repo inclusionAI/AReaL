@@ -1,11 +1,10 @@
-# Basic experiment info
-experiment_name: async-ppo
+experiment_name: qwen3-8b-code
 trial_name: my-trial
 seed: 1
 mode: ray
-metric_discovery_port: 17997
+metric_discovery_port: 0
 wandb:
-  mode: disabled
+  mode: disbled
   entity: null
   project: null
   name: null
@@ -19,11 +18,10 @@ tensorboard:
 recover_mode: auto
 recover_retries: 10
 recover_after: 10
-
 exp_ctrl:
-  total_train_epochs: 5
-  save_freq_epochs: 1
-  save_freq_steps: null
+  total_train_epochs: 10
+  save_freq_epochs: null
+  save_freq_steps: 20
   save_freq_secs: null
   ckpt_freq_epochs: null
   ckpt_freq_steps: null
@@ -35,38 +33,28 @@ exp_ctrl:
   benchmark_n_seqs: null
 torch_cache_mysophobia: true
 cache_clear_freq: 1
-
-# Asynchronous RL options
-max_head_offpolicyness: 4
+max_head_offpolicyness: 16
 n_rollout_workers: null
-max_concurrent_rollouts: null
+max_concurrent_rollouts: 512
 flush_request_timeout: 300
-
-# Asynchronous worker resources
 cpus_per_generation_server: 4
 mem_per_generation_server: 61440
 cpus_per_gserver_manager: 4
 mem_per_gserver_manager: 10240
 cpus_per_rollout_worker: 4
 mem_per_rollout_worker: 20480
-
-# Allocation and parallelism
-allocation_mode: sglang.d4p1m1+d2p2m1
-n_nodes: 1
+allocation_mode: sglang.d80m2p1+d4m2p4
+n_nodes: 24
 n_gpus_per_node: 8
-
-# Cluster configuration
 ray_temp_path: /tmp/ray
 cluster:
-  fileroot: /storage/ray/experiments
+  fileroot: /home/admin/.cache/realhf
   n_nodes: 32
   n_gpus_per_node: 8
-
-# Model
 actor:
   type:
     _class: qwen3
-  path: /storage/openpsi/models/Qwen3-1.7B/
+  path: /storage/testing/models/Qwen__Qwen3-8B/
   init_from_scratch: false
   gradient_checkpointing: true
   bf16: false
@@ -107,14 +95,14 @@ actor:
     enable_nan_detection: false
     enable_p2p_check: false
     triton_attention_reduce_in_fp32: false
-    triton_attention_num_kv_splits: 8
+    triton_attention_num_kv_splits: 16
     num_continuous_decode_steps: 1
     enable_memory_saver: false
     allow_auto_truncate: false
     attention_backend: flashinfer
     sampling_backend: null
-    context_length: 32768
-    mem_fraction_static: 0.8
+    context_length: 30720
+    mem_fraction_static: 0.7
     max_running_requests: null
     chunked_prefill_size: -1
     max_prefill_tokens: 32768
@@ -133,7 +121,7 @@ actor:
 ref:
   type:
     _class: qwen3
-  path: /storage/openpsi/models/Qwen3-1.7B/
+  path: /storage/testing/models/Qwen__Qwen3-8B/
   init_from_scratch: false
   bf16: false
 actor_train:
@@ -145,21 +133,17 @@ ref_inf:
 actor_inf:
   mb_spec:
     max_tokens_per_mb: 30720
-
-# Dataset
 shuffle_dataset: true
 dataset:
-  path: /storage/datasets/boba_106k_0319.jsonl
-  max_prompt_len: 1024
-  train_bs_n_seqs: 512
-
-# Algorithm
+  path: /path/to/dataset.jsonl
+  max_prompt_len: 2048
+  train_bs_n_seqs: 128
 group_size: 16
 mask_too_long: false
 group_adv_norm: false
 rw_type: sparse
-success_rate_ub: 1.0
-success_rate_lb: 0.0
+success_rate_ub: 0.95
+success_rate_lb: 0.05
 ppo:
   gen:
     n: 1
@@ -167,9 +151,9 @@ ppo:
     min_new_tokens: 0
     greedy: false
     top_p: 1.0
-    top_k: 1000000
+    top_k: 100000000
     temperature: 1.0
-  ppo_n_minibatches: 4
+  ppo_n_minibatches: 1
   eps_clip: 0.2
   c_clip: null
   value_eps_clip: 0.2
@@ -188,9 +172,7 @@ ppo:
   disable_value: true
   recompute_logprob: true
   use_decoupled_loss: true
-  behav_imp_weight_cap: null
-
-# worker resources
+  behav_imp_weight_cap: 5.0
 cpus_per_master_worker: 4
 mem_per_master_worker: 20000
 cpus_per_model_worker: 4
