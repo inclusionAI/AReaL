@@ -3,6 +3,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import json
+import os
 import sys
 import traceback
 from collections import defaultdict
@@ -36,9 +37,10 @@ def check_code_metadata_entries(data):
         data["problem_id"] = data["query_id"]
     assert isinstance(data["prompt"], str)
     case_size = sys.getsizeof(data["input_output"])
-    assert (
-        case_size < 500 * 1024
-    ), f"'input_output' exceeds 500KB ({case_size} bytes). Use remote testcase instead."
+    if not os.getenv("FUNCTIONCALL_SERVICE_DOMAIN", ""):
+        assert (
+            case_size < 500 * 1024
+        ), f"'input_output' exceeds 500KB ({case_size} bytes). Use remote testcase instead."
     input_output = json.loads(data["input_output"])
     assert len(input_output["inputs"]) == len(input_output["outputs"])
     for inp, out in zip(input_output["inputs"], input_output["outputs"]):

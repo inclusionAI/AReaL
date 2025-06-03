@@ -1,6 +1,6 @@
 # Quickstart
 
-This guide walks through a simple example of training an LLM to solve math problems. Please make sure you have properly [installed dependencies and set up the runtime environment](installation.md).
+This guide walks you through a simple example of training an LLM to solve math problems. Please ensure you have properly [installed dependencies and set up the runtime environment](installation.md) before proceeding.
 
 ## Dataset
 
@@ -10,7 +10,7 @@ Use `huggingface-cli` to download our open-source dataset:
 huggingface-cli download --repo-type=dataset inclusionAI/AReaL-RL-Data
 ```
 
-> **Note**: The above command will display the path of the downloaded dataset. You'll need to pass this path to the training command.
+> **Note**: The command above will display the path of the downloaded dataset. You'll need to pass this path to the training command.
 
 ## Model
 
@@ -29,21 +29,28 @@ From the repository directory, run:
 
 ```bash
 # examples/run_async_ppo.sh
-python3 training/main_sync_ppo.py \
+python3 training/main_async_ppo.py \
     n_nodes=1 n_gpus_per_node=8 \
     allocation_mode=sglang.d4p1m1+d2p2m1 \
     cluster.fileroot=/path/to/save/logs/checkpoints/ \
     actor.type._class=qwen3 \
-    actor.path=/path/to/models/Qwen__Qwen3-1.7B \
+    actor.path=Qwen/Qwen3-1.7B \
     ref.type._class=qwen3 \
-    ref.path=/path/to/models/Qwen__Qwen3-1.7B \
-    dataset.path=/path/to/dataset/boba_106k_0319.jsonl \
+    ref.path=Qwen/Qwen3-1.7B \
+    dataset.path=/path/to/boba_106k_0319.jsonl \
     dataset.train_bs_n_seqs=32 \
     group_size=8 \
     ppo.gen.max_new_tokens=4096 \
     ppo.ppo_n_minibatches=4 \
-    actor_train.mb_spec.max_tokens_per_mb=32768
+    actor_train.mb_spec.max_tokens_per_mb=32768 \
+    actor_inf.mb_spec.max_tokens_per_mb=32768 \
+    max_concurrent_rollouts=16 \
+    max_head_offpolicyness=4
 ```
+
+::::{important}
+Running `main_async_ppo.py` with `ppo.recompute_logprob=False`, `ppo.use_decoupled_loss=False`, and `max_head_offpolicyness=0` will essentially replicate the behavior of synchronous PPO. Therefore, it's usually not recommended to run synchronous PPO directly (i.e., `main_sync_ppo.py`). The workflow of asynchronous RL is more stable and easier to customize.
+::::
 
 ## Command Line Options
 
@@ -76,13 +83,15 @@ python3 training/main_sync_ppo.py --help
 ### Memory and Performance
 
 - **`{actor_train|ref_inf|actor_inf}.mb_spec.max_tokens_per_mb`**: Maximum tokens per mini-batch for forward/backward passes during reference model inference and actor model training. Reduce this value to avoid OOM errors.
-- **`ppo.ppo_n_minibatches`**: Number of mini-batches for dividing data during each PPO update.
+- **`max_concurrent_rollouts`**: The maximum number of concurrent rollouts. SGLang will run out of memory if this value is too large. Defaults to `dataset.train_bs_n_seqs`.
 
-### PPO Configuration
+### Algorithm Configuration
 
+- **`max_head_offpolicyness`**: The allowed maximum data staleness. 0 recovers synchronous training. A large value will increase generation throughput but degrade final performance. We recommend keeping this value at 8 or below.
 - **`ppo.recompute_logprob`**: Whether to compute proximal log probabilities for training. Defaults to True for asynchronous experiments and False for synchronous baselines.
 - **`ppo.use_decoupled_loss`**: Use decoupled loss to stabilize asynchronous training. Defaults to True.
 - **`ppo.gen.max_new_tokens`**: Maximum tokens to generate per prompt.
+- **`ppo.ppo_n_minibatches`**: Number of mini-batches for dividing data during each PPO update.
 
 ## Monitoring the Training Process
 
@@ -94,13 +103,13 @@ The main log will be saved to `${fileroot}/logs/${USER}/${experiment_name}/${tri
 
 ### Key Training Statistics
 
-- **`Epoch 1/5`**: Indicates total epochs required and current epoch being trained.
-- **`step 6/19`**: Shows the current epoch has 19 steps, with the 6th step just completed.
+- **`Epoch 1/5`**: Indicates the total epochs required and the current epoch being trained.
+- **`step 6/19`**: Shows that the current epoch has 19 steps, with the 6th step just completed.
 - **`global step 6`**: Step count across all epochs.
-- **`ppo_actor/task_reward/avg`**: Average reward value of all sampled responses in this step. Should steadily increase during training and eventually stabilize.
-- **`ppo_actor/importance_weight/avg`**: Average importance sampling ratio across all tokens in the PPO loss. Typically close to 1.0.
-- **`ppo_actor/actor_clip_ratio/avg`**: Ratio of clipped tokens in PPO loss to total tokens. Usually less than 0.1.
-- **`ppo_actor/actor_loss/avg`**: PPO loss value. **Does not show clear trends during training** and should not be used as a performance indicator.
+- **`ppo_actor/task_reward/avg`**: Average reward value of all sampled responses in this step. This should steadily increase during training and eventually stabilize.
+- **`ppo_actor/importance_weight/avg`**: Average importance sampling ratio across all tokens in the PPO loss. This is typically close to 1.0.
+- **`ppo_actor/actor_clip_ratio/avg`**: Ratio of clipped tokens in PPO loss to total tokens. This is usually less than 0.1.
+- **`ppo_actor/actor_loss/avg`**: PPO loss value. **This does not show clear trends during training** and should not be used as a performance indicator.
 
 ## Next Steps
 
