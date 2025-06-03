@@ -92,6 +92,8 @@ python3 training/main_sync_ppo.py --help
 - **`ppo.use_decoupled_loss`**: Use decoupled loss to stabilize asynchronous training. Defaults to True.
 - **`ppo.gen.max_new_tokens`**: Maximum tokens to generate per prompt.
 - **`ppo.ppo_n_minibatches`**: Number of mini-batches for dividing data during each PPO update.
+- **`success_rate_ub`**: Upper bound of success rate. Prompts with a higher success rate will be filtered out.
+- **`success_rate_lb`**: Lower bound of success rate. Prompts with a lower success rate will be filtered out.
 
 ## Monitoring the Training Process
 

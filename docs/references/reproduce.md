@@ -8,7 +8,7 @@ The experiment configurations used to train our released models can be found in 
   + Dataset: [AReaL-boba-106k](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-106k.jsonl)
 
 + `examples/configs/v0.3-qwen3-code`: Configuration for reproducing the boba² coding model based on Qwen3
-  + Dataset: [DeepCoder Dataset](https://huggingface.co/datasets/agentica-org/DeepCoder-Preview-Dataset) (duplicated problems and problems with incorrect answers have been filtered out)
+  + Dataset: [DeepCoder Dataset](https://huggingface.co/datasets/agentica-org/DeepCoder-Preview-Dataset). After deduplication and quality filtering, approximately 7,600 coding problems remained. Additionally, we have around 10,000 internal data entries that can further improve the model's performance. We are actively working on open-sourcing this portion of the data.
 
 ## Adjusting Computation Resources
 

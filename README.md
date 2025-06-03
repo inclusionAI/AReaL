@@ -8,68 +8,101 @@
 
 <img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
 
-AReaL (Ant Reasoning RL) is a fully open-sourced, scalable, and efficient reinforcement learning training system for large language models developed at **the RL Lab, Ant Research**, built upon the open-source project [RealHF](https://github.com/openpsi-project/ReaLHF). We fully commit to open-source by releasing training details, data, and infra required to reproduce all the models with the desired performances. AReaL aims to help everyone build their own AI agents easily and affordably. Our team loves milk tea as it is delicious, customizable, and affordable. We hope you all enjoy our project just like how you enjoy A-ReaL-milk-tea.🧋 
+AReaL (Ant Reasoning RL) is an open-sourced **fully asynchronous reinforcement learning training system** for large reasoning models developed at **the RL Lab, Ant Research**, built upon the open-source project [RealHF](https://github.com/openpsi-project/ReaLHF). We fully commit to open-source by opening training details, data and infra required to reproduce the results along with the model itself. AReaL aims to help everyone build their own AI agents easily and affordably. Our team loves milk tea as it is delicious, customizable, and affordable. We hope you all enjoy our project just like how you enjoy a real-world milk tea. 🧋
 
 **AReaL Highlights**
 
-+ 🛠️ **Open & Reproducible**: We will continuously release _all code, datasets, and training recipes_ for RL training LLMs .
++ 🔥 **[NEW] Asynchronous RL:** With algorithm-system co-design, AReaL supports fully asynchronous RL for **the fastest training**! Experimental support for multi-turn agentic RL is also provided.
++ 🛠️ **Open & Reproducible**: We will continuously release _all code, datasets, and training recipes_ for RL training LLMs.
 + 🚀 **Scalability**: AReaL can seamlessly adapt to different computational resource settings, ranging from 1 single node to 1K GPUs.
-+ 🔪 **Cutting-Edge Performances:** AReaL can produce models with cutting-edge reasoning capabilities. We are actively working on other domains, such as coding and agent, as well. 
++ 🔪 **Cutting-Edge Performances:** AReaL can produce models with cutting-edge reasoning capabilities in math and coding. We are also actively working on agentic tasks.
 
 ## News
 
-**[2025/03/31]** **(v0.2, Boba)** Our milestone release Boba! Please call it A-ReaL-Boba! This release includes much accelerated training with SGLang support and SOTA 7B and 32B models on math reasoning. 
+**[2025/06/03] (v0.3, boba²)** We release **boba²** (double-boba) for fully asynchronous RL training, which achieves a **2.77x speedup while obtaining on-par or even better training performance** compared to synchronous systems. Moreover, asynchronous RL makes it extremely easy to set up multi-turn agentic RL training! Check out [our v0.3 overview blog](/blog/AReaL_v0_3.md) and the [research paper](https://arxiv.org/pdf/2505.24298).
 
-**[2025/02/24]** **(v0.1)** Our initial release includes reproducible results for 1.5B and 7B LRMs. Check our [v0.1 technical blog](/blog/AReaL_v0_1.md).
+**[2025/03/31] (v0.2, Boba)** Here comes our next milestone release - Boba! Please call it A-ReaL-Boba! This release includes much accelerated training with SGLang support and SOTA 7B and 32B models on math reasoning. Check our [v0.2 technical blog](/blog/AReaL_v0_2.md).
 
-## AReaL-boba Milestones and Highlights
-In our boba release, we highlight the 3 most important milestones:
+**[2025/02/24] (v0.1)** Our initial release includes reproducible results for 1.5B and 7B LRMs. Check our [v0.1 technical blog](/blog/AReaL_v0_1.md).
 
-+ Full SGLang support and a collection of efficiency improvements
-+ A SOTA 7B math reasoning model [AReaL-boba-RL-7B](https://huggingface.co/inclusionAI/AReaL-boba-RL-7B) and the corresponing training data [AReaL-boba-106k](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-106k.jsonl).
-+ A particularly competitive 32B model [AReaL-boba-SFT-32B](https://huggingface.co/inclusionAI/AReaL-boba-SFT-32B) that can be trained with extremely low cost. (Training Data: [AReaL-boba-SFT-200](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-SFT-200.jsonl))
+## Release Highlights
 
-For the complete training and model details, please check [our v0.2 technical blog](/blog/AReaL_v0_2.md). 
+In our AReaL-boba² (A-ReaL-double-boba) release, we highlight the top 3 most important features:
 
-#### SGLang support with 1.5x speedup on 7B Training
++ A fully asynchronous RL training pipeline with **system and RL algorithm co-design**, achieving [over 2.77x speedup](https://github.com/inclusionAI/AReaL/tree/main/benchmark) without any performance drop.
++ SOTA coding models, i.e., a 14B model with a **69.1 score on LCB-v5**. [Reproducible results](https://inclusionai.github.io/AReaL/references/reproduce.htmls/reproduce.html) with fully open-sourced datasets are also provided.
++ Experimental support for **multi-turn** agentic RL training.
 
-![throughput_comparision_with_v0.1.0.png](/assets/thpt_comparison.png) 
+For the complete system design and training details, please check [our v0.3 blog](/blog/AReaL_v0_3.md) and our [research paper](about:blank) for a more comprehensive presentation of our system design.
 
-Thanks to a series of system-level optimizations, AReaL v0.2 improves its end-to-end training performance by up to 73%. 
+### Overview of Asynchronous RL Training
 
-In the following table, we show the convergence time under different resource settings:
+During the synchronous RL training process, a generation step must wait until the longest sequence completes within the batch of LLM outputs. Due to the varying output lengths for LRM, a synchronous RL system suffers from massive GPU idle time, leading to training inefficiency. Some recent works ([DeepCoder](https://pretty-radio-b75.notion.site/DeepCoder-A-Fully-Open-Source-14B-Coder-at-O3-mini-Level-1cf81902c14680b3bee5eb349a512a51), [Intellect](https://www.primeintellect.ai/blog/intellect-2)) propose to overlap a single training step with a single generation step to accelerate training. However, the largest bottleneck remains unchanged: the samples within a batch are still from the same model version, leading to waiting and GPU idle time.
 
-| **Model Size** | **1.5B** | **1.5B** | **1.5B** | **7B** | **7B** |**32B (SFT)** |
-| --- |:--------:|:--------:|:--------:|:------:|:------:|:-------:|
-| #GPU |    8     |    32    |   128    |   32   |  128   |  64 |
-| Step |   250    |   250    |   250    |  400   |  400   |  300 |
-| Time (h) |   ~240   |   ~69    |   ~27    |  ~252  |  ~90   |  ~3.5 |
+![Synchronous vs One-step Overlap RL](/assets/sync_one_step_gen.png)
 
+*Fig.1. Left: Execution timeline of a synchronous RL training. Right: Execution timeline of one-step overlap RL system.*
 
-#### SOTA 7B model using RL in math reasoning
-| **Model** | **AIME 2024** | **AIME 2025** | **GPQA-Diamond** |
+AReaL adopts a fully asynchronous RL training framework that completely decouples generation from training. In AReaL, LLM generation runs in a streaming manner, with each rollout worker continuously producing outputs without waiting. Meanwhile, trainer workers perform parallel model updates upon receiving training batches.
+
+![Asynchronous RL Training](/assets/async_timeline.png)
+
+*Fig 2. Execution timeline of our fully asynchronous RL system.*
+
+AReaL follows a system-algorithm co-design principle: on the system side, AReaL efficiently syncs up model parameters and carefully controls the staleness of each training sample; on the algorithm side, AReaL improves the objective of PPO to make async-RL stable.
+
+We compare the scalability of **asynchronous RL** training based on our AReaL-boba² system with **classical synchronous RL** training (we adopt the fastest open-sourced system veRL, main branch on 05/07/2025) across different model sizes and different numbers of H800 GPUs. AReaL demonstrates the much improved scaling capabilities w.r.t. training throughput. This is also partially due to that AReaL decouples training and generation, leading to much fewer GPU memory fragments. (Check the [benchmark directory](/benchmark) for detailed benchmark guide.)
+
+![Scaling Comparison](/assets/async_scaling_vs_verl.png)
+
+*Fig.3 The scaling trend of asynchronous RL (based on AReaL-boba2) and classical synchronous RL (based on veRL) with different model sizes. Dotted lines indicate ideal linear scaling.*
+
+### SOTA Code Generation Model by AReaL-boba²
+
+We use **Qwen3** as our base model. After asynchronous RL training, we achieve SOTA results on LiveCodeBench, Codeforce, and CodeContests benchmarks.
+
+| **Model (8B)** | **LiveCodeBench v5**<br/>**(2024.10-2025.2)** | **Codeforce** | **CodeContests** |
 | :---: | :---: | :---: | :---: |
-| O1-Preview | 56.7 | - |  |
-| R1-Distill-Qwen-7B | 55.0 | 39.7 | 47.1 |
-| Light-R1-7B-DS | 56.7 | 44.9 | 40.9 |
-| [AReaL-boba-RL-7B 🤗](https://huggingface.co/inclusionAI/AReaL-boba-RL-7B) | **61.9** | **48.3** | **47.6** |
+| Qwen3-8B | 58.8 | 1879/96.7% | 31.4 |
+| DeepSeek-R1-0528-Qwen3-8B | 58.4 | 1945/97.3% | 31.0 |
+| AReaL-boba²-8B-Open | 62.0 | 1933/97.2% | **41.4** |
+| AReaL-boba²-8B | **63.0** | **1962/97.5%** | 40.8 |
 
+| **Model (14B)** | **LiveCodeBench v5**<br/>**(2024.10-2025.2)** | **Codeforce** | **CodeContests** |
+| :---: | :---: | :---: | :---: |
+| Qwen3-14B | 65.4 | 1978/97.7% | 38.3 |
+| DeepCoder-14B-Preview | 60.6 | 1936/95.3% | 40.1 |
+| AReaL-boba²-14B-Open | 67.3 | 1990/97.8% | **46.2** |
+| AReal-boba²-14B | **69.1** | **2044/98.2%** | 46.1 |
 
-We use **R1-Distill-Qwen-7B** as our base model. After RL training, the pass@1 scores on AIME 2024 and AIME 2025 improve by 6.9 and 8.6 points, respectively, achieving SOTA performance among 7B models in mathematical reasoning. We have released the training data at [AReaL-boba-106k](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-106k.jsonl).  
+| **Larger Models** | **LiveCodeBench v5**<br/>**(2024.10-2025.2)** | **Codeforce** | **Codecontest** |
+| :---: | :---: | :---: | :---: |
+| Qwen3-235B | 70.7 | 2056 | - |
+| DeepSeek-R1 | 64.3 | 2029 | - |
+| OpenAI-o3-mini (Medium) | 66.3 | 2036 | - |
 
-Although our dataset primarily consists of math and logic problems, we observed that RL training led to measurable improvements on the challenging STEM benchmark GPQA. We plan to open-source more datasets in the future, including code, STEM, and other domains. All the reported numbers are re-evaluated using our evaluation code with more details in our [blog](blog/AReaL_v0_2.md#eval_detail). 
+*Table 1: Coding Task Performance Comparison. AReaL-boba²-8B/14B-Open denotes training results on open-sourced data，AReaL-boba²-8B/14B models are trained with an additional small amount of internal data could achieve SOTA performance on LiveCodeBench, Codeforce & CodeContests*
 
-#### Approaching QwQ-32B performances using only 200 data samples
-| **Model** | **AIME 2024** |
-| :---: | :---: |
-| R1-Distill-Qwen-32B | 72.6 |
-| QwQ-32B | 78.9 |
-| [AReaL-boba-SFT-32B 🤗](https://huggingface.co/inclusionAI/AReaL-boba-SFT-32B) | 78.8 |
+We highlight the tutorials about the following key features for synchronous training in AReaL-boba²:
 
++ [Streaming generation and reward computation](https://inclusionai.github.io/AReaL/developer/rollout/rollout_worker.html)
++ [Interruptible rollout](https://inclusionai.github.io/AReaL/developer/rollout/gserver.html)
++ [Data staleness control with the rollout controller](https://inclusionai.github.io/AReaL/developer/rollout/gserver.html)
++ [The adoption of decoupled PPO loss](https://inclusionai.github.io/AReaL/customization/algorithm.html)
 
-Building upon **R1-Distill-Qwen-32B**, we replicate **QwQ-32B's** inference performance on AIME 2024 using just **200 data points** via Supervised Fine-Tuning (SFT). We have released the training data at [AReaL-boba-SFT-200](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-SFT-200.jsonl).
+We provide a step-by-step [code walkthrough](https://inclusionai.github.io/AReaL/developer/overview.html) and [customization guide](https://inclusionai.github.io/AReaL/customization/dataset.html) for these features and recommend users to walk through the corresponding documentation.
+
+### RL Training for Multi-turn Agent
+
+AReaL-boba² allows you to independently customize the [dataset](https://inclusionai.github.io/AReaL/customization/dataset.html), [rollout behavior](https://inclusionai.github.io/AReaL/customization/agent.html), and the [training algorithm](https://inclusionai.github.io/AReaL/customization/algorithm.html), without the need to modify the heavy system-level code.
+
+In particular, we show a simple example to develop a multi-turn math agent for RL training. Please see the learning curve below and reference the [step-by-step guide](https://inclusionai.github.io/AReaL/customization/agent.html) if you want to implement your own agentic RL project.
+
+![Multi-turn Agent Learning Curve](/assets/multiturn_reward.png)
+
 
 ## Getting Started
+
 ### Quick Start
 
 Train Qwen3 1.7B locally:
@@ -95,7 +128,7 @@ python3 training/main_async_ppo.py \
     max_head_offpolicyness=4
 ```
 
-Evaluation
+Evaluation:
 
 ```bash
 bash examples/env/scripts/setup-eval-pip-deps.sh
@@ -117,23 +150,29 @@ python eval_and_aggregate.py \
 + [Quickstart](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
 + [Code Walkthrough](https://inclusionai.github.io/AReaL/developer/overview.html)
 + **Customization Guide**
-  + [Dataset](https://inclusionai.github.io/AReaL/customization/dataset.html)
-  + [Rollout Behavior (Agentic RL)](https://inclusionai.github.io/AReaL/customization/agent.html)
-  + [Training Algorithm](https://inclusionai.github.io/AReaL/customization/algorithm.html)
+    - [Dataset](https://inclusionai.github.io/AReaL/customization/dataset.html)
+    - [Rollout Behavior (Agentic RL)](https://inclusionai.github.io/AReaL/customization/agent.html)
+    - [Training Algorithm](https://inclusionai.github.io/AReaL/customization/algorithm.html)
 + [Contributing](https://inclusionai.github.io/AReaL/contrib.html)
 
 ## Future Plan
-AReaL is under active development. We will have major releases in a weekly manner. We also highly appreciate efforts from the community as well. Here we highlight our future research and development plan. 
+
+AReaL is under active development. We plan to have minor releases in a weekly manner and major releases in a monthly manner. Community engagements and contributions are extremely welcomed. We are also **hiring interns and full-timers** with open positions in both the US and China.
+
+For the research and development plan already in place, please see the following list:
 
 ### System Development
+
 - [x] Support for SGLang.
 - [x] RL training with coding problems.
 - [x] Asynchronous generation and RL training.
-- [ ] Optimizations for distributed training: expert parallel and zero-bubble pipelining.
+- [ ] Optimizations for distributed training: expert parallel for MOE and zero-bubble pipelining.
 - [ ] RL for vision-language models (VLM).
-- [ ] Function calling and agent capabilities.
+- [x] Multi-turn agentic RL.
+- [ ] Function calling and tool use.
 
 ### Algorithm Development
+
 - [x] RL training receipes for 1.5B and 7B models.
 - [x] A complete RL training receipe for 32B models.
 - [ ] Sample-efficient multi-task RL algorithms.
@@ -141,14 +180,14 @@ AReaL is under active development. We will have major releases in a weekly manne
 - [ ] Stable RL training for larger MOE models.
 
 ## Acknowledgement
-We would like to remark that major contributors are from **RL Lab at Ant Research** and **Institute for Interdisciplinary Information Sciences, Tsinghua University**.
+We would like to remark that major contributors are from the RL Lab at Ant Research and the Institute for Interdisciplinary Information Sciences, Tsinghua University.
 
-Our team has also received invaluable assistance from the Super Computing Technology (SCT) team at Ant Group, particularly in large-scale cluster operations and maintenance. 
+Our team has also received invaluable assistance from the Data Intelligence Lab at Ant Research for data support and from the Super Computing Technology (SCT) team at Ant Group, particularly in the realm of large-scale cluster operations and maintenance.
 
-We also appreciate all the pioneer works from the community, particularly the [ReaLHF](https://github.com/openpsi-project/ReaLHF) project from OpenPsi Inc. and many other projects, including but not limited to, [DeepScaleR](https://github.com/agentica-project/deepscaler), [Open-Reasoner-Zero](https://github.com/Open-Reasoner-Zero/Open-Reasoner-Zero/), [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF), [verl](https://github.com/volcengine/verl), [SGLang](https://github.com/sgl-project/sglang), [QwQ](https://github.com/QwenLM/QwQ),  [Light-R1](https://github.com/Qihoo360/Light-R1), and [DAPO](https://github.com/BytedTsinghua-SIA/DAPO).
+We also appreciate all the pioneering works from the community, particularly the [ReaLHF](https://github.com/openpsi-project/ReaLHF) project from OpenPsi Inc. and those other projects, including but not limited to, [DeepScaleR](https://github.com/agentica-project/deepscaler), [Open-Reasoner-Zero](https://github.com/Open-Reasoner-Zero/Open-Reasoner-Zero/tree/main), [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF), [VeRL](https://github.com/volcengine/verl), [SGLang](https://github.com/sgl-project/sglang), [QwQ](https://github.com/QwenLM/QwQ), [Light-R1](https://github.com/Qihoo360/Light-R1) and [DAPO](https://github.com/BytedTsinghua-SIA/DAPO).
 
 ## Citation
-```plain
+```bibtex
 @inproceedings{mei2025real,
   author       = {Mei, Zhiyu and Fu, Wei and Li, Kaiwei and Wang, Guangju and Zhang, Huanchen and Wu, Yi},
   title        = {ReaL: Efficient RLHF Training of Large Language Models with Parameter Reallocation},
@@ -159,7 +198,7 @@ We also appreciate all the pioneer works from the community, particularly the [R
 }
 ```
 
-```plain
+```bibtex
 @misc{areal2025,
   author = {RL Lab, Ant Research},
   title = {AReaL: Ant Reasoning RL},
