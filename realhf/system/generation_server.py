@@ -4,6 +4,7 @@ import sys
 import time
 from pathlib import Path
 
+import ray
 import requests
 
 from realhf.api.cli_args import SGLangConfig
@@ -125,11 +126,17 @@ class GenerationServer(Worker):
         )
 
         # Cancel the effect of CUDA device isolation
-        if "CUDA_VISIBLE_DEVICES" in os.environ:
+        if ray.is_initialized():
+            self.base_gpu_id = 0
+        elif "CUDA_VISIBLE_DEVICES" in os.environ:
             self.base_gpu_id = int(os.environ["CUDA_VISIBLE_DEVICES"])
             os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
                 map(str, range(gpu_utils.gpu_count()))
             )
+        else:
+            servers_per_node = cluster_spec.n_gpus_per_node // self.config.tp_size
+            idx_on_this_node = self.worker_index % servers_per_node
+            self.base_gpu_id = idx_on_this_node * self.config.tp_size
 
         self.server_process = None
         self.server_addr = None

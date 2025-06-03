@@ -31,6 +31,7 @@ parts:
   - caption: References
     chapters:
     - file: references/benchmark
+    - file: references/reproduce
   - caption: Contributing
     chapters:
     - file: contrib

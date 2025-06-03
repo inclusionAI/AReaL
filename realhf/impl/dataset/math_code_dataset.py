@@ -37,7 +37,7 @@ def check_code_metadata_entries(data):
         data["problem_id"] = data["query_id"]
     assert isinstance(data["prompt"], str)
     case_size = sys.getsizeof(data["input_output"])
-    if not os.getenv("FUNCTIONCALL_SERVICE_DOMAIN", ""):
+    if os.getenv("FUNCTIONCALL_SERVICE_DOMAIN", ""):
         assert (
             case_size < 500 * 1024
         ), f"'input_output' exceeds 500KB ({case_size} bytes). Use remote testcase instead."
