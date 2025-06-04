@@ -14,15 +14,15 @@ We now release AReaL v0.3, featuring three major milestones:
 |:---:|:---:|:---:|:---:|
 | Qwen3-8B | 58.8 | 1879/96.7% | 31.4 |
 | DeepSeek-R1-0528-Qwen3-8B | 58.4 | 1945/97.3% | 31.0 |
-| AReaL-boba²-8B-Open | 62.0 | 1933/97.2% | **41.4** |
-| AReaL-boba²-8B | **63.0** | **1962/97.5%** | 40.8 |
+| [🤗 AReaL-boba²-8B-Open](https://huggingface.co/inclusionAI/AReaL-boba-2-8B-subset) | 62.0 | 1933/97.2% | **41.4** |
+| [🤗 AReaL-boba²-8B](https://huggingface.co/inclusionAI/AReaL-boba-2-8B) | **63.0** | **1962/97.5%** | 40.8 |
 
 | **Model (14B)** | **LiveCodeBench v5** (2024.10-2025.2) | **Codeforce** | **CodeContests** |
 |:---:|:---:|:---:|:---:|
 | Qwen3-14B | 65.4 | 1978/97.7% | 38.3 |
 | DeepCoder-14B-Preview | 60.6 | 1936/95.3% | 40.1 |
-| AReaL-boba²-14B-Open | 67.3 | 1990/97.8% | **46.2** |
-| AReal-boba²-14B | **69.1** | **2044/98.2%** | 46.1 |
+| [🤗 AReaL-boba²-14B-Open](https://huggingface.co/inclusionAI/AReaL-boba-2-14B-subset) | 67.3 | 1990/97.8% | **46.2** |
+| [🤗 AReal-boba²-14B](https://huggingface.co/inclusionAI/AReaL-boba-2-14B) | **69.1** | **2044/98.2%** | 46.1 |
 
 | **Larger Models** | **LiveCodeBench v5** (2024.10-2025.2) | **Codeforce** | **CodeContests** |
 |:---:|:---:|:---:|:---:|
@@ -31,6 +31,8 @@ We now release AReaL v0.3, featuring three major milestones:
 | OpenAI-o3-mini (Medium) | 66.3 | 2036 | - |
 
 *Table 1: Coding Task Performance Comparison. AReaL-boba²-8B/14B-Open denotes training results on open-sourced data. AReaL-boba²-8B/14B models are trained with an additional small amount of internal data and achieve SOTA performance on LiveCodeBench, Codeforce & CodeContests.*
+
+To access our latest models and training data, please visit this [Huggingface Link](https://huggingface.co/collections/inclusionAI/areal-boba-2-683f0e819ccb7bb2e1b2f2d5).
 
 ## Motivation for Asynchronous RL System
 
