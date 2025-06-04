@@ -10,6 +10,10 @@ parts:
     - file: tutorial/quickstart
     - file: tutorial/eval
     - file: tutorial/troubleshooting
+  - caption: References
+    chapters:
+    - file: references/benchmark
+    - file: references/reproduce
   - caption: Customization
     chapters:
     - file: customization/dataset
@@ -28,10 +32,6 @@ parts:
       sections:
         - file: developer/rollout/gserver
         - file: developer/rollout/rollout_worker
-  - caption: References
-    chapters:
-    - file: references/benchmark
-    - file: references/reproduce
   - caption: Contributing
     chapters:
     - file: contrib
