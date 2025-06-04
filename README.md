@@ -21,7 +21,7 @@ AReaL (Ant Reasoning RL) is an open-source **fully asynchronous reinforcement le
 
 **[2025/06/03] (v0.3, boba²)** We release **boba²** (double-boba) for fully asynchronous RL training, which achieves a **2.77x speedup while obtaining on-par or even better training performance** compared to synchronous systems. Moreover, asynchronous RL makes it extremely easy to set up multi-turn agentic RL training! Check out [our v0.3 overview blog](/blog/AReaL_v0_3.md) and the [research paper](https://arxiv.org/pdf/2505.24298).
 
-**[2025/03/31] (v0.2, Boba)** Here comes our next milestone release - Boba! Please call it A-ReaL-Boba! This release includes much faster training with SGLang support and SOTA 7B and 32B models on math reasoning. Check our [v0.2 technical blog](/blog/AReaL_v0_2.md).
+**[2025/03/31] (v0.2, boba)** Here comes our next milestone release - boba! Please call it A-ReaL-boba! This release includes much faster training with SGLang support and SOTA 7B and 32B models on math reasoning. Check our [v0.2 technical blog](/blog/AReaL_v0_2.md).
 
 **[2025/02/24] (v0.1)** Our initial release includes reproducible results for 1.5B and 7B LRMs. Check our [v0.1 technical blog](/blog/AReaL_v0_1.md).
 
@@ -35,7 +35,9 @@ In our AReaL-boba² (A-ReaL-double-boba) release, we highlight the top 3 most im
 
 + Experimental support for **multi-turn** agentic RL training. Check our [complete example](https://inclusionai.github.io/AReaL/customization/agent.html).
 
-For the complete system design and more training details, please check [our v0.3 blog](/blog/AReaL_v0_3.md) and our [research paper](about:blank) for a more comprehensive presentation of our system design.
+For the complete system design and more training details, please check [our v0.3 blog](/blog/AReaL_v0_3.md) and our [research paper](https://arxiv.org/pdf/2505.24298).
+
+**Jump to the [quickstart section](https://github.com/inclusionAI/AReaL?tab=readme-ov-file#getting-started) if you want to quickly run an experiment and get your hands dirty!** 😈
 
 ### Overview of Asynchronous RL Training
 
@@ -98,11 +100,7 @@ AReaL-boba² allows you to independently customize the [dataset](https://inclusi
 
 In particular, we show a simple example to develop a multi-turn math agent for RL training. Please see the learning curve below and reference the [step-by-step guide](https://inclusionai.github.io/AReaL/customization/agent.html) if you want to implement your own agentic RL project.
 
-![Multi-turn Agent Learning Curve](/assets/multiturn_reward.png)
-
 ## Getting Started
-
-### Quick Start
 
 Train Qwen3 1.7B locally:
 
