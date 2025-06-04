@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-| <a href="https://arxiv.org/pdf/2505.24298"><b>Paper</b></a> | <a href="https://inclusionai.github.io/AReaL/"><b>Documentation</b></a> | <a href="https://deepwiki.com/inclusionAI/AReaL"><b>Ask DeepWiki</b></a> |
+| <a href="https://arxiv.org/pdf/2505.24298"><b>Paper</b></a> | <a href="https://inclusionai.github.io/AReaL/"><b>Documentation</b></a> | <a href="https://deepwiki.com/inclusionAI/AReaL"><b>Ask DeepWiki</b></a> | <a href="https://huggingface.co/collections/inclusionAI/areal-boba-2-683f0e819ccb7bb2e1b2f2d5"><b>🤗 Models & Data</b></a> |
 </p>
 
 <img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
@@ -67,15 +67,15 @@ We use **Qwen3** as our base model. After asynchronous RL training, we achieve S
 | :---: | :---: | :---: | :---: |
 | Qwen3-8B | 58.8 | 1879/96.7% | 31.4 |
 | DeepSeek-R1-0528-Qwen3-8B | 58.4 | 1945/97.3% | 31.0 |
-| AReaL-boba²-8B-Open | 62.0 | 1933/97.2% | **41.4** |
-| AReaL-boba²-8B | **63.0** | **1962/97.5%** | 40.8 |
+| [🤗 AReaL-boba²-8B-Open](https://huggingface.co/inclusionAI/AReaL-boba-2-8B-subset) | 62.0 | 1933/97.2% | **41.4** |
+| [🤗 AReaL-boba²-8B](https://huggingface.co/inclusionAI/AReaL-boba-2-8B) | **63.0** | **1962/97.5%** | 40.8 |
 
 | **Model (14B)** | **LiveCodeBench v5**<br/>**(2024.10-2025.2)** | **Codeforces** | **CodeContests** |
 | :---: | :---: | :---: | :---: |
 | Qwen3-14B | 65.4 | 1978/97.7% | 38.3 |
 | DeepCoder-14B-Preview | 60.6 | 1936/95.3% | 40.1 |
-| AReaL-boba²-14B-Open | 67.3 | 1990/97.8% | **46.2** |
-| AReaL-boba²-14B | **69.1** | **2044/98.2%** | 46.1 |
+| [🤗 AReaL-boba²-14B-Open](https://huggingface.co/inclusionAI/AReaL-boba-2-14B-subset) | 67.3 | 1990/97.8% | **46.2** |
+| [🤗 AReal-boba²-14B](https://huggingface.co/inclusionAI/AReaL-boba-2-14B) | **69.1** | **2044/98.2%** | 46.1 |
 
 | **Larger Models** | **LiveCodeBench v5**<br/>**(2024.10-2025.2)** | **Codeforces** | **CodeContests** |
 | :---: | :---: | :---: | :---: |
