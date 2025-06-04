@@ -128,4 +128,8 @@ Please follow the guide in [quickstart](../tutorial/quickstart.md). Generally, s
 python3 training/main_async_ppo.py my_param=5.0  # and any additional CLI arguments
 ```
 
+The training reward of our trial is shown below:
+
+![](multiturn_reward.png)
+
 Happy coding!
