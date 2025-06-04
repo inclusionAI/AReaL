@@ -134,7 +134,7 @@ We vary the maximum allowed staleness η and compare configurations with and wit
 
 ![](/assets/algo_ablation.png)
 
-*Fig.6 Left: Learning curves with naive PPO. Right: Learning curves with decoupled PPO objective.*
+*Fig.6 Ablation Study on Decoupled PPO Objective with DeepSeek-R1-Distill-Qwen-1.5B. Left: Learning curves with naive PPO. Right: Learning curves with decoupled PPO objective.*
 
 | η | **AIME 24** | | **AIME 25** | |
 |:---:|:---:|:---:|:---:|:---:|
@@ -148,6 +148,11 @@ We vary the maximum allowed staleness η and compare configurations with and wit
 | ∞ | 34.0 | 36.9 | 26.9 | 29.9 |
 
 *Table 3: Evaluation scores when varying data staleness, comparing performance with and without the decoupled objective.*
+
+
+```{note}
+In practice, the effect of staleness could depend on various factors, such as learning rate, batch size, the number of mini batches, generation length, and also the RL algorithm. Here we aim to illustrate the impact of staleness on the training performance of a synchronous RL system, and show that stalenss control and decoupled PPO could well mitigate the negative impact of staleness. Here we follow a large batch size setting with `batch_size=512`, `n_rollouts=16`, `n_mini_batch=4`, `max_new_tokens=8192`, and `lr=2e-5`. The staleness is defined as the gap of model versions, where the model version increases by 1 when a batch of `batch_size` X `n_rollouts` samples are trained on.
+```
 
 However, the decoupled PPO objective substantially improves training stability when handling stale data. Notably, even with the decoupled objective, unbounded staleness (maximum staleness → ∞) still results in inferior performance compared to the zero-staleness oracle. When properly constrained, moderate staleness (e.g., η ≤ 4) has minimal impact on final performance while significantly accelerating training through the asynchronous pipeline, as demonstrated in Tab.3 and Fig.7.
 
