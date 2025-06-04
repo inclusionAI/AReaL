@@ -150,7 +150,7 @@ We vary the maximum allowed staleness η and compare configurations with and wit
 *Table 3: Evaluation scores when varying data staleness, comparing performance with and without the decoupled objective.*
 
 
-```note
+```{note}
 In practice, the effect of staleness could depend on various factors, such as learning rate, batch size, the number of mini batches, generation length, and also the RL algorithm. Here we aim to illustrate the impact of staleness on the training performance of a synchronous RL system, and show that stalenss control and decoupled PPO could well mitigate the negative impact of staleness. Here we follow a large batch size setting with `batch_size=512`, `n_rollouts=16`, `n_mini_batch=4`, `max_new_tokens=8192`, and `lr=2e-5`. The staleness is defined as the gap of model versions, where the model version increases by 1 when a batch of `batch_size` X `n_rollouts` samples are trained on.
 ```
 
