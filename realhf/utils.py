@@ -22,8 +22,9 @@ def load_hf_or_local_file(path: str) -> str:
     hf://<org>/<repo>@<revision>/<filename>
     
     e.g, 
-    hf://inclusionAI/AReaL-RL-Data/data/boba_106k_0319.jsonl 
+    hf-dataset://inclusionAI/AReaL-RL-Data/data/boba_106k_0319.jsonl 
     => 
+    repo_type = dataset
     repo_id = inclusionAI/AReaL-RL-Data
     filename = data/boba_106k_0319.jsonl
     revision = main
