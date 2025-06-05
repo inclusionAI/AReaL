@@ -14,6 +14,7 @@ import torch.utils.data
 
 from realhf.api.core import data_api
 from realhf.base import logging
+from realhf.utils import load_hf_or_local_file
 
 logger = logging.getLogger("Math Code Dataset")
 
@@ -54,6 +55,7 @@ def check_code_metadata_entries(data):
 
 def load_metadata(path):
     assert str(path).endswith(".jsonl"), path
+    path = load_hf_or_local_file(path)
     with open(path, "r") as f:
         data = [json.loads(l) for l in f.readlines()]
 
