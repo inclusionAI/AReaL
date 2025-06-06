@@ -182,3 +182,5 @@ api_key.json
 
 .vscode/
 wandb/
+outputs/
+sympy/

@@ -14,9 +14,10 @@ from typing import Union
 
 import regex
 from latex2sympy2 import latex2sympy
-from sympy import N, simplify
 from sympy.parsing.latex import parse_latex
 from sympy.parsing.sympy_parser import parse_expr
+
+from sympy import N, simplify
 
 # from .parser import choice_answer_clean, strip_string
 # from parser import choice_answer_clean
