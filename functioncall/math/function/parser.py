@@ -3,10 +3,9 @@ import re
 from typing import Any, Dict, Iterable, List, TypeVar, Union
 
 import regex
+import sympy
 from latex2sympy2 import latex2sympy
 from word2number import w2n
-
-import sympy
 
 # from utils import *
 
