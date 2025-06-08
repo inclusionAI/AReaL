@@ -849,7 +849,6 @@ def parse_lines_in_parallel(
         label = 0
         for job in as_completed(jobs):
             x = job.result()
-            print(x)
             label = label or x
         labels.append(label)
     return labels
