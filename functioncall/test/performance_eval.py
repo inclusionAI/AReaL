@@ -14,6 +14,7 @@ from typing import Any, Dict, List
 import numpy as np
 
 from functioncall.code.verify import code_verify
+from realhf.utils import load_hf_or_local_file
 
 logger = logging.getLogger("function call")
 
@@ -223,6 +224,7 @@ def statics_result(result, query_ids):
 def standard_dataset_eval(
     dataset_path, code_count=0, test_case_batch_size=20, dry_run=False
 ):
+    dataset_path = load_hf_or_local_file(dataset_path)
     id2info = defaultdict(dict)
     generateds, query_ids = [], []
     cnt = 0

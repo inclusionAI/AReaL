@@ -1,16 +1,26 @@
 # Reproduction Guide
 
-The experiment configurations used to train our released models can be found in `examples/configs`. The user can overwrite `training/config/async_ppo.yaml` with our provided config (e.g., by copy-pasting) and then run `python3 training/main_async_ppo.py` as illustrated in the [quickstart section](../tutorial/quickstart.md).
+The experiment configurations can be found [here](https://github.com/inclusionAI/AReaL/tree/main/examples/configs/v0.3-qwen3-code).
 
-**Available Configurations:**
+Users should overwrite [training/config/async_ppo.yaml](https://github.com/inclusionAI/AReaL/blob/main/training/configs/async-ppo.yaml) and then run:
 
-+ `examples/configs/v0.2-qwen2-math`: Configuration for reproducing the boba math models based on R1-Distilled-Qwen models
+```bash
+python3 training/main_async_ppo.py
+```
+
+More information can be found in the [quickstart section](../tutorial/quickstart.md).
+
+**Math:**
+
++ [`examples/configs/v0.2-qwen2-math`](https://github.com/inclusionAI/AReaL/tree/main/examples/configs/v0.2-qwen2-math): Configuration for reproducing the boba math models based on R1-Distilled-Qwen models
   + Dataset: [AReaL-boba-106k](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-106k.jsonl)
 
-+ `examples/configs/v0.3-qwen3-code`: Configuration for reproducing the boba² coding model based on Qwen3
-  + Dataset: [DeepCoder Dataset](https://huggingface.co/datasets/agentica-org/DeepCoder-Preview-Dataset) (duplicated problems and problems with incorrect answers have been filtered out)
+**Code:**
 
-## Adjusting Computation Resources
++ [`examples/configs/v0.3-qwen3-code`](https://github.com/inclusionAI/AReaL/tree/main/examples/configs/v0.3-qwen3-code): Configuration for reproducing the boba² coding model based on Qwen3
+  + Dataset: [AReaL-boba-2-code](https://huggingface.co/datasets/inclusionAI/AReaL-boba-2-RL-Code). We perform deduplication and filtering on the [DeepCoder dataset](https://huggingface.co/datasets/agentica-org/DeepCoder-Preview-Dataset). After deduplication and quality filtering, approximately 7,600 coding problems remained. Additionally, we have around 10,000 internal data entries that can further improve the model's performance. We are actively working on open-sourcing this portion of the data.
+
+## Adjusting Computational Resources
 
 We recommend using the provided number of GPUs and corresponding parallelization strategy for optimal reproducibility. When resources are limited, try decreasing the `n_nodes` and reducing the data parallelism degree in `allocation_mode`.
 
