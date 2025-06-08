@@ -24,7 +24,7 @@ The following hardware configuration has been extensively tested:
 | Git LFS | Required for downloading models, datasets, and AReaL code. See [installation guide](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage) |
 | Docker | 27.5.1 |
 | NVIDIA Container Toolkit | See [installation guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) |
-| AReaL Image | `ghcr.io/inclusionai/areal-runtime:v0.3.0` (includes runtime dependencies and Ray components) |
+| AReaL Image | `ghcr.io/inclusionai/areal-runtime:v0.3.0.post1` (includes runtime dependencies and Ray components) |
 
 **Note**: This tutorial does not cover the installation of NVIDIA Drivers, CUDA, or shared storage mounting, as these depend on your specific node configuration and system version. Please complete these installations independently.
 
@@ -37,11 +37,11 @@ The following hardware configuration has been extensively tested:
 We recommend using Docker with our provided image. The Dockerfile is available in the top-level directory of the AReaL repository.
 
 ```bash
-docker pull ghcr.io/inclusionai/areal-runtime:v0.3.0
+docker pull ghcr.io/inclusionai/areal-runtime:v0.3.0.post1
 docker run -it --name areal-node1 \
    --privileged --gpus all --network host \
    --shm-size 700g -v /path/to/mount:/path/to/mount \
-   ghcr.io/inclusionai/areal-runtime:v0.3.0 \
+   ghcr.io/inclusionai/areal-runtime:v0.3.0.post1 \
    /bin/bash
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
