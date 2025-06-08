@@ -3,12 +3,11 @@ from concurrent.futures import TimeoutError
 from parser import *
 
 import numpy as np
+from grader import *
 from pebble import ProcessPool
 from python_executor import PythonExecutor
 from tqdm import tqdm
 from utils import load_jsonl
-
-from grader import *
 
 
 def evaluate(

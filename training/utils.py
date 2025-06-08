@@ -6,6 +6,7 @@ import signal
 import sys
 import threading
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from typing import Any, List
 
 import psutil
@@ -128,9 +129,11 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
         REAL_RECOVER_RUN="0",
         REAL_SAVE_RECOVER_STATES="1",
     )
+    git_path = Path(__file__).parent.parent / ".git"
     runtime_env = {
         "env_vars": env_vars,
         "working_dir": os.getcwd(),
+        "excludes": [str(git_path)],
     }
     logger.info(f"Ray workers runtime env: {runtime_env}")
     ray_log_path = exp_cfg.ray_temp_path

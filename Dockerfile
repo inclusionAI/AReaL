@@ -18,12 +18,6 @@ ENV NVTE_WITH_USERBUFFERS=1 NVTE_FRAMEWORK=pytorch MPI_HOME=/usr/local/mpi
 ENV PATH="${PATH}:/opt/hpcx/ompi/bin:/opt/hpcx/ucx/bin"
 ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/opt/hpcx/ompi/lib:/opt/hpcx/ucx/lib/"
 
-RUN git clone --depth=1 https://github.com/QwenLM/Qwen2.5-Math /qwen2_5-math && mv /qwen2_5-math/evaluation/latex2sympy /latex2sympy && rm -rf /qwen2_5-math \
-        && python3 -m venv /sympy && \
-        /sympy/bin/pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && /sympy/bin/pip config set global.extra-index-url "" \
-        && /sympy/bin/pip install /latex2sympy && \
-        /sympy/bin/pip install regex numpy tqdm datasets python_dateutil sympy==1.12 antlr4-python3-runtime==4.11.1 word2number Pebble timeout-decorator prettytable
-
 RUN pip uninstall cugraph-dgl dask-cuda cugraph-service-server raft-dask cugraph cuml \
     cugraph-pyg lightning_thunder opt_einsum nvfuser  looseversion lightning_utilities -y
 RUN pip3 install -U uv nvidia-ml-py pipdeptree importlib_metadata packaging platformdirs typing_extensions wheel zipp
