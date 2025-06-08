@@ -19,10 +19,9 @@ blosc
 colorama
 colorlog
 einops
-hydra-core
+hydra-core==1.4.0.dev1
 matplotlib
 numba
-omegaconf
 packaging
 pandas
 pybind11>=2.10.0
@@ -64,3 +63,9 @@ jupyter-book
 uvloop>=0.21.0
 uvicorn>=0.34.2
 fastapi>=0.115.12
+regex
+python_dateutil
+word2number
+Pebble
+timeout-decorator
+prettytable

@@ -50,8 +50,7 @@ dependencies = [
     "orjson>=3.10.16",
     "pydantic",
     "PyYAML",
-    "omegaconf",
-    "hydra-core",
+    "hydra-core==1.4.0.dev1",
     "packaging",
     "tabulate",
     
@@ -99,6 +98,12 @@ dependencies = [
     "distro-info>=1.0",
     "python-debian>=0.1.49",
     "func_timeout",
+    "regex",
+    "python_dateutil",
+    "word2number",
+    "Pebble",
+    "timeout-decorator",
+    "prettytable",
     
     # Development tools (consider moving to optional dependencies)
     "pytest",
