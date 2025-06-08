@@ -185,7 +185,7 @@ class GserverManager(AsyncWorker):
                             if "num_paused_requests" in res:
                                 logger.info(
                                     f"{res['num_paused_requests']} requests are interrupted "
-                                    f"during updateing weights for server {server_index}: {server_url}"
+                                    f"during updating weights for server {server_index}: {server_url}"
                                 )
                             return
                         logger.warning(
