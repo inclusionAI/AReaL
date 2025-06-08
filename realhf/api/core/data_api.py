@@ -41,6 +41,7 @@ from realhf.api.cli_args import MicroBatchSpec
 from realhf.api.core import config as config_api
 from realhf.base import constants, datapack, logging, seeding
 from realhf.base.cluster import spec as cluster_spec
+from realhf.utils import load_hf_or_local_file
 
 logger = logging.getLogger("api.data")
 
@@ -756,6 +757,7 @@ def load_shuffle_split_dataset(
     dataset_path: str,
     dataset_builder: Optional[Callable[[], List[Dict[str, str]]]] = None,
 ):
+    dataset_path = load_hf_or_local_file(dataset_path)
     if dataset_path is not None:
         if dataset_path.endswith(".jsonl"):
             with open(dataset_path, "r") as f:
