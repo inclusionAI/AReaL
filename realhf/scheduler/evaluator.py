@@ -9,6 +9,7 @@ import time
 from typing import Dict, Optional
 
 import wandb
+import swanlab
 
 import realhf.api.core.system_api as config_pkg
 from realhf.base import cluster, constants, logging
@@ -125,13 +126,15 @@ class EvaluationStep:
             self.status = EvaluationStepStatus.FAILED
             return False
 
-        wandb_data = {}
+        swanlab_wandb_data = {}
         for data_name, d in data.items():
             for k, v in d.items():
-                wandb_data[f"{data_name}_{k}"] = v
-        wandb.log(wandb_data, step=self.global_step)
+                swanlab_wandb_data[f"{data_name}_{k}"] = v
+        wandb.log(swanlab_wandb_data, step=self.global_step)
+        swanlab.log(swanlab_wandb_data, step=self.global_step)
         self.status = EvaluationStepStatus.LOGGED
-        logger.info(f"Logging eval result {wandb_data} to step {self.global_step}")
+        logger.info(f"Logging eval result {swanlab_wandb_data} to step {self.global_step}")
+
         return True
 
     def check(self):
@@ -154,13 +157,15 @@ class AutomaticEvaluator:
         self,
         config: config_pkg.AutomaticEvaluator,
         wandb_config: config_pkg.WandBConfig,
+        swanlab_config: config_pkg.SwanlabConfig,
     ):
         self.__eval_steps: Dict[int, EvaluationStep] = {}
         self.__max_concurrent_jobs = config.max_concurrent_jobs
         self.__wandb_config = wandb_config
+        self.__swanlab_config = swanlab_config
         self.__config = config
         self.__wandb_initialized = False
-
+        self.__swanlab_initialized = False
         # Check evaluated checkpoints by logs in recover
         # NOTE: All previous evaluation steps with output will be marked
         # as logged, even if it is not really logged in wandb.
@@ -228,6 +233,19 @@ class AutomaticEvaluator:
             settings=wandb.Settings(start_method="fork"),
         )
 
+    def __lazy_swanlab_init(self):
+        if self.__swanlab_config.api_key:
+            swanlab.login(self.__swanlab_config.api_key)
+        swanlab.init(
+            project=self.__swanlab_config.project or constants.experiment_name(),
+            experiment_name=self.__swanlab_config.name or f"{constants.trial_name()}_eval",
+            config={"FRAMEWORK": "AReal", **self.__swanlab_config.config,},
+            logdir=self.__swanlab_config.logdir or os.path.join(
+                constants.LOG_ROOT, constants.experiment_name(), constants.trial_name(), "swanlab"
+            ),
+            mode=self.__swanlab_config.mode,
+        )
+
     def step(self):
         # Check whether a new evaluation step should be created
         ckpt_parent = os.path.join(
@@ -292,6 +310,9 @@ class AutomaticEvaluator:
                 if not self.__wandb_initialized:
                     self.__lazy_wandb_init()
                     self.__wandb_initialized = True
+                if not self.__swanlab_initialized:
+                    self.__lazy_swanlab_init()
+                    self.__swanlab_initialized = True
                 self.__eval_steps[log_step].log(self.__config)
 
     @property

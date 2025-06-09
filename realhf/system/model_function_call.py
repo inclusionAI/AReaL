@@ -11,6 +11,7 @@ from collections import defaultdict
 from typing import Dict, Hashable, List, Set, Tuple
 
 import wandb
+import swanlab
 from tensorboardX import SummaryWriter
 
 import realhf.api.core.config as config_api
@@ -447,6 +448,11 @@ class ModelFunctionCall:
                     step=ctrl.step_info.global_step,
                     summary_writer=self.summary_writer,
                 )
+                logging.log_swanlab_tensorboard(
+                    res,
+                    step=ctrl.step_info.global_step,
+                    summary_writer=self.summary_writer,
+                )
             elif isinstance(res, list):
                 for j, r in enumerate(res):
                     logger.info(
@@ -454,6 +460,11 @@ class ModelFunctionCall:
                     )
                     offset = len(res) * ctrl.step_info.global_step
                     logging.log_wandb_tensorboard(
+                        r,
+                        step=offset + j,
+                        summary_writer=self.summary_writer,
+                    )
+                    logging.log_swanlab_tensorboard(
                         r,
                         step=offset + j,
                         summary_writer=self.summary_writer,
@@ -469,7 +480,10 @@ class ModelFunctionCall:
             time_stats,
             summary_writer=self.summary_writer,
         )
-
+        logging.log_swanlab_tensorboard(
+            time_stats,
+            summary_writer=self.summary_writer,
+        )
         logger.info(
             f"Model rpc {rpc.name} finished. "
             f"Request-reply time {time.perf_counter() - tik:.4f}s. "

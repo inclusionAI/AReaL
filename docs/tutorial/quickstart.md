@@ -99,9 +99,13 @@ python3 training/main_sync_ppo.py --help
 
 We recommend using Weights & Biases (wandb) for monitoring. Run `wandb login` or set the `WANDB_API_KEY` environment variable. Set `wandb.mode=True` in your configuration to upload training statistics.
 
+Alternatively, you can use SwanLab for monitoring. Run swanlab login or set the `SWANLAB_API_KEY` environment variable. Set `swanlab.mode=True` in your configuration to upload training statistics.
+
 You can also use TensorBoard by setting the `tensorboard.path` parameter.
 
 The main log will be saved to `${fileroot}/logs/${USER}/${experiment_name}/${trial_name}/main.log` and contains the statistics uploaded to wandb.
+
+If SwanLab is enabled, logs will be saved to the directory specified by `swanlab.logdir`.
 
 ### Key Training Statistics
 

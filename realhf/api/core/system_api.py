@@ -13,6 +13,7 @@ from realhf.api.cli_args import (
     ExperimentSaveEvalControl,
     TensorBoardConfig,
     WandBConfig,
+    SwanlabConfig,
 )
 from realhf.api.core.config import (
     AgentAbstraction,
@@ -254,6 +255,7 @@ class ExperimentScheduling:
 class ExperimentConfig:
     exp_ctrl: ExperimentSaveEvalControl
     wandb: WandBConfig
+    swanlab: SwanlabConfig
     tensorboard: TensorBoardConfig
     # dataflow
     model_rpcs: List[dfg.MFCDef]
