@@ -97,7 +97,7 @@ python3 training/main_sync_ppo.py --help
 
 ## Monitoring the Training Process
 
-We recommend using Weights & Biases (wandb) for monitoring. Run `wandb login` or set the `WANDB_API_KEY` environment variable. Set `wandb.mode=True` in your configuration to upload training statistics.
+We recommend using Weights & Biases (wandb) for monitoring. Run `wandb login` or set the `WANDB_API_KEY` environment variable. Set `wandb.mode=online` in your configuration to upload training statistics.
 
 Alternatively, you can use SwanLab for monitoring. Run swanlab login or set the `SWANLAB_API_KEY` environment variable. Set `swanlab.mode=True` in your configuration to upload training statistics.
 
