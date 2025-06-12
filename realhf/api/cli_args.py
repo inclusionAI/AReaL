@@ -962,7 +962,7 @@ class BaseExperimentConfig:
     )
     swanlab: SwanlabConfig =field(
         default_factory=SwanlabConfig,
-        metadata={"help": "Weights & Biases configuration."},
+        metadata={"help": "SwanLab configuration."},
     )
     tensorboard: TensorBoardConfig = field(
         default_factory=TensorBoardConfig,
