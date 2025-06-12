@@ -69,5 +69,4 @@ word2number
 Pebble
 timeout-decorator
 prettytable
-swanlab==0.6.2
-swanboard==0.1.8b1
+swanlab[dashboard]
