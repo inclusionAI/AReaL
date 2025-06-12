@@ -236,10 +236,19 @@ class AutomaticEvaluator:
     def __lazy_swanlab_init(self):
         if self.__swanlab_config.api_key:
             swanlab.login(self.__swanlab_config.api_key)
+        if self.swanlab_config.config is None:
+            import yaml
+            with open(os.path.join(
+                constants.LOG_ROOT, constants.experiment_name(), constants.trial_name(), "config.yaml"
+            ), "r") as f:
+                __config = yaml.safe_load(f)
+        else:
+            __config = self.swanlab_config.config
+        __config["FRAMEWORK"]="AReaL"
         swanlab.init(
             project=self.__swanlab_config.project or constants.experiment_name(),
             experiment_name=self.__swanlab_config.name or f"{constants.trial_name()}_eval",
-            config={"FRAMEWORK": "AReal", **self.__swanlab_config.config,},
+            config=__config,
             logdir=self.__swanlab_config.logdir or os.path.join(
                 constants.LOG_ROOT, constants.experiment_name(), constants.trial_name(), "swanlab"
             ),

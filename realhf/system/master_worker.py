@@ -317,10 +317,19 @@ class MasterWorker(worker_base.AsyncWorker):
         # swanlab init, connect to remote or local swanlab host
         if self.swanlab_config.mode != "disabled" and self.swanlab_config.api_key:
             swanlab.login(self.swanlab_config.api_key)
+        if self.swanlab_config.config is None:
+            import yaml
+            with open(os.path.join(
+                constants.LOG_ROOT, constants.experiment_name(), constants.trial_name(), "config.yaml"
+            ), "r") as f:
+                __config = yaml.safe_load(f)
+        else:
+            __config = self.swanlab_config.config
+        __config["FRAMEWORK"]="AReaL"
         swanlab.init(
             project=self.swanlab_config.project or constants.experiment_name(),
             experiment_name=self.swanlab_config.name or f"{constants.trial_name()}_train",
-            config={"FRAMEWORK": "AReal", **self.swanlab_config.config,},
+            config=__config,
             logdir=self.swanlab_config.logdir or os.path.join(
                 constants.LOG_ROOT, constants.experiment_name(), constants.trial_name(), "swanlab"
             ),
