@@ -320,7 +320,7 @@ class MasterWorker(worker_base.AsyncWorker):
         swanlab.init(
             project=self.swanlab_config.project or constants.experiment_name(),
             experiment_name=self.swanlab_config.name or f"{constants.trial_name()}_train",
-            config={"FRAMEWORK": "AReal", **self.__swanlab_config.config,},
+            config={"FRAMEWORK": "AReal", **self.swanlab_config.config,},
             logdir=self.swanlab_config.logdir or os.path.join(
                 constants.LOG_ROOT, constants.experiment_name(), constants.trial_name(), "swanlab"
             ),
@@ -501,8 +501,7 @@ class MasterWorker(worker_base.AsyncWorker):
         s += f"(global step {global_step}) finishes. "
         s += f"#End to end# execution time: *{e2e_time:.3f}*s. "
         s += f"Total time consumption: {time_since_configure:.3f}s. "
-        logging.log_wandb_tensorboard({"timeperf/e2e": e2e_time})
-        logging.log_swanlab_tensorboard({"timeperf/e2e": e2e_time})
+        logging.log_swanlab_wandb_tensorboard({"timeperf/e2e": e2e_time})
         if len(self.e2e_time_history) > 2:
             remaining_steps = self._steps_per_epoch - epoch_step
             remaining_epochs = self.__total_train_epochs - epoch

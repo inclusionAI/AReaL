@@ -443,12 +443,7 @@ class ModelFunctionCall:
                 logger.info(
                     f"RPC name {rpc.name} returns\n{data_api.tabulate_stats(res)}"
                 )
-                logging.log_wandb_tensorboard(
-                    res,
-                    step=ctrl.step_info.global_step,
-                    summary_writer=self.summary_writer,
-                )
-                logging.log_swanlab_tensorboard(
+                logging.log_swanlab_wandb_tensorboard(
                     res,
                     step=ctrl.step_info.global_step,
                     summary_writer=self.summary_writer,
@@ -459,12 +454,7 @@ class ModelFunctionCall:
                         f"RPC name {rpc.name} returns ({j + 1}/{len(res)})\n{data_api.tabulate_stats(r)}"
                     )
                     offset = len(res) * ctrl.step_info.global_step
-                    logging.log_wandb_tensorboard(
-                        r,
-                        step=offset + j,
-                        summary_writer=self.summary_writer,
-                    )
-                    logging.log_swanlab_tensorboard(
+                    logging.log_swanlab_wandb_tensorboard(
                         r,
                         step=offset + j,
                         summary_writer=self.summary_writer,
@@ -476,11 +466,7 @@ class ModelFunctionCall:
         for time_record in time_records:
             stats_tracker.scalar(**time_record)
         time_stats = stats_tracker.export()
-        logging.log_wandb_tensorboard(
-            time_stats,
-            summary_writer=self.summary_writer,
-        )
-        logging.log_swanlab_tensorboard(
+        logging.log_swanlab_wandb_tensorboard(
             time_stats,
             summary_writer=self.summary_writer,
         )

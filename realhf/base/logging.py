@@ -144,34 +144,30 @@ def getLogger(
 _LATEST_WANDB_STEP = 0
 _LATEST_SWANLAB_STEP = 0
 
-def log_wandb_tensorboard(data, step=None, summary_writer=None):
-    import wandb
-
-    global _LATEST_WANDB_STEP
-    if step is None:
-        step = _LATEST_WANDB_STEP
-    else:
-        _LATEST_WANDB_STEP = max(_LATEST_WANDB_STEP, step)
-
-    wandb.log(data, step=step)
-    if summary_writer is not None:
-        for key, val in data.items():
-            summary_writer.add_scalar(f"{key}", val, step)
-
-def log_swanlab_tensorboard(data, step=None, summary_writer=None):
+def log_swanlab_wandb_tensorboard(data, step=None, summary_writer=None):
+    # Logs data to SwanLab、 wandb、 TensorBoard.
+    # swanlab
     import swanlab
-
     global _LATEST_SWANLAB_STEP
     if step is None:
         step = _LATEST_SWANLAB_STEP
     else:
         _LATEST_SWANLAB_STEP = max(_LATEST_SWANLAB_STEP, step)
-
     swanlab.log(data, step=step)
+
+    # wandb
+    import wandb
+    global _LATEST_WANDB_STEP
+    if step is None:
+        step = _LATEST_WANDB_STEP
+    else:
+        _LATEST_WANDB_STEP = max(_LATEST_WANDB_STEP, step)
+    wandb.log(data, step=step)
+
+    # tensorboard
     if summary_writer is not None:
         for key, val in data.items():
             summary_writer.add_scalar(f"{key}", val, step)
-
 
 if __name__ == "__main__":
     # The following serves as a color visualization test.
