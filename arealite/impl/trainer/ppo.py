@@ -2,7 +2,7 @@ import multiprocessing as mp
 from typing import Dict, List
 
 from arealite.api.agent_api import AgentFactory
-from arealite.api.cli_args import PPOTrainerConfig, TrainingArgs
+from arealite.api.cli_args import PPOTrainerConfig, TrainerConfig, TrainingArgs
 from arealite.api.collector_api import TrajCollector, TrajCollectorFactory
 from arealite.api.engine_api import EngineFactory
 from arealite.api.env_api import EnvFactory
@@ -17,9 +17,9 @@ from realhf.impl.model.utils.padding import pad_input, unpad_input
 
 class PPOTrainer(Trainer):
 
-    def __init__(self, args: TrainingArgs, config: PPOTrainerConfig):
-        # super().__init__(args, config)
-        self.config = config
+    def __init__(self, args: TrainingArgs, trainer_config: TrainerConfig):
+        super().__init__(args, trainer_config)
+        self.config = config = trainer_config.ppo
 
         # Create models
         engine_factory = EngineFactory(args)

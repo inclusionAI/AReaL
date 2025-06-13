@@ -6,9 +6,9 @@ from arealite.api.cli_args import TrainerConfig, TrainingArgs
 
 
 class Trainer(abc.ABC):
-    def __init__(self, args: TrainingArgs, config: Any):
+    def __init__(self, args: TrainingArgs, trainer_config: TrainerConfig):
         self.args = args
-        self.config = config
+        self.trainer_config = trainer_config
 
     def train(self, resume_from_checkpoint: Optional[Union[str, bool]] = None):
         raise NotImplementedError()
@@ -25,6 +25,6 @@ class TrainerFactory:
         if config.type == "ppo":
             from arealite.impl.trainer.ppo import PPOTrainer
 
-            return PPOTrainer(self.args, config.ppo)
+            return PPOTrainer(self.args, config)
         else:
             raise NotImplementedError(f"Unknown trainer type: {config.type}")

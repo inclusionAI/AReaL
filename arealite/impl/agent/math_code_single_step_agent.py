@@ -7,7 +7,12 @@ import torch
 from gymnasium.core import ObsType
 
 from arealite.api.agent_api import Agent
-from arealite.api.cli_args import AgentConfig, TrainingArgs
+from arealite.api.cli_args import (
+    AgentConfig,
+    LLMClientConfig,
+    MathCodeSingleStepAgentConfig,
+    TrainingArgs,
+)
 from arealite.api.io_struct import AgentInferOutput, LLMRequest, Message, Trajectory
 from realhf.api.core.data_api import load_hf_tokenizer
 
@@ -19,15 +24,18 @@ if TYPE_CHECKING:
 
 
 class MathCodeSingleStepAgent(Agent):
-    def __init__(self, args: TrainingArgs, config: AgentConfig):
-        super().__init__(args, config)
-        agent_config = config.math_code_single_step
-        self.gconfig = agent_config.gconfig
-        self.tokenizer = load_hf_tokenizer(agent_config.tokenizer_path)
-        self.success_rate_lb = agent_config.success_rate_lb
-        self.success_rate_ub = agent_config.success_rate_ub
-        self.reward_scaling = agent_config.reward_scaling
-        self.reward_bias = agent_config.reward_bias
+    def __init__(
+        self,
+        args: TrainingArgs,
+        client_config: LLMClientConfig,
+        agent_config: AgentConfig,
+    ):
+        super().__init__(args, client_config, agent_config)
+
+        config = agent_config.math_code_single_step
+
+        self.gconfig = config.gconfig
+        self.tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     def act(self, obs: MathCodeObs) -> AgentInferOutput:
         """Given an observation, return an action."""

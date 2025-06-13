@@ -42,10 +42,6 @@ class LLMClientConfig:
 class MathCodeSingleStepAgentConfig:
     gconfig: GenerationHyperparameters
     tokenizer_path: str
-    success_rate_lb: float
-    success_rate_ub: float
-    reward_scaling: float
-    reward_bias: float
 
 
 @dataclass
@@ -63,6 +59,8 @@ class MathCodeSingleStepEnvConfig:
 @dataclass
 class EnvConfig:
     type: str
+    reward_scaling: float
+    reward_bias: float
     math_code_single_step: Optional[MathCodeSingleStepEnvConfig]
 
 

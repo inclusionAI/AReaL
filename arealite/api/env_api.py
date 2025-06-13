@@ -9,9 +9,9 @@ from arealite.api.cli_args import EnvConfig, TrainingArgs
 
 # Re-export the gymnasium environment class
 class Environment(abc.ABC, Env):
-    def __init__(self, args: TrainingArgs, config: Any):
+    def __init__(self, args: TrainingArgs, env_config: EnvConfig):
         self.args = args
-        self.config = config
+        self.env_config = env_config
 
 
 @dataclass
@@ -24,6 +24,6 @@ class EnvFactory:
                 MathCodeSingleStepEnv,
             )
 
-            return MathCodeSingleStepEnv(self.args, config.math_code_single_step)
+            return MathCodeSingleStepEnv(self.args, config)
         else:
             raise NotImplementedError(f"Unknown env type: {config.type}")

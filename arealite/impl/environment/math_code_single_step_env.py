@@ -65,11 +65,14 @@ class MathCodeObs:
 class MathCodeSingleStepEnv(Environment):
     """Math and Code single-step verification environment."""
 
-    def __init__(self, args: TrainingArgs, config: EnvConfig):
-        super().__init__(args, config)
-        env_config = config.math_code_single_step
-        self.dataset_path = env_config.dataset_path
+    def __init__(self, args: TrainingArgs, env_config: EnvConfig):
+        super().__init__(args, env_config)
+        config = env_config.math_code_single_step
+        self.dataset_path = config.dataset_path
         self.id2info, _ = _load_metadata_cached(self.dataset_path)
+
+        self.reward_scaling = env_config.reward_scaling
+        self.reward_bias = env_config.reward_bias
 
         # TODO: define observation and action spaces
 

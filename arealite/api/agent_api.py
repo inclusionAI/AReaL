@@ -14,10 +14,10 @@ class Agent(abc.ABC):
         self,
         args: TrainingArgs,
         client_config: LLMClientConfig,
-        config: Any,
+        agent_config: AgentConfig,
     ):
         self.args = args
-        self.config = config
+        self.agent_config = agent_config
 
         # Create an LLM client to generate actions
         client_factory = LLMClientFactory(args)
@@ -46,7 +46,7 @@ class AgentFactory:
             return MathCodeSingleStepAgent(
                 self.args,
                 self.client_config,
-                config.math_code_single_step,
+                config,
             )
         else:
             raise NotImplementedError(f"Unknown agent type: {config.type}")
