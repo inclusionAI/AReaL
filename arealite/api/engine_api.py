@@ -15,9 +15,9 @@ class SPMDWrapper(abc.ABC):
     pytorch FSDP, which are mostly SPMD-based.
     """
 
-    def __init__(self, args: TrainingArgs, config: EngineConfig):
+    def __init__(self, args: TrainingArgs, engine_config: EngineConfig):
         self.args = args
-        self.config = config
+        self.engine_config = engine_config
 
     def init_distributed(self, config: ParallelismConfig):
         """Initialize distributed communication groups and models.
@@ -95,11 +95,11 @@ class SPMDWrapper(abc.ABC):
 class EngineFactory:
     args: TrainingArgs
 
-    def make_engine(self, config: EngineConfig) -> SPMDWrapper:
+    def make_engine(self, engine_config: EngineConfig) -> SPMDWrapper:
         """Create an engine based on the configuration."""
-        if config.backend == "fsdp":
+        if engine_config.backend == "fsdp":
             from arealite.impl.fsdp_wrapper import FSDPEngine
 
-            return FSDPEngine(self.args, config)
+            return FSDPEngine(self.args, engine_config)
         else:
-            raise ValueError(f"Unsupported engine type: {config.backend}")
+            raise ValueError(f"Unsupported engine type: {engine_config.backend}")

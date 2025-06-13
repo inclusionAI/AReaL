@@ -1,18 +1,14 @@
 # Copyright 2025 Ant Group Inc.
 # Licensed under the Apache License, Version 2.0 (the "License").
 
+import uuid
 from typing import TYPE_CHECKING
 
 import torch
 from gymnasium.core import ObsType
 
 from arealite.api.agent_api import Agent
-from arealite.api.cli_args import (
-    AgentConfig,
-    LLMClientConfig,
-    MathCodeSingleStepAgentConfig,
-    TrainingArgs,
-)
+from arealite.api.cli_args import AgentConfig, LLMClientConfig, TrainingArgs
 from arealite.api.io_struct import AgentInferOutput, LLMRequest, Message, Trajectory
 from realhf.api.core.data_api import load_hf_tokenizer
 
@@ -48,7 +44,7 @@ class MathCodeSingleStepAgent(Agent):
 
         # Create LLM request
         llm_req = LLMRequest(
-            rid=str(qid),
+            rid=str(qid) + "-" + str(uuid.uuid4()),
             model_id="actor",  # Default model ID for actor
             messages=messages,
             gconfig=self.gconfig,
@@ -58,13 +54,10 @@ class MathCodeSingleStepAgent(Agent):
         llm_resp = self.llm_client.generate(llm_req)
 
         # Extract answers from completion
-        if isinstance(llm_resp.completion, list):
-            answers = llm_resp.completion
-        else:
-            answers = [llm_resp.completion]
+        answer = llm_resp.completion
 
         return AgentInferOutput(
-            action=MathCodeAction(qid=qid, answers=answers),
+            action=MathCodeAction(qid=qid, answer=answer),
             llm_req=llm_req,
             llm_resp=llm_resp,
         )

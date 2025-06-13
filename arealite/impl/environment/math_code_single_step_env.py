@@ -1,15 +1,9 @@
-# Copyright 2025 Ant Group Inc.
-# Licensed under the Apache License, Version 2.0 (the "License").
-
 import asyncio
 import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, List, Optional, Tuple
-
-import gymnasium as gym
-import numpy as np
 
 from arealite.api.cli_args import EnvConfig, TrainingArgs
 from arealite.api.env_api import Environment
@@ -98,11 +92,11 @@ class MathCodeSingleStepEnv(Environment):
 
         if cur_task == "math":
             # Run math verification
-            format_rewards = math_verify_call(self.id2info, [answer], [qid])
+            format_reward = math_verify_call(self.id2info, [answer], [qid])[0]
         elif cur_task == "code":
             # Extract code blocks and run code verification
             extracted_answer = extract_code(answer)
-            format_rewards = code_verify_call(self.id2info, [extracted_answer], [qid])
+            format_reward = code_verify_call(self.id2info, [extracted_answer], [qid])[0]
         else:
             raise NotImplementedError(f"Task type '{cur_task}' not implemented")
 
@@ -111,4 +105,4 @@ class MathCodeSingleStepEnv(Environment):
         truncated = False
         info = {"task": cur_task, "qid": qid}
 
-        return None, format_rewards, terminated, truncated, info
+        return None, format_reward, terminated, truncated, info

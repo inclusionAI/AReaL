@@ -11,6 +11,8 @@ from realhf.api.cli_args import (
 )
 from realhf.api.cli_args import ModelTrainEvalConfig as EngineConfig
 from realhf.api.cli_args import (
+    OptimizerConfig,
+    ParallelismConfig,
     PPOHyperparameters,
     PromptAnswerDatasetConfig,
     PromptOnlyDatasetConfig,
@@ -21,9 +23,12 @@ from realhf.api.cli_args import (
 )
 
 
+## Inference config for clients and servers. ##
 @dataclass
 class LLMServiceConfig:
     server_backend: str
+    model_path: str
+    parallel: ParallelismConfig
     health_check_interval: int = 5
     startup_timeout: int = 90
     max_unhealth_count: int = 3
@@ -35,6 +40,67 @@ class LLMServiceConfig:
 @dataclass
 class LLMClientConfig:
     server_backend: str
+    tokenizer_path: str
+    gen_timeout: int
+
+
+## Training backend configs. ##
+
+
+@dataclass
+class FSDPConfig:
+    sync_module_states: bool
+    use_orig_params: bool
+
+
+@dataclass
+class EngineConfig:
+    # Model Architecture Configuration
+    type: ModelFamily = field(
+        default=ModelFamily("llama", False),
+        metadata={"help": "Model family specification"},
+    )
+    path: str = field(default="", metadata={"help": "Path to HuggingFace checkpoint"})
+    init_from_scratch: bool = field(
+        default=False, metadata={"help": "Initialize model weights randomly"}
+    )
+    init_critic_from_actor: bool = field(
+        default=False,
+        metadata={"help": "Initialize critic/reward model from LM checkpoint"},
+    )
+
+    # Training Backend Configuration
+    backend: str = field(
+        default="megatron",
+        metadata={"help": "Training backend", "choices": ["megatron"]},
+    )
+    gradient_checkpointing: bool = field(
+        default=True, metadata={"help": "Enable memory-saving gradient checkpointing"}
+    )
+    bf16: bool = field(
+        default=False, metadata={"help": "Use bf16 precision (otherwise fp16)"}
+    )
+
+    # Backend-Specific Configurations
+    optimizer: Optional[OptimizerConfig] = field(
+        default_factory=OptimizerConfig, metadata={"help": "Optimizer configuration"}
+    )
+    fsdp: FSDPConfig = field(
+        default_factory=FSDPConfig,
+        metadata={"help": "FSDP-specific configuration."},
+    )
+    vllm: vLLMConfig = field(
+        default_factory=vLLMConfig,
+        metadata={
+            "help": "vLLM inference configuration. Can be ignored if this model doesn't use vLLM."
+        },
+    )
+    sglang: SGLangConfig = field(
+        default_factory=SGLangConfig,
+        metadata={
+            "help": "SGLang runtime configuration.  Can be ignored if this model doesn't use SGLang."
+        },
+    )
 
 
 ## Agent configurations. ##
@@ -94,12 +160,15 @@ class PPOTrainerConfig:
 
     dataset: PromptOnlyDatasetConfig
 
-    inf_service: LLMServiceConfig
     collector: Optional[TrajCollectorConfig] = field(
         default_factory=TrajCollectorConfig,
     )
 
     # Core PPO Parameters
+    group_size: int = field(
+        default=16,
+        metadata={"help": "Number of trajectories to sample for each prompt."},
+    )
     ppo_n_minibatches: int = field(
         default=4, metadata={"help": "Number of minibatches for each PPO update"}
     )

@@ -7,8 +7,9 @@ from arealite.api.io_struct import LLMRequest, LLMResponse
 
 
 class LLMClient(abc.ABC):
-    def __init__(self, args: TrainingArgs):
+    def __init__(self, args: TrainingArgs, client_config: LLMClientConfig):
         self.args = args
+        self.client_config = client_config
 
     def generate(self, req: LLMRequest) -> LLMResponse:
         raise NotImplementedError()
@@ -27,8 +28,8 @@ class LLMClientFactory:
     def make_client(self, config: LLMClientConfig) -> LLMClient:
         """Create an instance of LLMClient based on the specified type."""
         if config.server_backend == "sglang":
-            from xxx import SGLangLLMClient
+            from arealite.impl.sglang_client import SGLangClient
 
-            return SGLangLLMClient(self.args)
+            return SGLangClient(self.args, config)
         else:
             raise ValueError(f"Unknown LLMClient type: {config.server_backend}")

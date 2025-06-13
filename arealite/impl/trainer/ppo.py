@@ -15,7 +15,7 @@ from realhf.experiments.common.utils import AllocationMode
 from realhf.impl.model.utils.padding import pad_input, unpad_input
 
 
-class PPOTrainer(Trainer):
+class FsdpPPOTrainer(Trainer):
 
     def __init__(self, args: TrainingArgs, trainer_config: TrainerConfig):
         super().__init__(args, trainer_config)
