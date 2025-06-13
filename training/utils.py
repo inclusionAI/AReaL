@@ -90,6 +90,7 @@ class RayWorker:
             worker_info.experiment_name, worker_info.trial_name
         )
         self.worker.wandb_config = expr_config.wandb
+        self.worker.swanlab_config = expr_config.swanlab
         self.worker.tensorboard_config = expr_config.tensorboard
         self.logger = logging.getLogger(f"{self.worker_type} {idx}", "benchmark")
         self.logger.info(f"Configuring {self.worker_type}...")
@@ -125,6 +126,7 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
     # Initialize ray in the Ray cluster
     env_vars = constants.get_env_vars(
         WADNB_MODE=exp_cfg.wandb.mode,
+        SWANLAB_MODE=exp_cfg.swanlab.mode,
         REAL_MODE="ray",
         REAL_RECOVER_RUN="0",
         REAL_SAVE_RECOVER_STATES="1",
