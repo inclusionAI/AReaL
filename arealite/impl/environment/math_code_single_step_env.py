@@ -4,11 +4,12 @@
 import asyncio
 import os
 import re
+from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, List, Optional, Tuple
 
 import gymnasium as gym
 import numpy as np
-from dataclasses import dataclass
 
 from arealite.api.cli_args import EnvConfig, TrainingArgs
 from arealite.api.env_api import Environment
@@ -24,6 +25,12 @@ math_verify_call = math_verify if ENABLE_FUNCTION_CALL else parse_lines_in_paral
 code_verify_call = code_verify if ENABLE_FUNCTION_CALL else local_code_verify
 
 logger = logging.getLogger("Math Code Single Step Environment")
+
+
+@lru_cache(maxsize=128)
+def _load_metadata_cached(dataset_path: str):
+    """Cached version of load_metadata to avoid reloading metadata each time."""
+    return load_metadata(dataset_path)
 
 
 def extract_code(text, min_length=20):
@@ -42,15 +49,18 @@ def extract_code(text, min_length=20):
     # return the last code block
     return valid_blocks[-1]
 
+
 @dataclass
 class MathCodeAction:
     qid: str
     answer: str
 
+
 @dataclass
 class MathCodeObs:
     qid: str
-    answer: str
+    prompt: str
+
 
 class MathCodeSingleStepEnv(Environment):
     """Math and Code single-step verification environment."""
@@ -59,41 +69,37 @@ class MathCodeSingleStepEnv(Environment):
         super().__init__(args, config)
         env_config = config.math_code_single_step
         self.dataset_path = env_config.dataset_path
-        self.id2info, _ = load_metadata(self.dataset_path)
+        self.id2info, _ = _load_metadata_cached(self.dataset_path)
 
-        # Define observation and action spaces for gymnasium
-        self.observation_space = gym.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32)
-        self.action_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32)
+        # TODO: define observation and action spaces
 
-    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None) -> Tuple[Any, dict]:
+    def reset(
+        self, seed: Optional[int] = None, options: Optional[dict] = None
+    ) -> Tuple[Any, dict]:
         """Reset the environment."""
         super().reset(seed=seed)
-        prompt = options.get("prompt", "")
+        prompt = options["prompt"]
+        qid = options["qid"]
         # Return dummy observation and info
-        return prompt, {}
+        return MathCodeObs(qid=qid, prompt=prompt), {}
 
-    def step(self, action: Tuple[str, List[str]]) -> Tuple[Any, List[float], bool, bool, dict]:
+    def step(
+        self, action: MathCodeAction
+    ) -> Tuple[MathCodeObs, float, bool, bool, dict]:
         """Execute one step in the environment."""
-        qid, answers = action
-        group_size = len(answers)
+        qid = action.qid
+        answer = action.answer
+
         qid = qid.split("@")[0]
         cur_task = self.id2info[qid]["task"]
 
         if cur_task == "math":
             # Run math verification
-            format_rewards = math_verify_call(
-                self.id2info,
-                answers,
-                [qid for _ in range(group_size)],
-            )
+            format_rewards = math_verify_call(self.id2info, [answer], [qid])
         elif cur_task == "code":
             # Extract code blocks and run code verification
-            extracted_answers = [extract_code(x) for x in answers]
-            format_rewards = code_verify_call(
-                self.id2info,
-                extracted_answers,
-                [qid for _ in range(group_size)],
-            )
+            extracted_answer = extract_code(answer)
+            format_rewards = code_verify_call(self.id2info, [extracted_answer], [qid])
         else:
             raise NotImplementedError(f"Task type '{cur_task}' not implemented")
 

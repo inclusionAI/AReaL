@@ -50,13 +50,6 @@ class LLMResponse:
 
 
 @dataclass
-class AgentInferOutput:
-    action: ActType
-    llm_req: LLMRequest
-    llm_resp: LLMResponse
-
-
-@dataclass
 class Trajectory:
     data: Dict[str, torch.Tensor]
     stats: Dict[str, Any]

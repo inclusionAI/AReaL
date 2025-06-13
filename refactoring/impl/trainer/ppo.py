@@ -14,8 +14,6 @@ from refactoring.api.trainer_api import Trainer
 from refactoring.utils import concat_padded_tensors
 
 
-
-
 class PPOTrainer(Trainer):
 
     def __init__(self, args: TrainingArgs, config: PPOTrainerConfig):

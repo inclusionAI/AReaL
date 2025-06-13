@@ -1,15 +1,14 @@
 import abc
 from dataclasses import dataclass
 
-from arealite.api.cli_args import LLMServiceConfig, TrainingArgs
+from arealite.api.cli_args import LLMClientConfig, TrainingArgs
 from arealite.api.engine_api import SPMDWrapper
 from arealite.api.io_struct import LLMRequest, LLMResponse
 
 
 class LLMClient(abc.ABC):
-    def __init__(self, args: TrainingArgs, config: LLMServiceConfig):
+    def __init__(self, args: TrainingArgs):
         self.args = args
-        self.config = config
 
     def generate(self, req: LLMRequest) -> LLMResponse:
         raise NotImplementedError()
@@ -25,11 +24,11 @@ class LLMClientFactory:
 
     args: TrainingArgs
 
-    def make_client(self, config: LLMServiceConfig) -> LLMClient:
+    def make_client(self, config: LLMClientConfig) -> LLMClient:
         """Create an instance of LLMClient based on the specified type."""
         if config.server_backend == "sglang":
             from xxx import SGLangLLMClient
 
-            return SGLangLLMClient(self.args, config)
+            return SGLangLLMClient(self.args)
         else:
             raise ValueError(f"Unknown LLMClient type: {config.server_backend}")

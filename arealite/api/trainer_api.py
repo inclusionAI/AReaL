@@ -6,7 +6,7 @@ from arealite.api.cli_args import TrainerConfig, TrainingArgs
 
 
 class Trainer(abc.ABC):
-    def __init__(self, args: TrainingArgs, config: TrainerConfig):
+    def __init__(self, args: TrainingArgs, config: Any):
         self.args = args
         self.config = config
 

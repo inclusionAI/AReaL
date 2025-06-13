@@ -21,14 +21,14 @@ class SPMDWrapper(abc.ABC):
 
     def init_distributed(self, config: ParallelismConfig):
         """Initialize distributed communication groups and models.
-        
+
         Models may not be loaded during __init__, but when calling this method.
         """
         raise NotImplementedError()
 
     def train_batch(
         self,
-        input_: SequenceSample,
+        input_: Dict,
         mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[torch.Tensor, Dict], float],

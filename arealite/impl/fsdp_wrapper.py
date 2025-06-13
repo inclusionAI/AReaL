@@ -6,11 +6,11 @@ from typing import Any, Callable, Dict, List, Literal, Optional
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+import transformers
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import ShardingStrategy, StateDictType
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from transformers import AutoModelForCausalLM
-import transformers
 
 from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
 from arealite.api.engine_api import SPMDWrapper
@@ -32,10 +32,10 @@ class FSDPEngine(SPMDWrapper):
         """Initialize distributed communication groups and models."""
         if self._distributed_initialized:
             return
-        
+
         if not dist.is_initialized():
             dist.init_process_group(backend="nccl")
-        
+
         self._setup_model()
         self._setup_optimizer()
         self._distributed_initialized = True
@@ -304,7 +304,7 @@ class FSDPEngine(SPMDWrapper):
         """Get the model state dict in HuggingFace format."""
         if self.model is None:
             raise RuntimeError("Model not initialized. Call init_distributed first.")
-        
+
         with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):
             return self.model.state_dict()
 
@@ -315,19 +315,19 @@ class FSDPEngine(SPMDWrapper):
         base_model_path: Optional[str] = None,
     ):
         """Save the model to HuggingFace format."""
-        
+
         if self.model is None:
             raise RuntimeError("Model not initialized. Call init_distributed first.")
-        
+
         os.makedirs(path, exist_ok=True)
-        
+
         # Save the state dict
         state_dict = self.get_hf_model_state_dict()
         torch.save(state_dict, os.path.join(path, "pytorch_model.bin"))
-        
+
         # Save tokenizer
         tokenizer.save_pretrained(path)
-        
+
         # Save config
         if base_model_path:
             config = transformers.AutoConfig.from_pretrained(base_model_path)
@@ -339,47 +339,57 @@ class FSDPEngine(SPMDWrapper):
         """Load the model from HuggingFace format."""
         if self.model is None:
             raise RuntimeError("Model not initialized. Call init_distributed first.")
-        
-        state_dict = torch.load(os.path.join(path, "pytorch_model.bin"), map_location="cpu")
-        
+
+        state_dict = torch.load(
+            os.path.join(path, "pytorch_model.bin"), map_location="cpu"
+        )
+
         with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):
             self.model.load_state_dict(state_dict)
 
     def save_optimizer_state(self, path: str):
         """Save the optimizer state in a folder."""
-        
+
         if self.optimizer is None:
-            raise RuntimeError("Optimizer not initialized. Call init_distributed first.")
-        
+            raise RuntimeError(
+                "Optimizer not initialized. Call init_distributed first."
+            )
+
         os.makedirs(path, exist_ok=True)
-        
+
         # Save optimizer state
         torch.save(self.optimizer.state_dict(), os.path.join(path, "optimizer.pt"))
-        
+
         # Save scheduler state if exists
         if self.scheduler is not None:
             torch.save(self.scheduler.state_dict(), os.path.join(path, "scheduler.pt"))
-        
+
         # Save scaler state if exists
         if self.scaler is not None:
             torch.save(self.scaler.state_dict(), os.path.join(path, "scaler.pt"))
 
     def load_optimizer_state(self, path: str):
         """Load the optimizer state from a folder."""
-        
+
         if self.optimizer is None:
-            raise RuntimeError("Optimizer not initialized. Call init_distributed first.")
-        
+            raise RuntimeError(
+                "Optimizer not initialized. Call init_distributed first."
+            )
+
         # Load optimizer state
         optimizer_path = os.path.join(path, "optimizer.pt")
         if os.path.exists(optimizer_path):
-            self.optimizer.load_state_dict(torch.load(optimizer_path, map_location="cpu"))
-        
+            self.optimizer.load_state_dict(
+                torch.load(optimizer_path, map_location="cpu")
+            )
+
         # Load scheduler state if exists
         scheduler_path = os.path.join(path, "scheduler.pt")
         if self.scheduler is not None and os.path.exists(scheduler_path):
-            self.scheduler.load_state_dict(torch.load(scheduler_path, map_location="cpu"))
-        
+            self.scheduler.load_state_dict(
+                torch.load(scheduler_path, map_location="cpu")
+            )
+
         # Load scaler state if exists
         scaler_path = os.path.join(path, "scaler.pt")
         if self.scaler is not None and os.path.exists(scaler_path):

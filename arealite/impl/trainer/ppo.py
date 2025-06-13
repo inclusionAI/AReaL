@@ -1,19 +1,18 @@
 import multiprocessing as mp
 from typing import Dict, List
 
-from realhf.api.core.data_api import gather_stat
-from realhf.experiments.common.utils import AllocationMode
 from arealite.api.agent_api import AgentFactory
 from arealite.api.cli_args import PPOTrainerConfig, TrainingArgs
-from arealite.api.collector_api import TrajCollectorFactory, TrajCollector
+from arealite.api.collector_api import TrajCollector, TrajCollectorFactory
 from arealite.api.engine_api import EngineFactory
 from arealite.api.env_api import EnvFactory
 from arealite.api.io_struct import Trajectory
 from arealite.api.llm_client_api import LLMClientFactory
 from arealite.api.trainer_api import Trainer
 from arealite.utils import concat_padded_tensors
+from realhf.api.core.data_api import SequenceSample, gather_stat
+from realhf.experiments.common.utils import AllocationMode
 from realhf.impl.model.utils.padding import pad_input, unpad_input
-from realhf.api.core.data_api import SequenceSample
 
 
 class PPOTrainer(Trainer):
@@ -35,7 +34,7 @@ class PPOTrainer(Trainer):
         self.rew = None
         if config.rew is not None:
             self.rew = engine_factory.make_engine(config.rew)
-        
+
         # Rollout collector
         self.collector_factory = TrajCollectorFactory(args)
 
@@ -68,9 +67,8 @@ class PPOTrainer(Trainer):
             stats = gather_stat([traj.stats for traj in trajs])
 
             # Convert trajectories to SequenceSample
-            attn_mask = data['attention_mask']
-            packed_input_ids = unpad_input(data['packed_input_ids'], attn_mask)
-            
+            attn_mask = data["attention_mask"]
+            packed_input_ids = unpad_input(data["packed_input_ids"], attn_mask)
 
             # Run reference model inference
             if self.ref is not None and self.config.kl_ctl != 0.0:

@@ -6,13 +6,13 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
 import torch
 from gymnasium.core import ActType, ObsType
 
-from realhf.api.core.model_api import GenerationHyperparameters
 from arealite.api.agent_api import Agent, AgentFactory
 from arealite.api.cli_args import TrainingArgs, TrajCollectorConfig
 from arealite.api.collector_api import TrajCollector
 from arealite.api.env_api import EnvFactory, Environment
 from arealite.api.io_struct import Trajectory
 from arealite.utils import pad_sequences_to_tensors
+from realhf.api.core.model_api import GenerationHyperparameters
 
 
 class LLMTrajCollector(TrajCollector):

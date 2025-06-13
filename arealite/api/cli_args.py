@@ -32,6 +32,11 @@ class LLMServiceConfig:
     vllm: vLLMConfig | None = None
 
 
+@dataclass
+class LLMClientConfig:
+    server_backend: str
+
+
 ## Agent configurations. ##
 @dataclass
 class MathCodeSingleStepAgentConfig:
@@ -96,19 +101,28 @@ class PPOTrainerConfig:
         default_factory=TrajCollectorConfig,
     )
 
-
     # Core PPO Parameters
-    ppo_n_minibatches: int = field(default=4, metadata={"help": "Number of minibatches for each PPO update"})
-    eps_clip: float = field(default=0.2, metadata={"help": "Clipping factor for policy ratio"})
+    ppo_n_minibatches: int = field(
+        default=4, metadata={"help": "Number of minibatches for each PPO update"}
+    )
+    eps_clip: float = field(
+        default=0.2, metadata={"help": "Clipping factor for policy ratio"}
+    )
     c_clip: Optional[float] = field(
         default=None,
-        metadata={"help": "Dual clipping factor for policy ratio, must > 1.0. None disables dual clipping."},
+        metadata={
+            "help": "Dual clipping factor for policy ratio, must > 1.0. None disables dual clipping."
+        },
     )
-    value_eps_clip: float = field(default=0.2, metadata={"help": "Clipping factor for value updates"})
+    value_eps_clip: float = field(
+        default=0.2, metadata={"help": "Clipping factor for value updates"}
+    )
     early_stop_imp_ratio: float = field(
         default=5.0, metadata={"help": "Early stop threshold for importance ratio"}
     )
-    actor_sample_reuse: int = field(default=1, metadata={"help": "The data reuse (aka PPO epoch) for actor."})
+    actor_sample_reuse: int = field(
+        default=1, metadata={"help": "The data reuse (aka PPO epoch) for actor."}
+    )
     critic_sample_reuse: int = field(
         default=1, metadata={"help": "The data reuse (aka PPO epoch) for critic."}
     )
@@ -120,24 +134,38 @@ class PPOTrainerConfig:
     reward_output_scaling: float = field(
         default=1.0, metadata={"help": "Scaling factor for reward model outputs"}
     )
-    reward_output_bias: float = field(default=0.0, metadata={"help": "Bias term for reward model outputs"})
+    reward_output_bias: float = field(
+        default=0.0, metadata={"help": "Bias term for reward model outputs"}
+    )
     fuse_rew_ref: bool = field(
         default=True,
         metadata={"help": "Whether to fuse reward and reference model computations"},
     )
 
     # Advantage Estimation
-    discount: float = field(default=1.0, metadata={"help": "Discount factor for future rewards"})
-    gae_lambda: float = field(default=1.0, metadata={"help": "Lambda parameter for GAE"})
-    adv_norm: bool = field(default=True, metadata={"help": "Enable advantage normalization"})
+    discount: float = field(
+        default=1.0, metadata={"help": "Discount factor for future rewards"}
+    )
+    gae_lambda: float = field(
+        default=1.0, metadata={"help": "Lambda parameter for GAE"}
+    )
+    adv_norm: bool = field(
+        default=True, metadata={"help": "Enable advantage normalization"}
+    )
 
     # KL Control
     kl_ctl: float = field(default=0.1, metadata={"help": "KL divergence coefficient"})
-    use_adaptive_kl_ctl: bool = field(default=False, metadata={"help": "Use adaptive KL coefficient control"})
+    use_adaptive_kl_ctl: bool = field(
+        default=False, metadata={"help": "Use adaptive KL coefficient control"}
+    )
 
     # Value Function Configuration
-    disable_value: bool = field(default=False, metadata={"help": "Disable value/critic model"})
-    value_norm: bool = field(default=True, metadata={"help": "Enable value normalization"})
+    disable_value: bool = field(
+        default=False, metadata={"help": "Disable value/critic model"}
+    )
+    value_norm: bool = field(
+        default=True, metadata={"help": "Enable value normalization"}
+    )
     value_norm_type: str = field(
         default="exp",
         metadata={"help": "Type of value normalization", "choices": ["exp", "ma"]},
@@ -146,7 +174,9 @@ class PPOTrainerConfig:
         default=0.99995,
         metadata={"help": "Decay factor for exponential moving average"},
     )
-    value_norm_eps: float = field(default=1e-5, metadata={"help": "Epsilon term for numerical stability"})
+    value_norm_eps: float = field(
+        default=1e-5, metadata={"help": "Epsilon term for numerical stability"}
+    )
     recompute_logprob: bool = field(
         default=False,
         metadata={"help": "Recompute logp and replace the logp returned by inference."},
@@ -161,8 +191,6 @@ class PPOTrainerConfig:
             "help": "We filter out the tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing the loss, must be > 1.0, use_decoupled_loss must be true"
         },
     )
-
-    
 
 
 @dataclass
@@ -196,10 +224,13 @@ class TrainingArgs:
     allocation_mode: str = field(
         default="",
         metadata={
-            "help": "GPU parallel strategy allocation mode. " "Options: manual/heuristic or pattern-based."
+            "help": "GPU parallel strategy allocation mode. "
+            "Options: manual/heuristic or pattern-based."
         },
     )
-    n_gpus_per_node: int = field(default=8, metadata={"help": "Number of GPUs per node for this experiment."})
+    n_gpus_per_node: int = field(
+        default=8, metadata={"help": "Number of GPUs per node for this experiment."}
+    )
     seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
     exp_ctrl: ExperimentSaveEvalControl = field(
         default_factory=ExperimentSaveEvalControl,
