@@ -14,47 +14,6 @@ from refactoring.api.trainer_api import Trainer
 from refactoring.utils import concat_padded_tensors
 
 
-class DataPipe:
-    def __init__(self, args: TrainingArgs):
-        self.args = args
-        self.collector = TrajCollectorFactory(args).make_collector(args.collector)
-
-        self.queue = mp.Queue(128)
-        self.stop_event = mp.Event()
-
-    def _worker(self, dataloader):
-        collector = TrajCollectorFactory(self.args).make_collector(self.args.collector)
-        while not self.stop_event.is_set():
-            # TODO: capacity and staleness control here
-            with self.lock:
-                data = next(dataloader)
-            traj = collector.run_episode(env_option=data)
-            # FIXME: avoid mp queue pickling
-            self.queue.put(traj)
-
-    def start_run_episode_loop(self, args: TrainingArgs, dataloader):
-        procs = [
-            mp.Process(target=self._worker) for _ in range(args.collector.num_workers)
-        ]
-        for p in procs:
-            p.start()
-        # TODO: create a puller thread to pull from the queue
-
-    def wait_for(self, global_bs: int) -> List[Trajectory]:
-        data = []
-        stats = []
-        current_samples = 0
-        while current_samples < global_bs:
-            try:
-                traj: Trajectory = self.queue.get_nowait()
-                data.append(traj.data)
-                stats.append(traj.stats)
-            except:
-                time.sleep(0.1)
-            current_samples = int(name_resolve.get(xxx))
-        data = concat_padded_tensors(data)
-        stat = gather_stat(stat)
-        return Trajectory(data, stat)
 
 
 class PPOTrainer(Trainer):
@@ -80,8 +39,6 @@ class PPOTrainer(Trainer):
         self.llm_client = client_factory.make_client(args.collector.agent.inf_service)
 
     def train(self):
-        data_pipe = DataPipe()
-        data_pipe.start_run_episode_loop(self.args, self.dataloader)
 
         for _ in range(50):
             # Different process may have different number of samples (even 0)

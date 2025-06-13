@@ -5,21 +5,23 @@ from typing import Any, Callable, Dict, List, Literal
 import torch
 
 from refactoring.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
+from realhf.api.cli_args import ParallelismConfig
 
 
-class Engine(abc.ABC):
-    """Defines the interface for modules after backend initialization.
-
-    Different backends (e.g., Megatron, Transformers) will implement
-    this interface to provide their own training and evaluation methods.
+class SPMDBackendWrapper(abc.ABC):
+    """A wrapper over the training/inference backends (e.g., FSDP, SGLang).
+    We following the design of existing libraries, such as Megatron-LM and
+    pytorch FSDP, which are mostly SPMD-based.
     """
 
     def __init__(self, args: TrainingArgs, config: EngineConfig):
         self.args = args
         self.config = config
 
-    def init_process_group(self):
+    def init_distributed(self):
         raise NotImplementedError()
+    def init_parallelism_groups(self):
+        raise pass
 
     def train_batch(
         self,
@@ -117,15 +119,164 @@ class Engine(abc.ABC):
         raise NotImplementedError()
 
 
+class DataManager:
+    def scatter(self, input_: Dict, mb_spec: MicroBatchSpec) -> Dict:
+        """Scatter the input data across micro-batches."""
+        # Implementation of scattering logic goes here.
+        return input_
+
+    def gather(self, output: Dict) -> Dict:
+        return output
+
+    def gather_stats(self, stats: Dict) -> Dict:
+        return stats
+import torch.distributed as dist
+import torch.multiprocessing as mp
+class EngineExecutor:
+    def __init__(self, args: TrainingArgs, config: EngineConfig):
+        self.config = config
+        self.args = args
+        
+    def setup_distributed(self, args: TrainingArgs, para: ParallelismConfig):
+        """Start worker processes"""
+        procs = [mp.Process(target=self._worker_fn, args=(i, args, para, )) for i in range(para.world_size)]
+        for p in procs:
+            p.start()
+        
+    def _worker_fn(self, rank, args, para: ParallelismConfig):
+        """Worker process - handles FSDP training"""
+        # Initialize distributed
+        dist.init_process_group('nccl', rank=rank, world_size=para.world_size)
+        torch.cuda.set_device(rank)
+        
+        factory = EngineFactory(args)
+        engine = factory.make_engine(self.config)
+        engine.init_parallelism_groups()
+        
+        # Worker training loop
+        while True:
+            try:
+                # Receive global batch from controller
+                batch = self._receive_batch(rank)
+                if batch is None:  # Shutdown signal
+                    break
+                    
+                # Get worker's portion of the batch
+                data, target = self._split_batch(batch, rank)
+                
+                # Standard FSDP training step
+                optimizer.zero_grad()
+                output = model(data)
+                loss = nn.CrossEntropyLoss()(output, target)
+                loss.backward()
+                optimizer.step()
+                
+                # Send loss back to controller
+                self._send_result(loss.item(), rank)
+                
+            except Exception as e:
+                print(f"Worker {rank} error: {e}")
+                break
+                
+        dist.destroy_process_group()
+    
+    def _receive_batch(self, rank):
+        """Receive batch data from controller"""
+        # Simple implementation using file-based communication
+        # In production, use proper IPC mechanisms
+        import time, pickle, os
+        
+        while True:
+            try:
+                if os.path.exists(f'/tmp/batch_{rank}.pkl'):
+                    with open(f'/tmp/batch_{rank}.pkl', 'rb') as f:
+                        batch = pickle.load(f)
+                    os.remove(f'/tmp/batch_{rank}.pkl')
+                    return batch
+                elif os.path.exists('/tmp/shutdown.signal'):
+                    return None
+                time.sleep(0.01)
+            except:
+                time.sleep(0.01)
+    
+    def _send_result(self, loss, rank):
+        """Send result back to controller"""
+        import pickle
+        with open(f'/tmp/result_{rank}.pkl', 'wb') as f:
+            pickle.dump(loss, f)
+    
+    def _split_batch(self, batch, rank):
+        """Split global batch for this worker"""
+        data, target = batch
+        chunk_size = len(data) // self.world_size
+        start = rank * chunk_size
+        end = start + chunk_size if rank < self.world_size - 1 else len(data)
+        return data[start:end].cuda(), target[start:end].cuda()
+    
+    def train_batch(self, batch):
+        """Train on global batch - called from controller"""
+        import pickle, os, time
+        
+        # Send batch to all workers
+        for rank in range(self.world_size):
+            with open(f'/tmp/batch_{rank}.pkl', 'wb') as f:
+                pickle.dump(batch, f)
+        
+        # Wait for results from all workers
+        losses = []
+        for rank in range(self.world_size):
+            while not os.path.exists(f'/tmp/result_{rank}.pkl'):
+                time.sleep(0.01)
+            with open(f'/tmp/result_{rank}.pkl', 'rb') as f:
+                loss = pickle.load(f)
+            losses.append(loss)
+            os.remove(f'/tmp/result_{rank}.pkl')
+        
+        return sum(losses) / len(losses)
+    
+    def cleanup(self):
+        """Shutdown workers"""
+        import os
+        with open('/tmp/shutdown.signal', 'w') as f:
+            f.write('shutdown')
+
+class EngineExecutor:
+
+    def __init__(
+        self,
+        base_engine: SPMDBackendWrapper,
+        data_manager: DataManager,
+    ):
+        self.base_engine = base_engine
+        self.data_manager = data_manager
+
+    def train_batch(
+        self,
+        input_: Dict,
+        mb_spec: MicroBatchSpec,
+        loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
+        loss_weight_fn: Callable[[torch.Tensor, Dict], float],
+        version_steps: int,
+        token_normalize_scope: Literal["global", "dp"] = "global",
+    ) -> Dict:
+        input_ = self.data_manager.scatter(input_, mb_spec)
+        stats = self.base_engine.train_batch(
+            input_, mb_spec, loss_fn, loss_weight_fn, version_steps, token_normalize_scope
+        )
+        stats = self.data_manager.gather_stats(stats)
+        return stats
+
+
 @dataclass
 class EngineFactory:
     args: TrainingArgs
 
-    def make_engine(self, config: EngineConfig) -> Engine:
+    def make_engine(self, config: EngineConfig) -> SPMDBackendWrapper:
         """Create an engine based on the configuration."""
         if config.backend == "fsdp":
             from refactoring.impl.model.fsdp_engine import FSDPEngine
 
-            return FSDPEngine(self.args, config)
+            base_engine = FSDPEngine(self.args, config)
         else:
             raise ValueError(f"Unsupported engine type: {config.backend}")
+        

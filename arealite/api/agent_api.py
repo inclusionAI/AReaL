@@ -1,12 +1,12 @@
 import abc
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 from gymnasium.core import ObsType
 
-from refactoring.api.cli_args import AgentConfig, TrainingArgs
-from refactoring.api.io_struct import AgentInferOutput
-from refactoring.api.llm_client_api import LLMClient, LLMClientFactory
+from arealite.api.cli_args import AgentConfig, TrainingArgs
+from arealite.api.io_struct import AgentInferOutput
+from arealite.api.llm_client_api import LLMClient, LLMClientFactory
 
 
 class Agent(abc.ABC):
@@ -36,7 +36,7 @@ class AgentFactory:
 
     def make_agent(self, config: AgentConfig) -> Agent:
         if config.type == "math-code-single-step":
-            from refactoring.impl.agent.math_code_single_step_agent import MathCodeSingleStepAgent
+            from arealite.impl.agent.math_code_single_step_agent import MathCodeSingleStepAgent
 
             return MathCodeSingleStepAgent(self.args, config)
         else:
