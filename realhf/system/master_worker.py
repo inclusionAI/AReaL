@@ -12,8 +12,8 @@ from typing import Dict
 import colorama
 import networkx as nx
 import numpy as np
-import wandb
 import swanlab
+import wandb
 from tensorboardX import SummaryWriter
 
 import realhf.api.core.dfg as dfg
@@ -319,19 +319,31 @@ class MasterWorker(worker_base.AsyncWorker):
             swanlab.login(self.swanlab_config.api_key)
         if self.swanlab_config.config is None:
             import yaml
-            with open(os.path.join(
-                constants.LOG_ROOT, constants.experiment_name(), constants.trial_name(), "config.yaml"
-            ), "r") as f:
+
+            with open(
+                os.path.join(
+                    constants.LOG_ROOT,
+                    constants.experiment_name(),
+                    constants.trial_name(),
+                    "config.yaml",
+                ),
+                "r",
+            ) as f:
                 __config = yaml.safe_load(f)
         else:
             __config = self.swanlab_config.config
-        __config["FRAMEWORK"]="AReaL"
+        __config["FRAMEWORK"] = "AReaL"
         swanlab.init(
             project=self.swanlab_config.project or constants.experiment_name(),
-            experiment_name=self.swanlab_config.name or f"{constants.trial_name()}_train",
+            experiment_name=self.swanlab_config.name
+            or f"{constants.trial_name()}_train",
             config=__config,
-            logdir=self.swanlab_config.logdir or os.path.join(
-                constants.LOG_ROOT, constants.experiment_name(), constants.trial_name(), "swanlab"
+            logdir=self.swanlab_config.logdir
+            or os.path.join(
+                constants.LOG_ROOT,
+                constants.experiment_name(),
+                constants.trial_name(),
+                "swanlab",
             ),
             mode=self.swanlab_config.mode,
         )

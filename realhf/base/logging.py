@@ -143,6 +143,7 @@ def getLogger(
 
 _LATEST_LOG_STEP = 0
 
+
 def log_swanlab_wandb_tensorboard(data, step=None, summary_writer=None):
     # Logs data to SwanLab、 wandb、 TensorBoard.
 
@@ -151,19 +152,22 @@ def log_swanlab_wandb_tensorboard(data, step=None, summary_writer=None):
         step = _LATEST_LOG_STEP
     else:
         _LATEST_LOG_STEP = max(_LATEST_LOG_STEP, step)
-    
+
     # swanlab
     import swanlab
+
     swanlab.log(data, step=step)
 
     # wandb
     import wandb
+
     wandb.log(data, step=step)
 
     # tensorboard
     if summary_writer is not None:
         for key, val in data.items():
             summary_writer.add_scalar(f"{key}", val, step)
+
 
 if __name__ == "__main__":
     # The following serves as a color visualization test.

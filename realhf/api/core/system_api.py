@@ -11,9 +11,9 @@ import realhf.api.core.dfg as dfg
 from realhf.api.cli_args import (
     AutomaticEvaluator,
     ExperimentSaveEvalControl,
+    SwanlabConfig,
     TensorBoardConfig,
     WandBConfig,
-    SwanlabConfig,
 )
 from realhf.api.core.config import (
     AgentAbstraction,

@@ -10,8 +10,8 @@ import uuid
 from collections import defaultdict
 from typing import Dict, Hashable, List, Set, Tuple
 
-import wandb
 import swanlab
+import wandb
 from tensorboardX import SummaryWriter
 
 import realhf.api.core.config as config_api

@@ -8,8 +8,8 @@ import subprocess
 import time
 from typing import Dict, Optional
 
-import wandb
 import swanlab
+import wandb
 
 import realhf.api.core.system_api as config_pkg
 from realhf.base import cluster, constants, logging
@@ -133,7 +133,9 @@ class EvaluationStep:
         wandb.log(swanlab_wandb_data, step=self.global_step)
         swanlab.log(swanlab_wandb_data, step=self.global_step)
         self.status = EvaluationStepStatus.LOGGED
-        logger.info(f"Logging eval result {swanlab_wandb_data} to step {self.global_step}")
+        logger.info(
+            f"Logging eval result {swanlab_wandb_data} to step {self.global_step}"
+        )
 
         return True
 
@@ -238,19 +240,31 @@ class AutomaticEvaluator:
             swanlab.login(self.__swanlab_config.api_key)
         if self.swanlab_config.config is None:
             import yaml
-            with open(os.path.join(
-                constants.LOG_ROOT, constants.experiment_name(), constants.trial_name(), "config.yaml"
-            ), "r") as f:
+
+            with open(
+                os.path.join(
+                    constants.LOG_ROOT,
+                    constants.experiment_name(),
+                    constants.trial_name(),
+                    "config.yaml",
+                ),
+                "r",
+            ) as f:
                 __config = yaml.safe_load(f)
         else:
             __config = self.swanlab_config.config
-        __config["FRAMEWORK"]="AReaL"
+        __config["FRAMEWORK"] = "AReaL"
         swanlab.init(
             project=self.__swanlab_config.project or constants.experiment_name(),
-            experiment_name=self.__swanlab_config.name or f"{constants.trial_name()}_eval",
+            experiment_name=self.__swanlab_config.name
+            or f"{constants.trial_name()}_eval",
             config=__config,
-            logdir=self.__swanlab_config.logdir or os.path.join(
-                constants.LOG_ROOT, constants.experiment_name(), constants.trial_name(), "swanlab"
+            logdir=self.__swanlab_config.logdir
+            or os.path.join(
+                constants.LOG_ROOT,
+                constants.experiment_name(),
+                constants.trial_name(),
+                "swanlab",
             ),
             mode=self.__swanlab_config.mode,
         )

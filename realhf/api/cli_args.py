@@ -847,6 +847,7 @@ class WandBConfig:
     tags: Optional[List[str]] = None
     config: Optional[Dict] = None
 
+
 @dataclass
 class SwanlabConfig:
     project: Optional[str] = None
@@ -854,7 +855,7 @@ class SwanlabConfig:
     config: Optional[Dict] = None
     logdir: Optional[str] = None
     mode: Optional[str] = "local"
-    api_key: Optional[str] = os.getenv("SWANLAB_API_KEY",None)
+    api_key: Optional[str] = os.getenv("SWANLAB_API_KEY", None)
 
 
 @dataclass
@@ -960,7 +961,7 @@ class BaseExperimentConfig:
         default_factory=WandBConfig,
         metadata={"help": "Weights & Biases configuration."},
     )
-    swanlab: SwanlabConfig =field(
+    swanlab: SwanlabConfig = field(
         default_factory=SwanlabConfig,
         metadata={"help": "SwanLab configuration."},
     )
