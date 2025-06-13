@@ -141,27 +141,23 @@ def getLogger(
     return logging.getLogger(name)
 
 
-_LATEST_WANDB_STEP = 0
-_LATEST_SWANLAB_STEP = 0
+_LATEST_LOG_STEP = 0
 
 def log_swanlab_wandb_tensorboard(data, step=None, summary_writer=None):
     # Logs data to SwanLab、 wandb、 TensorBoard.
+
+    global _LATEST_LOG_STEP
+    if step is None:
+        step = _LATEST_LOG_STEP
+    else:
+        _LATEST_LOG_STEP = max(_LATEST_LOG_STEP, step)
+    
     # swanlab
     import swanlab
-    global _LATEST_SWANLAB_STEP
-    if step is None:
-        step = _LATEST_SWANLAB_STEP
-    else:
-        _LATEST_SWANLAB_STEP = max(_LATEST_SWANLAB_STEP, step)
     swanlab.log(data, step=step)
 
     # wandb
     import wandb
-    global _LATEST_WANDB_STEP
-    if step is None:
-        step = _LATEST_WANDB_STEP
-    else:
-        _LATEST_WANDB_STEP = max(_LATEST_WANDB_STEP, step)
     wandb.log(data, step=step)
 
     # tensorboard
