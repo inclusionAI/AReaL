@@ -126,16 +126,14 @@ class EvaluationStep:
             self.status = EvaluationStepStatus.FAILED
             return False
 
-        swanlab_wandb_data = {}
+        log_data = {}
         for data_name, d in data.items():
             for k, v in d.items():
-                swanlab_wandb_data[f"{data_name}_{k}"] = v
-        wandb.log(swanlab_wandb_data, step=self.global_step)
-        swanlab.log(swanlab_wandb_data, step=self.global_step)
+                log_data[f"{data_name}_{k}"] = v
+        wandb.log(log_data, step=self.global_step)
+        swanlab.log(log_data, step=self.global_step)
         self.status = EvaluationStepStatus.LOGGED
-        logger.info(
-            f"Logging eval result {swanlab_wandb_data} to step {self.global_step}"
-        )
+        logger.info(f"Logging eval result {log_data} to step {self.global_step}")
 
         return True
 
