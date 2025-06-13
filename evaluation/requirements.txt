@@ -15,5 +15,4 @@ prettytable
 timeout-decorator
 timeout_decorator
 wandb
-swanlab
-swanboard
+swanlab[dashboard]
