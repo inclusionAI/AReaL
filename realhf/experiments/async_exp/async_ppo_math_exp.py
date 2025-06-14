@@ -48,7 +48,6 @@ class AsyncPPOMATHConfig(AsyncRLExperimentConfig, PPOMATHConfig):
             "math-code-single-step",
             args=dict(
                 dataset_path=self.dataset.path,
-                args=self,
             ),
         )
 

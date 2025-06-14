@@ -24,6 +24,7 @@ blogger = logging.getLogger("benchmark")
 class FunctionExecutor:
     def __init__(
         self,
+        args,
         rpcs: List[MFCDef],
         msid2mwid: Dict[ModelShardID, int],
         stream: NameResolvingRequestClient,
@@ -35,6 +36,8 @@ class FunctionExecutor:
         shuffle_dataset: bool,
     ):
 
+        self.args = args
+
         self.func_calls: Dict[str, ModelFunctionCall] = {}
         self.ctrl = ctrl
 
@@ -42,7 +45,9 @@ class FunctionExecutor:
         self.msid2mwid = msid2mwid
 
         self.storage_tracker = GlobalStorageTracker(self.n_model_workers)
-        self.redistrib_planner = RedistribPlanner(self.storage_tracker)
+        self.redistrib_planner = RedistribPlanner(
+            self.args.cluster, self.storage_tracker
+        )
 
         self.rpcs = rpcs
         self.src_rpc = list(filter(lambda rpc: rpc.is_src, rpcs))[0]

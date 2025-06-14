@@ -692,6 +692,8 @@ def allocate_resources(
         infos, key=lambda x: x.n_jobsteps * x.resource_requirement, reverse=True
     )
     prioritized_hosts = set()
+    if len(infos) == 0:
+        return infos
     cluster_config = infos[0].args.cluster
     for info_idx, info in enumerate(infos):
         valid_hostnames = available_hostnames(

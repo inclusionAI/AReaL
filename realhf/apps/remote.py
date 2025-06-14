@@ -21,7 +21,7 @@ from omegaconf import OmegaConf
 multiprocessing.set_start_method("spawn", force=True)
 
 from realhf.api.quickstart.entrypoint import QUICKSTART_CONFIG_CLASSES
-from realhf.base import gpu_utils, importing, logging
+from realhf.base import gpu_utils, importing, logging, name_resolve
 from realhf.version import get_full_version_with_dirty_description
 
 logger = logging.getLogger("Main-Workers")
@@ -61,6 +61,7 @@ def main_worker(args):
     import realhf.api.core.system_api as system_api
 
     experiment = system_api.make_experiment(name=args.experiment_name)
+    name_resolve.reconfigure(experiment.cluster.name_resolve)
 
     worker_index_start = args.jobstep_id * args.wprocs_per_jobstep + args.wproc_offset
     worker_index_end = min(
@@ -165,6 +166,9 @@ def main_controller(args):
     constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     _patch_external_impl(args.experiment_name, args.trial_name)
 
+    experiment = system_api.make_experiment(args.experiment_name)
+    name_resolve.reconfigure(experiment.cluster.name_resolve)
+
     logger.debug("Running controller with args: %s", args)
     assert not args.experiment_name.startswith("/"), args.experiment_name
     try:
@@ -176,7 +180,6 @@ def main_controller(args):
         experiment_name=args.experiment_name,
         trial_name=args.trial_name,
     )
-    experiment = system_api.make_experiment(args.experiment_name)
 
     controller.start(
         experiment=experiment,

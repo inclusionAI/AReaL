@@ -80,14 +80,13 @@ class SlurmSchedulerClient(SchedulerClient):
 
     def __init__(
         self,
-        expr_name: str,
-        trial_name: str,
+        args,
         schedule_strategy: str,
         evaluator: Optional[AutomaticEvaluator],
         job_group_id: str,
         job_group_index: int,
     ):
-        super().__init__(expr_name, trial_name)
+        super().__init__(args)
 
         self.__schedule_strategy = schedule_strategy
 

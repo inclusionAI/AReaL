@@ -84,6 +84,7 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
     if recover_count == 0:
         constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     experiment = config_package.make_experiment(args.experiment_name)
+    name_resolve.reconfigure(experiment.cluster.name_resolve)
 
     # Run initial_setup to go through all sanity checks.
     try:
@@ -150,10 +151,7 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
 
     # setup experiments
     sched = sched_client.make(
-        mode=scheduler_mode(args.mode),
-        expr_name=expr_name,
-        trial_name=trial_name,
-        schedule_strategy=args.schedule_strategy,
+        experiment,
         evaluator=evaluator,
         job_group_id=job_group_id,
         job_group_index=recover_count,
@@ -292,11 +290,8 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
 
 
 def main_stop(args):
-    sched = sched_client.make(
-        mode=scheduler_mode(args.mode),
-        expr_name=args.experiment_name,
-        trial_name=args.trial_name,
-    )
+    experiment = config_package.make_experiment(args.experiment_name)
+    sched = sched_client.make(experiment)
     sched.find_all()
     sched.stop_all()
 

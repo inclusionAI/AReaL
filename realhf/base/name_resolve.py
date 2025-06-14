@@ -4,7 +4,6 @@
 
 # Implements a simple name resolving service, which can be considered as a distributed key-value dict.
 import dataclasses
-import getpass
 import os
 import queue
 import random
@@ -385,7 +384,7 @@ class NfsNameRecordRepository(NameRecordRepository):
                         continue
                     if files[0] != "ENTRY":
                         continue
-                    key = root.removeprefix(self.RECORD_ROOT)
+                    key = root.removeprefix(self.record_root)
                     key = key.removeprefix("/")
                     rs.append(self.get(key))
                 except NameEntryNotFoundError:
@@ -402,7 +401,7 @@ class NfsNameRecordRepository(NameRecordRepository):
                         continue
                     if files[0] != "ENTRY":
                         continue
-                    key = root.removeprefix(self.RECORD_ROOT)
+                    key = root.removeprefix(self.record_root)
                     key = key.removeprefix("/")
                     rs.append(key)
                 except NameEntryNotFoundError:
@@ -597,7 +596,7 @@ class Etcd3NameRecordRepository(NameRecordRepository):
         # Set connection parameters
         self._host = host
         self._port = port
-        self._user = getpass.getuser()
+        self._user = user
         self._password = password
 
         # Connect to etcd
@@ -829,16 +828,17 @@ class Etcd3NameRecordRepository(NameRecordRepository):
     def reset(self):
         """Delete all keys added via this repository instance."""
         with self._lock:
-            count = 0
-            for name in self._to_delete:
-                if name in self._entries:
-                    try:
-                        self._delete_locked(name)
-                        count += 1
-                    except NameEntryNotFoundError:
-                        pass
-            self._to_delete = set()
-            logger.info(f"Reset {count} saved etcd entries")
+            if hasattr(self, "_to_delete"):
+                count = 0
+                for name in self._to_delete:
+                    if name in self._entries:
+                        try:
+                            self._delete_locked(name)
+                            count += 1
+                        except NameEntryNotFoundError:
+                            pass
+                self._to_delete = set()
+                logger.info(f"Reset {count} saved etcd entries")
 
     def _keepalive_thread_run(self):
         """Background thread to keep leases alive."""
@@ -1382,19 +1382,21 @@ def make_repository(args: "NameResolveConfig"):
         raise NotImplementedError(f"No such name resolver: {args.type}")
 
 
-add = NameRecordRepository.add
-add_subentry = NameRecordRepository.add_subentry
-delete = NameRecordRepository.delete
-clear_subtree = NameRecordRepository.clear_subtree
-get = NameRecordRepository.get
-get_subtree = NameRecordRepository.get_subtree
-find_subtree = NameRecordRepository.find_subtree
-wait = NameRecordRepository.wait
-reset = NameRecordRepository.reset
-watch_names = NameRecordRepository.watch_names
+DEFAULT_REPOSITORY = NfsNameRecordRepository("/tmp/areal/name_resolve")
+add = DEFAULT_REPOSITORY.add
+add_subentry = DEFAULT_REPOSITORY.add_subentry
+delete = DEFAULT_REPOSITORY.delete
+clear_subtree = DEFAULT_REPOSITORY.clear_subtree
+get = DEFAULT_REPOSITORY.get
+get_subtree = DEFAULT_REPOSITORY.get_subtree
+find_subtree = DEFAULT_REPOSITORY.find_subtree
+wait = DEFAULT_REPOSITORY.wait
+reset = DEFAULT_REPOSITORY.reset
+watch_names = DEFAULT_REPOSITORY.watch_names
 
 
 def reconfigure(config: "NameResolveConfig"):
+    global DEFAULT_REPOSITORY
     global add, add_subentry, delete, clear_subtree, get, get_subtree, find_subtree, wait, reset, watch_names
     DEFAULT_REPOSITORY = make_repository(config)
     add = DEFAULT_REPOSITORY.add

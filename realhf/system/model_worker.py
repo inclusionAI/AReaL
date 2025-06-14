@@ -684,10 +684,9 @@ class ModelWorker(worker_base.Worker):
                     f"Model worker {self.__worker_index} cleared cache in {et-st:.4f}s. "
                 )
             logger.debug(
-                "Get clear_data_cache, dump cuda tmark. "
+                "Get clear_data_cache. "
                 f"Remaining data in local storage: {self.data_manager.storage_size()}. "
             )
-            dump_tmark_db(self.__worker_index)
             res = request_reply_stream.NoResponse()
         self.__reply_queue.put_nowait((request, res))
         self.__request_sample_size[request.request_id] = 1

@@ -51,7 +51,7 @@ class JobInfo:
 
 class SchedulerClient:
 
-    def __init__(self, args: BaseExperimentConfig):
+    def __init__(self, args: "BaseExperimentConfig"):
         self.args = args
         self.expr_name = args.experiment_name
         self.trial_name = args.trial_name
@@ -155,25 +155,23 @@ def control_cmd(expr_name, trial_name, debug, ignore_worker_error, controller_ty
     return bash_cmd
 
 
-def make(mode, expr_name, trial_name, **kwargs) -> SchedulerClient:
-    if mode == "slurm":
+def make(args: "BaseExperimentConfig", **kwargs) -> SchedulerClient:
+    if args.mode == "slurm":
         from realhf.scheduler.slurm.client import SlurmSchedulerClient
 
-        schedule_strategy = kwargs.get("schedule_strategy", "empty_first")
-        evaluator = kwargs.get("evaluator", None)
         job_group_id = kwargs.get("job_group_id", None)
         job_group_index = kwargs.get("job_group_index", None)
+        evaluator = kwargs.get("evaluator", None)
         return SlurmSchedulerClient(
-            expr_name,
-            trial_name,
-            schedule_strategy,
+            args,
+            args.schedule_strategy,
             evaluator,
             job_group_id,
             job_group_index,
         )
-    elif mode == "local":
+    elif args.mode == "local":
         from realhf.scheduler.local.client import LocalSchedulerClient
 
-        return LocalSchedulerClient(expr_name, trial_name)
+        return LocalSchedulerClient(args)
     else:
         raise NotImplementedError(f"Scheduler {mode} not found")

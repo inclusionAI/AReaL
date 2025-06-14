@@ -168,7 +168,11 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 # NOTE: here we use puller stream to wrap the original dataset
                 datasets=[
                     DatasetAbstraction(
-                        "puller_stream", args=dict(dataset_cfgs=self.datasets)
+                        "puller_stream",
+                        args=dict(
+                            dataset_cfgs=self.datasets,
+                            args=self,
+                        ),
                     )
                 ],
                 torch_cache_mysophobia=self.torch_cache_mysophobia,

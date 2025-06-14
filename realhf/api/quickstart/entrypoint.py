@@ -16,7 +16,11 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING, OmegaConf
 
 import realhf.api.core.system_api as system_api
-from realhf.base.constants import get_log_path, get_save_path
+from realhf.base.constants import (
+    QUICKSTART_EXPR_CACHE_PATH,
+    get_log_path,
+    get_save_path,
+)
 from realhf.base.ray_utils import check_ray_availability
 from realhf.base.slurm_utils import check_slurm_availability
 

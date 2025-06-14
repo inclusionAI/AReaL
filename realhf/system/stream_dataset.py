@@ -50,6 +50,8 @@ class PullerStreamDataset(Dataset):
         self.data_queue = queue.Queue(maxsize=self.dataset_size * util.world_size)
         self._stop_event = threading.Event()
 
+        self.args = args
+
         # Pass ZMQ context (thread-safe) and let worker create the socket
         self.util = util
         self.worker_thread = threading.Thread(target=self._pull_data_worker)

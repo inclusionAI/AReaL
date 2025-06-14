@@ -473,10 +473,6 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
             tp_size=constants.tensor_parallel_world_size(),
             # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
             base_gpu_id=int(os.environ["CUDA_VISIBLE_DEVICES"]),
-            file_storage_path=os.path.join(
-                constants.SGLANG_CACHE_PATH,
-                f"sglang_storage{constants.data_parallel_rank()}",
-            ),
             # Data parallelism
             dp_size=1,  # TODO: check whether we require SGLang dp
             load_balance_method="round_robin",

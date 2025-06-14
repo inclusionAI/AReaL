@@ -311,6 +311,7 @@ class MasterWorker(worker_base.AsyncWorker):
         # Create coroutines for model RPCs.
         logger.debug(f"Creating asyncio coroutines...")
         self.func_executor = FunctionExecutor(
+            args=self.args,
             rpcs=self.__model_rpcs,
             msid2mwid=self.config.msid2mwid,
             stream=self.__stream,

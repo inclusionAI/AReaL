@@ -139,8 +139,8 @@ class ModelShardID:
         )
 
     def __repr__(self):
-        n = len(str(len(self.topo.world_size())))
-        return f"{self.model_name}@pp{self.pp_rank}@tp{self.tp_rank}@dp{self.dp_rank}"
+        n = len(str(self.topo.world_size()))
+        return f"{self.model_name}@pp{self.pp_rank:0{n}d}@tp{self.tp_rank:0{n}d}@dp{self.dp_rank:0{n}d}"
 
     def __hash__(self):
         return hash(str(self))

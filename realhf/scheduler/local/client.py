@@ -79,8 +79,8 @@ class LocalSchedulerClient(SchedulerClient):
             f"{worker_type}-0",
         )
 
-    def __init__(self, expr_name, trial_name):
-        super().__init__(expr_name, trial_name)
+    def __init__(self, args):
+        super().__init__(args)
         self._jobs: Dict[str, subprocess.Popen] = {}
         self._running_worker_types = []
 
