@@ -4,6 +4,7 @@
 
 # Implements a simple name resolving service, which can be considered as a distributed key-value dict.
 import dataclasses
+import getpass
 import os
 import queue
 import random
@@ -11,7 +12,7 @@ import shutil
 import threading
 import time
 import uuid
-from typing import Callable, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional
 
 import ray
 
@@ -21,6 +22,9 @@ except Exception:
     etcd3 = None
 
 from realhf.base import logging, security, timeutil
+
+if TYPE_CHECKING:
+    from realhf.api.cli_args import NameResolveConfig
 
 logger = logging.getLogger("name-resolve")
 
@@ -567,15 +571,6 @@ class Etcd3NameRecordRepository(NameRecordRepository):
     TTL-based expiration, atomic operations, and key watching functionality.
     """
 
-    # Default configuration
-    try:
-        host, port = os.getenv("REAL_ETCD_ADDR", "").split(":")
-    except ValueError:
-        host, port = "localhost", 2379
-    ETCD_HOST = host
-    ETCD_PORT = int(port)
-    ETCD_USER = None
-    ETCD_PASSWORD = None
     KEEPALIVE_POLL_FREQUENCY = 1
 
     @dataclasses.dataclass
@@ -600,14 +595,17 @@ class Etcd3NameRecordRepository(NameRecordRepository):
         self._lock = threading.Lock()
 
         # Set connection parameters
-        self._host = host or self.ETCD_HOST
-        self._port = port or self.ETCD_PORT
-        self._user = user or self.ETCD_USER
-        self._password = password or self.ETCD_PASSWORD
+        self._host = host
+        self._port = port
+        self._user = getpass.getuser()
+        self._password = password
 
         # Connect to etcd
         self._client = etcd3.client(
-            host=self._host, port=self._port, user=self._user, password=self._password
+            host=self._host,
+            port=self._port,
+            user=self._user,
+            password=self._password,
         )
 
         # Keep track of entries for cleanup and keepalive
@@ -1372,48 +1370,33 @@ class RayNameResolveRepository:
                             )
 
 
-def make_repository(type_="nfs", **kwargs):
-    if type_ == "memory":
-        return MemoryNameRecordRepository(**kwargs)
-    elif type_ == "nfs":
-        return NfsNameRecordRepository(**kwargs)
-    elif type_ == "redis":
-        return RedisNameRecordRepository(**kwargs)
-    elif type_ == "etcd3":
-        return Etcd3NameRecordRepository(**kwargs)
-    elif type_ == "ray":
-        return RayNameResolveRepository(**kwargs)
+def make_repository(args: "NameResolveConfig"):
+    if args.type == "nfs":
+        return NfsNameRecordRepository(args.nfs_record_root)
+    elif args.type == "etcd3":
+        host, port = args.etcd3_addr.split(":")
+        return Etcd3NameRecordRepository(host=host, port=int(port))
+    elif args.type == "ray":
+        return RayNameResolveRepository()
     else:
-        raise NotImplementedError(f"No such name resolver: {type_}")
+        raise NotImplementedError(f"No such name resolver: {args.type}")
 
 
-# DEFAULT_REPOSITORY_TYPE = "redis" if socket.gethostname().startswith("frl") else "nfs"
-DEFAULT_REPOSITORY_TYPE = "nfs"
-if etcd3 is not None and os.getenv("REAL_ETCD_ADDR", ""):
-    DEFAULT_REPOSITORY_TYPE = "etcd3"
-if os.getenv("REAL_ETCD_ADDR", "") and etcd3 is None:
-    logger.warning(
-        f"Detected REAL_ETCD_ADDR but etcd3 client is not available. "
-        "Please run `pip install -r requirements.txt` if you want to use etcd name resolve."
-    )
-DEFAULT_REPOSITORY = make_repository(DEFAULT_REPOSITORY_TYPE)
-add = DEFAULT_REPOSITORY.add
-add_subentry = DEFAULT_REPOSITORY.add_subentry
-delete = DEFAULT_REPOSITORY.delete
-clear_subtree = DEFAULT_REPOSITORY.clear_subtree
-get = DEFAULT_REPOSITORY.get
-get_subtree = DEFAULT_REPOSITORY.get_subtree
-find_subtree = DEFAULT_REPOSITORY.find_subtree
-wait = DEFAULT_REPOSITORY.wait
-reset = DEFAULT_REPOSITORY.reset
-watch_names = DEFAULT_REPOSITORY.watch_names
+add = NameRecordRepository.add
+add_subentry = NameRecordRepository.add_subentry
+delete = NameRecordRepository.delete
+clear_subtree = NameRecordRepository.clear_subtree
+get = NameRecordRepository.get
+get_subtree = NameRecordRepository.get_subtree
+find_subtree = NameRecordRepository.find_subtree
+wait = NameRecordRepository.wait
+reset = NameRecordRepository.reset
+watch_names = NameRecordRepository.watch_names
 
 
-def reconfigure(*args, **kwargs):
-    global DEFAULT_REPOSITORY, DEFAULT_REPOSITORY_TYPE
+def reconfigure(config: "NameResolveConfig"):
     global add, add_subentry, delete, clear_subtree, get, get_subtree, find_subtree, wait, reset, watch_names
-    DEFAULT_REPOSITORY = make_repository(*args, **kwargs)
-    DEFAULT_REPOSITORY_TYPE = args[0]
+    DEFAULT_REPOSITORY = make_repository(config)
     add = DEFAULT_REPOSITORY.add
     add_subentry = DEFAULT_REPOSITORY.add_subentry
     delete = DEFAULT_REPOSITORY.delete

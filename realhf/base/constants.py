@@ -538,7 +538,6 @@ def get_env_vars(exp_cfg: "BaseExperimentConfig", **kwargs):
         REAL_RECORD_PERFORMANCE=os.environ.get("REAL_RECORD_PERFORMANCE", "0"),
         FUNCTIONCALL_SERVICE_DOMAIN=os.getenv("FUNCTIONCALL_SERVICE_DOMAIN", ""),
         REAL_DUMP_MEMORY=os.environ.get("REAL_DUMP_MEMORY", "0"),
-        REAL_ETCD_ADDR=os.getenv("REAL_ETCD_ADDR", "localhost:2379"),
         REAL_OSS_TESTCASE_PATH=os.getenv("REAL_OSS_TESTCASE_PATH", ""),
     )
     envvars = {

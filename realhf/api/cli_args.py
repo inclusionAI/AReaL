@@ -860,25 +860,27 @@ def get_user_tmp():
     user_tmp = os.path.join("/home", user, ".cache", "realhf")
     os.makedirs(user_tmp, exist_ok=True)
     return user_tmp
+
+
 @dataclass
 class NameResolveConfig:
     type: str = field(
         default="nfs",
         metadata={
             "help": "Type of the distributed KV store for name resolving.",
-            "choices": ["nfs", "etcd3"],
-        },)
-    nfs_record_root :str= field(
-        default="",
+            "choices": ["nfs", "etcd3", "ray"],
+        },
+    )
+    nfs_record_root: str = field(
+        default="/tmp/areal/name_resolve",
         metadata={
             "help": "Record root for NFS name resolving. Should be available in all nodes."
-        },)
-    etcd3_addr: str= field(
-        default="localhost:2379",
-        metadata={
-            "help": "Address of the ETCD3 server.",
-        },)
-    
+        },
+    )
+    etcd3_addr: str = field(
+        default="localhost:2379", metadata={"help": "Address of the ETCD3 server."}
+    )
+
 
 @dataclass
 class ClusterSpecConfig:
@@ -887,6 +889,10 @@ class ClusterSpecConfig:
         metadata={
             "help": "JSON config path. If not given, use the following CLI args."
         },
+    )
+    name_resolve: NameResolveConfig = field(
+        default_factory=NameResolveConfig,
+        metadata={"help": "Name resolving configuration."},
     )
     cluster_name: str = field(
         default="local",
@@ -922,6 +928,26 @@ class ClusterSpecConfig:
         default=8,
         metadata={"help": "GPUs per node (physically)."},
     )
+
+    def __post_init__(self):
+        if self.config_path:
+            import json
+
+            with open(self.config_path, "r") as f:
+                config = json.load(f)
+            self.cluster_name = config["cluster_name"]
+            self.gpu_type = config["gpu_type"]
+            self.fileroot = config["fileroot"]
+            self.mount = config["default_mount"]
+            self.cpu_image = config["cpu_image"]
+            self.gpu_image = config["gpu_image"]
+            self.gpu_infer_image = config.get("gpu_infer_image", self.gpu_image)
+            self.node_name_prefix = config["node_name_prefix"]
+            self.n_gpus_per_node = config["n_gpus_per_node"]
+            self.n_nodes = config.get("n_nodes", self.n_nodes)
+        from realhf.base import name_resolve
+
+        name_resolve.reconfigure(self.name_resolve)
 
 
 @dataclass
