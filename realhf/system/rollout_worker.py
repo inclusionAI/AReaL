@@ -129,9 +129,7 @@ class RolloutWorker(AsyncWorker):
         # Recover indices for dynamic dataset
         if hasattr(self.dataset, "filter"):
             dataset_indices_path = os.path.join(
-                constants.MODEL_SAVE_ROOT,
-                constants.experiment_name(),
-                constants.trial_name(),
+                constants.get_log_path(self.args),
                 f"dataset_indices_{self.worker_index}.npy",
             )
             if os.path.exists(dataset_indices_path):
@@ -156,15 +154,11 @@ class RolloutWorker(AsyncWorker):
             self.is_new_epoch = True
             # Upon the first fetch request, filter dataset and create dataloader.
             eval_scores_path = os.path.join(
-                constants.MODEL_SAVE_ROOT,
-                constants.experiment_name(),
-                constants.trial_name(),
+                constants.get_log_path(self.args),
                 "dataset_eval_scores.json",
             )
             dataset_indices_path = os.path.join(
-                constants.MODEL_SAVE_ROOT,
-                constants.experiment_name(),
-                constants.trial_name(),
+                constants.get_log_path(self.args),
                 f"dataset_indices_{self.worker_index}.npy",
             )
             if hasattr(self.dataset, "filter") and os.path.exists(eval_scores_path):

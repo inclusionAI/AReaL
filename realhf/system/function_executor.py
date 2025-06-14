@@ -51,6 +51,7 @@ class FunctionExecutor:
         # Create model function calls.
         for rpc in self.rpcs:
             func_call = ModelFunctionCall(
+                args=self.args,
                 rpc=rpc,
                 src_rpc=self.src_rpc,
                 stream=stream,

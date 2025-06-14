@@ -110,11 +110,7 @@ class GserverManager(AsyncWorker):
         epoch = self.__recover_info.last_step_info.epoch + 1
         epochstep = self.__recover_info.last_step_info.epoch_step + 1
         globalstep = self.__recover_info.last_step_info.global_step + 1
-        save_root = os.path.join(
-            constants.MODEL_SAVE_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
-        )
+        save_root = constants.get_save_path(self.args)
         role_path = os.path.join(save_root, role)
         if not os.path.exists(role_path):
             raise RuntimeError(

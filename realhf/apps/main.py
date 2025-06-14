@@ -116,7 +116,7 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
         is_recover_run = recover_count > 0
     if args.recover_mode == "auto":
         try:
-            recover.discover_ckpt(args.experiment_name, args.trial_name)
+            recover.discover_ckpt(experiment)
             is_recover_run = True
         except recover.InValidRecoverCkpt as e:
             logger.warning(
@@ -127,7 +127,7 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
             is_recover_run = False
     if is_recover_run:
         recover_ckpt_path, model_ckpt_dirs, recover_info = recover.discover_ckpt(
-            args.experiment_name, args.trial_name
+            experiment
         )
         logger.info(f"Will load recover info from {recover_ckpt_path}.")
         logger.info(f"Will load model checkpoints from {model_ckpt_dirs}.")

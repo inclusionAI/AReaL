@@ -81,9 +81,8 @@ class InValidRecoverCkpt(Exception):
     pass
 
 
-def discover_ckpt(
-    expr_name: str, trial_name: str
-) -> Tuple[str, List[str], RecoverInfo]:
+def discover_ckpt(args) -> Tuple[str, List[str], RecoverInfo]:
+    expr_name, trial_name = args.experiment_name, args.trial_name
     recover_info_file = (
         pathlib.Path(constants.RECOVER_ROOT)
         / expr_name
@@ -100,9 +99,7 @@ def discover_ckpt(
                 f"but found {info.last_step_info.epoch}"
             )
             raise InValidRecoverCkpt(msg)
-        model_save_dir = (
-            pathlib.Path(constants.MODEL_SAVE_ROOT) / expr_name / trial_name
-        )
+        model_save_dir = pathlib.Path(constants.get_save_path(args))
         model_ckpt_dirs = []
         for role in os.listdir(model_save_dir):
             if "dataset_indices" in role:

@@ -96,13 +96,6 @@ class MasterWorker(worker_base.AsyncWorker):
             freq_sec=config.exp_ctrl.eval_freq_secs,
         )
 
-        self.MODEL_SAVE_ROOT = os.path.join(
-            constants.MODEL_SAVE_ROOT,
-            config.worker_info.experiment_name,
-            config.worker_info.trial_name,
-        )
-        os.makedirs(self.MODEL_SAVE_ROOT, exist_ok=True)
-
         self.__initialized = False
         self.__recover_run, self.__recover_info = recover.load_recover_info()
         if self.__recover_info is not None:

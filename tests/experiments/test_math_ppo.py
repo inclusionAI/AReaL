@@ -508,8 +508,6 @@ def test_ppo_save(
     constants.set_experiment_trial_names(
         testing._DEFAULT_EXPR_NAME, testing._DEFAULT_TRIAL_NAME
     )
-    shutil.rmtree(constants.MODEL_SAVE_ROOT, ignore_errors=True)
-    os.makedirs(constants.MODEL_SAVE_ROOT, exist_ok=True)
 
     total_train_epochs = 3
 
@@ -605,6 +603,9 @@ def test_ppo_save(
             ),
         ),
     )
+    shutil.rmtree(constants.get_save_path(exp_cfg), ignore_errors=True)
+    os.makedirs(constants.get_save_path(exp_cfg), exist_ok=True)
+
     exp_cfg.actor.vllm.hybrid_train = True
     exp_cfg.actor.vllm.enforce_eager = True
 
@@ -636,9 +637,7 @@ def test_ppo_save(
             int(os.path.basename(f).split("globalstep")[-1])
             for f in os.listdir(
                 os.path.join(
-                    constants.MODEL_SAVE_ROOT,
-                    testing._DEFAULT_EXPR_NAME,
-                    testing._DEFAULT_EXPR_NAME,
+                    constants.get_save_path(exp_cfg),
                     model_name,
                 )
             )

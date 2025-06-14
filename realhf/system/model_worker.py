@@ -168,11 +168,7 @@ class ModelWorker(worker_base.Worker):
         epoch = self.__recover_info.last_step_info.epoch + 1
         epochstep = self.__recover_info.last_step_info.epoch_step + 1
         globalstep = self.__recover_info.last_step_info.global_step + 1
-        save_root = os.path.join(
-            constants.MODEL_SAVE_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
-        )
+        save_root = constants.get_save_path(self.args)
         if epoch > 0:
             role_path = os.path.join(save_root, role)
             if os.path.exists(role_path):
@@ -382,9 +378,7 @@ class ModelWorker(worker_base.Worker):
                                 and hasattr(d, "filter")
                             ):
                                 dataset_indices_path = os.path.join(
-                                    constants.MODEL_SAVE_ROOT,
-                                    constants.experiment_name(),
-                                    constants.trial_name(),
+                                    constants.get_save_path(self.args),
                                     "dataset_indices",
                                     f"{self._dp_rank}_{i}.npy",
                                 )
@@ -595,15 +589,11 @@ class ModelWorker(worker_base.Worker):
             except StopIteration:
                 # Upon the first fetch request, filter dataset and create dataloader.
                 eval_scores_path = os.path.join(
-                    constants.MODEL_SAVE_ROOT,
-                    constants.experiment_name(),
-                    constants.trial_name(),
+                    constants.get_save_path(self.args),
                     "dataset_eval_scores.json",
                 )
                 dataset_indices_path = os.path.join(
-                    constants.MODEL_SAVE_ROOT,
-                    constants.experiment_name(),
-                    constants.trial_name(),
+                    constants.get_save_path(self.args),
                     "dataset_indices",
                     f"{dp_rank}_{dataset_id}.npy",
                 )
@@ -980,9 +970,7 @@ class ModelWorker(worker_base.Worker):
                 raise NotImplementedError(f"Unknown MFC type: {request.handle_name}.")
 
         eval_scores_path = os.path.join(
-            constants.MODEL_SAVE_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
+            constants.get_save_path(self.args),
             "dataset_eval_scores.json",
         )
         eval_scores = {}

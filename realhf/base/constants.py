@@ -70,7 +70,6 @@ QUICKSTART_EXPR_CACHE_PATH = str(Path(__file__).parent.parent.parent / ".cache")
 os.makedirs(QUICKSTART_EXPR_CACHE_PATH, exist_ok=True)
 
 # Global constants that should be initialized after cluster initialization.
-MODEL_SAVE_ROOT = None
 RECOVER_ROOT = None
 SLURM_LOCK_FILE_NAME = None
 PORT_LOCK_FILE_ROOT = None
