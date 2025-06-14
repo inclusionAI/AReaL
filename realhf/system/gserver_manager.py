@@ -71,7 +71,7 @@ class GserverManager(AsyncWorker):
         self.server_urls = []
 
         # recover info
-        self.__recover_run, self.__recover_info = recover.load_recover_info()
+        self.__recover_run, self.__recover_info = recover.load_recover_info(self.args)
         if self.__recover_run:
             # update weights will be automatically triggered upon the first schedule_request
             # self._last_param_realloc_step will also be updated
@@ -146,9 +146,7 @@ class GserverManager(AsyncWorker):
                 self._loaded_recover_weights = True
             else:
                 realloc_dir = os.path.join(
-                    constants.PARAM_REALLOC_PATH,
-                    constants.experiment_name(),
-                    constants.trial_name(),
+                    constants.get_param_realloc_path(self.args),
                     self.model_name.role,
                     str(realloc_version),
                 )
@@ -288,9 +286,7 @@ class GserverManager(AsyncWorker):
 
         # clear old weights
         realloc_root = os.path.join(
-            constants.PARAM_REALLOC_PATH,
-            constants.experiment_name(),
-            constants.trial_name(),
+            constants.get_param_realloc_path(self.args),
             self.model_name.role,
         )
         if os.path.exists(realloc_root):

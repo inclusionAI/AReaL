@@ -130,7 +130,7 @@ class ModelWorker(worker_base.Worker):
         r = self.config.worker_info
 
         # recover info
-        self.__recover_run, self.__recover_info = recover.load_recover_info()
+        self.__recover_run, self.__recover_info = recover.load_recover_info(self.args)
 
         # Whether to enable profiling is controlled by the following environment variables.
         self.__enable_profiler = os.getenv("REAL_DUMP_TRACE", "0") == "1"
@@ -302,13 +302,6 @@ class ModelWorker(worker_base.Worker):
                     self.__dataset_dp_rank,
                     self.__dataset_dp_size,
                     self.config.tokenizer_name_or_path,
-                    self.config.worker_info.experiment_name,
-                    self.config.worker_info.trial_name,
-                    cache_root=(
-                        None
-                        if not self.config.use_dataset_cache
-                        else self.config.dataset_cahce_root
-                    ),
                 )
                 for d in self.config.datasets
             ]
@@ -426,13 +419,6 @@ class ModelWorker(worker_base.Worker):
                         s.id.dp_rank,
                         s.id.topo.get_dim("data"),
                         self.__models[s.id.model_name].tokenizer,
-                        self.config.worker_info.experiment_name,
-                        self.config.worker_info.trial_name,
-                        cache_root=(
-                            None
-                            if not self.config.use_dataset_cache
-                            else self.config.dataset_cahce_root
-                        ),
                     )
                     eval_dataloader = torch.utils.data.DataLoader(
                         eval_dataset,
@@ -802,9 +788,7 @@ class ModelWorker(worker_base.Worker):
             tik = time.perf_counter()
             global_step = self.__models[model_name].version.global_step
             realloc_dir = os.path.join(
-                constants.PARAM_REALLOC_PATH,
-                constants.experiment_name(),
-                constants.trial_name(),
+                constants.get_param_realloc_path(self.args),
                 model_name.role,
                 str(global_step),
             )
@@ -1107,9 +1091,7 @@ class ModelWorker(worker_base.Worker):
             global_step = int(global_step.item())
 
             realloc_dir = os.path.join(
-                constants.PARAM_REALLOC_PATH,
-                constants.experiment_name(),
-                constants.trial_name(),
+                constants.get_param_realloc_path(self.args),
                 from_model_name.role,
                 str(global_step),
             )

@@ -808,17 +808,12 @@ def make_dataset(
     dp_rank: int,
     world_size: int,
     tokenizer_or_tokenizer_name: Union[transformers.PreTrainedTokenizerFast, str],
-    experiment_name: str,
-    trial_name: str,
-    cache_root: Optional[str] = None,
 ) -> torch.utils.data.Dataset:
     if isinstance(cfg, str):
         cfg = config_api.DatasetAbstraction(type_=cfg)
 
     if isinstance(tokenizer_or_tokenizer_name, str):
         tokenizer = load_hf_tokenizer(tokenizer_or_tokenizer_name)
-    elif tokenizer_or_tokenizer_name is None:
-        raise RuntimeError("tokenizer_or_tokenizer_name cannot be None.")
     else:
         tokenizer = tokenizer_or_tokenizer_name
     util = DatasetUtility(
@@ -827,46 +822,8 @@ def make_dataset(
         world_size,
         tokenizer,
     )
-
-    if cache_root is None:
-        dataset_cls = ALL_DATASET_CLASSES[cfg.type_]
-        return dataset_cls(util=util, **cfg.args)
-
-    # Create and check cache path.
-    if not cache_root.startswith(cluster_spec.fileroot) and not cache_root.startswith(
-        "/home"
-    ):
-        raise ValueError(
-            f"Data cache path {cache_root} should be /home or under {cluster_spec.fileroot}."
-        )
-    if "_" in experiment_name or "_" in trial_name:
-        raise ValueError(f"Invalid experiment/trial name.")
-
-    output_path = os.path.join(
-        cache_root,
-        experiment_name,
-        trial_name,
-        cfg.type_,
-        f"seed{seed}",
-        f"world_size{world_size}",
-        f"rank{dp_rank}",
-    )
-    os.makedirs(output_path, exist_ok=True)
-
-    fname = "dataset.pt"
-    cache_found = os.path.isfile(os.path.join(output_path, fname))
-
-    tik = time.perf_counter()
-    if not cache_found:
-        logger.info(f"No data cache found for rank {dp_rank}. Create it from scratch.")
-        dataset = ALL_DATASET_CLASSES[cfg.type_](seed, dp_rank, world_size, **cfg.args)
-        torch.save(dataset, os.path.join(output_path, fname))
-    else:
-        logger.info(f"Rank {dp_rank} find existing data cache, load it.")
-        dataset = torch.load(os.path.join(output_path, fname))
-    logger.info(f"Dataset creation/loading time: {time.perf_counter() - tik:.3f}s")
-
-    return dataset
+    dataset_cls = ALL_DATASET_CLASSES[cfg.type_]
+    return dataset_cls(util=util, **cfg.args)
 
 
 def gather_stat(src: List[Dict]) -> Dict:

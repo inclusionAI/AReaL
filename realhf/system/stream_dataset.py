@@ -35,8 +35,6 @@ class PullerStreamDataset(Dataset):
                 dp_rank=util.dp_rank,
                 world_size=util.world_size,
                 tokenizer_or_tokenizer_name=util.tokenizer,
-                experiment_name=constants.experiment_name(),
-                trial_name=constants.trial_name(),
             )
             for dataset_cfg in dataset_cfgs
         ]

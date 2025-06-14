@@ -158,8 +158,6 @@ class ModelWorker:
     # dataset, for source model workers
     tokenizer_name_or_path: Optional[str] = None
     datasets: Optional[List[Union[str, DatasetAbstraction]]] = None
-    use_dataset_cache: bool = False
-    dataset_cahce_root: str = constants.DATASET_CACHE_PATH
     shuffle_dataset: bool = True
     cuda_cache_cleanliness: bool = True
     cuda_cache_clear_freq: int = 10
@@ -214,8 +212,6 @@ class RolloutWorker:
     env: EnvServiceAbstraction
     agent: AgentAbstraction
     datasets: List[Union[str, DatasetAbstraction]]
-    use_dataset_cache: bool = False
-    dataset_cahce_root: str = constants.DATASET_CACHE_PATH
     worker_info: WorkerInformation = None
 
 

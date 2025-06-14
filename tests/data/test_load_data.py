@@ -21,8 +21,6 @@ def _validate_dataset(cfg: config_api.DatasetAbstraction, tokenizer):
         dp_rank=0,
         world_size=1,
         tokenizer_or_tokenizer_name=tokenizer,
-        experiment_name=str(uuid.uuid4()),
-        trial_name=str(uuid.uuid4()),
     )
     dataloader = DataLoader(
         dataset,

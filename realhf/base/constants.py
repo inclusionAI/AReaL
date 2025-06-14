@@ -70,12 +70,9 @@ QUICKSTART_EXPR_CACHE_PATH = str(Path(__file__).parent.parent.parent / ".cache")
 os.makedirs(QUICKSTART_EXPR_CACHE_PATH, exist_ok=True)
 
 # Global constants that should be initialized after cluster initialization.
-RECOVER_ROOT = None
 SLURM_LOCK_FILE_NAME = None
 PORT_LOCK_FILE_ROOT = None
-DATASET_CACHE_PATH = None
 PROFILER_CACHE_PATH = None
-PARAM_REALLOC_PATH = None
 SGLANG_CACHE_PATH = None
 TORCH_EXTENSIONS_DIR = None
 BASE_ENVIRONS = None
@@ -104,6 +101,10 @@ def get_save_path(args) -> str:
     os.makedirs(path, exist_ok=True)
     return path
 
+def get_param_realloc_path(args):
+    path = f"{args.cluster.fileroot}/.cache/{getpass.getuser()}/param_realloc"
+    os.makedirs(path, exist_ok=True)
+    return path
 
 def init_constants(args: "BaseExperimentConfig"):
     from realhf.base.cluster import init_cluster_spec
@@ -114,12 +115,9 @@ def init_constants(args: "BaseExperimentConfig"):
     globals_dict = globals()  # Get module's global variables
 
     kwargs = dict(
-        RECOVER_ROOT=f"{cluster_spec.fileroot}/recover/{getpass.getuser()}",
         SLURM_LOCK_FILE_NAME=f"{cluster_spec.fileroot}/logs/slurm_scheduler.lock",
         PORT_LOCK_FILE_ROOT=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/ports",
-        DATASET_CACHE_PATH=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/datasets",
         PROFILER_CACHE_PATH=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/profiler",
-        PARAM_REALLOC_PATH=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/param_realloc",
     )
     BASE_ENVIRONS = {
         # "PYTHONPATH": "/realhf",
@@ -196,9 +194,6 @@ def init_constants(args: "BaseExperimentConfig"):
         globals_dict[key] = value
 
     # make directories if does not exist
-    os.makedirs(globals_dict["PARAM_REALLOC_PATH"], exist_ok=True)
-    os.makedirs(globals_dict["RECOVER_ROOT"], exist_ok=True)
-    os.makedirs(globals_dict["DATASET_CACHE_PATH"], exist_ok=True)
     os.makedirs(globals_dict["PROFILER_CACHE_PATH"], exist_ok=True)
     os.makedirs(globals_dict["TORCH_EXTENSIONS_DIR"], exist_ok=True)
     os.makedirs(globals_dict["PORT_LOCK_FILE_ROOT"], exist_ok=True)

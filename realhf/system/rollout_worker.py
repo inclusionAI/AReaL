@@ -87,7 +87,7 @@ class RolloutWorker(AsyncWorker):
         self.rollout_stat = RolloutStat()
 
         # recover info
-        self.__recover_run, self.__recover_info = recover.load_recover_info()
+        self.__recover_run, self.__recover_info = recover.load_recover_info(self.args)
 
         return config.worker_info
 
@@ -101,13 +101,6 @@ class RolloutWorker(AsyncWorker):
                 self.worker_index,
                 self.worker_count,
                 self.config.tokenizer_path,
-                self.config.worker_info.experiment_name,
-                self.config.worker_info.trial_name,
-                cache_root=(
-                    None
-                    if not self.config.use_dataset_cache
-                    else self.config.dataset_cahce_root
-                ),
             )
             for d in self.config.datasets
         ]

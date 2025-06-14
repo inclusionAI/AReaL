@@ -97,7 +97,7 @@ class MasterWorker(worker_base.AsyncWorker):
         )
 
         self.__initialized = False
-        self.__recover_run, self.__recover_info = recover.load_recover_info()
+        self.__recover_run, self.__recover_info = recover.load_recover_info(self.args)
         if self.__recover_info is not None:
             logger.info(
                 f"Loaded recover info: recover_start={self.__recover_info.recover_start}, "
@@ -554,7 +554,7 @@ class MasterWorker(worker_base.AsyncWorker):
             hash_vals_to_ignore=self.__rpc_ctrl.used_hash_vals_this_epoch,
         )
 
-        recover.dump_recover_info(recover_info)
+        recover.dump_recover_info(self.args, recover_info)
         logger.info("Dumped recover info to file.")
         logger.info(f"Will recover from: {recover_info.recover_start}")
         logger.info(

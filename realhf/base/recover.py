@@ -40,13 +40,11 @@ class RecoverInfo:
     hash_vals_to_ignore: List[int] = dataclasses.field(default_factory=list)
 
 
-def dump_recover_info(recover_info: RecoverInfo):
+def dump_recover_info(args, recover_info: RecoverInfo):
     global RECOVER_INFO_PATH
     if RECOVER_INFO_PATH is None:
         RECOVER_INFO_PATH = os.path.join(
-            constants.RECOVER_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
+            constants.get_save_path(args),
             "recover_info.pkl",
         )
         os.makedirs(os.path.dirname(RECOVER_INFO_PATH), exist_ok=True)
@@ -54,15 +52,13 @@ def dump_recover_info(recover_info: RecoverInfo):
         pickle.dump(recover_info, f)
 
 
-def load_recover_info() -> Tuple[int, Optional[RecoverInfo]]:
+def load_recover_info(args) -> Tuple[int, Optional[RecoverInfo]]:
     if os.environ.get("REAL_RECOVER_RUN", "0") != "1":
         return False, None
     global RECOVER_INFO_PATH
     if RECOVER_INFO_PATH is None:
         RECOVER_INFO_PATH = os.path.join(
-            constants.RECOVER_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
+            constants.get_save_path(args),
             "recover_info.pkl",
         )
         os.makedirs(os.path.dirname(RECOVER_INFO_PATH), exist_ok=True)
@@ -84,9 +80,7 @@ class InValidRecoverCkpt(Exception):
 def discover_ckpt(args) -> Tuple[str, List[str], RecoverInfo]:
     expr_name, trial_name = args.experiment_name, args.trial_name
     recover_info_file = (
-        pathlib.Path(constants.RECOVER_ROOT)
-        / expr_name
-        / trial_name
+        pathlib.Path(constants.get_save_path(args))
         / "recover_info.pkl"
     )
     if os.path.exists(str(recover_info_file)):
