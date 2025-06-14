@@ -16,7 +16,7 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING, OmegaConf
 
 import realhf.api.core.system_api as system_api
-from realhf.base.constants import get_log_path, get_save_path, init_constants
+from realhf.base.constants import get_log_path, get_save_path
 from realhf.base.ray_utils import check_ray_availability
 from realhf.base.slurm_utils import check_slurm_availability
 
@@ -75,8 +75,6 @@ def register_quickstart_exp(config_name: str, exp_cls: Callable):
         else:
             trial_name = args.trial_name
         from realhf.apps.main import main_start, main_stop
-
-        init_constants(args)
 
         config_save_path = os.path.join(get_log_path(args), "config.yaml")
         os.makedirs(os.path.dirname(config_save_path), exist_ok=True)

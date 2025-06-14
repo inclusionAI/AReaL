@@ -20,7 +20,6 @@ from realhf.base import (
     pkg_version,
     seeding,
 )
-from realhf.base.cluster import spec as cluster_spec
 from realhf.system.worker_base import PollResult, Worker
 
 logger = logging.getLogger(__name__)
@@ -139,7 +138,7 @@ class GenerationServer(Worker):
                 map(str, range(gpu_utils.gpu_count()))
             )
         else:
-            servers_per_node = cluster_spec.n_gpus_per_node // self.config.tp_size
+            servers_per_node = self.args.cluster.n_gpus_per_node // self.config.tp_size
             idx_on_this_node = self.worker_index % servers_per_node
             self.base_gpu_id = idx_on_this_node * self.config.tp_size
 
@@ -159,7 +158,7 @@ class GenerationServer(Worker):
         # NOTE: Ports returned by `find_multiple_free_ports` are unique,
         # but SGLang servers still encounter conflicts.
         # Use a clearance period to hack over this issue.
-        servers_per_node = cluster_spec.n_gpus_per_node // self.config.tp_size
+        servers_per_node = self.args.cluster.n_gpus_per_node // self.config.tp_size
         idx_on_this_node = self.worker_index % servers_per_node
         time.sleep(idx_on_this_node * PORT_CLEARANCE_PERIOD / servers_per_node)
 
@@ -169,6 +168,7 @@ class GenerationServer(Worker):
             high=60000,
             experiment_name=self.experiment_name,
             trial_name=self.trial_name,
+            lockfile_root=os.path.join(constants.get_cache_path(self.args), "ports"),
         )
         server_port = ports[0]
         nccl_port = ports[1]

@@ -166,7 +166,7 @@ def build_leave_one_indices(
     )
 
 
-def _gather_logprobs(
+def gather_logprobs(
     logits: torch.Tensor,
     labels: torch.Tensor,
 ):
@@ -184,24 +184,6 @@ def _gather_logprobs(
     log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
     log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
     return log_probs_labels
-
-
-_gather_logprobs_compiled = None
-
-
-def gather_logprobs(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
-):
-    from realhf.base import cluster
-
-    if cluster.spec.name == "wa180":
-        # torch.compile doesn't work on PPU
-        return _gather_logprobs(logits, labels)
-    global _gather_logprobs_compiled
-    if _gather_logprobs_compiled is None:
-        _gather_logprobs_compiled = torch.compile(_gather_logprobs)
-    return _gather_logprobs_compiled(logits, labels)
 
 
 def gather_packed_shifted_log_probs(

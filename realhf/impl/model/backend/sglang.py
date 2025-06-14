@@ -32,7 +32,6 @@ from realhf.api.core.model_api import (
     register_backend,
 )
 from realhf.base import (
-    cluster,
     constants,
     datapack,
     gpu_utils,
@@ -431,10 +430,6 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
     def _initialize(self, model: Model, spec: FinetuneSpec) -> Model:
         if constants.pipe_parallel_world_size() != 1:
             raise RuntimeError("SGLang does not support pipe parallel size > 1.")
-        if constants.tensor_parallel_world_size() > cluster.spec.n_gpus_per_node:
-            raise RuntimeError(
-                "AReaL's SGLang integration does not support model parallel size > n_gpus_per_node."
-            )
 
         additional_args = dataclasses.asdict(self)
         additional_args.pop("hybrid_train")
@@ -453,6 +448,9 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
                     high=60000,
                     experiment_name=constants.experiment_name(),
                     trial_name=constants.trial_name(),
+                    lockfile_root=os.path.join(
+                        constants.get_cache_path(self.args), "ports"
+                    ),
                 ),
                 group=constants.data_parallel_group(),
             )

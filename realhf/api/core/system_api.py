@@ -24,7 +24,6 @@ from realhf.api.core.config import (
     StandaloneModelShardAbstraction,
 )
 from realhf.base import constants, topology
-from realhf.base.cluster import spec as cluster_spec
 
 
 class ExpStatus(Enum):
@@ -47,66 +46,6 @@ class Scheduling:
     time_limit: Optional[str] = None  # see  "--time" option for format
     begin: Optional[str] = None  # see "--begin" option for format
     deadline: Optional[str] = None  # see "--deadline" option for format
-
-    @staticmethod
-    def master_worker_default(**kwargs):
-        return Scheduling(
-            **{
-                "cpu": 16,
-                "mem": 20 * 1024,
-                "gpu": 0,
-                "container_image": cluster_spec.cpu_image,
-                **kwargs,
-            }
-        )
-
-    @staticmethod
-    def model_worker_default(**kwargs):
-        return Scheduling(
-            **{
-                "cpu": 2,
-                "gpu": 1,
-                "mem": 60 * 1024,
-                "container_image": cluster_spec.gpu_image,
-                **kwargs,
-            }
-        )
-
-    @staticmethod
-    def generation_server_default(**kwargs):
-        return Scheduling(
-            **{
-                "cpu": 4,
-                "gpu": 1,
-                "mem": 60 * 1024,
-                "container_image": cluster_spec.gpu_infer_image,
-                **kwargs,
-            }
-        )
-
-    @staticmethod
-    def gserver_manager_default(**kwargs):
-        return Scheduling(
-            **{
-                "cpu": 4,
-                "gpu": 0,
-                "mem": 10 * 1024,
-                "container_image": cluster_spec.gpu_image,
-                **kwargs,
-            }
-        )
-
-    @staticmethod
-    def rollout_worker_default(**kwargs):
-        return Scheduling(
-            **{
-                "cpu": 4,
-                "gpu": 0,
-                "mem": 20 * 1024,
-                "container_image": cluster_spec.gpu_image,
-                **kwargs,
-            }
-        )
 
 
 @dataclasses.dataclass

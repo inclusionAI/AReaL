@@ -5,7 +5,9 @@ from typing import Dict, List, Optional, Tuple, Type, Union
 
 from omegaconf import MISSING
 
-from realhf.base import pkg_version
+from realhf.base import logging, pkg_version
+
+logger = logging.getLogger("CLI args")
 
 ## Data and datasets. ##
 

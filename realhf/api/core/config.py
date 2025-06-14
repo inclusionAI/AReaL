@@ -6,7 +6,6 @@ import dataclasses
 import enum
 from typing import Any, Dict, List, Optional
 
-import realhf.base.cluster as cluster
 import realhf.base.topology as topology
 
 
@@ -140,8 +139,8 @@ class ModelShardID:
         )
 
     def __repr__(self):
-        n = cluster.spec.suffix_n_digits
-        return f"{self.model_name}@pp{self.pp_rank:0{n}d}@tp{self.tp_rank:0{n}d}@dp{self.dp_rank:0{n}d}"
+        n = len(str(len(self.topo.world_size())))
+        return f"{self.model_name}@pp{self.pp_rank}@tp{self.tp_rank}@dp{self.dp_rank}"
 
     def __hash__(self):
         return hash(str(self))

@@ -6,7 +6,7 @@ from typing import *
 import pytest
 
 from realhf.api.core.system_api import Experiment, register_experiment
-from realhf.base import cluster, constants, logging, testing
+from realhf.base import constants, logging, testing
 from realhf.system.worker_base import WorkerServerStatus
 from tests.fixtures import *
 

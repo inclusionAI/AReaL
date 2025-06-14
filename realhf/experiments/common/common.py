@@ -42,7 +42,6 @@ from realhf.api.quickstart.device_mesh import (
     RPCAllocation,
     make_device_mesh_from_name,
 )
-from realhf.base.cluster import spec as cluster_spec
 from realhf.experiments.common.check import (
     check_valid_model_and_path,
     check_valid_optimizer,
@@ -164,21 +163,24 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
         return ExperimentScheduling(
             master_worker=TasksGroup(
                 count=1,
-                scheduling=Scheduling.master_worker_default(
+                scheduling=Scheduling(
                     cpu=self.cpus_per_master_worker,
+                    gpu=0,
                     mem=self.mem_per_master_worker,
                     nodelist=self.nodelist,
                     exclude=self.exclude,
+                    container_image=self.cluster.cpu_image,
                 ),
             ),
             model_worker=TasksGroup(
                 count=self.n_nodes * self.n_gpus_per_node,
-                scheduling=Scheduling.model_worker_default(
+                scheduling=Scheduling(
                     cpu=self.cpus_per_model_worker,
                     gpu=1,
                     mem=self.mem_per_model_worker,
                     nodelist=self.nodelist,
                     exclude=self.exclude,
+                    container_image=self.cluster.gpu_image,
                 ),
             ),
         )
@@ -326,6 +328,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
                     rpc=rpc,
                     device_mesh=(
                         make_device_mesh_from_name(
+                            self.cluster,
                             self.nodelist,
                             self.allocations[rpc_type].device_mesh,
                             self.global_device_mesh.n_gpus_per_node,

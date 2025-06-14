@@ -8,7 +8,6 @@ import yaml
 from omegaconf import MISSING, OmegaConf
 
 from realhf.api.quickstart.entrypoint import kind_reminder
-from realhf.base.constants import init_constants
 from realhf.experiments.common.sft_exp import SFTConfig
 from training.utils import run_experiment
 
@@ -36,8 +35,6 @@ def main(args):
 
     if args.mode != "ray":
         raise RuntimeError("This script only supports the `ray` mode.")
-
-    init_constants(args)
 
     from realhf.base.constants import get_log_path
 

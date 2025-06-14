@@ -475,6 +475,7 @@ class GserverManager(AsyncWorker):
         port = network.find_free_port(
             experiment_name=self.experiment_name,
             trial_name=self.trial_name,
+            lockfile_root=os.path.join(constants.get_cache_path(self.args), "ports"),
         )
         self.manager_addr = f"{network.gethostip()}:{port}"
 

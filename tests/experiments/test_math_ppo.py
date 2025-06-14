@@ -8,6 +8,7 @@ from typing import *
 import pytest
 
 from realhf.api.cli_args import (
+    ClusterSpecConfig,
     ExperimentSaveEvalControl,
     GenerationHyperparameters,
     MFCConfig,
@@ -17,7 +18,7 @@ from realhf.api.cli_args import (
     PPOHyperparameters,
     PromptOnlyDatasetConfig,
 )
-from realhf.base import cluster, testing
+from realhf.base import testing
 from realhf.experiments.common.ppo_math_exp import PPOMATHConfig
 from tests.experiments.utils import run_test_exp
 from tests.fixtures import *
@@ -73,8 +74,6 @@ def test_ppo_symm(
     mp,
 ):
     # Setup experiment env. Should be done before any other operations.
-    log_root = tmp_path_factory.mktemp("ppo")
-    cluster.spec.fileroot = str(log_root)
     constants.set_experiment_trial_names(
         testing._DEFAULT_EXPR_NAME, testing._DEFAULT_TRIAL_NAME
     )
@@ -117,6 +116,7 @@ def test_ppo_symm(
             ),
         ),
         group_size=2,
+        cluster=ClusterSpecConfig(fileroot=str(tmp_path_factory.mktemp("ppo"))),
     )
 
     run_test_exp(exp_cfg)
@@ -152,8 +152,6 @@ def test_ppo_decoupled(
     gmp,
 ):
     # Setup experiment env. Should be done before any other operations.
-    log_root = tmp_path_factory.mktemp("ppo")
-    cluster.spec.fileroot = str(log_root)
     constants.set_experiment_trial_names(
         testing._DEFAULT_EXPR_NAME, testing._DEFAULT_TRIAL_NAME
     )
@@ -245,6 +243,7 @@ def test_ppo_decoupled(
             ),
         ),
         group_size=2,
+        cluster=ClusterSpecConfig(fileroot=str(tmp_path_factory.mktemp("ppo"))),
     )
 
     run_test_exp(exp_cfg)
@@ -275,8 +274,6 @@ def test_ppo_global_reshard(
     rew_inf,
 ):
     # Setup experiment env. Should be done before any other operations.
-    log_root = tmp_path_factory.mktemp("ppo-global-reshard")
-    cluster.spec.fileroot = str(log_root)
     constants.set_experiment_trial_names(
         testing._DEFAULT_EXPR_NAME, testing._DEFAULT_TRIAL_NAME
     )
@@ -368,6 +365,7 @@ def test_ppo_global_reshard(
                 pipeline_parallel_size=critic_train[2],
             ),
         ),
+        cluster=ClusterSpecConfig(fileroot=str(tmp_path_factory.mktemp("ppo"))),
     )
     run_test_exp(exp_cfg)
 
@@ -388,8 +386,6 @@ def test_ppo_param_realloc_sub_device_mesh(
     critic_inf,
 ):
     # Setup experiment env. Should be done before any other operations.
-    log_root = tmp_path_factory.mktemp("ppo-submesh")
-    cluster.spec.fileroot = str(log_root)
     constants.set_experiment_trial_names(
         testing._DEFAULT_EXPR_NAME, testing._DEFAULT_TRIAL_NAME
     )
@@ -484,6 +480,7 @@ def test_ppo_param_realloc_sub_device_mesh(
                 pipeline_parallel_size=2,
             ),
         ),
+        cluster=ClusterSpecConfig(fileroot=str(tmp_path_factory.mktemp("ppo"))),
     )
 
     run_test_exp(exp_cfg)
@@ -503,8 +500,6 @@ def test_ppo_save(
     bs,
 ):
     # Setup experiment env. Should be done before any other operations.
-    log_root = tmp_path_factory.mktemp("ppo")
-    cluster.spec.fileroot = str(log_root)
     constants.set_experiment_trial_names(
         testing._DEFAULT_EXPR_NAME, testing._DEFAULT_TRIAL_NAME
     )
@@ -602,6 +597,7 @@ def test_ppo_save(
                 pipeline_parallel_size=1,
             ),
         ),
+        cluster=ClusterSpecConfig(fileroot=str(tmp_path_factory.mktemp("ppo"))),
     )
     shutil.rmtree(constants.get_save_path(exp_cfg), ignore_errors=True)
     os.makedirs(constants.get_save_path(exp_cfg), exist_ok=True)

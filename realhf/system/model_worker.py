@@ -241,6 +241,7 @@ class ModelWorker(worker_base.Worker):
         )
 
         self.__pg_info = global_comm.setup_global_comm(
+            args=self.args,
             expr_name=self.__experiment_name,
             trial_name=self.__trial_name,
             worker_index=self.__worker_index,

@@ -11,7 +11,8 @@ from typing import Any, Dict, Optional
 import wandb
 
 import realhf.api.core.system_api as config_pkg
-from realhf.base import cluster, constants, logging
+from realhf.api.cli_args import BaseExperimentConfig
+from realhf.base import constants, logging
 
 logger = logging.getLogger("AutomaticEvaluator", "colored")
 
@@ -26,7 +27,7 @@ class EvaluationStepStatus(enum.Enum):
 
 @dataclasses.dataclass
 class EvaluationStep:
-    args: Any
+    args: BaseExperimentConfig
     global_step: int
     status: EvaluationStepStatus
     start_time: Optional[float] = None
@@ -76,7 +77,7 @@ class EvaluationStep:
         cmd = (
             f"srun --mpi=pmi2 -J {slurm_job_name} --ntasks=1 --cpus-per-task=128 --gres=gpu:8 --mem-per-cpu=12G "
             f"singularity exec --no-home --nv --pid --writable-tmpfs --bind /storage:/storage "
-            f"{config.eval_job_image or cluster.spec.gpu_image} "
+            f"{config.eval_job_image or self.args.cluster.gpu_image} "
             f"bash ./evaluation/sh/install_deps_and_eval.sh {self.ckpt_dir} {self.output_dir} "
             f"{config.data_names} {config.max_gen_tokens} {config.prompt_type}"
         )
@@ -85,7 +86,7 @@ class EvaluationStep:
     def submit(self, config: config_pkg.AutomaticEvaluator):
         os.makedirs(self.output_dir, exist_ok=True)
         log_file = open(os.path.join(self.output_dir, "output.log"), "w")
-        if cluster.spec.cluster_type == "slurm":
+        if self.args.mode == "slurm":
             cmd = self.slurm_eval_cmd(config)
         else:
             raise NotImplementedError(
@@ -152,7 +153,7 @@ class AutomaticEvaluator:
 
     def __init__(
         self,
-        args,
+        args: BaseExperimentConfig,
         config: config_pkg.AutomaticEvaluator,
         wandb_config: config_pkg.WandBConfig,
     ):
@@ -198,7 +199,7 @@ class AutomaticEvaluator:
                 ckpt_dir=self.__config.initial_checkpoint_path,
             )
 
-        if not cluster.spec.cluster_type == "slurm":
+        if not self.args.mode == "slurm":
             raise NotImplementedError(
                 "Currently only support automatic evaluation for slurm"
             )

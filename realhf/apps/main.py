@@ -138,19 +138,9 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
         )
     save_recover_states = args.recover_mode != "disabled"
 
-    cluster_spec_path = os.environ.get("CLUSTER_SPEC_PATH", "")
-    if not cluster_spec_path:
-        logger.info(
-            "Environment variable CLUSTER_SPEC_PATH is not set. "
-            "Will use the fileroot specified in CLI args. "
-        )
-    else:
-        logger.warning(
-            "Environment variable CLUSTER_SPEC_PATH is set. "
-            "Will overwrite the cluster spec in CLI args. "
-        )
     # set env vars
     BASE_ENVIRONS = constants.get_env_vars(
+        experiment,
         REAL_MODE=args.mode.upper(),
         REAL_RECOVER_RUN="1" if is_recover_run else "0",
         REAL_SAVE_RECOVER_STATES="1" if save_recover_states else "0",

@@ -23,6 +23,7 @@ class PullerStreamDataset(Dataset):
     def __init__(
         self,
         util: DatasetUtility,
+        args,
         dataset_cfgs: List[DatasetAbstraction],
         pull_timeout_ms=100,
     ):
@@ -58,8 +59,7 @@ class PullerStreamDataset(Dataset):
         """Worker thread that creates its own ZMQ puller and streams data."""
         # Initialize the puller inside the worker thread
         stream = NameResolvingZmqPuller(
-            constants.experiment_name(),
-            constants.trial_name(),
+            self.args,
             puller_index=self.util.dp_rank,
         )
         try:

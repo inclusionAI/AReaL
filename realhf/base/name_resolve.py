@@ -287,24 +287,20 @@ class MemoryNameRecordRepository(NameRecordRepository):
 
 
 class NfsNameRecordRepository(NameRecordRepository):
-    RECORD_ROOT = ""
 
-    def __init__(self, **kwargs):
+    def __init__(self, record_root="", **kwargs):
         self.__to_delete = set()
+        self.record_root = record_root
 
-    @staticmethod
-    def __dir_path(name):
-        if not NfsNameRecordRepository.RECORD_ROOT:
-            from realhf.base.cluster import spec as cluster_spec
+    def __dir_path(self, name):
+        if not self.record_root:
+            raise RuntimeError(
+                f"The `record_root` of NfsNameRecordRepository is not properly reconfigured."
+            )
+        return os.path.join(self.record_root, name)
 
-            RECORD_ROOT = f"{cluster_spec.fileroot}/name_resolve/"
-            os.makedirs(RECORD_ROOT, exist_ok=True)
-            NfsNameRecordRepository.RECORD_ROOT = RECORD_ROOT
-        return os.path.join(NfsNameRecordRepository.RECORD_ROOT, name)
-
-    @staticmethod
-    def __file_path(name):
-        return os.path.join(NfsNameRecordRepository.__dir_path(name), "ENTRY")
+    def __file_path(self, name):
+        return os.path.join(self.__dir_path(name), "ENTRY")
 
     def add(
         self,
@@ -342,7 +338,7 @@ class NfsNameRecordRepository(NameRecordRepository):
         os.remove(path)
         while True:
             path = os.path.dirname(path)
-            if path == NfsNameRecordRepository.RECORD_ROOT:
+            if path == self.record_root:
                 break
             if len(os.listdir(path)) > 0:
                 break

@@ -16,7 +16,6 @@ from rich.panel import Panel
 
 from realhf.api.cli_args import console, highlighter, print_config_help
 from realhf.api.quickstart.entrypoint import QUICKSTART_CONFIG_CLASSES, QUICKSTART_FN
-from realhf.base.cluster import spec as cluster_spec
 from realhf.base.importing import import_module
 from realhf.base.prologue import (
     PROLOGUE_EXTERNAL_CONFIG_NAME,
@@ -144,7 +143,7 @@ def prepare_hydra_config(name: str, prologue_path: str):
     config = OmegaConf.load(prologue_path)
     experiment_name = get_experiment_name(config.get("experiment_name"))
     trial_name = get_trial_name(config.get("trial_name"))
-    config_dir = f"{cluster_spec.fileroot}/configs/{getpass.getuser()}/{experiment_name}/{trial_name}"
+    config_dir = f"{config.cluster.fileroot}/configs/{getpass.getuser()}/{experiment_name}/{trial_name}"
     os.makedirs(config_dir, exist_ok=True)
 
     config.pop(PROLOGUE_EXTERNAL_CONFIG_NAME, {})

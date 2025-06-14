@@ -79,10 +79,7 @@ class InValidRecoverCkpt(Exception):
 
 def discover_ckpt(args) -> Tuple[str, List[str], RecoverInfo]:
     expr_name, trial_name = args.experiment_name, args.trial_name
-    recover_info_file = (
-        pathlib.Path(constants.get_save_path(args))
-        / "recover_info.pkl"
-    )
+    recover_info_file = pathlib.Path(constants.get_save_path(args)) / "recover_info.pkl"
     if os.path.exists(str(recover_info_file)):
         with open(recover_info_file, "rb") as f:
             info: RecoverInfo = pickle.load(f)

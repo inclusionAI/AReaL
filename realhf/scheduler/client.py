@@ -5,9 +5,10 @@
 import dataclasses
 import enum
 import subprocess
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
-from realhf.base.cluster import spec as cluster_spec
+if TYPE_CHECKING:
+    from realhf.api.cli_args import BaseExperimentConfig
 
 
 class JobState(enum.Enum):
@@ -50,10 +51,10 @@ class JobInfo:
 
 class SchedulerClient:
 
-    def __init__(self, args):
+    def __init__(self, args: BaseExperimentConfig):
         self.args = args
         self.expr_name = args.experiment_name
-        self.trial_name = args.trial_nametrial_name
+        self.trial_name = args.trial_name
         self.run_name = f"{self.expr_name}_{self.trial_name}"
 
     def submit(self, worker_type, cmd, **kwargs):
@@ -122,8 +123,6 @@ class SchedulerClient:
 
 
 def get_python3_path():
-    if cluster_spec.cluster_type == "ray":
-        return subprocess.check_output(["which", "python3"]).decode("utf-8").strip()
     return "python3"
 
 

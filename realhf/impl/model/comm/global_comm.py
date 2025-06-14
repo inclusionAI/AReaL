@@ -46,6 +46,7 @@ def filter_match_mwids(
 
 
 def setup_global_comm(
+    args,
     expr_name: str,
     trial_name: str,
     worker_index: int,
@@ -100,7 +101,11 @@ def setup_global_comm(
 
     if worker_index == 0:
         host_ip = socket.gethostbyname(socket.gethostname())
-        port = network.find_free_port(experiment_name=expr_name, trial_name=trial_name)
+        port = network.find_free_port(
+            experiment_name=expr_name,
+            trial_name=trial_name,
+            lockfile_root=os.path.join(constants.get_cache_path(args), "ports"),
+        )
         pg_init_addr = f"tcp://{host_ip}:{port}"
         name_resolve.add(pg_master_name, pg_init_addr, keepalive_ttl=300)
     else:

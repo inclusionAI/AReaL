@@ -19,6 +19,7 @@ import torch
 import torch.distributed as dist
 import torch.utils.data
 
+from realhf.api.cli_args import BaseExperimentConfig
 from realhf.api.core.data_api import SequenceSample
 from realhf.base import constants, gpu_utils, logging, name_resolve, names, topology
 from realhf.base.topology import (
@@ -103,7 +104,11 @@ class StandaloneTestingProcess(mp.Process):
             if self.dist_backend is None:
                 self.dist_backend = "gloo" if not constants.use_cuda() else "nccl"
             setup_global_comm(
-                self.expr_name, self.trial_name, self.rank, backend=self.dist_backend
+                BaseExperimentConfig(),
+                self.expr_name,
+                self.trial_name,
+                self.rank,
+                backend=self.dist_backend,
             )
 
         # misc setup

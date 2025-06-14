@@ -82,7 +82,6 @@ class RayWorker:
         return "".join([c.capitalize() for c in self.worker_type.split("_")])
 
     def configure(self, cfg: Any, expr_config: Any):
-        constants.init_constants(expr_config)
 
         worker_info = cfg.worker_info
         idx = worker_info.worker_index
@@ -124,6 +123,7 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
 
     # Initialize ray in the Ray cluster
     env_vars = constants.get_env_vars(
+        exp_cfg,
         WADNB_MODE=exp_cfg.wandb.mode,
         REAL_MODE="ray",
         REAL_RECOVER_RUN="0",

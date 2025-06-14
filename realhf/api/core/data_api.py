@@ -40,7 +40,6 @@ from pydantic import field_validator, model_validator
 from realhf.api.cli_args import MicroBatchSpec
 from realhf.api.core import config as config_api
 from realhf.base import constants, datapack, logging, seeding
-from realhf.base.cluster import spec as cluster_spec
 from realhf.utils import load_hf_or_local_file
 
 logger = logging.getLogger("api.data")

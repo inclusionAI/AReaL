@@ -61,7 +61,6 @@ def main_worker(args):
     import realhf.api.core.system_api as system_api
 
     experiment = system_api.make_experiment(name=args.experiment_name)
-    constants.init_constants(experiment)
 
     worker_index_start = args.jobstep_id * args.wprocs_per_jobstep + args.wproc_offset
     worker_index_end = min(
@@ -178,9 +177,6 @@ def main_controller(args):
         trial_name=args.trial_name,
     )
     experiment = system_api.make_experiment(args.experiment_name)
-
-    # Initialize cluster infor from ENV or CLI args.
-    constants.init_constants(experiment)
 
     controller.start(
         experiment=experiment,
