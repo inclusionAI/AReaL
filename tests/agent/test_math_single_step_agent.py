@@ -141,7 +141,6 @@ async def test_collect_trajectory_empty_act_queue(agent, mock_env, mock_prompt):
 def test_log_rewards_to_file(agent, tmp_path):
     # Setup test directories
     with (
-        patch("realhf.base.constants.LOG_ROOT", tmp_path),
         patch("realhf.base.constants.experiment_name", return_value="test_exp"),
         patch("realhf.base.constants.trial_name", return_value="test_trial"),
     ):

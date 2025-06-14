@@ -247,9 +247,7 @@ class Controller:
 
         # If a log exists, find the last failed setup and run it.
         start_idx = 0
-        prev_logfile = os.path.join(
-            constants.LOG_ROOT, self.experiment_name, self.trial_name, "ctl-0"
-        )
+        prev_logfile = os.path.join(constants.get_log_path(experiment), "ctl-0")
         if os.path.exists(prev_logfile):
             with open(prev_logfile, "r") as f:
                 for l in f.readlines():

@@ -25,6 +25,7 @@ class MathSingleStepAgent(Agent):
         self,
         gconfig,
         tokenizer_path,
+        answer_save_path,
         success_rate_lb,
         success_rate_ub,
         reward_scaling=1.0,
@@ -32,6 +33,7 @@ class MathSingleStepAgent(Agent):
     ):
         self.gconfig = gconfig
         self.tokenizer = load_hf_tokenizer(tokenizer_path)
+        self.answer_save_path = answer_save_path
 
         self.success_rate_lb = success_rate_lb
         self.success_rate_ub = success_rate_ub
@@ -198,10 +200,7 @@ class MathSingleStepAgent(Agent):
         for group_idx in range(group_size):
             # NOTE: we can ensure that only one process is logging this query id
             gen_file_path = os.path.join(
-                constants.LOG_ROOT,
-                constants.experiment_name(),
-                constants.trial_name(),
-                "generated",
+                self.answer_save_path,
                 str(version_starts[group_idx]),
                 f"{qid}.txt",
             )
@@ -224,10 +223,7 @@ class MathSingleStepAgent(Agent):
                 _f.write(info + "\n")
 
             train_pass_monitor_file_path = os.path.join(
-                constants.LOG_ROOT,
-                constants.experiment_name(),
-                constants.trial_name(),
-                "training_monitor",
+                self.answer_save_path,
                 str(version_starts[group_idx]),
                 f"{qid}.jsonl",
             )

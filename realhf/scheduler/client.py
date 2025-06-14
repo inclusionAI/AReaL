@@ -50,10 +50,11 @@ class JobInfo:
 
 class SchedulerClient:
 
-    def __init__(self, expr_name, trial_name):
-        self.expr_name = expr_name
-        self.trial_name = trial_name
-        self.run_name = f"{expr_name}_{trial_name}"
+    def __init__(self, args):
+        self.args = args
+        self.expr_name = args.experiment_name
+        self.trial_name = args.trial_nametrial_name
+        self.run_name = f"{self.expr_name}_{self.trial_name}"
 
     def submit(self, worker_type, cmd, **kwargs):
         """Submits a job to the scheduler. Raises exception if the job is

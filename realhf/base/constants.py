@@ -4,13 +4,10 @@
 
 # log format constants
 import contextlib
-import copy
 import datetime
 import getpass
 import os
 import pathlib
-import subprocess
-from collections import defaultdict
 from pathlib import Path
 from typing import *
 
@@ -69,18 +66,11 @@ TORCH_FORCE_CPU = False
 
 # constants in experiment instance scope
 LOCAL_CACHE_DIR = "/tmp/realhf"
-PYTORCH_KERNEL_CACHE_PATH = (
-    f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/torch/kernels"
-)
-TRITON_CACHE_PATH = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/triton"
 QUICKSTART_EXPR_CACHE_PATH = str(Path(__file__).parent.parent.parent / ".cache")
-os.makedirs(PYTORCH_KERNEL_CACHE_PATH, exist_ok=True)
-os.makedirs(TRITON_CACHE_PATH, exist_ok=True)
 os.makedirs(QUICKSTART_EXPR_CACHE_PATH, exist_ok=True)
 
 # Global constants that should be initialized after cluster initialization.
 MODEL_SAVE_ROOT = None
-LOG_ROOT = None
 RECOVER_ROOT = None
 SLURM_LOCK_FILE_NAME = None
 PORT_LOCK_FILE_ROOT = None
@@ -92,6 +82,30 @@ TORCH_EXTENSIONS_DIR = None
 BASE_ENVIRONS = None
 
 
+def get_log_root(args) -> str:
+    log_root = f"{args.cluster.fileroot}/logs/{getpass.getuser()}"
+    os.makedirs(log_root, exist_ok=True)
+    return log_root
+
+
+def get_log_path(args) -> str:
+    log_path = f"{args.cluster.fileroot}/logs/{getpass.getuser()}/{args.experiment_name}/{args.trial_name}"
+    os.makedirs(log_path, exist_ok=True)
+    return log_path
+
+
+def get_save_root(args) -> str:
+    path = f"{args.cluster.fileroot}/checkpoints/{getpass.getuser()}"
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def get_save_path(args) -> str:
+    path = f"{args.cluster.fileroot}/checkpoints/{getpass.getuser()}/{args.experiment_name}/{args.trial_name}"
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def init_constants(args: "BaseExperimentConfig"):
     from realhf.base.cluster import init_cluster_spec
     from realhf.base.cluster import spec as cluster_spec
@@ -101,18 +115,12 @@ def init_constants(args: "BaseExperimentConfig"):
     globals_dict = globals()  # Get module's global variables
 
     kwargs = dict(
-        MODEL_SAVE_ROOT=f"{cluster_spec.fileroot}/checkpoints/{getpass.getuser()}",
-        LOG_ROOT=f"{cluster_spec.fileroot}/logs/{getpass.getuser()}",
         RECOVER_ROOT=f"{cluster_spec.fileroot}/recover/{getpass.getuser()}",
         SLURM_LOCK_FILE_NAME=f"{cluster_spec.fileroot}/logs/slurm_scheduler.lock",
         PORT_LOCK_FILE_ROOT=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/ports",
         DATASET_CACHE_PATH=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/datasets",
         PROFILER_CACHE_PATH=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/profiler",
         PARAM_REALLOC_PATH=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/param_realloc",
-        SGLANG_CACHE_PATH=f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/sglang",
-        TORCH_EXTENSIONS_DIR=(
-            f"{cluster_spec.fileroot}/.cache/{getpass.getuser()}/torch/extensions"
-        ),
     )
     BASE_ENVIRONS = {
         # "PYTHONPATH": "/realhf",
@@ -120,10 +128,7 @@ def init_constants(args: "BaseExperimentConfig"):
         # "NCCL_P2P_DISABLE": "1",
         # "NCCL_IB_DISABLE": "1",
         "TRANSFORMERS_OFFLINE": "1",
-        "PYTORCH_KERNEL_CACHE_PATH": PYTORCH_KERNEL_CACHE_PATH,
-        "TRITON_CACHE_DIR": TRITON_CACHE_PATH,
         "TOKENIZERS_PARALLELISM": "true",
-        "TORCH_EXTENSIONS_DIR": kwargs["TORCH_EXTENSIONS_DIR"],
         # "TORCH_DISTRIBUTED_DEBUG": "DETAIL",
         # "NCCL_SOCKET_IFNAME": "ibp71s0",
         # "GLOO_SOCKET_IFNAME": "ibp71s0",
@@ -144,7 +149,6 @@ def init_constants(args: "BaseExperimentConfig"):
         # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
         "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
         # Whether to enable time mark to plot timelines.
-        "REAL_CUDA_TMARK": os.getenv("REAL_CUDA_TMARK", "0"),
         "REAL_DUMP_TRACE": os.getenv("REAL_DUMP_TRACE", "0"),
         "REAL_DUMP_MEMORY": os.getenv("REAL_DUMP_MEMORY", "0"),
         "REAL_GPU_MEMORY_KILL_THRESHOLD": os.getenv(
@@ -194,14 +198,11 @@ def init_constants(args: "BaseExperimentConfig"):
 
     # make directories if does not exist
     os.makedirs(globals_dict["PARAM_REALLOC_PATH"], exist_ok=True)
-    os.makedirs(globals_dict["MODEL_SAVE_ROOT"], exist_ok=True)
-    os.makedirs(globals_dict["LOG_ROOT"], exist_ok=True)
     os.makedirs(globals_dict["RECOVER_ROOT"], exist_ok=True)
     os.makedirs(globals_dict["DATASET_CACHE_PATH"], exist_ok=True)
     os.makedirs(globals_dict["PROFILER_CACHE_PATH"], exist_ok=True)
     os.makedirs(globals_dict["TORCH_EXTENSIONS_DIR"], exist_ok=True)
     os.makedirs(globals_dict["PORT_LOCK_FILE_ROOT"], exist_ok=True)
-    os.makedirs(globals_dict["SGLANG_CACHE_PATH"], exist_ok=True)
 
 
 # _model_name will be changed in the model_scope context manager

@@ -304,9 +304,7 @@ class MasterWorker(worker_base.AsyncWorker):
             notes=self.wandb_config.notes,
             tags=self.wandb_config.tags,
             config=self.wandb_config.config,
-            dir=os.path.join(
-                constants.LOG_ROOT, constants.experiment_name(), constants.trial_name()
-            ),
+            dir=constants.get_log_path(self.args),
             force=True,
             id=f"{constants.experiment_name()}_{constants.trial_name()}_train",
             resume="allow",

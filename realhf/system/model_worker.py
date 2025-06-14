@@ -43,12 +43,6 @@ from realhf.base import (
     timeutil,
     topology,
 )
-from realhf.base.monitor import (
-    CUDATimeMarkType,
-    cuda_tmark,
-    cuda_tmarked,
-    dump_tmark_db,
-)
 from realhf.impl.model.nn.real_llm_api import ReaLModel
 from realhf.impl.model.utils import cuda_graph
 from realhf.system import request_reply_stream, worker_base
@@ -497,16 +491,15 @@ class ModelWorker(worker_base.Worker):
             self.__param_realloc(hook_data)
         elif hook == "offload":
             # NOTE: Profiling (or cuda synchronization) will cause an overhead ~0.5s.
-            with cuda_tmarked("offload", CUDATimeMarkType.mem_layout):
-                m = self.__unwrapped_models[hook_data["model_name"]]
-                if not isinstance(m, ReaLModel):
-                    logger.warning(
-                        f"Model {hook_data['model_name']} (type={type(m)}) is not a ReaLModel, "
-                        f"so it can't use offload."
-                    )
-                    return
-                if not m._offloaded:
-                    m.async_offload()
+            m = self.__unwrapped_models[hook_data["model_name"]]
+            if not isinstance(m, ReaLModel):
+                logger.warning(
+                    f"Model {hook_data['model_name']} (type={type(m)}) is not a ReaLModel, "
+                    f"so it can't use offload."
+                )
+                return
+            if not m._offloaded:
+                m.async_offload()
         elif hook == "save":
             self.__save_model(hook_data)
         elif hook == "evaluate":
@@ -700,20 +693,19 @@ class ModelWorker(worker_base.Worker):
                 "dataset_size": self.dataset_size,
             }
         elif request.handle_name == "clear_data_cache":
-            with cuda_tmarked("clear_data_cache", CUDATimeMarkType.misc):
-                ids = request.data
-                self.data_manager.remove(ids)
-                gc.collect()
-                if (
-                    self.config.cuda_cache_cleanliness
-                    and self.__clear_cache_frequency.check()
-                ):
-                    st = time.monotonic()
-                    self._clear_memory(force=True)
-                    et = time.monotonic()
-                    blogger.debug(
-                        f"Model worker {self.__worker_index} cleared cache in {et-st:.4f}s. "
-                    )
+            ids = request.data
+            self.data_manager.remove(ids)
+            gc.collect()
+            if (
+                self.config.cuda_cache_cleanliness
+                and self.__clear_cache_frequency.check()
+            ):
+                st = time.monotonic()
+                self._clear_memory(force=True)
+                et = time.monotonic()
+                blogger.debug(
+                    f"Model worker {self.__worker_index} cleared cache in {et-st:.4f}s. "
+                )
             logger.debug(
                 "Get clear_data_cache, dump cuda tmark. "
                 f"Remaining data in local storage: {self.data_manager.storage_size()}. "
@@ -852,9 +844,7 @@ class ModelWorker(worker_base.Worker):
 
     def _get_setup_logdir(self, name):
         subdir = os.path.join(
-            constants.LOG_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
+            constants.get_log_path(self.args),
             name,
             f"setup{self._setup_counter}",
         )
@@ -1061,7 +1051,6 @@ class ModelWorker(worker_base.Worker):
         dist.barrier(group=constants.cpu_parallelism_group())
         return res
 
-    @cuda_tmark("data_transfer", CUDATimeMarkType.comm)
     def __data_transfer_among_workers(self, hook_data: Dict[str, Any]):
         meta_sample = hook_data["meta_sample"]
 
@@ -1284,7 +1273,6 @@ class ModelWorker(worker_base.Worker):
                     f"Time consumption: {float(t):.4f}s."
                 )
 
-    @cuda_tmark("post_response", CUDATimeMarkType.misc)
     def maybe_post_responses(self):
         ready_to_post = []
         while True:
@@ -1335,7 +1323,6 @@ class ModelWorker(worker_base.Worker):
             time.sleep(_MODEL_WORKER_POLL_REQUESTS_INTERVAL_SECS)
             pass
 
-    @cuda_tmark("receive_request", CUDATimeMarkType.misc)
     def maybe_receive_requests(self):
         tik = time.perf_counter()
         while time.perf_counter() - tik < _MODEL_WORKER_POLL_REQUESTS_SECS:

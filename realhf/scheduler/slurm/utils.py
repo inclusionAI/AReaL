@@ -23,7 +23,7 @@ import pandas as pd
 import realhf.base.cluster as cluster
 import realhf.base.logging as logging
 import realhf.version as version
-from realhf.base.constants import LOG_ROOT
+from realhf.base.constants import get_log_path
 from realhf.scheduler.client import JobException, JobInfo, JobState
 
 logger = logging.getLogger("scheduler.slurm.utils")
@@ -199,6 +199,10 @@ class SlurmLaunchInfo:
     job_group_id: str
     job_group_index: str
 
+    log_path: str
+    multiprog_path: str
+    hostfile_path: str
+
     resource_requirement: SlurmResource
     cmd: str
     container_image: str
@@ -251,41 +255,6 @@ class SlurmLaunchInfo:
             return self.job_info.slurm_id
         else:
             return None
-
-    @property
-    def log_path(self) -> str:
-        return os.path.join(
-            LOG_ROOT,
-            self.exper_name,
-            self.trial_name,
-            f"{self.worker_type}-{self.worker_submission_idx}.log",
-        )
-
-    @property
-    def multiprog_path(self) -> str:
-        path = os.path.join(
-            LOG_ROOT,
-            self.exper_name,
-            self.trial_name,
-            "slurm",
-            "multiprog",
-            f"{self.worker_type}-{self.worker_submission_idx}.multiprog",
-        )
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        return path
-
-    @property
-    def hostfile_path(self) -> str:
-        path = os.path.join(
-            LOG_ROOT,
-            self.exper_name,
-            self.trial_name,
-            "slurm",
-            "hostfile",
-            f"{self.worker_type}-{self.worker_submission_idx}.hostfile",
-        )
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        return path
 
     def show_log(self):
         try:

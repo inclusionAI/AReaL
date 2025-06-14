@@ -268,7 +268,7 @@ class DualOutput:
 
 
 def run_experiment(exp_cfg, expr_name, trial_name):
-    log_path = os.path.join(constants.LOG_ROOT, expr_name, trial_name, "main.log")
+    log_path = os.path.join(constants.get_log_path(exp_cfg), "main.log")
     with open(log_path, "a") as f:
         # Create dual output handler
         dual_out = DualOutput(f, sys.stdout)

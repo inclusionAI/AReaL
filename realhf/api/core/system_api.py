@@ -288,16 +288,9 @@ class ExperimentConfig:
 
         assert constants.trial_name() is not None
         assert constants.experiment_name() is not None
-        graph_path = os.path.join(
-            constants.LOG_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
-            "dataflow_graph.png",
-        )
-        os.makedirs(os.path.dirname(graph_path), exist_ok=True)
         # If verbose set to True here, every worker will print the graph once
         # due to lazy init on workers.
-        G = dfg.build_graph(self.model_rpcs, verbose=False, graph_path=graph_path)
+        G = dfg.build_graph(self.model_rpcs, verbose=False)
         for rpc in self.model_rpcs:
             rpc._G = G
 

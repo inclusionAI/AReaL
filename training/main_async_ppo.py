@@ -39,12 +39,10 @@ def main_ppo_math(args):
 
     init_constants(args)
 
-    from realhf.base.constants import LOG_ROOT
+    from realhf.base.constants import get_log_path
 
     # Save overwritten configuration to yaml
-    config_save_path = os.path.join(
-        LOG_ROOT, args.experiment_name, args.trial_name, "config.yaml"
-    )
+    config_save_path = os.path.join(get_log_path(args), "config.yaml")
     os.makedirs(os.path.dirname(config_save_path), exist_ok=True)
     with open(config_save_path, "w") as f:
         config_dict: Dict = dataclasses.asdict(args)
