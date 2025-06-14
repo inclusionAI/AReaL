@@ -860,7 +860,25 @@ def get_user_tmp():
     user_tmp = os.path.join("/home", user, ".cache", "realhf")
     os.makedirs(user_tmp, exist_ok=True)
     return user_tmp
-
+@dataclass
+class NameResolveConfig:
+    type: str = field(
+        default="nfs",
+        metadata={
+            "help": "Type of the distributed KV store for name resolving.",
+            "choices": ["nfs", "etcd3"],
+        },)
+    nfs_record_root :str= field(
+        default="",
+        metadata={
+            "help": "Record root for NFS name resolving. Should be available in all nodes."
+        },)
+    etcd3_addr: str= field(
+        default="localhost:2379",
+        metadata={
+            "help": "Address of the ETCD3 server.",
+        },)
+    
 
 @dataclass
 class ClusterSpecConfig:
