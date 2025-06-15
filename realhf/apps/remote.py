@@ -61,7 +61,6 @@ def main_worker(args):
     import realhf.api.core.system_api as system_api
 
     experiment = system_api.make_experiment(name=args.experiment_name)
-    name_resolve.reconfigure(experiment.cluster.name_resolve)
 
     worker_index_start = args.jobstep_id * args.wprocs_per_jobstep + args.wproc_offset
     worker_index_end = min(
@@ -167,7 +166,6 @@ def main_controller(args):
     _patch_external_impl(args.experiment_name, args.trial_name)
 
     experiment = system_api.make_experiment(args.experiment_name)
-    name_resolve.reconfigure(experiment.cluster.name_resolve)
 
     logger.debug("Running controller with args: %s", args)
     assert not args.experiment_name.startswith("/"), args.experiment_name

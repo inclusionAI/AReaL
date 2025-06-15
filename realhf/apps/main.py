@@ -84,7 +84,6 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
     if recover_count == 0:
         constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     experiment = config_package.make_experiment(args.experiment_name)
-    name_resolve.reconfigure(experiment.cluster.name_resolve)
 
     # Run initial_setup to go through all sanity checks.
     try:

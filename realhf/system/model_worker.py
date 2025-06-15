@@ -638,7 +638,7 @@ class ModelWorker(worker_base.Worker):
                     continue
                 if self.data_manager.has_data(x.ids[0]):
                     continue
-                data_loaded.append(x)
+                data_loaded.append(x.cpu())
                 self.data_manager.store(x)
             assert len(set([x.ids[0] for x in data_loaded])) == len(data_loaded)
 

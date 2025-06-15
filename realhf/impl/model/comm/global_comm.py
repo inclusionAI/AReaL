@@ -68,7 +68,6 @@ def setup_global_comm(
             )
         )
     )
-    print(">>>>>>>>>>", peers)
     assert len(peers) == len(set(peers)), f"Duplicated trainer worker index. {peers}"
     world_size = len(peers)
     global_rank = peers.index(worker_index)

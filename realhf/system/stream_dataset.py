@@ -70,6 +70,7 @@ class PullerStreamDataset(Dataset):
             if processed_data is not None:
                 try:
                     self.data_queue.put_nowait(processed_data)
+                    processed_data = None
                 except queue.Full:
                     time.sleep(0.1)
                     continue

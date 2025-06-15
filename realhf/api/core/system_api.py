@@ -475,4 +475,12 @@ def register_experiment(name, cls):
 
 def make_experiment(name) -> Experiment:
     cls = ALL_EXPERIMENT_CLASSES[name]
-    return cls()
+    args = cls()
+    if args.cluster.config_path:
+        from realhf.base.cluster import load_spec_from_file
+
+        load_spec_from_file(args.cluster)
+    from realhf.base import name_resolve
+
+    name_resolve.reconfigure(args.cluster.name_resolve)
+    return args

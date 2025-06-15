@@ -1365,7 +1365,7 @@ def make_repository(args: "NameResolveConfig"):
         host, port = args.etcd3_addr.split(":")
         return Etcd3NameRecordRepository(host=host, port=int(port))
     elif args.type == "ray":
-        return RayNameResolveRepository()
+        return RayNameResolveRepository(actor_name=args.ray_actor_name)
     else:
         raise NotImplementedError(f"No such name resolver: {args.type}")
 

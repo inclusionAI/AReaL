@@ -361,7 +361,7 @@ class SlurmLaunchInfo:
             f"#SBATCH --output={self.log_path}",
             "#SBATCH --open-mode=append",
             f"#SBATCH --ntasks={ntasks}",
-            f"#SBATCH {gres_line}",
+            f"#SBATCH {gres_line}" if gpu >= 1 else "",
             f"#SBATCH --cpus-per-task={cpu}",
             f"#SBATCH --mem-per-cpu={mem // max(1, cpu)}M",
             "#SBATCH --distribution=arbitrary" if self.hostfile else "",

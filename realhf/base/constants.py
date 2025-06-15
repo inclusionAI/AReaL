@@ -71,6 +71,13 @@ os.makedirs(QUICKSTART_EXPR_CACHE_PATH, exist_ok=True)
 PORT_LOCKFILE_ROOT = os.getenv("AREAL_PORT_LOCKFILE_ROOT", "/tmp/areal/ports/")
 os.makedirs(PORT_LOCKFILE_ROOT, exist_ok=True)
 
+PYTORCH_KERNEL_CACHE_PATH = (
+    f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/torch/kernels"
+)
+TRITON_CACHE_PATH = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/triton"
+os.makedirs(PYTORCH_KERNEL_CACHE_PATH, exist_ok=True)
+os.makedirs(TRITON_CACHE_PATH, exist_ok=True)
+
 
 def get_cache_path(args: "BaseExperimentConfig") -> str:
     path = f"{args.cluster.fileroot}/.cache/{getpass.getuser()}/{args.experiment_name}/{args.trial_name}"
@@ -115,6 +122,8 @@ BASE_ENVIRONS = {
     # "NCCL_IB_DISABLE": "1",
     "TRANSFORMERS_OFFLINE": "1",
     "TOKENIZERS_PARALLELISM": "true",
+    "PYTORCH_KERNEL_CACHE_PATH": PYTORCH_KERNEL_CACHE_PATH,
+    "TRITON_CACHE_DIR": TRITON_CACHE_PATH,
     # "TORCH_DISTRIBUTED_DEBUG": "DETAIL",
     # "NCCL_SOCKET_IFNAME": "ibp71s0",
     # "GLOO_SOCKET_IFNAME": "ibp71s0",
