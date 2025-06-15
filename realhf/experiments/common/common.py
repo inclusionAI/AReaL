@@ -581,7 +581,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
             )
         if self.n_gpus_per_node > self.cluster.n_gpus_per_node:
             raise ValueError(
-                f"Number of 7used GPUs per node {self.n_gpus_per_node} should not be larger than the cluster limit {self.cluster.n_gpus_per_node}"
+                f"Number of used GPUs per node {self.n_gpus_per_node} should not be larger than the cluster limit {self.cluster.n_gpus_per_node}"
             )
         if self.n_nodes > 1 and self.n_gpus_per_node != self.cluster.n_gpus_per_node:
             raise ValueError(

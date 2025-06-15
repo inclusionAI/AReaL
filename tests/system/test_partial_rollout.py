@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from transformers import PreTrainedTokenizerFast
 
+from realhf.api.cli_args import NameResolveConfig
 from realhf.api.core.model_api import (
     APIGenerateInput,
     APIGenerateOutput,
@@ -66,6 +67,10 @@ def partial_rollout_manager():
     # Set up mocked request and reply queues
     request_queue = asyncio.Queue()
     reply_queue = asyncio.Queue()
+
+    name_resolve.reconfigure(
+        NameResolveConfig("nfs", "/tmp/areal/test-partial-rollout")
+    )
 
     testing.clear_name_resolve()
     constants.set_experiment_trial_names(

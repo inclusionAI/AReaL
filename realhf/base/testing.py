@@ -19,7 +19,7 @@ import torch
 import torch.distributed as dist
 import torch.utils.data
 
-from realhf.api.cli_args import BaseExperimentConfig
+from realhf.api.cli_args import BaseExperimentConfig, NameResolveConfig
 from realhf.api.core.data_api import SequenceSample
 from realhf.base import constants, gpu_utils, logging, name_resolve, names, topology
 from realhf.base.topology import (
@@ -93,6 +93,14 @@ class StandaloneTestingProcess(mp.Process):
         if constants.use_cuda():
             torch.cuda.set_device(0)
 
+        from realhf.api.cli_args import NameResolveConfig
+
+        name_resolve.reconfigure(
+            NameResolveConfig(
+                "nfs", f"/tmp/areal/testing/{self.expr_name}/{self.trial_name}/"
+            )
+        )
+
         self.barrier.wait()
 
         if self.setup_dist_torch:
@@ -154,6 +162,11 @@ class LocalMultiProcessTest:
         if torch.cuda.is_available():
             os.environ["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
             os.environ["GPU_DEVICES_ISOLATED"] = str(1)
+        expr_name = expr_name if expr_name is not None else _DEFAULT_EXPR_NAME
+        trial_name = trial_name if trial_name is not None else _DEFAULT_TRIAL_NAME
+        name_resolve.reconfigure(
+            NameResolveConfig("nfs", f"/tmp/areal/testing/{expr_name}/{trial_name}/")
+        )
         clear_name_resolve(expr_name, trial_name)
         self.timeout_secs = timeout_secs
         self.processes = []

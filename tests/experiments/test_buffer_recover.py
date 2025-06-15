@@ -67,7 +67,6 @@ def test_buffer_recover(
     # Setup experiment env. Should be done before any other operations.
     expr_name = str(uuid.uuid4())
     trial_name = str(uuid.uuid4())
-    testing.clear_name_resolve(expr_name, trial_name)
     constants.set_experiment_trial_names(expr_name, trial_name)
 
     exp_cfg = NullPPOConfig(
@@ -114,7 +113,8 @@ def test_buffer_recover(
             benchmark_steps=0,
         ),
         cluster=ClusterSpecConfig(
-            fileroot=str(tmp_path_factory.mktemp("buffer-recover"))
+            fileroot=str(tmp_path_factory.mktemp("buffer-recover")),
+            n_gpus_per_node=16,
         ),
     )
 

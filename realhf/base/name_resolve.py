@@ -48,12 +48,6 @@ class NameRecordRepository:
         except Exception as e:
             logger.info(f"Exception ignore when deleting NameResolveRepo {e}")
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.reset()
-
     def add(
         self,
         name,
@@ -1093,12 +1087,6 @@ class RayNameResolveRepository:
                 f"Exception ignored when deleting RayNameResolveRepository: {e}"
             )
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.reset()
-
     def add(
         self,
         name: str,
@@ -1382,7 +1370,7 @@ def make_repository(args: "NameResolveConfig"):
         raise NotImplementedError(f"No such name resolver: {args.type}")
 
 
-DEFAULT_REPOSITORY = NfsNameRecordRepository("/tmp/areal/name_resolve")
+DEFAULT_REPOSITORY = NfsNameRecordRepository()
 add = DEFAULT_REPOSITORY.add
 add_subentry = DEFAULT_REPOSITORY.add_subentry
 delete = DEFAULT_REPOSITORY.delete

@@ -29,7 +29,7 @@ class AllocateRolloutInput:
     qid: str
 
 
-class GserverManager(AsyncWorker):
+class GserverManager(Worker):
     """This worker has the following functionalities:
     1. As a router, it schedules generation requests and returns the
        best server urls to clients for submitting generation requests.
@@ -207,7 +207,7 @@ class GserverManager(AsyncWorker):
         url = min(self.server_urls, key=lambda k: self._server_token_usage[k])
         return self.server_urls.index(url)
 
-    async def _poll_async(self):
+    def _poll(self):
         if not self.thread:
             # Find addresses of generation servers
             self.server_urls = self._discover_servers(self.config.n_servers)

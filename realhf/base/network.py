@@ -28,7 +28,7 @@ def find_free_port(
     exclude_ports=None,
     experiment_name="port",
     trial_name="port",
-    lockfile_root="/tmp/areal/ports/",
+    lockfile_root=constants.PORT_LOCKFILE_ROOT,
 ):
     """Find a free port within the specified range, excluding certain ports."""
 
@@ -69,7 +69,7 @@ def find_multiple_free_ports(
     high=65536,
     experiment_name="port",
     trial_name="port",
-    lockfile_root="/tmp/areal/ports/",
+    lockfile_root=constants.PORT_LOCKFILE_ROOT,
 ):
     """Find multiple mutually exclusive free ports."""
     free_ports = set()

@@ -68,6 +68,8 @@ TORCH_FORCE_CPU = False
 LOCAL_CACHE_DIR = "/tmp/realhf"
 QUICKSTART_EXPR_CACHE_PATH = str(Path(__file__).parent.parent.parent / ".cache")
 os.makedirs(QUICKSTART_EXPR_CACHE_PATH, exist_ok=True)
+PORT_LOCKFILE_ROOT = os.getenv("AREAL_PORT_LOCKFILE_ROOT", "/tmp/areal/ports/")
+os.makedirs(PORT_LOCKFILE_ROOT, exist_ok=True)
 
 
 def get_cache_path(args: "BaseExperimentConfig") -> str:

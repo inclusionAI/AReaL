@@ -2,6 +2,7 @@ import queue
 import sys
 import threading
 import time
+import traceback
 from typing import Any, List, Optional
 
 from torch.utils.data import ConcatDataset, Dataset
@@ -64,29 +65,29 @@ class PullerStreamDataset(Dataset):
             self.args,
             puller_index=self.util.dp_rank,
         )
-        try:
-            while not self._stop_event.is_set():
+        processed_data = None
+        while not self._stop_event.is_set():
+            if processed_data is not None:
                 try:
-                    data = stream.pull(timeout_ms=self.pull_timeout_ms)
-                    processed_data = [
-                        SequenceSample.from_json_compatible(x) for x in data
-                    ]
-                    logger.debug(
-                        f"Get data {[x.ids[0] for x in processed_data]} from puller stream."
-                    )
-                    self.data_queue.put(processed_data)
-                except queue.Empty:
-                    logger.debug(f"No data from puller stream.")
+                    self.data_queue.put_nowait(processed_data)
+                except queue.Full:
                     time.sleep(0.1)
                     continue
-        finally:
-            # Ensure socket is closed in the same thread
-            del stream
-            # Exit if this thread has an error
-            sys.exit(1)
+            try:
+                data = stream.pull(timeout_ms=self.pull_timeout_ms)
+                processed_data = [SequenceSample.from_json_compatible(x) for x in data]
+                logger.debug(
+                    f"Get data {[x.ids[0] for x in processed_data]} from puller stream."
+                )
+            except queue.Empty:
+                logger.debug(f"No data from puller stream.")
+                time.sleep(0.1)
+                continue
 
     def __getitem__(self, idx: int) -> Optional[Any]:
         samples = []
+        if not self.worker_thread.is_alive():
+            raise RuntimeError("Stream dataset puller thread is not alive.")
         while True:
             try:
                 samples += self.data_queue.get_nowait()
@@ -99,8 +100,6 @@ class PullerStreamDataset(Dataset):
 
     def __del__(self):
         self._stop_event.set()
-        if self.worker_thread.is_alive():
-            self.worker_thread.join(timeout=1.0)
 
 
 register_dataset("puller_stream", PullerStreamDataset)

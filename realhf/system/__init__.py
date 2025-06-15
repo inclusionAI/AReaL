@@ -61,7 +61,7 @@ def run_worker(
     )
     worker = worker_class(server=server)
     try:
-        if worker_type in ["rollout_worker", "master_worker", "gserver_manager"]:
+        if worker_type in ["rollout_worker"]:
             asyncio.run(worker.run_async())
         else:
             worker.run()

@@ -941,9 +941,6 @@ class ClusterSpecConfig:
             self.node_name_prefix = config["node_name_prefix"]
             self.n_gpus_per_node = config["n_gpus_per_node"]
             self.n_nodes = config.get("n_nodes", self.n_nodes)
-        from realhf.base import name_resolve
-
-        name_resolve.reconfigure(self.name_resolve)
 
 
 @dataclass

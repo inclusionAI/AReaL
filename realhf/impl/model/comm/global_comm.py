@@ -68,6 +68,7 @@ def setup_global_comm(
             )
         )
     )
+    print(">>>>>>>>>>", peers)
     assert len(peers) == len(set(peers)), f"Duplicated trainer worker index. {peers}"
     world_size = len(peers)
     global_rank = peers.index(worker_index)
@@ -88,10 +89,12 @@ def setup_global_comm(
         )
 
     if constants.use_cuda():
-        assert len(os.environ["CUDA_VISIBLE_DEVICES"].split(",")) == 1, os.environ[
-            "CUDA_VISIBLE_DEVICES"
-        ]
-        local_gpu_id = int(os.environ["CUDA_VISIBLE_DEVICES"])
+        if len(os.environ["CUDA_VISIBLE_DEVICES"].split(",")) == 1:
+            local_gpu_id = int(os.environ["CUDA_VISIBLE_DEVICES"])
+        else:
+            local_gpu_id = int(
+                os.environ["CUDA_VISIBLE_DEVICES"].split(",")[worker_index]
+            )
     else:
         local_gpu_id = global_rank
 

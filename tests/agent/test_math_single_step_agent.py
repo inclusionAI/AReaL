@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -21,7 +22,7 @@ def mock_env():
 
 
 @pytest.fixture
-def agent_config():
+def agent_config(tmp_path):
     return {
         "gconfig": MagicMock(n=2),
         "tokenizer_path": "/storage/openpsi/models/Qwen__Qwen2.5-0.5B-Instruct/",
@@ -29,6 +30,7 @@ def agent_config():
         "success_rate_ub": 1.0,
         "reward_scaling": 2.0,
         "reward_bias": 0.1,
+        "answer_save_path": tmp_path,
     }
 
 
@@ -140,47 +142,34 @@ async def test_collect_trajectory_empty_act_queue(agent, mock_env, mock_prompt):
 
 def test_log_rewards_to_file(agent, tmp_path):
     # Setup test directories
-    with (
-        patch("realhf.base.constants.experiment_name", return_value="test_exp"),
-        patch("realhf.base.constants.trial_name", return_value="test_trial"),
-    ):
-        agent.log_rewards_to_file(
-            qid="123",
-            prompt="test_prompt",
-            prompt_len=3,
-            answers=["answer1", "answer2"],
-            seqlens=[5, 6],
-            rewards=[0.5, 0.7],
-            success=[True, False],
-            version_starts=[1, 2],
-            version_ends=[2, 3],
-        )
+    agent.log_rewards_to_file(
+        qid="123",
+        prompt="test_prompt",
+        prompt_len=3,
+        answers=["answer1", "answer2"],
+        seqlens=[5, 6],
+        rewards=[0.5, 0.7],
+        success=[True, False],
+        version_starts=[1, 2],
+        version_ends=[2, 3],
+    )
 
-        # Check generated file
-        gen_file_path = (
-            tmp_path / "test_exp" / "test_trial" / "generated" / "1" / "123.txt"
-        )
-        assert gen_file_path.exists()
-        with open(gen_file_path) as f:
-            content = f.read()
-            assert "idx: 1 / 2" in content
-            assert "seqlen: 5" in content
-            assert "test_prompt" in content
+    # Check generated file
+    gen_file_path = Path(agent.answer_save_path) / "1" / "123.txt"
+    assert gen_file_path.exists()
+    with open(gen_file_path) as f:
+        content = f.read()
+        assert "idx: 1 / 2" in content
+        assert "seqlen: 5" in content
+        assert "test_prompt" in content
 
-        # Check monitor file
-        monitor_file_path = (
-            tmp_path
-            / "test_exp"
-            / "test_trial"
-            / "training_monitor"
-            / "1"
-            / "123.jsonl"
-        )
-        assert monitor_file_path.exists()
-        with open(monitor_file_path) as f:
-            data = json.loads(f.readline())
-            assert data["version_start"] == 1
-            assert data["prompt_len"] == 3
+    # Check monitor file
+    monitor_file_path = Path(agent.answer_save_path) / "1" / "123.jsonl"
+    assert monitor_file_path.exists()
+    with open(monitor_file_path) as f:
+        data = json.loads(f.readline())
+        assert data["version_start"] == 1
+        assert data["prompt_len"] == 3
 
 
 def test_reward_calculation(agent):

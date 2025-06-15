@@ -43,12 +43,9 @@ def name_resolve(request):
         temp_dir = tempfile.mkdtemp()
         from realhf.base.name_resolve import NfsNameRecordRepository
 
-        original_root = NfsNameRecordRepository.RECORD_ROOT
-        NfsNameRecordRepository.RECORD_ROOT = temp_dir
-        repo = NfsNameRecordRepository()
+        repo = NfsNameRecordRepository(temp_dir)
         yield repo
         repo.reset()
-        NfsNameRecordRepository.RECORD_ROOT = original_root
         shutil.rmtree(temp_dir)
     elif backend_type == "memory":
         from realhf.base.name_resolve import MemoryNameRecordRepository
@@ -206,17 +203,6 @@ def test_reset(name_resolve):
         name_resolve.get("test_key1")
     assert name_resolve.get("test_key_no_delete") == "value2"
     name_resolve.delete("test_key_no_delete")
-
-
-def test_context_manager(name_resolve):
-    """Test context manager functionality."""
-    with name_resolve.__class__() as repo:
-        repo.add("test_key", "test_value", delete_on_exit=True)
-        assert repo.get("test_key") == "test_value"
-
-    # Key should be deleted after context exits
-    with pytest.raises(NameEntryNotFoundError):
-        name_resolve.get("test_key")
 
 
 def test_concurrent_access(name_resolve):

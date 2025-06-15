@@ -753,11 +753,11 @@ def get_shuffle_indices(seed: int, size: int):
 
 def load_shuffle_split_dataset(
     util: DatasetUtility,
-    dataset_path: str,
+    dataset_path: Optional[str] = None,
     dataset_builder: Optional[Callable[[], List[Dict[str, str]]]] = None,
 ):
-    dataset_path = load_hf_or_local_file(dataset_path)
     if dataset_path is not None:
+        dataset_path = load_hf_or_local_file(dataset_path)
         if dataset_path.endswith(".jsonl"):
             with open(dataset_path, "r") as f:
                 data = [json.loads(ff) for ff in f]

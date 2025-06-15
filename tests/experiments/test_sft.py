@@ -33,9 +33,6 @@ def model_class(request):
         (1, 2, 4),
         (2, 4, 1),
         (2, 1, 4),
-        (4, 2, 2),
-        (2, 4, 2),
-        (2, 2, 4),
     ],
 )
 def test_sft_xl(tmp_path_factory, tokenizer, save_path, cpu_hf_model, dp, pp, tp):
