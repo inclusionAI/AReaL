@@ -33,14 +33,15 @@ class StructuredUserInstructions(BaseModel):
 
     def __str__(self) -> str:
         lines = []
+        tab = "\t"
         lines.append(f"Domain: {self.domain}")
-        lines.append(f"Reason for call:\n{textwrap.indent(self.reason_for_call, '\t')}")
+        lines.append(f"Reason for call:\n{textwrap.indent(self.reason_for_call, tab)}")
         if self.known_info is not None:
-            lines.append(f"Known info:\n{textwrap.indent(self.known_info, '\t')}")
+            lines.append(f"Known info:\n{textwrap.indent(self.known_info, tab)}")
         if self.unknown_info is not None:
-            lines.append(f"Unknown info:\n{textwrap.indent(self.unknown_info, '\t')}")
+            lines.append(f"Unknown info:\n{textwrap.indent(self.unknown_info, tab)}")
         lines.append(
-            f"Task instructions:\n{textwrap.indent(self.task_instructions, '\t')}"
+            f"Task instructions:\n{textwrap.indent(self.task_instructions, tab)}"
         )
         return "\n".join(lines)
 

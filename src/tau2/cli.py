@@ -13,7 +13,6 @@ from tau2.config import (
     DEFAULT_NUM_TRIALS,
     DEFAULT_SEED,
     DEFAULT_USER_IMPLEMENTATION,
-    MAX_DEBUG_MODE_TASKS,
 )
 from tau2.data_model.simulation import RunConfig
 from tau2.run import get_options, run_domain
@@ -87,6 +86,12 @@ def add_run_args(parser):
         help="(Optional) run only the tasks with the given IDs. If not provided, will run all tasks.",
     )
     parser.add_argument(
+        "--num-tasks",
+        type=int,
+        default=None,
+        help="The number of tasks to run.",
+    )
+    parser.add_argument(
         "--max-steps",
         type=int,
         default=DEFAULT_MAX_STEPS,
@@ -122,11 +127,6 @@ def add_run_args(parser):
         default=DEFAULT_LOG_LEVEL,
         help=f"The log level to use for the simulation. Default is {DEFAULT_LOG_LEVEL}.",
     )
-    parser.add_argument(
-        "--debug-mode",
-        action="store_true",
-        help=f"Whether to run the simulation in debug mode. Default is False. If True, it will limit the number of tasks to {MAX_DEBUG_MODE_TASKS}.",
-    )
 
 
 def main():
@@ -142,6 +142,7 @@ def main():
                 domain=args.domain,
                 task_set_name=args.task_set_name,
                 task_ids=args.task_ids,
+                num_tasks=args.num_tasks,
                 agent=args.agent,
                 llm_agent=args.agent_llm,
                 llm_args_agent=args.agent_llm_args,
@@ -155,7 +156,6 @@ def main():
                 max_concurrency=args.max_concurrency,
                 seed=args.seed,
                 log_level=args.log_level,
-                debug_mode=args.debug_mode,
             )
         )
     )

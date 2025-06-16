@@ -7,7 +7,7 @@ name = "tau2"
 version = "0.0.1"
 description = "The tau2 package"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 license = "MIT"
 authors = [
     { name = "Victor Barres", email = "victor.barres@gmail.com" },
