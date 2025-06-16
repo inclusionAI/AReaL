@@ -8,7 +8,6 @@ from typing import Optional
 from loguru import logger
 
 from tau2.agent.llm_agent import LLMAgent, LLMGTAgent, LLMSoloAgent
-from tau2.config import MAX_DEBUG_MODE_TASKS
 from tau2.data_model.simulation import (
     AgentInfo,
     Info,
@@ -55,7 +54,11 @@ def load_tasks(task_set_name: str) -> list[Task]:
     return tasks
 
 
-def get_tasks(task_set_name: str, task_ids: Optional[list[str]] = None) -> list[Task]:
+def get_tasks(
+    task_set_name: str,
+    task_ids: Optional[list[str]] = None,
+    num_tasks: Optional[int] = None,
+) -> list[Task]:
     """
     Loads the tasks for the given domain.
     """
@@ -69,6 +72,8 @@ def get_tasks(task_set_name: str, task_ids: Optional[list[str]] = None) -> list[
         raise ValueError(
             f"Not all tasks were found for task set {task_set_name}: {missing_tasks}"
         )
+    if num_tasks is not None:
+        tasks = tasks[:num_tasks]
     return tasks
 
 
@@ -95,7 +100,7 @@ def run_domain(config: RunConfig) -> Results:
         task_set_name = config.domain
     else:
         task_set_name = config.task_set_name
-    tasks = get_tasks(task_set_name, config.task_ids)
+    tasks = get_tasks(task_set_name, config.task_ids, config.num_tasks)
     if "gt" in config.agent:
         total_num_tasks = len(tasks)
         tasks = [task for task in tasks if LLMGTAgent.check_valid_task(task)]
@@ -112,12 +117,6 @@ def run_domain(config: RunConfig) -> Results:
         )
 
     num_trials = config.num_trials
-    if config.debug_mode:
-        ConsoleDisplay.console.print(
-            "[bold yellow]Running in debug mode. Limiting the number of tasks to 5 and number of trials to 1.[/bold yellow]"
-        )
-        num_trials = 1
-        tasks = tasks[:MAX_DEBUG_MODE_TASKS]
     save_to = config.save_to
     if save_to is None:
         save_to = make_run_name(config)

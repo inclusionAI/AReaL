@@ -1,17 +1,20 @@
 # $\tau^2$-Bench: Evaluating Conversational Agents in a Dual-Control Environment
 
-[![python](https://img.shields.io/badge/Python-3.13%2B-blue.svg?style=flat&logo=python&logoColor=white)](https://www.python.org)
+[![python](https://img.shields.io/badge/Python-3.10%2B-blue.svg?style=flat&logo=python&logoColor=white)](https://www.python.org)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![arXiv](http://img.shields.io/badge/cs.AI-arXiv%3A2506.07982-B31B1B.svg?logo=arxiv&logoColor=red)](https://arxiv.org/abs/2506.07982)
+[![blog](https://img.shields.io/badge/blog-tau2--bench-green)](https://sierra.ai/blog/benchmarking-agents-in-collaborative-real-world-scenarios)
+[![Twitter](https://img.shields.io/twitter/url/https/twitter.com/sierra.svg?style=social&label=Follow%20%40SierraPlatform)](https://x.com/SierraPlatform/status/1932464265207889974)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?logo=linkedin&logoColor=white)](https://www.linkedin.com/posts/sierra_last-year-we-introduced-%F0%9D%9C%8F-bench-a-benchmark-activity-7338229693898231809-F8L4?utm_source=share&utm_medium=member_desktop&rcm=ACoAAAdc8goBmhEsiEo1_t_XSJbAnY4_zMfAWcE)
 
 <div align="center">
-<img src="figs/overview.png" width="100%" alt="System Overview"><br>
+<img src="figs/overview.png" width="95%" alt="System Overview"><br>
 <em>Figure 1: τ²-bench allows users to interact with the agent and the environment</em>
 </div>
 
 <div align="center">
-<img src="figs/traj.png" width="100%" alt="Trajectory"><br>
+<img src="figs/traj.png" width="95%" alt="Trajectory"><br>
 <em>Figure 2: Trajectory of a conversation between an agent and a user</em>
 </div>
 
@@ -31,21 +34,7 @@ Domains are:
 - `retail`
 - `telecom`
 
-All the information that an agent developer needs to build an agent for a domain can be accessed through the domain's API docs.
-
-Once $\tau^2$-bench is installed, to view a domain policy and API docs:
-
-1. Run:
-```sh
-tau2 domain <domain>
-``` 
-
-2. Visit http://127.0.0.1:8004/redoc
-
-## Requirements
-
-- Python >= 3.13.0
-- [pdm](https://pdm-project.org/en/latest/)
+All the information that an agent developer needs to build an agent for a domain can be accessed through the domain's API docs. See [View domain documentation](#view-domain-documentation) for more details.
 
 ## Installation
 
@@ -55,59 +44,50 @@ git clone https://github.com/sierra-research/tau2-bench
 cd tau2-bench
 ```
 
-2. Create a new environment
+2. Create a new environment (optional)
 
-Check that you have the correct python version
-```bash
-python --version
-```
-You should get `Python 3.13.0`
-
-Create and activate new environment
+$\tau^2$-bench requires Python 3.10 or higher. You may create and activate a new environment:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 ```
 
-3. Install dependencies
+3. Install tau2
 
-```bash
-pdm install
-```
-
-4. Provide your LLM API keys
-
-Copy `.env.example` as `.env` and edit it to include your API keys.
-
-5. Set scripts as executable
-```bash
-chmod +x ./scripts/start_tau2_server.sh
-```
-
-6. Install package (required to run the CLI)
 ```bash
 pip install .
 ```
 
-7. Test the installation
-To run a test evaluation on only 5 tasks, run:
+This will enable you to run the `tau2` command.
+
+To remove all the generated files and the virtual environment, run:
+```bash
+make clean
+```
+
+## Quick Start
+
+### Setup LLM API keys
+
+We use [LiteLLM](https://github.com/BerriAI/litellm) to manage LLM APIs, so you can use any LLM provider supported by LiteLLM.
+
+To provide your API keys, copy `.env.example` as `.env` and edit it to include your API keys.
+
+### Run agent evaluation
+
+To run a test evaluation on only 5 tasks with 1 trial per task, run:
+
 ```bash
 tau2 run \ 
 --domain airline \
 --agent-llm gpt-4.1 \
 --user-llm gpt-4.1 \
---debug-mode
+--num-trials 1 \
+--num-tasks 5
 ```
-(`debug-mode` will limit the results to 5 tasks and 1 trial per task.)
 
-Results will be saved in `data/tau2/simulations/`
-
-### Uninstall
-To remove all the generated files and the virtual environment, run:
-```bash
-make clean
-```
+Results will be saved in `data/tau2/simulations/`.
 
 ## Command Line Interface
 
@@ -120,6 +100,7 @@ tau2 run \
   --agent-llm <llm_name> \
   --user-llm <llm_name> \
   --num-trials <trial_count> \
+  --task-ids <task_ids> \
   --max-concurrency <concurrent_sims> \
   ...
 ```
@@ -133,7 +114,6 @@ This tool allows you to:
 - View agent performance metrics
 - View a particular simulation
 - View task details
-
 
 ### View domain documentation
 ```bash

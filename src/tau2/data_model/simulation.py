@@ -48,6 +48,13 @@ class RunConfig(BaseModel):
             default=None,
         ),
     ]
+    num_tasks: Annotated[
+        Optional[int],
+        Field(
+            description="The number of tasks to run the simulation on",
+            default=None,
+        ),
+    ]
     is_remote: Annotated[
         bool,
         Field(
@@ -144,13 +151,6 @@ class RunConfig(BaseModel):
         Field(
             description="The log level to use for the simulation",
             default=DEFAULT_LOG_LEVEL,
-        ),
-    ]
-    debug_mode: Annotated[
-        bool,
-        Field(
-            description="Whether to run the simulation in debug mode. This limits the number of tasks to 5.",
-            default=False,
         ),
     ]
 
