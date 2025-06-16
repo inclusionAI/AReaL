@@ -19,7 +19,7 @@ class EnvFactory:
     args: TrainingArgs
 
     def make_env(self, config: EnvConfig) -> Environment:
-        if config.type == "math-code-single-step":
+        if config.type == "math_code_single_step":
             from arealite.impl.environment.math_code_single_step_env import (
                 MathCodeSingleStepEnv,
             )

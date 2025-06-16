@@ -75,8 +75,11 @@ class MathCodeSingleStepEnv(Environment):
     ) -> Tuple[Any, dict]:
         """Reset the environment."""
         super().reset(seed=seed)
-        prompt = options["prompt"]
-        qid = options["qid"]
+        try:
+            prompt = options["prompt"]
+            qid = options["qid"]
+        except KeyError:
+            raise RuntimeError("prompt and qid must be set in env options.")
         # Return dummy observation and info
         return MathCodeObs(qid=qid, prompt=prompt), {}
 
@@ -105,4 +108,10 @@ class MathCodeSingleStepEnv(Environment):
         truncated = False
         info = {"task": cur_task, "qid": qid}
 
-        return None, format_reward, terminated, truncated, info
+        return (
+            None,
+            (format_reward + self.reward_bias) * self.reward_scaling,
+            terminated,
+            truncated,
+            info,
+        )

@@ -1,6 +1,5 @@
 import uuid
 
-import omegaconf
 from omegaconf import OmegaConf
 
 from arealite.api.cli_args import (
@@ -15,7 +14,6 @@ args = OmegaConf.load("arealite/config/async_ppo.yaml")
 default_args = OmegaConf.structured(TrainingArgs)
 args = OmegaConf.merge(default_args, args)
 args: TrainingArgs = OmegaConf.to_object(args)
-print(args.cluster.name_resolve)
 name_resolve.reconfigure(args.cluster.name_resolve)
 
 from arealite.impl.sglang_client import SGLangClient

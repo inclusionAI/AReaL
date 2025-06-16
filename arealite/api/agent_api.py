@@ -38,7 +38,7 @@ class AgentFactory:
     client_config: LLMClientConfig
 
     def make_agent(self, config: AgentConfig) -> Agent:
-        if config.type == "math-code-single-step":
+        if config.type == "math_code_single_step":
             from arealite.impl.agent.math_code_single_step_agent import (
                 MathCodeSingleStepAgent,
             )

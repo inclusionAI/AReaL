@@ -18,7 +18,7 @@ from realhf.api.core.model_api import GenerationHyperparameters
 class LLMTrajCollector(TrajCollector):
     def __init__(self, args: TrainingArgs, config: TrajCollectorConfig):
         super().__init__(args, config)
-        agent_factory = AgentFactory(args)
+        agent_factory = AgentFactory(args, config.llm_client)
         self.agent = agent_factory.make_agent(config.agent)
         env_factory = EnvFactory(args)
         self.env = env_factory.make_env(config.env)
@@ -47,8 +47,8 @@ class LLMTrajCollector(TrajCollector):
 
             # Collect the step data.
             resp = agent_infer_out.llm_resp
-            input_len = resp.input_tokens
-            output_len = resp.output_tokens
+            input_len = len(resp.input_tokens)
+            output_len = len(resp.output_tokens)
 
             input_ids = resp.input_tokens + resp.output_tokens
             prompt_mask = [1] * input_len + [0] * output_len

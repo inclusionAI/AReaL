@@ -9,14 +9,12 @@ from gymnasium.core import ObsType
 
 from arealite.api.agent_api import Agent
 from arealite.api.cli_args import AgentConfig, LLMClientConfig, TrainingArgs
-from arealite.api.io_struct import AgentInferOutput, LLMRequest, Message, Trajectory
+from arealite.api.io_struct import AgentInferOutput, LLMRequest, Trajectory
+from arealite.impl.environment.math_code_single_step_env import (
+    MathCodeAction,
+    MathCodeObs,
+)
 from realhf.api.core.data_api import load_hf_tokenizer
-
-if TYPE_CHECKING:
-    from arealite.impl.environment.math_code_single_step_env import (
-        MathCodeAction,
-        MathCodeObs,
-    )
 
 
 class MathCodeSingleStepAgent(Agent):
@@ -39,14 +37,10 @@ class MathCodeSingleStepAgent(Agent):
         qid = obs.qid
         prompt_text = obs.prompt
 
-        # Create prompt message
-        messages = [Message(role="user", content=prompt_text, attachment=None)]
-
         # Create LLM request
         llm_req = LLMRequest(
             rid=str(qid) + "-" + str(uuid.uuid4()),
-            model_id="actor",  # Default model ID for actor
-            messages=messages,
+            text=prompt_text,
             gconfig=self.gconfig,
         )
 

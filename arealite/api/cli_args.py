@@ -144,6 +144,7 @@ class EnvConfig:
 @dataclass
 class TrajCollectorConfig:
     type: str = "llm"
+    llm_client: LLMClientConfig = field(default_factory=LLMClientConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     env: EnvConfig = field(default_factory=EnvConfig)
 
