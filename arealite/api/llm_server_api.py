@@ -137,7 +137,9 @@ class LLMServer:
 
         # Wait for server to be ready
         if not self._wait_for_ready():
-            raise RuntimeError("Server failed to become ready")
+            raise RuntimeError(
+                f"Server failed to become ready in {self.service_config.startup_timeout}s"
+            )
 
         # Register with service registry
         self.registry.register_server(server_info)

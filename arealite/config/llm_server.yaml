@@ -4,16 +4,19 @@ experiment_name: test-exp
 trial_name: test-trial
 cluster:
   cluster_name: local
-  fileroot: /tmp/areal/
+  fileroot: /tmp/arealite/
   n_nodes: 32
   n_gpus_per_node: 8
+  name_resolve:
+    type: nfs
+    nfs_record_root: /tmp/arealite/llm_server/
 parallel:
   tensor_parallel_size: 1
   pipeline_parallel_size: 1
   data_parallel_size: 1
   use_sequence_parallel: false
 health_check_interval: 5
-startup_timeout: 90
+startup_timeout: 300
 max_unhealth_count: 3
 graceful_shutdown_on_unhealthy: true
 sglang:

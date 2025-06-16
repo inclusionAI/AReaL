@@ -27,11 +27,13 @@ from realhf.api.cli_args import (
 ## Inference config for clients and servers. ##
 @dataclass
 class LLMServiceConfig:
-    experiment_name: str
-    trial_name: str
-    server_backend: str
-    model_path: str
-    parallel: ParallelismConfig
+    experiment_name: str = MISSING
+    trial_name: str = MISSING
+    seed: int = 1
+    cluster: ClusterSpecConfig = field(default_factory=ClusterSpecConfig)
+    server_backend: str = "sglang"
+    model_path: str = ""
+    parallel: ParallelismConfig = field(default_factory=ParallelismConfig)
     health_check_interval: int = 5
     startup_timeout: int = 90
     max_unhealth_count: int = 3
