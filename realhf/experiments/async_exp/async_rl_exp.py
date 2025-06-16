@@ -331,6 +331,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
         return ExperimentConfig(
             exp_ctrl=self.exp_ctrl,
             wandb=self.wandb,
+            swanlab=self.swanlab,
             tensorboard=self.tensorboard,
             # NOTE: master and model worker only see RPCs without generation
             model_rpcs=[
