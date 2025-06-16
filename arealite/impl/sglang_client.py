@@ -1,5 +1,4 @@
 import time
-from typing import List
 
 import requests
 import torch.distributed as dist

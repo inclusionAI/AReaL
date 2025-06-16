@@ -3,7 +3,6 @@ import uuid
 
 from omegaconf import OmegaConf
 
-from arealite.api.agent_api import AgentFactory
 from arealite.api.cli_args import (
     AgentConfig,
     EnvConfig,
@@ -15,8 +14,7 @@ from arealite.api.cli_args import (
     TrajCollectorConfig,
 )
 from arealite.api.collector_api import TrajCollectorFactory
-from arealite.api.env_api import EnvFactory
-from arealite.api.io_struct import LLMRequest, LLMResponse, Trajectory
+from arealite.api.io_struct import Trajectory
 from realhf.base import name_resolve
 
 args = OmegaConf.load("arealite/config/async_ppo.yaml")

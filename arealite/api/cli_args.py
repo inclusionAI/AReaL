@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Optional
 
 from omegaconf import MISSING
 
@@ -14,7 +14,6 @@ from realhf.api.cli_args import ModelTrainEvalConfig as EngineConfig
 from realhf.api.cli_args import (
     OptimizerConfig,
     ParallelismConfig,
-    PPOHyperparameters,
     PromptAnswerDatasetConfig,
     PromptOnlyDatasetConfig,
     SGLangConfig,
@@ -27,29 +26,53 @@ from realhf.api.cli_args import (
 ## Inference config for clients and servers. ##
 @dataclass
 class LLMServiceConfig:
-    experiment_name: str = MISSING
-    trial_name: str = MISSING
+    experiment_name: str = field(
+        default=MISSING, metadata={"help": "Name of the experiment. Required."}
+    )
+    trial_name: str = field(
+        default=MISSING, metadata={"help": "Name of the trial. Required."}
+    )
     served_model_name: Optional[str] = None
-    seed: int = 1
+    seed: int = field(default=1, metadata={"help": "Random seed"})
     cluster: ClusterSpecConfig = field(default_factory=ClusterSpecConfig)
-    server_backend: str = "sglang"
-    model_path: str = ""
+    server_backend: str = field(
+        default="sglang",
+        metadata={"help": "Backend for serving", "choices": ["sglang", "vllm"]},
+    )
+    model_path: str = field(default="", metadata={"help": "Path to model"})
     parallel: ParallelismConfig = field(default_factory=ParallelismConfig)
-    health_check_interval: int = 5
-    startup_timeout: int = 90
-    max_unhealth_count: int = 3
-    graceful_shutdown_on_unhealthy: bool = True
-    sglang: SGLangConfig | None = None
-    vllm: vLLMConfig | None = None
+    health_check_interval: int = field(
+        default=5, metadata={"help": "Health check interval in seconds"}
+    )
+    startup_timeout: int = field(
+        default=90, metadata={"help": "Startup timeout in seconds"}
+    )
+    max_unhealth_count: int = field(
+        default=3, metadata={"help": "Max unhealthy count before restart"}
+    )
+    graceful_shutdown_on_unhealthy: bool = field(
+        default=True, metadata={"help": "Enable graceful shutdown when unhealthy"}
+    )
+    sglang: Optional[SGLangConfig] = None
+    vllm: Optional[vLLMConfig] = None
 
 
 @dataclass
 class LLMClientConfig:
-    server_backend: str = "sglang"
-    tokenizer_path: str = ""
-    gen_timeout: int = 1800
-    update_weights_timeout: int = 300
-    update_weights_retries: int = 3
+    server_backend: str = field(
+        default="sglang",
+        metadata={"help": "Backend for client", "choices": ["sglang", "vllm"]},
+    )
+    tokenizer_path: str = field(default="", metadata={"help": "Path to tokenizer"})
+    gen_timeout: int = field(
+        default=1800, metadata={"help": "Generation timeout in seconds"}
+    )
+    update_weights_timeout: int = field(
+        default=300, metadata={"help": "Weight update timeout in seconds"}
+    )
+    update_weights_retries: int = field(
+        default=3, metadata={"help": "Number of weight update retries"}
+    )
 
 
 ## Training backend configs. ##
@@ -57,15 +80,15 @@ class LLMClientConfig:
 
 @dataclass
 class FSDPConfig:
-    sync_module_states: bool
-    use_orig_params: bool
+    sync_module_states: bool = True
+    use_orig_params: bool = False
 
 
 @dataclass
 class EngineConfig:
     # Model Architecture Configuration
     type: ModelFamily = field(
-        default=ModelFamily("llama", False),
+        default_factory=lambda: ModelFamily("llama", False),
         metadata={"help": "Model family specification"},
     )
     path: str = field(default="", metadata={"help": "Path to HuggingFace checkpoint"})
@@ -83,58 +106,47 @@ class EngineConfig:
         metadata={"help": "Training backend", "choices": ["megatron"]},
     )
     gradient_checkpointing: bool = field(
-        default=True, metadata={"help": "Enable memory-saving gradient checkpointing"}
+        default=True, metadata={"help": "Enable gradient checkpointing"}
     )
-    bf16: bool = field(
-        default=False, metadata={"help": "Use bf16 precision (otherwise fp16)"}
-    )
+    bf16: bool = field(default=False, metadata={"help": "Use bf16 precision"})
 
     # Backend-Specific Configurations
     optimizer: Optional[OptimizerConfig] = field(
         default_factory=OptimizerConfig, metadata={"help": "Optimizer configuration"}
     )
-    fsdp: Optional[FSDPConfig] = field(
-        default=None,
-        metadata={"help": "FSDP-specific configuration."},
-    )
-    vllm: Optional[vLLMConfig] = field(
-        default=None,
-        metadata={
-            "help": "vLLM inference configuration. Can be ignored if this model doesn't use vLLM."
-        },
-    )
-    sglang: Optional[SGLangConfig] = field(
-        default=None,
-        metadata={
-            "help": "SGLang runtime configuration.  Can be ignored if this model doesn't use SGLang."
-        },
-    )
+    fsdp: Optional[FSDPConfig] = None
+    vllm: Optional[vLLMConfig] = None
+    sglang: Optional[SGLangConfig] = None
 
 
 ## Agent configurations. ##
 @dataclass
 class MathCodeSingleStepAgentConfig:
-    gconfig: GenerationHyperparameters
-    tokenizer_path: str
+    gconfig: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
+    tokenizer_path: str = field(default="", metadata={"help": "Path to tokenizer"})
 
 
 @dataclass
 class AgentConfig:
-    type: str = ""
+    type: str = field(default="", metadata={"help": "Agent type"})
     math_code_single_step: Optional[MathCodeSingleStepAgentConfig] = None
 
 
 ## Environment configurations. ##
 @dataclass
 class MathCodeSingleStepEnvConfig:
-    dataset_path: str
+    dataset_path: str = field(default="", metadata={"help": "Path to dataset"})
 
 
 @dataclass
 class EnvConfig:
-    type: str = ""
-    reward_scaling: float = 1.0
-    reward_bias: float = 0.0
+    type: str = field(default="", metadata={"help": "Environment type"})
+    reward_scaling: float = field(
+        default=1.0, metadata={"help": "Reward scaling factor"}
+    )
+    reward_bias: float = field(default=0.0, metadata={"help": "Reward bias"})
     math_code_single_step: Optional[MathCodeSingleStepEnvConfig] = None
 
 
@@ -143,7 +155,7 @@ class EnvConfig:
 
 @dataclass
 class TrajCollectorConfig:
-    type: str = "llm"
+    type: str = field(default="llm", metadata={"help": "Trajectory collector type"})
     llm_client: LLMClientConfig = field(default_factory=LLMClientConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     env: EnvConfig = field(default_factory=EnvConfig)
@@ -154,9 +166,11 @@ class TrajCollectorConfig:
 
 @dataclass
 class SFTTrainerConfig:
-    model: EngineConfig
-    mb_spec: MicroBatchSpec
-    dataset: PromptAnswerDatasetConfig
+    model: EngineConfig = field(default_factory=EngineConfig)
+    mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
+    dataset: PromptAnswerDatasetConfig = field(
+        default_factory=PromptAnswerDatasetConfig
+    )
 
 
 @dataclass
@@ -271,7 +285,9 @@ class PPOTrainerConfig:
 
 @dataclass
 class TrainerConfig:
-    type: str = "ppo"
+    type: str = field(
+        default="ppo", metadata={"help": "Trainer type", "choices": ["ppo", "sft"]}
+    )
     ppo: Optional[PPOTrainerConfig] = None
     sft: Optional[SFTTrainerConfig] = None
 

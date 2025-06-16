@@ -2,14 +2,10 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import uuid
-from typing import TYPE_CHECKING
-
-import torch
-from gymnasium.core import ObsType
 
 from arealite.api.agent_api import Agent
 from arealite.api.cli_args import AgentConfig, LLMClientConfig, TrainingArgs
-from arealite.api.io_struct import AgentInferOutput, LLMRequest, Trajectory
+from arealite.api.io_struct import AgentInferOutput, LLMRequest
 from arealite.impl.environment.math_code_single_step_env import (
     MathCodeAction,
     MathCodeObs,

@@ -1,6 +1,6 @@
 import abc
 from dataclasses import dataclass
-from typing import Any, Optional, Union
+from typing import Optional, Union
 
 from arealite.api.cli_args import TrainerConfig, TrainingArgs
 

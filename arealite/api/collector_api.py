@@ -3,8 +3,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, List, Optional
 
-import torch
-
 from arealite.api.cli_args import TrainingArgs, TrajCollectorConfig
 from arealite.api.io_struct import Trajectory
 

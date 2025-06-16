@@ -1,7 +1,7 @@
 """Test script for FSDP Engine implementation."""
 
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict
 
 import torch
 
