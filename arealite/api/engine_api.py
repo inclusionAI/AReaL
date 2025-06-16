@@ -73,8 +73,8 @@ class SPMDWrapper(abc.ABC):
 
     def save_model_to_hf(
         self,
-        tokenizer: transformers.PreTrainedTokenizerFast,
         path: str,
+        tokenizer: Optional[transformers.PreTrainedTokenizerFast] = None,
         base_model_path: Optional[str] = None,
     ):
         raise NotImplementedError()

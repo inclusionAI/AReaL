@@ -2,6 +2,7 @@ import time
 from typing import List
 
 import requests
+import torch.distributed as dist
 import transformers
 
 from arealite.api.cli_args import LLMClientConfig, TrainingArgs
@@ -10,7 +11,7 @@ from arealite.api.io_struct import LLMRequest, LLMResponse, Message
 from arealite.api.llm_client_api import LLMClient
 from arealite.api.llm_server_api import LLMServiceRegistry
 from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import logging
+from realhf.base import constants, logging
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class SGLangClient(LLMClient):
 
         self._server_idx = 0
 
-    def _get_available_server(self):
+    def _choose_server(self):
         """Get an available healthy server."""
         servers = self.registry.get_healthy_servers()
         if not servers:
@@ -58,7 +59,7 @@ class SGLangClient(LLMClient):
 
     def generate(self, req: LLMRequest) -> LLMResponse:
         """Generate response using SGLang server."""
-        server_info = self._get_available_server()
+        server_info = self._choose_server()
         base_url = f"http://{server_info.host}:{server_info.port}"
 
         # Convert messages to prompt
@@ -123,17 +124,72 @@ class SGLangClient(LLMClient):
             ttft=latency,  # Simplified for non-streaming
         )
 
+    async def request_update_weight(self, server_info, new_param_path):
+        import aiohttp
+
+        server_url = f"http://{server_info.host}:{server_info.port}"
+        success = False
+        for _ in range(self.client_config.update_weights_retries):
+            async with aiohttp.ClientSession(
+                server_url,
+                timeout=aiohttp.ClientTimeout(
+                    total=self.client_config.update_weights_timeout,
+                    sock_connect=self.client_config.update_weights_timeout,
+                ),
+            ) as session:
+                async with session.post(
+                    f"/update_weights_from_disk",
+                    json=dict(model_path=new_param_path, allow_interrupt=True),
+                ) as resp:
+                    if resp.status == 200:
+                        res = await resp.json()
+                        success = res["success"]
+                        if success:
+                            if "num_paused_requests" in res:
+                                logger.info(
+                                    f"{res['num_paused_requests']} requests are interrupted "
+                                    f"during updating weights for server {server_url}"
+                                )
+                            return
+                        logger.warning(
+                            f"Update weights failed: {res['message']}. Retrying."
+                        )
+                    logger.warning(f"Update weights failed: {resp.reason}. Retrying.")
+                time.sleep(0.1)
+        raise RuntimeError("Update weights failed.")
+
     def update_weights_from(self, engine: SPMDWrapper) -> None:
         """Update weights from the engine after an RL training step."""
         server_infos = self.registry.get_healthy_servers()
-        base_url = f"http://{server_info.host}:{server_info.port}"
+        n_total_servers = len(server_infos)
+        m = (n_total_servers + dist.get_world_size() - 1) // dist.get_world_size()
+        infos = server_infos[dist.get_rank() * m : (dist.get_rank() + 1) * m]
 
-        # This would typically save weights to disk and update the server
-        # For now, we implement a placeholder that logs the action
-        logger.info(f"Updating weights for server {server_info.server_id}")
+        path = constants.get_param_realloc_path(self.args)
+        engine.save_model_to_hf(path=path)
+        tik = time.perf_counter()
 
-        # TODO: Implement actual weight update logic
-        # This would involve:
-        # 1. Saving engine weights to a temporary path
-        # 2. Calling the server's update_weights_from_disk endpoint
-        # 3. Handling the response
+        if len(infos) > 0:
+
+            def _run_in_thread():
+                import asyncio
+
+                # Create a new event loop for this thread
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                tasks = [self.request_update_weight(info, path) for info in infos]
+                try:
+                    return new_loop.run_until_complete(asyncio.gather(*tasks))
+                finally:
+                    new_loop.close()
+
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor() as executor:
+                future = executor.submit(_run_in_thread)
+                _ = future.result()
+        dist.barrier()
+
+        logger.info(
+            f"Updating weights for SGLang server done: {time.perf_counter() - tik:.4f}s"
+        )

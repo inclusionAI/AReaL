@@ -68,6 +68,7 @@ class LLMServiceRegistry:
         current_time = time.time()
         try:
             root = names.gen_server_root(self.expr_name, self.trial_name)
+            print(">>>>>>>>", root)
             server_infos = name_resolve.get_subtree(root)
             for server_data in server_infos:
                 try:

@@ -69,3 +69,4 @@ word2number
 Pebble
 timeout-decorator
 prettytable
+gymnasium>=1.1.1

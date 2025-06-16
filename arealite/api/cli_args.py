@@ -47,6 +47,8 @@ class LLMClientConfig:
     server_backend: str
     tokenizer_path: str
     gen_timeout: int
+    update_weights_timeout: int
+    update_weights_retries: int
 
 
 ## Training backend configs. ##
@@ -90,18 +92,18 @@ class EngineConfig:
     optimizer: Optional[OptimizerConfig] = field(
         default_factory=OptimizerConfig, metadata={"help": "Optimizer configuration"}
     )
-    fsdp: FSDPConfig = field(
-        default_factory=FSDPConfig,
+    fsdp: Optional[FSDPConfig] = field(
+        default=None,
         metadata={"help": "FSDP-specific configuration."},
     )
-    vllm: vLLMConfig = field(
-        default_factory=vLLMConfig,
+    vllm: Optional[vLLMConfig] = field(
+        default=None,
         metadata={
             "help": "vLLM inference configuration. Can be ignored if this model doesn't use vLLM."
         },
     )
-    sglang: SGLangConfig = field(
-        default_factory=SGLangConfig,
+    sglang: Optional[SGLangConfig] = field(
+        default=None,
         metadata={
             "help": "SGLang runtime configuration.  Can be ignored if this model doesn't use SGLang."
         },
@@ -117,8 +119,8 @@ class MathCodeSingleStepAgentConfig:
 
 @dataclass
 class AgentConfig:
-    type: str
-    math_code_single_step: Optional[MathCodeSingleStepAgentConfig]
+    type: str = ""
+    math_code_single_step: Optional[MathCodeSingleStepAgentConfig] = None
 
 
 ## Environment configurations. ##
@@ -129,10 +131,10 @@ class MathCodeSingleStepEnvConfig:
 
 @dataclass
 class EnvConfig:
-    type: str
-    reward_scaling: float
-    reward_bias: float
-    math_code_single_step: Optional[MathCodeSingleStepEnvConfig]
+    type: str = ""
+    reward_scaling: float = 1.0
+    reward_bias: float = 0.0
+    math_code_single_step: Optional[MathCodeSingleStepEnvConfig] = None
 
 
 ## TrajCollector configurations. ##
@@ -140,9 +142,9 @@ class EnvConfig:
 
 @dataclass
 class TrajCollectorConfig:
-    type: str
-    agent: AgentConfig
-    env: EnvConfig
+    type: str = "llm"
+    agent: AgentConfig = field(default_factory=AgentConfig)
+    env: EnvConfig = field(default_factory=EnvConfig)
 
 
 ## Trainer configurations. ##
@@ -157,13 +159,13 @@ class SFTTrainerConfig:
 
 @dataclass
 class PPOTrainerConfig:
-    actor: EngineConfig
-    critic: Optional[EngineConfig]
-    ref: Optional[EngineConfig]
-    rew: Optional[EngineConfig]
-    mb_spec: MicroBatchSpec
+    actor: EngineConfig = field(default_factory=EngineConfig)
+    critic: Optional[EngineConfig] = None
+    ref: Optional[EngineConfig] = None
+    rew: Optional[EngineConfig] = None
+    mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
 
-    dataset: PromptOnlyDatasetConfig
+    dataset: PromptOnlyDatasetConfig = field(default_factory=PromptOnlyDatasetConfig)
 
     collector: Optional[TrajCollectorConfig] = field(
         default_factory=TrajCollectorConfig,
@@ -267,9 +269,9 @@ class PPOTrainerConfig:
 
 @dataclass
 class TrainerConfig:
-    type: str
-    ppo: Optional[PPOTrainerConfig]
-    sft: Optional[SFTTrainerConfig]
+    type: str = "ppo"
+    ppo: Optional[PPOTrainerConfig] = None
+    sft: Optional[SFTTrainerConfig] = None
 
 
 ## Entrypoint. ##
@@ -285,6 +287,13 @@ class TrainingArgs:
         default=MISSING,
         metadata={"help": "Name of the trial (no '-' or '/'). Required."},
     )
+    mode: str = field(
+        default="slurm",
+        metadata={
+            "help": "Experiment launching mode.",
+            "choices": ["slurm", "local", "ray"],
+        },
+    )
     wandb: WandBConfig = field(
         default_factory=WandBConfig,
         metadata={"help": "Weights & Biases configuration."},
@@ -299,6 +308,12 @@ class TrainingArgs:
             "help": "GPU parallel strategy allocation mode. "
             "Options: manual/heuristic or pattern-based."
         },
+    )
+    ray_temp_path: str = field(
+        default="/tmp/ray", metadata={"help": "Absolute path for Ray's log."}
+    )
+    n_nodes: int = field(
+        default=1, metadata={"help": "Number of nodes for experiment."}
     )
     n_gpus_per_node: int = field(
         default=8, metadata={"help": "Number of GPUs per node for this experiment."}

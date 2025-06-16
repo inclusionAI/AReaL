@@ -11,6 +11,7 @@ def main(args: LLMServiceConfig):
     """Main entry point for launching the LLM server."""
     default_args = OmegaConf.structured(LLMServiceConfig)
     args = OmegaConf.merge(default_args, args)
+    args: LLMServiceConfig = OmegaConf.to_object(args)
 
     seeding.set_random_seed(args.seed, "llm_server")
 

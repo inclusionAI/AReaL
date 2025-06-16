@@ -84,9 +84,11 @@ class SGLangServer(LLMServer):
             elif len(os.environ["CUDA_VISIBLE_DEVICES"]) == mp_size:
                 self.base_gpu_id = int(os.environ["CUDA_VISIBLE_DEVICES"].split(",")[0])
             else:
-                raise RuntimeError(
-                    f"Unknown how to resolve cuda visible devices: {os.environ['CUDA_VISIBLE_DEVICE']}"
+                logger.warning(
+                    f"Unknown how to resolve cuda visible devices: {os.environ['CUDA_VISIBLE_DEVICES']}, "
+                    f"setting base_gpu_id to 0."
                 )
+                self.base_gpu_id = 0
             os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
                 map(str, range(gpu_utils.gpu_count()))
             )

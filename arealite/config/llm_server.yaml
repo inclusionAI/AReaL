@@ -1,5 +1,5 @@
-server_backend: "sglang"
-model_path: Qwen/Qwen2-0.5B
+server_backend: sglang
+model_path: /storage/testing/models/Qwen__Qwen3-1.7B/
 experiment_name: test-exp
 trial_name: test-trial
 cluster:
