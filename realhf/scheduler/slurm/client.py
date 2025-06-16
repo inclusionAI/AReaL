@@ -15,9 +15,7 @@ from typing import Dict, List, Literal, Optional, Tuple
 import colorama
 
 import realhf.base.logging as logging
-from realhf.base.cluster import spec as cluster_spec
-from realhf.base.constants import LOG_ROOT
-from realhf.base.constants import SLURM_LOCK_FILE_NAME as LOCK_FILE_NAME
+from realhf.base.constants import get_log_path
 from realhf.scheduler.client import JobException, JobInfo, JobState, SchedulerClient
 from realhf.scheduler.evaluator import AutomaticEvaluator
 from realhf.scheduler.slurm.utils import (
@@ -82,14 +80,13 @@ class SlurmSchedulerClient(SchedulerClient):
 
     def __init__(
         self,
-        expr_name: str,
-        trial_name: str,
+        args,
         schedule_strategy: str,
         evaluator: Optional[AutomaticEvaluator],
         job_group_id: str,
         job_group_index: int,
     ):
-        super().__init__(expr_name, trial_name)
+        super().__init__(args)
 
         self.__schedule_strategy = schedule_strategy
 
@@ -124,11 +121,31 @@ class SlurmSchedulerClient(SchedulerClient):
         deadline: str = None,
         time_limit: str = None,
     ):
-        container_image = container_image or cluster_spec.cpu_image
-        container_mounts = container_mounts or cluster_spec.mount
+        container_image = container_image or self.args.cluster.cpu_image
+        container_mounts = container_mounts or self.args.cluster.mount
         # record launch information, do not submit to slurm until `wait()` is called
         # NOTE: fractional GPU requirement will be resolved automatically in `__post_init__` of SlurnLaunchInfo
+        log_path = os.path.join(
+            get_log_path(self.args),
+            f"{worker_type}-{self.__submission_counter[worker_type]}.log",
+        )
+        multiprog_path = os.path.join(
+            get_log_path(self.args),
+            "slurm",
+            "multiprog",
+            f"{worker_type}-{self.__submission_counter[worker_type]}.multiprog",
+        )
+        os.makedirs(os.path.dirname(multiprog_path), exist_ok=True)
+        hostfile_path = os.path.join(
+            get_log_path(self.args),
+            "slurm",
+            "hostfile",
+            f"{worker_type}-{self.__submission_counter[worker_type]}.hostfile",
+        )
+        os.makedirs(os.path.dirname(hostfile_path), exist_ok=True)
+
         launch_info = SlurmLaunchInfo(
+            args=self.args,
             worker_type=worker_type,
             wprocs_in_job=count,
             resource_requirement=SlurmResource(mem=mem, cpu=cpu, gpu=gpu),
@@ -149,6 +166,9 @@ class SlurmSchedulerClient(SchedulerClient):
             time_limit=time_limit,
             job_group_id=self.__job_group_id,
             job_group_index=self.__job_group_index,
+            log_path=log_path,
+            multiprog_path=multiprog_path,
+            hostfile_path=hostfile_path,
         )
 
         if (
@@ -177,9 +197,9 @@ class SlurmSchedulerClient(SchedulerClient):
             wproc_offset=self.__wprocs_counter[worker_type],
         )
         wrap_cmd = "singularity exec "
-        if cluster_spec.name == "na132":
+        if self.args.cluster.cluster_name == "na132":
             wrap_cmd += "--pid "
-        if cluster_spec.gpu_type == "tesla":
+        if self.args.cluster.gpu_type == "tesla":
             wrap_cmd += "--nv "
         wrap_cmd += "--no-home --writable-tmpfs "
         if len(launch_info.env_vars) > 0:
@@ -199,7 +219,9 @@ class SlurmSchedulerClient(SchedulerClient):
         start_time = time.monotonic()
         while True:
             try:
-                fp = open(LOCK_FILE_NAME, "w")
+                fp = open(
+                    f"{self.args.cluster.fileroot}/logs/slurm_scheduler.lock", "w"
+                )
                 fcntl.flock(fp, fcntl.LOCK_EX)
                 infos = list(self.__pending_jobs.values())
                 infos = allocate_resources(infos, strategy=self.__schedule_strategy)
@@ -297,9 +319,7 @@ class SlurmSchedulerClient(SchedulerClient):
         threads = []
         stop_events = []
 
-        merged_log_path = os.path.join(
-            LOG_ROOT, self.expr_name, self.trial_name, "main.log"
-        )
+        merged_log_path = os.path.join(get_log_path(self.args), "main.log")
 
         for job_name, launch_info in self.__committed_jobs.items():
             stop_event = threading.Event()

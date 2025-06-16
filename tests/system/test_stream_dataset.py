@@ -7,9 +7,10 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
+from realhf.api.cli_args import BaseExperimentConfig, NameResolveConfig
 from realhf.api.core import config as config_api
 from realhf.api.core import data_api
-from realhf.base import constants, testing
+from realhf.base import constants, name_resolve, testing
 from tests.fixtures import *
 
 
@@ -64,6 +65,7 @@ def test_load_stream_dataset(prompt_dataset_cfg, tokenizer, mock_puller):
         testing._DEFAULT_EXPR_NAME, testing._DEFAULT_TRIAL_NAME
     )
 
+    name_resolve.reconfigure(NameResolveConfig("nfs", "/tmp/areal/test-stream-dataset"))
     testing.clear_name_resolve()
 
     util = data_api.DatasetUtility(
@@ -74,7 +76,12 @@ def test_load_stream_dataset(prompt_dataset_cfg, tokenizer, mock_puller):
     )
 
     # Test initialization
-    dataset = PullerStreamDataset(util, prompt_dataset_cfg, pull_timeout_ms=100)
+    dataset = PullerStreamDataset(
+        util,
+        args=BaseExperimentConfig(),
+        dataset_cfgs=prompt_dataset_cfg,
+        pull_timeout_ms=100,
+    )
     assert len(dataset) > 0  # Should have non-zero size from prompt dataset
     assert dataset.data_queue.empty()
 
@@ -91,12 +98,14 @@ def test_load_stream_dataset(prompt_dataset_cfg, tokenizer, mock_puller):
     assert len(items1) + len(items2) > 0
 
     # Test cleanup
+    dataset._stop_event.set()
     del dataset
 
 
 def test_puller_stream_dataset_timeout(prompt_dataset_cfg, tokenizer):
     from realhf.system.stream_dataset import PullerStreamDataset
 
+    name_resolve.reconfigure(NameResolveConfig("nfs", "/tmp/areal/test-stream-dataset"))
     testing.clear_name_resolve()
 
     util = data_api.DatasetUtility(
@@ -109,15 +118,19 @@ def test_puller_stream_dataset_timeout(prompt_dataset_cfg, tokenizer):
     with patch("realhf.system.stream_dataset.NameResolvingZmqPuller") as mock_puller:
         mock_puller.return_value.pull.side_effect = queue.Empty()
 
-        dataset = PullerStreamDataset(util, prompt_dataset_cfg, pull_timeout_ms=10)
+        dataset = PullerStreamDataset(
+            util, BaseExperimentConfig(), prompt_dataset_cfg, pull_timeout_ms=10
+        )
         # Should handle timeout gracefully
         assert dataset[0] == []
+        dataset._stop_event.set()
         del dataset
 
 
 def test_puller_stream_dataset_stop_event(prompt_dataset_cfg, tokenizer, mock_puller):
     from realhf.system.stream_dataset import PullerStreamDataset
 
+    name_resolve.reconfigure(NameResolveConfig("nfs", "/tmp/areal/test-stream-dataset"))
     testing.clear_name_resolve()
 
     util = data_api.DatasetUtility(
@@ -127,7 +140,7 @@ def test_puller_stream_dataset_stop_event(prompt_dataset_cfg, tokenizer, mock_pu
         tokenizer=tokenizer,
     )
 
-    dataset = PullerStreamDataset(util, prompt_dataset_cfg)
+    dataset = PullerStreamDataset(util, BaseExperimentConfig(), prompt_dataset_cfg)
     assert not dataset._stop_event.is_set()
 
     # Trigger stop event and verify thread stops
@@ -140,6 +153,7 @@ def test_puller_stream_dataset_stop_event(prompt_dataset_cfg, tokenizer, mock_pu
 def test_puller_stream_dataset_worker_thread_exception(prompt_dataset_cfg, tokenizer):
     from realhf.system.stream_dataset import PullerStreamDataset
 
+    name_resolve.reconfigure(NameResolveConfig("nfs", "/tmp/areal/test-stream-dataset"))
     testing.clear_name_resolve()
 
     util = data_api.DatasetUtility(
@@ -152,7 +166,7 @@ def test_puller_stream_dataset_worker_thread_exception(prompt_dataset_cfg, token
     with patch("realhf.system.stream_dataset.NameResolvingZmqPuller") as mock_puller:
         mock_puller.return_value.pull.side_effect = Exception("Test error")
 
-        dataset = PullerStreamDataset(util, prompt_dataset_cfg)
+        dataset = PullerStreamDataset(util, BaseExperimentConfig(), prompt_dataset_cfg)
         time.sleep(0.1)  # Give thread time to crash
         assert not dataset.worker_thread.is_alive()
         del dataset

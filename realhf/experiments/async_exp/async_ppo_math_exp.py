@@ -2,6 +2,7 @@
 
 import copy
 import dataclasses
+import os
 from typing import Any, Dict, List, Tuple
 
 import realhf.base.logging as logging
@@ -13,6 +14,7 @@ from realhf.api.core.config import (
 )
 from realhf.api.core.model_api import GenerationHyperparameters
 from realhf.api.quickstart.entrypoint import register_quickstart_exp
+from realhf.base import constants
 from realhf.experiments.async_exp.async_rl_exp import AsyncRLExperimentConfig
 from realhf.experiments.common.ppo_math_exp import PPOMATHConfig
 from realhf.experiments.common.utils import asdict
@@ -29,6 +31,9 @@ class AsyncPPOMATHConfig(AsyncRLExperimentConfig, PPOMATHConfig):
             "math-single-step",
             args=dict(
                 gconfig=self.generation_config,
+                answer_save_path=os.path.join(
+                    constants.get_log_path(self), "generated"
+                ),
                 tokenizer_path=self.actor.path,
                 success_rate_lb=self.success_rate_lb,
                 success_rate_ub=self.success_rate_ub,
@@ -40,7 +45,10 @@ class AsyncPPOMATHConfig(AsyncRLExperimentConfig, PPOMATHConfig):
     @property
     def env(self) -> EnvServiceAbstraction:
         return EnvServiceAbstraction(
-            "math-code-single-step", args=dict(dataset_path=self.dataset.path)
+            "math-code-single-step",
+            args=dict(
+                dataset_path=self.dataset.path,
+            ),
         )
 
     @property

@@ -8,7 +8,6 @@ import yaml
 from omegaconf import MISSING, OmegaConf
 
 from realhf.api.quickstart.entrypoint import kind_reminder
-from realhf.base.constants import init_constants
 from realhf.experiments.common.ppo_math_exp import PPOMATHConfig
 from training.utils import run_experiment
 
@@ -37,14 +36,10 @@ def main(args):
     if args.mode != "ray":
         raise RuntimeError("This script only supports the `ray` mode.")
 
-    init_constants(args)
-
-    from realhf.base.constants import LOG_ROOT
+    from realhf.base.constants import get_log_path
 
     # Save overwritten configuration to yaml
-    config_save_path = os.path.join(
-        LOG_ROOT, args.experiment_name, args.trial_name, "config.yaml"
-    )
+    config_save_path = os.path.join(get_log_path(args), "config.yaml")
     os.makedirs(os.path.dirname(config_save_path), exist_ok=True)
     with open(config_save_path, "w") as f:
         config_dict: Dict = dataclasses.asdict(args)

@@ -12,6 +12,7 @@ from typing import Any, List
 import psutil
 import ray
 
+from realhf.api.cli_args import NameResolveConfig
 from realhf.api.core.system_api import Experiment, ExperimentScheduling, TasksGroup
 from realhf.base import constants, logging, name_resolve, names
 from realhf.system import WORKER_TYPES, load_worker
@@ -64,6 +65,7 @@ class RayWorker:
 
     def __init__(
         self,
+        args,
         worker_type: str,
         worker_cls,
         kv_store_name,
@@ -74,15 +76,16 @@ class RayWorker:
 
         os.environ["REAL_MODE"] = "RAY"
 
-        name_resolve.reconfigure("ray", actor_name=kv_store_name)
+        name_recolve_config = NameResolveConfig("ray", ray_actor_name=kv_store_name)
+        name_resolve.reconfigure(name_recolve_config)
         self.worker: Worker | AsyncWorker = worker_cls()
         self.worker_type = worker_type
+        self.args = args
 
     def __repr__(self):
         return "".join([c.capitalize() for c in self.worker_type.split("_")])
 
     def configure(self, cfg: Any, expr_config: Any):
-        constants.init_constants(expr_config)
 
         worker_info = cfg.worker_info
         idx = worker_info.worker_index
@@ -91,6 +94,7 @@ class RayWorker:
         )
         self.worker.wandb_config = expr_config.wandb
         self.worker.tensorboard_config = expr_config.tensorboard
+        self.worker.args = self.args
         self.logger = logging.getLogger(f"{self.worker_type} {idx}", "benchmark")
         self.logger.info(f"Configuring {self.worker_type}...")
         self.worker._configure(cfg)
@@ -124,6 +128,7 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
 
     # Initialize ray in the Ray cluster
     env_vars = constants.get_env_vars(
+        exp_cfg,
         WADNB_MODE=exp_cfg.wandb.mode,
         REAL_MODE="ray",
         REAL_RECOVER_RUN="0",
@@ -143,7 +148,8 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
     logger.info("Ray initialized! Ready to run workers.")
 
     ray_kv_store_name = f"{expr_name}/{trial_name}/ray_kv_store"
-    name_resolve.reconfigure("ray", actor_name=ray_kv_store_name)
+    name_recolve_config = NameResolveConfig("ray", ray_actor_name=ray_kv_store_name)
+    name_resolve.reconfigure(name_recolve_config)
 
     name_resolve.clear_subtree(
         names.trial_root(experiment_name=expr_name, trial_name=trial_name)
@@ -208,6 +214,7 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
                     num_gpus=sch.scheduling.gpu,
                     memory=sch.scheduling.mem * 1024**2,
                 ).remote(
+                    args=exp_cfg,
                     worker_type=worker_type,
                     worker_cls=load_worker(worker_type),
                     kv_store_name=ray_kv_store_name,
@@ -237,7 +244,7 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
         run_jobs = []
         for worker_type in all_workers:
             workers = all_workers[worker_type]
-            if worker_type in ["master_worker", "rollout_worker", "gserver_manager"]:
+            if worker_type in ["master_worker", "rollout_worker"]:
                 # Only the rollout worker is asynchronous
                 jobs = [w.run_async.remote() for w in workers]
             else:
@@ -268,7 +275,7 @@ class DualOutput:
 
 
 def run_experiment(exp_cfg, expr_name, trial_name):
-    log_path = os.path.join(constants.LOG_ROOT, expr_name, trial_name, "main.log")
+    log_path = os.path.join(constants.get_log_path(exp_cfg), "main.log")
     with open(log_path, "a") as f:
         # Create dual output handler
         dual_out = DualOutput(f, sys.stdout)

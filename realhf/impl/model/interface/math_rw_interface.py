@@ -181,6 +181,7 @@ def retokenize_and_verify(
 class MultiTaskRewardInterface(model_api.ModelInterface):
     dataset_path: str = ""
     tokenizer_path: str = "/storage/models/Qwen__Qwen2.5-1.5B"
+    answer_save_path: str = "."
     output_scaling: float = 1.0
     output_bias: float = 0.0
     rw_type: str = "sparse"
@@ -363,10 +364,7 @@ class MultiTaskRewardInterface(model_api.ModelInterface):
     ):
         tik = time.perf_counter()
         gen_file_path = os.path.join(
-            constants.LOG_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
-            "generated",
+            self.answer_save_path,
             task_type,
             f"v{model.version.global_step}r{dist.get_rank()}.txt",
         )
@@ -386,10 +384,7 @@ class MultiTaskRewardInterface(model_api.ModelInterface):
                 _f.write(info + "\n")
 
         gen_file_path = os.path.join(
-            constants.LOG_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
-            "generated_jsonl",
+            self.answer_save_path,
             task_type,
             f"v{model.version.global_step}r{dist.get_rank()}.jsonl",
         )

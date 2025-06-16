@@ -13,7 +13,9 @@ from typing import Optional
 import aiohttp
 import pytest
 
+from realhf.api.cli_args import BaseExperimentConfig, NameResolveConfig
 from realhf.api.core.config import ModelName
+from realhf.api.core.system_api import ExpStatus
 from realhf.api.core.system_api import GserverManager as GserverManagerConfig
 from realhf.api.core.system_api import WorkerInformation
 from realhf.base import constants, name_resolve, names, network, testing
@@ -42,6 +44,9 @@ def mock_servers():
     from fastapi import FastAPI
     from fastapi.responses import ORJSONResponse, PlainTextResponse
 
+    name_resolve.reconfigure(
+        NameResolveConfig("nfs", "/tmp/areal/test-gserver-manager")
+    )
     ports = network.find_multiple_free_ports(N_SERVERS)
 
     # Create mock server responses
@@ -124,7 +129,6 @@ def mock_servers():
 @pytest.fixture
 def gserver_manager(request, mock_servers):
     train_batch_size, offpolicyness = request.param
-    testing.clear_name_resolve()
     constants.set_experiment_trial_names(
         testing._DEFAULT_EXPR_NAME, testing._DEFAULT_TRIAL_NAME
     )
@@ -134,6 +138,9 @@ def gserver_manager(request, mock_servers):
     name = gen_servers(testing._DEFAULT_EXPR_NAME, testing._DEFAULT_TRIAL_NAME)
     name_resolve.add_subentry(name, server_urls[0])
     name_resolve.add_subentry(name, server_urls[1])
+
+    name = names.experiment_status(constants.experiment_name(), constants.trial_name())
+    name_resolve.add(name, ExpStatus.RUNNING)
 
     # Mock requests.get for metrics endpoint
     m = GserverManager()
@@ -153,6 +160,7 @@ def gserver_manager(request, mock_servers):
             worker_index=0,
         ),
     )
+    m.args = BaseExperimentConfig()
     m._configure(config)
     # launch the server
     m._poll()

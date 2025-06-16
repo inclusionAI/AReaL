@@ -38,8 +38,6 @@ from realhf.api.core.system_api import (
     TasksGroup,
 )
 from realhf.api.quickstart.device_mesh import RPCAllocation
-from realhf.base.cluster import spec as cluster_spec
-from realhf.experiments.common.check import check_valid_sglang, check_valid_vllm
 from realhf.experiments.common.common import CommonExperimentConfig
 from realhf.experiments.common.utils import (
     AllocationMode,
@@ -92,49 +90,57 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
         return ExperimentScheduling(
             master_worker=TasksGroup(
                 count=1,
-                scheduling=Scheduling.master_worker_default(
+                scheduling=Scheduling(
                     cpu=self.cpus_per_master_worker,
+                    gpu=0,
                     mem=self.mem_per_master_worker,
                     nodelist=self.nodelist,
                     exclude=self.exclude,
+                    container_image=self.cluster.cpu_image,
                 ),
             ),
             model_worker=TasksGroup(
                 count=train_world_size,
-                scheduling=Scheduling.model_worker_default(
+                scheduling=Scheduling(
                     cpu=self.cpus_per_model_worker,
                     gpu=1,
                     mem=self.mem_per_model_worker,
                     nodelist=self.nodelist,
                     exclude=self.exclude,
+                    container_image=self.cluster.gpu_image,
                 ),
             ),
             generation_server=TasksGroup(
                 count=gen_world_size // gen_tp_size,
-                scheduling=Scheduling.generation_server_default(
+                scheduling=Scheduling(
                     cpu=self.cpus_per_generation_server,
                     gpu=gen_tp_size,
                     mem=self.mem_per_generation_server,
                     nodelist=self.nodelist,
                     exclude=self.exclude,
+                    container_image=self.cluster.gpu_infer_image,
                 ),
             ),
             gserver_manager=TasksGroup(
                 count=1,
-                scheduling=Scheduling.gserver_manager_default(
+                scheduling=Scheduling(
                     cpu=self.cpus_per_gserver_manager,
+                    gpu=0,
                     mem=self.mem_per_gserver_manager,
                     nodelist=self.nodelist,
                     exclude=self.exclude,
+                    container_image=self.cluster.cpu_image,
                 ),
             ),
             rollout_worker=TasksGroup(
                 count=self.n_rollout_workers or train_world_size,
-                scheduling=Scheduling.rollout_worker_default(
+                scheduling=Scheduling(
                     cpu=self.cpus_per_rollout_worker,
+                    gpu=0,
                     mem=self.mem_per_rollout_worker,
                     nodelist=self.nodelist,
                     exclude=self.exclude,
+                    container_image=self.cluster.cpu_image,
                 ),
             ),
         )
@@ -162,7 +168,11 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
                 # NOTE: here we use puller stream to wrap the original dataset
                 datasets=[
                     DatasetAbstraction(
-                        "puller_stream", args=dict(dataset_cfgs=self.datasets)
+                        "puller_stream",
+                        args=dict(
+                            dataset_cfgs=self.datasets,
+                            args=self,
+                        ),
                     )
                 ],
                 torch_cache_mysophobia=self.torch_cache_mysophobia,

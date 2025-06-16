@@ -96,15 +96,8 @@ class MasterWorker(worker_base.AsyncWorker):
             freq_sec=config.exp_ctrl.eval_freq_secs,
         )
 
-        self.MODEL_SAVE_ROOT = os.path.join(
-            constants.MODEL_SAVE_ROOT,
-            config.worker_info.experiment_name,
-            config.worker_info.trial_name,
-        )
-        os.makedirs(self.MODEL_SAVE_ROOT, exist_ok=True)
-
         self.__initialized = False
-        self.__recover_run, self.__recover_info = recover.load_recover_info()
+        self.__recover_run, self.__recover_info = recover.load_recover_info(self.args)
         if self.__recover_info is not None:
             logger.info(
                 f"Loaded recover info: recover_start={self.__recover_info.recover_start}, "
@@ -304,9 +297,7 @@ class MasterWorker(worker_base.AsyncWorker):
             notes=self.wandb_config.notes,
             tags=self.wandb_config.tags,
             config=self.wandb_config.config,
-            dir=os.path.join(
-                constants.LOG_ROOT, constants.experiment_name(), constants.trial_name()
-            ),
+            dir=constants.get_log_path(self.args),
             force=True,
             id=f"{constants.experiment_name()}_{constants.trial_name()}_train",
             resume="allow",
@@ -320,6 +311,7 @@ class MasterWorker(worker_base.AsyncWorker):
         # Create coroutines for model RPCs.
         logger.debug(f"Creating asyncio coroutines...")
         self.func_executor = FunctionExecutor(
+            args=self.args,
             rpcs=self.__model_rpcs,
             msid2mwid=self.config.msid2mwid,
             stream=self.__stream,
@@ -563,7 +555,7 @@ class MasterWorker(worker_base.AsyncWorker):
             hash_vals_to_ignore=self.__rpc_ctrl.used_hash_vals_this_epoch,
         )
 
-        recover.dump_recover_info(recover_info)
+        recover.dump_recover_info(self.args, recover_info)
         logger.info("Dumped recover info to file.")
         logger.info(f"Will recover from: {recover_info.recover_start}")
         logger.info(

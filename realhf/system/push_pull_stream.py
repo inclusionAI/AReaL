@@ -1,4 +1,5 @@
 import logging
+import os
 from queue import Empty as QueueEmpty
 from typing import Any, Dict, List, Optional, Union
 
@@ -6,7 +7,7 @@ import orjson
 import zmq
 from zmq.utils.strtypes import asbytes
 
-from realhf.base import logging, name_resolve, names, network
+from realhf.base import constants, logging, name_resolve, names, network
 
 logger = logging.getLogger("ZMQ Push-Pull Stream")
 
@@ -160,12 +161,16 @@ class NameResolvingZmqPusher(ZMQJsonPusher):
 
 
 class NameResolvingZmqPuller(ZMQJsonPuller):
-    def __init__(self, experiment_name, trial_name, puller_index, **kwargs):
+    def __init__(self, args, puller_index, **kwargs):
+        experiment_name = args.experiment_name
+        trial_name = args.trial_name
         name = names.push_pull_stream(
             experiment_name, trial_name, stream_name=f"puller{puller_index}"
         )
         host, port = network.gethostip(), network.find_free_port(
-            experiment_name=experiment_name, trial_name=trial_name
+            experiment_name=experiment_name,
+            trial_name=trial_name,
+            lockfile_root=os.path.join(constants.get_cache_path(args), "ports"),
         )
         addr = f"{host}:{port}"
         name_resolve.add(name, addr)

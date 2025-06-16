@@ -17,7 +17,6 @@ import transformers
 from realhf.api.core import model_api
 from realhf.api.core.config import ModelName
 from realhf.base import constants, logging, topology
-from realhf.base.monitor import CUDATimeMarkType, cuda_tmark, cuda_tmarked
 from realhf.impl.model.comm.global_comm import NCCLProcessGroupInfo
 from realhf.impl.model.comm.param_realloc import (
     ReparallelizeReceiverStep,
@@ -470,13 +469,11 @@ class ReaLModel(nn.Module):
                 pp_input_buf[:batch_length] = x.pp_input
                 x.pp_input = pp_input_buf
 
-        tmark_type = CUDATimeMarkType.forward
-        with cuda_tmarked("fwd", tmark_type):
-            # Main forward calls.
-            if not self._offloaded:
-                x, ys = self.__forward(x, ys)
-            else:
-                x, ys = self.__overlapped_load_forward(x, ys)
+        # Main forward calls.
+        if not self._offloaded:
+            x, ys = self.__forward(x, ys)
+        else:
+            x, ys = self.__overlapped_load_forward(x, ys)
 
         # Resume from padding.
         if (
@@ -644,7 +641,6 @@ class ReaLModel(nn.Module):
         self._reparallelize_targets[(from_model_name, to_model_name)] = rtgt
 
     # FIXME: we can get topo given model name from constants
-    @cuda_tmark("param_realloc", CUDATimeMarkType.mem_layout)
     def build_reparallelized_layers_async(
         self,
         from_model_name: ModelName,

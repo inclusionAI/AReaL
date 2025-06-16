@@ -5,9 +5,10 @@
 import dataclasses
 import enum
 import subprocess
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
-from realhf.base.cluster import spec as cluster_spec
+if TYPE_CHECKING:
+    from realhf.api.cli_args import BaseExperimentConfig
 
 
 class JobState(enum.Enum):
@@ -50,10 +51,11 @@ class JobInfo:
 
 class SchedulerClient:
 
-    def __init__(self, expr_name, trial_name):
-        self.expr_name = expr_name
-        self.trial_name = trial_name
-        self.run_name = f"{expr_name}_{trial_name}"
+    def __init__(self, args: "BaseExperimentConfig"):
+        self.args = args
+        self.expr_name = args.experiment_name
+        self.trial_name = args.trial_name
+        self.run_name = f"{self.expr_name}_{self.trial_name}"
 
     def submit(self, worker_type, cmd, **kwargs):
         """Submits a job to the scheduler. Raises exception if the job is
@@ -121,8 +123,6 @@ class SchedulerClient:
 
 
 def get_python3_path():
-    if cluster_spec.cluster_type == "ray":
-        return subprocess.check_output(["which", "python3"]).decode("utf-8").strip()
     return "python3"
 
 
@@ -155,25 +155,23 @@ def control_cmd(expr_name, trial_name, debug, ignore_worker_error, controller_ty
     return bash_cmd
 
 
-def make(mode, expr_name, trial_name, **kwargs) -> SchedulerClient:
-    if mode == "slurm":
+def make(args: "BaseExperimentConfig", **kwargs) -> SchedulerClient:
+    if args.mode == "slurm":
         from realhf.scheduler.slurm.client import SlurmSchedulerClient
 
-        schedule_strategy = kwargs.get("schedule_strategy", "empty_first")
-        evaluator = kwargs.get("evaluator", None)
         job_group_id = kwargs.get("job_group_id", None)
         job_group_index = kwargs.get("job_group_index", None)
+        evaluator = kwargs.get("evaluator", None)
         return SlurmSchedulerClient(
-            expr_name,
-            trial_name,
-            schedule_strategy,
+            args,
+            args.schedule_strategy,
             evaluator,
             job_group_id,
             job_group_index,
         )
-    elif mode == "local":
+    elif args.mode == "local":
         from realhf.scheduler.local.client import LocalSchedulerClient
 
-        return LocalSchedulerClient(expr_name, trial_name)
+        return LocalSchedulerClient(args)
     else:
         raise NotImplementedError(f"Scheduler {mode} not found")
