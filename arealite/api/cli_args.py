@@ -29,6 +29,7 @@ from realhf.api.cli_args import (
 class LLMServiceConfig:
     experiment_name: str = MISSING
     trial_name: str = MISSING
+    served_model_name: Optional[str] = None
     seed: int = 1
     cluster: ClusterSpecConfig = field(default_factory=ClusterSpecConfig)
     server_backend: str = "sglang"
@@ -44,11 +45,11 @@ class LLMServiceConfig:
 
 @dataclass
 class LLMClientConfig:
-    server_backend: str
-    tokenizer_path: str
-    gen_timeout: int
-    update_weights_timeout: int
-    update_weights_retries: int
+    server_backend: str = "sglang"
+    tokenizer_path: str = ""
+    gen_timeout: int = 1800
+    update_weights_timeout: int = 300
+    update_weights_retries: int = 3
 
 
 ## Training backend configs. ##

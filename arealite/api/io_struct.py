@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 import torch
 from gymnasium.core import ActType
@@ -15,22 +15,20 @@ class LLMServerInfo:
     status: str = "healthy"
     last_heartbeat: float = 0
     load: float = 0.0
-
-
-@dataclass
-class Message:
-    role: str
-    content: Any
-    attachment: Any
+    version: int = 0
 
 
 @dataclass
 class LLMRequest:
     rid: str
-    model_id: str
-    messages: List[Message]
-    gconfig: GenerationHyperparameters
-    metadata: Dict[str, Any]
+    text: Optional[str] = None
+    input_ids: List[int] = field(default_factory=list)
+    stop_token_ids: List[int] = field(default_factory=list)
+    gconfig: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    model_id: Optional[str] = None
 
 
 @dataclass

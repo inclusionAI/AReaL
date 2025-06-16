@@ -7,13 +7,19 @@ import transformers
 
 from arealite.api.cli_args import LLMClientConfig, TrainingArgs
 from arealite.api.engine_api import SPMDWrapper
-from arealite.api.io_struct import LLMRequest, LLMResponse, Message
+from arealite.api.io_struct import LLMRequest, LLMResponse, LLMServerInfo
 from arealite.api.llm_client_api import LLMClient
 from arealite.api.llm_server_api import LLMServiceRegistry
 from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import constants, logging
+from realhf.base import constants, logging, pkg_version
 
 logger = logging.getLogger(__name__)
+
+if pkg_version.is_available("sglang"):
+    if pkg_version.is_version_greater_or_equal("sglang", "0.4.4"):
+        SGLANG_TOKEN_OUTPUT_IDENTIFIER = "output_ids"
+    else:
+        SGLANG_TOKEN_OUTPUT_IDENTIFIER = "token_ids"
 
 
 class SGLangClient(LLMClient):
@@ -39,44 +45,36 @@ class SGLangClient(LLMClient):
         self._server_idx += 1
         return server_info
 
-    def _convert_messages_to_prompt(self, messages: List[Message]) -> str:
-        """Convert messages to a prompt string."""
-        prompt_parts = []
-        for msg in messages:
-            if msg.role == "system":
-                prompt_parts.append(f"System: {msg.content}")
-            elif msg.role == "user":
-                prompt_parts.append(f"User: {msg.content}")
-            elif msg.role == "assistant":
-                prompt_parts.append(f"Assistant: {msg.content}")
-        return "\n".join(prompt_parts)
-
-    def _tokenize_prompt(self, prompt: str) -> List[int]:
-        """Tokenize the prompt."""
-        if not self.tokenizer:
-            raise RuntimeError("Tokenizer not initialized")
-        return self.tokenizer.encode(prompt)
-
     def generate(self, req: LLMRequest) -> LLMResponse:
         """Generate response using SGLang server."""
         server_info = self._choose_server()
         base_url = f"http://{server_info.host}:{server_info.port}"
 
         # Convert messages to prompt
-        prompt = self._convert_messages_to_prompt(req.messages)
-        input_tokens = self.tokenizer.encode(prompt)
+        if not req.text:
+            assert req.input_ids is not None
+            req.text = self.tokenizer.decode(req.text)
 
         # Prepare request payload
         gconfig = req.gconfig
+        stop_token_ids = gconfig.stop_token_ids
+        if self.tokenizer.eos_token_id not in stop_token_ids:
+            stop_token_ids.append(self.tokenizer.eos_token_id)
+        if self.tokenizer.pad_token_id not in stop_token_ids:
+            stop_token_ids.append(self.tokenizer.pad_token_id)
+
+        # TODO: n>1
         sample_params = {
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
             "max_new_tokens": gconfig.max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
+            "stop_token_ids": stop_token_ids,
         }
 
         payload = {
-            "text": prompt,
+            "rid": req.rid,
+            "text": req.text,
             "sampling_params": sample_params,
             "return_logprob": True,
             "stream": False,
@@ -97,34 +95,31 @@ class SGLangClient(LLMClient):
         latency = time.perf_counter() - start_time
 
         # Extract completion and tokens
-        completion = result.get("text", "")
-        output_tokens = []
-        output_logprobs = []
+        completion = result["text"]
+        meta_info = result["meta_info"]
 
-        if "meta_info" in result:
-            meta_info = result["meta_info"]
-            if "output_token_logprobs" in meta_info:
-                output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
+        output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
+        output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
 
-            # Determine stop reason
-            finish_reason = meta_info.get("finish_reason", {})
-            stop_reason = finish_reason.get("type", "stop")
-            if stop_reason not in ["length", "stop", "interrupt"]:
-                stop_reason = "stop"
-        else:
-            stop_reason = "stop"
+        # Determine stop reason
+        finish_reason = meta_info["finish_reason"]
+        stop_reason = finish_reason["type"]
+        assert stop_reason in ["length", "stop"], stop_reason
 
         return LLMResponse(
             completion=completion,
-            input_tokens=input_tokens,
+            input_tokens=req.input_ids,
             output_tokens=output_tokens,
             output_logprobs=output_logprobs,
+            output_versions=[server_info.version] * len(output_tokens),
             stop_reason=stop_reason,
             latency=latency,
             ttft=latency,  # Simplified for non-streaming
         )
 
-    async def request_update_weight(self, server_info, new_param_path):
+    async def request_update_weight(
+        self, server_info: LLMServerInfo, new_param_path: str, version: int
+    ):
         import aiohttp
 
         server_url = f"http://{server_info.host}:{server_info.port}"
@@ -150,6 +145,9 @@ class SGLangClient(LLMClient):
                                     f"{res['num_paused_requests']} requests are interrupted "
                                     f"during updating weights for server {server_url}"
                                 )
+                            self.registry.update_heartbeat(
+                                server_info.server_id, "healthy", version=version + 1
+                            )
                             return
                         logger.warning(
                             f"Update weights failed: {res['message']}. Retrying."
@@ -169,6 +167,8 @@ class SGLangClient(LLMClient):
         engine.save_model_to_hf(path=path)
         tik = time.perf_counter()
 
+        version = engine.get_version()
+
         if len(infos) > 0:
 
             def _run_in_thread():
@@ -177,7 +177,9 @@ class SGLangClient(LLMClient):
                 # Create a new event loop for this thread
                 new_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(new_loop)
-                tasks = [self.request_update_weight(info, path) for info in infos]
+                tasks = [
+                    self.request_update_weight(info, path, version) for info in infos
+                ]
                 try:
                     return new_loop.run_until_complete(asyncio.gather(*tasks))
                 finally:

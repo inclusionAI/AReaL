@@ -68,6 +68,9 @@ class SPMDWrapper(abc.ABC):
         """Run the forward pass or inference on the model."""
         raise NotImplementedError()
 
+    def get_version(self) -> int:
+        raise NotImplementedError()
+
     def get_hf_model_state_dict(self) -> Dict[str, torch.Tensor]:
         raise NotImplementedError()
 

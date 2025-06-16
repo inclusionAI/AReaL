@@ -131,6 +131,8 @@ class SGLangServer(LLMServer):
                 tp_size=tp_size,
                 base_gpu_id=self.base_gpu_id,
                 dist_init_addr=f"{host}:{nccl_port}",
+                served_model_name=self.service_config.served_model_name,
+                skip_tokenizer_init=False,
             )
 
             # Launch process
@@ -143,9 +145,9 @@ class SGLangServer(LLMServer):
                 host=host,
                 port=server_port,
                 status="starting",
+                version=0,
             )
 
-            logger.info(f"SGLang server launched at: http://{host}:{server_port}")
             return self.server_info
 
         except Exception as e:

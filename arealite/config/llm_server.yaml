@@ -2,6 +2,7 @@ server_backend: sglang
 model_path: /storage/testing/models/Qwen__Qwen3-1.7B/
 experiment_name: test-exp
 trial_name: test-trial
+served_model_name: null
 cluster:
   cluster_name: local
   fileroot: /tmp/arealite/

@@ -46,7 +46,9 @@ class LLMServiceRegistry:
         except name_resolve.NameEntryNotFoundError:
             pass
 
-    def update_heartbeat(self, server_id: str, status: str, load: float = 0.0):
+    def update_heartbeat(
+        self, server_id: str, status: str, load: float = 0.0, version: int = 0
+    ):
         try:
             key = self.get_server_key(server_id)
             server_data = name_resolve.get(key)
@@ -54,6 +56,7 @@ class LLMServiceRegistry:
             server_info.last_heartbeat = datetime.now().timestamp()
             server_info.load = load
             server_info.status = status
+            server_info.version = version
             name_resolve.add(
                 key,
                 json.dumps(asdict(server_info)),
@@ -68,7 +71,6 @@ class LLMServiceRegistry:
         current_time = time.time()
         try:
             root = names.gen_server_root(self.expr_name, self.trial_name)
-            print(">>>>>>>>", root)
             server_infos = name_resolve.get_subtree(root)
             for server_data in server_infos:
                 try:
@@ -132,9 +134,7 @@ class LLMServer:
         if not server_info or not self.process:
             raise RuntimeError("Failed to launch server")
 
-        logger.info(
-            f"Server {self.server_id} starting on {server_info.host}:{server_info.port}"
-        )
+        logger.info(f"Server {self.server_id} starting")
 
         # Wait for server to be ready
         if not self._wait_for_ready():
@@ -149,7 +149,9 @@ class LLMServer:
         health_thread = threading.Thread(target=self._health_monitor, daemon=True)
         health_thread.start()
 
-        logger.info(f"Server {self.server_id} ready and registered")
+        logger.info(
+            f"Server {self.server_id} ready and registered at http://{server_info.host}:{server_info.port}"
+        )
 
     def _wait_for_ready(self) -> bool:
         """Wait for server to become healthy"""
