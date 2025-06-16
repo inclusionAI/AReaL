@@ -8,6 +8,7 @@ from realhf.api.cli_args import (
     ExperimentSaveEvalControl,
     GenerationHyperparameters,
     MicroBatchSpec,
+    ModelFamily,
 )
 from realhf.api.cli_args import ModelTrainEvalConfig as EngineConfig
 from realhf.api.cli_args import (
@@ -26,6 +27,8 @@ from realhf.api.cli_args import (
 ## Inference config for clients and servers. ##
 @dataclass
 class LLMServiceConfig:
+    experiment_name: str
+    trial_name: str
     server_backend: str
     model_path: str
     parallel: ParallelismConfig

@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -116,6 +117,7 @@ class LLMServer:
             self._run()
         except Exception as e:
             logger.error(f"Server error: {e}")
+            logger.error(traceback.format_exc())
             self._graceful_exit(1)
 
     def _startup(self):
@@ -202,6 +204,7 @@ class LLMServer:
 
             except Exception as e:
                 logger.error(f"Health monitor error: {e}")
+                logger.error(traceback.format_exc())
                 failures += 1
                 if (
                     failures >= max_failures
@@ -225,6 +228,7 @@ class LLMServer:
             self.registry.unregister_server(self.server_id)
         except Exception as e:
             logger.warning(f"Registry cleanup failed: {e}")
+            logger.warning(traceback.format_exc())
 
         # Stop process
         if self.process and self.process.poll() is None:
@@ -244,6 +248,7 @@ class LLMServer:
                     pass
             except Exception as e:
                 logger.error(f"Process cleanup failed: {e}")
+                logger.error(traceback.format_exc())
 
         sys.exit(exit_code)
 

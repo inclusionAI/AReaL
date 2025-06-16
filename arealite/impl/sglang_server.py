@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 import requests
@@ -63,8 +64,8 @@ def apply_sglang_path():
 class SGLangServer(LLMServer):
     """SGLang implementation of LLMServer."""
 
-    def __init__(self, args: TrainingArgs, service_config: LLMServiceConfig):
-        super().__init__(args, service_config)
+    def __init__(self, service_config: LLMServiceConfig):
+        super().__init__(service_config)
         self.server_info: LLMServerInfo | None = None
         self.base_gpu_id = 0
         self.config = service_config.sglang
@@ -74,12 +75,14 @@ class SGLangServer(LLMServer):
         import ray
 
         tp_size = self.service_config.parallel.tensor_parallel_size
+        pp_size = self.service_config.parallel.pipeline_parallel_size
+        mp_size = tp_size * pp_size
         if ray.is_initialized():
             self.base_gpu_id = 0
         elif "CUDA_VISIBLE_DEVICES" in os.environ:
             if len(os.environ["CUDA_VISIBLE_DEVICES"]) == 1:
                 self.base_gpu_id = int(os.environ["CUDA_VISIBLE_DEVICES"])
-            elif len(os.environ["CUDA_VISIBLE_DEVICES"]) == tp_size:
+            elif len(os.environ["CUDA_VISIBLE_DEVICES"]) == mp_size:
                 self.base_gpu_id = int(os.environ["CUDA_VISIBLE_DEVICES"].split(",")[0])
             else:
                 raise RuntimeError(
@@ -89,7 +92,10 @@ class SGLangServer(LLMServer):
                 map(str, range(gpu_utils.gpu_count()))
             )
         elif "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+            # torchrun
             self.base_gpu_id = int(os.environ["RANK"]) % gpu_utils.gpu_count()
+        elif gpu_utils.gpu_count() == mp_size:
+            self.base_gpu_id = 0
         else:
             raise RuntimeError("Cannot resolve base GPU ID.")
 
@@ -143,6 +149,7 @@ class SGLangServer(LLMServer):
 
         except Exception as e:
             logger.error(f"Failed to launch SGLang server: {e}")
+            logger.error(traceback.format_exc())
             return None
 
     def check_health(self) -> bool:

@@ -301,7 +301,6 @@ class SGLangConfig:
     schedule_policy: str = "lpm"
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
-    hybrid_train: bool = False
     dtype: str = "float16"
     kv_cache_dtype: str = "auto"
 
@@ -315,6 +314,9 @@ class SGLangConfig:
     # The interval (in decoding iterations) to log throughput
     # and update prometheus metrics
     decode_log_interval: int = 1
+
+    # Not used.
+    hybrid_train: bool = False
 
     # Use staticmethod to make OmegaConf happy.
     @staticmethod

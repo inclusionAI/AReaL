@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -85,9 +86,11 @@ class LLMServiceRegistry:
 
 
 class LLMServer:
-    def __init__(self, args: TrainingArgs, service_config: LLMServiceConfig):
+    def __init__(self, service_config: LLMServiceConfig):
         self.server_id = str(uuid.uuid4())
-        self.registry = LLMServiceRegistry(args.experiment_name, args.trial_name)
+        self.registry = LLMServiceRegistry(
+            service_config.experiment_name, service_config.trial_name
+        )
         self.running = False
         self.load = 0.0
         self.process: Optional[subprocess.Popen] = None
@@ -116,6 +119,7 @@ class LLMServer:
             self._run()
         except Exception as e:
             logger.error(f"Server error: {e}")
+            logger.error(traceback.format_exc())
             self._graceful_exit(1)
 
     def _startup(self):
@@ -202,6 +206,7 @@ class LLMServer:
 
             except Exception as e:
                 logger.error(f"Health monitor error: {e}")
+                logger.error(traceback.format_exc())
                 failures += 1
                 if (
                     failures >= max_failures
@@ -225,6 +230,7 @@ class LLMServer:
             self.registry.unregister_server(self.server_id)
         except Exception as e:
             logger.warning(f"Registry cleanup failed: {e}")
+            logger.warning(traceback.format_exc())
 
         # Stop process
         if self.process and self.process.poll() is None:
@@ -244,20 +250,20 @@ class LLMServer:
                     pass
             except Exception as e:
                 logger.error(f"Process cleanup failed: {e}")
+                logger.error(traceback.format_exc())
 
         sys.exit(exit_code)
 
 
-@dataclass
 class LLMServerFactory:
-    args: TrainingArgs
 
-    def make_server(self, server_config: LLMServiceConfig) -> LLMServer:
+    @staticmethod
+    def make_server(server_config: LLMServiceConfig) -> LLMServer:
         """Create an LLM server instance based on the configuration."""
         if server_config.server_backend == "sglang":
             from arealite.impl.sglang_server import SGLangServer
 
-            return SGLangServer(self.args, server_config)
+            return SGLangServer(server_config)
         else:
             raise ValueError(
                 f"Unsupported server backend: {server_config.server_backend}"
