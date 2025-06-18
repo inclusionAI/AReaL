@@ -1,4 +1,5 @@
 import abc
+import asyncio
 from dataclasses import dataclass
 
 from arealite.api.cli_args import LLMClientConfig, TrainingArgs
@@ -17,6 +18,10 @@ class LLMClient(abc.ABC):
 
     def generate(self, req: LLMRequest) -> LLMResponse:
         raise NotImplementedError()
+
+    async def generate_async(self, req: LLMRequest) -> LLMResponse:
+        """A trick to make an async generation function."""
+        return await asyncio.to_thread(self.generate, req)
 
     def update_weights_from_disk(self, path: str):
         raise NotImplementedError()

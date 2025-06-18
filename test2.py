@@ -15,26 +15,6 @@ import torch
 
 from realhf.impl.model.utils.padding import unpad_input
 
-
-@torch.no_grad()
-@torch.jit.script
-def compute_varlen_position_indices(
-    total_seqlen: int,
-    cu_seqlens: torch.IntTensor,
-    seqlen_offsets: Optional[torch.IntTensor] = None,
-) -> torch.IntTensor:
-    indexing_t = torch.arange(
-        total_seqlen, dtype=torch.long, device=cu_seqlens.device
-    ).unsqueeze_(0)
-    indexing_t = (cu_seqlens[:-1].unsqueeze(1) <= indexing_t) & (
-        indexing_t < cu_seqlens[1:].unsqueeze(1)
-    )
-    indices = indexing_t.cumsum(1) - 1
-    if seqlen_offsets is not None:
-        indices += seqlen_offsets.unsqueeze(1)
-    return torch.where(indexing_t, indices, 0).sum(0)
-
-
 bs = 8
 with torch.no_grad():
     seqlens = torch.randint(3, 12, (bs,), dtype=torch.int, device="cuda")

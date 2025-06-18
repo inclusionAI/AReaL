@@ -26,6 +26,7 @@ class SGLangClient(LLMClient):
 
     def __init__(self, args: TrainingArgs, client_config: LLMClientConfig):
         super().__init__(args, client_config)
+        # TODO: move registry to base class
         self.registry = LLMServiceRegistry(args.experiment_name, args.trial_name)
         self.tokenizer: transformers.PreTrainedTokenizerFast = load_hf_tokenizer(
             client_config.tokenizer_path
@@ -81,6 +82,7 @@ class SGLangClient(LLMClient):
 
         # Make request
         # TODO: implement interruptable rollout
+        # TODO: server OOM request will not return, should retry
         start_time = time.perf_counter()
         response = requests.post(
             f"{base_url}/generate",
@@ -155,6 +157,12 @@ class SGLangClient(LLMClient):
                 time.sleep(0.1)
         raise RuntimeError("Update weights failed.")
 
+
+class Engine:
+    # TODO: move to engine
+    def update_weights_to(self, llm_client):
+        pass
+
     def update_weights_from(self, engine: SPMDWrapper) -> None:
         """Update weights from the engine after an RL training step."""
         server_infos = self.registry.get_healthy_servers()
@@ -163,6 +171,14 @@ class SGLangClient(LLMClient):
         infos = server_infos[dist.get_rank() * m : (dist.get_rank() + 1) * m]
 
         path = constants.get_param_realloc_path(self.args)
+
+        # FIXME: will OOM
+        sd = engine.get_hf_model_state_dict()
+        sd = engine.gather_sharded_state_dict()
+        # TODO: consider how to define a straightforward API to gather sharded state dict
+        # (e.g., DP for torch FSDP, TP for Megatron)
+        # TODO: single-controller?
+
         engine.save_model_to_hf(path=path)
         tik = time.perf_counter()
 

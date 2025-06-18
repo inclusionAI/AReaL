@@ -83,16 +83,16 @@ class LLMClientConfig:
 ## Dataset configs. ##
 @dataclass
 class DatasetConfig:
-    train_batch_size: int = field(default=1, metadata={"help": "Training batch size"})
-    valid_batch_size: Optional[int] = field(
-        default=None, metadata={"help": "Validation batch size"}
-    )
+    path: str = ""
+    name: Optional[str] = None
+    split: Optional[str] = None
+    data_files: Optional[str] = None
+    batch_size: int = field(default=1, metadata={"help": "Training batch size"})
     shuffle: bool = field(
         default=True, metadata={"help": "Whether to shuffle the dataset"}
     )
-    drop_last: bool = field(
-        default=False, metadata={"help": "Whether to drop the last incomplete batch"}
-    )
+    pin_memory: bool = False
+    num_workers: int = 0
 
 
 ## Training backend configs. ##
@@ -106,6 +106,17 @@ class FSDPConfig:
     use_orig_params: bool = field(
         default=False,
         metadata={"help": "Use original parameters instead of flattened ones"},
+    )
+
+
+@dataclass
+class EngineBackendConfig:
+    type: str = field(
+        default="fsdp",
+        metadata={"help": "Training backend", "choices": ["fsdp"]},
+    )
+    fsdp: Optional[FSDPConfig] = field(
+        default=None, metadata={"help": "FSDP configuration (if using FSDP backend)"}
     )
 
 
@@ -126,30 +137,21 @@ class EngineConfig:
     )
 
     # Training Backend Configuration
-    backend: str = field(
-        default="megatron",
-        metadata={"help": "Training backend", "choices": ["megatron"]},
-    )
     gradient_checkpointing: bool = field(
         default=True, metadata={"help": "Enable gradient checkpointing"}
     )
     bf16: bool = field(default=False, metadata={"help": "Use bf16 precision"})
-
-    # Backend-Specific Configurations
     optimizer: Optional[OptimizerConfig] = field(
-        default_factory=OptimizerConfig, metadata={"help": "Optimizer configuration"}
+        default=None, metadata={"help": "Optimizer configuration"}
     )
-    fsdp: Optional[FSDPConfig] = field(
-        default=None, metadata={"help": "FSDP configuration (if using FSDP backend)"}
+    backend: EngineBackendConfig = field(
+        default_factory=EngineBackendConfig,
     )
 
 
 ## Agent configurations. ##
 @dataclass
 class MathCodeSingleStepAgentConfig:
-    gconfig: GenerationHyperparameters = field(
-        default_factory=GenerationHyperparameters
-    )
     tokenizer_path: str = field(default="", metadata={"help": "Path to tokenizer"})
 
 
@@ -199,8 +201,9 @@ class RolloutControllerConfig:
         default=float("inf"), metadata={"help": "Upper bound for reward filtering"}
     )
     llm_client: LLMClientConfig = field(default_factory=LLMClientConfig)
-    agent: AgentConfig = field(default_factory=AgentConfig)
-    env: EnvConfig = field(default_factory=EnvConfig)
+    gconfig: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
 
 
 ## Trainer configurations. ##
@@ -220,16 +223,12 @@ class PPOTrainerConfig:
     )
     mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
 
-    rollout_controller: RolloutControllerConfig = field(
-        default_factory=RolloutControllerConfig,
-        metadata={"help": "Rollout controller configuration"},
-    )
-
-    # Core PPO Parameters
+    # Core PPO/GRPO Parameters
     group_size: int = field(
         default=16,
         metadata={"help": "Number of trajectories to sample for each prompt."},
     )
+    group_adv_norm: bool = True
     ppo_n_minibatches: int = field(
         default=4, metadata={"help": "Number of minibatches for each PPO update"}
     )
@@ -241,9 +240,6 @@ class PPOTrainerConfig:
         metadata={
             "help": "Dual clipping factor for policy ratio, must > 1.0. None disables dual clipping."
         },
-    )
-    early_stop_imp_ratio: float = field(
-        default=5.0, metadata={"help": "Early stop threshold for importance ratio"}
     )
     actor_sample_reuse: int = field(
         default=1, metadata={"help": "The data reuse (aka PPO epoch) for actor."}
@@ -262,9 +258,9 @@ class PPOTrainerConfig:
 
     # KL Control
     kl_ctl: float = field(default=0.1, metadata={"help": "KL divergence coefficient"})
-    use_adaptive_kl_ctl: bool = field(
-        default=False, metadata={"help": "Use adaptive KL coefficient control"}
-    )
+
+    # Reward clipping
+    max_reward_clip: float = 100.0
     recompute_logprob: bool = field(
         default=False,
         metadata={"help": "Recompute logp and replace the logp returned by inference."},
@@ -284,7 +280,8 @@ class PPOTrainerConfig:
 @dataclass
 class TrainerConfig:
     type: str = field(
-        default="ppo", metadata={"help": "Trainer type", "choices": ["ppo", "sft"]}
+        default="ppo",
+        metadata={"help": "Trainer type", "choices": ["ppo", "sft", "null"]},
     )
     ppo: Optional[PPOTrainerConfig] = field(
         default=None, metadata={"help": "PPO trainer configuration (if using PPO)"}
@@ -351,9 +348,17 @@ class TrainingArgs:
         default_factory=ClusterSpecConfig,
         metadata={"help": "Cluster specification. Mainly used by slurm."},
     )
-    dataset: DatasetConfig = field(
-        default_factory=DatasetConfig, metadata={"help": "Dataset configuration"}
+
+    # RL workflow configuration
+    train_dataset: DatasetConfig = field(
+        default_factory=DatasetConfig, metadata={"help": "Train dataset configuration"}
     )
-    trainer: TrainerConfig = field(
-        default_factory=TrainerConfig, metadata={"help": "Trainer configuration"}
+    valid_dataset: Optional[DatasetConfig] = field(
+        default=None, metadata={"help": "Validation dataset configuration"}
+    )
+    agent: Optional[AgentConfig] = None
+    env: Optional[EnvConfig] = None
+    rollout: Optional[RolloutControllerConfig] = None
+    trainer: Optional[TrainerConfig] = field(
+        default=None, metadata={"help": "Trainer configuration"}
     )
