@@ -22,9 +22,9 @@ class TrainerFactory:
     args: TrainingArgs
 
     def make_trainer(self, config: TrainerConfig) -> Trainer:
-        if config.type == "ppo":
-            from arealite.impl.trainer.ppo import PPOTrainer
+        if config.type == "ppo-agentic":
+            from arealite.impl.trainer.agentic.ppo import FsdpPPOTrainer
 
-            return PPOTrainer(self.args, config)
+            return FsdpPPOTrainer(self.args, config)
         else:
             raise NotImplementedError(f"Unknown trainer type: {config.type}")

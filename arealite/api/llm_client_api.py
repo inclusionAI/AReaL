@@ -2,8 +2,12 @@ import abc
 from dataclasses import dataclass
 
 from arealite.api.cli_args import LLMClientConfig, TrainingArgs
-from arealite.api.engine_api import SPMDWrapper
-from arealite.api.io_struct import LLMRequest, LLMResponse
+from arealite.api.io_struct import (
+    LLMRequest,
+    LLMResponse,
+    WeightMeta,
+    WeightUpdateGroupMeta,
+)
 
 
 class LLMClient(abc.ABC):
@@ -14,8 +18,13 @@ class LLMClient(abc.ABC):
     def generate(self, req: LLMRequest) -> LLMResponse:
         raise NotImplementedError()
 
-    def update_weights_from(self, engine: SPMDWrapper) -> None:
-        """Update weights from the engine after an RL training step."""
+    def update_weights_from_disk(self, path: str):
+        raise NotImplementedError()
+
+    def init_weight_update_group(self, group_meta: WeightUpdateGroupMeta):
+        raise NotImplementedError()
+
+    def update_weights_from_distributed(self, weight_meta: WeightMeta):
         raise NotImplementedError()
 
 

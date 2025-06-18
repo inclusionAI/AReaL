@@ -1,11 +1,17 @@
 import abc
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Literal, Optional
 
 import torch
 import transformers
 
-from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
+from arealite.api.cli_args import (
+    EngineConfig,
+    GenerationHyperparameters,
+    MicroBatchSpec,
+    TrainingArgs,
+)
+from arealite.api.llm_client_api import LLMClient
 from realhf.api.cli_args import ParallelismConfig
 
 
@@ -71,9 +77,6 @@ class SPMDWrapper(abc.ABC):
     def get_version(self) -> int:
         raise NotImplementedError()
 
-    def get_hf_model_state_dict(self) -> Dict[str, torch.Tensor]:
-        raise NotImplementedError()
-
     def save_model_to_hf(
         self,
         path: str,
@@ -91,6 +94,10 @@ class SPMDWrapper(abc.ABC):
 
     def load_optimizer_state(self, path: str):
         """Load the optimizer state in a folder."""
+        raise NotImplementedError()
+
+    def update_weights_to(self, llm_client: LLMClient):
+        """Update the weights to the server by sending requests to the client."""
         raise NotImplementedError()
 
 

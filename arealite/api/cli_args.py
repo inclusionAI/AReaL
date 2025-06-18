@@ -14,8 +14,6 @@ from realhf.api.cli_args import ModelTrainEvalConfig as EngineConfig
 from realhf.api.cli_args import (
     OptimizerConfig,
     ParallelismConfig,
-    PromptAnswerDatasetConfig,
-    PromptOnlyDatasetConfig,
     SGLangConfig,
     TensorBoardConfig,
     WandBConfig,
@@ -32,7 +30,9 @@ class LLMServiceConfig:
     trial_name: str = field(
         default=MISSING, metadata={"help": "Name of the trial. Required."}
     )
-    served_model_name: Optional[str] = None
+    served_model_name: Optional[str] = field(
+        default=None, metadata={"help": "Name of the served model"}
+    )
     seed: int = field(default=1, metadata={"help": "Random seed"})
     cluster: ClusterSpecConfig = field(default_factory=ClusterSpecConfig)
     server_backend: str = field(
@@ -53,8 +53,13 @@ class LLMServiceConfig:
     graceful_shutdown_on_unhealthy: bool = field(
         default=True, metadata={"help": "Enable graceful shutdown when unhealthy"}
     )
-    sglang: Optional[SGLangConfig] = None
-    vllm: Optional[vLLMConfig] = None
+    sglang: Optional[SGLangConfig] = field(
+        default=None,
+        metadata={"help": "SGLang configuration (if using SGLang backend)"},
+    )
+    vllm: Optional[vLLMConfig] = field(
+        default=None, metadata={"help": "vLLM configuration (if using vLLM backend)"}
+    )
 
 
 @dataclass
@@ -75,13 +80,33 @@ class LLMClientConfig:
     )
 
 
+## Dataset configs. ##
+@dataclass
+class DatasetConfig:
+    train_batch_size: int = field(default=1, metadata={"help": "Training batch size"})
+    valid_batch_size: Optional[int] = field(
+        default=None, metadata={"help": "Validation batch size"}
+    )
+    shuffle: bool = field(
+        default=True, metadata={"help": "Whether to shuffle the dataset"}
+    )
+    drop_last: bool = field(
+        default=False, metadata={"help": "Whether to drop the last incomplete batch"}
+    )
+
+
 ## Training backend configs. ##
 
 
 @dataclass
 class FSDPConfig:
-    sync_module_states: bool = True
-    use_orig_params: bool = False
+    sync_module_states: bool = field(
+        default=True, metadata={"help": "Synchronize module states across processes"}
+    )
+    use_orig_params: bool = field(
+        default=False,
+        metadata={"help": "Use original parameters instead of flattened ones"},
+    )
 
 
 @dataclass
@@ -114,9 +139,9 @@ class EngineConfig:
     optimizer: Optional[OptimizerConfig] = field(
         default_factory=OptimizerConfig, metadata={"help": "Optimizer configuration"}
     )
-    fsdp: Optional[FSDPConfig] = None
-    vllm: Optional[vLLMConfig] = None
-    sglang: Optional[SGLangConfig] = None
+    fsdp: Optional[FSDPConfig] = field(
+        default=None, metadata={"help": "FSDP configuration (if using FSDP backend)"}
+    )
 
 
 ## Agent configurations. ##
@@ -131,7 +156,9 @@ class MathCodeSingleStepAgentConfig:
 @dataclass
 class AgentConfig:
     type: str = field(default="", metadata={"help": "Agent type"})
-    math_code_single_step: Optional[MathCodeSingleStepAgentConfig] = None
+    math_code_single_step: Optional[MathCodeSingleStepAgentConfig] = field(
+        default=None, metadata={"help": "Math code single step agent configuration"}
+    )
 
 
 ## Environment configurations. ##
@@ -147,15 +174,30 @@ class EnvConfig:
         default=1.0, metadata={"help": "Reward scaling factor"}
     )
     reward_bias: float = field(default=0.0, metadata={"help": "Reward bias"})
-    math_code_single_step: Optional[MathCodeSingleStepEnvConfig] = None
+    math_code_single_step: Optional[MathCodeSingleStepEnvConfig] = field(
+        default=None,
+        metadata={"help": "Math code single step environment configuration"},
+    )
 
 
-## TrajCollector configurations. ##
+## RolloutController configurations. ##
 
 
 @dataclass
-class TrajCollectorConfig:
-    type: str = field(default="llm", metadata={"help": "Trajectory collector type"})
+class RolloutControllerConfig:
+    max_concurrent_rollouts: int = field(
+        default=1, metadata={"help": "Maximum number of concurrent rollouts"}
+    )
+    max_head_offpolicyness: int = field(
+        default=0,
+        metadata={"help": "Maximum off-policyness tolerance for the first token"},
+    )
+    filter_reward_lb: float = field(
+        default=-float("inf"), metadata={"help": "Lower bound for reward filtering"}
+    )
+    filter_reward_ub: float = field(
+        default=float("inf"), metadata={"help": "Upper bound for reward filtering"}
+    )
     llm_client: LLMClientConfig = field(default_factory=LLMClientConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     env: EnvConfig = field(default_factory=EnvConfig)
@@ -168,23 +210,19 @@ class TrajCollectorConfig:
 class SFTTrainerConfig:
     model: EngineConfig = field(default_factory=EngineConfig)
     mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
-    dataset: PromptAnswerDatasetConfig = field(
-        default_factory=PromptAnswerDatasetConfig
-    )
 
 
 @dataclass
 class PPOTrainerConfig:
     actor: EngineConfig = field(default_factory=EngineConfig)
-    critic: Optional[EngineConfig] = None
-    ref: Optional[EngineConfig] = None
-    rew: Optional[EngineConfig] = None
+    ref: Optional[EngineConfig] = field(
+        default=None, metadata={"help": "Reference model configuration"}
+    )
     mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
 
-    dataset: PromptOnlyDatasetConfig = field(default_factory=PromptOnlyDatasetConfig)
-
-    collector: Optional[TrajCollectorConfig] = field(
-        default_factory=TrajCollectorConfig,
+    rollout_controller: RolloutControllerConfig = field(
+        default_factory=RolloutControllerConfig,
+        metadata={"help": "Rollout controller configuration"},
     )
 
     # Core PPO Parameters
@@ -204,32 +242,11 @@ class PPOTrainerConfig:
             "help": "Dual clipping factor for policy ratio, must > 1.0. None disables dual clipping."
         },
     )
-    value_eps_clip: float = field(
-        default=0.2, metadata={"help": "Clipping factor for value updates"}
-    )
     early_stop_imp_ratio: float = field(
         default=5.0, metadata={"help": "Early stop threshold for importance ratio"}
     )
     actor_sample_reuse: int = field(
         default=1, metadata={"help": "The data reuse (aka PPO epoch) for actor."}
-    )
-    critic_sample_reuse: int = field(
-        default=1, metadata={"help": "The data reuse (aka PPO epoch) for critic."}
-    )
-
-    # Reward Processing
-    max_reward_clip: float = field(
-        default=20.0, metadata={"help": "Maximum absolute value for clipped rewards"}
-    )
-    reward_output_scaling: float = field(
-        default=1.0, metadata={"help": "Scaling factor for reward model outputs"}
-    )
-    reward_output_bias: float = field(
-        default=0.0, metadata={"help": "Bias term for reward model outputs"}
-    )
-    fuse_rew_ref: bool = field(
-        default=True,
-        metadata={"help": "Whether to fuse reward and reference model computations"},
     )
 
     # Advantage Estimation
@@ -247,25 +264,6 @@ class PPOTrainerConfig:
     kl_ctl: float = field(default=0.1, metadata={"help": "KL divergence coefficient"})
     use_adaptive_kl_ctl: bool = field(
         default=False, metadata={"help": "Use adaptive KL coefficient control"}
-    )
-
-    # Value Function Configuration
-    disable_value: bool = field(
-        default=False, metadata={"help": "Disable value/critic model"}
-    )
-    value_norm: bool = field(
-        default=True, metadata={"help": "Enable value normalization"}
-    )
-    value_norm_type: str = field(
-        default="exp",
-        metadata={"help": "Type of value normalization", "choices": ["exp", "ma"]},
-    )
-    value_norm_beta: float = field(
-        default=0.99995,
-        metadata={"help": "Decay factor for exponential moving average"},
-    )
-    value_norm_eps: float = field(
-        default=1e-5, metadata={"help": "Epsilon term for numerical stability"}
     )
     recompute_logprob: bool = field(
         default=False,
@@ -288,8 +286,12 @@ class TrainerConfig:
     type: str = field(
         default="ppo", metadata={"help": "Trainer type", "choices": ["ppo", "sft"]}
     )
-    ppo: Optional[PPOTrainerConfig] = None
-    sft: Optional[SFTTrainerConfig] = None
+    ppo: Optional[PPOTrainerConfig] = field(
+        default=None, metadata={"help": "PPO trainer configuration (if using PPO)"}
+    )
+    sft: Optional[SFTTrainerConfig] = field(
+        default=None, metadata={"help": "SFT trainer configuration (if using SFT)"}
+    )
 
 
 ## Entrypoint. ##
@@ -341,10 +343,17 @@ class TrainingArgs:
         default_factory=ExperimentSaveEvalControl,
         metadata={"help": "Experiment save/evaluation control configuration."},
     )
+    shutdown_server_on_exit: bool = field(
+        default=False,
+        metadata={"help": "Whether to shut down the LLM generation server on exit."},
+    )
     cluster: ClusterSpecConfig = field(
         default_factory=ClusterSpecConfig,
         metadata={"help": "Cluster specification. Mainly used by slurm."},
     )
+    dataset: DatasetConfig = field(
+        default_factory=DatasetConfig, metadata={"help": "Dataset configuration"}
+    )
     trainer: TrainerConfig = field(
-        default_factory=TrainerConfig,
+        default_factory=TrainerConfig, metadata={"help": "Trainer configuration"}
     )

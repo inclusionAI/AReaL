@@ -23,7 +23,6 @@ class LLMRequest:
     rid: str
     text: Optional[str] = None
     input_ids: List[int] = field(default_factory=list)
-    stop_token_ids: List[int] = field(default_factory=list)
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
@@ -55,6 +54,29 @@ class AgentInferOutput:
 
 
 @dataclass
+class TrajStats:
+    start_time: float = 0.0
+    total_reward: float = 0.0
+    episode_length: int = 0
+    info: Dict = field(default_factory=dict)
+
+
+@dataclass
 class Trajectory:
     data: Dict[str, torch.Tensor]
-    stats: Dict[str, Any]
+    stats: TrajStats
+
+
+@dataclass
+class WeightUpdateGroupMeta:
+    group_name: str
+    ranks: List[int]
+    comm_type: str
+
+
+@dataclass
+class WeightMeta:
+    group_name: str
+    param_name: str
+    shape: torch.Size
+    dtype: torch.dtype
