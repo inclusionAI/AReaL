@@ -80,37 +80,54 @@ class SGLangClient(LLMClient):
         }
 
         # Make request
-        # TODO: implement interruptable rollout
         start_time = time.perf_counter()
-        response = requests.post(
-            f"{base_url}/generate",
-            json=payload,
-            timeout=self.client_config.gen_timeout,
-        )
-        response.raise_for_status()
+        accumulated_output_tokens = []
+        accumulated_output_logprobs = []
+        accumulated_versions = []
 
-        # Parse response
-        result = response.json()
+        while True:
+            # loop until the generation is complete
+            try:
+                response = requests.post(
+                    f"{base_url}/generate",
+                    json=payload,
+                    timeout=self.client_config.gen_timeout,
+                )
+                response.raise_for_status()
+                result = response.json()
+                
+                # Parse response
+                completion = result["text"]
+                meta_info = result["meta_info"]
+                output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
+                output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
+                
+                # Update accumulated outputs
+                accumulated_output_tokens.extend(output_tokens)
+                accumulated_output_logprobs.extend(output_logprobs)
+                accumulated_versions.extend([server_info.version] * len(output_tokens))
+                
+                # Check if generation is complete
+                # TODO: (Chenyang) stop_reason could be aborted right?
+                finish_reason = meta_info["finish_reason"]
+                stop_reason = finish_reason["type"]
+                if stop_reason in ["length", "stop"]:
+                    break
+                    
+                payload["text"] = completion
+                
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"Request failed: {e}, retrying...")
+                continue
+
         latency = time.perf_counter() - start_time
-
-        # Extract completion and tokens
-        completion = result["text"]
-        meta_info = result["meta_info"]
-
-        output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
-        output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
-
-        # Determine stop reason
-        finish_reason = meta_info["finish_reason"]
-        stop_reason = finish_reason["type"]
-        assert stop_reason in ["length", "stop"], stop_reason
 
         return LLMResponse(
             completion=completion,
             input_tokens=req.input_ids,
-            output_tokens=output_tokens,
-            output_logprobs=output_logprobs,
-            output_versions=[server_info.version] * len(output_tokens),
+            output_tokens=accumulated_output_tokens,
+            output_logprobs=accumulated_output_logprobs,
+            output_versions=accumulated_versions,
             stop_reason=stop_reason,
             latency=latency,
             ttft=latency,  # Simplified for non-streaming
