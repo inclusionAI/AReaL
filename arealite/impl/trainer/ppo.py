@@ -138,6 +138,7 @@ class SpmdRlvrPPOTrainer(Trainer):
 
                 # Transformer forward input data
                 # TODO: should pad input data before running forward
+                # TODO: should squeeze model outputs
                 input_data = dict(
                     input_ids=input_ids.unsqueeze(0),
                     attention_mask=None,
@@ -214,6 +215,7 @@ class SpmdRlvrPPOTrainer(Trainer):
                     seq_no_eos_mask=seq_no_eos_mask,
                 )
 
+                # TODO: grpo norm is incorrect
                 # Optionally perform advantage normalization.
                 if self.adv_norm:
                     if self.group_adv_norm == False:
