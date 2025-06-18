@@ -6,6 +6,9 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from einops import rearrange, repeat
 
+from arealite.api.cli_args import MicroBatchSpec
+from realhf.base import datapack
+
 
 def pad_sequences_to_tensors(
     sequence_list: List[Dict[str, List[float]]], pad_value: float = 0.0
@@ -528,3 +531,43 @@ def pad_input(hidden_states, indices, batch, seqlen):
     # output[indices] = hidden_states
     output = index_put_first_axis(hidden_states, indices, batch * seqlen)
     return rearrange(output, "(b s) ... -> b s ...", b=batch)
+
+
+def dict_tensor_select(data: Dict[str, torch.Tensor], indices: List[int]):
+    return {k: v[indices] for k, v in data.items()}
+
+
+def allocate_balanced_mbs(mb_spec: MicroBatchSpec, lens: List[int]) -> List[List[int]]:
+    group_indices = datapack.ffd_allocate(
+        lens, mb_spec.max_tokens_per_mb, min_groups=mb_spec.n_mbs
+    )
+    return sorted([sorted(g) for g in group_indices])
+
+
+def allocate_balanced_mbs_synced(
+    mb_spec: MicroBatchSpec,
+    lens: List[int],
+    group: Optional[dist.ProcessGroup] = None,
+) -> np.ndarray:
+    group_indices = allocate_balanced_mbs(mb_spec, lens)
+    if not dist.is_initialized():
+        return group_indices
+
+    all_n_mbs = [None for _ in range(dist.get_world_size(group))]
+    dist.all_gather_object(all_n_mbs, len(group_indices), group=group)
+    if all(mbs == len(group_indices) for mbs in all_n_mbs):
+        return group_indices
+    return allocate_balanced_mbs_synced(
+        MicroBatchSpec.new(mb_spec, n_mbs=max(all_n_mbs)), lens
+    )
+
+
+def dict_tensor_split_mbs(
+    data: Dict[str, torch.Tensor],
+    mb_spec: MicroBatchSpec,
+    lens: List[int],
+    group: Optional[dist.ProcessGroup] = None,
+) -> List[Dict[str, torch.Tensor]]:
+    """Split a dict of tensors into microbatches."""
+    group_indices = allocate_balanced_mbs_synced(mb_spec, lens, group=group)
+    return [dict_tensor_select(data, indices) for indices in group_indices]
