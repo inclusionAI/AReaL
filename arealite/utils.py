@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple,Any
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -535,7 +535,7 @@ def pad_input(hidden_states, indices, batch, seqlen):
 def dict_indexing(data: Dict[str, torch.Tensor], lens: List[int], indices: List[int]):
     input_lens = torch.tensor(lens, device="cuda")
     cu_seqlens = torch.nn.functional.pad(input_lens.cumsum(0, dtype=torch.int), (1, 0))
-    
+
     s = []
     for index in indices:
         start = cu_seqlens[index]
@@ -545,7 +545,9 @@ def dict_indexing(data: Dict[str, torch.Tensor], lens: List[int], indices: List[
     return {k: v[s] for k, v in data.items()}
 
 
-def allocate_balanced_mbs(mb_spec: MicroBatchSpec, lens: List[int]) -> Tuple[List[List[int]], List[List[int]]]:
+def allocate_balanced_mbs(
+    mb_spec: MicroBatchSpec, lens: List[int]
+) -> Tuple[List[List[int]], List[List[int]]]:
     group_indices = datapack.ffd_allocate(
         lens, mb_spec.max_tokens_per_mb, min_groups=mb_spec.n_mbs
     )
@@ -579,8 +581,12 @@ def dict_split_mbs(
     group: Optional[dist.ProcessGroup] = None,
 ) -> Tuple[List[Dict[str, torch.Tensor]], List[List[int]]]:
     """Split a dict of tensors into microbatches."""
-    group_indices, splitted_lens = allocate_balanced_mbs_synced(mb_spec, lens, group=group)
-    return [dict_indexing(data, lens, indices) for indices in group_indices], splitted_lens
+    group_indices, splitted_lens = allocate_balanced_mbs_synced(
+        mb_spec, lens, group=group
+    )
+    return [
+        dict_indexing(data, lens, indices) for indices in group_indices
+    ], splitted_lens
 
 
 def split_dict_tensor_with_cu_seqlens(
@@ -599,17 +605,17 @@ def split_dict_tensor_with_cu_seqlens(
 
     for key, value in data.items():
         if not torch.is_tensor(value):
-            not_to_split[key] = value 
+            not_to_split[key] = value
         else:
             if value.shape == (1, total_lens):
                 value = value.squeeze()
                 to_split[key] = value
             else:
                 not_to_split[key] = value
-    
-    # split 
+
+    # split
     mbs, splitted_lens = dict_split_mbs(to_split, mb_spec, input_lens, group)
-    
+
     results = []
     # organize splitted micro batches
     for i, (mb, lens) in enumerate(zip(mbs, splitted_lens)):
@@ -617,10 +623,10 @@ def split_dict_tensor_with_cu_seqlens(
         for k, v in mb.items():
             unsqueezed[k] = v.unsqueeze(0)
         lens = torch.tensor(lens, device="cuda")
-        batch_cu_seqlens = torch.nn.functional.pad(lens.cumsum(0, dtype=torch.int), (1, 0)) 
-        results.append(
-            {**unsqueezed, **not_to_split, "cu_seqlens": batch_cu_seqlens}
+        batch_cu_seqlens = torch.nn.functional.pad(
+            lens.cumsum(0, dtype=torch.int), (1, 0)
         )
+        results.append({**unsqueezed, **not_to_split, "cu_seqlens": batch_cu_seqlens})
     return results
 
 

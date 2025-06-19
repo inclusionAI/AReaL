@@ -9,8 +9,6 @@ from realhf.api.cli_args import (
     GenerationHyperparameters,
     MicroBatchSpec,
     ModelFamily,
-)
-from realhf.api.cli_args import (
     OptimizerConfig,
     ParallelismConfig,
     SGLangConfig,

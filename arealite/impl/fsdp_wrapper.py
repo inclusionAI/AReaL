@@ -8,8 +8,8 @@ import torch.nn as nn
 import transformers
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import ShardingStrategy, StateDictType
-from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy, always_wrap_policy
-from transformers import AutoModelForCausalLM, AutoConfig
+from torch.distributed.fsdp.wrap import always_wrap_policy, transformer_auto_wrap_policy
+from transformers import AutoConfig, AutoModelForCausalLM
 
 from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
 from arealite.api.engine_api import SPMDWrapper
@@ -18,11 +18,26 @@ from realhf.api.cli_args import ParallelismConfig
 from realhf.base.pkg_version import is_version_greater_or_equal
 
 if is_version_greater_or_equal("torch", "2.6.0"):
-    from torch.distributed.fsdp import CPUOffloadPolicy, FSDPModule, MixedPrecisionPolicy, fully_shard
+    from torch.distributed.fsdp import (
+        CPUOffloadPolicy,
+        FSDPModule,
+        MixedPrecisionPolicy,
+        fully_shard,
+    )
 elif is_version_greater_or_equal("torch", "2.4.0"):
-    from torch.distributed._composable.fsdp import CPUOffloadPolicy, FSDPModule, MixedPrecisionPolicy, fully_shard
+    from torch.distributed._composable.fsdp import (
+        CPUOffloadPolicy,
+        FSDPModule,
+        MixedPrecisionPolicy,
+        fully_shard,
+    )
 else:
-    fully_shard, MixedPrecisionPolicy, FSDPModule, CPUOffloadPolicy = None, None, None, None
+    fully_shard, MixedPrecisionPolicy, FSDPModule, CPUOffloadPolicy = (
+        None,
+        None,
+        None,
+        None,
+    )
 
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
@@ -44,6 +59,7 @@ def get_transformer_layer_cls(model):
 
     return layer_classes
 
+
 def create_fsdp_device_mesh(shard_size, world_size):
     if shard_size < 0 or shard_size >= world_size:
         device_mesh = init_device_mesh(
@@ -57,9 +73,12 @@ def create_fsdp_device_mesh(shard_size, world_size):
         )
     return device_mesh
 
+
 def apply_fsdp2(model, fsdp_kwargs):
     """model: AutoModelForCausalLM"""
-    assert CPUOffloadPolicy is not None, "PyTorch version >= 2.4 is required for using fully_shard API (FSDP2)"
+    assert (
+        CPUOffloadPolicy is not None
+    ), "PyTorch version >= 2.4 is required for using fully_shard API (FSDP2)"
 
     default_transformer_cls_names_to_wrap = getattr(model, "_no_split_modules", None)
     # fsdp_transformer_layer_cls_to_wrap = config.get("wrap_policy", {}).get("transformer_layer_cls_to_wrap", default_transformer_cls_names_to_wrap)
@@ -68,19 +87,28 @@ def apply_fsdp2(model, fsdp_kwargs):
     if isinstance(fsdp_transformer_layer_cls_to_wrap, str):
         fsdp_transformer_layer_cls_to_wrap = [fsdp_transformer_layer_cls_to_wrap]
 
-    assert len(fsdp_transformer_layer_cls_to_wrap) > 0 and fsdp_transformer_layer_cls_to_wrap[0] is not None
+    assert (
+        len(fsdp_transformer_layer_cls_to_wrap) > 0
+        and fsdp_transformer_layer_cls_to_wrap[0] is not None
+    )
 
     modules = []
     for name, module in model.named_modules():
-        if (module.__class__.__name__ in fsdp_transformer_layer_cls_to_wrap 
-            or (isinstance(module, nn.Embedding) and not model.config.tie_word_embeddings)):
+        if module.__class__.__name__ in fsdp_transformer_layer_cls_to_wrap or (
+            isinstance(module, nn.Embedding) and not model.config.tie_word_embeddings
+        ):
             modules.append(module)
 
     for idx, module in enumerate(modules):
         fully_shard(module, **fsdp_kwargs)
-    fully_shard(model, **fsdp_kwargs)  # fsdp2 will not reshard_after_forward for root module
+    fully_shard(
+        model, **fsdp_kwargs
+    )  # fsdp2 will not reshard_after_forward for root module
 
-def fsdp2_load_full_state_dict(model: torch.nn.Module, full_state: dict, device_mesh=None, cpu_offload=None):
+
+def fsdp2_load_full_state_dict(
+    model: torch.nn.Module, full_state: dict, device_mesh=None, cpu_offload=None
+):
     """
     Loads the full state dict (could be only on rank 0) into the sharded model. This is done by broadcasting the
     parameters from rank 0 to all other ranks. This function modifies the model in-place.
@@ -89,7 +117,11 @@ def fsdp2_load_full_state_dict(model: torch.nn.Module, full_state: dict, device_
         model (`torch.nn.Module`): The model to load the state dict into
         full_state (`dict`): The full state dict to load, can only be on rank 0
     """
-    from torch.distributed.checkpoint.state_dict import StateDictOptions, set_model_state_dict
+    from torch.distributed.checkpoint.state_dict import (
+        StateDictOptions,
+        set_model_state_dict,
+    )
+
     device = torch.cuda.current_device()
 
     # To broadcast, it needs to be instantiated in the GPU.
@@ -99,7 +131,9 @@ def fsdp2_load_full_state_dict(model: torch.nn.Module, full_state: dict, device_
         model = model.to_empty(device=device)
 
     cpu_offload = cpu_offload is not None
-    options = StateDictOptions(full_state_dict=True, cpu_offload=cpu_offload, broadcast_from_rank0=True)
+    options = StateDictOptions(
+        full_state_dict=True, cpu_offload=cpu_offload, broadcast_from_rank0=True
+    )
     set_model_state_dict(model, full_state, options=options)
 
     # rotary_emb is not in state_dict, so we need to broadcast it manually
@@ -162,7 +196,9 @@ class FSDPEngine(SPMDWrapper):
 
     def __init__(self, args: TrainingArgs, engine_config: EngineConfig):
         super().__init__(args, engine_config)
-        assert is_version_greater_or_equal("torch", "2.4.0"), f"arealite only supports FSDP2, which requires torch>=2.4.0"
+        assert is_version_greater_or_equal(
+            "torch", "2.4.0"
+        ), f"arealite only supports FSDP2, which requires torch>=2.4.0"
 
         self.config = engine_config.backend.fsdp
 
@@ -188,16 +224,20 @@ class FSDPEngine(SPMDWrapper):
             trust_remote_code=True,
         )
         self.model_config = AutoConfig.from_pretrained(
-            pretrained_model_name_or_path=self.engine_config.path, 
-            trust_remote_code=True
+            pretrained_model_name_or_path=self.engine_config.path,
+            trust_remote_code=True,
         )
 
         # Simple auto wrap policy
         # TODO: fix wrap policy
         auto_wrap_policy = always_wrap_policy
 
-        mixed_precision_policy = MixedPrecisionPolicy(param_dtype=torch.bfloat16, reduce_dtype=torch.float32, cast_forward_inputs=True)
-        device_mesh = create_fsdp_device_mesh(self.world_size, self.world_size) 
+        mixed_precision_policy = MixedPrecisionPolicy(
+            param_dtype=torch.bfloat16,
+            reduce_dtype=torch.float32,
+            cast_forward_inputs=True,
+        )
+        device_mesh = create_fsdp_device_mesh(self.world_size, self.world_size)
         self.device_mesh = device_mesh
         # sharding_strategy = ShardingStrategy.FULL_SHARD
         cpu_offload = None
@@ -223,7 +263,7 @@ class FSDPEngine(SPMDWrapper):
         full_state = model.state_dict()
         apply_fsdp2(model, fsdp_kwargs)
         fsdp2_load_full_state_dict(model, full_state, device_mesh, cpu_offload)
-        
+
         self.model = model
 
         # Set up optimizer
@@ -247,7 +287,9 @@ class FSDPEngine(SPMDWrapper):
             )
             # TODO: get total training steps
             total_train_steps = 1000
-            num_warmup_steps = int(optimizer_config.warmup_steps_proportion * total_train_steps)
+            num_warmup_steps = int(
+                optimizer_config.warmup_steps_proportion * total_train_steps
+            )
 
             self.lr_scheduler = get_cosine_schedule_with_warmup(
                 self.optimizer,
@@ -321,7 +363,7 @@ class FSDPEngine(SPMDWrapper):
             # TODO: check if this is required for FSDP
             if token_normalize_scope == "global":
                 loss_scale *= self.world_size
-            
+
             loss *= loss_scale
             loss.backward()
 
@@ -371,7 +413,7 @@ class FSDPEngine(SPMDWrapper):
         """Forward pass with optional post-processing."""
         self.model.eval()
         mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
-        
+
         results = []
 
         for mb_input in mb_inputs:
@@ -406,7 +448,10 @@ class FSDPEngine(SPMDWrapper):
         os.makedirs(path, exist_ok=True)
 
         # FSDP2 checkpoint saving
-        from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict
+        from torch.distributed.checkpoint.state_dict import (
+            StateDictOptions,
+            get_model_state_dict,
+        )
 
         # Get full state dict with FSDP2
         options = StateDictOptions(full_state_dict=True, cpu_offload=True)
@@ -420,7 +465,6 @@ class FSDPEngine(SPMDWrapper):
             tokenizer.save_pretrained(path)
 
         dist.barrier()
-
 
     def load_model_from_hf(self, path: str):
         """Load model from HuggingFace format."""
@@ -442,8 +486,9 @@ class FSDPEngine(SPMDWrapper):
         )
         full_state = model.state_dict()
 
-        fsdp2_load_full_state_dict(self.model, full_state, self.device_mesh, self.cpu_offload)
-
+        fsdp2_load_full_state_dict(
+            self.model, full_state, self.device_mesh, self.cpu_offload
+        )
 
     def save_optimizer_state(self, path: str):
         """Save optimizer state."""

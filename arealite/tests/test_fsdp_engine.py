@@ -1,28 +1,33 @@
 """Test script for FSDP Engine implementation."""
 
+import os
 from dataclasses import dataclass
 from typing import Dict
 
 import torch
 import torch.distributed as dist
-import os
 
 from arealite.api.cli_args import (
-    MicroBatchSpec, 
-    EngineConfig,
-    ModelFamily, 
-    OptimizerConfig,
     EngineBackendConfig,
-    FSDPConfig
+    EngineConfig,
+    FSDPConfig,
+    MicroBatchSpec,
+    ModelFamily,
+    OptimizerConfig,
 )
 from arealite.api.engine_api import EngineFactory
-from arealite.utils import compute_varlen_position_indices, split_dict_tensor_with_cu_seqlens
-
+from arealite.utils import (
+    compute_varlen_position_indices,
+    split_dict_tensor_with_cu_seqlens,
+)
 from realhf.impl.model.utils.padding import unpad_input
+
 
 def create_mock_input(bs: int = 2, min_seqlen: int = 3, max_seqlen: int = 12) -> Dict:
     """Create mock input data for testing."""
-    seqlens = torch.randint(min_seqlen, max_seqlen, (bs,), dtype=torch.int, device="cuda")
+    seqlens = torch.randint(
+        min_seqlen, max_seqlen, (bs,), dtype=torch.int, device="cuda"
+    )
     max_seqlen = int(max(seqlens))
     input_ids = torch.randint(0, 100, (bs, max_seqlen), dtype=torch.long, device="cuda")
 
@@ -49,15 +54,18 @@ def create_mock_input(bs: int = 2, min_seqlen: int = 3, max_seqlen: int = 12) ->
         use_cache=False,
     )
 
+
 def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
     """Mock loss function for testing."""
     return torch.mean(logits)
+
 
 def mock_loss_weight_fn(logits: torch.Tensor, input_data: Dict) -> float:
     """Mock loss weight function for testing."""
     return float(input_data["attention_mask"].sum())
 
-def test_split_mbs(): 
+
+def test_split_mbs():
     # dist.init_process_group(backend="nccl")
     torch.cuda.set_device(0)
 
@@ -68,17 +76,16 @@ def test_split_mbs():
                 print(f"v.shape={v.shape}")
             print(f"v={v}")
 
-    input_data = create_mock_input(bs=4) 
+    input_data = create_mock_input(bs=4)
     print("***** full data *****")
     print_data(input_data)
 
     mb_spec = MicroBatchSpec(n_mbs=2)
-    mbs = split_dict_tensor_with_cu_seqlens(
-        input_data, mb_spec
-    )
+    mbs = split_dict_tensor_with_cu_seqlens(input_data, mb_spec)
     for i, mb in enumerate(mbs):
         print(f"***** data batch {i} *****")
         print_data(mb)
+
 
 def test_engine():
     """Test engine creation and basic functionality."""
@@ -90,16 +97,15 @@ def test_engine():
         from arealite.api.cli_args import TrainingArgs
 
         config = EngineConfig(
-            type = ModelFamily("qwen2", False),
-            path = "/storage/openpsi/models/Qwen__Qwen2.5-0.5B-Instruct",
-            gradient_checkpointing = False,
-            optimizer = OptimizerConfig(),
-            backend = EngineBackendConfig(
-                type = "fsdp",
-                fsdp = FSDPConfig()
-            )
+            type=ModelFamily("qwen2", False),
+            path="/storage/openpsi/models/Qwen__Qwen2.5-0.5B-Instruct",
+            gradient_checkpointing=False,
+            optimizer=OptimizerConfig(),
+            backend=EngineBackendConfig(type="fsdp", fsdp=FSDPConfig()),
         )
-        mock_args = TrainingArgs(n_nodes=1, n_gpus_per_node=1)  # This would need proper initialization
+        mock_args = TrainingArgs(
+            n_nodes=1, n_gpus_per_node=1
+        )  # This would need proper initialization
         engine_factory = EngineFactory(mock_args)
         engine = engine_factory.make_engine(config)
         engine.init_distributed(None)
@@ -137,9 +143,9 @@ def test_engine():
 
         print("Testing train ...")
         train_result = engine.train_batch(
-            input_=input_data, 
-            mb_spec=mb_spec, 
-            loss_fn=mock_loss_fn, 
+            input_=input_data,
+            mb_spec=mb_spec,
+            loss_fn=mock_loss_fn,
             loss_weight_fn=lambda x: x["cu_seqlens"][-1],
             version_steps=0,
         )
