@@ -33,25 +33,29 @@ class LLMClient(abc.ABC):
 
     def select_server(self):
         """Get an available healthy server."""
-        servers = self.registry.get_healthy_servers()
-        if not servers:
-            raise RuntimeError("No healthy SGLang servers available")
-
+        servers = self.get_healthy_servers()
         assert self.client_config.schedule_policy == "round_robin"
         # Simple round-robin selection (could be improved with load balancing)
         server_info = servers[self._server_idx % len(servers)]
         self._server_idx += 1
         return server_info
 
+    def get_healthy_servers(self):
+        servers = self.registry.get_healthy_servers()
+        if not servers:
+            raise RuntimeError("No healthy SGLang servers available")
+        return servers
+
     def request_with_retry(
         self,
         endpoint: str,
         payload: Optional[Dict[str, Any]] = None,
         method: str = "POST",
-        max_retries: int = 3,
+        max_retries: Optional[int] = None,
         timeout: Optional[float] = None,
         retry_delay: float = 1.0,
-    ) -> tuple[requests.Response, Any]:
+        target_server: Optional[LLMServerInfo] = None,
+    ) -> tuple[requests.Response, LLMServerInfo]:
         """
         Send HTTP request to servers with retry logic and server switching.
 
@@ -72,10 +76,14 @@ class LLMClient(abc.ABC):
 
         timeout = timeout or self.client_config.request_timeout
         last_exception = None
+        max_retries = max_retries or self.client_config.request_retries
 
         # Try each server with retries
         for _ in range(max_retries):
-            server_info = self.select_server()
+            if target_server is None:
+                server_info = self.select_server()
+            else:
+                server_info = target_server
             base_url = f"http://{server_info.host}:{server_info.port}"
             url = f"{base_url}{endpoint}"
 
@@ -118,10 +126,11 @@ class LLMClient(abc.ABC):
         endpoint: str,
         payload: Optional[Dict[str, Any]] = None,
         method: str = "POST",
-        max_retries: int = 3,
+        max_retries: Optional[int] = None,
         timeout: Optional[float] = None,
         retry_delay: float = 1.0,
-    ) -> tuple[aiohttp.ClientResponse, Any]:
+        target_server: Optional[LLMServerInfo] = None,
+    ) -> tuple[aiohttp.ClientResponse, LLMServerInfo]:
         """
         Send async HTTP request to servers with retry logic and server switching.
 
@@ -142,10 +151,14 @@ class LLMClient(abc.ABC):
 
         timeout = timeout or self.client_config.request_timeout
         last_exception = None
+        max_retries = max_retries or self.client_config.request_retries
 
         # Try each server with retries
         for _ in range(max_retries):
-            server_info = self.select_server()
+            if target_server is None:
+                server_info = self.select_server()
+            else:
+                server_info = target_server
             base_url = f"http://{server_info.host}:{server_info.port}"
             url = f"{base_url}{endpoint}"
 
@@ -198,13 +211,17 @@ class LLMClient(abc.ABC):
         """A trick to make an async generation function."""
         return await asyncio.to_thread(self.generate, req)
 
-    async def aupdate_weights_from_disk(self, path: str):
+    async def aupdate_weights_from_disk(self, server_info: LLMServerInfo, path: str):
         raise NotImplementedError()
 
-    async def ainit_weight_update_group(self, group_meta: WeightUpdateGroupMeta):
+    async def ainit_weight_update_group(
+        self, server_info: LLMServerInfo, group_meta: WeightUpdateGroupMeta
+    ):
         raise NotImplementedError()
 
-    async def aupdate_weights_from_distributed(self, weight_meta: WeightMeta):
+    async def aupdate_weights_from_distributed(
+        self, server_info: LLMServerInfo, weight_meta: WeightMeta
+    ):
         raise NotImplementedError()
 
 

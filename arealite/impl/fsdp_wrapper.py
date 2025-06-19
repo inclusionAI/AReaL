@@ -7,8 +7,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import transformers
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp import ShardingStrategy, StateDictType
-from torch.distributed.fsdp.wrap import always_wrap_policy, transformer_auto_wrap_policy
+from torch.distributed.fsdp import StateDictType
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
@@ -39,7 +38,7 @@ else:
         None,
     )
 
-from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
+from torch.distributed.device_mesh import init_device_mesh
 
 
 def get_transformer_layer_cls(model):
@@ -230,7 +229,6 @@ class FSDPEngine(SPMDWrapper):
 
         # Simple auto wrap policy
         # TODO: fix wrap policy
-        auto_wrap_policy = always_wrap_policy
 
         mixed_precision_policy = MixedPrecisionPolicy(
             param_dtype=torch.bfloat16,
@@ -383,7 +381,7 @@ class FSDPEngine(SPMDWrapper):
         self.model.eval()
 
         assert "cu_seqlens" in input_
-        lens = input_["cu_seqlens"]
+        input_["cu_seqlens"]
         mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
 
         total_loss = 0.0

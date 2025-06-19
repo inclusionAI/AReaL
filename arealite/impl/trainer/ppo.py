@@ -8,7 +8,6 @@ from datasets import Dataset
 from arealite import ppo_functional
 from arealite.api.cli_args import MicroBatchSpec, TrainerConfig, TrainingArgs
 from arealite.api.engine_api import EngineFactory
-from arealite.api.io_struct import LLMRequest
 from arealite.api.llm_client_api import LLMClientFactory
 from arealite.api.trainer_api import Trainer
 from arealite.impl.rollout_controller import RolloutController
@@ -21,7 +20,6 @@ from arealite.utils import (
     gather_logprobs,
     list_of_dict2dict_of_list,
     masked_normalization,
-    pad_sequences_to_tensors,
     to_device,
     unpack_sequence,
     unpad_input,
@@ -104,7 +102,7 @@ class SpmdRlvrPPOTrainer(Trainer):
         self.adv_norm = self.config.adv_norm
         self.max_reward_clip = self.config.max_reward_clip
         self.group_adv_norm = self.config.group_adv_norm
-        self.group_size = self.config.group_size
+        self.group_size = self.args.rollout.gconfig.n_samples
 
     def _setup_models(self):
         # TODO: disable dropout
@@ -122,7 +120,6 @@ class SpmdRlvrPPOTrainer(Trainer):
             prompt = list_of_dict2dict_of_list([traj.prompt for traj in trajs])
             return prompt, data
 
-        # TODO: ignored group size
         # Run batched rollout by submitting requests to LLM servers
         prompt = next(self.data_generator)
         env_options = dict_of_list2list_of_dict(prompt)
@@ -166,7 +163,7 @@ class SpmdRlvrPPOTrainer(Trainer):
     def _rollout_step(self) -> UnpaddedRolloutOutput:
         # Run generation or rollout to collect data
         loaded_data, rollout = self._get_rollout_batch()
-        seqlens = [int(m.sum()) for m in rollout["attention_mask"]]
+        [int(m.sum()) for m in rollout["attention_mask"]]
         rollout = to_device(rollout)
 
         # Marks which sequence does not has an EOS token, i.e.,
@@ -206,6 +203,11 @@ class SpmdRlvrPPOTrainer(Trainer):
     def _train_step(self, rollout_output: UnpaddedRolloutOutput):
         input_ids = rollout_output.model_inputs["input_ids"].squeeze(0)
         n_seqs = rollout_output.seq_no_eos_mask.shape[0]
+        assert n_seqs == self.local_train_batch_size * self.group_size, (
+            n_seqs,
+            self.group_size,
+            self.local_train_batch_size,
+        )
 
         # Run reference model forward
         def calc_logprobs(logits, input_data):
@@ -487,7 +489,7 @@ class SpmdRlvrPPOTrainer(Trainer):
 
                 rollout_output = self._rollout_step()
 
-                stats = self._train_step(rollout_output)
+                self._train_step(rollout_output)
 
                 # Synchronize weights to the client.
                 self.actor.update_weights_to(self.llm_client)

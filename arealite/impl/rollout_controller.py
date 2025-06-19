@@ -1,17 +1,17 @@
 import asyncio
 import threading
 from concurrent.futures import ProcessPoolExecutor
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
+import numpy as np
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
 
 from arealite.api.cli_args import RolloutControllerConfig, TrainingArgs
-from arealite.api.io_struct import LLMRequest, Trajectory
-from arealite.api.llm_client_api import LLMClient, LLMResponse
+from arealite.api.io_struct import Trajectory
 from arealite.api.rollout_api import RolloutWorkflow, RolloutWorkflowFactory
-from realhf.base import logging
+from realhf.base import datapack, logging
 from realhf.base.monitor import RolloutStat
 
 logger = logging.getLogger("Rollout Controller")
@@ -81,19 +81,28 @@ class RolloutController:
         env_options: Optional[List[Any]] = None,
         seeds: Optional[List[int]] = None,
     ) -> List[Trajectory]:
-        factory = RolloutWorkflowFactory(self.args, self.config.llm_client)
+        n_reqs = batch_size * self.gconfig.n_samples
+        factory = RolloutWorkflowFactory(self.args)
         collectors = [
-            factory.make_workflow(self.config.workflow) for _ in range(batch_size)
+            factory.make_workflow(self.config.workflow) for _ in range(n_reqs)
         ]
         if env_options is None:
-            env_options = [None] * len(collectors)
+            env_options = [None] * len(n_reqs)
+        else:
+            assert len(env_options) == batch_size
+            env_options = [env_options[i % batch_size] for i in range(n_reqs)]
         if seeds is None:
-            seeds = [None] * len(collectors)
-        assert len(env_options) == len(seeds) == batch_size
+            seeds = [None] * len(n_reqs)
+        else:
+            assert len(seeds) == batch_size
+            seeds = [seeds[i % batch_size] for i in range(n_reqs)]
+        assert len(env_options) == len(seeds) == n_reqs
         trajs = []
         for collector, env_option, seed in zip(collectors, env_options, seeds):
             collector: RolloutWorkflow
-            trajs.append(collector.run_episode(self.gconfig, env_option, seed))
+            trajs.append(
+                collector.run_episode(self.gconfig.new(n_samples=1), env_option, seed)
+            )
         return trajs
 
     def _generate_batch_parallel(
@@ -102,20 +111,29 @@ class RolloutController:
         env_options: Optional[List[Any]] = None,
         seeds: Optional[List[int]] = None,
     ) -> List[Trajectory]:
-        factory = RolloutWorkflowFactory(self.args, self.config.llm_client)
+        n_reqs = batch_size * self.gconfig.n_samples
+        factory = RolloutWorkflowFactory(self.args)
         collectors = [
-            factory.make_workflow(self.config.workflow) for _ in range(batch_size)
+            factory.make_workflow(self.config.workflow) for _ in range(n_reqs)
         ]
         if env_options is None:
-            env_options = [None] * len(collectors)
+            env_options = [None] * len(n_reqs)
+        else:
+            assert len(env_options) == batch_size
+            env_options = [env_options[i % batch_size] for i in range(n_reqs)]
         if seeds is None:
-            seeds = [None] * len(collectors)
-        assert len(env_options) == len(seeds) == batch_size
+            seeds = [None] * len(n_reqs)
+        else:
+            assert len(seeds) == batch_size
+            seeds = [seeds[i % batch_size] for i in range(n_reqs)]
+        assert len(env_options) == len(seeds) == n_reqs
 
         def _generate_worker(args):
             collector, env_option, seed = args
             collector: RolloutWorkflow
-            return collector.run_episode(env_option, seed)
+            return collector.run_episode(
+                self.gconfig.new(n_samples=1), env_option, seed
+            )
 
         # Set sharing strategy for tensors - file_descriptor is more efficient for CUDA
         mp.set_sharing_strategy("file_descriptor")
@@ -136,7 +154,7 @@ class RolloutController:
         with self._lock:
             self._buffer = sorted(self._buffer, lambda x: x.stats.start_time)
             data, self._buffer = self._buffer[:batch_size], self._buffer[batch_size:]
-        return data
+        return datapack.flat2d(data)
 
     def _generate_until_complete(self):
         """Start an event loop to run episodes continuously."""
@@ -148,9 +166,17 @@ class RolloutController:
             loop.close()
 
     async def _run_single_episode_async(self, rid, data):
-        factory = RolloutWorkflowFactory(self.args, self.config.llm_client)
+        factory = RolloutWorkflowFactory(self.args)
         collector = factory.make_workflow(self.config.workflow)
-        return rid, await collector.run_episode_async(env_option=data)
+        tasks = [
+            asyncio.create_task(
+                collector.run_episode_async(
+                    self.gconfig.new(n_samples=1), env_option=data
+                )
+            )
+            for _ in range(self.gconfig.n_samples)
+        ]
+        return rid, await asyncio.gather(tasks)
 
     async def _generate_loop(self, dataloader):
         data_generator = iter(dataloader)
@@ -211,17 +237,17 @@ class RolloutController:
 
             # Collect done results.
             for task in done:
-                rid, traj = await task
-                assert isinstance(traj, Trajectory)
+                rid, trajs = await task
+                assert isinstance(trajs, list) and isinstance(trajs[0], Trajectory)
                 rollout_stat.running -= 1
 
                 # Filter data according to episodic return.
-                ret = traj.stats.total_reward
+                ret = np.mean([traj.stats.total_reward for traj in trajs])
                 accepted = ret >= self.config.filter_reward_lb
                 accepted &= ret <= self.config.filter_reward_ub
                 if accepted:
                     with self._lock:
-                        self._buffer.append(traj)
+                        self._buffer.append(trajs)
                     rollout_stat.accepted += 1
                 logger.debug(
                     f"Finish rollout for rid {rid}. "

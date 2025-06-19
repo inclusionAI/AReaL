@@ -1,8 +1,6 @@
 from functools import lru_cache
 from typing import List
 
-import torch
-
 from realhf.impl.dataset.math_code_dataset import load_metadata
 from realhf.impl.dataset.math_parser import parse_lines_in_parallel
 

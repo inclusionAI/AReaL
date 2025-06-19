@@ -1,11 +1,9 @@
 """Test script for FSDP Engine implementation."""
 
 import os
-from dataclasses import dataclass
 from typing import Dict
 
 import torch
-import torch.distributed as dist
 
 from arealite.api.cli_args import (
     EngineBackendConfig,

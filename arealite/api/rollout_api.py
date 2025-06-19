@@ -1,11 +1,11 @@
 import abc
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Optional, SupportsFloat, Tuple, TypeVar
+from typing import Any, Optional, SupportsFloat
 
 from gymnasium import Env
 from gymnasium.core import ActType, ObsType
-from gymnasium.utils import RecordConstructorArgs, seeding
+from gymnasium.utils import seeding
 
 from arealite.api.cli_args import (
     GenerationHyperparameters,
@@ -96,10 +96,9 @@ class RolloutWorkflow(abc.ABC):
 @dataclass
 class RolloutWorkflowFactory:
     args: TrainingArgs
-    client_config: LLMClientConfig
 
     def make_workflow(self, config: RolloutWorkflowConfig) -> RolloutWorkflow:
-        client = LLMClientFactory(self.args).make_client(self.client_config)
+        client = LLMClientFactory(self.args).make_client(self.args.rollout.llm_client)
         if config.type == "rlvr":
             from arealite.impl.rlvr.rlvr_workflow import RlvrWorkflow
 

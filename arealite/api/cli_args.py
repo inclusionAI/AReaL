@@ -1,12 +1,11 @@
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import asdict, dataclass, field
+from typing import List, Optional
 
 from omegaconf import MISSING
 
 from realhf.api.cli_args import (
     ClusterSpecConfig,
     ExperimentSaveEvalControl,
-    GenerationHyperparameters,
     MicroBatchSpec,
     ModelFamily,
     OptimizerConfig,
@@ -15,6 +14,46 @@ from realhf.api.cli_args import (
     TensorBoardConfig,
     WandBConfig,
 )
+
+
+@dataclass
+class GenerationHyperparameters:
+    """Controls text generation behavior for PPO training."""
+
+    n_samples: int = field(
+        default=1, metadata={"help": "Number of sequences to generate per prompt."}
+    )
+    max_new_tokens: int = field(
+        default=16384, metadata={"help": "Maximum number of tokens to generate."}
+    )
+    min_new_tokens: int = field(
+        default=0, metadata={"help": "Minimum number of tokens to generate."}
+    )
+    greedy: bool = field(
+        default=False,
+        metadata={"help": "Whether to use greedy decoding (max probability)."},
+    )
+    top_p: float = field(
+        default=1.0,
+        metadata={"help": "Nucleus sampling probability threshold (0.0, 1.0]."},
+    )
+    top_k: int = field(
+        default=int(1e8),
+        metadata={"help": "Number of highest probability tokens to consider."},
+    )
+    temperature: float = field(
+        default=1.0,
+        metadata={"help": "Sampling temperature. Higher values increase diversity."},
+    )
+    stop_token_ids: List[int] = field(
+        default_factory=list,
+        metadata={"help": "Stop generation when encoutering these token ids."},
+    )
+
+    def new(self, **kwargs):
+        args = asdict(self)
+        args.update(kwargs)
+        return GenerationHyperparameters(**args)
 
 
 ## Inference config for clients and servers. ##
@@ -75,11 +114,8 @@ class LLMClientConfig:
     request_timeout: int = field(
         default=3600, metadata={"help": "Request timeout in seconds"}
     )
-    update_weights_timeout: int = field(
-        default=300, metadata={"help": "Weight update timeout in seconds"}
-    )
-    update_weights_retries: int = field(
-        default=3, metadata={"help": "Number of weight update retries"}
+    request_retries: int = field(
+        default=3, metadata={"help": "Number of retries for each request"}
     )
 
 
@@ -256,10 +292,6 @@ class PPOTrainerConfig:
     )
 
     # Core PPO/GRPO Parameters
-    group_size: int = field(
-        default=16,
-        metadata={"help": "Number of trajectories to sample for each prompt."},
-    )
     group_adv_norm: bool = field(
         default=True,
         metadata={
@@ -414,7 +446,7 @@ class TrainingArgs:
         default=None, metadata={"help": "Validation dataset configuration"}
     )
     rollout: Optional[RolloutControllerConfig] = field(
-        default=None,
+        default_factory=RolloutControllerConfig,
         metadata={"help": "Rollout controller configuration for RL training"},
     )
     trainer: Optional[TrainerConfig] = field(

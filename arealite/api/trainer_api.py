@@ -66,6 +66,10 @@ class Trainer(abc.ABC):
             drop_last=True,
         )
 
+    @property
+    def local_train_batch_size(self):
+        return self.args.train_dataset.batch_size // dist.get_world_size()
+
     # TODO: check HF trainer signature
     def train(self, resume_from_checkpoint: Optional[Union[str, bool]] = None):
         raise NotImplementedError()

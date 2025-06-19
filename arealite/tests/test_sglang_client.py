@@ -8,22 +8,17 @@ from arealite.api.cli_args import (
     TrainingArgs,
 )
 from arealite.api.io_struct import LLMRequest, LLMResponse
+from arealite.impl.sglang_client import SGLangClient
 from realhf.base import name_resolve
 
-args = OmegaConf.load("arealite/config/async_ppo.yaml")
-default_args = OmegaConf.structured(TrainingArgs)
-args = OmegaConf.merge(default_args, args)
-args: TrainingArgs = OmegaConf.to_object(args)
+args = TrainingArgs(experiment_name="test_rollout", trial_name="test_rollout")
 name_resolve.reconfigure(args.cluster.name_resolve)
-
-from arealite.impl.sglang_client import SGLangClient
-
-client_cfg = LLMClientConfig(
+args.rollout.llm_client = LLMClientConfig(
     server_backend="sglang",
-    tokenizer_path="/storage/testing/models/Qwen__Qwen3-1.7B/",
-    request_timeout=1800,
+    tokenizer_path="Qwen/Qwen2-0.5B",
+    request_timeout=10,
 )
-client = SGLangClient(args, client_config=client_cfg)
+client = SGLangClient(args, client_config=args.rollout.llm_client)
 req = LLMRequest(
     rid=str(uuid.uuid4()),
     text="hello! how are you today",

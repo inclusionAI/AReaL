@@ -8,7 +8,6 @@ from typing import Dict, Optional, Tuple
 import torch
 import torch.distributed
 
-from arealite.utils import compute_varlen_position_indices
 from realhf.base import pkg_version
 
 

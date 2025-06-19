@@ -2,8 +2,6 @@ import re
 from functools import lru_cache
 from typing import List
 
-import torch
-
 from functioncall.code.local_verify import code_verify
 from realhf.impl.dataset.math_code_dataset import load_metadata
 
@@ -41,7 +39,7 @@ def get_code_reward_fn(dataset_path):
     ) -> List[int]:
 
         id2info = _load_metadata(dataset_path)
-        answers = [extract_code(c) for c in completions]
+        [extract_code(c) for c in completions]
         return code_verify(id2info=id2info, generateds=completions, query_ids=query_ids)
 
     return code_reward
