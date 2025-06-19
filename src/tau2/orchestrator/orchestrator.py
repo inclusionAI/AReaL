@@ -218,17 +218,20 @@ class Orchestrator:
             self.trajectory = message_history
 
         else:
-            self.agent_state = self.agent.get_init_state()
             self.user_state = self.user.get_init_state()
             if not self.solo_mode:
                 first_message = deepcopy(DEFAULT_FIRST_AGENT_MESSAGE)
                 first_message.timestamp = get_now()
+                self.agent_state = self.agent.get_init_state(
+                    message_history=[first_message]
+                )
                 self.trajectory = [first_message]
                 self.message = first_message
                 self.from_role = Role.AGENT
                 self.to_role = Role.USER
             else:
-                first_message, agent_state = self.agent.generate_next_message(
+                self.agent_state = self.agent.get_init_state()
+                first_message, self.agent_state = self.agent.generate_next_message(
                     None, self.agent_state
                 )
                 self.trajectory = [first_message]

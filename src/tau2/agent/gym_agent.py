@@ -1,17 +1,14 @@
-import re
 import threading
 import time
 from copy import deepcopy
 from typing import Any, List, Optional
 
 import gymnasium as gym
+from loguru import logger
 from pydantic import BaseModel
 
-from tau2.agent.base import (
-    LocalAgent,
-    ValidAgentInputMessage,
-    is_valid_agent_history_message,
-)
+from tau2.agent.base import LocalAgent, ValidAgentInputMessage
+from tau2.config import DEFAULT_LLM_ARGS_USER, DEFAULT_LLM_USER
 from tau2.data_model.message import AssistantMessage, Message, MultiToolMessage
 from tau2.data_model.simulation import Task
 from tau2.environment.environment import Environment
@@ -26,308 +23,217 @@ class GymAgentState(BaseModel):
     messages: list[Any]
 
 
-class GymAgent(LocalAgent[GymAgentState]):
+class GymAgent(LocalAgent):
     """
-    An LLM agent that can be used to solve a task with a gym-like interface.
+    A gym agent that can be used to solve a task with a gym-like interface.
     """
 
-    def __init__(
-        self,
-        tools: List[Tool],
-        domain_policy: str,
-    ):
-        """
-        Initialize the GymAgent.
-        """
+    def __init__(self, tools: List[Tool], domain_policy: str):
         super().__init__(tools=tools, domain_policy=domain_policy)
-        self._orchestrator = None
-        self._orchestrator_thread = None
-        self._waiting_for_input = False
-        self._input_received = threading.Event()
-        self._next_action = None
-        self._conversation_snapshot = None
-        self._simulation_done = False
+        self._observation: Optional[list[Message]] = None
+        self._next_action: Optional[str] = None
+        self._action_received = threading.Event()
+        self._observation_set = threading.Event()
         self._lock = threading.Lock()
 
-    def set_orchestrator(self, orchestrator):
-        """Set the orchestrator that this agent will work with."""
-        self._orchestrator = orchestrator
-
-    def reset(self):
+    def step(self, action: str) -> list[Message]:
         """
-        Reset the agent and start the orchestrator.
-        Returns the initial conversation state.
+        Set the next action
+        This should allow generate_next_message to continue
+        Wait until generate_next_message sets the observation
+        return the observation
         """
         with self._lock:
-            # Reset state
-            self._waiting_for_input = False
-            self._input_received.clear()
-            self._next_action = None
-            self._conversation_snapshot = None
-            self._simulation_done = False
-
-            # Start orchestrator in a separate thread
-            if self._orchestrator_thread and self._orchestrator_thread.is_alive():
-                # Wait for any existing thread to finish
-                self._orchestrator_thread.join(timeout=1.0)
-
-            self._orchestrator_thread = threading.Thread(target=self._run_orchestrator)
-            self._orchestrator_thread.daemon = True
-            self._orchestrator_thread.start()
-
-            # Wait for the first call to generate_next_message
-            while not self._waiting_for_input and not self._simulation_done:
-                time.sleep(0.01)
-
-            if self._simulation_done:
-                return self._conversation_snapshot
-
-            return self._conversation_snapshot
-
-    def step(self, action: str):
-        """
-        Provide an action and continue the simulation.
-        Returns the conversation state when the next input is needed.
-        """
-        with self._lock:
-            if not self._waiting_for_input:
-                raise RuntimeError(
-                    "Agent is not waiting for input. Call reset() first."
-                )
-
+            logger.info(f"Stepping with action: {action}")
             self._next_action = action
-            self._input_received.set()
-            self._waiting_for_input = False
+            self._action_received.set()
+            self._observation_set.clear()
 
-            # Wait for the next call to generate_next_message
-            while not self._waiting_for_input and not self._simulation_done:
-                time.sleep(0.01)
+        logger.info(f"Waiting for observation")
+        # Wait for generate_next_message to set the observation
+        self._observation_set.wait()
 
-            if self._simulation_done:
-                return self._conversation_snapshot
+        logger.info(f"Got observation: {self._observation}")
 
-            return self._conversation_snapshot
-
-    def _run_orchestrator(self):
-        """Run the orchestrator in a separate thread."""
-        try:
-            if self._orchestrator:
-                self._orchestrator.run()
-        except Exception as e:
-            print(f"Orchestrator error: {e}")
-        finally:
-            self._simulation_done = True
-
-    def get_init_state(
-        self, message_history: Optional[list[Message]] = None
-    ) -> GymAgentState:
-        """Get the initial state of the agent.
-
-        Args:
-            message_history: The message history of the conversation.
-
-        Returns:
-            The initial state of the agent.
-        """
-        if message_history is None:
-            message_history = []
-        assert all(is_valid_agent_history_message(m) for m in message_history), (
-            "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
-        )
-        return GymAgentState(
-            messages=message_history,
-        )
-
-    def _display_conversation(self, state: GymAgentState):
-        """Display the current conversation history."""
-        print("\n" + "=" * 50)
-        print("CONVERSATION HISTORY:")
-        print("=" * 50)
-
-        for i, msg in enumerate(state.messages):
-            if hasattr(msg, "role"):
-                role = msg.role
-                content = getattr(msg, "content", str(msg))
-            else:
-                role = "unknown"
-                content = str(msg)
-
-            print(f"{i + 1}. [{role.upper()}]: {content}")
-
-        print("=" * 50 + "\n")
-
-    def _parse_tool_call(
-        self, tool_input: str, message_count: int = 0
-    ) -> Optional[dict]:
-        """Parse tool call using regex pattern.
-
-        Expected format: TOOL:tool_name(arg1=value1, arg2=value2)
-        """
-        # Regex pattern to match TOOL:tool_name(arguments)
-        tool_pattern = r"^TOOL:\s*(\w+)\s*\((.*)\)$"
-        match = re.match(tool_pattern, tool_input.strip())
-
-        if not match:
-            return None
-
-        tool_name = match.group(1)
-        args_str = match.group(2)
-
-        # Parse arguments (simple key=value format)
-        args = {}
-        if args_str.strip():
-            # Split by comma, but be careful about commas within quotes
-            arg_pairs = re.findall(r"(\w+)\s*=\s*([^,]+)", args_str)
-            for key, value in arg_pairs:
-                # Remove quotes if present
-                value = value.strip().strip("\"'")
-                args[key] = value
-
-        return {
-            "id": f"call_{message_count}",
-            "type": "function",
-            "function": {"name": tool_name, "arguments": args},
-        }
+        # Return the current observation
+        return deepcopy(self._observation) if self._observation else []
 
     def generate_next_message(
         self, message: ValidAgentInputMessage, state: GymAgentState
     ) -> tuple[AssistantMessage, GymAgentState]:
         """
-        Respond to a user or tool message.
-        This method is called by the orchestrator and waits for input from step().
+        Set current observation to messages
+        Wait for next_action to be set
+        Return the next message
         """
-        if isinstance(message, MultiToolMessage):
-            state.messages.extend(message.tool_messages)
-        else:
-            state.messages.append(message)
-
-        # Take a snapshot of the conversation
         with self._lock:
-            self._conversation_snapshot = deepcopy(state.messages)
-            self._waiting_for_input = True
-            self._input_received.clear()
+            logger.info(f"Got message: {message}")
+            if isinstance(message, MultiToolMessage):
+                state.messages.extend(message.tool_messages)
+            else:
+                state.messages.append(message)
+            self._observation = deepcopy(state.messages)
+            logger.info(f"Setting observation: {self._observation}")
+            self._observation_set.set()
 
-        # Wait for input from step() method
-        self._input_received.wait()
+        # Wait for step() to provide the next action
+        logger.info(f"Waiting for action")
+        self._action_received.wait()
 
-        # Get the action provided by step()
-        next_message = self._next_action
-        # if next_message is None:
-        #     # Fallback to direct input if step() wasn't called
-        #     next_message = input("Enter next action (or TOOL:tool_name(args)): ")
+        logger.info(f"Continuing with action: {self._next_action}")
 
-        # Parse the input to determine if it's a tool call or user message
-        tool_call = self._parse_tool_call(next_message, len(state.messages))
+        with self._lock:
+            action = self._next_action
+            # Reset for next iteration
+            self._action_received.clear()
+            self._observation_set.clear()
+            self._next_action = None
 
-        if tool_call:
-            # Create tool call message
-            assistant_message = AssistantMessage(
-                role="assistant", content="", tool_calls=[tool_call]
-            )
-        else:
-            # Regular user message
-            assistant_message = AssistantMessage(
-                role="assistant", content=next_message, cost=0.0
-            )
+        # Create the response message
+        response_message = AssistantMessage(role="assistant", content=action) ## FIXME: We need to handle tool calls here
+        state.messages.append(response_message)
+        return response_message, state
 
-        # Add the assistant message to state
-        state.messages.append(assistant_message)
+    def get_init_state(
+        self,
+        message_history: Optional[list[Message]] = None,
+    ) -> GymAgentState:
+        """Get the initial state of the agent."""
+        messages = message_history.copy() if message_history else []
+        return GymAgentState(messages=messages)
 
-        return assistant_message, state
+    @property
+    def waiting_for_input(self) -> bool:
+        """Check if the agent is waiting for input via step()."""
+        return self._observation_set.is_set() and not self._action_received.is_set()
+
+    def reset(self) -> list[Message]:
+        """
+        Reset the agent state and wait for generate_next_message to be called for the first time.
+        Returns the initial observation from generate_next_message.
+        """
+        with self._lock:
+            # Clear any pending synchronization
+            self._action_received.clear()
+            self._observation_set.clear()
+            self._next_action = None
+            self._observation = None
+
+        # Wait for generate_next_message to set the observation
+        self._observation_set.wait()
+
+        # Return the initial observation
+        return deepcopy(self._observation) if self._observation else []
 
 
 class TauGymEnv(gym.Env):
     """
-    A gym environment for the tau2 simulation.
+    A gym environment for the gym agent.
     """
 
     def __init__(self, domain: str, task_id: str):
-        self.domain = domain
-        self.task_id = task_id
-        self._lock = threading.Lock()
-        self._orchestrator = None
-        self._orchestrator_thread = None
-        self._waiting_for_input = False
-        self._input_received = threading.Event()
-        self._next_action = None
-        self._conversation_snapshot = None
-        self._simulation_done = False
-        self.observation_space = gym.spaces.Text()
-        self.action_space = gym.spaces.Text()
-
-    def _create_orchestrator(self) -> Orchestrator:
-        from tau2.registry import registry
-
-        environment = registry.get_env_constructor(self.domain)()
-        task = [
-            task
-            for task in registry.get_tasks_loader(self.domain)(self.task_id)
-            if task.id == self.task_id
-        ]
-        if len(task) == 0:
-            raise ValueError(f"Task {self.task_id} not found in domain {self.domain}")
-        task = task[0]
-        agent = GymAgent(
-            tools=environment.get_tools(), domain_policy=environment.get_policy()
-        )
-        user = UserSimulator(user_info=environment.get_user_info())
-        orchestrator = Orchestrator(
-            environment=environment,
-            task=task,
-            agent=agent,
-            user=user,
-        )
-        return orchestrator
-
-    def _get_obs(self) -> str:
-        # Wait for call to generate_next_message
-        while not self._waiting_for_input and not self._simulation_done:
-            time.sleep(0.01)
-
-        if self._simulation_done:
-            return self._conversation_snapshot
-
-        return self._conversation_snapshot
-
-    def _get_info(self) -> dict:
-        return {}
+        self.domain: str = domain
+        self.task_id: str = task_id
+        self._lock: threading.Lock = threading.Lock()
+        self._agent: Optional[GymAgent] = None
+        self._user: Optional[UserSimulator] = None
+        self._orchestrator: Optional[Orchestrator] = None
+        self._orchestrator_thread: Optional[threading.Thread] = None
+        self._simulation_done: bool = False
+        self.observation_space: gym.spaces.Space = gym.spaces.Text(max_length=10000)
+        self.action_space: gym.spaces.Space = gym.spaces.Text(max_length=1000)
 
     def reset(
         self, seed: Optional[int] = None, options: Optional[dict] = None
     ) -> tuple[str, dict]:
-        """
-        Reset the environment.
-
-        Args:
-            seed: The seed for the environment.
-            options: The options for the environment.
+        """Reset the environment.
+        This should create a new orchestrator and start it in a separate thread.
+        it should call reset on the agent and return the first observation.
+        It should return that observation.
+        At this point:
+            - the Agent should be waiting for input.
+            - The orchestrator should be waiting for the agent to get this input so that it can continue the simulation.
 
         Returns:
-            The initial observation and info.
+        observation, info
 
-
-
+        For now only return the observation. The info can be placeholder values.
         """
         super().reset(seed=seed)
+
         with self._lock:
             # Reset state
-            self._waiting_for_input = False
-            self._input_received.clear()
-            self._next_action = None
-            self._conversation_snapshot = None
             self._simulation_done = False
 
-            # Start orchestrator in a separate thread
+            # Wait for any existing thread to finish
             if self._orchestrator_thread and self._orchestrator_thread.is_alive():
-                # Wait for any existing thread to finish
                 self._orchestrator_thread.join(timeout=1.0)
 
-            self._orchestrator = self._create_orchestrator()
+            # Create new orchestrator
+            self._orchestrator = self.get_orchestrator()
+            self._agent = self._orchestrator.agent
+            self._user = self._orchestrator.user
+
+            # Do NOT call self._orchestrator.initialize() here; run() will do it
+
+            # Start orchestrator in a separate thread
             self._orchestrator_thread = threading.Thread(target=self._run_orchestrator)
             self._orchestrator_thread.daemon = True
             self._orchestrator_thread.start()
 
-            return self._get_obs(), self._get_info()
+            # Wait for the agent to be waiting for input
+            while not self._agent.waiting_for_input and not self._simulation_done:
+                time.sleep(0.01)
+
+            if self._simulation_done:
+                # Simulation ended immediately, return empty observation
+                return "", {}
+
+            # Get the current observation from the agent (don't call reset())
+            current_observation = (
+                self._agent._observation.copy() if self._agent._observation else []
+            )
+
+            # Convert observation to string format
+            observation_str = self._format_observation(current_observation)
+
+            return observation_str, {}
+
+    def step(self, action: str) -> tuple[str, dict, bool, bool, dict]:
+        """
+        Provide an action and continue the simulation.
+        - This should call step on the agent and return the observation along with other required values
+        At this point:
+            - The agent should be waiting for input.
+            - The orchestrator should be waiting for the agent to get this input so that it can continue the simulation.
+        We should check if the orchestrator is done.
+
+        Returns:
+        observation, reward, terminated, truncated, info
+
+        For now only return the observation and terminated. The rest can be placeholder values.
+        """
+        if self._orchestrator is None:
+            raise RuntimeError("Orchestrator not initialized. Call reset() first.")
+
+        with self._lock:
+            if self._simulation_done:
+                return "", 0.0, True, False, {}
+
+            # Provide the action to the agent
+            observation = self._agent.step(action)
+
+            # Wait for the agent to be waiting for input again or simulation to be done
+            while not self._agent.waiting_for_input and not self._simulation_done:
+                time.sleep(0.01)
+
+            # Check if simulation is done
+            terminated = self._simulation_done
+
+            # Convert observation to string format
+            observation_str = self._format_observation(observation)
+
+            return observation_str, 0.0, terminated, False, {}
 
     def _run_orchestrator(self):
         """Run the orchestrator in a separate thread."""
@@ -339,25 +245,61 @@ class TauGymEnv(gym.Env):
         finally:
             self._simulation_done = True
 
-    def step(self, action: str):
-        """
-        Provide an action and continue the simulation.
-        Returns the conversation state when the next input is needed.
-        """
-        if self._orchestrator is None:
-            raise RuntimeError("Orchestrator not initialized. Call reset() first.")
-        with self._lock:
-            if not self._waiting_for_input:
-                raise RuntimeError(
-                    "TauGymEnv is not waiting for input. Call reset() first."
-                )
+    def _format_observation(self, messages: list[Message]) -> str:
+        """Format the observation as a string."""
+        if not messages:
+            return ""
+        return "\n".join([f"{m.role}: {m.content}" for m in messages])
 
-            # Set the next action. This will trigger the agent to generate a next message.
-            self._next_action = action
-            self._input_received.set()
-            self._waiting_for_input = False
+    def get_environment(self) -> Environment:
+        """Get the environment."""
+        from tau2.registry import registry
 
-            return self._get_obs(), self._get_info()
+        return registry.get_env_constructor(self.domain)()
 
-    def render(self, mode="human"):
-        pass
+    def get_task(self) -> Task:
+        """Get the task."""
+        from tau2.registry import registry
+
+        return next(
+            task
+            for task in registry.get_tasks_loader(self.domain)()
+            if task.id == self.task_id
+        )
+
+    def get_agent(self) -> GymAgent:
+        """Get the agent."""
+        environment = self.get_environment()
+        return GymAgent(
+            tools=environment.get_tools(),
+            domain_policy=environment.get_policy(),
+        )
+
+    def get_user(self) -> UserSimulator:
+        """Get the user."""
+        environment = self.get_environment()
+        task = self.get_task()
+        try:
+            user_tools = environment.get_user_tools()
+        except ValueError:
+            user_tools = None
+        return UserSimulator(
+            tools=user_tools,
+            instructions=task.user_scenario,
+            llm=DEFAULT_LLM_USER,
+            llm_args=deepcopy(DEFAULT_LLM_ARGS_USER),
+        )
+
+    def get_orchestrator(self) -> Orchestrator:
+        """Get the orchestrator."""
+        return Orchestrator(
+            domain=self.domain,
+            agent=self.get_agent(),
+            user=self.get_user(),
+            environment=self.get_environment(),
+            task=self.get_task(),
+        )
+    
+
+# if __name__ == "__main__":
+#     env = TauGymEnv(domain="retail", task_id="1")
