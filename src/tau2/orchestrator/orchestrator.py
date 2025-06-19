@@ -262,6 +262,19 @@ class Orchestrator:
             if self.num_errors >= self.max_errors:
                 self.done = True
                 self.termination_reason = TerminationReason.TOO_MANY_ERRORS
+        # Send stop signal to the agent, user, and environment
+        last_msg_to_agent = None
+        last_msg_to_user = None
+        if self.to_role == Role.AGENT:
+            last_msg_to_agent = self.message
+        elif self.to_role == Role.USER:
+            last_msg_to_user = self.message
+        elif self.to_role == Role.ENV:
+            raise ValueError("Environment should not be the last message")
+        self.agent.stop(last_msg_to_agent, self.agent_state)
+        self.user.stop(last_msg_to_user, self.user_state)
+
+        # Wrap up the simulation
         duration = time.perf_counter() - start
         messages = self.get_trajectory()
         res = get_cost(messages)

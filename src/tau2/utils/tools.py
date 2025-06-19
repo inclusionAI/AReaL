@@ -2,7 +2,102 @@ import ast
 import re
 from typing import Any
 
-from tau2.data_model.message import ToolCall
+from tau2.data_model.message import AssistantMessage, ToolCall, UserMessage
+
+
+def parse_action_string(action: str, requestor: str = "assistant") -> AssistantMessage:
+    """
+    Parse an action string and return the appropriate message object with tool calls or content.
+
+    This function handles multiple formats of action strings:
+    1. JSON-formatted tool calls (valid ToolCall JSON)
+    2. Functional tool calls (e.g., "function_name(arg1=value1, arg2=value2)")
+    3. Plain text content (non-tool call actions)
+
+    The function automatically detects the format and creates the appropriate message type
+    (AssistantMessage or UserMessage) based on the requestor parameter.
+
+    Args:
+        action: The action string to parse. Can be:
+            - JSON string representing a ToolCall object
+            - Functional call string like "function_name(arg1=value1, arg2=value2)"
+            - Plain text content for non-tool actions
+        requestor: The role of the message sender. Must be either "assistant" (default)
+                  or "user". Determines whether to return AssistantMessage or UserMessage.
+
+    Returns:
+        AssistantMessage or UserMessage: A message object containing either:
+            - Tool calls (if the action was a valid tool call format)
+            - Text content (if the action was plain text)
+            - The original action string is preserved in the raw_data field
+
+    Raises:
+        ValueError: If the action string is empty or cannot be parsed
+
+    Examples:
+        >>> # JSON tool call
+        >>> parse_action_string('{"name": "search", "arguments": {"query": "flights"}}')
+        AssistantMessage(role="assistant", content=None, tool_calls=[ToolCall(...)], raw_data="...")
+
+        >>> # Functional tool call
+        >>> parse_action_string("search_flights(origin='NYC', destination='LAX')")
+        AssistantMessage(role="assistant", content=None, tool_calls=[ToolCall(...)], raw_data="...")
+
+        >>> # Plain text content
+        >>> parse_action_string("Hello, how can I help you?")
+        AssistantMessage(role="assistant", content="Hello, how can I help you?", tool_calls=None, raw_data="...")
+
+        >>> # User message
+        >>> parse_action_string("I need help", requestor="user")
+        UserMessage(role="user", content="I need help", tool_calls=None, raw_data="...")
+    """
+    if requestor == "user":
+        MessageClass = UserMessage
+    else:
+        MessageClass = AssistantMessage
+
+    original_action = action
+    action = action.strip()
+    # Check for empty action after stripping
+    if not action:
+        raise ValueError("Action cannot be empty")
+
+    # Check if it is a tool call JSON string
+    try:
+        tool_call = ToolCall.model_validate_json(action)
+        message = MessageClass(
+            role=requestor,
+            content=None,
+            tool_calls=[tool_call],
+            raw_data={"action": original_action},
+        )
+        return message
+    except Exception:
+        pass
+
+    # Check if it is a functional tool call
+    if is_functional_tool_call(action):
+        try:
+            tool_call = parse_functional_tool_call(action, requestor)
+            message = MessageClass(
+                role=requestor,
+                content=None,
+                tool_calls=[tool_call],
+                raw_data={"action": original_action},
+            )
+            return message
+        except Exception:
+            # If functional parsing fails, treat as plain text
+            pass
+
+    # Always return a plain text message if previous attempts fail
+    message = MessageClass(
+        role=requestor,
+        content=original_action,
+        tool_calls=None,
+        raw_data={"action": original_action},
+    )
+    return message
 
 
 def parse_functional_tool_call(
@@ -143,41 +238,6 @@ def is_functional_tool_call(text: str) -> bool:
     text = text.strip()
     # Pattern: word followed by parentheses
     return bool(re.match(r"^\w+\s*\(.*\)$", text))
-
-
-def extract_tool_calls_from_text(
-    text: str, requestor: str = "assistant"
-) -> list[ToolCall]:
-    """
-    Extract multiple tool calls from a text that may contain multiple functional calls.
-
-    Args:
-        text: Text that may contain multiple functional tool calls
-        requestor: The requestor of the tool calls
-
-    Returns:
-        List of ToolCall objects
-
-    Examples:
-        >>> extract_tool_calls_from_text("search_flights(origin='NYC') book_ticket(flight_id=123)")
-        [ToolCall(name="search_flights", ...), ToolCall(name="book_ticket", ...)]
-    """
-    tool_calls = []
-
-    # Split by common separators and check each part
-    parts = re.split(r"[;\n]", text)
-
-    for part in parts:
-        part = part.strip()
-        if part and is_functional_tool_call(part):
-            try:
-                tool_call = parse_functional_tool_call(part, requestor)
-                tool_calls.append(tool_call)
-            except (ValueError, SyntaxError):
-                # Skip invalid tool calls but continue processing
-                continue
-
-    return tool_calls
 
 
 def to_functional_format(tool_call: ToolCall) -> str:

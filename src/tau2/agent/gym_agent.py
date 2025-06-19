@@ -1,7 +1,7 @@
 import threading
 import time
 from copy import deepcopy
-from typing import Any, List, Optional
+from typing import List, Optional
 
 import gymnasium as gym
 from loguru import logger
@@ -15,11 +15,12 @@ from tau2.data_model.message import (
     Message,
     MultiToolMessage,
 )
-from tau2.data_model.simulation import Task
+from tau2.data_model.simulation import SimulationRun, Task
 from tau2.environment.environment import Environment
 from tau2.environment.tool import Tool
 from tau2.orchestrator.orchestrator import Orchestrator
 from tau2.user.user_simulator import UserSimulator
+from tau2.utils.tools import parse_action_string
 
 
 class GymAgentState(BaseModel):
@@ -52,12 +53,28 @@ class GymAgent(LocalAgent):
         """
         super().__init__(tools=tools, domain_policy=domain_policy)
         self._observation: Optional[list[Message]] = None
-        self._next_action: Optional[str] = None
+        self._next_action: Optional[AssistantMessage] = None
         self._action_received = threading.Event()
         self._observation_set = threading.Event()
         self._lock = threading.Lock()
 
-    def step(self, action: str) -> list[Message]:
+    def stop(
+        self,
+        message: Optional[AssistantMessage] = None,
+        state: Optional[GymAgentState] = None,
+    ) -> None:
+        """
+        Stops the agent.
+        Args:
+            message: The last message to the agent.
+        """
+        super().stop(message, state)
+        history = deepcopy(state.messages) if state else []
+        self._observation = history + [message] if message else []
+        self._action_received.set()
+        self._observation_set.set()
+
+    def step(self, action_msg: AssistantMessage) -> list[Message]:
         """
         Provide the next action to the agent and get the resulting observation.
 
@@ -71,7 +88,7 @@ class GymAgent(LocalAgent):
         - Returns a copy of the current observation
 
         Args:
-            action: The action string to be executed by the agent
+            action_msg: The action string to be executed by the agent
 
         Returns:
             A deep copy of the current message history (observation)
@@ -81,8 +98,8 @@ class GymAgent(LocalAgent):
             The returned observation includes all messages up to and including the agent's response to the provided action.
         """
         with self._lock:
-            logger.info(f"Stepping with action: {action}")
-            self._next_action = action
+            logger.info(f"Stepping with action: {str(action_msg)}")
+            self._next_action = action_msg
             self._action_received.set()
             self._observation_set.clear()
 
@@ -141,19 +158,15 @@ class GymAgent(LocalAgent):
         logger.info(f"Waiting for action")
         self._action_received.wait()
 
-        logger.info(f"Continuing with action: {self._next_action}")
+        logger.info(f"Continuing with action: {str(self._next_action)}")
 
         with self._lock:
-            action = self._next_action
+            response_message = self._next_action
             # Reset for next iteration
             self._action_received.clear()
             self._observation_set.clear()
             self._next_action = None
 
-        # Create the response message
-        response_message = AssistantMessage(
-            role="assistant", content=action
-        )  ## FIXME: We need to handle tool calls here
         state.messages.append(response_message)
         return response_message, state
 
@@ -238,6 +251,24 @@ class AgentGymEnv(gym.Env):
     - Automatic orchestrator lifecycle management
     - Standard gym observation/action spaces
     - Graceful handling of simulation termination
+
+    Action Input Format:
+    The step() method accepts action strings in multiple formats:
+    1. JSON-formatted tool calls: Valid ToolCall JSON objects
+       Example: '{"name": "search", "arguments": {"query": "flights"}}'
+
+    2. Functional tool calls: Function-style syntax with keyword arguments
+       Example: "search_flights(origin='NYC', destination='LAX')"
+       Example: "book_ticket(flight_id=123, passenger_name='John Doe')"
+
+    3. Plain text content: Regular text messages for communication
+       Example: "Hello, how can I help you?"
+       Example: "I need to book a flight from New York to Los Angeles"
+
+    The environment automatically detects the format and converts it to the appropriate
+    message type (AssistantMessage with tool calls or content). Plain text messages
+    are sent to the user simulator, while tool calls are executed against the environment
+    to perform actions like searching databases, making bookings, or retrieving information.
     """
 
     def __init__(self, domain: str, task_id: str):
@@ -255,7 +286,8 @@ class AgentGymEnv(gym.Env):
         self._user: Optional[UserSimulator] = None
         self._orchestrator: Optional[Orchestrator] = None
         self._orchestrator_thread: Optional[threading.Thread] = None
-        self._simulation_done: bool = False
+        self._simulation_done: threading.Event = threading.Event()
+        self._simulation_run: Optional[SimulationRun] = None
         self.observation_space: gym.spaces.Space = gym.spaces.Text(max_length=10000)
         self.action_space: gym.spaces.Space = gym.spaces.Text(max_length=1000)
 
@@ -292,7 +324,8 @@ class AgentGymEnv(gym.Env):
 
         with self._lock:
             # Reset state
-            self._simulation_done = False
+            self._simulation_run = None
+            self._simulation_done.clear()
 
             # Wait for any existing thread to finish
             if self._orchestrator_thread and self._orchestrator_thread.is_alive():
@@ -311,12 +344,17 @@ class AgentGymEnv(gym.Env):
             self._orchestrator_thread.start()
 
             # Wait for the agent to be waiting for input
-            while not self._agent.waiting_for_input and not self._simulation_done:
-                time.sleep(0.01)
+            # Use a timeout to periodically check if simulation is done
+            while (
+                not self._simulation_done.is_set() and not self._agent.waiting_for_input
+            ):
+                self._simulation_done.wait(timeout=0.01)
+                if self._simulation_done.is_set():
+                    break
 
-            if self._simulation_done:
+            if self._simulation_done.is_set():
                 # Simulation ended immediately, return empty observation
-                return "", {}
+                return "", self._get_info()
 
             # Get the current observation from the agent (don't call reset())
             current_observation = (
@@ -326,7 +364,21 @@ class AgentGymEnv(gym.Env):
             # Convert observation to string format
             observation_str = self._format_observation(current_observation)
 
-            return observation_str, {}
+            return observation_str, self._get_info()
+
+    def _get_info(self) -> dict:
+        """
+        Get the current info.
+        """
+        return {"simulation_run": self._get_simulation_run()}
+
+    def _get_simulation_run(self) -> SimulationRun:
+        """
+        Get the current simulation run.
+        """
+        if self._simulation_run is None:
+            return {}
+        return self._simulation_run.model_dump_json(indent=2)
 
     def step(self, action: str) -> tuple[str, dict, bool, bool, dict]:
         """
@@ -342,7 +394,13 @@ class AgentGymEnv(gym.Env):
         and the internal Tau2 simulation running in a separate thread.
 
         Args:
-            action: The action string to be executed by the agent
+            action: The action string to be executed by the agent. Supports multiple formats:
+                - JSON-formatted tool calls: '{"name": "search", "arguments": {"query": "flights"}}'
+                - Functional tool calls: "search_flights(origin='NYC', destination='LAX')"
+                - Plain text content: "Hello, how can I help you?"
+                See the class docstring for detailed format examples.
+                Note: Plain text messages are sent to the user simulator, while tool calls
+                are executed against the environment to perform actions.
 
         Returns:
             A tuple containing:
@@ -364,23 +422,31 @@ class AgentGymEnv(gym.Env):
             raise RuntimeError("Orchestrator not initialized. Call reset() first.")
 
         with self._lock:
-            if self._simulation_done:
-                return "", 0.0, True, False, {}
+            if self._simulation_done.is_set():
+                return "", 0.0, True, False, self._get_info()
+
+            # Parse the action string into a message
+            action_msg = parse_action_string(action)
 
             # Provide the action to the agent
-            observation = self._agent.step(action)
+            observation = self._agent.step(action_msg)
 
-            # Wait for the agent to be waiting for input again or simulation to be done
-            while not self._agent.waiting_for_input and not self._simulation_done:
-                time.sleep(0.01)
+            # Wait for the agent to be waiting for input again, but only if simulation is not done
+            # Use a timeout to periodically check if simulation is done
+            while (
+                not self._simulation_done.is_set() and not self._agent.waiting_for_input
+            ):
+                self._simulation_done.wait(timeout=0.01)
+                if self._simulation_done.is_set():
+                    break
 
             # Check if simulation is done
-            terminated = self._simulation_done
+            terminated = self._simulation_done.is_set()
 
             # Convert observation to string format
             observation_str = self._format_observation(observation)
 
-            return observation_str, 0.0, terminated, False, {}
+            return observation_str, 0.0, terminated, False, self._get_info()
 
     def _run_orchestrator(self):
         """
@@ -393,14 +459,16 @@ class AgentGymEnv(gym.Env):
         The method sets the _simulation_done flag when the orchestrator
         finishes (either normally or due to an error), which signals
         to the main thread that the simulation has ended.
+        It also sets the simulation run to the orchestrator's simulation run.
         """
         try:
             if self._orchestrator:
-                self._orchestrator.run()
+                simulation_run = self._orchestrator.run()
+                self._simulation_run = simulation_run
         except Exception as e:
             print(f"Orchestrator error: {e}")
         finally:
-            self._simulation_done = True
+            self._simulation_done.set()
 
     def _format_observation(self, messages: list[Message]) -> str:
         """
@@ -516,3 +584,26 @@ class AgentGymEnv(gym.Env):
             environment=self.get_environment(),
             task=self.get_task(),
         )
+
+
+if __name__ == "__main__":
+    env = AgentGymEnv(domain="mock", task_id="create_task_1")
+    observation, info = env.reset()
+    print(observation)
+    print(info)
+    observation, reward, terminated, truncated, info = env.step(
+        "create_task(user_id='user_1', title='Important Meeting', description='task_description')"
+    )
+    print(observation)
+    print(reward)
+    print(terminated)
+    print(truncated)
+    print(info)
+    observation, reward, terminated, truncated, info = env.step(
+        "ok done! It is called Important Meeting and assigned to user_1"
+    )
+    print(observation)
+    print(reward)
+    print(terminated)
+    print(truncated)
+    print(info)

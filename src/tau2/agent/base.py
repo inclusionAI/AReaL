@@ -47,6 +47,20 @@ class BaseAgent(ABC, Generic[AgentState]):
         raise NotImplementedError
 
     @abstractmethod
+    def stop(
+        self,
+        message: Optional[ValidAgentInputMessage] = None,
+        state: Optional[AgentState] = None,
+    ) -> None:
+        """
+        Can be used to stop the agent.
+        Args:
+            message: The last message to the agent.
+            state: The agent last state.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def get_init_state(
         self,
         message_history: Optional[list[Message]] = None,
@@ -91,3 +105,16 @@ class LocalAgent(BaseAgent[AgentState]):
         super().__init__()
         self.tools = tools
         self.domain_policy = domain_policy
+
+    def stop(
+        self,
+        message: Optional[ValidAgentInputMessage] = None,
+        state: Optional[AgentState] = None,
+    ) -> None:
+        """
+        Stops the agent.
+        Args:
+            message: The last message to the agent.
+            state: The agent state.
+        """
+        pass

@@ -148,3 +148,9 @@ class BaseUser(ABC):
         if cur_seed is not None:
             logger.warning(f"Seed is already set to {cur_seed}, resetting it to {seed}")
         self.llm_args["seed"] = seed
+
+    def stop(self, message: Optional[UserMessage] = None) -> None:
+        """
+        Stops the user simulator.
+        """
+        pass

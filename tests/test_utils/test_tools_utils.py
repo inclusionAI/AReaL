@@ -1,10 +1,10 @@
 import pytest
 
-from tau2.data_model.message import ToolCall
+from tau2.data_model.message import AssistantMessage, ToolCall, UserMessage
 from tau2.utils.tools import (
     _evaluate_ast_node,
-    extract_tool_calls_from_text,
     is_functional_tool_call,
+    parse_action_string,
     parse_functional_tool_call,
     to_functional_format,
 )
@@ -345,64 +345,6 @@ class TestIsFunctionalToolCall:
         assert is_functional_tool_call("(origin='NYC')") is False
 
 
-class TestExtractToolCallsFromText:
-    """Test cases for extract_tool_calls_from_text function."""
-
-    def test_single_tool_call(self):
-        """Test extracting a single tool call."""
-        text = "search_flights(origin='NYC', destination='LAX')"
-        results = extract_tool_calls_from_text(text)
-        assert len(results) == 1
-        assert results[0].name == "search_flights"
-        assert results[0].arguments == {"origin": "NYC", "destination": "LAX"}
-
-    def test_multiple_tool_calls_semicolon_separated(self):
-        """Test extracting multiple tool calls separated by semicolons."""
-        text = "search_flights(origin='NYC'); book_ticket(flight_id=123)"
-        results = extract_tool_calls_from_text(text)
-        assert len(results) == 2
-        assert results[0].name == "search_flights"
-        assert results[1].name == "book_ticket"
-
-    def test_multiple_tool_calls_newline_separated(self):
-        """Test extracting multiple tool calls separated by newlines."""
-        text = "search_flights(origin='NYC')\nbook_ticket(flight_id=123)"
-        results = extract_tool_calls_from_text(text)
-        assert len(results) == 2
-        assert results[0].name == "search_flights"
-        assert results[1].name == "book_ticket"
-
-    def test_mixed_content_with_tool_calls(self):
-        """Test extracting tool calls from mixed content."""
-        text = "Let me help you with that. search_flights(origin='NYC') and then book_ticket(flight_id=123)"
-        results = extract_tool_calls_from_text(text)
-        assert len(results) == 0  # No valid tool calls in this format
-
-    def test_invalid_tool_calls_ignored(self):
-        """Test that invalid tool calls are ignored."""
-        text = "search_flights(origin=, destination='LAX'); valid_call(param='value')"
-        results = extract_tool_calls_from_text(text)
-        assert len(results) == 1
-        assert results[0].name == "valid_call"
-
-    def test_empty_text(self):
-        """Test extracting from empty text."""
-        results = extract_tool_calls_from_text("")
-        assert results == []
-
-    def test_whitespace_only(self):
-        """Test extracting from whitespace-only text."""
-        results = extract_tool_calls_from_text("   \n  \t  ")
-        assert results == []
-
-    def test_custom_requestor(self):
-        """Test extracting with custom requestor."""
-        text = "search_flights(origin='NYC')"
-        results = extract_tool_calls_from_text(text, requestor="user")
-        assert len(results) == 1
-        assert results[0].requestor == "user"
-
-
 class TestToFunctionalFormat:
     """Test cases for to_functional_format function."""
 
@@ -560,3 +502,250 @@ class TestToFunctionalFormat:
         # Should be equivalent (ignoring id and requestor which aren't part of functional format)
         assert parsed_tool_call.name == original_tool_call.name
         assert parsed_tool_call.arguments == original_tool_call.arguments
+
+
+class TestParseActionString:
+    """Test cases for parse_action_string function."""
+
+    def test_json_tool_call_assistant(self):
+        """Test parsing JSON tool call for assistant."""
+        action = '{"name": "search_flights", "arguments": {"origin": "NYC", "destination": "LAX"}}'
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content is None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "search_flights"
+        assert result.tool_calls[0].arguments == {"origin": "NYC", "destination": "LAX"}
+        assert result.raw_data == {"action": action}
+
+    def test_json_tool_call_user(self):
+        """Test parsing JSON tool call for user."""
+        action = '{"name": "search_flights", "arguments": {"origin": "NYC"}}'
+        result = parse_action_string(action, requestor="user")
+
+        assert isinstance(result, UserMessage)
+        assert result.role == "user"
+        assert result.content is None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "search_flights"
+        assert result.tool_calls[0].arguments == {"origin": "NYC"}
+        assert result.raw_data == {"action": action}
+
+    def test_functional_tool_call_assistant(self):
+        """Test parsing functional tool call for assistant."""
+        action = "search_flights(origin='NYC', destination='LAX')"
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content is None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "search_flights"
+        assert result.tool_calls[0].arguments == {"origin": "NYC", "destination": "LAX"}
+        assert result.raw_data == {"action": action}
+
+    def test_functional_tool_call_user(self):
+        """Test parsing functional tool call for user."""
+        action = "book_ticket(flight_id=123, passenger_name='John Doe')"
+        result = parse_action_string(action, requestor="user")
+
+        assert isinstance(result, UserMessage)
+        assert result.role == "user"
+        assert result.content is None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "book_ticket"
+        assert result.tool_calls[0].arguments == {
+            "flight_id": 123,
+            "passenger_name": "John Doe",
+        }
+        assert result.raw_data == {"action": action}
+
+    def test_functional_tool_call_with_complex_args(self):
+        """Test parsing functional tool call with complex arguments."""
+        action = (
+            "update_config(config={'timeout': 30, 'retries': 3}, items=['a', 'b', 'c'])"
+        )
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content is None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "update_config"
+        assert result.tool_calls[0].arguments == {
+            "config": {"timeout": 30, "retries": 3},
+            "items": ["a", "b", "c"],
+        }
+        assert result.raw_data == {"action": action}
+
+    def test_functional_tool_call_no_args(self):
+        """Test parsing functional tool call with no arguments."""
+        action = "refresh()"
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content is None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "refresh"
+        assert result.tool_calls[0].arguments == {}
+        assert result.raw_data == {"action": action}
+
+    def test_plain_text_content_assistant(self):
+        """Test parsing plain text content for assistant."""
+        action = "Hello, how can I help you today?"
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content == "Hello, how can I help you today?"
+        assert result.tool_calls is None
+        assert result.raw_data == {"action": action}
+
+    def test_plain_text_content_user(self):
+        """Test parsing plain text content for user."""
+        action = "I need help with my flight booking"
+        result = parse_action_string(action, requestor="user")
+
+        assert isinstance(result, UserMessage)
+        assert result.role == "user"
+        assert result.content == "I need help with my flight booking"
+        assert result.tool_calls is None
+        assert result.raw_data == {"action": action}
+
+    def test_plain_text_with_spaces(self):
+        """Test parsing plain text with leading/trailing spaces."""
+        action = "  Hello world  "
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content == "  Hello world  "
+        assert result.tool_calls is None
+        assert result.raw_data == {"action": action}
+
+    def test_empty_string_raises_error(self):
+        """Test that empty string raises ValueError."""
+        with pytest.raises(ValueError, match="Action cannot be empty"):
+            parse_action_string("", requestor="assistant")
+
+    def test_whitespace_only_raises_error(self):
+        """Test that whitespace-only string raises ValueError."""
+        with pytest.raises(ValueError, match="Action cannot be empty"):
+            parse_action_string("   ", requestor="assistant")
+
+    def test_invalid_json_raises_no_error(self):
+        """Test that invalid JSON is treated as plain text."""
+        action = '{"invalid": json}'
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content == '{"invalid": json}'
+        assert result.tool_calls is None
+        assert result.raw_data == {"action": action}
+
+    def test_malformed_functional_call_raises_no_error(self):
+        """Test that malformed functional call is treated as plain text."""
+        action = "search_flights(origin=, destination='LAX')"
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content == "search_flights(origin=, destination='LAX')"
+        assert result.tool_calls is None
+        assert result.raw_data == {"action": action}
+
+    def test_text_that_looks_like_function_but_isnt(self):
+        """Test that text that looks like a function but isn't valid is treated as plain text."""
+        action = "search_flights"
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content == "search_flights"
+        assert result.tool_calls is None
+        assert result.raw_data == {"action": action}
+
+    def test_text_with_parentheses_but_no_function_name(self):
+        """Test that text with parentheses but no function name is treated as plain text."""
+        action = "(origin='NYC', destination='LAX')"
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content == "(origin='NYC', destination='LAX')"
+        assert result.tool_calls is None
+        assert result.raw_data == {"action": action}
+
+    def test_json_with_requestor_field(self):
+        """Test parsing JSON tool call that includes requestor field."""
+        action = (
+            '{"name": "search", "arguments": {"query": "flights"}, "requestor": "user"}'
+        )
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content is None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "search"
+        assert result.tool_calls[0].arguments == {"query": "flights"}
+        assert result.raw_data == {"action": action}
+
+    def test_functional_call_with_escaped_quotes(self):
+        """Test parsing functional call with escaped quotes in strings."""
+        action = "update_description(description='John\\'s flight')"
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content is None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "update_description"
+        assert result.tool_calls[0].arguments == {"description": "John's flight"}
+        assert result.raw_data == {"action": action}
+
+    def test_functional_call_with_negative_numbers(self):
+        """Test parsing functional call with negative numbers."""
+        action = "set_coordinates(lat=-40.7128, lng=-74.0060)"
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content is None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "set_coordinates"
+        assert result.tool_calls[0].arguments == {"lat": -40.7128, "lng": -74.0060}
+        assert result.raw_data == {"action": action}
+
+    def test_functional_call_with_boolean_values(self):
+        """Test parsing functional call with boolean values."""
+        action = "update_preferences(notifications=True, marketing=False)"
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content is None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "update_preferences"
+        assert result.tool_calls[0].arguments == {
+            "notifications": True,
+            "marketing": False,
+        }
+        assert result.raw_data == {"action": action}
+
+    def test_functional_call_with_none_value(self):
+        """Test parsing functional call with None value."""
+        action = "set_value(key='test', value=None)"
+        result = parse_action_string(action, requestor="assistant")
+
+        assert isinstance(result, AssistantMessage)
+        assert result.role == "assistant"
+        assert result.content is None
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "set_value"
+        assert result.tool_calls[0].arguments == {"key": "test", "value": None}
+        assert result.raw_data == {"action": action}
