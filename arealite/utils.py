@@ -622,3 +622,10 @@ def split_dict_tensor_with_cu_seqlens(
             {**unsqueezed, **not_to_split, "cu_seqlens": batch_cu_seqlens}
         )
     return results
+
+
+def unpack_sequence(x: torch.Tensor, cu_seqlens: torch.IntTensor):
+    """Unpack a sequence tensor into a list of tensors based on cumulative sequence lengths."""
+    return torch.split(
+        x, (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist(), dim=0
+    )
