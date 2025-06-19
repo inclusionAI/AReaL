@@ -65,7 +65,7 @@ class SGLangClient(LLMClient):
             payload=payload,
             method="POST",
             max_retries=3,
-            timeout=self.client_config.gen_timeout,
+            timeout=self.client_config.request_timeout,
         )
 
         # Parse response

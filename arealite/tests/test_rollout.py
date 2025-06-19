@@ -4,17 +4,12 @@ import uuid
 from omegaconf import OmegaConf
 
 from arealite.api.cli_args import (
-    AgentConfig,
-    EnvConfig,
     GenerationHyperparameters,
     LLMClientConfig,
-    MathCodeSingleStepAgentConfig,
-    MathCodeSingleStepEnvConfig,
     TrainingArgs,
-    TrajCollectorConfig,
 )
-from arealite.api.collector_api import TrajCollectorFactory
 from arealite.api.io_struct import Trajectory
+from arealite.api.rollout_api import RolloutWorkflowFactory
 from realhf.base import name_resolve
 
 args = OmegaConf.load("arealite/config/async_ppo.yaml")
@@ -42,35 +37,16 @@ with open(jsonl_path, "w") as f:
 client_cfg = LLMClientConfig(
     server_backend="sglang",
     tokenizer_path="/storage/testing/models/Qwen__Qwen3-1.7B/",
-    gen_timeout=1800,
+    request_timeout=1800,
 )
 client = SGLangClient(args, client_config=client_cfg)
 gconfig = GenerationHyperparameters(max_new_tokens=16)
-agent_config = AgentConfig(
-    "math_code_single_step",
-    math_code_single_step=MathCodeSingleStepAgentConfig(
-        gconfig=GenerationHyperparameters(max_new_tokens=16),
-        tokenizer_path="/storage/testing/models/Qwen__Qwen3-1.7B/",
-    ),
-)
-env_config = EnvConfig(
-    type="math_code_single_step",
-    reward_scaling=10.0,
-    reward_bias=-0.5,
-    math_code_single_step=MathCodeSingleStepEnvConfig(
-        dataset_path=jsonl_path,
-    ),
+
+collector = RolloutWorkflowFactory(args, client_cfg).make_workflow(
+    args.rollout.workflow
 )
 
-
-collector = TrajCollectorFactory(args).make_collector(
-    TrajCollectorConfig(
-        agent=agent_config,
-        env=env_config,
-        llm_client=client_cfg,
-    ),
-)
-
+# Test the rollout workflow with the provided JSONL data
 with open(jsonl_path, "r") as f:
     for i, l in enumerate(f.readlines()):
         data = json.loads(l)

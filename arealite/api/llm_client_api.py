@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+import aiohttp
 import requests
 import transformers
 
@@ -11,6 +12,7 @@ from arealite.api.cli_args import LLMClientConfig, TrainingArgs
 from arealite.api.io_struct import (
     LLMRequest,
     LLMResponse,
+    LLMServerInfo,
     WeightMeta,
     WeightUpdateGroupMeta,
 )
@@ -67,15 +69,13 @@ class LLMClient(abc.ABC):
         Raises:
             RuntimeError: If all servers fail after max retries
         """
-        servers = self.registry.get_healthy_servers()
-        if not servers:
-            raise RuntimeError("No healthy servers available")
 
-        timeout = timeout or self.client_config.gen_timeout
+        timeout = timeout or self.client_config.request_timeout
         last_exception = None
 
         # Try each server with retries
-        for server_info in servers:
+        for _ in range(max_retries):
+            server_info = self.select_server()
             base_url = f"http://{server_info.host}:{server_info.port}"
             url = f"{base_url}{endpoint}"
 
@@ -102,6 +102,84 @@ class LLMClient(abc.ABC):
                     last_exception = e
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
+                    continue
+
+            # Mark server as potentially unhealthy after all retries failed
+            # Note: Could implement more sophisticated health tracking here
+
+        # All servers exhausted
+        raise RuntimeError(
+            f"All servers failed after {max_retries} retries each. "
+            f"Last error: {last_exception}"
+        )
+
+    async def arequest_with_retry(
+        self,
+        endpoint: str,
+        payload: Optional[Dict[str, Any]] = None,
+        method: str = "POST",
+        max_retries: int = 3,
+        timeout: Optional[float] = None,
+        retry_delay: float = 1.0,
+    ) -> tuple[aiohttp.ClientResponse, Any]:
+        """
+        Send async HTTP request to servers with retry logic and server switching.
+
+        Args:
+            endpoint: API endpoint (e.g., "/generate", "/health")
+            payload: Request payload for POST/PUT requests
+            method: HTTP method ("GET", "POST", "PUT", "DELETE")
+            max_retries: Maximum number of retry attempts per server
+            timeout: Request timeout in seconds
+            retry_delay: Delay between retries in seconds
+
+        Returns:
+            tuple: (aiohttp.ClientResponse, server_info) - Successful HTTP response and server info
+
+        Raises:
+            RuntimeError: If all servers fail after max retries
+        """
+
+        timeout = timeout or self.client_config.request_timeout
+        last_exception = None
+
+        # Try each server with retries
+        for _ in range(max_retries):
+            server_info = self.select_server()
+            base_url = f"http://{server_info.host}:{server_info.port}"
+            url = f"{base_url}{endpoint}"
+
+            for attempt in range(max_retries):
+                try:
+                    async with aiohttp.ClientSession(
+                        timeout=aiohttp.ClientTimeout(
+                            total=timeout,
+                            sock_connect=30,
+                            sock_read=timeout,
+                        )
+                    ) as session:
+                        if method.upper() == "GET":
+                            response = await session.get(url)
+                        elif method.upper() == "POST":
+                            response = await session.post(url, json=payload)
+                        elif method.upper() == "PUT":
+                            response = await session.put(url, json=payload)
+                        elif method.upper() == "DELETE":
+                            response = await session.delete(url)
+                        else:
+                            raise ValueError(f"Unsupported HTTP method: {method}")
+
+                        response.raise_for_status()
+                        return response, server_info
+
+                except (
+                    aiohttp.ClientError,
+                    aiohttp.ClientResponseError,
+                    asyncio.TimeoutError,
+                ) as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
                     continue
 
             # Mark server as potentially unhealthy after all retries failed

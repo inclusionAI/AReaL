@@ -21,7 +21,7 @@ from arealite.impl.sglang_client import SGLangClient
 client_cfg = LLMClientConfig(
     server_backend="sglang",
     tokenizer_path="/storage/testing/models/Qwen__Qwen3-1.7B/",
-    gen_timeout=1800,
+    request_timeout=1800,
 )
 client = SGLangClient(args, client_config=client_cfg)
 req = LLMRequest(

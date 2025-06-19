@@ -14,7 +14,6 @@ from realhf.api.cli_args import (
     SGLangConfig,
     TensorBoardConfig,
     WandBConfig,
-    vLLMConfig,
 )
 
 
@@ -31,13 +30,19 @@ class LLMServiceConfig:
         default=None, metadata={"help": "Name of the served model"}
     )
     seed: int = field(default=1, metadata={"help": "Random seed"})
-    cluster: ClusterSpecConfig = field(default_factory=ClusterSpecConfig)
+    cluster: ClusterSpecConfig = field(
+        default_factory=ClusterSpecConfig,
+        metadata={"help": "Cluster specification configuration"},
+    )
     server_backend: str = field(
         default="sglang",
         metadata={"help": "Backend for serving", "choices": ["sglang", "vllm"]},
     )
     model_path: str = field(default="", metadata={"help": "Path to model"})
-    parallel: ParallelismConfig = field(default_factory=ParallelismConfig)
+    parallel: ParallelismConfig = field(
+        default_factory=ParallelismConfig,
+        metadata={"help": "Model parallelism configuration"},
+    )
     health_check_interval: int = field(
         default=5, metadata={"help": "Health check interval in seconds"}
     )
@@ -54,21 +59,21 @@ class LLMServiceConfig:
         default=None,
         metadata={"help": "SGLang configuration (if using SGLang backend)"},
     )
-    vllm: Optional[vLLMConfig] = field(
-        default=None, metadata={"help": "vLLM configuration (if using vLLM backend)"}
-    )
 
 
 @dataclass
 class LLMClientConfig:
     server_backend: str = field(
         default="sglang",
-        metadata={"help": "Backend for client", "choices": ["sglang", "vllm"]},
+        metadata={"help": "Backend for client", "choices": ["sglang"]},
     )
-    schedule_policy: str = "round_robin"
+    schedule_policy: str = field(
+        default="round_robin",
+        metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
+    )
     tokenizer_path: str = field(default="", metadata={"help": "Path to tokenizer"})
-    gen_timeout: int = field(
-        default=1800, metadata={"help": "Generation timeout in seconds"}
+    request_timeout: int = field(
+        default=3600, metadata={"help": "Request timeout in seconds"}
     )
     update_weights_timeout: int = field(
         default=300, metadata={"help": "Weight update timeout in seconds"}
@@ -81,16 +86,33 @@ class LLMClientConfig:
 ## Dataset configs. ##
 @dataclass
 class DatasetConfig:
-    path: str = ""
-    name: Optional[str] = None
-    split: Optional[str] = None
-    data_files: Optional[str] = None
-    batch_size: int = field(default=1, metadata={"help": "Training batch size"})
+    path: str = field(
+        default="", metadata={"help": "Path or HuggingFace identifier to the dataset"}
+    )
+    name: Optional[str] = field(
+        default=None, metadata={"help": "Dataset name (for HuggingFace datasets)"}
+    )
+    split: Optional[str] = field(
+        default=None, metadata={"help": "Dataset split to use (e.g., 'train', 'test')"}
+    )
+    data_files: Optional[str] = field(
+        default=None, metadata={"help": "Specific data files to load"}
+    )
+    batch_size: int = field(
+        default=1, metadata={"help": "Batch size of the dataloader"}
+    )
     shuffle: bool = field(
         default=True, metadata={"help": "Whether to shuffle the dataset"}
     )
-    pin_memory: bool = False
-    num_workers: int = 0
+    pin_memory: bool = field(
+        default=False,
+        metadata={
+            "help": "Pin memory for faster data loading (set True for GPU training)"
+        },
+    )
+    num_workers: int = field(
+        default=0, metadata={"help": "Number of worker processes for data loading"}
+    )
 
 
 ## Training backend configs. ##
@@ -98,13 +120,8 @@ class DatasetConfig:
 
 @dataclass
 class FSDPConfig:
-    sync_module_states: bool = field(
-        default=True, metadata={"help": "Synchronize module states across processes"}
-    )
-    use_orig_params: bool = field(
-        default=False,
-        metadata={"help": "Use original parameters instead of flattened ones"},
-    )
+    sync_module_states: bool = True
+    use_orig_params: bool = False
 
 
 @dataclass
@@ -144,6 +161,7 @@ class EngineConfig:
     )
     backend: EngineBackendConfig = field(
         default_factory=EngineBackendConfig,
+        metadata={"help": "Training backend configuration"},
     )
 
 
@@ -157,9 +175,16 @@ class MathCodeSingleStepConfig:
 
 @dataclass
 class RolloutWorkflowConfig:
-    type: str = "default"
+    type: str = field(
+        default="rlvr",
+        metadata={
+            "help": "Rollout workflow type",
+            "choices": ["rlvr", "math_code_single_step"],
+        },
+    )
     math_code_single_step: Optional[MathCodeSingleStepConfig] = field(
-        default_factory=MathCodeSingleStepConfig
+        default_factory=MathCodeSingleStepConfig,
+        metadata={"help": "The configuration for the single-step math/code workflow"},
     )
 
 
@@ -168,13 +193,13 @@ class RolloutWorkflowConfig:
 
 @dataclass
 class RolloutControllerConfig:
-    workflow: Optional[RolloutWorkflowConfig] = field(
+    workflow: RolloutWorkflowConfig = field(
         default_factory=RolloutWorkflowConfig,
-        metadata={
-            "help": "Agentic workflow configuration. If None, degenerate to the RLVR pipeline."
-        },
+        metadata={"help": "Rollout workflow configuration."},
     )
-    num_workers: int = 1
+    num_workers: int = field(
+        default=1, metadata={"help": "Number of rollout worker processes"}
+    )
     max_concurrent_rollouts: int = field(
         default=1, metadata={"help": "Maximum number of concurrent rollouts"}
     )
@@ -188,9 +213,13 @@ class RolloutControllerConfig:
     filter_reward_ub: float = field(
         default=float("inf"), metadata={"help": "Upper bound for reward filtering"}
     )
-    llm_client: LLMClientConfig = field(default_factory=LLMClientConfig)
+    llm_client: LLMClientConfig = field(
+        default_factory=LLMClientConfig,
+        metadata={"help": "LLM client configuration for rollouts"},
+    )
     gconfig: GenerationHyperparameters = field(
-        default_factory=GenerationHyperparameters
+        default_factory=GenerationHyperparameters,
+        metadata={"help": "Generation hyperparameters for rollouts"},
     )
 
 
@@ -199,25 +228,44 @@ class RolloutControllerConfig:
 
 @dataclass
 class SFTTrainerConfig:
-    model: EngineConfig = field(default_factory=EngineConfig)
-    mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
+    model: EngineConfig = field(
+        default_factory=EngineConfig,
+        metadata={"help": "Model configuration for SFT training"},
+    )
+    mb_spec: MicroBatchSpec = field(
+        default_factory=MicroBatchSpec,
+        metadata={"help": "Micro-batch specification for SFT training"},
+    )
 
 
 @dataclass
 class PPOTrainerConfig:
-    async_training: bool = True
-    actor: EngineConfig = field(default_factory=EngineConfig)
+    async_training: bool = field(
+        default=True, metadata={"help": "Enable asynchronous training mode"}
+    )
+    actor: EngineConfig = field(
+        default_factory=EngineConfig,
+        metadata={"help": "Actor model configuration for PPO training"},
+    )
     ref: Optional[EngineConfig] = field(
         default=None, metadata={"help": "Reference model configuration"}
     )
-    mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
+    mb_spec: MicroBatchSpec = field(
+        default_factory=MicroBatchSpec,
+        metadata={"help": "Micro-batch specification for PPO training"},
+    )
 
     # Core PPO/GRPO Parameters
     group_size: int = field(
         default=16,
         metadata={"help": "Number of trajectories to sample for each prompt."},
     )
-    group_adv_norm: bool = True
+    group_adv_norm: bool = field(
+        default=True,
+        metadata={
+            "help": "Normalize advantages within each prompt group rather than globally"
+        },
+    )
     ppo_n_minibatches: int = field(
         default=4, metadata={"help": "Number of minibatches for each PPO update"}
     )
@@ -235,12 +283,22 @@ class PPOTrainerConfig:
     )
 
     # Reward
-    group_reward_norm: bool = False
+    group_reward_norm: bool = field(
+        default=False,
+        metadata={
+            "help": "Normalize final reward of each sequence (GRPO-style) to reduce length bias"
+        },
+    )
     reward_scaling: float = field(
         default=1.0, metadata={"help": "Reward scaling factor"}
     )
     reward_bias: float = field(default=0.0, metadata={"help": "Reward bias"})
-    mask_no_eos_with_zero: bool = False
+    mask_no_eos_with_zero: bool = field(
+        default=False,
+        metadata={
+            "help": "Mask truncated generations (no EOS token) and exclude from training"
+        },
+    )
 
     # Advantage Estimation
     discount: float = field(
@@ -257,7 +315,9 @@ class PPOTrainerConfig:
     kl_ctl: float = field(default=0.1, metadata={"help": "KL divergence coefficient"})
 
     # Reward clipping
-    max_reward_clip: float = 100.0
+    max_reward_clip: float = field(
+        default=20.0, metadata={"help": "Maximum absolute value for reward clipping"}
+    )
     recompute_logprob: bool = field(
         default=False,
         metadata={"help": "Recompute logp and replace the logp returned by inference."},
@@ -353,7 +413,10 @@ class TrainingArgs:
     valid_dataset: Optional[DatasetConfig] = field(
         default=None, metadata={"help": "Validation dataset configuration"}
     )
-    rollout: Optional[RolloutControllerConfig] = None
+    rollout: Optional[RolloutControllerConfig] = field(
+        default=None,
+        metadata={"help": "Rollout controller configuration for RL training"},
+    )
     trainer: Optional[TrainerConfig] = field(
         default=None, metadata={"help": "Trainer configuration"}
     )
