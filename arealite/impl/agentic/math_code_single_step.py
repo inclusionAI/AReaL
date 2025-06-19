@@ -5,9 +5,14 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, List, Optional, Tuple
 
-from arealite.api.agentic_api import Agent, AgenticWorkflow, Environment
 from arealite.api.cli_args import TrainingArgs
-from arealite.api.io_struct import AgentInferOutput, LLMRequest, Trajectory
+from arealite.api.io_struct import (
+    AgentInferInput,
+    AgentInferOutput,
+    LLMRequest,
+    Trajectory,
+)
+from arealite.api.rollout_api import Agent, Environment, RolloutWorkflow
 from arealite.utils import pad_sequences_to_tensors
 from functioncall.code.local_verify import code_verify as local_code_verify
 from functioncall.code.verify import code_verify
@@ -52,7 +57,7 @@ class MathCodeAction:
 @dataclass
 class MathCodeObs:
     qid: str
-    prompt: str
+    prompt_ids: List[int]
 
 
 class MathCodeSingleStepEnv(Environment):
@@ -68,12 +73,12 @@ class MathCodeSingleStepEnv(Environment):
         """Reset the environment."""
         super().reset(seed=seed)
         try:
-            prompt = options["prompt"]
+            prompt_ids = options["input_ids"]
             qid = options["qid"]
         except KeyError:
-            raise RuntimeError("prompt and qid must be set in env options.")
+            raise RuntimeError("`input_ids` and `qid` must be set in env options.")
         # Return dummy observation and info
-        return MathCodeObs(qid=qid, prompt=prompt), {}
+        return MathCodeObs(qid=qid, prompt_ids=prompt_ids), {}
 
     def step(
         self, action: MathCodeAction
@@ -111,17 +116,18 @@ class MathCodeSingleStepEnv(Environment):
 
 class MathCodeAgent(Agent):
 
-    def act(self, obs: MathCodeObs) -> AgentInferOutput:
+    def act(self, inp: AgentInferInput) -> AgentInferOutput:
         """Given an observation, return an action."""
         # Extract information from observation
+        obs: MathCodeObs = inp.obs
         qid = obs.qid
-        prompt_text = obs.prompt
+        prompt_ids = obs.prompt_ids
 
         # Create LLM request
         llm_req = LLMRequest(
             rid=str(qid) + "-" + str(uuid.uuid4()),
-            text=prompt_text,
-            gconfig=self.gconfig,
+            input_ids=prompt_ids,
+            gconfig=inp.gconfig,
         )
 
         # Generate response using LLM client
@@ -141,7 +147,7 @@ class MathCodeAgent(Agent):
         pass  # Stateless agent, no memory to reset
 
 
-class MathCodeSingleStepWorkflow(AgenticWorkflow):
+class MathCodeSingleStepWorkflow(RolloutWorkflow):
 
     def run_episode(
         self,
@@ -190,6 +196,7 @@ class MathCodeSingleStepWorkflow(AgenticWorkflow):
             obs = nex_obs
 
         return Trajectory(
+            prompt=env_option,
             data=pad_sequences_to_tensors(data),
             stats=dict(ret=ret),
         )

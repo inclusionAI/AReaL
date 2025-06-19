@@ -159,7 +159,7 @@ class MathCodeSingleStepConfig:
 
 
 @dataclass
-class AgenticWorkflowConfig:
+class RolloutWorkflowConfig:
     type: str = "default"
     math_code_single_step: Optional[MathCodeSingleStepConfig] = field(
         default_factory=MathCodeSingleStepConfig
@@ -171,12 +171,13 @@ class AgenticWorkflowConfig:
 
 @dataclass
 class RolloutControllerConfig:
-    workflow: Optional[AgenticWorkflowConfig] = field(
-        default_factory=AgenticWorkflowConfig,
+    workflow: Optional[RolloutWorkflowConfig] = field(
+        default_factory=RolloutWorkflowConfig,
         metadata={
             "help": "Agentic workflow configuration. If None, degenerate to the RLVR pipeline."
         },
     )
+    num_workers: int = 1
     max_concurrent_rollouts: int = field(
         default=1, metadata={"help": "Maximum number of concurrent rollouts"}
     )

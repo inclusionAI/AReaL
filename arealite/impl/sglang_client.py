@@ -26,8 +26,6 @@ class SGLangClient(LLMClient):
 
     def generate(self, req: LLMRequest) -> LLMResponse:
         """Generate response using SGLang server."""
-        server_info = self.select_server()
-        base_url = f"http://{server_info.host}:{server_info.port}"
 
         # Convert messages to prompt
         if not req.text:
@@ -59,16 +57,16 @@ class SGLangClient(LLMClient):
             "stream": False,
         }
 
-        # Make request
+        # Make request with retry logic
         # TODO: implement interruptable rollout
-        # TODO: server OOM request will not return, should retry
         start_time = time.perf_counter()
-        response = requests.post(
-            f"{base_url}/generate",
-            json=payload,
+        response, server_info = self.request_with_retry(
+            endpoint="/generate",
+            payload=payload,
+            method="POST",
+            max_retries=3,
             timeout=self.client_config.gen_timeout,
         )
-        response.raise_for_status()
 
         # Parse response
         result = response.json()

@@ -8,9 +8,9 @@ from gymnasium.core import ActType, ObsType
 from gymnasium.utils import RecordConstructorArgs, seeding
 
 from arealite.api.cli_args import (
-    AgenticWorkflowConfig,
     GenerationHyperparameters,
     LLMClientConfig,
+    RolloutWorkflowConfig,
     TrainingArgs,
 )
 from arealite.api.io_struct import AgentInferInput, AgentInferOutput, Trajectory
@@ -58,14 +58,14 @@ class Environment(abc.ABC, Env):
             self._np_random, self._np_random_seed = seeding.np_random(seed)
 
 
-class AgenticWorkflow(abc.ABC):
+class RolloutWorkflow(abc.ABC):
 
     def __init__(
         self,
         args: TrainingArgs,
-        config: AgenticWorkflowConfig,
-        agent: Agent,
-        env: Environment,
+        config: RolloutWorkflowConfig,
+        agent: Agent | None = None,
+        env: Environment | None = None,
     ):
         self.args = args
         self.config = config
@@ -94,12 +94,20 @@ class AgenticWorkflow(abc.ABC):
 
 
 @dataclass
-class AgenticWorkflowFactory:
+class RolloutWorkflowFactory:
     args: TrainingArgs
     client_config: LLMClientConfig
 
-    def make_workflow(self, config: AgenticWorkflowConfig) -> Agent:
+    def make_workflow(self, config: RolloutWorkflowConfig) -> RolloutWorkflow:
         client = LLMClientFactory(self.args).make_client(self.client_config)
+        if config.type == "rlvr":
+            from arealite.impl.rlvr.rlvr_workflow import RlvrWorkflow
+
+            return RlvrWorkflow(
+                self.args,
+                config=config,
+                llm_client=client,
+            )
         if config.type == "math_code_single_step":
             from arealite.impl.agentic.math_code_single_step import (
                 MathCodeAgent,
@@ -119,5 +127,4 @@ class AgenticWorkflowFactory:
                 agent=agent,
                 env=env,
             )
-        else:
-            raise NotImplementedError(f"Unknown agent type: {config.type}")
+        raise NotImplementedError(f"Unknown agent type: {config.type}")

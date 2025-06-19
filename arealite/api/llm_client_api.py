@@ -1,7 +1,10 @@
 import abc
 import asyncio
+import time
 from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
+import requests
 import transformers
 
 from arealite.api.cli_args import LLMClientConfig, TrainingArgs
@@ -37,6 +40,78 @@ class LLMClient(abc.ABC):
         server_info = servers[self._server_idx % len(servers)]
         self._server_idx += 1
         return server_info
+
+    def request_with_retry(
+        self,
+        endpoint: str,
+        payload: Optional[Dict[str, Any]] = None,
+        method: str = "POST",
+        max_retries: int = 3,
+        timeout: Optional[float] = None,
+        retry_delay: float = 1.0,
+    ) -> tuple[requests.Response, Any]:
+        """
+        Send HTTP request to servers with retry logic and server switching.
+
+        Args:
+            endpoint: API endpoint (e.g., "/generate", "/health")
+            payload: Request payload for POST/PUT requests
+            method: HTTP method ("GET", "POST", "PUT", "DELETE")
+            max_retries: Maximum number of retry attempts per server
+            timeout: Request timeout in seconds
+            retry_delay: Delay between retries in seconds
+
+        Returns:
+            tuple: (requests.Response, server_info) - Successful HTTP response and server info
+
+        Raises:
+            RuntimeError: If all servers fail after max retries
+        """
+        servers = self.registry.get_healthy_servers()
+        if not servers:
+            raise RuntimeError("No healthy servers available")
+
+        timeout = timeout or self.client_config.gen_timeout
+        last_exception = None
+
+        # Try each server with retries
+        for server_info in servers:
+            base_url = f"http://{server_info.host}:{server_info.port}"
+            url = f"{base_url}{endpoint}"
+
+            for attempt in range(max_retries):
+                try:
+                    if method.upper() == "GET":
+                        response = requests.get(url, timeout=timeout)
+                    elif method.upper() == "POST":
+                        response = requests.post(url, json=payload, timeout=timeout)
+                    elif method.upper() == "PUT":
+                        response = requests.put(url, json=payload, timeout=timeout)
+                    elif method.upper() == "DELETE":
+                        response = requests.delete(url, timeout=timeout)
+                    else:
+                        raise ValueError(f"Unsupported HTTP method: {method}")
+
+                    response.raise_for_status()
+                    return response, server_info
+
+                except (
+                    requests.exceptions.RequestException,
+                    requests.exceptions.HTTPError,
+                ) as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                    continue
+
+            # Mark server as potentially unhealthy after all retries failed
+            # Note: Could implement more sophisticated health tracking here
+
+        # All servers exhausted
+        raise RuntimeError(
+            f"All servers failed after {max_retries} retries each. "
+            f"Last error: {last_exception}"
+        )
 
     def generate(self, req: LLMRequest) -> LLMResponse:
         raise NotImplementedError()

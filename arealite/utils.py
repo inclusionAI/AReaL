@@ -579,3 +579,74 @@ def unpack_sequence(x: torch.Tensor, cu_seqlens: torch.IntTensor):
     return torch.split(
         x, (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist(), dim=0
     )
+
+
+def dict_of_list2list_of_dict(
+    dict_of_lists: Dict[str, List[Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Convert a dictionary of lists into a list of dictionaries.
+
+    Args:
+        dict_of_lists: Dictionary where each value is a list
+
+    Returns:
+        List of dictionaries where each dictionary contains one item from each list
+
+    Example:
+        >>> data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
+        >>> result = dict_of_list2list_of_dict(data)
+        >>> result
+        [{"a": 1, "b": 4, "c": 7}, {"a": 2, "b": 5, "c": 8}, {"a": 3, "b": 6, "c": 9}]
+    """
+    if not dict_of_lists:
+        return []
+
+    # Get the length from the first key's list
+    keys = list(dict_of_lists.keys())
+    length = len(dict_of_lists[keys[0]])
+
+    # Verify all lists have the same length
+    for key, value_list in dict_of_lists.items():
+        if len(value_list) != length:
+            raise ValueError(
+                f"All lists must have the same length. Key '{key}' has length {len(value_list)}, expected {length}"
+            )
+
+    # Convert to list of dicts
+    return [{key: dict_of_lists[key][i] for key in keys} for i in range(length)]
+
+
+def list_of_dict2dict_of_list(
+    list_of_dicts: List[Dict[str, Any]],
+) -> Dict[str, List[Any]]:
+    """
+    Convert a list of dictionaries into a dictionary of lists.
+
+    Args:
+        list_of_dicts: List where each element is a dictionary
+
+    Returns:
+        Dictionary where each key maps to a list of values from all dictionaries
+
+    Example:
+        >>> data = [{"a": 1, "b": 4, "c": 7}, {"a": 2, "b": 5, "c": 8}, {"a": 3, "b": 6, "c": 9}]
+        >>> result = lod2dol(data)
+        >>> result
+        {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
+    """
+    if not list_of_dicts:
+        return {}
+
+    # Get all keys from the first dictionary
+    keys = list(list_of_dicts[0].keys())
+
+    # Verify all dictionaries have the same keys
+    for i, dict_item in enumerate(list_of_dicts):
+        if set(dict_item.keys()) != set(keys):
+            raise ValueError(
+                f"All dictionaries must have the same keys. Dictionary at index {i} has keys {set(dict_item.keys())}, expected {set(keys)}"
+            )
+
+    # Convert to dict of lists
+    return {key: [dict_item[key] for dict_item in list_of_dicts] for key in keys}

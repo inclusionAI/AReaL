@@ -16,8 +16,10 @@ from arealite.utils import (
     calc_entropy,
     compute_varlen_position_indices,
     concat_padded_tensors,
+    dict_of_list2list_of_dict,
     dict_split_mbs,
     gather_logprobs,
+    list_of_dict2dict_of_list,
     masked_normalization,
     pad_sequences_to_tensors,
     to_device,
@@ -110,38 +112,26 @@ class SpmdRlvrPPOTrainer(Trainer):
         if self.ref is not None:
             self.ref.init_distributed()
 
-    def _get_rollout_batch(self) -> Dict[str, torch.Tensor]:
+    def _get_rollout_batch(self):
         if self.config.async_training:
             # Wait until enough trajectories has been collected.
             trajs = self.rollout_controller.prepare_batch(
                 batch_size=self.args.train_dataset.batch_size // dist.get_world_size()
             )
             data = concat_padded_tensors([traj.data for traj in trajs])
-            prompt = concat_padded_tensors([traj.prompt for traj in trajs])
+            prompt = list_of_dict2dict_of_list([traj.prompt for traj in trajs])
             return prompt, data
 
-        # TODO: provide a sequential version for debugging
         # TODO: ignored group size
         # Run batched rollout by submitting requests to LLM servers
         prompt = next(self.data_generator)
-        reqs = [
-            LLMRequest(input_ids=input_ids, gconfig=self.gconfig)
-            for input_ids in prompt["input_ids"]
-        ]
-        resps = self.rollout_controller.generate_batch(self.llm_client, reqs)
-        raw_data = []
-        for resp in resps:
-            input_len = len(resp.input_tokens)
-            output_len = len(resp.output_tokens)
-            x = dict(
-                input_ids=resp.input_tokens + resp.output_tokens,
-                logprobs=[0] * input_len + resp.output_logprobs,
-                prompt_mask=[1] * input_len + [0] * output_len,
-            )
-            raw_data.append(x)
-
-        # Padding will add an attention_mask field
-        data = pad_sequences_to_tensors(raw_data)
+        env_options = dict_of_list2list_of_dict(prompt)
+        trajs = self.rollout_controller.generate_batch(
+            batch_size=len(env_options),
+            env_options=env_options,
+        )
+        data = concat_padded_tensors([traj.data for traj in trajs])
+        prompt = list_of_dict2dict_of_list([traj.prompt for traj in trajs])
         return prompt, data
 
     def _get_rlvr_reward(self, rollout_output: UnpaddedRolloutOutput):
@@ -501,3 +491,6 @@ class SpmdRlvrPPOTrainer(Trainer):
 
                 # Synchronize weights to the client.
                 self.actor.update_weights_to(self.llm_client)
+
+                # IMPORTANT! Update the version for staleness control
+                self.rollout_controller.set_version(self.actor.get_version())

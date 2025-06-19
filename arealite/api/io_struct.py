@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional
 
 import torch
-from gymnasium.core import ActType
+from gymnasium.core import ActType, ObsType
 
 from arealite.api.cli_args import GenerationHyperparameters
 
@@ -49,7 +49,7 @@ class LLMResponse:
 
 @dataclass
 class AgentInferInput:
-    obs: ActType
+    obs: ObsType
     gconfig: GenerationHyperparameters
 
 
@@ -70,7 +70,7 @@ class TrajStats:
 
 @dataclass
 class Trajectory:
-    prompt: Dict[str, torch.Tensor]
+    prompt: Dict[str, Any]
     data: Dict[str, torch.Tensor]
     stats: TrajStats
 

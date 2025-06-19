@@ -7,10 +7,10 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
 
-from arealite.api.agentic_api import AgenticWorkflow, AgenticWorkflowFactory
 from arealite.api.cli_args import RolloutControllerConfig, TrainingArgs
 from arealite.api.io_struct import LLMRequest, Trajectory
 from arealite.api.llm_client_api import LLMClient, LLMResponse
+from arealite.api.rollout_api import RolloutWorkflow, RolloutWorkflowFactory
 from realhf.base import logging
 from realhf.base.monitor import RolloutStat
 
@@ -23,6 +23,7 @@ class RolloutController:
     def __init__(self, args: TrainingArgs, config: RolloutControllerConfig):
         self.args = args
         self.config = config
+        self.gconfig = config.gconfig
 
         self.train_batch_size = args.train_dataset.batch_size
 
@@ -32,66 +33,27 @@ class RolloutController:
         self._version = 0
 
     ################### User Interfaces Start #################
-    # TODO: invocation of these APIs are too deep
 
     def generate_batch(
-        self, llm_client: LLMClient, reqs: LLMRequest
-    ) -> List[LLMResponse]:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        tasks = [self._generate_single(llm_client, req) for req in reqs]
-        try:
-            resps = loop.run_until_complete(asyncio.gather(*tasks))
-            return resps
-        finally:
-            loop.close()
-
-    def run_episode_batch(
         self,
+        batch_size: int,
         env_options: Optional[List[Any]] = None,
         seeds: Optional[List[int]] = None,
-        num_workers: Optional[int] = None,
     ) -> List[Trajectory]:
-        # TODO: consider how to unwrap this function to make it simpler
         """Run episodes in batch using efficient multiprocessing for CUDA tensors."""
-        if num_workers is None:
-            num_workers = min(len(collectors), mp.cpu_count())
+        if self.config.num_workers == 1:
+            return self._generate_batch_sequential(batch_size, env_options, seeds)
 
-        factory = AgenticWorkflowFactory(self.args, self.config.llm_client)
-        collectors = [
-            factory.make_workflow(self.config.workflow) for _ in range(num_workers)
-        ]
+        return self._generate_batch_parallel(batch_size, env_options, seeds)
 
-        if env_options is None:
-            env_options = [None] * len(collectors)
-        if seeds is None:
-            seeds = [None] * len(collectors)
-
-        def _run_episode_worker(args):
-            collector, env_option, seed = args
-            collector: AgenticWorkflow
-            return collector.run_episode(env_option, seed)
-
-        # Set sharing strategy for tensors - file_descriptor is more efficient for CUDA
-        mp.set_sharing_strategy("file_descriptor")
-
-        # Use ProcessPoolExecutor for better resource management
-        with ProcessPoolExecutor(
-            max_workers=num_workers, mp_context=mp.get_context("spawn")
-        ) as executor:
-            tasks = list(zip(collectors, env_options, seeds))
-            trajectories = list(executor.map(_run_episode_worker, tasks))
-
-        return trajectories
-
-    def start_run_episode_loop(self, dataloader: DataLoader):
+    def start_generate_loop(self, dataloader: DataLoader):
         """Start the episode loop in a separate thread."""
         self._generation_thread = threading.Thread(
-            target=self._run_episode_until_complete, args=(dataloader,)
+            target=self._generate_until_complete, args=(dataloader,)
         )
         self._generation_thread.start()
 
-    def stop_run_episode_loop(self):
+    def stop_generate_loop(self):
         """Stop the episode loop and wait for it to finish."""
         self._exiting.set()
         if self._generation_thread.is_alive():
@@ -113,9 +75,57 @@ class RolloutController:
 
     ################## User Interfaces End ##################
 
-    async def _generate_single(self, llm_client: LLMClient, req: LLMRequest):
-        """A trick to make an async generation function."""
-        return await asyncio.to_thread(llm_client.generate, req)
+    def _generate_batch_sequential(
+        self,
+        batch_size: int,
+        env_options: Optional[List[Any]] = None,
+        seeds: Optional[List[int]] = None,
+    ) -> List[Trajectory]:
+        factory = RolloutWorkflowFactory(self.args, self.config.llm_client)
+        collectors = [
+            factory.make_workflow(self.config.workflow) for _ in range(batch_size)
+        ]
+        if env_options is None:
+            env_options = [None] * len(collectors)
+        if seeds is None:
+            seeds = [None] * len(collectors)
+        assert len(env_options) == len(seeds) == batch_size
+        trajs = []
+        for collector, env_option, seed in zip(collectors, env_options, seeds):
+            collector: RolloutWorkflow
+            trajs.append(collector.run_episode(self.gconfig, env_option, seed))
+        return trajs
+
+    def _generate_batch_parallel(
+        self,
+        batch_size: int,
+        env_options: Optional[List[Any]] = None,
+        seeds: Optional[List[int]] = None,
+    ) -> List[Trajectory]:
+        factory = RolloutWorkflowFactory(self.args, self.config.llm_client)
+        collectors = [
+            factory.make_workflow(self.config.workflow) for _ in range(batch_size)
+        ]
+        if env_options is None:
+            env_options = [None] * len(collectors)
+        if seeds is None:
+            seeds = [None] * len(collectors)
+        assert len(env_options) == len(seeds) == batch_size
+
+        def _generate_worker(args):
+            collector, env_option, seed = args
+            collector: RolloutWorkflow
+            return collector.run_episode(env_option, seed)
+
+        # Set sharing strategy for tensors - file_descriptor is more efficient for CUDA
+        mp.set_sharing_strategy("file_descriptor")
+        # Use ProcessPoolExecutor for better resource management
+        with ProcessPoolExecutor(
+            max_workers=self.config.num_workers, mp_context=mp.get_context("spawn")
+        ) as executor:
+            tasks = list(zip(collectors, env_options, seeds))
+            trajectories = list(executor.map(_generate_worker, tasks))
+        return trajectories
 
     async def _prepare_batch_async(self, batch_size: int):
         buf_size = -1
@@ -128,21 +138,21 @@ class RolloutController:
             data, self._buffer = self._buffer[:batch_size], self._buffer[batch_size:]
         return data
 
-    def _run_episode_until_complete(self):
+    def _generate_until_complete(self):
         """Start an event loop to run episodes continuously."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(self._run_episode_loop())
+            loop.run_until_complete(self._generate_loop())
         finally:
             loop.close()
 
     async def _run_single_episode_async(self, rid, data):
-        factory = AgenticWorkflowFactory(self.args, self.config.llm_client)
+        factory = RolloutWorkflowFactory(self.args, self.config.llm_client)
         collector = factory.make_workflow(self.config.workflow)
         return rid, await collector.run_episode_async(env_option=data)
 
-    async def _run_episode_loop(self, dataloader):
+    async def _generate_loop(self, dataloader):
         data_generator = iter(dataloader)
         data = None
 
