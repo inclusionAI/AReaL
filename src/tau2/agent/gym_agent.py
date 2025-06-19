@@ -1,5 +1,4 @@
 import threading
-import time
 from copy import deepcopy
 from typing import List, Optional
 
@@ -439,7 +438,6 @@ class AgentGymEnv(gym.Env):
                 self._simulation_done.wait(timeout=0.01)
                 if self._simulation_done.is_set():
                     break
-
             # Check if simulation is done
             terminated = self._simulation_done.is_set()
 
