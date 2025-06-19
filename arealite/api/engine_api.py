@@ -37,7 +37,7 @@ class SPMDWrapper(abc.ABC):
         input_: Dict,
         mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
-        loss_weight_fn: Callable[[torch.Tensor, Dict], float],
+        loss_weight_fn: Callable[[Dict], float],
         version_steps: int,
         token_normalize_scope: Literal["global", "dp"] = "global",
     ) -> Dict:
@@ -107,7 +107,7 @@ class EngineFactory:
 
     def make_engine(self, engine_config: EngineConfig) -> SPMDWrapper:
         """Create an engine based on the configuration."""
-        if engine_config.backend == "fsdp":
+        if engine_config.backend.type == "fsdp":
             from arealite.impl.fsdp_wrapper import FSDPEngine
 
             return FSDPEngine(self.args, engine_config)
