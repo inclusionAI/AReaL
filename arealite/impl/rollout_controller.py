@@ -7,7 +7,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
 
-from arealite.api.agentic_api import AgenticWorkflowFactory, AgenticWorkflow
+from arealite.api.agentic_api import AgenticWorkflow, AgenticWorkflowFactory
 from arealite.api.cli_args import RolloutControllerConfig, TrainingArgs
 from arealite.api.io_struct import LLMRequest, Trajectory
 from arealite.api.llm_client_api import LLMClient, LLMResponse
@@ -34,7 +34,9 @@ class RolloutController:
     ################### User Interfaces Start #################
     # TODO: invocation of these APIs are too deep
 
-    def generate_batch(self, llm_client: LLMClient, reqs: LLMRequest) -> List[LLMResponse]:
+    def generate_batch(
+        self, llm_client: LLMClient, reqs: LLMRequest
+    ) -> List[LLMResponse]:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         tasks = [self._generate_single(llm_client, req) for req in reqs]
@@ -56,7 +58,9 @@ class RolloutController:
             num_workers = min(len(collectors), mp.cpu_count())
 
         factory = AgenticWorkflowFactory(self.args, self.config.llm_client)
-        collectors = [factory.make_workflow(self.config.workflow) for _ in range(num_workers)]
+        collectors = [
+            factory.make_workflow(self.config.workflow) for _ in range(num_workers)
+        ]
 
         if env_options is None:
             env_options = [None] * len(collectors)
@@ -72,7 +76,9 @@ class RolloutController:
         mp.set_sharing_strategy("file_descriptor")
 
         # Use ProcessPoolExecutor for better resource management
-        with ProcessPoolExecutor(max_workers=num_workers, mp_context=mp.get_context("spawn")) as executor:
+        with ProcessPoolExecutor(
+            max_workers=num_workers, mp_context=mp.get_context("spawn")
+        ) as executor:
             tasks = list(zip(collectors, env_options, seeds))
             trajectories = list(executor.map(_run_episode_worker, tasks))
 

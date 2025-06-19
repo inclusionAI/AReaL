@@ -24,30 +24,9 @@ if pkg_version.is_available("sglang"):
 class SGLangClient(LLMClient):
     """SGLang implementation of LLMClient."""
 
-    def __init__(self, args: TrainingArgs, client_config: LLMClientConfig):
-        super().__init__(args, client_config)
-        # TODO: move registry to base class
-        self.registry = LLMServiceRegistry(args.experiment_name, args.trial_name)
-        self.tokenizer: transformers.PreTrainedTokenizerFast = load_hf_tokenizer(
-            client_config.tokenizer_path
-        )
-
-        self._server_idx = 0
-
-    def _choose_server(self):
-        """Get an available healthy server."""
-        servers = self.registry.get_healthy_servers()
-        if not servers:
-            raise RuntimeError("No healthy SGLang servers available")
-
-        # Simple round-robin selection (could be improved with load balancing)
-        server_info = servers[self._server_idx % len(servers)]
-        self._server_idx += 1
-        return server_info
-
     def generate(self, req: LLMRequest) -> LLMResponse:
         """Generate response using SGLang server."""
-        server_info = self._choose_server()
+        server_info = self.select_server()
         base_url = f"http://{server_info.host}:{server_info.port}"
 
         # Convert messages to prompt
@@ -63,7 +42,7 @@ class SGLangClient(LLMClient):
         if self.tokenizer.pad_token_id not in stop_token_ids:
             stop_token_ids.append(self.tokenizer.pad_token_id)
 
-        # TODO: n>1
+        assert gconfig.n == 1
         sample_params = {
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
@@ -156,57 +135,3 @@ class SGLangClient(LLMClient):
                     logger.warning(f"Update weights failed: {resp.reason}. Retrying.")
                 time.sleep(0.1)
         raise RuntimeError("Update weights failed.")
-
-
-class Engine:
-    # TODO: move to engine
-    def update_weights_to(self, llm_client):
-        pass
-
-    def update_weights_from(self, engine: SPMDWrapper) -> None:
-        """Update weights from the engine after an RL training step."""
-        server_infos = self.registry.get_healthy_servers()
-        n_total_servers = len(server_infos)
-        m = (n_total_servers + dist.get_world_size() - 1) // dist.get_world_size()
-        infos = server_infos[dist.get_rank() * m : (dist.get_rank() + 1) * m]
-
-        path = constants.get_param_realloc_path(self.args)
-
-        # FIXME: will OOM
-        sd = engine.get_hf_model_state_dict()
-        sd = engine.gather_sharded_state_dict()
-        # TODO: consider how to define a straightforward API to gather sharded state dict
-        # (e.g., DP for torch FSDP, TP for Megatron)
-        # TODO: single-controller?
-
-        engine.save_model_to_hf(path=path)
-        tik = time.perf_counter()
-
-        version = engine.get_version()
-
-        if len(infos) > 0:
-
-            def _run_in_thread():
-                import asyncio
-
-                # Create a new event loop for this thread
-                new_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(new_loop)
-                tasks = [
-                    self.request_update_weight(info, path, version) for info in infos
-                ]
-                try:
-                    return new_loop.run_until_complete(asyncio.gather(*tasks))
-                finally:
-                    new_loop.close()
-
-            from concurrent.futures import ThreadPoolExecutor
-
-            with ThreadPoolExecutor() as executor:
-                future = executor.submit(_run_in_thread)
-                _ = future.result()
-        dist.barrier()
-
-        logger.info(
-            f"Updating weights for SGLang server done: {time.perf_counter() - tik:.4f}s"
-        )

@@ -2,6 +2,8 @@ import abc
 import asyncio
 from dataclasses import dataclass
 
+import transformers
+
 from arealite.api.cli_args import LLMClientConfig, TrainingArgs
 from arealite.api.io_struct import (
     LLMRequest,
@@ -9,6 +11,8 @@ from arealite.api.io_struct import (
     WeightMeta,
     WeightUpdateGroupMeta,
 )
+from arealite.api.llm_server_api import LLMServiceRegistry
+from realhf.api.core.data_api import load_hf_tokenizer
 
 
 class LLMClient(abc.ABC):
@@ -16,20 +20,38 @@ class LLMClient(abc.ABC):
         self.args = args
         self.client_config = client_config
 
+        self.registry = LLMServiceRegistry(args.experiment_name, args.trial_name)
+        self.tokenizer: transformers.PreTrainedTokenizerFast = load_hf_tokenizer(
+            client_config.tokenizer_path
+        )
+        self._server_idx = 0
+
+    def select_server(self):
+        """Get an available healthy server."""
+        servers = self.registry.get_healthy_servers()
+        if not servers:
+            raise RuntimeError("No healthy SGLang servers available")
+
+        assert self.client_config.schedule_policy == "round_robin"
+        # Simple round-robin selection (could be improved with load balancing)
+        server_info = servers[self._server_idx % len(servers)]
+        self._server_idx += 1
+        return server_info
+
     def generate(self, req: LLMRequest) -> LLMResponse:
         raise NotImplementedError()
 
-    async def generate_async(self, req: LLMRequest) -> LLMResponse:
+    async def agenerate(self, req: LLMRequest) -> LLMResponse:
         """A trick to make an async generation function."""
         return await asyncio.to_thread(self.generate, req)
 
-    def update_weights_from_disk(self, path: str):
+    async def aupdate_weights_from_disk(self, path: str):
         raise NotImplementedError()
 
-    def init_weight_update_group(self, group_meta: WeightUpdateGroupMeta):
+    async def ainit_weight_update_group(self, group_meta: WeightUpdateGroupMeta):
         raise NotImplementedError()
 
-    def update_weights_from_distributed(self, weight_meta: WeightMeta):
+    async def aupdate_weights_from_distributed(self, weight_meta: WeightMeta):
         raise NotImplementedError()
 
 

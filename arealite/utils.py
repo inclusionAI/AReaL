@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -100,7 +100,6 @@ def to_device(
 
 
 @torch.no_grad()
-@torch.jit.script
 def compute_varlen_position_indices(
     total_seqlen: int,
     cu_seqlens: torch.IntTensor,
@@ -533,8 +532,10 @@ def pad_input(hidden_states, indices, batch, seqlen):
     return rearrange(output, "(b s) ... -> b s ...", b=batch)
 
 
-def dict_tensor_select(data: Dict[str, torch.Tensor], indices: List[int]):
-    return {k: v[indices] for k, v in data.items()}
+def dict_indexing(data: Dict[str, Any], indices: List[int]):
+    return {
+        k: v[indices] if isinstance(v, torch.Tensor) else v for k, v in data.items()
+    }
 
 
 def allocate_balanced_mbs(mb_spec: MicroBatchSpec, lens: List[int]) -> List[List[int]]:
@@ -562,7 +563,7 @@ def allocate_balanced_mbs_synced(
     )
 
 
-def dict_tensor_split_mbs(
+def dict_split_mbs(
     data: Dict[str, torch.Tensor],
     mb_spec: MicroBatchSpec,
     lens: List[int],
@@ -570,4 +571,11 @@ def dict_tensor_split_mbs(
 ) -> List[Dict[str, torch.Tensor]]:
     """Split a dict of tensors into microbatches."""
     group_indices = allocate_balanced_mbs_synced(mb_spec, lens, group=group)
-    return [dict_tensor_select(data, indices) for indices in group_indices]
+    return [dict_indexing(data, indices) for indices in group_indices]
+
+
+def unpack_sequence(x: torch.Tensor, cu_seqlens: torch.IntTensor):
+    """Unpack a sequence tensor into a list of tensors based on cumulative sequence lengths."""
+    return torch.split(
+        x, (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist(), dim=0
+    )

@@ -68,6 +68,7 @@ class LLMClientConfig:
         default="sglang",
         metadata={"help": "Backend for client", "choices": ["sglang", "vllm"]},
     )
+    schedule_policy: str = "round_robin"
     tokenizer_path: str = field(default="", metadata={"help": "Path to tokenizer"})
     gen_timeout: int = field(
         default=1800, metadata={"help": "Generation timeout in seconds"}
@@ -170,7 +171,12 @@ class AgenticWorkflowConfig:
 
 @dataclass
 class RolloutControllerConfig:
-    workflow: AgenticWorkflowConfig = field(default_factory=AgenticWorkflowConfig)
+    workflow: Optional[AgenticWorkflowConfig] = field(
+        default_factory=AgenticWorkflowConfig,
+        metadata={
+            "help": "Agentic workflow configuration. If None, degenerate to the RLVR pipeline."
+        },
+    )
     max_concurrent_rollouts: int = field(
         default=1, metadata={"help": "Maximum number of concurrent rollouts"}
     )
@@ -201,6 +207,7 @@ class SFTTrainerConfig:
 
 @dataclass
 class PPOTrainerConfig:
+    async_training: bool = True
     actor: EngineConfig = field(default_factory=EngineConfig)
     ref: Optional[EngineConfig] = field(
         default=None, metadata={"help": "Reference model configuration"}
@@ -230,10 +237,12 @@ class PPOTrainerConfig:
     )
 
     # Reward
+    group_reward_norm: bool = False
     reward_scaling: float = field(
         default=1.0, metadata={"help": "Reward scaling factor"}
     )
     reward_bias: float = field(default=0.0, metadata={"help": "Reward bias"})
+    mask_no_eos_with_zero: bool = False
 
     # Advantage Estimation
     discount: float = field(
