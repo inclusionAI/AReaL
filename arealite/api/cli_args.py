@@ -150,35 +150,18 @@ class EngineConfig:
 
 
 ## Agent configurations. ##
-@dataclass
-class MathCodeSingleStepAgentConfig:
-    tokenizer_path: str = field(default="", metadata={"help": "Path to tokenizer"})
 
 
 @dataclass
-class AgentConfig:
-    type: str = field(default="", metadata={"help": "Agent type"})
-    math_code_single_step: Optional[MathCodeSingleStepAgentConfig] = field(
-        default=None, metadata={"help": "Math code single step agent configuration"}
-    )
-
-
-## Environment configurations. ##
-@dataclass
-class MathCodeSingleStepEnvConfig:
-    dataset_path: str = field(default="", metadata={"help": "Path to dataset"})
+class MathCodeSingleStepConfig:
+    solution_path: str = field(default="", metadata={"help": "Path to solutions"})
 
 
 @dataclass
-class EnvConfig:
-    type: str = field(default="", metadata={"help": "Environment type"})
-    reward_scaling: float = field(
-        default=1.0, metadata={"help": "Reward scaling factor"}
-    )
-    reward_bias: float = field(default=0.0, metadata={"help": "Reward bias"})
-    math_code_single_step: Optional[MathCodeSingleStepEnvConfig] = field(
-        default=None,
-        metadata={"help": "Math code single step environment configuration"},
+class AgenticWorkflowConfig:
+    type: str = "default"
+    math_code_single_step: Optional[MathCodeSingleStepConfig] = field(
+        default_factory=MathCodeSingleStepConfig
     )
 
 
@@ -187,6 +170,7 @@ class EnvConfig:
 
 @dataclass
 class RolloutControllerConfig:
+    workflow: AgenticWorkflowConfig = field(default_factory=AgenticWorkflowConfig)
     max_concurrent_rollouts: int = field(
         default=1, metadata={"help": "Maximum number of concurrent rollouts"}
     )
@@ -244,6 +228,12 @@ class PPOTrainerConfig:
     actor_sample_reuse: int = field(
         default=1, metadata={"help": "The data reuse (aka PPO epoch) for actor."}
     )
+
+    # Reward
+    reward_scaling: float = field(
+        default=1.0, metadata={"help": "Reward scaling factor"}
+    )
+    reward_bias: float = field(default=0.0, metadata={"help": "Reward bias"})
 
     # Advantage Estimation
     discount: float = field(
@@ -356,8 +346,6 @@ class TrainingArgs:
     valid_dataset: Optional[DatasetConfig] = field(
         default=None, metadata={"help": "Validation dataset configuration"}
     )
-    agent: Optional[AgentConfig] = None
-    env: Optional[EnvConfig] = None
     rollout: Optional[RolloutControllerConfig] = None
     trainer: Optional[TrainerConfig] = field(
         default=None, metadata={"help": "Trainer configuration"}

@@ -5,12 +5,12 @@ from typing import Any, Dict, List, Optional
 
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
-from arealite.api.cli_args import RolloutControllerConfig
+from arealite.api.agentic_api import AgenticWorkflowFactory, AgenticWorkflow
+from arealite.api.cli_args import RolloutControllerConfig, TrainingArgs
 from arealite.api.io_struct import LLMRequest, Trajectory
 from arealite.api.llm_client_api import LLMClient, LLMResponse
-from arealite.impl.traj_collector import TrajCollector
 from realhf.base import logging
 from realhf.base.monitor import RolloutStat
 
@@ -20,11 +20,11 @@ ROLLOUT_POLL_WAIT_TIME = 0.4
 
 
 class RolloutController:
-    def __init__(self, args, config: RolloutControllerConfig):
+    def __init__(self, args: TrainingArgs, config: RolloutControllerConfig):
         self.args = args
         self.config = config
 
-        self.train_batch_size = args.dataset.batch_size
+        self.train_batch_size = args.train_dataset.batch_size
 
         self._exiting = threading.Event()
         self._lock = threading.Lock()
@@ -32,10 +32,9 @@ class RolloutController:
         self._version = 0
 
     ################### User Interfaces Start #################
+    # TODO: invocation of these APIs are too deep
 
-    def generate_batch(
-        self, llm_client: LLMClient, reqs: LLMRequest
-    ) -> List[LLMResponse]:
+    def generate_batch(self, llm_client: LLMClient, reqs: LLMRequest) -> List[LLMResponse]:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         tasks = [self._generate_single(llm_client, req) for req in reqs]
@@ -56,9 +55,8 @@ class RolloutController:
         if num_workers is None:
             num_workers = min(len(collectors), mp.cpu_count())
 
-        collectors = [
-            TrajCollector(self.args, self.collector_config) for _ in range(num_workers)
-        ]
+        factory = AgenticWorkflowFactory(self.args, self.config.llm_client)
+        collectors = [factory.make_workflow(self.config.workflow) for _ in range(num_workers)]
 
         if env_options is None:
             env_options = [None] * len(collectors)
@@ -67,16 +65,14 @@ class RolloutController:
 
         def _run_episode_worker(args):
             collector, env_option, seed = args
-            # TODO: highlight run_episode
+            collector: AgenticWorkflow
             return collector.run_episode(env_option, seed)
 
         # Set sharing strategy for tensors - file_descriptor is more efficient for CUDA
         mp.set_sharing_strategy("file_descriptor")
 
         # Use ProcessPoolExecutor for better resource management
-        with ProcessPoolExecutor(
-            max_workers=num_workers, mp_context=mp.get_context("spawn")
-        ) as executor:
+        with ProcessPoolExecutor(max_workers=num_workers, mp_context=mp.get_context("spawn")) as executor:
             tasks = list(zip(collectors, env_options, seeds))
             trajectories = list(executor.map(_run_episode_worker, tasks))
 
@@ -136,7 +132,8 @@ class RolloutController:
             loop.close()
 
     async def _run_single_episode_async(self, rid, data):
-        collector = TrajCollector(self.args, self.collector_config)
+        factory = AgenticWorkflowFactory(self.args, self.config.llm_client)
+        collector = factory.make_workflow(self.config.workflow)
         return rid, await collector.run_episode_async(env_option=data)
 
     async def _run_episode_loop(self, dataloader):

@@ -48,6 +48,12 @@ class LLMResponse:
 
 
 @dataclass
+class AgentInferInput:
+    obs: ActType
+    gconfig: GenerationHyperparameters
+
+
+@dataclass
 class AgentInferOutput:
     action: ActType
     llm_req: LLMRequest
@@ -64,6 +70,7 @@ class TrajStats:
 
 @dataclass
 class Trajectory:
+    prompt: Dict[str, torch.Tensor]
     data: Dict[str, torch.Tensor]
     stats: TrajStats
 
