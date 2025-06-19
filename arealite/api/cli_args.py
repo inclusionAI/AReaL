@@ -10,7 +10,6 @@ from realhf.api.cli_args import (
     MicroBatchSpec,
     ModelFamily,
 )
-from realhf.api.cli_args import ModelTrainEvalConfig as EngineConfig
 from realhf.api.cli_args import (
     OptimizerConfig,
     ParallelismConfig,
