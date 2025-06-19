@@ -1,7 +1,8 @@
 import abc
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Dict, Optional, Union
 
+import torch.distributed as dist
 from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -9,6 +10,18 @@ from arealite.api.cli_args import TrainerConfig, TrainingArgs
 
 if TYPE_CHECKING:
     from arealite.impl.rollout_controller import RolloutController
+# application code
+
+# 1. create a trimmed base trainer class for inheriance
+# 2. use legacy CLI args
+# 3. directly use huggingface Dataset
+# 4. use huggingface.trainerstate
+# TODO: how to do checkpointing?
+
+# follow the signature of transformers.Trainer if possible
+
+# distributed sampler
+# process group init
 
 
 class Trainer(abc.ABC):
@@ -19,6 +32,7 @@ class Trainer(abc.ABC):
         train_dataset: Dataset,
         valid_dataset: Optional[Dataset] = None,
         rollout_controller: Optional["RolloutController"] = None,
+        extra_args: Optional[Dict] = None,
     ):
         self.args = args
         self.trainer_config = trainer_config
@@ -28,11 +42,13 @@ class Trainer(abc.ABC):
 
         self.rollout_controller = rollout_controller
 
+        self.extra_args = extra_args
+
     def create_train_dataloader(self):
         cfg = self.args.train_dataset
         self.train_dataloader = StatefulDataLoader(
             dataset=self.train_dataset,
-            batch_size=cfg.batch_size,
+            batch_size=cfg.batch_size // dist.get_world_size(),
             shuffle=cfg.shuffle,
             pin_memory=cfg.pin_memory,
             num_workers=cfg.num_workers,
@@ -43,7 +59,7 @@ class Trainer(abc.ABC):
         cfg = self.args.valid_dataset
         self.valid_dataloader = StatefulDataLoader(
             dataset=self.valid_dataset,
-            batch_size=cfg.batch_size,
+            batch_size=cfg.batch_size // dist.get_world_size(),
             shuffle=cfg.shuffle,
             pin_memory=cfg.pin_memory,
             num_workers=cfg.num_workers,
@@ -68,6 +84,7 @@ class TrainerFactory:
         train_dataset: Dataset,
         valid_dataset: Optional[Dataset] = None,
         rollout_controller: Optional["RolloutController"] = None,
+        extra_args: Optional[Dict] = None,
     ) -> Trainer:
         if config.type == "ppo-rlvr":
             from arealite.impl.trainer.ppo import SpmdRlvrPPOTrainer
@@ -78,6 +95,7 @@ class TrainerFactory:
                 train_dataset=train_dataset,
                 valid_dataset=valid_dataset,
                 rollout_controller=rollout_controller,
+                extra_args=extra_args,
             )
         else:
             raise NotImplementedError(f"Unknown trainer type: {config.type}")

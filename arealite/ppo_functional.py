@@ -8,6 +8,7 @@ from typing import Dict, Optional, Tuple
 import torch
 import torch.distributed
 
+from arealite.utils import compute_varlen_position_indices
 from realhf.base import pkg_version
 
 
@@ -232,60 +233,21 @@ def get_packed_rewards(
     log_probs: torch.FloatTensor,
     ref_log_probs: torch.FloatTensor,
     reward_score: torch.FloatTensor,
-    short1cu_seqlens: torch.IntTensor,
+    cu_seqlens: torch.IntTensor,
     seq_no_eos_mask: torch.BoolTensor,
     mask_no_eos_with_zero: bool = False,
 ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
-    # Here log_probs/ref_log_probs is one-step shorter than packed_input_ids (the last step is removed),
-    # so the log_probs at the EOS token is not included in this tensor.
-    # We directly add reward scores of each sequence onto the final token of each sequence.
     tot_rewards = -kl_ctl * (log_probs - ref_log_probs)
+    # Set the KL reward at the EOS token to be zero.
+    tot_rewards[cu_seqlens[1:] - 1] = 0
     kl_rewards = tot_rewards.clone()
     reward_score = reward_score.clip(-clip_reward_value, clip_reward_value)
 
+    indices = torch.clip(cu_seqlens[1:] - 2, min=0)
     if mask_no_eos_with_zero:
-        tot_rewards[short1cu_seqlens[1:] - 1] += torch.where(
-            seq_no_eos_mask, 0, reward_score
-        )
+        tot_rewards[indices] += torch.where(seq_no_eos_mask, 0, reward_score)
     else:
-        tot_rewards[short1cu_seqlens[1:] - 1] += reward_score
-
-    return kl_rewards, tot_rewards
-
-
-@torch.no_grad()
-def get_packed_reward_dense(
-    kl_ctl: float,
-    clip_reward_value: float,
-    log_probs: torch.FloatTensor,
-    ref_log_probs: torch.FloatTensor,
-    dense_reward_score: torch.FloatTensor,
-    short1cu_seqlens: torch.IntTensor,
-    seq_no_eos_mask: torch.FloatTensor,
-    reward_delta: bool,
-):
-    tot_rewards = -kl_ctl * (log_probs - ref_log_probs)
-    kl_rewards = tot_rewards.clone()
-    dense_reward_score = dense_reward_score.clip(-clip_reward_value, clip_reward_value)
-    offset = 0
-    offset2 = 0
-    for seq_len in short1cu_seqlens[1:] - short1cu_seqlens[:-1]:
-        try:
-            if reward_delta == True:
-                tot_rewards[offset : offset + seq_len] += (
-                    dense_reward_score[offset2 + 1 : offset2 + seq_len + 1]
-                    - dense_reward_score[offset2 : offset2 + seq_len]
-                )
-            else:
-                tot_rewards[offset : offset + seq_len] += dense_reward_score[
-                    offset2 + 1 : offset2 + seq_len + 1
-                ]
-        except:
-            raise RuntimeError(
-                f"seq_len: {seq_len}, offset: {offset}, offset2: {offset2}, {tot_rewards.shape}, {dense_reward_score.shape}"
-            )
-        offset += seq_len
-        offset2 += seq_len + 1
+        tot_rewards[indices] += reward_score
     return kl_rewards, tot_rewards
 
 

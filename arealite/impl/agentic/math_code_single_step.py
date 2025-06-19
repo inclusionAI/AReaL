@@ -1,23 +1,23 @@
 import os
 import re
+import uuid
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
-from arealite.api.cli_args import EnvConfig, TrainingArgs
-from arealite.api.env_api import Environment
+from arealite.api.agentic_api import Agent, AgenticWorkflow, Environment
+from arealite.api.cli_args import TrainingArgs
+from arealite.api.io_struct import AgentInferOutput, LLMRequest, Trajectory
+from arealite.utils import pad_sequences_to_tensors
 from functioncall.code.local_verify import code_verify as local_code_verify
 from functioncall.code.verify import code_verify
 from functioncall.math.verify import math_verify
-from realhf.base import logging
 from realhf.impl.dataset.math_code_dataset import load_metadata
 from realhf.impl.dataset.math_parser import parse_lines_in_parallel
 
 ENABLE_FUNCTION_CALL = True if os.getenv("FUNCTIONCALL_SERVICE_DOMAIN", "") else False
 math_verify_call = math_verify if ENABLE_FUNCTION_CALL else parse_lines_in_parallel
 code_verify_call = code_verify if ENABLE_FUNCTION_CALL else local_code_verify
-
-logger = logging.getLogger("Math Code Single Step Environment")
 
 
 @lru_cache(maxsize=128)
@@ -58,16 +58,9 @@ class MathCodeObs:
 class MathCodeSingleStepEnv(Environment):
     """Math and Code single-step verification environment."""
 
-    def __init__(self, args: TrainingArgs, env_config: EnvConfig):
-        super().__init__(args, env_config)
-        config = env_config.math_code_single_step
-        self.dataset_path = config.dataset_path
-        self.id2info, _ = _load_metadata_cached(self.dataset_path)
-
-        self.reward_scaling = env_config.reward_scaling
-        self.reward_bias = env_config.reward_bias
-
-        # TODO: define observation and action spaces
+    def __init__(self, args: TrainingArgs, solution_path: str):
+        super().__init__(args)
+        self.id2info, _ = _load_metadata_cached(solution_path)
 
     def reset(
         self, seed: Optional[int] = None, options: Optional[dict] = None
@@ -113,4 +106,90 @@ class MathCodeSingleStepEnv(Environment):
             terminated,
             truncated,
             info,
+        )
+
+
+class MathCodeAgent(Agent):
+
+    def act(self, obs: MathCodeObs) -> AgentInferOutput:
+        """Given an observation, return an action."""
+        # Extract information from observation
+        qid = obs.qid
+        prompt_text = obs.prompt
+
+        # Create LLM request
+        llm_req = LLMRequest(
+            rid=str(qid) + "-" + str(uuid.uuid4()),
+            text=prompt_text,
+            gconfig=self.gconfig,
+        )
+
+        # Generate response using LLM client
+        llm_resp = self.llm_client.generate(llm_req)
+
+        # Extract answers from completion
+        answer = llm_resp.completion
+
+        return AgentInferOutput(
+            action=MathCodeAction(qid=qid, answer=answer),
+            llm_req=llm_req,
+            llm_resp=llm_resp,
+        )
+
+    def reset(self):
+        """Resets the agent's memory."""
+        pass  # Stateless agent, no memory to reset
+
+
+class MathCodeSingleStepWorkflow(AgenticWorkflow):
+
+    def run_episode(
+        self,
+        env_option: Optional[Any] = None,
+        seed: Optional[int] = None,
+    ) -> Trajectory:
+        # Reset the environment and the agent's memory.
+        obs, info = self.env.reset(options=env_option, seed=seed)
+        self.agent.reset()
+
+        data = []
+        ret = 0.0
+
+        done = False
+        # Episode loop.
+        while not done:
+            # Take an action by sending a request to generation server.
+            agent_infer_out = self.agent.act(obs)
+            action = agent_infer_out.action
+
+            # Advance one step in the environment.
+            nex_obs, reward, terminated, truncated, info = self.env.step(action)
+
+            # Collect the step data.
+            resp = agent_infer_out.llm_resp
+            input_len = len(resp.input_tokens)
+            output_len = len(resp.output_tokens)
+
+            input_ids = resp.input_tokens + resp.output_tokens
+            prompt_mask = [1] * input_len + [0] * output_len
+            logprobs = [0.0] * input_len + resp.output_logprobs
+            versions = [-1] * input_len + resp.output_versions
+
+            d = dict(
+                input_ids=input_ids,
+                prompt_mask=prompt_mask,
+                logprobs=logprobs,
+                versions=versions,
+            )
+            data.append(d)
+
+            ret += reward
+
+            # Prepare information for the next step.
+            done = terminated or truncated
+            obs = nex_obs
+
+        return Trajectory(
+            data=pad_sequences_to_tensors(data),
+            stats=dict(ret=ret),
         )

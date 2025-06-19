@@ -1,4 +1,3 @@
-import copy
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -101,7 +100,6 @@ def to_device(
 
 
 @torch.no_grad()
-@torch.jit.script
 def compute_varlen_position_indices(
     total_seqlen: int,
     cu_seqlens: torch.IntTensor,
@@ -534,7 +532,7 @@ def pad_input(hidden_states, indices, batch, seqlen):
     return rearrange(output, "(b s) ... -> b s ...", b=batch)
 
 
-def dict_tensor_select(data: Dict[str, torch.Tensor], lens: List[int], indices: List[int]):
+def dict_indexing(data: Dict[str, torch.Tensor], lens: List[int], indices: List[int]):
     input_lens = torch.tensor(lens, device="cuda")
     cu_seqlens = torch.nn.functional.pad(input_lens.cumsum(0, dtype=torch.int), (1, 0))
     
@@ -574,7 +572,7 @@ def allocate_balanced_mbs_synced(
     )
 
 
-def dict_tensor_split_mbs(
+def dict_split_mbs(
     data: Dict[str, torch.Tensor],
     mb_spec: MicroBatchSpec,
     lens: List[int],
@@ -582,7 +580,7 @@ def dict_tensor_split_mbs(
 ) -> Tuple[List[Dict[str, torch.Tensor]], List[List[int]]]:
     """Split a dict of tensors into microbatches."""
     group_indices, splitted_lens = allocate_balanced_mbs_synced(mb_spec, lens, group=group)
-    return [dict_tensor_select(data, lens, indices) for indices in group_indices], splitted_lens
+    return [dict_indexing(data, lens, indices) for indices in group_indices], splitted_lens
 
 
 def split_dict_tensor_with_cu_seqlens(
@@ -590,9 +588,8 @@ def split_dict_tensor_with_cu_seqlens(
     mb_spec: MicroBatchSpec,
     group: Optional[dist.ProcessGroup] = None,
 ):
-    data = copy.deepcopy(data)
     assert "cu_seqlens" in data
-    cu_seqlens = data.pop("cu_seqlens")
+    cu_seqlens = data["cu_seqlens"]
     total_lens = cu_seqlens[-1]
     input_lens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy()
 
@@ -611,7 +608,7 @@ def split_dict_tensor_with_cu_seqlens(
                 not_to_split[key] = value
     
     # split 
-    mbs, splitted_lens = dict_tensor_split_mbs(to_split, mb_spec, input_lens, group)
+    mbs, splitted_lens = dict_split_mbs(to_split, mb_spec, input_lens, group)
     
     results = []
     # organize splitted micro batches
