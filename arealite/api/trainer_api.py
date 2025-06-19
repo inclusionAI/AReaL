@@ -90,10 +90,10 @@ class TrainerFactory:
         rollout_controller: Optional["RolloutController"] = None,
         extra_args: Optional[Dict] = None,
     ) -> Trainer:
-        if config.type == "ppo-rlvr":
-            from arealite.impl.trainer.ppo import SpmdRlvrPPOTrainer
+        if config.type == "ppo":
+            from arealite.impl.trainer.ppo import SpmdPPOTrainer
 
-            return SpmdRlvrPPOTrainer(
+            return SpmdPPOTrainer(
                 self.args,
                 config,
                 train_dataset=train_dataset,

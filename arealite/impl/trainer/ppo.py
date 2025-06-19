@@ -40,7 +40,7 @@ class UnpaddedRolloutOutput:
     rewards: Optional[torch.FloatTensor] = None
 
 
-class SpmdRlvrPPOTrainer(Trainer):
+class SpmdPPOTrainer(Trainer):
 
     def __init__(
         self,

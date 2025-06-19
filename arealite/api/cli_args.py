@@ -429,6 +429,10 @@ class TrainingArgs:
         default_factory=ExperimentSaveEvalControl,
         metadata={"help": "Experiment save/evaluation control configuration."},
     )
+    min_required_servers: int = field(
+        default=0,
+        metadata={"help": "The minimum LLM server instances for RL training."},
+    )
     shutdown_server_on_exit: bool = field(
         default=False,
         metadata={"help": "Whether to shut down the LLM generation server on exit."},
