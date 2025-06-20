@@ -116,42 +116,24 @@ class RolloutController:
         env_options: Optional[List[Any]] = None,
         seeds: Optional[List[int]] = None,
     ) -> List[Trajectory]:
-        n_reqs = batch_size * self.gconfig.n_samples
-
-        # Create new workflow objects to avoid data race issues
-        factory = RolloutWorkflowFactory(self.args)
-        collectors = [
-            factory.make_workflow(self.config.workflow) for _ in range(n_reqs)
-        ]
-
         if env_options is None:
-            env_options = [None] * n_reqs
+            env_options = [None] * batch_size
         else:
             assert len(env_options) == batch_size
-            env_options = [env_options[i % batch_size] for i in range(n_reqs)]
         if seeds is None:
-            seeds = [None] * n_reqs
+            seeds = [None] * batch_size
         else:
             assert len(seeds) == batch_size
-            seeds = [seeds[i % batch_size] for i in range(n_reqs)]
-        assert len(env_options) == len(seeds) == n_reqs
 
-        def _generate_worker(args):
-            collector, env_option, seed = args
-            collector: RolloutWorkflow
-            return collector.run_episode(
-                self.gconfig.new(n_samples=1), env_option, seed
-            )
+        async def run_parallel_gen():
+            tasks = [
+                self._run_grouped_episode_async(None, env_option, seed)
+                for env_option, seed in zip(env_options, seeds)
+            ]
+            results = await asyncio.gather(*tasks)
+            return sum([r[1] for r in results], [])
 
-        # Set sharing strategy for tensors - file_descriptor is more efficient for CUDA
-        mp.set_sharing_strategy("file_descriptor")
-        # Use ProcessPoolExecutor for better resource management
-        with ProcessPoolExecutor(
-            max_workers=self.config.num_workers, mp_context=mp.get_context("spawn")
-        ) as executor:
-            tasks = list(zip(collectors, env_options, seeds))
-            trajectories = list(executor.map(_generate_worker, tasks))
-        return trajectories
+        return asyncio.run(run_parallel_gen())
 
     async def _prepare_batch_async(self, batch_size: int):
         buf_size = -1
@@ -175,14 +157,14 @@ class RolloutController:
         finally:
             loop.close()
 
-    async def _run_single_episode_async(self, rid, data):
+    async def _run_grouped_episode_async(self, rid, data, seed=None):
         factory = RolloutWorkflowFactory(self.args)
         collector = factory.make_workflow(self.config.workflow)
         tasks = [
-            asyncio.create_task(
-                collector.run_episode_async(
-                    self.gconfig.new(n_samples=1), env_option=data
-                )
+            collector.run_episode_async(
+                self.gconfig.new(n_samples=1),
+                env_option=data,
+                seed=seed,
             )
             for _ in range(self.gconfig.n_samples)
         ]
@@ -219,7 +201,7 @@ class RolloutController:
 
             # Create the new rollout task.
             if can_rollout:
-                task = asyncio.create_task(self._run_single_episode_async(rid, data))
+                task = asyncio.create_task(self._run_grouped_episode_async(rid, data))
                 rollout_tasks[rid] = task
                 task.add_done_callback(lambda t: rollout_tasks.pop(rid, None))
 

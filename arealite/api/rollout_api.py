@@ -95,7 +95,7 @@ class RolloutWorkflow(abc.ABC):
     ) -> Trajectory:
         """Run a single episode asynchronously and return trajectory."""
         # A trick to convert a sync function to async function
-        return await asyncio.to_thread(self.run_episode(gconfig, env_option, seed))
+        return await asyncio.to_thread(self.run_episode, gconfig, env_option, seed)
 
 
 @dataclass
