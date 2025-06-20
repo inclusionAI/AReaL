@@ -1,8 +1,9 @@
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional
 
 import torch
-from gymnasium.core import ActType
+from gymnasium.core import ActType, ObsType
 
 from arealite.api.cli_args import GenerationHyperparameters
 
@@ -20,10 +21,9 @@ class LLMServerInfo:
 
 @dataclass
 class LLMRequest:
-    rid: str
+    rid: str = field(default_factory=lambda: str(uuid.uuid4()))
     text: Optional[str] = None
     input_ids: List[int] = field(default_factory=list)
-    stop_token_ids: List[int] = field(default_factory=list)
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
@@ -48,6 +48,12 @@ class LLMResponse:
 
 
 @dataclass
+class AgentInferInput:
+    obs: ObsType
+    gconfig: GenerationHyperparameters
+
+
+@dataclass
 class AgentInferOutput:
     action: ActType
     llm_req: LLMRequest
@@ -55,6 +61,30 @@ class AgentInferOutput:
 
 
 @dataclass
+class TrajStats:
+    start_time: float = 0.0
+    total_reward: float = 0.0
+    episode_length: int = 0
+    info: Dict = field(default_factory=dict)
+
+
+@dataclass
 class Trajectory:
+    prompt: Dict[str, Any]
     data: Dict[str, torch.Tensor]
-    stats: Dict[str, Any]
+    stats: TrajStats
+
+
+@dataclass
+class WeightUpdateGroupMeta:
+    group_name: str
+    ranks: List[int]
+    comm_type: str
+
+
+@dataclass
+class WeightMeta:
+    group_name: str
+    param_name: str
+    shape: torch.Size
+    dtype: torch.dtype

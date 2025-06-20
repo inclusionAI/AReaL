@@ -1,0 +1,45 @@
+import re
+from functools import lru_cache
+from typing import List
+
+from functioncall.code.local_verify import code_verify
+from realhf.impl.dataset.math_code_dataset import load_metadata
+
+
+@lru_cache(maxsize=1)
+def _load_metadata(dataset_path: str):
+    """Cached version of load_metadata to avoid reloading metadata each time."""
+    return load_metadata(dataset_path)
+
+
+def extract_code(text, min_length=20):
+    """Extract code blocks from text."""
+    code_pattern = r"(?i)```(?:python|py|cpp|CPP)?\s*\n?(.*?)\n?```"
+    code_blocks = re.findall(code_pattern, text, re.DOTALL)
+    valid_blocks = []
+    for block in code_blocks:
+        clean_block = block.strip()
+        if len(clean_block) < min_length:
+            continue
+        valid_blocks.append(clean_block)
+
+    if not valid_blocks:
+        return None
+    # return the last code block
+    return valid_blocks[-1]
+
+
+def get_code_reward_fn(dataset_path):
+    def code_reward(
+        query_ids: List[str],
+        prompts: List[str],
+        completions: List[str],
+        prompt_ids: List[List[int]],
+        completion_ids: List[List[int]],
+    ) -> List[int]:
+
+        id2info = _load_metadata(dataset_path)
+        [extract_code(c) for c in completions]
+        return code_verify(id2info=id2info, generateds=completions, query_ids=query_ids)
+
+    return code_reward

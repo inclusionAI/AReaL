@@ -6,6 +6,7 @@ import torch
 import transformers
 
 from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
+from arealite.api.llm_client_api import LLMClient
 from realhf.api.cli_args import ParallelismConfig
 
 
@@ -31,7 +32,7 @@ class SPMDWrapper(abc.ABC):
         input_: Dict,
         mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
-        loss_weight_fn: Callable[[torch.Tensor, Dict], float],
+        loss_weight_fn: Callable[[Dict], float],
         version_steps: int,
         token_normalize_scope: Literal["global", "dp"] = "global",
     ) -> Dict:
@@ -71,9 +72,6 @@ class SPMDWrapper(abc.ABC):
     def get_version(self) -> int:
         raise NotImplementedError()
 
-    def get_hf_model_state_dict(self) -> Dict[str, torch.Tensor]:
-        raise NotImplementedError()
-
     def save_model_to_hf(
         self,
         path: str,
@@ -93,6 +91,10 @@ class SPMDWrapper(abc.ABC):
         """Load the optimizer state in a folder."""
         raise NotImplementedError()
 
+    def update_weights_to(self, llm_client: LLMClient):
+        """Update the weights to the server by sending requests to the client."""
+        raise NotImplementedError()
+
 
 @dataclass
 class EngineFactory:
@@ -100,7 +102,7 @@ class EngineFactory:
 
     def make_engine(self, engine_config: EngineConfig) -> SPMDWrapper:
         """Create an engine based on the configuration."""
-        if engine_config.backend == "fsdp":
+        if engine_config.backend.type == "fsdp":
             from arealite.impl.fsdp_wrapper import FSDPEngine
 
             return FSDPEngine(self.args, engine_config)
