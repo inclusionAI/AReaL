@@ -163,8 +163,8 @@ class FSDPConfig:
 @dataclass
 class EngineBackendConfig:
     type: str = field(
-        default="fsdp",
-        metadata={"help": "Training backend", "choices": ["fsdp"]},
+        default="hf",
+        metadata={"help": "Training backend", "choices": ["fsdp", "hf"]},
     )
     fsdp: Optional[FSDPConfig] = field(
         default=None, metadata={"help": "FSDP configuration (if using FSDP backend)"}

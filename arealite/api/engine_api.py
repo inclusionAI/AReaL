@@ -1,12 +1,15 @@
 import abc
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional
 
 import torch
 import transformers
+from transformers import AutoConfig, AutoModelForCausalLM
 
 from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
 from arealite.api.llm_client_api import LLMClient
+from arealite.utils import split_dict_tensor_with_cu_seqlens
 from realhf.api.cli_args import ParallelismConfig
 
 
@@ -107,4 +110,4 @@ class EngineFactory:
 
             return FSDPEngine(self.args, engine_config)
         else:
-            raise ValueError(f"Unsupported engine type: {engine_config.backend}")
+            raise ValueError(f"Unsupported engine type: {engine_config.backend.type}")
