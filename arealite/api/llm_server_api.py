@@ -256,7 +256,8 @@ class LLMServer:
                 logger.error(f"Process cleanup failed: {e}")
                 logger.error(traceback.format_exc())
 
-        sys.exit(exit_code)
+        if exit_code != 0:
+            sys.exit(exit_code)
 
 
 class LLMServerFactory:

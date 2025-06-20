@@ -22,7 +22,7 @@ class SGLangClient(LLMClient):
         # Convert messages to prompt
         if not req.text:
             assert req.input_ids is not None
-            req.text = self.tokenizer.decode(req.text)
+            req.text = self.tokenizer.decode(req.input_ids)
 
         # Prepare request payload
         gconfig = req.gconfig
@@ -56,8 +56,13 @@ class SGLangClient(LLMClient):
         accumulated_versions = []
 
         # Deal with rollout interruption
-        no_eos = True
-        while no_eos and len(accumulated_output_tokens) < gconfig.max_new_tokens:
+        completion = ""
+        stop_reason = "length"
+
+        while (
+            stop_reason != "stop"
+            and len(accumulated_output_tokens) < gconfig.max_new_tokens
+        ):
             # loop until the generation is complete
             response, server_info = self.request_with_retry(
                 endpoint="/generate",
@@ -69,7 +74,7 @@ class SGLangClient(LLMClient):
             result = response.json()
 
             # Parse response
-            completion = result["text"]
+            completion += result["text"]
             meta_info = result["meta_info"]
             output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
             output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
@@ -82,7 +87,6 @@ class SGLangClient(LLMClient):
             # Check if generation is complete
             finish_reason = meta_info["finish_reason"]
             stop_reason = finish_reason["type"]
-            no_eos = not stop_reason == "stop"
 
             payload["text"] += completion
 
@@ -99,19 +103,17 @@ class SGLangClient(LLMClient):
             ttft=latency,  # Simplified for non-streaming
         )
 
-    async def aupdate_weights_from_disk(
-        self, server_info: LLMServerInfo, new_param_path: str
-    ):
+    async def aupdate_weights_from_disk(self, server_info: LLMServerInfo, path: str):
         server_url = f"http://{server_info.host}:{server_info.port}"
         response, _ = await self.arequest_with_retry(
             endpoint="/update_weights_from_disk",
-            payload=dict(model_path=new_param_path, allow_interrupt=True),
+            payload=dict(model_path=path, allow_interrupt=True),
             method="POST",
             max_retries=3,
             timeout=self.client_config.request_timeout,
             target_server=server_info,
         )
-        res = response.json()
+        res = await response.json()
         assert res["success"]
         if "num_paused_requests" in res:
             logger.info(

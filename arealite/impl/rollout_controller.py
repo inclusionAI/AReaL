@@ -20,16 +20,24 @@ ROLLOUT_POLL_WAIT_TIME = 0.4
 
 
 class RolloutController:
-    def __init__(self, args: TrainingArgs, config: RolloutControllerConfig):
+    def __init__(
+        self,
+        args: TrainingArgs,
+        config: RolloutControllerConfig,
+        workflow: RolloutWorkflow,
+    ):
         self.args = args
         self.config = config
         self.gconfig = config.gconfig
 
+        # For staleness control
         self.train_batch_size = args.train_dataset.batch_size
+
+        self.workflow = workflow
 
         self._exiting = threading.Event()
         self._lock = threading.Lock()
-        self._buffer: List[Trajectory] = []
+        self._buffer: List[List[Trajectory]] = []
         self._version = 0
 
     ################### User Interfaces Start #################
@@ -64,7 +72,7 @@ class RolloutController:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(self._prepare_batch_async(batch_size))
+            return loop.run_until_complete(self._prepare_batch_async(batch_size))
         finally:
             loop.close()
 
@@ -82,26 +90,23 @@ class RolloutController:
         seeds: Optional[List[int]] = None,
     ) -> List[Trajectory]:
         n_reqs = batch_size * self.gconfig.n_samples
-        factory = RolloutWorkflowFactory(self.args)
-        collectors = [
-            factory.make_workflow(self.config.workflow) for _ in range(n_reqs)
-        ]
         if env_options is None:
-            env_options = [None] * len(n_reqs)
+            env_options = [None] * n_reqs
         else:
             assert len(env_options) == batch_size
             env_options = [env_options[i % batch_size] for i in range(n_reqs)]
         if seeds is None:
-            seeds = [None] * len(n_reqs)
+            seeds = [None] * n_reqs
         else:
             assert len(seeds) == batch_size
             seeds = [seeds[i % batch_size] for i in range(n_reqs)]
         assert len(env_options) == len(seeds) == n_reqs
         trajs = []
-        for collector, env_option, seed in zip(collectors, env_options, seeds):
-            collector: RolloutWorkflow
+        for env_option, seed in zip(env_options, seeds):
             trajs.append(
-                collector.run_episode(self.gconfig.new(n_samples=1), env_option, seed)
+                self.workflow.run_episode(
+                    self.gconfig.new(n_samples=1), env_option, seed
+                )
             )
         return trajs
 
@@ -112,17 +117,20 @@ class RolloutController:
         seeds: Optional[List[int]] = None,
     ) -> List[Trajectory]:
         n_reqs = batch_size * self.gconfig.n_samples
+
+        # Create new workflow objects to avoid data race issues
         factory = RolloutWorkflowFactory(self.args)
         collectors = [
             factory.make_workflow(self.config.workflow) for _ in range(n_reqs)
         ]
+
         if env_options is None:
-            env_options = [None] * len(n_reqs)
+            env_options = [None] * n_reqs
         else:
             assert len(env_options) == batch_size
             env_options = [env_options[i % batch_size] for i in range(n_reqs)]
         if seeds is None:
-            seeds = [None] * len(n_reqs)
+            seeds = [None] * n_reqs
         else:
             assert len(seeds) == batch_size
             seeds = [seeds[i % batch_size] for i in range(n_reqs)]
@@ -152,16 +160,18 @@ class RolloutController:
                 buf_size = len(self._buffer)
             await asyncio.sleep(0.1)
         with self._lock:
-            self._buffer = sorted(self._buffer, lambda x: x.stats.start_time)
+            self._buffer = sorted(
+                self._buffer, key=lambda x: np.mean([xx.stats.start_time for xx in x])
+            )
             data, self._buffer = self._buffer[:batch_size], self._buffer[batch_size:]
         return datapack.flat2d(data)
 
-    def _generate_until_complete(self):
+    def _generate_until_complete(self, dataloader):
         """Start an event loop to run episodes continuously."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(self._generate_loop())
+            loop.run_until_complete(self._generate_loop(dataloader))
         finally:
             loop.close()
 
@@ -176,7 +186,7 @@ class RolloutController:
             )
             for _ in range(self.gconfig.n_samples)
         ]
-        return rid, await asyncio.gather(tasks)
+        return rid, await asyncio.gather(*tasks)
 
     async def _generate_loop(self, dataloader):
         data_generator = iter(dataloader)
@@ -238,6 +248,7 @@ class RolloutController:
             # Collect done results.
             for task in done:
                 rid, trajs = await task
+                trajs: List[Trajectory]
                 assert isinstance(trajs, list) and isinstance(trajs[0], Trajectory)
                 rollout_stat.running -= 1
 

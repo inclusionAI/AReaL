@@ -210,6 +210,12 @@ class MathCodeSingleStepConfig:
 
 
 @dataclass
+class RLVRConfig:
+    reward_type: str = "math"
+    solution_path: str = field(default="", metadata={"help": "Path to solutions"})
+
+
+@dataclass
 class RolloutWorkflowConfig:
     type: str = field(
         default="rlvr",
@@ -218,8 +224,12 @@ class RolloutWorkflowConfig:
             "choices": ["rlvr", "math_code_single_step"],
         },
     )
+    rlvr: Optional[RLVRConfig] = field(
+        default=None,
+        metadata={"help": "The configuration for the single-step math/code workflow"},
+    )
     math_code_single_step: Optional[MathCodeSingleStepConfig] = field(
-        default_factory=MathCodeSingleStepConfig,
+        default=None,
         metadata={"help": "The configuration for the single-step math/code workflow"},
     )
 

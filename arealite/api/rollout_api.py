@@ -1,7 +1,7 @@
 import abc
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Optional, SupportsFloat
+from typing import Any, Callable, Optional, SupportsFloat
 
 from gymnasium import Env
 from gymnasium.core import ActType, ObsType
@@ -66,12 +66,17 @@ class RolloutWorkflow(abc.ABC):
         config: RolloutWorkflowConfig,
         agent: Agent | None = None,
         env: Environment | None = None,
+        reward_func: Callable | None = None,
     ):
         self.args = args
         self.config = config
 
+        # Used in agentic scenarios
         self.agent = agent
         self.env = env
+
+        # Used in RLVR
+        self.reward_func = reward_func
 
     def run_episode(
         self,
@@ -102,10 +107,25 @@ class RolloutWorkflowFactory:
         if config.type == "rlvr":
             from arealite.impl.rlvr.rlvr_workflow import RlvrWorkflow
 
+            rlvr_config = config.rlvr
+            if rlvr_config.reward_type == "math":
+                from arealite.impl.rlvr.math_reward import get_math_reward_fn
+
+                reward_fn = get_math_reward_fn(rlvr_config.solution_path)
+            elif rlvr_config.reward_type == "code":
+                from arealite.impl.rlvr.code_reward import get_code_reward_fn
+
+                reward_fn = get_code_reward_fn(rlvr_config.solution_path)
+            else:
+                raise NotImplementedError(
+                    f"Unknown reward type: {rlvr_config.reward_type}"
+                )
+
             return RlvrWorkflow(
                 self.args,
                 config=config,
                 llm_client=client,
+                reward_fn=reward_fn,
             )
         if config.type == "math_code_single_step":
             from arealite.impl.agentic.math_code_single_step import (

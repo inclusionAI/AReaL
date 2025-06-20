@@ -50,13 +50,13 @@ def extract_code(text, min_length=20):
 
 @dataclass
 class MathCodeAction:
-    qid: str
+    query_id: str
     answer: str
 
 
 @dataclass
 class MathCodeObs:
-    qid: str
+    query_id: str
     prompt_ids: List[int]
 
 
@@ -74,36 +74,38 @@ class MathCodeSingleStepEnv(Environment):
         super().reset(seed=seed)
         try:
             prompt_ids = options["input_ids"]
-            qid = options["qid"]
+            query_id = options["query_id"]
         except KeyError:
-            raise RuntimeError("`input_ids` and `qid` must be set in env options.")
+            raise RuntimeError("`input_ids` and `query_id` must be set in env options.")
         # Return dummy observation and info
-        return MathCodeObs(qid=qid, prompt_ids=prompt_ids), {}
+        return MathCodeObs(query_id=query_id, prompt_ids=prompt_ids), {}
 
     def step(
         self, action: MathCodeAction
     ) -> Tuple[MathCodeObs, float, bool, bool, dict]:
         """Execute one step in the environment."""
-        qid = action.qid
+        query_id = action.query_id
         answer = action.answer
 
-        qid = qid.split("@")[0]
-        cur_task = self.id2info[qid]["task"]
+        query_id = query_id.split("@")[0]
+        cur_task = self.id2info[query_id]["task"]
 
         if cur_task == "math":
             # Run math verification
-            format_reward = math_verify_call(self.id2info, [answer], [qid])[0]
+            format_reward = math_verify_call(self.id2info, [answer], [query_id])[0]
         elif cur_task == "code":
             # Extract code blocks and run code verification
             extracted_answer = extract_code(answer)
-            format_reward = code_verify_call(self.id2info, [extracted_answer], [qid])[0]
+            format_reward = code_verify_call(
+                self.id2info, [extracted_answer], [query_id]
+            )[0]
         else:
             raise NotImplementedError(f"Task type '{cur_task}' not implemented")
 
         # Return: observation, reward, terminated, truncated, info
         terminated = True  # Single step environment always terminates
         truncated = False
-        info = {"task": cur_task, "qid": qid}
+        info = {"task": cur_task, "query_id": query_id}
 
         return (
             None,
@@ -120,12 +122,12 @@ class MathCodeAgent(Agent):
         """Given an observation, return an action."""
         # Extract information from observation
         obs: MathCodeObs = inp.obs
-        qid = obs.qid
+        query_id = obs.query_id
         prompt_ids = obs.prompt_ids
 
         # Create LLM request
         llm_req = LLMRequest(
-            rid=str(qid) + "-" + str(uuid.uuid4()),
+            rid=str(query_id) + "-" + str(uuid.uuid4()),
             input_ids=prompt_ids,
             gconfig=inp.gconfig,
         )
@@ -137,7 +139,7 @@ class MathCodeAgent(Agent):
         answer = llm_resp.completion
 
         return AgentInferOutput(
-            action=MathCodeAction(qid=qid, answer=answer),
+            action=MathCodeAction(query_id=query_id, answer=answer),
             llm_req=llm_req,
             llm_resp=llm_resp,
         )
