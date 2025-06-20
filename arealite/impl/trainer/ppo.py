@@ -309,7 +309,6 @@ class SpmdPPOTrainer(Trainer):
             **rollout_output.model_inputs,
             old_logp=old_logp,
             advantages=advantages,
-            old_logp=old_logp,
             ppo_loss_mask=ppo_loss_mask,
         )
         input_lens = (
