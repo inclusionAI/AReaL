@@ -568,6 +568,7 @@ class Worker:
         self.__worker_index = worker_info.worker_index
 
         experiment = system_api.make_experiment(name=worker_info.experiment_name)
+        self.args = experiment
 
         expr_config = experiment.initial_setup()
         if isinstance(expr_config, list):

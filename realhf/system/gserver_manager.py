@@ -29,7 +29,7 @@ class AllocateRolloutInput:
     qid: str
 
 
-class GserverManager(AsyncWorker):
+class GserverManager(Worker):
     """This worker has the following functionalities:
     1. As a router, it schedules generation requests and returns the
        best server urls to clients for submitting generation requests.
@@ -71,7 +71,7 @@ class GserverManager(AsyncWorker):
         self.server_urls = []
 
         # recover info
-        self.__recover_run, self.__recover_info = recover.load_recover_info()
+        self.__recover_run, self.__recover_info = recover.load_recover_info(self.args)
         if self.__recover_run:
             # update weights will be automatically triggered upon the first schedule_request
             # self._last_param_realloc_step will also be updated
@@ -110,11 +110,7 @@ class GserverManager(AsyncWorker):
         epoch = self.__recover_info.last_step_info.epoch + 1
         epochstep = self.__recover_info.last_step_info.epoch_step + 1
         globalstep = self.__recover_info.last_step_info.global_step + 1
-        save_root = os.path.join(
-            constants.MODEL_SAVE_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
-        )
+        save_root = constants.get_save_path(self.args)
         role_path = os.path.join(save_root, role)
         if not os.path.exists(role_path):
             raise RuntimeError(
@@ -150,9 +146,7 @@ class GserverManager(AsyncWorker):
                 self._loaded_recover_weights = True
             else:
                 realloc_dir = os.path.join(
-                    constants.PARAM_REALLOC_PATH,
-                    constants.experiment_name(),
-                    constants.trial_name(),
+                    constants.get_param_realloc_path(self.args),
                     self.model_name.role,
                     str(realloc_version),
                 )
@@ -213,7 +207,7 @@ class GserverManager(AsyncWorker):
         url = min(self.server_urls, key=lambda k: self._server_token_usage[k])
         return self.server_urls.index(url)
 
-    async def _poll_async(self):
+    def _poll(self):
         if not self.thread:
             # Find addresses of generation servers
             self.server_urls = self._discover_servers(self.config.n_servers)
@@ -292,9 +286,7 @@ class GserverManager(AsyncWorker):
 
         # clear old weights
         realloc_root = os.path.join(
-            constants.PARAM_REALLOC_PATH,
-            constants.experiment_name(),
-            constants.trial_name(),
+            constants.get_param_realloc_path(self.args),
             self.model_name.role,
         )
         if os.path.exists(realloc_root):
@@ -483,6 +475,7 @@ class GserverManager(AsyncWorker):
         port = network.find_free_port(
             experiment_name=self.experiment_name,
             trial_name=self.trial_name,
+            lockfile_root=os.path.join(constants.get_cache_path(self.args), "ports"),
         )
         self.manager_addr = f"{network.gethostip()}:{port}"
 

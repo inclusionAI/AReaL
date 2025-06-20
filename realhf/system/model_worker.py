@@ -43,12 +43,6 @@ from realhf.base import (
     timeutil,
     topology,
 )
-from realhf.base.monitor import (
-    CUDATimeMarkType,
-    cuda_tmark,
-    cuda_tmarked,
-    dump_tmark_db,
-)
 from realhf.impl.model.nn.real_llm_api import ReaLModel
 from realhf.impl.model.utils import cuda_graph
 from realhf.system import request_reply_stream, worker_base
@@ -136,7 +130,7 @@ class ModelWorker(worker_base.Worker):
         r = self.config.worker_info
 
         # recover info
-        self.__recover_run, self.__recover_info = recover.load_recover_info()
+        self.__recover_run, self.__recover_info = recover.load_recover_info(self.args)
 
         # Whether to enable profiling is controlled by the following environment variables.
         self.__enable_profiler = os.getenv("REAL_DUMP_TRACE", "0") == "1"
@@ -174,11 +168,7 @@ class ModelWorker(worker_base.Worker):
         epoch = self.__recover_info.last_step_info.epoch + 1
         epochstep = self.__recover_info.last_step_info.epoch_step + 1
         globalstep = self.__recover_info.last_step_info.global_step + 1
-        save_root = os.path.join(
-            constants.MODEL_SAVE_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
-        )
+        save_root = constants.get_save_path(self.args)
         if epoch > 0:
             role_path = os.path.join(save_root, role)
             if os.path.exists(role_path):
@@ -251,6 +241,7 @@ class ModelWorker(worker_base.Worker):
         )
 
         self.__pg_info = global_comm.setup_global_comm(
+            args=self.args,
             expr_name=self.__experiment_name,
             trial_name=self.__trial_name,
             worker_index=self.__worker_index,
@@ -312,13 +303,6 @@ class ModelWorker(worker_base.Worker):
                     self.__dataset_dp_rank,
                     self.__dataset_dp_size,
                     self.config.tokenizer_name_or_path,
-                    self.config.worker_info.experiment_name,
-                    self.config.worker_info.trial_name,
-                    cache_root=(
-                        None
-                        if not self.config.use_dataset_cache
-                        else self.config.dataset_cahce_root
-                    ),
                 )
                 for d in self.config.datasets
             ]
@@ -388,9 +372,7 @@ class ModelWorker(worker_base.Worker):
                                 and hasattr(d, "filter")
                             ):
                                 dataset_indices_path = os.path.join(
-                                    constants.MODEL_SAVE_ROOT,
-                                    constants.experiment_name(),
-                                    constants.trial_name(),
+                                    constants.get_save_path(self.args),
                                     "dataset_indices",
                                     f"{self._dp_rank}_{i}.npy",
                                 )
@@ -438,13 +420,6 @@ class ModelWorker(worker_base.Worker):
                         s.id.dp_rank,
                         s.id.topo.get_dim("data"),
                         self.__models[s.id.model_name].tokenizer,
-                        self.config.worker_info.experiment_name,
-                        self.config.worker_info.trial_name,
-                        cache_root=(
-                            None
-                            if not self.config.use_dataset_cache
-                            else self.config.dataset_cahce_root
-                        ),
                     )
                     eval_dataloader = torch.utils.data.DataLoader(
                         eval_dataset,
@@ -497,16 +472,15 @@ class ModelWorker(worker_base.Worker):
             self.__param_realloc(hook_data)
         elif hook == "offload":
             # NOTE: Profiling (or cuda synchronization) will cause an overhead ~0.5s.
-            with cuda_tmarked("offload", CUDATimeMarkType.mem_layout):
-                m = self.__unwrapped_models[hook_data["model_name"]]
-                if not isinstance(m, ReaLModel):
-                    logger.warning(
-                        f"Model {hook_data['model_name']} (type={type(m)}) is not a ReaLModel, "
-                        f"so it can't use offload."
-                    )
-                    return
-                if not m._offloaded:
-                    m.async_offload()
+            m = self.__unwrapped_models[hook_data["model_name"]]
+            if not isinstance(m, ReaLModel):
+                logger.warning(
+                    f"Model {hook_data['model_name']} (type={type(m)}) is not a ReaLModel, "
+                    f"so it can't use offload."
+                )
+                return
+            if not m._offloaded:
+                m.async_offload()
         elif hook == "save":
             self.__save_model(hook_data)
         elif hook == "evaluate":
@@ -602,15 +576,11 @@ class ModelWorker(worker_base.Worker):
             except StopIteration:
                 # Upon the first fetch request, filter dataset and create dataloader.
                 eval_scores_path = os.path.join(
-                    constants.MODEL_SAVE_ROOT,
-                    constants.experiment_name(),
-                    constants.trial_name(),
+                    constants.get_save_path(self.args),
                     "dataset_eval_scores.json",
                 )
                 dataset_indices_path = os.path.join(
-                    constants.MODEL_SAVE_ROOT,
-                    constants.experiment_name(),
-                    constants.trial_name(),
+                    constants.get_save_path(self.args),
                     "dataset_indices",
                     f"{dp_rank}_{dataset_id}.npy",
                 )
@@ -668,7 +638,7 @@ class ModelWorker(worker_base.Worker):
                     continue
                 if self.data_manager.has_data(x.ids[0]):
                     continue
-                data_loaded.append(x)
+                data_loaded.append(x.cpu())
                 self.data_manager.store(x)
             assert len(set([x.ids[0] for x in data_loaded])) == len(data_loaded)
 
@@ -700,25 +670,23 @@ class ModelWorker(worker_base.Worker):
                 "dataset_size": self.dataset_size,
             }
         elif request.handle_name == "clear_data_cache":
-            with cuda_tmarked("clear_data_cache", CUDATimeMarkType.misc):
-                ids = request.data
-                self.data_manager.remove(ids)
-                gc.collect()
-                if (
-                    self.config.cuda_cache_cleanliness
-                    and self.__clear_cache_frequency.check()
-                ):
-                    st = time.monotonic()
-                    self._clear_memory(force=True)
-                    et = time.monotonic()
-                    blogger.debug(
-                        f"Model worker {self.__worker_index} cleared cache in {et-st:.4f}s. "
-                    )
+            ids = request.data
+            self.data_manager.remove(ids)
+            gc.collect()
+            if (
+                self.config.cuda_cache_cleanliness
+                and self.__clear_cache_frequency.check()
+            ):
+                st = time.monotonic()
+                self._clear_memory(force=True)
+                et = time.monotonic()
+                blogger.debug(
+                    f"Model worker {self.__worker_index} cleared cache in {et-st:.4f}s. "
+                )
             logger.debug(
-                "Get clear_data_cache, dump cuda tmark. "
+                "Get clear_data_cache. "
                 f"Remaining data in local storage: {self.data_manager.storage_size()}. "
             )
-            dump_tmark_db(self.__worker_index)
             res = request_reply_stream.NoResponse()
         self.__reply_queue.put_nowait((request, res))
         self.__request_sample_size[request.request_id] = 1
@@ -820,9 +788,7 @@ class ModelWorker(worker_base.Worker):
             tik = time.perf_counter()
             global_step = self.__models[model_name].version.global_step
             realloc_dir = os.path.join(
-                constants.PARAM_REALLOC_PATH,
-                constants.experiment_name(),
-                constants.trial_name(),
+                constants.get_param_realloc_path(self.args),
                 model_name.role,
                 str(global_step),
             )
@@ -852,9 +818,7 @@ class ModelWorker(worker_base.Worker):
 
     def _get_setup_logdir(self, name):
         subdir = os.path.join(
-            constants.LOG_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
+            constants.get_log_path(self.args),
             name,
             f"setup{self._setup_counter}",
         )
@@ -990,9 +954,7 @@ class ModelWorker(worker_base.Worker):
                 raise NotImplementedError(f"Unknown MFC type: {request.handle_name}.")
 
         eval_scores_path = os.path.join(
-            constants.MODEL_SAVE_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
+            constants.get_save_path(self.args),
             "dataset_eval_scores.json",
         )
         eval_scores = {}
@@ -1061,7 +1023,6 @@ class ModelWorker(worker_base.Worker):
         dist.barrier(group=constants.cpu_parallelism_group())
         return res
 
-    @cuda_tmark("data_transfer", CUDATimeMarkType.comm)
     def __data_transfer_among_workers(self, hook_data: Dict[str, Any]):
         meta_sample = hook_data["meta_sample"]
 
@@ -1130,9 +1091,7 @@ class ModelWorker(worker_base.Worker):
             global_step = int(global_step.item())
 
             realloc_dir = os.path.join(
-                constants.PARAM_REALLOC_PATH,
-                constants.experiment_name(),
-                constants.trial_name(),
+                constants.get_param_realloc_path(self.args),
                 from_model_name.role,
                 str(global_step),
             )
@@ -1284,7 +1243,6 @@ class ModelWorker(worker_base.Worker):
                     f"Time consumption: {float(t):.4f}s."
                 )
 
-    @cuda_tmark("post_response", CUDATimeMarkType.misc)
     def maybe_post_responses(self):
         ready_to_post = []
         while True:
@@ -1335,7 +1293,6 @@ class ModelWorker(worker_base.Worker):
             time.sleep(_MODEL_WORKER_POLL_REQUESTS_INTERVAL_SECS)
             pass
 
-    @cuda_tmark("receive_request", CUDATimeMarkType.misc)
     def maybe_receive_requests(self):
         tik = time.perf_counter()
         while time.perf_counter() - tik < _MODEL_WORKER_POLL_REQUESTS_SECS:

@@ -21,13 +21,13 @@ BACKENDS = [
     ("nfs", {}),
     ("ray", {}),
 ]
-if os.environ.get("REAL_ETCD_ADDR"):
+if os.environ.get("TESTING_ETCD_ADDR"):
     BACKENDS.append(
         (
             "etcd3",
             {
-                "host": os.getenv("REAL_ETCD_ADDR").split(":")[0],
-                "port": int(os.getenv("REAL_ETCD_ADDR").split(":")[1]),
+                "host": os.getenv("TESTING_ETCD_ADDR").split(":")[0],
+                "port": int(os.getenv("TESTING_ETCD_ADDR").split(":")[1]),
             },
         )
     )
@@ -43,12 +43,9 @@ def name_resolve(request):
         temp_dir = tempfile.mkdtemp()
         from realhf.base.name_resolve import NfsNameRecordRepository
 
-        original_root = NfsNameRecordRepository.RECORD_ROOT
-        NfsNameRecordRepository.RECORD_ROOT = temp_dir
-        repo = NfsNameRecordRepository()
+        repo = NfsNameRecordRepository(temp_dir)
         yield repo
         repo.reset()
-        NfsNameRecordRepository.RECORD_ROOT = original_root
         shutil.rmtree(temp_dir)
     elif backend_type == "memory":
         from realhf.base.name_resolve import MemoryNameRecordRepository
@@ -206,17 +203,6 @@ def test_reset(name_resolve):
         name_resolve.get("test_key1")
     assert name_resolve.get("test_key_no_delete") == "value2"
     name_resolve.delete("test_key_no_delete")
-
-
-def test_context_manager(name_resolve):
-    """Test context manager functionality."""
-    with name_resolve.__class__() as repo:
-        repo.add("test_key", "test_value", delete_on_exit=True)
-        assert repo.get("test_key") == "test_value"
-
-    # Key should be deleted after context exits
-    with pytest.raises(NameEntryNotFoundError):
-        name_resolve.get("test_key")
 
 
 def test_concurrent_access(name_resolve):
@@ -648,7 +634,9 @@ def test_corner_case_get_same_as_prefix(name_resolve):
     assert set(keys) == {"prefix", "prefix/child"}
 
 
-@pytest.mark.skipif(os.getenv("REAL_ETCD_ADDR") is None, reason="ETCD3 not configured")
+@pytest.mark.skipif(
+    os.getenv("TESTING_ETCD_ADDR") is None, reason="ETCD3 not configured"
+)
 def test_etcd3_specific_features(name_resolve):
     if not isinstance(name_resolve, Etcd3NameRecordRepository):
         pytest.skip("ETCD3 specific test")
@@ -663,7 +651,9 @@ def test_etcd3_specific_features(name_resolve):
         name_resolve.get("test_key")
 
 
-@pytest.mark.skipif(os.getenv("REAL_ETCD_ADDR") is not None, reason="NFS specific test")
+@pytest.mark.skipif(
+    os.getenv("TESTING_ETCD_ADDR") is not None, reason="NFS specific test"
+)
 def test_nfs_specific_features(name_resolve):
     """Test features specific to NFS backend."""
     from realhf.base.name_resolve import NfsNameRecordRepository

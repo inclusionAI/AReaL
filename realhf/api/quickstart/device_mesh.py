@@ -8,9 +8,8 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 
-from realhf.api.cli_args import ParallelismConfig
+from realhf.api.cli_args import ClusterSpecConfig, ParallelismConfig
 from realhf.api.core.dfg import MFCDef
-from realhf.base.cluster import spec as cluster_spec
 from realhf.base.slurm_utils import are_ones_contiguous, parse_nodelist
 
 
@@ -76,7 +75,6 @@ class DeviceMesh:
         return device_mesh
 
     def __post_init__(self):
-        n = cluster_spec.suffix_n_digits
         assert self._is_valid_mapping()
 
     def __eq__(self, other: "DeviceMesh"):
@@ -179,7 +177,10 @@ class DeviceMesh:
 
 
 def make_device_mesh_from_name(
-    global_mesh_name: str, name: str, n_gpus_per_node: int = 8
+    cluster: ClusterSpecConfig,
+    global_mesh_name: str,
+    name: str,
+    n_gpus_per_node: int = 8,
 ):
     """
     DeviceMesh name format: <prefix><node_indices>[:<gpu_ids>]
@@ -191,8 +192,8 @@ def make_device_mesh_from_name(
 
     Note: cluster device mesh name must occupy entire nodes.
     """
-    prefix = cluster_spec.node_name_prefix
-    node_list = parse_nodelist(global_mesh_name, prefix)
+    prefix = cluster.node_name_prefix
+    node_list = parse_nodelist(cluster, global_mesh_name, prefix)
     n_nodes = len(node_list)
 
     gpu_ids = None
@@ -202,7 +203,7 @@ def make_device_mesh_from_name(
         assert all(gpu_id < n_gpus_per_node for gpu_id in gpu_ids)
     else:
         node_names = name
-    node_names = parse_nodelist(node_names, prefix)
+    node_names = parse_nodelist(cluster, node_names, prefix)
     mapping = np.zeros((n_nodes, n_gpus_per_node), dtype=np.int32)
     if gpu_ids is None:
         node_indices = [node_list.index(node_name) for node_name in node_names]
