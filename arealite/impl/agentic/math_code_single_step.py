@@ -2,15 +2,17 @@ import os
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from functools import lru_cache
 from typing import Any, List, Optional, Tuple
 
-from arealite.api.cli_args import TrainingArgs
+from arealite.api.cli_args import GenerationHyperparameters, TrainingArgs
 from arealite.api.io_struct import (
     AgentInferInput,
     AgentInferOutput,
     LLMRequest,
     Trajectory,
+    TrajStats,
 )
 from arealite.api.rollout_api import Agent, Environment, RolloutWorkflow
 from arealite.utils import pad_sequences_to_tensors
@@ -109,7 +111,7 @@ class MathCodeSingleStepEnv(Environment):
 
         return (
             None,
-            (format_reward + self.reward_bias) * self.reward_scaling,
+            format_reward,
             terminated,
             truncated,
             info,
@@ -153,6 +155,7 @@ class MathCodeSingleStepWorkflow(RolloutWorkflow):
 
     def run_episode(
         self,
+        gconfig: GenerationHyperparameters,
         env_option: Optional[Any] = None,
         seed: Optional[int] = None,
     ) -> Trajectory:
@@ -161,13 +164,16 @@ class MathCodeSingleStepWorkflow(RolloutWorkflow):
         self.agent.reset()
 
         data = []
+        tik = datetime.now().timestamp()
         ret = 0.0
+        ep_len = 0
 
         done = False
         # Episode loop.
         while not done:
             # Take an action by sending a request to generation server.
-            agent_infer_out = self.agent.act(obs)
+            agent_infer_in = AgentInferInput(obs=obs, gconfig=gconfig)
+            agent_infer_out = self.agent.act(agent_infer_in)
             action = agent_infer_out.action
 
             # Advance one step in the environment.
@@ -192,6 +198,7 @@ class MathCodeSingleStepWorkflow(RolloutWorkflow):
             data.append(d)
 
             ret += reward
+            ep_len += 1
 
             # Prepare information for the next step.
             done = terminated or truncated
@@ -200,5 +207,10 @@ class MathCodeSingleStepWorkflow(RolloutWorkflow):
         return Trajectory(
             prompt=env_option,
             data=pad_sequences_to_tensors(data),
-            stats=dict(ret=ret),
+            stats=TrajStats(
+                start_time=tik,
+                total_reward=ret,
+                episode_length=ep_len,
+                info={},
+            ),
         )

@@ -476,7 +476,7 @@ class SpmdPPOTrainer(Trainer):
         self.create_train_dataloader()
 
         if self.config.async_training:
-            self.rollout_controller.start_run_episode_loop(self.train_dataloader)
+            self.rollout_controller.start_generate_loop(self.train_dataloader)
 
         total_epochs = self.args.exp_ctrl.total_train_epochs
         steps_per_epoch = len(self.train_dataloader) // (
