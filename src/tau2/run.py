@@ -7,7 +7,7 @@ from typing import Optional
 
 from loguru import logger
 
-from tau2.agent.gym_agent import GymAgent
+from tau2.gym.gym_agent import GymAgent
 from tau2.agent.llm_agent import LLMAgent, LLMGTAgent, LLMSoloAgent
 from tau2.data_model.simulation import (AgentInfo, Info, Results, RunConfig,
                                         SimulationRun, UserInfo)

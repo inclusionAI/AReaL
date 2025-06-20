@@ -1,8 +1,9 @@
 import threading
 from copy import deepcopy
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import gymnasium as gym
+from gymnasium.envs.registration import register
 from loguru import logger
 from pydantic import BaseModel
 
@@ -18,9 +19,42 @@ from tau2.data_model.message import (
 from tau2.data_model.simulation import SimulationRun, Task
 from tau2.environment.environment import Environment
 from tau2.environment.tool import Tool
+from tau2.evaluator.evaluator import EvaluationType, evaluate_simulation
 from tau2.orchestrator.orchestrator import Orchestrator
 from tau2.user.user_simulator import UserSimulator
 from tau2.utils.tools import parse_action_string, to_functional_format
+
+
+class TauSpace(gym.spaces.Space):
+    """
+    A space for the tau-bench gym environment.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def sample(self, *args, **kwargs) -> str:
+        """
+        Sample a string from the space.
+        """
+        logger.warning("Sampling not supported for tau-bench gym environment")
+        return ""
+
+    def contains(self, x: Any) -> bool:
+        """
+        Check if a string is in the space.
+        """
+        return isinstance(x, str)
+
+
+def register_gym_agent() -> None:
+    """
+    Register the tau-bench gym environment with gymnasium.
+    """
+    register(
+        id="tau-bench-v0",
+        entry_point="tau2.gym.gym_agent:AgentGymEnv",
+    )
 
 
 class GymAgentState(BaseModel):
@@ -284,17 +318,17 @@ class AgentGymEnv(gym.Env):
             domain: The domain name (e.g., 'retail', 'telecom', 'airline')
             task_id: The specific task ID to run within the domain
         """
-        self.domain: str = domain
-        self.task_id: str = task_id
-        self._lock: threading.Lock = threading.Lock()
+        self.domain = domain
+        self.task_id= task_id
+        self._lock = threading.Lock()
         self._agent: Optional[GymAgent] = None
         self._user: Optional[UserSimulator] = None
         self._orchestrator: Optional[Orchestrator] = None
         self._orchestrator_thread: Optional[threading.Thread] = None
-        self._simulation_done: threading.Event = threading.Event()
+        self._simulation_done = threading.Event()
         self._simulation_run: Optional[SimulationRun] = None
-        self.observation_space: gym.spaces.Space = gym.spaces.Text(max_length=10000)
-        self.action_space: gym.spaces.Space = gym.spaces.Text(max_length=1000)
+        self.observation_space = TauSpace()
+        self.action_space = TauSpace()
 
     def reset(
         self, seed: Optional[int] = None, options: Optional[dict] = None
@@ -470,11 +504,6 @@ class AgentGymEnv(gym.Env):
         """
         Get the reward for the current simulation run.
         """
-        from tau2.evaluator.evaluator import (  # TODO: Should not have to import inside func
-            EvaluationType,
-            evaluate_simulation,
-        )
-
         evaluation_type = EvaluationType.ENV
         evaluation_result = evaluate_simulation(
             simulation=self._simulation_run,
@@ -645,38 +674,3 @@ class AgentGymEnv(gym.Env):
             environment=self.get_environment(),
             task=self.get_task(),
         )
-
-
-if __name__ == "__main__":
-    from tau2.utils.display import ConsoleDisplay
-
-    env = AgentGymEnv(domain="mock", task_id="create_task_1")
-    observation, info = env.reset()
-    print(observation)
-    print(info)
-    observation, reward, terminated, truncated, info = env.step(
-        "create_task(user_id='user_1', title='Important Meeting')"
-    )
-    print(observation)
-    print(reward)
-    print(terminated)
-    observation, reward, terminated, truncated, info = env.step(
-        "ok done! It is called Important Meeting and assigned to user_1"
-    )
-    print(observation)
-    print(reward)
-    print(terminated)
-
-    if not terminated:
-        observation, reward, terminated, truncated, info = env.step(
-            "ok great, have a nice day!"
-        )
-        print(observation)
-        print(reward)
-        print(terminated)
-
-    ConsoleDisplay.display_task(env.get_task())
-    ConsoleDisplay.display_simulation(env._simulation_run)
-
-    ConsoleDisplay.display_task(env.get_task())
-    ConsoleDisplay.display_simulation(env._simulation_run)

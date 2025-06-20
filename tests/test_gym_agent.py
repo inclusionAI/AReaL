@@ -1,7 +1,7 @@
 import threading
 import time
 
-from tau2.agent.gym_agent import GymAgent, GymAgentState
+from tau2.gym.gym_agent import GymAgent, GymAgentState
 from tau2.data_model.message import AssistantMessage, ToolCall, UserMessage
 from tau2.environment.tool import Tool
 from tests.utils import timeout

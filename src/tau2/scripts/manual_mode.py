@@ -7,7 +7,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
-from tau2.agent.gym_agent import AgentGymEnv
+from tau2.gym.gym_agent import AgentGymEnv
 from tau2.run import get_options, load_tasks
 from tau2.utils.tools import is_functional_tool_call, parse_functional_tool_call
 
