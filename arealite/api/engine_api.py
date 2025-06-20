@@ -27,13 +27,6 @@ class SPMDWrapper(abc.ABC):
         """
         raise NotImplementedError()
 
-    def init(self, config):
-        """Initialize model in single node.
-
-        Models may not be loaded during __init__, but when calling this method.
-        """
-        raise NotImplementedError()
-
     def train_batch(
         self,
         input_: Dict,

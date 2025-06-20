@@ -12,23 +12,6 @@ from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
 from arealite.api.engine_api import SPMDWrapper
 from arealite.utils import split_dict_tensor_with_cu_seqlens
 
-def get_transformer_layer_cls(model):
-    """Get transformer layer classes for wrapping policy."""
-    # Common transformer layer class names
-    common_layer_names = ["Block", "DecoderLayer"]
-
-    layer_classes = set()
-    for name, module in model.named_modules():
-        module_name = type(module).__name__
-        if any(layer_name in module_name for layer_name in common_layer_names):
-            layer_classes.add(type(module))
-
-    # Fallback to standard PyTorch layers if none found
-    if not layer_classes:
-        layer_classes = {nn.TransformerEncoderLayer, nn.TransformerDecoderLayer}
-
-    return layer_classes
-
 def get_cosine_schedule_with_warmup(
     optimizer: torch.optim.Optimizer,
     num_warmup_steps: int,
@@ -84,7 +67,7 @@ class HFEngine(SPMDWrapper):
         self.optimizer = None
         self.model_config = None
 
-    def init(self, config):
+    def init_distributed(self, config):
         """Initialize model in single node."""
 
         # Load model
@@ -150,15 +133,13 @@ class HFEngine(SPMDWrapper):
         self.model.train()
         self.optimizer.zero_grad()
 
-        # TODO: implement
-        mb_inputs = split_dict_tensor(input_, mb_spec)
+        mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
 
         total_loss_weight = torch.tensor(
             sum([loss_weight_fn(mb) for mb in mb_inputs]), dtype=torch.float32
         )
         assert total_loss_weight != 0
 
-        total_loss = 0.0
         for mb_input in mb_inputs:
             outputs = self.model(**mb_input)
             loss = loss_fn(outputs.logits, mb_input)
@@ -166,13 +147,22 @@ class HFEngine(SPMDWrapper):
 
             loss *= loss_scale
             loss.backward()
-            total_loss += loss.item()
+
+        gradients = {}
+        for name, param in self.model.named_parameters():
+            if param.grad is not None:
+                gradients[name] = param.grad.clone().detach()
+
+        current_lr = self.lr_scheduler.get_last_lr()[0]
 
         # Optimizer step
         self.optimizer.step()
         self.lr_scheduler.step()
 
-        return {}
+        return {
+            "gradients": gradients,
+            "learning_rate": current_lr,
+        }
 
     @torch.no_grad()
     def eval_batch(
@@ -183,8 +173,7 @@ class HFEngine(SPMDWrapper):
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
         self.model.eval()
-
-        mb_inputs = split_dict_tensor(input_, mb_spec)
+        mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
 
         total_loss = 0.0
         total_weight = 0.0
@@ -212,7 +201,7 @@ class HFEngine(SPMDWrapper):
     ) -> Any | None:
         """Forward pass with optional post-processing."""
         self.model.eval()
-        mb_inputs = split_dict_tensor(input_, mb_spec)
+        mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
 
         results = []
 
@@ -225,7 +214,7 @@ class HFEngine(SPMDWrapper):
             else:
                 results.append(outputs.logits)
 
-        return aggregate_fn(results) if results else None
+        return aggregate_fn(results)
 
     def get_hf_model_state_dict(self) -> Dict[str, torch.Tensor]:
         """Get model state dict for saving."""
@@ -246,7 +235,8 @@ class HFEngine(SPMDWrapper):
 
         os.makedirs(path, exist_ok=True)
 
-        self.model.save_pretrained(path, state_dict=self.model.state_dict())
+        state_dict = {k: v.cpu() for k, v in self.model.state_dict().items()}
+        self.model.save_pretrained(path, state_dict=state_dict)
         self.model_config.save_pretrained(path)
         tokenizer.save_pretrained(path)
 
@@ -280,3 +270,5 @@ class HFEngine(SPMDWrapper):
             self.optimizer.load_state_dict(
                 torch.load(optimizer_path, map_location="cpu")
             )
+        else:
+            raise RuntimeError(f"Optimizer state file not found: {optimizer_path}")
