@@ -1,12 +1,34 @@
 #!/usr/bin/env python3
-"""
-Manual mode script for interacting with TauGymEnv as the agent.
-Allows users to play the role of the agent in a domain.
-"""
+from loguru import logger
+from rich import box
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.table import Table
+from rich.text import Text
 
 from tau2.agent.gym_agent import AgentGymEnv
 from tau2.run import get_options, load_tasks
 from tau2.utils.tools import is_functional_tool_call, parse_functional_tool_call
+
+# Initialize Rich console
+console = Console()
+
+
+def disable_logging():
+    """Disable all logging during manual mode for cleaner CLI output."""
+    # Remove all existing handlers
+    logger.remove()
+    # Add a handler that does nothing (suppresses all logs)
+    logger.add(lambda msg: None, level="CRITICAL")
+
+
+def enable_logging():
+    """Re-enable logging after manual mode."""
+    # Remove the silent handler
+    logger.remove()
+    # Re-add default console handler
+    logger.add(lambda msg: print(msg), level="INFO")
 
 
 def display_domains():
@@ -14,20 +36,31 @@ def display_domains():
     options = get_options()
     domains = options.domains
 
-    print("\n=== Available Domains ===")
+    # Create a table for domains
+    table = Table(title="🎯 Available Domains", box=box.ROUNDED)
+    table.add_column("Number", style="cyan", justify="center")
+    table.add_column("Domain", style="green", justify="left")
+
     for i, domain in enumerate(domains, 1):
-        print(f"{i}. {domain}")
+        table.add_row(str(i), domain)
+
+    console.print(table)
 
     while True:
         try:
-            choice = input(f"\nSelect a domain (1-{len(domains)}): ").strip()
+            choice = Prompt.ask(
+                f"\n[bold blue]Select a domain[/bold blue] (1-{len(domains)})",
+                default="1",
+            )
             choice_idx = int(choice) - 1
             if 0 <= choice_idx < len(domains):
                 return domains[choice_idx]
             else:
-                print(f"Please enter a number between 1 and {len(domains)}")
+                console.print(
+                    f"[red]Please enter a number between 1 and {len(domains)}[/red]"
+                )
         except ValueError:
-            print("Please enter a valid number")
+            console.print("[red]Please enter a valid number[/red]")
 
 
 def display_tasks(domain: str):
@@ -36,35 +69,57 @@ def display_tasks(domain: str):
     try:
         tasks = load_tasks(domain)
     except Exception as e:
-        print(f"Error loading tasks for domain '{domain}': {e}")
+        console.print(f"[red]Error loading tasks for domain '{domain}': {e}[/red]")
         # Try alternative task sets
         options = get_options()
         task_sets = [ts for ts in options.task_sets if domain in ts]
         if task_sets:
-            print(f"Available task sets for {domain}: {task_sets}")
+            console.print(
+                f"[yellow]Available task sets for {domain}: {task_sets}[/yellow]"
+            )
             task_set = task_sets[0]  # Use first available task set
-            print(f"Using task set: {task_set}")
+            console.print(f"[green]Using task set: {task_set}[/green]")
             tasks = load_tasks(task_set)
         else:
             raise ValueError(f"No task sets found for domain '{domain}'")
 
-    print(f"\n=== Available Tasks for {domain} ===")
+    # Create a table for tasks
+    table = Table(title=f"📋 Available Tasks for {domain}", box=box.ROUNDED)
+    table.add_column("Number", style="cyan", justify="center")
+    table.add_column("Task ID", style="green", justify="left")
+    table.add_column("Description", style="white", justify="left")
+
     for i, task in enumerate(tasks, 1):
-        print(f"{i}. {task.id}")
-        if task.description:
-            print(f"   Description: {task.description}")
-        print()
+        # Safely handle task description
+        try:
+            if hasattr(task, "description") and task.description:
+                if isinstance(task.description, str):
+                    description = task.description
+                else:
+                    description = str(task.description)
+            else:
+                description = "No description available"
+        except Exception:
+            description = "Description unavailable"
+
+        table.add_row(str(i), task.id, description)
+
+    console.print(table)
 
     while True:
         try:
-            choice = input(f"Select a task (1-{len(tasks)}): ").strip()
+            choice = Prompt.ask(
+                f"\n[bold blue]Select a task[/bold blue] (1-{len(tasks)})", default="1"
+            )
             choice_idx = int(choice) - 1
             if 0 <= choice_idx < len(tasks):
                 return tasks[choice_idx]
             else:
-                print(f"Please enter a number between 1 and {len(tasks)}")
+                console.print(
+                    f"[red]Please enter a number between 1 and {len(tasks)}[/red]"
+                )
         except ValueError:
-            print("Please enter a valid number")
+            console.print("[red]Please enter a valid number[/red]")
 
 
 def get_available_tools(env: AgentGymEnv):
@@ -74,17 +129,22 @@ def get_available_tools(env: AgentGymEnv):
         tools = environment.get_tools()
         return tools
     except Exception as e:
-        print(f"Warning: Could not load tools: {e}")
+        console.print(f"[yellow]Warning: Could not load tools: {e}[/yellow]")
         return []
 
 
 def display_tools(tools):
     """Display available tools to the user."""
     if not tools:
-        print("No tools available for this domain.")
+        console.print(Panel("No tools available for this domain.", style="red"))
         return
 
-    print("\n=== Available Tools ===")
+    # Create a table for tools
+    table = Table(title="🔧 Available Tools", box=box.ROUNDED)
+    table.add_column("Tool Name", style="cyan", justify="left")
+    table.add_column("Description", style="white", justify="left")
+    table.add_column("Parameters", style="yellow", justify="left")
+
     for tool in tools:
         # Get the description from the tool
         if hasattr(tool, "short_desc") and tool.short_desc:
@@ -94,65 +154,88 @@ def display_tools(tools):
         else:
             desc = "No description available"
 
-        print(f"- {tool.name}: {desc}")
-
         # Show parameters if available
+        params_text = ""
         if hasattr(tool, "params") and tool.params:
             try:
                 params_schema = tool.params.model_json_schema()
                 if "properties" in params_schema:
                     param_names = list(params_schema["properties"].keys())
                     if param_names:
-                        print(f"  Parameters: {', '.join(param_names)}")
+                        params_text = ", ".join(param_names)
             except Exception:
                 pass
+
+        table.add_row(tool.name, desc, params_text)
+
+    console.print(table)
 
 
 def format_observation(observation: str, step_count: int):
     """Format the observation for better display."""
     if not observation.strip():
-        print("\n=== No observation available ===")
+        console.print(Panel("No observation available", style="red"))
         return
 
-    print("\n" + "=" * 60)
-    print(f"STEP {step_count} - CURRENT OBSERVATION:")
-    print("=" * 60)
+    # Create a panel for the observation
+    title = f"STEP {step_count} - CURRENT OBSERVATION"
 
     # Split by lines and format each message
+    formatted_lines = []
     lines = observation.strip().split("\n")
+
     for line in lines:
         if line.strip():
             if line.startswith("user:"):
-                print(f"👤 USER: {line[5:].strip()}")
+                formatted_lines.append(
+                    f"[bold blue]👤 USER:[/bold blue] {line[5:].strip()}"
+                )
             elif line.startswith("assistant:"):
-                print(f"🤖 ASSISTANT: {line[10:].strip()}")
+                formatted_lines.append(
+                    f"[bold green]🤖 ASSISTANT:[/bold green] {line[10:].strip()}"
+                )
             elif line.startswith("system:"):
-                print(f"⚙️  SYSTEM: {line[7:].strip()}")
+                formatted_lines.append(
+                    f"[bold yellow]⚙️  SYSTEM:[/bold yellow] {line[7:].strip()}"
+                )
             else:
-                print(f"📝 {line.strip()}")
+                formatted_lines.append(f"[white]📝 {line.strip()}[/white]")
 
-    print("=" * 60)
+    content = "\n\n".join(formatted_lines)
+    panel = Panel(content, title=title, border_style="blue", box=box.ROUNDED)
+    console.print(panel)
 
 
 def get_user_action(env: AgentGymEnv, step_count: int) -> str:
     """Get the next action from the user."""
-    print(f"\n🎯 STEP {step_count} - Enter your action as the agent:")
-    print("(Type 'quit' to exit, 'help' for commands, 'tools' to see available tools)")
+    console.print(
+        f"\n[bold cyan] STEP {step_count} - Enter your action as the agent:[/bold cyan]"
+    )
+    console.print(
+        "[dim](Type 'quit' to exit, 'help' for commands, 'tools' to see available tools)[/dim]"
+    )
 
     while True:
-        action = input("Action: ").strip()
+        action = Prompt.ask("[bold green]Action[/bold green]")
         if action.lower() == "quit":
             return None
         elif action.lower() == "help":
-            print("\n📋 Available commands:")
-            print("- Type any text to send as your response")
-            print("- 'quit': Exit the simulation")
-            print("- 'help': Show this help message")
-            print("- 'tools': Show available tools")
-            print("\n💡 Tips:")
-            print("- You can use tools by typing their names and parameters")
-            print('- Example: \'search_flights(origin="NYC", destination="LAX")\'')
-            print("- Be conversational and helpful to the user")
+            help_panel = Panel(
+                """[bold]📋 Available commands:[/bold]
+• Type any text to send as your response
+• 'quit': Exit the simulation
+• 'help': Show this help message
+• 'tools': Show available tools
+
+[bold]💡 Tips:[/bold]
+• You can use tools by typing their names and parameters
+• Example: [cyan]search_flights(origin="NYC", destination="LAX")[/cyan]
+• Be conversational and helpful to the user""",
+                title="🆘 Help",
+                border_style="green",
+                box=box.ROUNDED,
+            )
+            console.print(help_panel)
         elif action.lower() == "tools":
             tools = get_available_tools(env)
             display_tools(tools)
@@ -162,53 +245,76 @@ def get_user_action(env: AgentGymEnv, step_count: int) -> str:
                 try:
                     # Parse the functional tool call
                     tool_call = parse_functional_tool_call(action)
-                    print(
-                        f"🔧 Parsed tool call: {tool_call.name} with arguments: {tool_call.arguments}"
+                    console.print(
+                        f"[green]🔧 Parsed tool call:[/green] [cyan]{tool_call.name}[/cyan] "
+                        f"with arguments: [yellow]{tool_call.arguments}[/yellow]"
                     )
                     # Return the action as-is for now - the environment will handle the tool call
                     return action
                 except (ValueError, SyntaxError) as e:
-                    print(f"❌ Error parsing tool call: {e}")
-                    print(
-                        "Please check the format. Example: function_name(arg1='value1', arg2=123)"
+                    console.print(f"[red]❌ Error parsing tool call: {e}[/red]")
+                    console.print(
+                        "[yellow]Please check the format. Example: function_name(arg1='value1', arg2=123)[/yellow]"
                     )
                     continue
             return action
         else:
-            print("Please enter a valid action")
+            console.print("[red]Please enter a valid action[/red]")
 
 
 def main():
     """Main function for the manual mode."""
-    print("🎮 Welcome to Tau2 Manual Mode!")
-    print("You will be playing the role of the agent in a domain.")
-    print(
-        "This allows you to interact with the simulation as if you were the AI agent."
+    # Disable logging for cleaner CLI output
+    disable_logging()
+
+    # Welcome message with Rich styling
+    welcome_text = Text()
+    welcome_text.append("🎮 Welcome to ", style="bold blue")
+    welcome_text.append("Tau2 Manual Mode", style="bold green")
+    welcome_text.append("!", style="bold blue")
+
+    welcome_panel = Panel(
+        """You will be playing the role of the agent in a domain.
+This allows you to interact with the simulation as if you were the AI agent.
+
+[bold]Ready to start your adventure?[/bold] 🚀""",
+        title=welcome_text,
+        border_style="blue",
+        box=box.DOUBLE,
     )
+
+    console.print(welcome_panel)
 
     try:
         # Step 1: Choose domain
         domain = display_domains()
-        print(f"\n✅ Selected domain: {domain}")
+        console.print(f"\n[green]✅ Selected domain:[/green] [bold]{domain}[/bold]")
 
         # Step 2: Choose task
         task = display_tasks(domain)
-        print(f"\n✅ Selected task: {task.id}")
+        console.print(f"\n[green]✅ Selected task:[/green] [bold]{task.id}[/bold]")
         if task.description:
-            print(f"📝 Task description: {task.description}")
+            try:
+                if isinstance(task.description, str):
+                    description = task.description
+                else:
+                    description = str(task.description)
+                console.print(f"[dim]📝 Task description: {description}[/dim]")
+            except Exception:
+                console.print(
+                    "[dim]📝 Task description: [red]Unable to display[/red][/dim]"
+                )
 
         # Step 3: Create TauGymEnv instance
-        print(
-            f"\n🔧 Initializing environment for domain '{domain}' and task '{task.id}'..."
-        )
-        env = AgentGymEnv(domain=domain, task_id=task.id)
+        with console.status("[bold green]Initializing environment...", spinner="dots"):
+            env = AgentGymEnv(domain=domain, task_id=task.id)
 
         # Show available tools
         tools = get_available_tools(env)
         display_tools(tools)
 
         # Step 4: Reset environment and get initial observation
-        print("\n🚀 Starting simulation...")
+        console.print("\n[bold green]🚀 Starting simulation...[/bold green]")
         observation, info = env.reset()
 
         # Main interaction loop
@@ -222,34 +328,74 @@ def main():
             # Get user action
             action = get_user_action(env, step_count)
             if action is None:
-                print("👋 Exiting simulation...")
+                console.print("[yellow]👋 Exiting simulation...[/yellow]")
                 break
 
             # Step the environment
             try:
-                observation, reward, terminated, truncated, info = env.step(action)
+                with console.status("[bold green]Processing action...", spinner="dots"):
+                    observation, reward, terminated, truncated, info = env.step(action)
 
                 if terminated:
-                    print("\n🏁 === Simulation Terminated ===")
                     if reward != 0.0:
-                        print(f"🏆 Final reward: {reward}")
+                        console.print(
+                            Panel(
+                                f"[bold green]🏆 Simulation Completed![/bold green]\n"
+                                f"Final reward: [bold yellow]{reward}[/bold yellow]",
+                                title="🏁 Simulation Terminated",
+                                border_style="green",
+                                box=box.ROUNDED,
+                            )
+                        )
+                    else:
+                        console.print(
+                            Panel(
+                                "[bold red]Simulation ended without reward[/bold red]",
+                                title="🏁 Simulation Terminated",
+                                border_style="red",
+                                box=box.ROUNDED,
+                            )
+                        )
                     break
                 elif truncated:
-                    print("\n⏰ === Simulation Truncated ===")
+                    console.print(
+                        Panel(
+                            "[bold yellow]Simulation was truncated (time limit reached)[/bold yellow]",
+                            title="⏰ Simulation Truncated",
+                            border_style="yellow",
+                            box=box.ROUNDED,
+                        )
+                    )
                     break
 
             except Exception as e:
-                print(f"❌ Error during simulation step: {e}")
-                print("🔄 Continuing with next step...")
+                console.print(f"[red]❌ Error during simulation step: {e}[/red]")
+                console.print("[yellow]🔄 Continuing with next step...[/yellow]")
                 continue
 
-        print("\n🎉 Simulation ended. Thank you for playing!")
+        console.print(
+            Panel(
+                "[bold green]🎉 Simulation ended. Thank you for playing![/bold green]",
+                border_style="green",
+                box=box.ROUNDED,
+            )
+        )
 
     except KeyboardInterrupt:
-        print("\n\n⏹️  Simulation interrupted by user.")
+        console.print("\n\n[red]⏹️  Simulation interrupted by user.[/red]")
     except Exception as e:
-        print(f"\n❌ Error: {e}")
-        print("Please check your domain and task selection.")
+        console.print(
+            Panel(
+                f"[bold red]❌ Error: {e}[/bold red]\n"
+                "Please check your domain and task selection.",
+                title="Error",
+                border_style="red",
+                box=box.ROUNDED,
+            )
+        )
+    finally:
+        # Re-enable logging when exiting
+        enable_logging()
 
 
 if __name__ == "__main__":

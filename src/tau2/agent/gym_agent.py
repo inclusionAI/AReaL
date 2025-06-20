@@ -13,13 +13,14 @@ from tau2.data_model.message import (
     AssistantMessage,
     Message,
     MultiToolMessage,
+    UserMessage,
 )
 from tau2.data_model.simulation import SimulationRun, Task
 from tau2.environment.environment import Environment
 from tau2.environment.tool import Tool
 from tau2.orchestrator.orchestrator import Orchestrator
 from tau2.user.user_simulator import UserSimulator
-from tau2.utils.tools import parse_action_string
+from tau2.utils.tools import parse_action_string, to_functional_format
 
 
 class GymAgentState(BaseModel):
@@ -56,6 +57,7 @@ class GymAgent(LocalAgent):
         self._action_received = threading.Event()
         self._observation_set = threading.Event()
         self._lock = threading.Lock()
+        self._terminated = threading.Event()
 
     def stop(
         self,
@@ -72,8 +74,9 @@ class GymAgent(LocalAgent):
         self._observation = history + [message] if message else []
         self._action_received.set()
         self._observation_set.set()
+        self._terminated.set()
 
-    def step(self, action_msg: AssistantMessage) -> list[Message]:
+    def step(self, action_msg: AssistantMessage) -> tuple[list[Message], bool]:
         """
         Provide the next action to the agent and get the resulting observation.
 
@@ -109,7 +112,9 @@ class GymAgent(LocalAgent):
         logger.info(f"Got observation: {self._observation}")
 
         # Return the current observation
-        return deepcopy(self._observation) if self._observation else []
+        observation = deepcopy(self._observation) if self._observation else []
+        terminated = self._terminated.is_set()
+        return observation, terminated
 
     def generate_next_message(
         self, message: ValidAgentInputMessage, state: GymAgentState
@@ -224,6 +229,7 @@ class GymAgent(LocalAgent):
             self._observation_set.clear()
             self._next_action = None
             self._observation = None
+            self._terminated.clear()
 
         # Wait for generate_next_message to set the observation
         self._observation_set.wait()
@@ -335,8 +341,6 @@ class AgentGymEnv(gym.Env):
             self._agent = self._orchestrator.agent
             self._user = self._orchestrator.user
 
-            # Do NOT call self._orchestrator.initialize() here; run() will do it
-
             # Start orchestrator in a separate thread
             self._orchestrator_thread = threading.Thread(target=self._run_orchestrator)
             self._orchestrator_thread.daemon = True
@@ -428,10 +432,11 @@ class AgentGymEnv(gym.Env):
             action_msg = parse_action_string(action)
 
             # Provide the action to the agent
-            observation = self._agent.step(action_msg)
+            observation, agent_terminated = self._agent.step(action_msg)
 
             # Wait for the agent to be waiting for input again, but only if simulation is not done
             # Use a timeout to periodically check if simulation is done
+            # TODO: Review the logic here!
             while (
                 not self._simulation_done.is_set() and not self._agent.waiting_for_input
             ):
@@ -439,12 +444,47 @@ class AgentGymEnv(gym.Env):
                 if self._simulation_done.is_set():
                     break
             # Check if simulation is done
+            logger.info(f"Agent terminated: {agent_terminated}")
             terminated = self._simulation_done.is_set()
-
+            logger.info(f"Simulation done: {terminated}")
             # Convert observation to string format
             observation_str = self._format_observation(observation)
 
-            return observation_str, 0.0, terminated, False, self._get_info()
+            return (
+                observation_str,
+                self.get_reward(),
+                terminated,
+                False,
+                self._get_info(),
+            )
+
+    def get_reward(self) -> float:
+        """
+        Get the reward for the current simulation run.
+        """
+        if self._simulation_run is None:
+            return 0.0
+        return self._get_reward()
+
+    def _get_reward(self) -> float:
+        """
+        Get the reward for the current simulation run.
+        """
+        from tau2.evaluator.evaluator import (  # TODO: Should not have to import inside func
+            EvaluationType,
+            evaluate_simulation,
+        )
+
+        evaluation_type = EvaluationType.ENV
+        evaluation_result = evaluate_simulation(
+            simulation=self._simulation_run,
+            task=self.get_task(),
+            evaluation_type=evaluation_type,
+            solo_mode=False,
+            domain=self.domain,
+        )
+        logger.info(f"Evaluation result: {evaluation_result}")
+        return evaluation_result.reward
 
     def _run_orchestrator(self):
         """
@@ -459,13 +499,16 @@ class AgentGymEnv(gym.Env):
         to the main thread that the simulation has ended.
         It also sets the simulation run to the orchestrator's simulation run.
         """
+        simulation_run = None
         try:
             if self._orchestrator:
+                logger.info("Starting orchestrator")
                 simulation_run = self._orchestrator.run()
-                self._simulation_run = simulation_run
+                logger.info("Orchestrator finished")
         except Exception as e:
-            print(f"Orchestrator error: {e}")
+            logger.error(f"Orchestrator error: {e}")
         finally:
+            self._simulation_run = simulation_run
             self._simulation_done.set()
 
     def _format_observation(self, messages: list[Message]) -> str:
@@ -485,7 +528,27 @@ class AgentGymEnv(gym.Env):
         """
         if not messages:
             return ""
-        return "\n".join([f"{m.role}: {m.content}" for m in messages])
+        turns = []
+        for m in messages:
+            if isinstance(m, UserMessage):
+                if not m.is_tool_call():
+                    turns.append(f"user: {m.content}")
+                else:
+                    tool_calls = ", ".join(
+                        [to_functional_format(t) for t in m.tool_calls]
+                    )
+                    turns.append(f"user: {tool_calls}")
+            elif isinstance(m, AssistantMessage):
+                if not m.is_tool_call():
+                    turns.append(f"assistant: {m.content}")
+                else:
+                    tool_calls = ", ".join(
+                        [to_functional_format(t) for t in m.tool_calls]
+                    )
+                    turns.append(f"assistant: {tool_calls}")
+            else:
+                turns.append(f"{m.role}: {m.content}")
+        return "\n".join(turns)
 
     def get_environment(self) -> Environment:
         """
@@ -585,23 +648,35 @@ class AgentGymEnv(gym.Env):
 
 
 if __name__ == "__main__":
+    from tau2.utils.display import ConsoleDisplay
+
     env = AgentGymEnv(domain="mock", task_id="create_task_1")
     observation, info = env.reset()
     print(observation)
     print(info)
     observation, reward, terminated, truncated, info = env.step(
-        "create_task(user_id='user_1', title='Important Meeting', description='task_description')"
+        "create_task(user_id='user_1', title='Important Meeting')"
     )
     print(observation)
     print(reward)
     print(terminated)
-    print(truncated)
-    print(info)
     observation, reward, terminated, truncated, info = env.step(
         "ok done! It is called Important Meeting and assigned to user_1"
     )
     print(observation)
     print(reward)
     print(terminated)
-    print(truncated)
-    print(info)
+
+    if not terminated:
+        observation, reward, terminated, truncated, info = env.step(
+            "ok great, have a nice day!"
+        )
+        print(observation)
+        print(reward)
+        print(terminated)
+
+    ConsoleDisplay.display_task(env.get_task())
+    ConsoleDisplay.display_simulation(env._simulation_run)
+
+    ConsoleDisplay.display_task(env.get_task())
+    ConsoleDisplay.display_simulation(env._simulation_run)
