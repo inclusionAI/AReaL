@@ -5,7 +5,7 @@ pip uninstall deepspeed flash-attn pynvml cugraph-dgl dask-cuda cugraph-service-
 pip install "sglang[all]==0.4.6.post4" 
 pip install megatron-core==0.11.0 nvidia-ml-py
 pip install git+https://github.com/garrett4wade/cugae --no-build-isolation --verbose
-pip install flash-attn --no-build-isolation
+pip install "flash-attn<=2.7.3" --no-build-isolation
 
 # Package used for calculating math reward
 pip install -e evaluation/latex2sympy
