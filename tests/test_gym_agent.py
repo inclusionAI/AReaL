@@ -1,9 +1,9 @@
 import threading
 import time
 
-from tau2.gym.gym_agent import GymAgent, GymAgentState
 from tau2.data_model.message import AssistantMessage, ToolCall, UserMessage
 from tau2.environment.tool import Tool
+from tau2.gym.gym_agent import GymAgent, GymAgentState
 from tests.utils import timeout
 
 
@@ -32,7 +32,7 @@ class TestGymAgent:
         agent = make_agent()
         assert agent._observation is None
         assert agent._next_action is None
-        assert not agent.waiting_for_input
+        assert not agent.is_agent_turn
 
     @timeout(10)
     def test_step_and_generate_next_message(self):
@@ -57,7 +57,7 @@ class TestGymAgent:
         thread = threading.Thread(target=run_generate)
         thread.start()
         time.sleep(0.1)
-        assert agent.waiting_for_input
+        assert agent.is_agent_turn
 
         action_content = "Hi! How can I help you?"
         action_msg = AssistantMessage(role="assistant", content=action_content)
@@ -73,7 +73,7 @@ class TestGymAgent:
         assert result_state is not None
         assert result_message.content == action_content
         assert isinstance(result_message, AssistantMessage)
-        assert not agent.waiting_for_input
+        assert not agent.is_agent_turn
         assert result_state.messages[-1].content == action_content
 
     def test_reset(self):
@@ -81,30 +81,30 @@ class TestGymAgent:
         # Simulate a previous run
         agent._observation = [UserMessage(role="user", content="Hi")]
         agent._next_action = AssistantMessage(role="assistant", content="Test")
-        agent._action_received.set()
+        agent._action_disallowed.set()
         agent._observation_set.set()
         # Test the reset functionality directly by clearing the state
         with agent._lock:
-            agent._action_received.clear()
+            agent._action_disallowed.clear()
             agent._observation_set.clear()
             agent._next_action = None
             agent._observation = None
         # Verify the state is cleared
         assert agent._observation is None
         assert agent._next_action is None
-        assert not agent._action_received.is_set()
+        assert not agent._action_disallowed.is_set()
         assert not agent._observation_set.is_set()
-        assert not agent.waiting_for_input
+        assert not agent.is_agent_turn
 
     def test_waiting_for_input_property(self):
         agent = make_agent()
         # Simulate waiting state
         agent._observation_set.set()
-        agent._action_received.clear()
-        assert agent.waiting_for_input
+        agent._action_disallowed.clear()
+        assert agent.is_agent_turn
         # Simulate not waiting
         agent._observation_set.clear()
-        assert not agent.waiting_for_input
+        assert not agent.is_agent_turn
 
     @timeout(10)
     def test_step_with_tool_call(self):
@@ -130,7 +130,7 @@ class TestGymAgent:
         thread = threading.Thread(target=run_generate)
         thread.start()
         time.sleep(0.1)
-        assert agent.waiting_for_input
+        assert agent.is_agent_turn
 
         # Create a tool call message
         tool_call = ToolCall(
@@ -158,7 +158,7 @@ class TestGymAgent:
             "destination": "LAX",
         }
         assert isinstance(result_message, AssistantMessage)
-        assert not agent.waiting_for_input
+        assert not agent.is_agent_turn
         assert result_state.messages[-1].tool_calls == [tool_call]
 
 

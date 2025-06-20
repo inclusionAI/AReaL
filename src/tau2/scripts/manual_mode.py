@@ -337,25 +337,15 @@ This allows you to interact with the simulation as if you were the AI agent.
                     observation, reward, terminated, truncated, info = env.step(action)
 
                 if terminated:
-                    if reward != 0.0:
-                        console.print(
-                            Panel(
-                                f"[bold green]🏆 Simulation Completed![/bold green]\n"
-                                f"Final reward: [bold yellow]{reward}[/bold yellow]",
-                                title="🏁 Simulation Terminated",
-                                border_style="green",
-                                box=box.ROUNDED,
-                            )
+                    console.print(
+                        Panel(
+                            f"[bold green]🏆 Simulation Completed![/bold green]\n"
+                            f"Final reward: [bold yellow]{reward}[/bold yellow]",
+                            title="🏁 Simulation Terminated",
+                            border_style="green",
+                            box=box.ROUNDED,
                         )
-                    else:
-                        console.print(
-                            Panel(
-                                "[bold red]Simulation ended without reward[/bold red]",
-                                title="🏁 Simulation Terminated",
-                                border_style="red",
-                                box=box.ROUNDED,
-                            )
-                        )
+                    )
                     break
                 elif truncated:
                     console.print(

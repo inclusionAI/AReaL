@@ -21,6 +21,7 @@ from tau2.environment.environment import Environment
 from tau2.environment.tool import Tool
 from tau2.evaluator.evaluator import EvaluationType, evaluate_simulation
 from tau2.orchestrator.orchestrator import Orchestrator
+from tau2.registry import registry
 from tau2.user.user_simulator import UserSimulator
 from tau2.utils.tools import parse_action_string, to_functional_format
 
@@ -88,10 +89,16 @@ class GymAgent(LocalAgent):
         super().__init__(tools=tools, domain_policy=domain_policy)
         self._observation: Optional[list[Message]] = None
         self._next_action: Optional[AssistantMessage] = None
-        self._action_received = threading.Event()
-        self._observation_set = threading.Event()
+        self._agent_turn_finished = threading.Event()
         self._lock = threading.Lock()
-        self._terminated = threading.Event()
+        self._agent_turn_finished.set()
+
+    @property
+    def observation(self) -> list[Message]:
+        """
+        Get the current observation.
+        """
+        return self._observation if self._observation else []
 
     def stop(
         self,
@@ -105,14 +112,13 @@ class GymAgent(LocalAgent):
         """
         super().stop(message, state)
         history = deepcopy(state.messages) if state else []
-        self._observation = history + [message] if message else []
-        self._action_received.set()
-        self._observation_set.set()
-        self._terminated.set()
+        with self._lock:
+            self._observation = history + [message] if message else []
+            self._agent_turn_finished.set()
 
-    def step(self, action_msg: AssistantMessage) -> tuple[list[Message], bool]:
+    def set_action(self, action_msg: AssistantMessage) -> None:
         """
-        Provide the next action to the agent and get the resulting observation.
+        Provide the next action to the agent.
 
         This method implements the gym-style step interface. It provides an action
         to the agent, waits for the agent to process it and generate a response,
@@ -120,35 +126,16 @@ class GymAgent(LocalAgent):
 
         The method uses threading events to synchronize with generate_next_message():
         - Sets the next action and signals that an action is available
-        - Waits for generate_next_message() to process the action and set the observation
-        - Returns a copy of the current observation
 
         Args:
             action_msg: The action string to be executed by the agent
-
-        Returns:
-            A deep copy of the current message history (observation)
-
-        Note:
-            This method blocks until the agent has sent the action to the orchestrator and received an observation back.
-            The returned observation includes all messages up to and including the agent's response to the provided action.
         """
         with self._lock:
+            if self._agent_turn_finished.is_set():
+                raise RuntimeError("It is not the agent's turn to act.")
             logger.info(f"Stepping with action: {str(action_msg)}")
             self._next_action = action_msg
-            self._action_received.set()
-            self._observation_set.clear()
-
-        logger.info(f"Waiting for observation")
-        # Wait for generate_next_message to set the observation
-        self._observation_set.wait()
-
-        logger.info(f"Got observation: {self._observation}")
-
-        # Return the current observation
-        observation = deepcopy(self._observation) if self._observation else []
-        terminated = self._terminated.is_set()
-        return observation, terminated
+            self._agent_turn_finished.set()
 
     def generate_next_message(
         self, message: ValidAgentInputMessage, state: GymAgentState
@@ -183,6 +170,7 @@ class GymAgent(LocalAgent):
             agent's responses are controlled externally through the gym interface.
         """
         with self._lock:
+            self._agent_turn_finished.clear()
             logger.info(f"Got message: {message}")
             if isinstance(message, MultiToolMessage):
                 state.messages.extend(message.tool_messages)
@@ -190,19 +178,16 @@ class GymAgent(LocalAgent):
                 state.messages.append(message)
             self._observation = deepcopy(state.messages)
             logger.info(f"Setting observation: {self._observation}")
-            self._observation_set.set()
 
         # Wait for step() to provide the next action
         logger.info(f"Waiting for action")
-        self._action_received.wait()
+        self._agent_turn_finished.wait()
 
         logger.info(f"Continuing with action: {str(self._next_action)}")
 
         with self._lock:
             response_message = self._next_action
             # Reset for next iteration
-            self._action_received.clear()
-            self._observation_set.clear()
             self._next_action = None
 
         state.messages.append(response_message)
@@ -226,7 +211,7 @@ class GymAgent(LocalAgent):
         return GymAgentState(messages=messages)
 
     @property
-    def waiting_for_input(self) -> bool:
+    def is_agent_turn(self) -> bool:
         """
         Check if the agent is currently waiting for input via step().
 
@@ -237,39 +222,7 @@ class GymAgent(LocalAgent):
         Returns:
             True if the agent is waiting for input, False otherwise
         """
-        return self._observation_set.is_set() and not self._action_received.is_set()
-
-    def reset(self) -> list[Message]:
-        """
-        Reset the agent's internal state and wait for the first observation.
-
-        This method clears all internal synchronization state and waits
-        for generate_next_message() to be called for the first time to
-        set the initial observation.
-
-        Returns:
-            A deep copy of the initial observation (message history) once
-            generate_next_message() has been called and set the observation.
-            Returns an empty list if no observation is set.
-
-        Note:
-            This method blocks until generate_next_message() is called and
-            sets the initial observation. It's typically used to initialize
-            the agent before starting the step-action cycle.
-        """
-        with self._lock:
-            # Clear any pending synchronization
-            self._action_received.clear()
-            self._observation_set.clear()
-            self._next_action = None
-            self._observation = None
-            self._terminated.clear()
-
-        # Wait for generate_next_message to set the observation
-        self._observation_set.wait()
-
-        # Return the initial observation
-        return deepcopy(self._observation) if self._observation else []
+        return not self._agent_turn_finished.is_set()
 
 
 class AgentGymEnv(gym.Env):
@@ -319,7 +272,7 @@ class AgentGymEnv(gym.Env):
             task_id: The specific task ID to run within the domain
         """
         self.domain = domain
-        self.task_id= task_id
+        self.task_id = task_id
         self._lock = threading.Lock()
         self._agent: Optional[GymAgent] = None
         self._user: Optional[UserSimulator] = None
@@ -380,26 +333,21 @@ class AgentGymEnv(gym.Env):
             self._orchestrator_thread.daemon = True
             self._orchestrator_thread.start()
 
-            # Wait for the agent to be waiting for input
+            # Wait for orchestrator to send the initial observation
             # Use a timeout to periodically check if simulation is done
-            while (
-                not self._simulation_done.is_set() and not self._agent.waiting_for_input
-            ):
+            while not self._simulation_done.is_set() and not self._agent.is_agent_turn:
                 self._simulation_done.wait(timeout=0.01)
-                if self._simulation_done.is_set():
-                    break
 
             if self._simulation_done.is_set():
                 # Simulation ended immediately, return empty observation
+                logger.warning("Simulation ended immediately")
                 return "", self._get_info()
 
-            # Get the current observation from the agent (don't call reset())
-            current_observation = (
-                self._agent._observation.copy() if self._agent._observation else []
-            )
+            # Get the initial observation from the agent
+            initial_observation = self._agent.observation.copy()
 
             # Convert observation to string format
-            observation_str = self._format_observation(current_observation)
+            observation_str = self._format_observation(initial_observation)
 
             return observation_str, self._get_info()
 
@@ -417,7 +365,7 @@ class AgentGymEnv(gym.Env):
             return {}
         return self._simulation_run.model_dump_json(indent=2)
 
-    def step(self, action: str) -> tuple[str, dict, bool, bool, dict]:
+    def step(self, action: str) -> tuple[str, float, bool, bool, dict]:
         """
         Execute an action and advance the simulation.
 
@@ -460,29 +408,24 @@ class AgentGymEnv(gym.Env):
 
         with self._lock:
             if self._simulation_done.is_set():
-                return "", 0.0, True, False, self._get_info()
+                raise ValueError("Simulation already terminated.")
 
             # Parse the action string into a message
             action_msg = parse_action_string(action)
 
             # Provide the action to the agent
-            observation, agent_terminated = self._agent.step(action_msg)
+            self._agent.set_action(action_msg)
 
-            # Wait for the agent to be waiting for input again, but only if simulation is not done
+            # Wait for the orchestrator to send the next observation
             # Use a timeout to periodically check if simulation is done
-            # TODO: Review the logic here!
-            while (
-                not self._simulation_done.is_set() and not self._agent.waiting_for_input
-            ):
+            while not self._simulation_done.is_set() and not self._agent.is_agent_turn:
                 self._simulation_done.wait(timeout=0.01)
-                if self._simulation_done.is_set():
-                    break
+
             # Check if simulation is done
-            logger.info(f"Agent terminated: {agent_terminated}")
             terminated = self._simulation_done.is_set()
             logger.info(f"Simulation done: {terminated}")
             # Convert observation to string format
-            observation_str = self._format_observation(observation)
+            observation_str = self._format_observation(self._agent.observation)
 
             return (
                 observation_str,
@@ -504,7 +447,7 @@ class AgentGymEnv(gym.Env):
         """
         Get the reward for the current simulation run.
         """
-        evaluation_type = EvaluationType.ENV
+        evaluation_type = EvaluationType.ALL
         evaluation_result = evaluate_simulation(
             simulation=self._simulation_run,
             task=self.get_task(),
@@ -589,7 +532,6 @@ class AgentGymEnv(gym.Env):
         Returns:
             An Environment instance configured for the specified domain
         """
-        from tau2.registry import registry
 
         return registry.get_env_constructor(self.domain)()
 
@@ -604,14 +546,14 @@ class AgentGymEnv(gym.Env):
             The Task object corresponding to the specified task_id
 
         Raises:
-            StopIteration: If no task is found with the specified task_id
+            ValueError: If no task is found with the specified task_id
         """
-        from tau2.registry import registry
-
-        return next(
-            task
-            for task in registry.get_tasks_loader(self.domain)()
-            if task.id == self.task_id
+        tasks = registry.get_tasks_loader(self.domain)()
+        for task in tasks:
+            if task.id == self.task_id:
+                return task
+        raise ValueError(
+            f"No task found with id {self.task_id} for domain {self.domain}"
         )
 
     def get_agent(self) -> GymAgent:
