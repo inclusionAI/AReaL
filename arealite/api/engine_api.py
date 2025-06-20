@@ -27,6 +27,13 @@ class SPMDWrapper(abc.ABC):
         """
         raise NotImplementedError()
 
+    def init(self, config):
+        """Initialize model in single node.
+
+        Models may not be loaded during __init__, but when calling this method.
+        """
+        raise NotImplementedError()
+
     def train_batch(
         self,
         input_: Dict,
@@ -106,5 +113,9 @@ class EngineFactory:
             from arealite.impl.fsdp_wrapper import FSDPEngine
 
             return FSDPEngine(self.args, engine_config)
+        elif engine_config.backend.type == "hf":
+            from arealite.impl.hf_wrapper import HFEngine
+
+            return HFEngine(self.args, engine_config)
         else:
             raise ValueError(f"Unsupported engine type: {engine_config.backend}")
