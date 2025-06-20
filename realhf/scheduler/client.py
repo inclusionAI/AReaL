@@ -122,14 +122,10 @@ class SchedulerClient:
         raise NotImplementedError()
 
 
-def get_python3_path():
-    return "python3"
-
-
 def remote_worker_cmd(expr_name, trial_name, debug, worker_type):
     # requires information in scheduler package
     return (
-        f"{get_python3_path()} {'' if debug else '-O'} -m realhf.apps.remote worker -w {worker_type} "
+        f"python3 {'' if debug else '-O'} -m realhf.apps.remote worker -w {worker_type} "
         f"-e {expr_name} -f {trial_name} -i {{jobstep_id}} -g {{n_jobsteps}} -r {{worker_submission_index}} "
         f"-p {{wprocs_per_jobstep}} -j {{wprocs_in_job}} -o {{wproc_offset}}"
     )
@@ -137,7 +133,7 @@ def remote_worker_cmd(expr_name, trial_name, debug, worker_type):
 
 def setup_cmd(expr_name, trial_name, debug):
     bash_cmd = (  # f"pip3 install -e $REAL_PACKAGE_PATH --no-build-isolation && "
-        f"{get_python3_path()} {'' if debug else '-O'} -m realhf.apps.remote "
+        f"python3 {'' if debug else '-O'} -m realhf.apps.remote "
         f"reset_name_resolve -e {expr_name} -f {trial_name}"
     )
     # return f"bash -c \"{bash_cmd}\""
@@ -146,7 +142,7 @@ def setup_cmd(expr_name, trial_name, debug):
 
 def control_cmd(expr_name, trial_name, debug, ignore_worker_error, controller_type):
     bash_cmd = (  # f"pip3 install -e $REAL_PACKAGE_PATH --no-build-isolation && "
-        f"{get_python3_path()} {'' if debug else '-O'} -m realhf.apps.remote controller "
+        f"python3 {'' if debug else '-O'} -m realhf.apps.remote controller "
         f"-e {expr_name} -f {trial_name} "
         f"--{'ignore_worker_error' if ignore_worker_error else 'raise_worker_error'} "
         f"--type {controller_type}"

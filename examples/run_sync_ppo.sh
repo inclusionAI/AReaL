@@ -4,10 +4,10 @@ python3 training/main_sync_ppo.py \
     allocation_mode=sglang.d4p1m1+d2p2m1 \
     cluster.fileroot=/storage/testing/experiments \
     actor.type._class=qwen3 \
-    actor.path=/storage/testing/models/Qwen__Qwen3-1.7B \
+    actor.path=Qwen/Qwen3-1.7B \
     ref.type._class=qwen3 \
-    ref.path=/storage/testing/models/Qwen__Qwen3-1.7B \
-    dataset.path=/storage/testing/dataset/boba_106k_0319.jsonl \
+    ref.path=Qwen/Qwen3-1.7B \
+    dataset.path=hf-dataset://inclusionAI/AReaL-RL-Data/data/boba_106k_0319.jsonl \
     dataset.train_bs_n_seqs=32 \
     group_size=8 \
     ppo.gen.max_new_tokens=4096 \
