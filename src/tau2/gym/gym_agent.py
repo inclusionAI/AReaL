@@ -59,7 +59,7 @@ def register_gym_agent() -> None:
 
 
 class GymAgentState(BaseModel):
-    """The state of the agent."""
+    """The state of the gym agent containing the conversation history."""
 
     messages: list[APICompatibleMessage]
 
@@ -70,12 +70,12 @@ class GymAgent(LocalAgent):
 
     This agent implements a gym-like interface where external code can control
     the agent's actions step-by-step. It uses threading events to synchronize
-    between the external step() calls and internal message generation.
+    between the external set_action() calls and internal message generation.
 
     The agent maintains an observation-action cycle:
-    1. External code calls step(action) to provide the next action
+    1. External code calls set_action(action_msg) to provide the next action
     2. The agent processes the action and generates a response
-    3. The agent waits for the next step() call
+    3. The agent waits for the next set_action() call
     """
 
     def __init__(self, tools: List[Tool], domain_policy: str):
@@ -97,6 +97,10 @@ class GymAgent(LocalAgent):
     def observation(self) -> list[Message]:
         """
         Get the current observation.
+
+        Returns:
+            List of messages representing the current conversation state,
+            or empty list if no observation has been set yet.
         """
         return self._observation if self._observation else []
 
@@ -106,9 +110,15 @@ class GymAgent(LocalAgent):
         state: Optional[GymAgentState] = None,
     ) -> None:
         """
-        Stops the agent.
+        Stops the agent and finalizes the observation.
+
+        This method is called when the simulation ends. It updates the final
+        observation with the complete message history and signals that the
+        agent's turn is finished.
+
         Args:
-            message: The last message to the agent.
+            message: The last message to the agent (optional)
+            state: The current agent state containing message history (optional)
         """
         super().stop(message, state)
         history = deepcopy(state.messages) if state else []
@@ -120,15 +130,19 @@ class GymAgent(LocalAgent):
         """
         Provide the next action to the agent.
 
-        This method implements the gym-style step interface. It provides an action
-        to the agent, waits for the agent to process it and generate a response,
-        then returns the current observation (message history).
+        This method is called by external code to provide the next action
+        that the agent should take. It sets the action and signals that
+        the agent can continue processing.
 
         The method uses threading events to synchronize with generate_next_message():
         - Sets the next action and signals that an action is available
+        - Raises an error if called when it's not the agent's turn to act
 
         Args:
-            action_msg: The action string to be executed by the agent
+            action_msg: The AssistantMessage containing the action to be executed
+
+        Raises:
+            RuntimeError: If called when it's not the agent's turn to act
         """
         with self._lock:
             if self._agent_turn_finished.is_set():
@@ -148,7 +162,7 @@ class GymAgent(LocalAgent):
 
         1. **Observation Phase**: Updates the agent's observation with the current
            message history and signals that an observation is ready
-        2. **Action Phase**: Waits for an external action to be provided via step(),
+        2. **Action Phase**: Waits for an external action to be provided via set_action(),
            then generates and returns the response message
 
         The method handles both regular messages and MultiToolMessages by
@@ -165,7 +179,7 @@ class GymAgent(LocalAgent):
             - The updated GymAgentState with the new message history
 
         Note:
-            This method blocks during the action phase until step() is called
+            This method blocks during the action phase until set_action() is called
             to provide the next action. The synchronization ensures that the
             agent's responses are controlled externally through the gym interface.
         """
@@ -179,7 +193,7 @@ class GymAgent(LocalAgent):
             self._observation = deepcopy(state.messages)
             logger.info(f"Setting observation: {self._observation}")
 
-        # Wait for step() to provide the next action
+        # Wait for set_action() to provide the next action
         logger.info(f"Waiting for action")
         self._agent_turn_finished.wait()
 
@@ -213,11 +227,11 @@ class GymAgent(LocalAgent):
     @property
     def is_agent_turn(self) -> bool:
         """
-        Check if the agent is currently waiting for input via step().
+        Check if the agent is currently waiting for input via set_action().
 
         This property indicates whether the agent has set an observation
         and is waiting for an external action to be provided through
-        the step() method.
+        the set_action() method.
 
         Returns:
             True if the agent is waiting for input, False otherwise
@@ -353,13 +367,21 @@ class AgentGymEnv(gym.Env):
 
     def _get_info(self) -> dict:
         """
-        Get the current info.
+        Get the current info dictionary for the gym environment.
+
+        Returns:
+            A dictionary containing the current simulation run information
+            in JSON format, or an empty dictionary if no simulation has run yet.
         """
         return {"simulation_run": self._get_simulation_run()}
 
     def _get_simulation_run(self) -> SimulationRun:
         """
-        Get the current simulation run.
+        Get the current simulation run as a JSON string.
+
+        Returns:
+            A JSON string representation of the current simulation run,
+            or an empty dictionary if no simulation has run yet.
         """
         if self._simulation_run is None:
             return {}
@@ -370,7 +392,7 @@ class AgentGymEnv(gym.Env):
         Execute an action and advance the simulation.
 
         This method provides the standard gym step interface. It:
-        1. Passes the action to the GymAgent via its step() method
+        1. Passes the action to the GymAgent via its set_action() method
         2. Waits for the agent to process the action and receive a response
         3. Checks if the simulation has terminated
         4. Returns the updated observation and termination status
@@ -438,6 +460,14 @@ class AgentGymEnv(gym.Env):
     def get_reward(self) -> float:
         """
         Get the reward for the current simulation run.
+
+        This method returns 0.0 if no simulation has run yet, otherwise
+        it delegates to the internal _get_reward() method to compute
+        the actual reward based on simulation evaluation.
+
+        Returns:
+            The reward value for the current simulation, or 0.0 if no
+            simulation has been completed.
         """
         if self._simulation_run is None:
             return 0.0
@@ -445,7 +475,14 @@ class AgentGymEnv(gym.Env):
 
     def _get_reward(self) -> float:
         """
-        Get the reward for the current simulation run.
+        Compute the reward for the current simulation run.
+
+        This method evaluates the simulation using the Tau2 evaluation
+        system and returns the computed reward value. It uses the ALL
+        evaluation type and non-solo mode for comprehensive assessment.
+
+        Returns:
+            The computed reward value based on simulation performance.
         """
         evaluation_type = EvaluationType.ALL
         evaluation_result = evaluate_simulation(
@@ -470,6 +507,16 @@ class AgentGymEnv(gym.Env):
         finishes (either normally or due to an error), which signals
         to the main thread that the simulation has ended.
         It also sets the simulation run to the orchestrator's simulation run.
+
+        Thread Safety:
+            This method is designed to be run in a separate thread and
+            uses the _simulation_done event to communicate with the main thread.
+            Any exceptions are logged but do not propagate to avoid thread crashes.
+
+        Error Handling:
+            If the orchestrator raises an exception, it is logged as an error
+            but the thread continues to set the simulation as done to prevent
+            the main thread from hanging indefinitely.
         """
         simulation_run = None
         try:
@@ -491,12 +538,20 @@ class AgentGymEnv(gym.Env):
         format for the gym observation space. Each message is formatted
         as "role: content" and messages are separated by newlines.
 
+        The method handles different message types:
+        - UserMessage: Formatted as "user: content" or "user: tool_calls"
+        - AssistantMessage: Formatted as "assistant: content" or "assistant: tool_calls"
+        - Other messages: Formatted as "role: content"
+
+        Tool calls are converted to functional format for readability.
+
         Args:
             messages: List of Message objects representing the conversation history
 
         Returns:
             A string representation of the message history, or empty string
-            if no messages are provided
+            if no messages are provided. Each message is on a separate line
+            in the format "role: content".
         """
         if not messages:
             return ""
@@ -527,26 +582,37 @@ class AgentGymEnv(gym.Env):
         Create and return the environment for the specified domain.
 
         This method uses the registry to construct the appropriate
-        environment instance based on the domain name.
+        environment instance based on the domain name. The registry
+        provides domain-specific environment constructors that are
+        configured with the appropriate tools, policies, and data.
 
         Returns:
-            An Environment instance configured for the specified domain
-        """
+            An Environment instance configured for the specified domain.
+            The environment contains domain-specific tools, policies,
+            and data structures needed for simulation.
 
+        Raises:
+            ValueError: If the domain is not registered in the registry
+        """
         return registry.get_env_constructor(self.domain)()
 
     def get_task(self) -> Task:
         """
         Retrieve the task configuration for the specified task ID.
 
-        This method loads all tasks for the domain and finds the one
-        matching the specified task_id.
+        This method loads all tasks for the domain using the registry's
+        task loader and finds the one matching the specified task_id.
+        Tasks contain the scenario, user instructions, and evaluation
+        criteria for the simulation.
 
         Returns:
-            The Task object corresponding to the specified task_id
+            The Task object corresponding to the specified task_id.
+            The task contains the complete scenario definition including
+            user instructions, success criteria, and evaluation parameters.
 
         Raises:
             ValueError: If no task is found with the specified task_id
+                       for the given domain
         """
         tasks = registry.get_tasks_loader(self.domain)()
         for task in tasks:
@@ -561,10 +627,18 @@ class AgentGymEnv(gym.Env):
         Create and return a GymAgent instance for the domain.
 
         This method creates a GymAgent with the tools and policy
-        from the domain's environment.
+        from the domain's environment. The GymAgent provides the
+        step-by-step interface that allows external control of
+        the agent's actions through the gym environment.
+
+        The agent is configured with:
+        - Domain-specific tools for performing actions
+        - Domain policy that defines the agent's behavior and constraints
 
         Returns:
-            A GymAgent instance configured with the domain's tools and policy
+            A GymAgent instance configured with the domain's tools and policy.
+            The agent is ready to participate in simulations with external
+            step-by-step control.
         """
         environment = self.get_environment()
         return GymAgent(
@@ -580,9 +654,19 @@ class AgentGymEnv(gym.Env):
         and any available user tools from the environment. If user tools
         are not available for the domain, they are set to None.
 
+        The user simulator is configured with:
+        - Task-specific user scenario and instructions
+        - Domain-specific user tools (if available)
+        - Default LLM configuration for user simulation
+
+        Error Handling:
+            If the environment does not support user tools (raises ValueError),
+            the user tools are set to None and the simulator continues without them.
+
         Returns:
             A UserSimulator instance configured with the task's user scenario
-            and domain-specific user tools (if available)
+            and domain-specific user tools (if available). The simulator is
+            ready to participate in the conversation simulation.
         """
         environment = self.get_environment()
         task = self.get_task()
@@ -606,8 +690,16 @@ class AgentGymEnv(gym.Env):
         coordinates the interaction between these components during the
         simulation.
 
+        The orchestrator manages:
+        - Message flow between agent and user
+        - Tool execution and environment state
+        - Simulation lifecycle and termination conditions
+        - Thread-safe coordination between components
+
         Returns:
-            An Orchestrator instance configured with all simulation components
+            An Orchestrator instance configured with all simulation components.
+            The orchestrator is ready to run the complete simulation with
+            proper coordination between agent, user, and environment.
         """
         return Orchestrator(
             domain=self.domain,

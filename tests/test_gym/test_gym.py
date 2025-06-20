@@ -1,7 +1,7 @@
 import gymnasium as gym
 import pytest
 
-from tau2.gym.gym_agent import AgentGymEnv, GymAgent
+from tau2.gym.gym_agent import AgentGymEnv, GymAgent, TauSpace
 from tests.utils import timeout
 
 
@@ -17,9 +17,9 @@ class TestTauGymEnv:
         assert env._orchestrator is None
         assert env._agent is None
         assert env._user is None
-        assert env._simulation_done is False
-        assert isinstance(env.observation_space, gym.spaces.Text)
-        assert isinstance(env.action_space, gym.spaces.Text)
+        assert not env._simulation_done.is_set()
+        assert isinstance(env.observation_space, TauSpace)
+        assert isinstance(env.action_space, TauSpace)
 
     @timeout(10)
     def test_tau_gym_env_reset(self):
@@ -191,9 +191,7 @@ class TestTauGymEnv:
 
     def test_tau_gym_env_invalid_task_id(self):
         """Test that TauGymEnv handles invalid task_id gracefully."""
-        with pytest.raises(
-            StopIteration
-        ):  # Should raise StopIteration for invalid task_id
+        with pytest.raises(ValueError):  # Should raise ValueError for invalid task_id
             env = AgentGymEnv(domain="mock", task_id="invalid_task_id")
             env.reset()
 

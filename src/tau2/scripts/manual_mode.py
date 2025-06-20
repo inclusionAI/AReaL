@@ -390,3 +390,4 @@ This allows you to interact with the simulation as if you were the AI agent.
 
 if __name__ == "__main__":
     main()
+    main()
