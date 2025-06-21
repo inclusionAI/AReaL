@@ -74,6 +74,31 @@ class Trajectory:
     data: Dict[str, torch.Tensor]
     stats: TrajStats
 
+    def to_json_compatible(self):
+        return {
+            "prompt": self.prompt,
+            "data": {k: v.cpu().numpy().tolist() for k, v in self.data.items()},
+            "stats": {
+                "start_time": self.stats.start_time,
+                "total_reward": self.stats.total_reward,
+                "episode_length": self.stats.episode_length,
+                "info": self.stats.info,
+            },
+        }
+
+    @classmethod
+    def from_json_compatbile(cls, data: Dict[str, Any]) -> "Trajectory":
+        return cls(
+            prompt=data["prompt"],
+            data={k: torch.tensor(v) for k, v in data["data"].items()},
+            stats=TrajStats(
+                start_time=data["stats"]["start_time"],
+                total_reward=data["stats"]["total_reward"],
+                episode_length=data["stats"]["episode_length"],
+                info=data["stats"]["info"],
+            ),
+        )
+
 
 @dataclass
 class WeightUpdateGroupMeta:
