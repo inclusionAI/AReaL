@@ -46,9 +46,13 @@ class Trainer(abc.ABC):
 
     def create_train_dataloader(self):
         cfg = self.args.train_dataset
+        if dist.is_available() and dist.is_initialized():
+            batch_size = cfg.batch_size // dist.get_world_size()
+        else:
+            batch_size = cfg.batch_size
         self.train_dataloader = StatefulDataLoader(
             dataset=self.train_dataset,
-            batch_size=cfg.batch_size // dist.get_world_size(),
+            batch_size=batch_size,
             shuffle=cfg.shuffle,
             pin_memory=cfg.pin_memory,
             num_workers=cfg.num_workers,

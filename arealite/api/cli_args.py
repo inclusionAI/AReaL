@@ -104,7 +104,7 @@ class LLMServiceConfig:
 class LLMClientConfig:
     server_backend: str = field(
         default="sglang",
-        metadata={"help": "Backend for client", "choices": ["sglang"]},
+        metadata={"help": "Backend for client", "choices": ["sglang", "hf"]},
     )
     schedule_policy: str = field(
         default="round_robin",
@@ -289,6 +289,10 @@ class PPOTrainerConfig:
     mb_spec: MicroBatchSpec = field(
         default_factory=MicroBatchSpec,
         metadata={"help": "Micro-batch specification for PPO training"},
+    )
+    inf_service: LLMClientConfig = field(
+        default_factory=LLMClientConfig,
+        metadata={"help": "LLM inference service configuration for PPO training"},
     )
 
     # Core PPO/GRPO Parameters

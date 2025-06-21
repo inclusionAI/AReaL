@@ -17,6 +17,7 @@ from arealite.api.cli_args import (
     PPOTrainerConfig,
     DatasetConfig,
     RolloutControllerConfig,
+    LLMClientConfig,
 )
 from arealite.api.engine_api import EngineFactory
 from arealite.api.trainer_api import TrainerFactory
@@ -115,8 +116,14 @@ def test_engine():
             backend=EngineBackendConfig(type="hf"),
         )
 
+        hf_client_config = LLMClientConfig(
+            server_backend="hf",
+            tokenizer_path="Qwen/Qwen2.5-0.5B-Instruct",
+        )
+
         ppo_config = PPOTrainerConfig(
             actor=engine_config,
+            inf_service=hf_client_config,
         )
 
         train_config = TrainerConfig(
@@ -149,7 +156,6 @@ def test_engine():
 
         if args.trainer is not None:
             trainer_factory = TrainerFactory(args)
-            # TODO: add hf llm client 
             trainer = trainer_factory.make_trainer(
                 args.trainer,
                 train_dataset=train_dataset,
