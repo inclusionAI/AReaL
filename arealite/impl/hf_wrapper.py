@@ -77,6 +77,7 @@ class HFEngine(SPMDWrapper):
             torch_dtype=dtype,
             attn_implementation="flash_attention_2",
             trust_remote_code=True,
+            device_map="auto",
         )
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.engine_config.path,

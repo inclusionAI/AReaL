@@ -156,12 +156,12 @@ class RolloutController:
             data, self._buffer = self._buffer[:batch_size], self._buffer[batch_size:]
         return datapack.flat2d(data)
 
-    def _generate_until_complete(self):
+    def _generate_until_complete(self, dataloader: DataLoader):
         """Start an event loop to run episodes continuously."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(self._generate_loop())
+            loop.run_until_complete(self._generate_loop(dataloader))
         finally:
             loop.close()
 
@@ -177,7 +177,8 @@ class RolloutController:
             for _ in range(self.gconfig.n_samples)
         ]
         return rid, await asyncio.gather(tasks)
-
+    
+    # TODO: Fix bugs
     async def _generate_loop(self, dataloader):
         data_generator = iter(dataloader)
         data = None

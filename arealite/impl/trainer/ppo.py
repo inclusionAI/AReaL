@@ -106,9 +106,10 @@ class SpmdPPOTrainer(Trainer):
 
     def _setup_models(self):
         # TODO: disable dropout
-        self.actor.init_distributed()
+        # TODO: Temporary for hf test. Fix the parameter passing logic bug
+        self.actor.init_distributed(None)
         if self.ref is not None:
-            self.ref.init_distributed()
+            self.ref.init_distributed(None)
 
     def _get_rollout_batch(self):
         if self.config.async_training:
@@ -475,7 +476,7 @@ class SpmdPPOTrainer(Trainer):
         self.create_train_dataloader()
 
         if self.config.async_training:
-            self.rollout_controller.start_run_episode_loop(self.train_dataloader)
+            self.rollout_controller.start_generate_loop(self.train_dataloader)
 
         total_epochs = self.args.exp_ctrl.total_train_epochs
         steps_per_epoch = len(self.train_dataloader) // (
