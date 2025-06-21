@@ -33,6 +33,7 @@ class RolloutController:
         self._exiting = mp.Event()
         self._lock = mp.Lock()
         self._buffer: List[List[Trajectory]] = []
+        self._version = 0
 
         # Worker processes
         self._worker_processes: List[mp.Process] = []
@@ -133,6 +134,11 @@ class RolloutController:
         if self._data_pusher:
             self._data_pusher.close()
         logger.info("Cleanup completed")
+
+    def set_version(self, version: int):
+        """Set the version for staleness control."""
+        self._version = version
+        logger.info(f"Updated rollout controller version to {version}")
 
     ################## User Interfaces End ##################
 

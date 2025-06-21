@@ -122,9 +122,13 @@ def test_async_rollout(args, sglang_server, dataloader, n_samples):
     rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
 
     # start loop
-    rollout_controller.start_generate_loop(dataloader)
-    assert hasattr(rollout_controller, "_generation_thread")
-    assert rollout_controller._generation_thread.is_alive()
+    rollout_controller.start_generate_loop()
+    assert hasattr(rollout_controller, "_collector_thread")
+    assert rollout_controller._collector_thread.is_alive()
+
+    # Submit data to workers
+    data = next(iter(dataloader))
+    rollout_controller.submit(data)
 
     # wait for batch
     batch_size = 2
@@ -144,7 +148,7 @@ def test_async_rollout(args, sglang_server, dataloader, n_samples):
     # exit
     rollout_controller.stop_generate_loop()
     assert rollout_controller._exiting.is_set()
-    assert not rollout_controller._generation_thread.is_alive()
+    assert not rollout_controller._collector_thread.is_alive()
 
 
 # def test_prepare_batch_empty_buffer(rollout_controller):
