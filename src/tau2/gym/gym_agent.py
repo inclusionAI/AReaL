@@ -25,6 +25,10 @@ from tau2.registry import registry
 from tau2.user.user_simulator import UserSimulator
 from tau2.utils.tools import parse_action_string, to_functional_format
 
+TAU_BENCH_ENV_NAME = "tau-bench"
+TAU_BENCH_ENV_VERSION = "v0"
+TAU_BENCH_ENV_ID = f"{TAU_BENCH_ENV_NAME}-{TAU_BENCH_ENV_VERSION}"
+
 
 class TauSpace(gym.spaces.Space):
     """
@@ -53,7 +57,7 @@ def register_gym_agent() -> None:
     Register the tau-bench gym environment with gymnasium.
     """
     register(
-        id="tau-bench-v0",
+        id=TAU_BENCH_ENV_ID,
         entry_point="tau2.gym.gym_agent:AgentGymEnv",
     )
 
@@ -297,6 +301,22 @@ class AgentGymEnv(gym.Env):
         self.observation_space = TauSpace()
         self.action_space = TauSpace()
 
+    def _get_tools(self) -> List[Tool]:
+        """
+        Get the tools for the environment.
+        """
+        if self._orchestrator is None:
+            raise ValueError("Orchestrator not initialized. Call reset() first.")
+        return self._orchestrator.environment.get_tools()
+
+    def _get_policy(self) -> str:
+        """
+        Get the policy for the environment.
+        """
+        if self._orchestrator is None:
+            raise ValueError("Orchestrator not initialized. Call reset() first.")
+        return self._orchestrator.environment.get_policy()
+
     def reset(
         self, seed: Optional[int] = None, options: Optional[dict] = None
     ) -> tuple[str, dict]:
@@ -338,7 +358,7 @@ class AgentGymEnv(gym.Env):
                 self._orchestrator_thread.join(timeout=1.0)
 
             # Create new orchestrator
-            self._orchestrator = self.get_orchestrator()
+            self._orchestrator = self._get_orchestrator()
             self._agent = self._orchestrator.agent
             self._user = self._orchestrator.user
 
@@ -373,7 +393,11 @@ class AgentGymEnv(gym.Env):
             A dictionary containing the current simulation run information
             in JSON format, or an empty dictionary if no simulation has run yet.
         """
-        return {"simulation_run": self._get_simulation_run()}
+        return {
+            "simulation_run": self._get_simulation_run(),
+            "tools": self._get_tools(),
+            "policy": self._get_policy(),
+        }
 
     def _get_simulation_run(self) -> SimulationRun:
         """
@@ -451,27 +475,11 @@ class AgentGymEnv(gym.Env):
 
             return (
                 observation_str,
-                self.get_reward(),
+                self._get_reward(),
                 terminated,
                 False,
                 self._get_info(),
             )
-
-    def get_reward(self) -> float:
-        """
-        Get the reward for the current simulation run.
-
-        This method returns 0.0 if no simulation has run yet, otherwise
-        it delegates to the internal _get_reward() method to compute
-        the actual reward based on simulation evaluation.
-
-        Returns:
-            The reward value for the current simulation, or 0.0 if no
-            simulation has been completed.
-        """
-        if self._simulation_run is None:
-            return 0.0
-        return self._get_reward()
 
     def _get_reward(self) -> float:
         """
@@ -480,14 +488,16 @@ class AgentGymEnv(gym.Env):
         This method evaluates the simulation using the Tau2 evaluation
         system and returns the computed reward value. It uses the ALL
         evaluation type and non-solo mode for comprehensive assessment.
-
+        The reward value for the current simulation, or 0.0 if no simulation has been completed.
         Returns:
             The computed reward value based on simulation performance.
         """
+        if self._simulation_run is None:
+            return 0.0
         evaluation_type = EvaluationType.ALL
         evaluation_result = evaluate_simulation(
             simulation=self._simulation_run,
-            task=self.get_task(),
+            task=self._get_task(),
             evaluation_type=evaluation_type,
             solo_mode=False,
             domain=self.domain,
@@ -577,7 +587,7 @@ class AgentGymEnv(gym.Env):
                 turns.append(f"{m.role}: {m.content}")
         return "\n".join(turns)
 
-    def get_environment(self) -> Environment:
+    def _get_environment(self) -> Environment:
         """
         Create and return the environment for the specified domain.
 
@@ -596,7 +606,7 @@ class AgentGymEnv(gym.Env):
         """
         return registry.get_env_constructor(self.domain)()
 
-    def get_task(self) -> Task:
+    def _get_task(self) -> Task:
         """
         Retrieve the task configuration for the specified task ID.
 
@@ -622,7 +632,7 @@ class AgentGymEnv(gym.Env):
             f"No task found with id {self.task_id} for domain {self.domain}"
         )
 
-    def get_agent(self) -> GymAgent:
+    def _get_agent(self) -> GymAgent:
         """
         Create and return a GymAgent instance for the domain.
 
@@ -640,13 +650,13 @@ class AgentGymEnv(gym.Env):
             The agent is ready to participate in simulations with external
             step-by-step control.
         """
-        environment = self.get_environment()
+        environment = self._get_environment()
         return GymAgent(
             tools=environment.get_tools(),
             domain_policy=environment.get_policy(),
         )
 
-    def get_user(self) -> UserSimulator:
+    def _get_user(self) -> UserSimulator:
         """
         Create and return a UserSimulator instance for the task.
 
@@ -668,8 +678,8 @@ class AgentGymEnv(gym.Env):
             and domain-specific user tools (if available). The simulator is
             ready to participate in the conversation simulation.
         """
-        environment = self.get_environment()
-        task = self.get_task()
+        environment = self._get_environment()
+        task = self._get_task()
         try:
             user_tools = environment.get_user_tools()
         except ValueError:
@@ -681,7 +691,7 @@ class AgentGymEnv(gym.Env):
             llm_args=deepcopy(DEFAULT_LLM_ARGS_USER),
         )
 
-    def get_orchestrator(self) -> Orchestrator:
+    def _get_orchestrator(self) -> Orchestrator:
         """
         Create and return an Orchestrator instance for the simulation.
 
@@ -703,8 +713,8 @@ class AgentGymEnv(gym.Env):
         """
         return Orchestrator(
             domain=self.domain,
-            agent=self.get_agent(),
-            user=self.get_user(),
-            environment=self.get_environment(),
-            task=self.get_task(),
+            agent=self._get_agent(),
+            user=self._get_user(),
+            environment=self._get_environment(),
+            task=self._get_task(),
         )

@@ -1,4 +1,3 @@
-import gymnasium as gym
 import pytest
 
 from tau2.gym.gym_agent import AgentGymEnv, GymAgent, TauSpace
@@ -200,11 +199,11 @@ class TestTauGymEnv:
         env = AgentGymEnv(domain="mock", task_id="create_task_1")
 
         # Test that components can be created
-        environment = env.get_environment()
-        task = env.get_task()
-        agent = env.get_agent()
-        user = env.get_user()
-        orchestrator = env.get_orchestrator()
+        environment = env._get_environment()
+        task = env._get_task()
+        agent = env._get_agent()
+        user = env._get_user()
+        orchestrator = env._get_orchestrator()
 
         # Check that all components are created successfully
         assert environment is not None
@@ -229,11 +228,11 @@ class TestTauGymEnv:
         assert env._orchestrator is None
 
         # Test that we can create the components
-        environment = env.get_environment()
-        task = env.get_task()
-        agent = env.get_agent()
-        user = env.get_user()
-        orchestrator = env.get_orchestrator()
+        environment = env._get_environment()
+        task = env._get_task()
+        agent = env._get_agent()
+        user = env._get_user()
+        orchestrator = env._get_orchestrator()
 
         # Check that all components are created successfully
         assert environment is not None

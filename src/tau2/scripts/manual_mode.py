@@ -122,15 +122,21 @@ def display_tasks(domain: str):
             console.print("[red]Please enter a valid number[/red]")
 
 
-def get_available_tools(env: AgentGymEnv):
-    """Get available tools for the environment."""
-    try:
-        environment = env.get_environment()
-        tools = environment.get_tools()
-        return tools
-    except Exception as e:
-        console.print(f"[yellow]Warning: Could not load tools: {e}[/yellow]")
-        return []
+def display_policy(policy: str):
+    """Display the agent policy to the user."""
+    if not policy:
+        console.print(Panel("No policy available for this domain.", style="red"))
+        return
+
+    # Create a panel for the policy
+    policy_panel = Panel(
+        policy,
+        title="📋 Agent Policy",
+        border_style="yellow",
+        box=box.ROUNDED,
+        width=100,
+    )
+    console.print(policy_panel)
 
 
 def display_tools(tools):
@@ -206,13 +212,13 @@ def format_observation(observation: str, step_count: int):
     console.print(panel)
 
 
-def get_user_action(env: AgentGymEnv, step_count: int) -> str:
+def get_user_action(env: AgentGymEnv, step_count: int, tools, policy: str) -> str:
     """Get the next action from the user."""
     console.print(
         f"\n[bold cyan] STEP {step_count} - Enter your action as the agent:[/bold cyan]"
     )
     console.print(
-        "[dim](Type 'quit' to exit, 'help' for commands, 'tools' to see available tools)[/dim]"
+        "[dim](Type 'quit' to exit, 'help' for commands, 'tools' to see available tools, 'policy' to see agent policy)[/dim]"
     )
 
     while True:
@@ -226,19 +232,22 @@ def get_user_action(env: AgentGymEnv, step_count: int) -> str:
 • 'quit': Exit the simulation
 • 'help': Show this help message
 • 'tools': Show available tools
+• 'policy': Show agent policy
 
 [bold]💡 Tips:[/bold]
 • You can use tools by typing their names and parameters
 • Example: [cyan]search_flights(origin="NYC", destination="LAX")[/cyan]
-• Be conversational and helpful to the user""",
+• Be conversational and helpful to the user
+• Follow the agent policy guidelines""",
                 title="🆘 Help",
                 border_style="green",
                 box=box.ROUNDED,
             )
             console.print(help_panel)
         elif action.lower() == "tools":
-            tools = get_available_tools(env)
             display_tools(tools)
+        elif action.lower() == "policy":
+            display_policy(policy)
         elif action:
             # Check if the action looks like a functional tool call
             if is_functional_tool_call(action):
@@ -265,7 +274,7 @@ def get_user_action(env: AgentGymEnv, step_count: int) -> str:
 def main():
     """Main function for the manual mode."""
     # Disable logging for cleaner CLI output
-    disable_logging()
+    # disable_logging()
 
     # Welcome message with Rich styling
     welcome_text = Text()
@@ -309,13 +318,15 @@ This allows you to interact with the simulation as if you were the AI agent.
         with console.status("[bold green]Initializing environment...", spinner="dots"):
             env = AgentGymEnv(domain=domain, task_id=task.id)
 
-        # Show available tools
-        tools = get_available_tools(env)
-        display_tools(tools)
-
         # Step 4: Reset environment and get initial observation
         console.print("\n[bold green]🚀 Starting simulation...[/bold green]")
         observation, info = env.reset()
+
+        # Get tools and policy from info dictionary
+        tools = info.get("tools", [])
+        policy = info.get("policy", "")
+        display_tools(tools)
+        display_policy(policy)
 
         # Main interaction loop
         step_count = 0
@@ -326,7 +337,7 @@ This allows you to interact with the simulation as if you were the AI agent.
             format_observation(observation, step_count)
 
             # Get user action
-            action = get_user_action(env, step_count)
+            action = get_user_action(env, step_count, tools, policy)
             if action is None:
                 console.print("[yellow]👋 Exiting simulation...[/yellow]")
                 break
@@ -335,6 +346,10 @@ This allows you to interact with the simulation as if you were the AI agent.
             try:
                 with console.status("[bold green]Processing action...", spinner="dots"):
                     observation, reward, terminated, truncated, info = env.step(action)
+
+                # Update tools and policy from info (in case they changed)
+                tools = info.get("tools", tools)
+                policy = info.get("policy", policy)
 
                 if terminated:
                     console.print(
@@ -389,5 +404,4 @@ This allows you to interact with the simulation as if you were the AI agent.
 
 
 if __name__ == "__main__":
-    main()
     main()
