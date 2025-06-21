@@ -87,7 +87,7 @@ class Trajectory:
         }
 
     @classmethod
-    def from_json_compatbile(cls, data: Dict[str, Any]) -> "Trajectory":
+    def from_json_compatible(cls, data: Dict[str, Any]) -> "Trajectory":
         return cls(
             prompt=data["prompt"],
             data={k: torch.tensor(v) for k, v in data["data"].items()},

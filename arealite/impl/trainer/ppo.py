@@ -490,8 +490,10 @@ class SpmdPPOTrainer(Trainer):
                     if global_step < self.args.rollout.max_head_offpolicyness + 1:
                         continue
 
+                # Run rollout
                 rollout_output = self._rollout_step()
 
+                # Run RL training and update weights.
                 self._train_step(rollout_output)
 
                 # Synchronize weights to the client.
