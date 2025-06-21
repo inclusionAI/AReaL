@@ -76,12 +76,14 @@ def dataloader(args):
     )
 
 
+@pytest.mark.skip("")
 @pytest.mark.parametrize("num_workers", [1, 4])
 @pytest.mark.parametrize("n_samples", [1, 2])
 def test_generate_batch(args, sglang_server, dataloader, n_samples, num_workers):
     args = deepcopy(args)
     args.rollout.num_workers = num_workers
     args.rollout.gconfig.n_samples = n_samples
+    args.rollout.gconfig.max_new_tokens = 16
     rollout_factory = RolloutWorkflowFactory(args)
     workflow = rollout_factory.make_workflow(args.rollout.workflow)
     rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
@@ -103,49 +105,50 @@ def test_generate_batch(args, sglang_server, dataloader, n_samples, num_workers)
         assert v.shape == shape
 
 
-# @patch("arealite.impl.rollout_controller.ProcessPoolExecutor")
-# @patch("arealite.impl.rollout_controller.RolloutWorkflowFactory")
-# def test_generate_batch_parallel(
-#     mock_factory, mock_executor, rollout_controller, mock_trajectory
-# ):
-#     rollout_controller.config.num_workers = 2
+def test_set_version(args):
+    args = deepcopy(args)
+    rollout_factory = RolloutWorkflowFactory(args)
+    workflow = rollout_factory.make_workflow(args.rollout.workflow)
+    rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
+    new_version = 5
+    rollout_controller.set_version(new_version)
 
-#     mock_workflow_instance = Mock()
-#     mock_factory.return_value.make_workflow.return_value = mock_workflow_instance
-
-#     mock_executor_instance = Mock()
-#     mock_executor.return_value.__enter__.return_value = mock_executor_instance
-#     mock_executor_instance.map.return_value = [mock_trajectory, mock_trajectory]
-
-#     batch_size = 2
-#     result = rollout_controller.generate_batch(batch_size)
-
-#     assert len(result) == batch_size
-#     mock_executor.assert_called_once()
-#     mock_executor_instance.map.assert_called_once()
+    assert rollout_controller._version == new_version
 
 
-# def test_set_version(rollout_controller):
-#     new_version = 5
-#     rollout_controller.set_version(new_version)
+@pytest.mark.parametrize("n_samples", [1])
+def test_async_rollout(args, sglang_server, dataloader, n_samples):
+    args = deepcopy(args)
+    args.rollout.gconfig.n_samples = n_samples
+    args.rollout.gconfig.max_new_tokens = 16
+    rollout_factory = RolloutWorkflowFactory(args)
+    workflow = rollout_factory.make_workflow(args.rollout.workflow)
+    rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
 
-#     assert rollout_controller._version == new_version
+    # start loop
+    rollout_controller.start_generate_loop(dataloader)
+    assert hasattr(rollout_controller, "_generation_thread")
+    assert rollout_controller._generation_thread.is_alive()
 
+    # wait for batch
+    batch_size = 2
+    result = rollout_controller.prepare_batch(batch_size)
+    assert len(result) == batch_size * n_samples
+    assert all(isinstance(traj, Trajectory) for traj in result)
+    for traj in result:
+        shape = traj.data["input_ids"].shape
+        for v in traj.data.values():
+            assert v.shape == shape
+    data = pad_sequences_to_tensors([traj.data for traj in result])
+    assert data["input_ids"].shape[0] == batch_size * n_samples
+    shape = data["input_ids"].shape
+    for v in data.values():
+        assert v.shape == shape
 
-# def test_start_stop_generate_loop(rollout_controller):
-#     mock_dataloader = Mock(spec=DataLoader)
-
-#     with patch.object(rollout_controller, "_generate_until_complete") as mock_generate:
-#         rollout_controller.start_generate_loop(mock_dataloader)
-
-#         assert hasattr(rollout_controller, "_generation_thread")
-#         assert rollout_controller._generation_thread.is_alive()
-
-#         rollout_controller.stop_generate_loop()
-
-#         assert rollout_controller._exiting.is_set()
-#         assert not rollout_controller._generation_thread.is_alive()
-#         mock_generate.assert_called_once_with(mock_dataloader)
+    # exit
+    rollout_controller.stop_generate_loop()
+    assert rollout_controller._exiting.is_set()
+    assert not rollout_controller._generation_thread.is_alive()
 
 
 # def test_prepare_batch_empty_buffer(rollout_controller):

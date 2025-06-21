@@ -1,4 +1,5 @@
 import asyncio
+import signal
 import threading
 from concurrent.futures import ProcessPoolExecutor
 from typing import Any, List, Optional
@@ -39,6 +40,18 @@ class RolloutController:
         self._lock = threading.Lock()
         self._buffer: List[List[Trajectory]] = []
         self._version = 0
+        # Set up signal handlers for graceful shutdown
+        self._setup_signal_handlers()
+
+    def _setup_signal_handlers(self):
+        """Setup signal handlers for graceful shutdown."""
+
+        def signal_handler(signum, frame):
+            logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+            self.stop_generate_loop()
+
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
 
     ################### User Interfaces Start #################
 
@@ -57,15 +70,19 @@ class RolloutController:
     def start_generate_loop(self, dataloader: DataLoader):
         """Start the episode loop in a separate thread."""
         self._generation_thread = threading.Thread(
-            target=self._generate_until_complete, args=(dataloader,)
+            target=self._generate_until_complete,
+            args=(dataloader,),
+            daemon=True,
         )
         self._generation_thread.start()
 
     def stop_generate_loop(self):
         """Stop the episode loop and wait for it to finish."""
+        logger.info("Stopping generation loop...")
         self._exiting.set()
-        if self._generation_thread.is_alive():
-            self._generation_thread.join()
+        if self._generation_thread and self._generation_thread.is_alive():
+            # Give the thread some time to finish gracefully
+            self._generation_thread.join(timeout=10.0)
 
     def prepare_batch(self, batch_size: int) -> List[Trajectory]:
         """Prepare and wait for a batch of trajectories."""
@@ -180,6 +197,7 @@ class RolloutController:
         rid = 0
 
         while not self._exiting.is_set():
+            print(111111111111, flush=True)
             # Load next data
             if data is None:
                 try:
@@ -190,14 +208,27 @@ class RolloutController:
 
             # Create rollout task if possible.
             # Check if we have capacity.
-            world_size = dist.get_world_size()
-            ofp = self.config.max_concurrent_rollouts
-            can_rollout = len(rollout_tasks) < ofp // world_size
+            if dist.is_initialized():
+                world_size = dist.get_world_size()
+            else:
+                world_size = 1
+            print(222222222222222, flush=True)
+            capacity = self.config.max_concurrent_rollouts // world_size
+            can_rollout = len(rollout_tasks) < capacity
             # Staleness control.
+            ofp = self.config.max_head_offpolicyness
             sample_cnt = rollout_stat.accepted + rollout_stat.running
             expected_version = sample_cnt // self.train_batch_size
             with self._lock:
                 can_rollout &= expected_version <= ofp + self._version
+                if not can_rollout:
+                    logger.info(
+                        f"Cannot submit new rollouts. "
+                        f"Capacity: {capacity}, current tasks: {len(tasks)}."
+                        f"Sample cnt: {sample_cnt}, train batch size: {self.train_batch_size}, "
+                        f"current version: {self._version}, max offpolicyness: {ofp}."
+                    )
+            print(33333333333, flush=True)
 
             # Create the new rollout task.
             if can_rollout:
@@ -207,7 +238,7 @@ class RolloutController:
 
                 rollout_stat.submitted += 1
                 rollout_stat.running += 1
-                logger.debug(
+                logger.info(
                     f"Submit a new rollout rid {rid}. "
                     f"Submit: {rollout_stat.submitted}, "
                     f"running: {rollout_stat.running}, "
@@ -217,6 +248,7 @@ class RolloutController:
                 rid += 1
                 data = None
 
+            print(44444444444444, flush=True)
             # Wait for rollout completion.
             tasks = list(rollout_tasks.values())
             done = []
@@ -227,24 +259,32 @@ class RolloutController:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
+            print(5555555555555, flush=True)
             # Collect done results.
             for task in done:
+                print(5.05, flush=True)
                 rid, trajs = await task
+                print(5.07, type(trajs), flush=True)
                 trajs: List[Trajectory]
                 assert isinstance(trajs, list) and isinstance(trajs[0], Trajectory)
                 rollout_stat.running -= 1
+                print(5.1, flush=True)
 
                 # Filter data according to episodic return.
                 ret = np.mean([traj.stats.total_reward for traj in trajs])
                 accepted = ret >= self.config.filter_reward_lb
                 accepted &= ret <= self.config.filter_reward_ub
+                print(5.2, flush=True)
                 if accepted:
                     with self._lock:
                         self._buffer.append(trajs)
                     rollout_stat.accepted += 1
-                logger.debug(
+                logger.info(
                     f"Finish rollout for rid {rid}. "
                     f"Submit: {rollout_stat.submitted}, "
                     f"running: {rollout_stat.running}, "
                     f"accepted: {rollout_stat.accepted}."
                 )
+        print(6666666666666, flush=True)
+        for task in rollout_tasks.values():
+            task.cancel()
