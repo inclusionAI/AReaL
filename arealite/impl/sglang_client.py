@@ -1,4 +1,3 @@
-import asyncio
 import time
 
 from arealite.api.io_struct import LLMRequest, LLMResponse, LLMServerInfo

@@ -1,4 +1,3 @@
-import asyncio
 import os
 import re
 import uuid
@@ -6,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
 from typing import Any, List, Optional, Tuple
+
+import torch
 
 from arealite.api.cli_args import GenerationHyperparameters, TrainingArgs
 from arealite.api.io_struct import (
@@ -221,10 +222,10 @@ class MathCodeSingleStepWorkflow(RolloutWorkflow):
             versions = [-1] * input_len + resp.output_versions
 
             d = dict(
-                input_ids=input_ids,
-                prompt_mask=prompt_mask,
-                logprobs=logprobs,
-                versions=versions,
+                input_ids=torch.tensor(input_ids, dtype=torch.long),
+                prompt_mask=torch.tensor(prompt_mask, dtype=torch.bool),
+                logprobs=torch.tensor(logprobs, dtype=torch.float32),
+                versions=torch.tensor(versions, dtype=torch.long),
             )
             data.append(d)
 
@@ -284,10 +285,10 @@ class MathCodeSingleStepWorkflow(RolloutWorkflow):
             versions = [-1] * input_len + resp.output_versions
 
             d = dict(
-                input_ids=input_ids,
-                prompt_mask=prompt_mask,
-                logprobs=logprobs,
-                versions=versions,
+                input_ids=torch.tensor(input_ids, dtype=torch.long),
+                prompt_mask=torch.tensor(prompt_mask, dtype=torch.bool),
+                logprobs=torch.tensor(logprobs, dtype=torch.float32),
+                versions=torch.tensor(versions, dtype=torch.long),
             )
             data.append(d)
 
