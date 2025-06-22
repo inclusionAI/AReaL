@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from typing import Any, Callable, Optional
 
@@ -46,6 +47,59 @@ class RlvrWorkflow(RolloutWorkflow):
             completions=[resp.completion],
             completion_ids=[resp.output_tokens],
         )[0]
+
+        input_len = len(resp.input_tokens)
+        output_len = len(resp.output_tokens)
+
+        input_ids = resp.input_tokens + resp.output_tokens
+        prompt_mask = [1] * input_len + [0] * output_len
+        logprobs = [0.0] * input_len + resp.output_logprobs
+        versions = [-1] * input_len + resp.output_versions
+
+        return Trajectory(
+            prompt=env_option,
+            data=dict(
+                input_ids=torch.tensor(input_ids),
+                prompt_mask=torch.tensor(prompt_mask),
+                logprobs=torch.tensor(logprobs),
+                versions=torch.tensor(versions),
+            ),
+            stats=TrajStats(
+                start_time=tik,
+                total_reward=reward,
+                episode_length=1,
+                info={},
+            ),
+        )
+
+    async def arun_episode(
+        self,
+        gconfig: GenerationHyperparameters,
+        env_option: Optional[Any] = None,
+        seed: Optional[int] = None,
+    ) -> Trajectory:
+        """Async version of run_episode. Run a single episode and return the trajectory."""
+        tik = datetime.now().timestamp()
+
+        prompt_ids = env_option["input_ids"]
+        query_id = env_option["query_id"]
+        req = LLMRequest(input_ids=prompt_ids, gconfig=gconfig)
+
+        # Use async LLM client
+        resp = await self.llm_client.agenerate(req)
+
+        # Run reward computation in executor to avoid blocking
+        loop = asyncio.get_event_loop()
+        reward = await loop.run_in_executor(
+            None,
+            self.reward_fn,
+            [query_id],
+            [req.text],
+            [prompt_ids],
+            [resp.completion],
+            [resp.output_tokens],
+        )
+        reward = reward[0]
 
         input_len = len(resp.input_tokens)
         output_len = len(resp.output_tokens)

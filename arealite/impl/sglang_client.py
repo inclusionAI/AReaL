@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 from arealite.api.io_struct import LLMRequest, LLMResponse, LLMServerInfo
@@ -72,6 +73,93 @@ class SGLangClient(LLMClient):
                 timeout=self.client_config.request_timeout,
             )
             result = response.json()
+
+            # Parse response
+            completion += result["text"]
+            meta_info = result["meta_info"]
+            output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
+            output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
+
+            # Update accumulated outputs
+            accumulated_output_tokens.extend(output_tokens)
+            accumulated_output_logprobs.extend(output_logprobs)
+            accumulated_versions.extend([server_info.version] * len(output_tokens))
+
+            # Check if generation is complete
+            finish_reason = meta_info["finish_reason"]
+            stop_reason = finish_reason["type"]
+
+            payload["text"] += completion
+
+        latency = time.perf_counter() - start_time
+
+        return LLMResponse(
+            completion=completion,
+            input_tokens=req.input_ids,
+            output_tokens=accumulated_output_tokens,
+            output_logprobs=accumulated_output_logprobs,
+            output_versions=accumulated_versions,
+            stop_reason=stop_reason,
+            latency=latency,
+            ttft=latency,  # Simplified for non-streaming
+        )
+
+    async def agenerate(self, req: LLMRequest) -> LLMResponse:
+        """Async version of generate using aiohttp."""
+
+        # Convert messages to prompt
+        if not req.text:
+            assert req.input_ids is not None
+            req.text = self.tokenizer.decode(req.input_ids)
+
+        # Prepare request payload
+        gconfig = req.gconfig
+        stop_token_ids = gconfig.stop_token_ids
+        if self.tokenizer.eos_token_id not in stop_token_ids:
+            stop_token_ids.append(self.tokenizer.eos_token_id)
+        if self.tokenizer.pad_token_id not in stop_token_ids:
+            stop_token_ids.append(self.tokenizer.pad_token_id)
+
+        assert gconfig.n_samples == 1
+        sample_params = {
+            "top_p": gconfig.top_p,
+            "top_k": gconfig.top_k,
+            "max_new_tokens": gconfig.max_new_tokens,
+            "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
+            "stop_token_ids": stop_token_ids,
+        }
+
+        payload = {
+            "rid": req.rid,
+            "text": req.text,
+            "sampling_params": sample_params,
+            "return_logprob": True,
+            "stream": False,
+        }
+
+        # Make request
+        start_time = time.perf_counter()
+        accumulated_output_tokens = []
+        accumulated_output_logprobs = []
+        accumulated_versions = []
+
+        # Deal with rollout interruption
+        completion = ""
+        stop_reason = "length"
+
+        while (
+            stop_reason != "stop"
+            and len(accumulated_output_tokens) < gconfig.max_new_tokens
+        ):
+            # loop until the generation is complete
+            response, server_info = await self.arequest_with_retry(
+                endpoint="/generate",
+                payload=payload,
+                method="POST",
+                max_retries=3,
+                timeout=self.client_config.request_timeout,
+            )
+            result = await response.json()
 
             # Parse response
             completion += result["text"]

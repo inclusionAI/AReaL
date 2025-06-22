@@ -208,8 +208,7 @@ class LLMClient(abc.ABC):
         raise NotImplementedError()
 
     async def agenerate(self, req: LLMRequest) -> LLMResponse:
-        """A trick to make an async generation function."""
-        return await asyncio.to_thread(self.generate, req)
+        raise NotImplementedError()
 
     async def aupdate_weights_from_disk(self, server_info: LLMServerInfo, path: str):
         raise NotImplementedError()

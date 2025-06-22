@@ -30,8 +30,16 @@ class Agent(abc.ABC):
         """Given an observation, return an action and data used for RL training."""
         raise NotImplementedError()
 
+    async def aact(self, inp: AgentInferInput) -> AgentInferOutput:
+        """Async version of act. Given an observation, return an action and data used for RL training."""
+        raise NotImplementedError()
+
     def reset(self) -> None:
         """Resets the agent's memory."""
+        raise NotImplementedError()
+
+    async def areset(self) -> None:
+        """Async version of reset. Resets the agent's memory."""
         raise NotImplementedError()
 
 
@@ -87,15 +95,14 @@ class RolloutWorkflow(abc.ABC):
         """Run a single episode and return the trajectory."""
         raise NotImplementedError()
 
-    async def run_episode_async(
+    async def arun_episode(
         self,
         gconfig: GenerationHyperparameters,
         env_option: Optional[Any] = None,
         seed: Optional[int] = None,
     ) -> Trajectory:
-        """Run a single episode asynchronously and return trajectory."""
-        # A trick to convert a sync function to async function
-        return await asyncio.to_thread(self.run_episode, gconfig, env_option, seed)
+        """Async version of run_episode. Run a single episode and return the trajectory."""
+        raise NotImplementedError()
 
 
 @dataclass

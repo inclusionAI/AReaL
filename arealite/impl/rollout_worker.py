@@ -72,7 +72,7 @@ class RolloutWorker:
             workflow = factory.make_workflow(self.config.workflow)
             print("////////", self.gconfig.new(n_samples=1))
             tasks += [
-                workflow.run_episode_async(
+                workflow.arun_episode(
                     self.gconfig.new(n_samples=1),
                     env_option=data,
                     seed=seed,
