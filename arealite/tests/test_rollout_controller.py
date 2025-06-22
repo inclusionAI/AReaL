@@ -101,22 +101,14 @@ def test_generate_batch(args, sglang_server, dataloader, n_samples, num_workers)
         assert v.shape == shape
 
 
-def test_set_version(args):
-    args = deepcopy(args)
-    rollout_factory = RolloutWorkflowFactory(args)
-    workflow = rollout_factory.make_workflow(args.rollout.workflow)
-    rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
-    new_version = 5
-    rollout_controller.set_version(new_version)
-
-    assert rollout_controller._version == new_version
-
-
-@pytest.mark.parametrize("n_samples", [1])
-def test_async_rollout(args, sglang_server, dataloader, n_samples):
+# @pytest.mark.skip('')
+@pytest.mark.parametrize("n_samples", [5])
+@pytest.mark.parametrize("num_workers", [1])
+def test_async_rollout(args, sglang_server, dataloader, n_samples, num_workers):
     args = deepcopy(args)
     args.rollout.gconfig.n_samples = n_samples
     args.rollout.gconfig.max_new_tokens = 16
+    args.train_dataset.batch_size = 2
     rollout_factory = RolloutWorkflowFactory(args)
     workflow = rollout_factory.make_workflow(args.rollout.workflow)
     rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
@@ -149,6 +141,7 @@ def test_async_rollout(args, sglang_server, dataloader, n_samples):
     rollout_controller.stop_generate_loop()
     assert rollout_controller._exiting.is_set()
     assert not rollout_controller._collector_thread.is_alive()
+    assert not rollout_controller._worker_processes
 
 
 # def test_prepare_batch_empty_buffer(rollout_controller):

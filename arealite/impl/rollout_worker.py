@@ -70,15 +70,17 @@ class RolloutWorker:
             # Create workflow
             factory = RolloutWorkflowFactory(self.args)
             workflow = factory.make_workflow(self.config.workflow)
+            print("////////", self.gconfig.new(n_samples=1))
             tasks += [
                 workflow.run_episode_async(
                     self.gconfig.new(n_samples=1),
                     env_option=data,
                     seed=seed,
                 )
-                for _ in range(self.gconfig.n_samples)
             ]
+        print(">>>>>>>>>>", len(tasks), flush=True)
         trajs = await asyncio.gather(*tasks)
+        print(">>>>>>>>>> 111111111111", len(tasks), flush=True)
         return rid, trajs
 
     def _get_model_version(self) -> int:
@@ -112,18 +114,9 @@ class RolloutWorker:
                 if data is None:
                     try:
                         data = self.data_puller.pull(timeout_ms=50)
-                        logger.debug(f"Get data from puller: {data}")
+                        logger.info(f"Get data from puller: {data}")
                     except queue.Empty:
-                        logger.debug(f"No data from puller stream.")
-                        await asyncio.sleep(0.1)
-                        continue
-                    except Exception as e:
-                        if not self._shutdown:
-                            logger.error(
-                                f"Worker {self.worker_id} error pulling data: {e}"
-                            )
-                        await asyncio.sleep(0.1)
-                        continue
+                        logger.info(f"No data from puller stream.")
 
                 # Check capacity
                 if dist.is_initialized():
@@ -131,28 +124,37 @@ class RolloutWorker:
                 else:
                     world_size = 1
 
-                capacity = self.config.max_concurrent_rollouts // world_size
+                cannot_rollout_reason = []
+                capacity = max(1, self.config.max_concurrent_rollouts // world_size)
                 can_rollout = len(rollout_tasks) < capacity
+                if not can_rollout:
+                    cannot_rollout_reason.append(
+                        f"Exceeding capacity: # running tasks {len(rollout_tasks)} >= capacity {capacity}"
+                    )
 
                 # Staleness control
                 version = self._get_model_version()
                 ofp = self.config.max_head_offpolicyness
                 sample_cnt = rollout_stat.accepted + rollout_stat.running
                 expected_version = sample_cnt // self.train_batch_size
-                can_rollout &= expected_version <= ofp + version
+                not_staled = expected_version <= ofp + version
+                can_rollout &= not_staled
+                if not not_staled:
+                    cannot_rollout_reason.append(
+                        f"Staled: expected version ({expected_version}) = "
+                        f"global sample cnt ({sample_cnt}) // batch size ({self.train_batch_size}), "
+                        f"current latest version {version}, "
+                        f"offpolicyness {self.config.max_head_offpolicyness}."
+                    )
 
                 if not can_rollout:
-                    logger.debug(
+                    logger.info(
                         f"Worker {self.worker_id}: Cannot submit new rollouts. "
-                        f"Capacity: {capacity}, current tasks: {len(rollout_tasks)}."
-                        f"Sample cnt: {sample_cnt}, train batch size: {self.train_batch_size}, "
-                        f"current version: {version}, max offpolicyness: {ofp}."
+                        + "\n".join(cannot_rollout_reason)
                     )
-                    await asyncio.sleep(0.1)
-                    continue
 
                 # Create new rollout task
-                if can_rollout:
+                if can_rollout and data is not None:
                     task = asyncio.create_task(
                         self._run_grouped_episode_async(rid, data)
                     )
@@ -179,12 +181,14 @@ class RolloutWorker:
                         timeout=ROLLOUT_POLL_WAIT_TIME,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
+                else:
+                    await asyncio.sleep(ROLLOUT_POLL_WAIT_TIME)
 
                 # Collect done results
                 for task in done:
                     task_rid, trajs = await task
                     trajs: List[Trajectory]
-                    rollout_tasks.pop(task_rid, None)
+                    rollout_tasks.pop(task_rid)
                     rollout_stat.running -= 1
 
                     # Filter data according to episodic return

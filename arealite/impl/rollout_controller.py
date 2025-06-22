@@ -72,6 +72,9 @@ class RolloutController:
         logger.info(f"RolloutController sending data on port {self._data_pusher_port}")
 
         # Start background thread to collect data from workers
+        self._puller_port = network.find_free_port(
+            experiment_name=self.args.experiment_name, trial_name=self.args.trial_name
+        )
         self._collector_thread = threading.Thread(
             target=self._collect_from_workers, daemon=True
         )
@@ -80,9 +83,7 @@ class RolloutController:
         # Start worker processes
         num_workers = self.config.num_workers
         for worker_id in range(num_workers):
-            process = mp.Process(
-                target=self._run_worker_process, args=(worker_id,), daemon=True
-            )
+            process = mp.Process(target=self._run_worker_process, args=(worker_id,))
             process.start()
             self._worker_processes.append(process)
             logger.info(f"Started worker process {worker_id}")
@@ -95,8 +96,10 @@ class RolloutController:
             )
 
         # Convert data to JSON-compatible format
-        self._data_pusher.push(data)
-        logger.info(f"Submitted data to workers: {data}")
+        assert isinstance(data, list)
+        for d in data:
+            self._data_pusher.push(d)
+        logger.info(f"Submitted {len(data)} data to workers")
 
     def prepare_batch(self, batch_size: int) -> List[Trajectory]:
         """Prepare and wait for a batch of trajectories."""
@@ -128,17 +131,16 @@ class RolloutController:
                     process.kill()
         self._worker_processes.clear()
 
+        if self._collector_thread is not None:
+            # Wait for the thread to finish (with optional timeout)
+            self._collector_thread.join(timeout=1.0)
+
         # Close communication channels
         if self._puller:
             self._puller.close()
         if self._data_pusher:
             self._data_pusher.close()
         logger.info("Cleanup completed")
-
-    def set_version(self, version: int):
-        """Set the version for staleness control."""
-        self._version = version
-        logger.info(f"Updated rollout controller version to {version}")
 
     ################## User Interfaces End ##################
 
@@ -162,9 +164,6 @@ class RolloutController:
     def _collect_from_workers(self):
         """Background thread to collect trajectories from workers."""
         # Find a free port
-        self._puller_port = network.find_free_port(
-            experiment_name=self.args.experiment_name, trial_name=self.args.trial_name
-        )
         self._puller = ZMQJsonPuller(host="localhost", port=self._puller_port)
         logger.info(f"RolloutController listening on port {self._puller_port}")
 
