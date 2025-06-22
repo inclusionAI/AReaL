@@ -1,3 +1,4 @@
+import time
 from copy import deepcopy
 from pathlib import Path
 
@@ -25,7 +26,7 @@ from arealite.utils import (
     pad_sequences_to_tensors,
 )
 from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import constants, name_resolve, seeding
+from realhf.base import constants, name_resolve, names, seeding
 
 EXPR_NAME = "test_rollout_controller"
 TRIAL_NAME = "test_rollout_controller"
@@ -69,10 +70,10 @@ def dataloader(args):
         dataset,
         batch_size=2,
         collate_fn=lambda x: x,
+        drop_last=True,
     )
 
 
-@pytest.mark.skip("")
 @pytest.mark.parametrize("num_workers", [1, 4])
 @pytest.mark.parametrize("n_samples", [1, 2])
 def test_generate_batch(args, sglang_server, dataloader, n_samples, num_workers):
@@ -101,14 +102,15 @@ def test_generate_batch(args, sglang_server, dataloader, n_samples, num_workers)
         assert v.shape == shape
 
 
-# @pytest.mark.skip('')
-@pytest.mark.parametrize("n_samples", [5])
-@pytest.mark.parametrize("num_workers", [1])
+@pytest.mark.parametrize("n_samples", [1, 4, 16])
+@pytest.mark.parametrize("num_workers", [1, 2, 4])
 def test_async_rollout(args, sglang_server, dataloader, n_samples, num_workers):
     args = deepcopy(args)
     args.rollout.gconfig.n_samples = n_samples
     args.rollout.gconfig.max_new_tokens = 16
     args.train_dataset.batch_size = 2
+    args.rollout.max_concurrent_rollouts = 16
+    args.rollout.num_workers = num_workers
     rollout_factory = RolloutWorkflowFactory(args)
     workflow = rollout_factory.make_workflow(args.rollout.workflow)
     rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
@@ -144,64 +146,46 @@ def test_async_rollout(args, sglang_server, dataloader, n_samples, num_workers):
     assert not rollout_controller._worker_processes
 
 
-# def test_prepare_batch_empty_buffer(rollout_controller):
-#     batch_size = 2
+@pytest.mark.parametrize("ofp", [1, 2, 4, 16])
+def test_async_staleness_control(args, sglang_server, dataloader, ofp):
+    args = deepcopy(args)
+    args.rollout.gconfig.n_samples = 2
+    args.rollout.gconfig.max_new_tokens = 4
+    args.rollout.max_head_offpolicyness = ofp
+    args.train_dataset.batch_size = 2
+    args.rollout.max_concurrent_rollouts = 100
+    rollout_factory = RolloutWorkflowFactory(args)
+    workflow = rollout_factory.make_workflow(args.rollout.workflow)
+    rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
+    name = names.model_version(args.experiment_name, args.trial_name, "actor")
+    name_resolve.add(name, str(0), replace=True)
 
-#     with patch.object(rollout_controller, "_prepare_batch_async") as mock_async:
-#         mock_async.return_value = []
+    # start loop
+    rollout_controller.start_generate_loop()
+    batch_size = 2
 
-#         result = rollout_controller.prepare_batch(batch_size)
+    gen = iter(dataloader)
+    rollout_controller.submit(next(gen))
+    rollout_controller.submit(next(gen))
+    # wait for some time
+    time.sleep(15)
+    assert len(rollout_controller._buffer) == min(
+        batch_size * 2, batch_size * (ofp + 1)
+    )
 
-#         mock_async.assert_called_once_with(batch_size)
-#         assert result == []
+    # Update model version
+    name = names.model_version(args.experiment_name, args.trial_name, "actor")
+    name_resolve.add(name, str(1), replace=True)
+    print("Updated model version", flush=True)
 
+    # submit again
+    rollout_controller.submit(next(gen))
+    rollout_controller.submit(next(gen))
+    # wait for some time
+    time.sleep(15)
+    assert len(rollout_controller._buffer) == min(
+        batch_size * 4, batch_size * (ofp + 2)
+    )
 
-# def test_prepare_batch_with_buffer(rollout_controller, mock_trajectory):
-#     rollout_controller._buffer = [[mock_trajectory], [mock_trajectory]]
-#     batch_size = 1
-
-#     with patch("arealite.impl.rollout_controller.datapack.flat2d") as mock_flat2d:
-#         mock_flat2d.return_value = [mock_trajectory]
-
-#         result = rollout_controller.prepare_batch(batch_size)
-
-#         mock_flat2d.assert_called_once()
-#         assert len(rollout_controller._buffer) == 1
-
-
-# @patch("torch.distributed.get_world_size")
-# async def test_generate_loop_basic(
-#     mock_world_size, rollout_controller, mock_trajectory
-# ):
-#     mock_world_size.return_value = 1
-
-#     dataset = MockDataset(size=2)
-#     dataloader = DataLoader(dataset, batch_size=1)
-
-#     rollout_controller.workflow.run_episode_async.return_value = mock_trajectory
-
-#     # Set exiting flag after short delay to terminate loop
-#     def set_exit():
-#         time.sleep(0.1)
-#         rollout_controller._exiting.set()
-
-#     exit_thread = threading.Thread(target=set_exit)
-#     exit_thread.start()
-
-#     await rollout_controller._generate_loop(dataloader)
-
-#     exit_thread.join()
-
-
-# def test_generate_until_complete(rollout_controller):
-#     mock_dataloader = Mock(spec=DataLoader)
-
-#     with patch.object(rollout_controller, "_generate_loop") as mock_loop:
-#         mock_loop.return_value = asyncio.sleep(0)  # Mock async function
-
-#         # Set exit flag to prevent infinite loop
-#         rollout_controller._exiting.set()
-
-#         rollout_controller._generate_until_complete(mock_dataloader)
-
-#         mock_loop.assert_called_once_with(mock_dataloader)
+    # exit
+    rollout_controller.stop_generate_loop()

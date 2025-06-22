@@ -64,12 +64,6 @@ class RolloutController:
     def start_generate_loop(self):
         """Start worker processes that run generation loops."""
         logger.info("Starting worker processes...")
-        # Find a free port
-        self._data_pusher_port = network.find_free_port(
-            experiment_name=self.args.experiment_name, trial_name=self.args.trial_name
-        )
-        self._data_pusher = ZMQJsonPusher(host="localhost", port=self._data_pusher_port)
-        logger.info(f"RolloutController sending data on port {self._data_pusher_port}")
 
         # Start background thread to collect data from workers
         self._puller_port = network.find_free_port(
@@ -81,6 +75,14 @@ class RolloutController:
         self._collector_thread.start()
 
         # Start worker processes
+        self._data_pusher_port = network.find_free_port(
+            experiment_name=self.args.experiment_name, trial_name=self.args.trial_name
+        )
+        self._data_pusher = ZMQJsonPusher(
+            host="localhost", port=self._data_pusher_port, bind=True
+        )
+        logger.info(f"RolloutController sending data on port {self._data_pusher_port}")
+
         num_workers = self.config.num_workers
         for worker_id in range(num_workers):
             process = mp.Process(target=self._run_worker_process, args=(worker_id,))

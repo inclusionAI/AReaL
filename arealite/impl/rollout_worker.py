@@ -78,9 +78,7 @@ class RolloutWorker:
                     seed=seed,
                 )
             ]
-        print(">>>>>>>>>>", len(tasks), flush=True)
         trajs = await asyncio.gather(*tasks)
-        print(">>>>>>>>>> 111111111111", len(tasks), flush=True)
         return rid, trajs
 
     def _get_model_version(self) -> int:
@@ -101,7 +99,9 @@ class RolloutWorker:
         # Communication with main process
         self.pusher = ZMQJsonPusher(host=self.pusher_host, port=self.pusher_port)
         self.data_puller = ZMQJsonPuller(
-            host=self.data_puller_host, port=self.data_puller_port
+            host=self.data_puller_host,
+            port=self.data_puller_port,
+            bind=False,
         )
 
         rollout_stat = RolloutStat()

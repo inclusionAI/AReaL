@@ -89,17 +89,13 @@ class RlvrWorkflow(RolloutWorkflow):
         resp = await self.llm_client.agenerate(req)
 
         # Run reward computation in executor to avoid blocking
-        loop = asyncio.get_event_loop()
-        reward = await loop.run_in_executor(
-            None,
-            self.reward_fn,
-            [query_id],
-            [req.text],
-            [prompt_ids],
-            [resp.completion],
-            [resp.output_tokens],
-        )
-        reward = reward[0]
+        reward = self.reward_fn(
+            query_ids=[query_id],
+            prompts=[req.text],
+            prompt_ids=[prompt_ids],
+            completions=[resp.completion],
+            completion_ids=[resp.output_tokens],
+        )[0]
 
         input_len = len(resp.input_tokens)
         output_len = len(resp.output_tokens)
