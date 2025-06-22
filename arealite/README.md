@@ -150,7 +150,8 @@ They need further refactoring to use `pytest`.
 - [ ] Synchronous PPO training pipeline (`impl/trainer/ppo.py`). (In-progress)
 - [x] SGLang rollout interruption.
 - [x] Asynchronous RL system-wide utilities (e.g., `RolloutController`).
-- [ ] CI and unittests.
+- [ ] CI and unittests. (FSDP trainer and PPO trainer in-progress.)
 - [ ] Benchmark performance versus the original AReaL code.
 - [ ] Various launching scripts: ray, torchrun, slurm.
+- [ ] Design doc and user guide for transitting from v0.3.0.
 - [ ] Allow external persistent SGLang servers for debugging purposes.
