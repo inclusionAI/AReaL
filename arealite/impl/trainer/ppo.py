@@ -482,11 +482,11 @@ class SpmdPPOTrainer(Trainer):
         global_step = 0
         for epoch in range(total_epochs):
             for step, data in enumerate(self.train_dataloader):
+                self.rollout_controller.submit(data)
                 if self.config.async_training:
                     # Submitted data will not actually be sent for rollout.
                     # The rollout controller over-subscribe the data to
                     # ensure that there are enough data being generated.
-                    self.rollout_controller.submit(data)
                     if global_step < self.args.rollout.max_head_offpolicyness + 1:
                         continue
 
