@@ -214,6 +214,10 @@ class FSDPEngine(SPMDWrapper):
         if not dist.is_initialized():
             dist.init_process_group(backend="nccl")
 
+        # print(f"LOCAL_RANK = {os.environ["LOCAL_RANK"]}")
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        # print(f"current rank = {dist.get_rank()}, current device = {torch.cuda.current_device()}")
+
         # Load model
         dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
         model = AutoModelForCausalLM.from_pretrained(
@@ -322,6 +326,14 @@ class FSDPEngine(SPMDWrapper):
     #         for fsdp_state in traversal_utils._get_fsdp_states(self.module):
     #             fsdp_state._is_root = None
     #         self.train_initialized = True
+
+    def train(self, mode: bool = True):
+        self.model.train()
+        return self
+
+    def eval(self):
+        self.model.eval()
+        return self
 
     def train_batch(
         self,

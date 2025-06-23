@@ -27,6 +27,14 @@ class SPMDWrapper(abc.ABC):
         """
         raise NotImplementedError()
 
+    def train(self, mode: bool = True):
+        """ Set model to train mode. """
+        raise NotImplementedError()
+
+    def eval(self):
+        """ Set model to eval mode. """
+        raise NotImplementedError()
+
     def train_batch(
         self,
         input_: Dict,

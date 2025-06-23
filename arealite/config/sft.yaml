@@ -1,0 +1,74 @@
+# Basic experiment info
+experiment_name: test-sft
+trial_name: test-trial
+seed: 1
+mode: ray
+n_nodes: 1
+n_gpus_per_node: 8
+
+exp_ctrl:
+  total_train_epochs: 2
+  save_freq_epochs: null
+  save_freq_steps: 20
+  save_freq_secs: null
+  ckpt_freq_epochs: null
+  ckpt_freq_steps: null
+  ckpt_freq_secs: 600
+  eval_freq_epochs: null
+  eval_freq_steps: null
+  eval_freq_secs: null
+  benchmark_steps: null
+  benchmark_n_seqs: null
+
+ray_temp_path: /tmp/ray
+cluster:
+  cluster_name: local
+  fileroot: /tmp/arealite/
+  n_nodes: 32
+  n_gpus_per_node: 8
+  name_resolve:
+    type: nfs
+    nfs_record_root: /tmp/arealite/llm_server/
+
+train_dataset: 
+  path: /storage/openpsi/users/meizhiyu.mzy/datasets/sft/json/
+  batch_size: 128
+  shuffle: true
+  pin_memory: true
+  num_workers: 0
+
+valid_dataset: null
+
+trainer:
+  type: sft
+  sft:
+    model:
+      type:
+        _class: qwen2
+      path: /storage/openpsi/models/Qwen__Qwen2.5-0.5B-Instruct/
+      init_from_scratch: false
+      gradient_checkpointing: false
+      bf16: false
+      optimizer:
+        type: adam
+        lr: 2.0e-05
+        weight_decay: 0.05
+        beta1: 0.9
+        beta2: 0.95
+        eps: 1.0e-05
+        min_lr_ratio: 0.0
+        lr_scheduler_type: constant
+        warmup_steps_proportion: 0.001
+        initial_loss_scale: 4294967296.0
+        min_loss_scale: 1.0
+        loss_scale_window: 5.0
+        hysteresis: 2
+        gradient_clipping: 1.0
+      backend:
+        type: fsdp
+        fsdp: null
+    mb_spec:
+      n_mbs: 1
+      max_tokens_per_mb: 10240
+
+rollout: null
