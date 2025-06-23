@@ -1,3 +1,6 @@
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional
@@ -73,6 +76,43 @@ class Trajectory:
     prompt: Dict[str, Any]
     data: Dict[str, torch.Tensor]
     stats: TrajStats
+
+    def to_json_compatible(self):
+        return {
+            "prompt": self.prompt,
+            "data": {k: v.cpu().numpy().tolist() for k, v in self.data.items()},
+            "stats": {
+                "start_time": self.stats.start_time,
+                "total_reward": self.stats.total_reward,
+                "episode_length": self.stats.episode_length,
+                "info": self.stats.info,
+            },
+        }
+
+    @classmethod
+    def from_json_compatible(cls, data: Dict[str, Any]) -> "Trajectory":
+        return cls(
+            prompt=data["prompt"],
+            data={k: torch.tensor(v) for k, v in data["data"].items()},
+            stats=TrajStats(
+                start_time=data["stats"]["start_time"],
+                total_reward=data["stats"]["total_reward"],
+                episode_length=data["stats"]["episode_length"],
+                info=data["stats"]["info"],
+            ),
+        )
+
+
+@dataclass
+class FinetuneSpec:
+    total_train_epochs: int
+    dataset_size: int
+    train_batch_size: int
+
+    @property
+    def total_train_steps(self):
+        # assuming drop_last
+        return self.total_train_epochs * (self.dataset_size // self.train_batch_size)
 
 
 @dataclass

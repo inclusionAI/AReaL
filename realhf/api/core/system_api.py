@@ -11,6 +11,7 @@ import realhf.api.core.dfg as dfg
 from realhf.api.cli_args import (
     AutomaticEvaluator,
     ExperimentSaveEvalControl,
+    SwanlabConfig,
     TensorBoardConfig,
     WandBConfig,
 )
@@ -189,6 +190,7 @@ class ExperimentScheduling:
 class ExperimentConfig:
     exp_ctrl: ExperimentSaveEvalControl
     wandb: WandBConfig
+    swanlab: SwanlabConfig
     tensorboard: TensorBoardConfig
     # dataflow
     model_rpcs: List[dfg.MFCDef]

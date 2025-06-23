@@ -54,6 +54,7 @@ dependencies = [
     "packaging",
     "tabulate",
     "gymnasium>=1.1.1",
+    "torchdata",
     
     # Monitoring and logging
     "wandb",
@@ -62,6 +63,7 @@ dependencies = [
     "colorlog",
     "psutil",
     "pynvml",
+    "swanlab[dashboard]",
     
     # Performance and compression
     "ninja",

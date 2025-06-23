@@ -1,3 +1,6 @@
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
 from functools import lru_cache
 from typing import List
 
@@ -19,7 +22,7 @@ def get_math_reward_fn(dataset_path):
         prompt_ids: List[List[int]],
         completion_ids: List[List[int]],
     ) -> List[int]:
-        id2info = _load_metadata(dataset_path)
+        id2info, _ = _load_metadata(dataset_path)
         for qid in query_ids:
             assert qid in id2info
             assert id2info[qid].get("task", "math") == "math"

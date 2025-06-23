@@ -1,3 +1,6 @@
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -11,9 +14,8 @@ from realhf.base import datapack
 
 
 def pad_sequences_to_tensors(
-    sequence_list: List[Dict[str, List[float]]], pad_value: float = 0.0
+    sequence_list: List[Dict[str, torch.Tensor]], pad_value: float = 0.0
 ) -> Dict[str, torch.Tensor]:
-    """Convert list of dict[str, List[float]] to padded tensors with attention mask."""
     if not sequence_list:
         return {}
 
@@ -25,10 +27,12 @@ def pad_sequences_to_tensors(
     # Create padded tensors for each key
     for key in sequence_list[0].keys():
         padded = [
-            item[key] + [pad_value] * (max_length - len(item[key]))
+            torch.nn.functional.pad(
+                item[key], (0, max_length - len(item[key])), value=pad_value
+            )
             for item in sequence_list
         ]
-        result[key] = torch.tensor(padded, dtype=torch.float32)
+        result[key] = torch.stack(padded)
 
     # Create attention mask
     attention_mask = [

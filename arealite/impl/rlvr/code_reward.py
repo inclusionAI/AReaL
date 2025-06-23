@@ -1,3 +1,6 @@
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
 import re
 from functools import lru_cache
 from typing import List
@@ -38,7 +41,7 @@ def get_code_reward_fn(dataset_path):
         completion_ids: List[List[int]],
     ) -> List[int]:
 
-        id2info = _load_metadata(dataset_path)
+        id2info, _ = _load_metadata(dataset_path)
         [extract_code(c) for c in completions]
         return code_verify(id2info=id2info, generateds=completions, query_ids=query_ids)
 
