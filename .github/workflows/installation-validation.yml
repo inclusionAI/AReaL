@@ -51,6 +51,9 @@ jobs:
             # Navigate to the synchronized repository
             cd /tmp/areal-validation
             
+            # Create persistent pip cache directory
+            mkdir -p /tmp/pip-cache
+            
             # Generate a unique container name
             CONTAINER_NAME="areal-validation-$(date +%s)"
             
@@ -65,6 +68,7 @@ jobs:
               --gpus all \
               --shm-size=8g \
               -v $(pwd):/workspace \
+              -v /tmp/pip-cache:/root/.cache/pip \
               -w /workspace \
               nvcr.io/nvidia/pytorch:25.01-py3 \
               sleep infinity
@@ -73,18 +77,25 @@ jobs:
             docker exec $CONTAINER_NAME nvidia-smi
             docker exec $CONTAINER_NAME nvcc --version
             
+            echo "=== Verifying workspace contents ==="
+            docker exec $CONTAINER_NAME pwd
+            docker exec $CONTAINER_NAME ls -la /workspace
+            docker exec $CONTAINER_NAME ls -la /workspace/examples/env/ || echo "examples/env directory not found"
+            
+            echo "=== Checking pip cache before installation ==="
+            du -sh /tmp/pip-cache 2>/dev/null || echo "Cache directory empty"
+            
             echo "=== Installing dependencies ==="
             docker exec $CONTAINER_NAME bash -c "
               python -m pip install --upgrade pip
               pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
               # Run the installation script
               bash examples/env/scripts/setup-pip-deps.sh
-            "
-            
-            echo "=== Running installation validation ==="
-            docker exec $CONTAINER_NAME bash -c "
               python examples/env/validate_installation.py
             "
+            
+            echo "=== Checking pip cache after installation ==="
+            du -sh /tmp/pip-cache 2>/dev/null || echo "Cache directory still empty"
             
             echo "=== Installation validation completed successfully ==="
             
