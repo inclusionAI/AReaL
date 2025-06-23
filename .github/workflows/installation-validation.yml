@@ -2,7 +2,7 @@ name: Installation Validation
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
     paths:
       - 'examples/env/scripts/setup-pip-deps.sh'
       - 'docs/tutorial/installation.md'
@@ -11,7 +11,7 @@ on:
       - 'requirements*.txt'
       - '.github/workflows/installation-validation.yml'
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
     paths:
       - 'examples/env/scripts/setup-pip-deps.sh'
       - 'docs/tutorial/installation.md'
@@ -23,7 +23,7 @@ on:
 
 jobs:
   validate-installation:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     
     steps:
       - name: Checkout repository
@@ -31,47 +31,100 @@ jobs:
         with:
           lfs: true
           
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.12'
-          
-      - name: Verify CUDA 12.8 environment
+      - name: Set up SSH key
         run: |
-          echo "=== CUDA Environment ==="
-          nvidia-smi
-          nvcc --version
-          echo "Expected CUDA 12.8"
+          mkdir -p ~/.ssh
+          echo "${{ secrets.REMOTE_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p 8107 101.6.96.205 >> ~/.ssh/known_hosts
           
-      - name: Install Miniconda
+      - name: Copy repository to remote machine
         run: |
-          wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
-          bash miniconda.sh -b -p $HOME/miniconda
-          export PATH="$HOME/miniconda/bin:$PATH"
-          conda init bash
+          # Create a tarball of the repository
+          tar -czf areal-repo.tar.gz --exclude='.git' .
+          # Copy to remote machine
+          scp -P 8107 areal-repo.tar.gz fuwei@101.6.96.205:/tmp/
           
-      - name: Create conda environment
+      - name: Run installation validation on remote machine
         run: |
-          export PATH="$HOME/miniconda/bin:$PATH"
-          conda create -n areal python=3.12 -y
+          ssh -p 8107 fuwei@101.6.96.205 << 'EOF'
+            set -e
+            
+            # Clean up any existing workspace
+            rm -rf /tmp/areal-validation
+            mkdir -p /tmp/areal-validation
+            cd /tmp/areal-validation
+            
+            # Extract the repository
+            tar -xzf /tmp/areal-repo.tar.gz
+            
+            # Generate a unique container name
+            CONTAINER_NAME="areal-validation-$(date +%s)"
+            
+            # Stop and remove any existing container with the same name
+            docker stop $CONTAINER_NAME 2>/dev/null || true
+            docker rm $CONTAINER_NAME 2>/dev/null || true
+            
+            echo "=== Starting Docker container ==="
+            # Launch Docker container with NVIDIA PyTorch image
+            docker run -d \
+              --name $CONTAINER_NAME \
+              --gpus all \
+              --shm-size=8g \
+              -v $(pwd):/workspace \
+              -w /workspace \
+              nvcr.io/nvidia/pytorch:25.01-py3 \
+              sleep infinity
+              
+            echo "=== Verifying CUDA environment in container ==="
+            docker exec $CONTAINER_NAME nvidia-smi
+            docker exec $CONTAINER_NAME nvcc --version
+            
+            echo "=== Installing Miniconda in container ==="
+            docker exec $CONTAINER_NAME bash -c "
+              wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
+              bash miniconda.sh -b -p /opt/miniconda
+              rm miniconda.sh
+              export PATH='/opt/miniconda/bin:\$PATH'
+              conda init bash
+            "
+            
+            echo "=== Creating conda environment and installing dependencies ==="
+            docker exec $CONTAINER_NAME bash -c "
+              export PATH='/opt/miniconda/bin:\$PATH'
+              source /opt/miniconda/etc/profile.d/conda.sh
+              
+              # Create conda environment
+              conda create -n areal python=3.12 -y
+              conda activate areal
+              
+              # Set CUDA environment variables
+              export CUDA_HOME=/usr/local/cuda
+              export PATH=\$CUDA_HOME/bin:\$PATH
+              export LD_LIBRARY_PATH=\$CUDA_HOME/lib64:\$LD_LIBRARY_PATH
+              
+              # Run the installation script
+              bash examples/env/scripts/setup-pip-deps.sh
+            "
+            
+            echo "=== Running installation validation ==="
+            docker exec $CONTAINER_NAME bash -c "
+              export PATH='/opt/miniconda/bin:\$PATH'
+              source /opt/miniconda/etc/profile.d/conda.sh
+              conda activate areal
+              python examples/env/validate_installation.py
+            "
+            
+            echo "=== Installation validation completed successfully ==="
+            
+            # Cleanup
+            docker stop $CONTAINER_NAME
+            docker rm $CONTAINER_NAME
+            cd ~
+            rm -rf /tmp/areal-validation /tmp/areal-repo.tar.gz
+          EOF
           
-      - name: Install dependencies using setup script
+      - name: Cleanup SSH key
+        if: always()
         run: |
-          export PATH="$HOME/miniconda/bin:$PATH"
-          source $HOME/miniconda/etc/profile.d/conda.sh
-          conda activate areal
-          
-          # Set CUDA environment variables for CUDA 12.8
-          export CUDA_HOME=/usr/local/cuda-12.8
-          export PATH=$CUDA_HOME/bin:$PATH
-          export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
-          
-          # Run the installation script
-          bash examples/env/scripts/setup-pip-deps.sh
-          
-      - name: Run installation validation
-        run: |
-          export PATH="$HOME/miniconda/bin:$PATH"
-          source $HOME/miniconda/etc/profile.d/conda.sh
-          conda activate areal
-          python examples/env/validate_installation.py
+          rm -f ~/.ssh/id_rsa
