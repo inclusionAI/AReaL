@@ -154,4 +154,5 @@ They need further refactoring to use `pytest`.
 - [ ] Benchmark performance versus the original AReaL code.
 - [ ] Various launching scripts: ray, torchrun, slurm.
 - [ ] Design doc and user guide for transitting from v0.3.0.
+- [ ] Examples of training GSM8K, TLDR, and a seach agent.
 - [ ] Allow external persistent SGLang servers for debugging purposes.
