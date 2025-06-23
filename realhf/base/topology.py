@@ -21,7 +21,6 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 import torch.distributed as dist
 
 import realhf.base.logging as logging
-from realhf.base.cluster import spec as cluster_spec
 from realhf.base.constants import NCCL_DEFAULT_TIMEOUT
 
 logger = logging.getLogger("Topology")
@@ -185,7 +184,7 @@ class ProcessTopology:
         omit_axes = frozenset(omit_axes)
         axes = [a for a in self.get_axis_names() if a not in omit_axes]
         names = []
-        n = cluster_spec.suffix_n_digits
+        n = len(str(len(self.mapping)))
         for ax in axes:
             ax_rank = getattr(self.get_coord(rank=rank), ax)
             names.append(f"{ax}{inner_sep}{ax_rank:0{n}d}")

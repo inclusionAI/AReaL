@@ -6,7 +6,7 @@ import itertools
 from collections import defaultdict
 from typing import *
 
-from realhf.base.cluster import spec as cluster_spec
+from realhf.api.cli_args import ClusterSpecConfig
 
 
 class GlobalStorageTracker:
@@ -70,7 +70,10 @@ class RedistribStep:
 
 
 class RedistribPlanner:
-    def __init__(self, storage_tracker: GlobalStorageTracker):
+    def __init__(
+        self, cluster_config: ClusterSpecConfig, storage_tracker: GlobalStorageTracker
+    ):
+        self.cluster_config = cluster_config
         self.storage_tracker = storage_tracker
 
     def derive_plan(
@@ -269,8 +272,8 @@ class RedistribPlanner:
         return self._group_bcast_transfers()
 
     def _on_same_node(self, i, j) -> bool:
-        return (i // cluster_spec.n_gpus_per_node) == (
-            j // cluster_spec.n_gpus_per_node
+        return (i // self.cluster_config.n_gpus_per_node) == (
+            j // self.cluster_config.n_gpus_per_node
         )
 
     def _select_best_bcast_source(self, source_gpus, target_gpus):

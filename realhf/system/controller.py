@@ -27,7 +27,6 @@ from omegaconf import OmegaConf
 
 import realhf.api.core.system_api as system_api
 from realhf.base import constants, gpu_utils, logging, name_resolve, names, pkg_version
-from realhf.base.cluster import spec as cluster_spec
 from realhf.system import WORKER_TYPES, load_worker, worker_base, worker_control
 from realhf.system.worker_base import WorkerServerStatus as Wss
 
@@ -247,9 +246,7 @@ class Controller:
 
         # If a log exists, find the last failed setup and run it.
         start_idx = 0
-        prev_logfile = os.path.join(
-            constants.LOG_ROOT, self.experiment_name, self.trial_name, "ctl-0"
-        )
+        prev_logfile = os.path.join(constants.get_log_path(experiment), "ctl-0")
         if os.path.exists(prev_logfile):
             with open(prev_logfile, "r") as f:
                 for l in f.readlines():
@@ -670,6 +667,7 @@ class RayController:
         ]
 
         env_vars = constants.get_env_vars(
+            experiment,
             REAL_MODE=os.environ.get("REAL_MODE", ""),
             REAL_RECOVER_RUN=os.environ.get("REAL_RECOVER_RUN", ""),
             REAL_SAVE_RECOVER_STATES=os.environ.get("REAL_SAVE_RECOVER_STATES", ""),

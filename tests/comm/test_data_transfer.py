@@ -14,6 +14,7 @@ import pytest
 import torch
 import torch.distributed as dist
 
+from realhf.api.cli_args import ClusterSpecConfig
 from realhf.api.core.config import ModelName, ModelShardID
 from realhf.api.core.data_api import SequenceSample
 from realhf.base import constants, testing, topology
@@ -166,7 +167,7 @@ def _test_data_transfer(
     data_manager.setup_process_groups()
 
     storage_tracker = GlobalStorageTracker(dist.get_world_size())
-    planner = RedistribPlanner(storage_tracker)
+    planner = RedistribPlanner(ClusterSpecConfig(), storage_tracker)
 
     key = "input_ids"
 

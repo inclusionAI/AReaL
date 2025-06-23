@@ -14,7 +14,7 @@ import psutil
 
 import realhf.base.logging as logging
 from realhf.base import gpu_utils
-from realhf.base.constants import LOG_ROOT
+from realhf.base.constants import get_log_path
 from realhf.scheduler.client import (
     JobException,
     JobInfo,
@@ -75,14 +75,12 @@ class LocalSchedulerClient(SchedulerClient):
 
     def log_path_of(self, worker_type) -> str:
         return os.path.join(
-            LOG_ROOT,
-            self.expr_name,
-            self.trial_name,
+            get_log_path(self.args),
             f"{worker_type}-0",
         )
 
-    def __init__(self, expr_name, trial_name):
-        super().__init__(expr_name, trial_name)
+    def __init__(self, args):
+        super().__init__(args)
         self._jobs: Dict[str, subprocess.Popen] = {}
         self._running_worker_types = []
 
