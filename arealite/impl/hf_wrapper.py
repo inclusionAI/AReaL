@@ -8,9 +8,10 @@ import torch.nn as nn
 import transformers
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
+from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs, ParallelismConfig
 from arealite.api.engine_api import SPMDWrapper
 from arealite.utils import split_dict_tensor_with_cu_seqlens
+from arealite.api.io_struct import FinetuneSpec
 
 def get_cosine_schedule_with_warmup(
     optimizer: torch.optim.Optimizer,
@@ -67,7 +68,7 @@ class HFEngine(SPMDWrapper):
         self.optimizer = None
         self.model_config = None
 
-    def init_distributed(self, config):
+    def init_distributed(self, config: ParallelismConfig, ft_spec: FinetuneSpec):
         """Initialize model in single node."""
 
         # Load model
@@ -77,7 +78,7 @@ class HFEngine(SPMDWrapper):
             torch_dtype=dtype,
             attn_implementation="flash_attention_2",
             trust_remote_code=True,
-            device_map="auto",
+            device_map=self.engine_config.backend.hf.device,
         )
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.engine_config.path,
@@ -105,8 +106,7 @@ class HFEngine(SPMDWrapper):
                 betas=(beta1, beta2),
                 eps=eps,
             )
-            # TODO: get total training steps
-            total_train_steps = 1000
+            total_train_steps = ft_spec.total_train_steps
             num_warmup_steps = int(
                 optimizer_config.warmup_steps_proportion * total_train_steps
             )

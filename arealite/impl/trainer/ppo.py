@@ -81,7 +81,7 @@ class SpmdPPOTrainer(Trainer):
 
         # Create a client to generate responses and update weights
         client_factory = LLMClientFactory(args)
-        self.llm_client = client_factory.make_client(config.inf_service)
+        self.llm_client = client_factory.make_client(args.rollout.llm_client)
 
         self.agentic = args.rollout.workflow is not None
 

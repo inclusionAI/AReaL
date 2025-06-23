@@ -129,7 +129,7 @@ def test_engine():
     )
     
     rollout_controller_config = RolloutControllerConfig(
-        inf_service=sglang_client_config,
+        llm_client=sglang_client_config,
     )
     
     args = TrainingArgs(
