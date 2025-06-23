@@ -1,31 +1,77 @@
 import uuid
 
-from omegaconf import OmegaConf
+import pytest
 
 from arealite.api.cli_args import (
     GenerationHyperparameters,
     LLMClientConfig,
+    LLMServiceConfig,
+    SGLangConfig,
     TrainingArgs,
 )
 from arealite.api.io_struct import LLMRequest, LLMResponse
-from arealite.impl.sglang_client import SGLangClient
-from realhf.base import name_resolve
+from arealite.api.llm_server_api import LLMServerFactory
+from realhf.base import constants, name_resolve, seeding
 
-args = TrainingArgs(experiment_name="test_rollout", trial_name="test_rollout")
-name_resolve.reconfigure(args.cluster.name_resolve)
-args.rollout.llm_client = LLMClientConfig(
-    server_backend="sglang",
-    tokenizer_path="Qwen/Qwen2-0.5B",
-    request_timeout=10,
-)
-client = SGLangClient(args, client_config=args.rollout.llm_client)
-req = LLMRequest(
-    rid=str(uuid.uuid4()),
-    text="hello! how are you today",
-    gconfig=GenerationHyperparameters(max_new_tokens=16),
-)
-resp = client.generate(req)
-assert isinstance(resp, LLMResponse)
-assert resp.input_tokens == req.input_ids
-assert len(resp.output_logprobs) == len(resp.output_tokens) == len(resp.output_versions)
-assert isinstance(resp.completion, str)
+EXPR_NAME = "test_sglang_client"
+TRIAL_NAME = "test_sglang_client"
+MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+
+
+@pytest.fixture(scope="module")
+def args():
+    args = TrainingArgs(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
+    constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
+    seeding.set_random_seed(args.seed, EXPR_NAME)
+    name_resolve.reconfigure(args.cluster.name_resolve)
+    yield args
+    name_resolve.reset()
+
+
+@pytest.fixture(scope="module")
+def sglang_server(args):
+    server_args = LLMServiceConfig(EXPR_NAME, TRIAL_NAME, model_path=MODEL_PATH)
+    server_args.sglang = SGLangConfig()
+    server = LLMServerFactory.make_server(server_args)
+    server._startup()
+    yield
+    server._graceful_exit(0)
+
+
+@pytest.fixture(scope="module")
+def sglang_client(args, sglang_server):
+    from arealite.impl.sglang_client import SGLangClient
+
+    llm_client = LLMClientConfig(
+        server_backend="sglang",
+        tokenizer_path=MODEL_PATH,
+        request_timeout=10,
+    )
+    client = SGLangClient(args, client_config=llm_client)
+    yield client
+
+
+def test_sglang_generate(sglang_client):
+    req = LLMRequest(
+        rid=str(uuid.uuid4()),
+        text="hello! how are you today",
+        gconfig=GenerationHyperparameters(max_new_tokens=16),
+    )
+    resp = sglang_client.generate(req)
+    assert isinstance(resp, LLMResponse)
+    assert resp.input_tokens == req.input_ids
+    assert (
+        len(resp.output_logprobs)
+        == len(resp.output_tokens)
+        == len(resp.output_versions)
+    )
+    assert isinstance(resp.completion, str)
+
+
+@pytest.mark.asyncio
+async def test_sglang_update_weigths(sglang_client):
+    servers = sglang_client.get_healthy_servers()
+    assert len(servers) == 1
+    await sglang_client.aupdate_weights_from_disk(
+        server_info=servers[0], path=MODEL_PATH
+    )

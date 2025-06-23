@@ -6,6 +6,7 @@ import torch
 import transformers
 
 from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
+from arealite.api.io_struct import FinetuneSpec
 from arealite.api.llm_client_api import LLMClient
 from realhf.api.cli_args import ParallelismConfig
 
@@ -20,7 +21,7 @@ class SPMDWrapper(abc.ABC):
         self.args = args
         self.engine_config = engine_config
 
-    def init_distributed(self, config: ParallelismConfig):
+    def init_distributed(self, config: ParallelismConfig, ft_spec: FinetuneSpec):
         """Initialize distributed communication groups and models.
 
         Models may not be loaded during __init__, but when calling this method.
@@ -28,12 +29,12 @@ class SPMDWrapper(abc.ABC):
         raise NotImplementedError()
 
     def train(self, mode: bool = True):
-        """ Set model to train mode. """
+        """Set the module in training mode."""
         raise NotImplementedError()
 
     def eval(self):
-        """ Set model to eval mode. """
-        raise NotImplementedError()
+        """Set the module in evaluation mode."""
+        return self.train(False)
 
     def train_batch(
         self,
@@ -115,4 +116,4 @@ class EngineFactory:
 
             return FSDPEngine(self.args, engine_config)
         else:
-            raise ValueError(f"Unsupported engine type: {engine_config.backend}")
+            raise ValueError(f"Unsupported engine type: {engine_config.backend.type}")

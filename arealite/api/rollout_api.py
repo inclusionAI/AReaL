@@ -1,7 +1,6 @@
 import abc
-import asyncio
 from dataclasses import dataclass
-from typing import Any, Optional, SupportsFloat
+from typing import Any, Callable, Optional, SupportsFloat
 
 from gymnasium import Env
 from gymnasium.core import ActType, ObsType
@@ -9,7 +8,6 @@ from gymnasium.utils import seeding
 
 from arealite.api.cli_args import (
     GenerationHyperparameters,
-    LLMClientConfig,
     RolloutWorkflowConfig,
     TrainingArgs,
 )
@@ -30,8 +28,16 @@ class Agent(abc.ABC):
         """Given an observation, return an action and data used for RL training."""
         raise NotImplementedError()
 
+    async def aact(self, inp: AgentInferInput) -> AgentInferOutput:
+        """Async version of act. Given an observation, return an action and data used for RL training."""
+        raise NotImplementedError()
+
     def reset(self) -> None:
         """Resets the agent's memory."""
+        raise NotImplementedError()
+
+    async def areset(self) -> None:
+        """Async version of reset. Resets the agent's memory."""
         raise NotImplementedError()
 
 
@@ -66,12 +72,17 @@ class RolloutWorkflow(abc.ABC):
         config: RolloutWorkflowConfig,
         agent: Agent | None = None,
         env: Environment | None = None,
+        reward_func: Callable | None = None,
     ):
         self.args = args
         self.config = config
 
+        # Used in agentic scenarios
         self.agent = agent
         self.env = env
+
+        # Used in RLVR
+        self.reward_func = reward_func
 
     def run_episode(
         self,
@@ -82,15 +93,14 @@ class RolloutWorkflow(abc.ABC):
         """Run a single episode and return the trajectory."""
         raise NotImplementedError()
 
-    async def run_episode_async(
+    async def arun_episode(
         self,
         gconfig: GenerationHyperparameters,
         env_option: Optional[Any] = None,
         seed: Optional[int] = None,
     ) -> Trajectory:
-        """Run a single episode asynchronously and return trajectory."""
-        # A trick to convert a sync function to async function
-        return await asyncio.to_thread(self.run_episode(gconfig, env_option, seed))
+        """Async version of run_episode. Run a single episode and return the trajectory."""
+        raise NotImplementedError()
 
 
 @dataclass
@@ -102,10 +112,25 @@ class RolloutWorkflowFactory:
         if config.type == "rlvr":
             from arealite.impl.rlvr.rlvr_workflow import RlvrWorkflow
 
+            rlvr_config = config.rlvr
+            if rlvr_config.reward_type == "math":
+                from arealite.impl.rlvr.math_reward import get_math_reward_fn
+
+                reward_fn = get_math_reward_fn(rlvr_config.solution_path)
+            elif rlvr_config.reward_type == "code":
+                from arealite.impl.rlvr.code_reward import get_code_reward_fn
+
+                reward_fn = get_code_reward_fn(rlvr_config.solution_path)
+            else:
+                raise NotImplementedError(
+                    f"Unknown reward type: {rlvr_config.reward_type}"
+                )
+
             return RlvrWorkflow(
                 self.args,
                 config=config,
                 llm_client=client,
+                reward_fn=reward_fn,
             )
         if config.type == "math_code_single_step":
             from arealite.impl.agentic.math_code_single_step import (

@@ -54,6 +54,7 @@ dependencies = [
     "packaging",
     "tabulate",
     "gymnasium>=1.1.1",
+    "torchdata",
     
     # Monitoring and logging
     "wandb",

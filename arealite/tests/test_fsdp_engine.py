@@ -93,6 +93,7 @@ def test_engine():
         # Note: This test needs TrainingArgs, but we're using a mock config
         # In a real scenario, you'd need to provide proper TrainingArgs
         from arealite.api.cli_args import TrainingArgs
+        from arealite.api.io_struct import FinetuneSpec
 
         config = EngineConfig(
             type=ModelFamily("qwen2", False),
@@ -106,7 +107,10 @@ def test_engine():
         )  # This would need proper initialization
         engine_factory = EngineFactory(mock_args)
         engine = engine_factory.make_engine(config)
-        engine.init_distributed(None)
+        ft_spec = FinetuneSpec(
+            total_train_epochs=1, dataset_size=100, train_batch_size=2
+        )
+        engine.init_distributed(None, ft_spec)
         print("✓ Engine created successfully")
 
         # Test forward pass

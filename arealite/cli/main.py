@@ -7,6 +7,7 @@ from datasets.distributed import split_dataset_by_node
 from torch.distributed.elastic.multiprocessing.errors import record
 
 from arealite.api.cli_args import DatasetConfig, TrainingArgs
+from arealite.api.rollout_api import RolloutWorkflowFactory
 from arealite.api.trainer_api import TrainerFactory
 from arealite.impl.rollout_controller import RolloutController
 
@@ -38,7 +39,9 @@ def main(args: TrainingArgs):
     # Create rollout controller for online training and evaluation.
     rollout_controller = None
     if args.rollout is not None:
-        rollout_controller = RolloutController(args, args.rollout)
+        rollout_factory = RolloutWorkflowFactory(args)
+        workflow = rollout_factory.make_workflow(args.rollout.workflow)
+        rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
 
     # If trainer is given, run RL or offline training.
     if args.trainer is not None:

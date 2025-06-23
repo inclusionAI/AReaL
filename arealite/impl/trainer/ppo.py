@@ -476,19 +476,24 @@ class SpmdPPOTrainer(Trainer):
         self.create_train_dataloader()
 
         if self.config.async_training:
-            self.rollout_controller.start_run_episode_loop(self.train_dataloader)
+            self.rollout_controller.start_generate_loop()
 
         total_epochs = self.args.exp_ctrl.total_train_epochs
-        steps_per_epoch = len(self.train_dataloader) // (
-            self.args.train_dataset.batch_size
-        )
+        global_step = 0
         for epoch in range(total_epochs):
-            for step in range(steps_per_epoch):
-                if not self.config.async_training:
-                    self.data_generator = iter(self.train_dataloader)
+            for step, data in enumerate(self.train_dataloader):
+                if self.config.async_training:
+                    # Submitted data will not actually be sent for rollout.
+                    # The rollout controller over-subscribe the data to
+                    # ensure that there are enough data being generated.
+                    self.rollout_controller.submit(data)
+                    if global_step < self.args.rollout.max_head_offpolicyness + 1:
+                        continue
 
+                # Run rollout
                 rollout_output = self._rollout_step()
 
+                # Run RL training and update weights.
                 self._train_step(rollout_output)
 
                 # Synchronize weights to the client.
@@ -496,3 +501,6 @@ class SpmdPPOTrainer(Trainer):
 
                 # IMPORTANT! Update the version for staleness control
                 self.rollout_controller.set_version(self.actor.get_version())
+                # TODO: update version through name resolve
+
+                global_step += 1

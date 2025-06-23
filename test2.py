@@ -1,3 +1,5 @@
-from arealite.api.cli_args import TrainingArgs
+from realhf.system.push_pull_stream import ZMQJsonPuller, ZMQJsonPusher
 
-args = TrainingArgs(experiment_name="test-1", trial_name="test_2")
+pusher = ZMQJsonPuller()
+print("success")
+pusher.close()

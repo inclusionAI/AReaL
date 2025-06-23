@@ -1,6 +1,4 @@
 import json
-import os
-import signal
 import subprocess
 import sys
 import threading
@@ -97,14 +95,6 @@ class LLMServer:
         self.load = 0.0
         self.process: Optional[subprocess.Popen] = None
         self.service_config = service_config
-
-        # Set up signal handlers
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        signal.signal(signal.SIGINT, self._signal_handler)
-
-    def _signal_handler(self, signum, frame):
-        logger.info(f"Received signal {signum}, shutting down")
-        self._graceful_exit(0)
 
     def launch_server(self) -> Optional[LLMServerInfo]:
         """Launch the LLM server subprocess. Returns server info or None if failed."""
@@ -240,15 +230,12 @@ class LLMServer:
         if self.process and self.process.poll() is None:
             try:
                 self.process.terminate()
-                self.process.wait(timeout=10)
+                self.process.wait(timeout=5)
                 logger.info("Server terminated gracefully")
             except subprocess.TimeoutExpired:
                 logger.warning("Force killing server")
                 try:
-                    if hasattr(os, "getpgid"):
-                        os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
-                    else:
-                        self.process.kill()
+                    self.process.kill()
                     self.process.wait()
                 except (ProcessLookupError, OSError):
                     pass
@@ -256,7 +243,8 @@ class LLMServer:
                 logger.error(f"Process cleanup failed: {e}")
                 logger.error(traceback.format_exc())
 
-        sys.exit(exit_code)
+        if exit_code != 0:
+            sys.exit(exit_code)
 
 
 class LLMServerFactory:

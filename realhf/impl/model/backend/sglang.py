@@ -430,6 +430,10 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
     def _initialize(self, model: Model, spec: FinetuneSpec) -> Model:
         if constants.pipe_parallel_world_size() != 1:
             raise RuntimeError("SGLang does not support pipe parallel size > 1.")
+        if constants.tensor_parallel_world_size() > torch.cuda.device_count():
+            raise RuntimeError(
+                "AReaL's SGLang integration does not support model parallel size > torch.cuda.device_count()."
+            )
 
         additional_args = dataclasses.asdict(self)
         additional_args.pop("hybrid_train")
