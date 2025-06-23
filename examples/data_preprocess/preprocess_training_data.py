@@ -1,9 +1,7 @@
 import json
 import sys
-from typing import Dict, List
-
 from argparse import ArgumentParser
-
+from typing import Dict, List
 
 # An example of prompt template, please remember to add special tokens, this example is for boba-2 coding dataset
 prompt_template = """
