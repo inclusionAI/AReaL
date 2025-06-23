@@ -12,6 +12,7 @@ from typing import Dict
 import colorama
 import networkx as nx
 import numpy as np
+import swanlab
 import wandb
 from tensorboardX import SummaryWriter
 
@@ -303,6 +304,40 @@ class MasterWorker(worker_base.AsyncWorker):
             resume="allow",
             settings=wandb.Settings(start_method="fork"),
         )
+
+        # swanlab init, connect to remote or local swanlab host
+        if self.swanlab_config.mode != "disabled" and self.swanlab_config.api_key:
+            swanlab.login(self.swanlab_config.api_key)
+        if self.swanlab_config.config is None:
+            import yaml
+
+            with open(
+                os.path.join(
+                    constants.LOG_ROOT,
+                    constants.experiment_name(),
+                    constants.trial_name(),
+                    "config.yaml",
+                ),
+                "r",
+            ) as f:
+                __config = yaml.safe_load(f)
+        else:
+            __config = self.swanlab_config.config
+        __config["FRAMEWORK"] = "AReaL"
+        swanlab.init(
+            project=self.swanlab_config.project or constants.experiment_name(),
+            experiment_name=self.swanlab_config.name
+            or f"{constants.trial_name()}_train",
+            config=__config,
+            logdir=self.swanlab_config.logdir
+            or os.path.join(
+                constants.LOG_ROOT,
+                constants.experiment_name(),
+                constants.trial_name(),
+                "swanlab",
+            ),
+            mode=self.swanlab_config.mode,
+        )
         # tensorboard logging
         self.__summary_writer = None
         if self.tensorboard_config.path is not None:
@@ -479,7 +514,7 @@ class MasterWorker(worker_base.AsyncWorker):
         s += f"(global step {global_step}) finishes. "
         s += f"#End to end# execution time: *{e2e_time:.3f}*s. "
         s += f"Total time consumption: {time_since_configure:.3f}s. "
-        logging.log_wandb_tensorboard({"timeperf/e2e": e2e_time})
+        logging.log_swanlab_wandb_tensorboard({"timeperf/e2e": e2e_time})
         if len(self.e2e_time_history) > 2:
             remaining_steps = self._steps_per_epoch - epoch_step
             remaining_epochs = self.__total_train_epochs - epoch
@@ -532,6 +567,7 @@ class MasterWorker(worker_base.AsyncWorker):
         )
 
         wandb.finish()
+        swanlab.finish()
         if self.__summary_writer is not None:
             self.__summary_writer.close()
         gc.collect()

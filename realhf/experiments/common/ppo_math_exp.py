@@ -373,6 +373,7 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
         return ExperimentConfig(
             exp_ctrl=self.exp_ctrl,
             wandb=self.wandb,
+            swanlab=self.swanlab,
             tensorboard=self.tensorboard,
             model_rpcs=[rpc_alloc.rpc for rpc_alloc in rpc_allocs],
             model_worker=model_worker,
