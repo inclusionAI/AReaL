@@ -73,38 +73,14 @@ jobs:
             docker exec $CONTAINER_NAME nvidia-smi
             docker exec $CONTAINER_NAME nvcc --version
             
-            echo "=== Installing Miniconda in container ==="
+            echo "=== Installing dependencies ==="
             docker exec $CONTAINER_NAME bash -c "
-              wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
-              bash miniconda.sh -b -p /opt/miniconda
-              rm miniconda.sh
-              export PATH='/opt/miniconda/bin:\$PATH'
-              conda init bash
-            "
-            
-            echo "=== Creating conda environment and installing dependencies ==="
-            docker exec $CONTAINER_NAME bash -c "
-              export PATH='/opt/miniconda/bin:\$PATH'
-              source /opt/miniconda/etc/profile.d/conda.sh
-              
-              # Create conda environment
-              conda create -n areal python=3.12 -y
-              conda activate areal
-              
-              # Set CUDA environment variables
-              export CUDA_HOME=/usr/local/cuda
-              export PATH=\$CUDA_HOME/bin:\$PATH
-              export LD_LIBRARY_PATH=\$CUDA_HOME/lib64:\$LD_LIBRARY_PATH
-              
               # Run the installation script
               bash examples/env/scripts/setup-pip-deps.sh
             "
             
             echo "=== Running installation validation ==="
             docker exec $CONTAINER_NAME bash -c "
-              export PATH='/opt/miniconda/bin:\$PATH'
-              source /opt/miniconda/etc/profile.d/conda.sh
-              conda activate areal
               python examples/env/validate_installation.py
             "
             
