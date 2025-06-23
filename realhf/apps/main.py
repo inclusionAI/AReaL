@@ -94,7 +94,7 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
         raise RuntimeError("Experiment initial setup failed.") from e
 
     evaluator = (
-        AutomaticEvaluator(exp_cfg.evaluator, exp_cfg.wandb, exp_cfg.swanlab)
+        AutomaticEvaluator(exp_cfg, exp_cfg.evaluator, exp_cfg.wandb, exp_cfg.swanlab)
         if exp_cfg.auto_eval
         else None
     )
@@ -116,7 +116,7 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
         is_recover_run = recover_count > 0
     if args.recover_mode == "auto":
         try:
-            recover.discover_ckpt(args.experiment_name, args.trial_name)
+            recover.discover_ckpt(experiment)
             is_recover_run = True
         except recover.InValidRecoverCkpt as e:
             logger.warning(
@@ -127,7 +127,7 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
             is_recover_run = False
     if is_recover_run:
         recover_ckpt_path, model_ckpt_dirs, recover_info = recover.discover_ckpt(
-            args.experiment_name, args.trial_name
+            experiment
         )
         logger.info(f"Will load recover info from {recover_ckpt_path}.")
         logger.info(f"Will load model checkpoints from {model_ckpt_dirs}.")
@@ -138,19 +138,9 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
         )
     save_recover_states = args.recover_mode != "disabled"
 
-    cluster_spec_path = os.environ.get("CLUSTER_SPEC_PATH", "")
-    if not cluster_spec_path:
-        logger.info(
-            "Environment variable CLUSTER_SPEC_PATH is not set. "
-            "Will use the fileroot specified in CLI args. "
-        )
-    else:
-        logger.warning(
-            "Environment variable CLUSTER_SPEC_PATH is set. "
-            "Will overwrite the cluster spec in CLI args. "
-        )
     # set env vars
     BASE_ENVIRONS = constants.get_env_vars(
+        experiment,
         REAL_MODE=args.mode.upper(),
         REAL_RECOVER_RUN="1" if is_recover_run else "0",
         REAL_SAVE_RECOVER_STATES="1" if save_recover_states else "0",
@@ -160,10 +150,7 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
 
     # setup experiments
     sched = sched_client.make(
-        mode=scheduler_mode(args.mode),
-        expr_name=expr_name,
-        trial_name=trial_name,
-        schedule_strategy=args.schedule_strategy,
+        experiment,
         evaluator=evaluator,
         job_group_id=job_group_id,
         job_group_index=recover_count,
@@ -302,11 +289,8 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
 
 
 def main_stop(args):
-    sched = sched_client.make(
-        mode=scheduler_mode(args.mode),
-        expr_name=args.experiment_name,
-        trial_name=args.trial_name,
-    )
+    experiment = config_package.make_experiment(args.experiment_name)
+    sched = sched_client.make(experiment)
     sched.find_all()
     sched.stop_all()
 

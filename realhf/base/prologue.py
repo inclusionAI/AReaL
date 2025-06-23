@@ -35,26 +35,6 @@ def global_init():
             if key not in os.environ:
                 os.environ[key] = value
 
-    # resolve config path for cluster spec.
-    cluster_spec_path = os.environ.get("CLUSTER_SPEC_PATH", "")
-    if cluster_spec_path == "":
-        if external_configs.get("cluster_config"):
-            fileroot = external_configs.cluster_config.get("fileroot")
-            if fileroot is not None and fileroot != "":
-                experiment_name = get_experiment_name(config.get("experiment_name"))
-                trial_name = get_trial_name(config.get("trial_name"))
-                config_dir = f"{fileroot}/configs/{getpass.getuser()}/{experiment_name}/{trial_name}"
-                os.makedirs(config_dir, exist_ok=True)
-                cluster_spec_path = f"{config_dir}/cluster_config.json"
-                cluster_spec = OmegaConf.to_container(external_configs.cluster_config)
-                if "cluster_type" not in cluster_spec:
-                    cluster_spec["cluster_type"] = config.mode
-                if "cluster_name" not in cluster_spec:
-                    cluster_spec["cluster_name"] = f"{config.mode}_cluster"
-                with open(cluster_spec_path, "w") as f:
-                    json.dump(cluster_spec, f)
-                os.environ["CLUSTER_SPEC_PATH"] = cluster_spec_path
-
 
 def get_experiment_name(default_name: str = ""):
     if any("experiment_name=" in x for x in sys.argv):

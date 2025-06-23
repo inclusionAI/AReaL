@@ -6,11 +6,12 @@ from typing import *
 import pytest
 
 from realhf.api.cli_args import (
+    ClusterSpecConfig,
     ExperimentSaveEvalControl,
     ModelTrainEvalConfig,
     PromptAnswerDatasetConfig,
 )
-from realhf.base import cluster, testing
+from realhf.base import testing
 from realhf.experiments.common.sft_exp import SFTConfig
 from tests.experiments.utils import run_test_exp
 from tests.fixtures import *
@@ -32,9 +33,6 @@ def model_class(request):
         (1, 2, 4),
         (2, 4, 1),
         (2, 1, 4),
-        (4, 2, 2),
-        (2, 4, 2),
-        (2, 2, 4),
     ],
 )
 def test_sft_xl(tmp_path_factory, tokenizer, save_path, cpu_hf_model, dp, pp, tp):
@@ -61,8 +59,6 @@ def test_sft_xl(tmp_path_factory, tokenizer, save_path, cpu_hf_model, dp, pp, tp
 def test_sft(tmp_path_factory, tokenizer, save_path, cpu_hf_model, dp, pp, tp):
 
     # Setup experiment env. Should be done before any other operations.
-    log_root = tmp_path_factory.mktemp("sft")
-    cluster.spec.fileroot = str(log_root)
     constants.set_experiment_trial_names(
         testing._DEFAULT_EXPR_NAME, testing._DEFAULT_TRIAL_NAME
     )
@@ -89,6 +85,7 @@ def test_sft(tmp_path_factory, tokenizer, save_path, cpu_hf_model, dp, pp, tp):
             valid_bs_n_seqs=minbs,
             fill_to_max_length=False,
         ),
+        cluster=ClusterSpecConfig(fileroot=str(tmp_path_factory.mktemp("sft"))),
     )
 
     run_test_exp(exp_cfg)

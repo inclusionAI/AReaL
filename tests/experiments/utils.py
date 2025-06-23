@@ -1,4 +1,5 @@
 # Copyright 2025 Ant Group Inc.
+import asyncio
 import functools
 import multiprocessing as mp
 from typing import *
@@ -6,7 +7,7 @@ from typing import *
 import pytest
 
 from realhf.api.core.system_api import Experiment, register_experiment
-from realhf.base import cluster, constants, logging, testing
+from realhf.base import constants, logging, testing
 from realhf.system.worker_base import WorkerServerStatus
 from tests.fixtures import *
 
@@ -74,7 +75,6 @@ def run_test_exp(
     logger.info("Configuring master worker...")
     mas.configure(setup_id=0, worker_info=exp_setup.master_worker[0].worker_info)
     logger.info("Configuring master worker... Done.")
-    initd = False
 
     # Run model workers in subprocesses
     barrier = mp.Barrier(len(exp_setup.model_worker))
@@ -98,13 +98,17 @@ def run_test_exp(
     testcase.start()
 
     # Run the master worker.
-    for _ in range(int(1e4)):
-        if mas.status == WorkerServerStatus.PAUSED:
-            break
-        if not initd:
-            logger.info("Running master worker lazy initialization...")
-        mas._poll()
-        if not initd:
-            logger.info("Running master worker lazy initialization... Done.")
-            initd = True
+    async def run_master_worker():
+        initd = False
+        for _ in range(int(1e4)):
+            if mas.status == WorkerServerStatus.PAUSED:
+                break
+            if not initd:
+                logger.info("Running master worker lazy initialization...")
+            await mas._poll_async()
+            if not initd:
+                logger.info("Running master worker lazy initialization... Done.")
+                initd = True
+
+    asyncio.run(run_master_worker())
     testcase.wait(timeout=0.1)

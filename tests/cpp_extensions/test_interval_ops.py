@@ -36,7 +36,7 @@ def maybe_synchronize_cuda():
         torch.cuda.synchronize()
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="This test requires a GPU.")
+@pytest.mark.skip("interval_ops are not used now.")
 @pytest.mark.parametrize(
     "n_intervals", list(reversed([1, 100, 500, 1000, 2000, 4000, 10000, 100000]))
 )
@@ -86,7 +86,7 @@ def test_get(n_intervals: int, dtype: torch.dtype):
     )
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="This test requires a GPU.")
+@pytest.mark.skip("interval_ops are not used now.")
 @pytest.mark.parametrize(
     "n_intervals", list(reversed([1, 10, 100, 500, 1000, 1000, 10000, 100000]))
 )
