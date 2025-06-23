@@ -7,6 +7,7 @@ import os
 from typing import Dict
 
 import torch
+from transformers import AutoTokenizer
 
 from arealite.api.cli_args import (
     EngineBackendConfig,
@@ -126,6 +127,27 @@ def test_hf_engine():
         version_steps=0,
     )
     print(f"✓ Train successful")
+
+    print("Testing get_hf_model_state_dict ...")
+    model_dict = engine.get_hf_model_state_dict()
+    print(f"✓ Model state dict retrieved successfully, dict is {model_dict}")
+
+    print("Testing save_model_to_hf ...")
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+    engine.save_model_to_hf(tokenizer=tokenizer, path="test_model")
+    print("✓ Model saved successfully")
+
+    print("Testing load_model_from_hf ...")
+    engine.load_model_from_hf("Qwen/Qwen2.5-0.5B-Instruct")
+    print("✓ Model loaded successfully")
+
+    print("Testing save_optimizer_state ...")
+    engine.save_optimizer_state("test_optimizer")
+    print("✓ Optimizer saved successfully")
+
+    print("Testing load_optimizer_state ...")
+    engine.load_optimizer_state("test_optimizer")
+    print("✓ Optimizer loaded successfully")
 
     print("All tests passed!")
 

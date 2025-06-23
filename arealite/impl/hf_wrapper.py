@@ -249,6 +249,7 @@ class HFEngine(SPMDWrapper):
             torch_dtype=dtype,
             attn_implementation="flash_attention_2",
             trust_remote_code=True,
+            device_map=self.engine_config.backend.hf.device,
         )
         full_state = model.state_dict()
         self.model.load_state_dict(full_state)
