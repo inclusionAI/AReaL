@@ -3,23 +3,8 @@ name: Installation Validation
 on:
   push:
     branches: [ main, dev ]
-    paths:
-      - 'examples/env/scripts/setup-pip-deps.sh'
-      - 'docs/tutorial/installation.md'
-      - 'examples/env/validate_installation.py'
-      - 'setup.py'
-      - 'requirements*.txt'
-      - '.github/workflows/installation-validation.yml'
   pull_request:
     branches: [ main, dev ]
-    paths:
-      - 'examples/env/scripts/setup-pip-deps.sh'
-      - 'docs/tutorial/installation.md'
-      - 'examples/env/validate_installation.py'
-      - 'setup.py'
-      - 'requirements*.txt'
-      - '.github/workflows/installation-validation.yml'
-  workflow_dispatch:
 
 jobs:
   validate-installation:
@@ -38,25 +23,18 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -p 8107 101.6.96.205 >> ~/.ssh/known_hosts
           
-      - name: Copy repository to remote machine
+      - name: Synchronize repository to remote machine
         run: |
-          # Create a tarball of the repository
-          tar -czf areal-repo.tar.gz --exclude='.git' .
-          # Copy to remote machine
-          scp -P 8107 areal-repo.tar.gz fuwei@101.6.96.205:/tmp/
+          # Use rsync to synchronize repository to remote machine
+          rsync -avz --delete --exclude='.git' -e 'ssh -p 8107' . fuwei@101.6.96.205:/tmp/areal-validation/
           
       - name: Run installation validation on remote machine
         run: |
           ssh -p 8107 fuwei@101.6.96.205 << 'EOF'
             set -e
             
-            # Clean up any existing workspace
-            rm -rf /tmp/areal-validation
-            mkdir -p /tmp/areal-validation
+            # Navigate to the synchronized repository
             cd /tmp/areal-validation
-            
-            # Extract the repository
-            tar -xzf /tmp/areal-repo.tar.gz
             
             # Generate a unique container name
             CONTAINER_NAME="areal-validation-$(date +%s)"
@@ -121,7 +99,7 @@ jobs:
             docker stop $CONTAINER_NAME
             docker rm $CONTAINER_NAME
             cd ~
-            rm -rf /tmp/areal-validation /tmp/areal-repo.tar.gz
+            rm -rf /tmp/areal-validation
           EOF
           
       - name: Cleanup SSH key
