@@ -1,3 +1,6 @@
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional

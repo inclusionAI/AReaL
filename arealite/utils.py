@@ -1,3 +1,6 @@
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
