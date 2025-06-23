@@ -12,6 +12,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 
 from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
 from arealite.api.engine_api import SPMDWrapper
+from arealite.api.io_struct import FinetuneSpec
 from arealite.utils import split_dict_tensor_with_cu_seqlens
 from realhf.api.cli_args import ParallelismConfig
 from realhf.base.pkg_version import is_version_greater_or_equal
@@ -39,24 +40,6 @@ else:
     )
 
 from torch.distributed.device_mesh import init_device_mesh
-
-
-def get_transformer_layer_cls(model):
-    """Get transformer layer classes for wrapping policy."""
-    # Common transformer layer class names
-    common_layer_names = ["Block", "DecoderLayer"]
-
-    layer_classes = set()
-    for name, module in model.named_modules():
-        module_name = type(module).__name__
-        if any(layer_name in module_name for layer_name in common_layer_names):
-            layer_classes.add(type(module))
-
-    # Fallback to standard PyTorch layers if none found
-    if not layer_classes:
-        layer_classes = {nn.TransformerEncoderLayer, nn.TransformerDecoderLayer}
-
-    return layer_classes
 
 
 def create_fsdp_device_mesh(shard_size, world_size):
@@ -209,7 +192,13 @@ class FSDPEngine(SPMDWrapper):
 
         self.world_size = args.n_gpus_per_node * args.n_nodes
 
-    def init_distributed(self, config: ParallelismConfig):
+    def train(self, mode: bool = True):
+        """Set the module in training mode."""
+        assert self.model is not None
+        self.model.train(mode=mode)
+        return self
+
+    def init_distributed(self, config: ParallelismConfig, ft_spec: FinetuneSpec):
         """Initialize distributed communication and model."""
         if not dist.is_initialized():
             dist.init_process_group(backend="nccl")
@@ -283,8 +272,7 @@ class FSDPEngine(SPMDWrapper):
                 betas=(beta1, beta2),
                 eps=eps,
             )
-            # TODO: get total training steps
-            total_train_steps = 1000
+            total_train_steps = ft_spec.total_train_steps
             num_warmup_steps = int(
                 optimizer_config.warmup_steps_proportion * total_train_steps
             )
@@ -337,7 +325,6 @@ class FSDPEngine(SPMDWrapper):
         assert self.optimizer is not None
         assert self.lr_scheduler is not None
 
-        self.model.train()
         self.optimizer.zero_grad()
 
         mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
@@ -352,6 +339,7 @@ class FSDPEngine(SPMDWrapper):
         # total_loss = 0.0
         # total_n_tokens = 0
         # Process microbatches with gradient accumulation
+        # TODO: step lr scheduler if required
         for mb_input in mb_inputs:
             outputs = self.model(**mb_input)
             loss = loss_fn(outputs.logits, mb_input)
@@ -378,7 +366,7 @@ class FSDPEngine(SPMDWrapper):
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
-        self.model.eval()
+        self.eval()
 
         assert "cu_seqlens" in input_
         input_["cu_seqlens"]

@@ -101,6 +101,18 @@ class Trajectory:
 
 
 @dataclass
+class FinetuneSpec:
+    total_train_epochs: int
+    dataset_size: int
+    train_batch_size: int
+
+    @property
+    def total_train_steps(self):
+        # assuming drop_last
+        return self.total_train_epochs * (self.dataset_size // self.train_batch_size)
+
+
+@dataclass
 class WeightUpdateGroupMeta:
     group_name: str
     ranks: List[int]

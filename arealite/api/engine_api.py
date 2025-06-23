@@ -4,11 +4,10 @@ from typing import Any, Callable, Dict, List, Literal, Optional
 
 import torch
 import transformers
-from transformers import AutoConfig, AutoModelForCausalLM
 
 from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
+from arealite.api.io_struct import FinetuneSpec
 from arealite.api.llm_client_api import LLMClient
-from arealite.utils import split_dict_tensor_with_cu_seqlens
 from realhf.api.cli_args import ParallelismConfig
 
 
@@ -22,12 +21,20 @@ class SPMDWrapper(abc.ABC):
         self.args = args
         self.engine_config = engine_config
 
-    def init_distributed(self, config: ParallelismConfig):
+    def init_distributed(self, config: ParallelismConfig, ft_spec: FinetuneSpec):
         """Initialize distributed communication groups and models.
 
         Models may not be loaded during __init__, but when calling this method.
         """
         raise NotImplementedError()
+
+    def train(self, mode: bool = True):
+        """Set the module in training mode."""
+        raise NotImplementedError()
+
+    def eval(self):
+        """Set the module in evaluation mode."""
+        return self.train(False)
 
     def train_batch(
         self,

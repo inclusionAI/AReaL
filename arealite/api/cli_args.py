@@ -269,23 +269,6 @@ class RolloutControllerConfig:
     )
 
 
-@dataclass
-class RolloutWorkerConfig:
-    """Configuration for standalone rollout worker processes."""
-
-    worker_id: int = field(default=0, metadata={"help": "Unique worker ID"})
-    pusher_host: str = field(
-        default="localhost", metadata={"help": "Host for ZMQ pusher connection"}
-    )
-    pusher_port: int = field(
-        default=5555, metadata={"help": "Port for ZMQ pusher connection"}
-    )
-    rollout: RolloutControllerConfig = field(
-        default_factory=RolloutControllerConfig,
-        metadata={"help": "Rollout configuration for this worker"},
-    )
-
-
 ## Trainer configurations. ##
 
 
