@@ -38,7 +38,7 @@ def process_code_data(file_path: str) -> List[Dict]:
                 "task": "code",
                 "query_id": item["query_id"],
                 "prompt": prompt_template.format(question=item["question"]),
-                "solutions": item.get("solutions", []), # nothing for code dataset
+                "solutions": item.get("solutions", []),  # nothing for code dataset
                 "input_output": json.dumps(
                     {
                         "inputs": input_output.get("inputs", []),
@@ -47,7 +47,7 @@ def process_code_data(file_path: str) -> List[Dict]:
                         "remote": False,
                     }
                 ),
-                "language": item.get("language", "PYTHON"), # default to python
+                "language": item.get("language", "PYTHON"),  # default to python
             }
         )
 
