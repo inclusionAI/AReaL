@@ -35,7 +35,6 @@ class Trainer(abc.ABC):
         train_dataset: Dataset,
         valid_dataset: Optional[Dataset] = None,
         rollout_controller: Optional["RolloutController"] = None,
-        extra_args: Optional[Dict] = None,
     ):
         self.args = args
         self.trainer_config = trainer_config
@@ -44,8 +43,6 @@ class Trainer(abc.ABC):
         self.valid_dataset = valid_dataset
 
         self.rollout_controller = rollout_controller
-
-        self.extra_args = extra_args
 
     def create_train_dataloader(self):
         cfg = self.args.train_dataset
@@ -91,7 +88,6 @@ class TrainerFactory:
         train_dataset: Dataset,
         valid_dataset: Optional[Dataset] = None,
         rollout_controller: Optional["RolloutController"] = None,
-        extra_args: Optional[Dict] = None,
     ) -> Trainer:
         if config.type == "ppo":
             from arealite.impl.trainer.ppo import SpmdPPOTrainer
@@ -102,7 +98,6 @@ class TrainerFactory:
                 train_dataset=train_dataset,
                 valid_dataset=valid_dataset,
                 rollout_controller=rollout_controller,
-                extra_args=extra_args,
             )
         else:
             raise NotImplementedError(f"Unknown trainer type: {config.type}")
