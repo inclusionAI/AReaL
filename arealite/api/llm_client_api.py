@@ -237,9 +237,4 @@ class LLMClientFactory:
             from arealite.impl.sglang_client import SGLangClient
 
             return SGLangClient(self.args, config)
-        elif config.server_backend == "hf":
-            from arealite.impl.hf_client import HFClient
-            
-            return HFClient(self.args, config)
-        else:
-            raise ValueError(f"Unknown LLMClient type: {config.server_backend}")
+        raise ValueError(f"Unknown LLMClient type: {config.server_backend}")

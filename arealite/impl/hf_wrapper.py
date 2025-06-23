@@ -161,7 +161,7 @@ class HFEngine(SPMDWrapper):
         self.lr_scheduler.step()
 
         return {
-            "gradients": gradients,
+            "grad_norm": gradients,
             "learning_rate": current_lr,
         }
 

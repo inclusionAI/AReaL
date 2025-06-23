@@ -84,95 +84,79 @@ def create_dataset(cfg: DatasetConfig):
 
 def test_engine():
     """Test engine creation and basic functionality."""
-    print("Testing HF Engine creation...")
-    try:
-        from arealite.api.cli_args import TrainingArgs
+    print("Testing PPO train creation...")
 
-        train_dataset = DatasetConfig(
-            path="openai/gsm8k",
-            name="main",
-            split="train",
-            batch_size=8,
-            shuffle=True,
-            pin_memory=True,
-            num_workers=4,
-        )
+    train_dataset = DatasetConfig(
+        path="openai/gsm8k",
+        name="main",
+        split="train",
+        batch_size=8,
+        shuffle=True,
+        pin_memory=True,
+        num_workers=4,
+    )
 
-        valid_dataset = DatasetConfig(
-            path="openai/gsm8k",
-            name="main",
-            split="test",
-            batch_size=8,
-            shuffle=False,
-            pin_memory=True,
-            num_workers=4,
-        )
+    valid_dataset = DatasetConfig(
+        path="openai/gsm8k",
+        name="main",
+        split="test",
+        batch_size=8,
+        shuffle=False,
+        pin_memory=True,
+        num_workers=4,
+    )
 
-        engine_config = EngineConfig(
-            type=ModelFamily("qwen2", False),
-            path="Qwen/Qwen2.5-0.5B-Instruct",
-            gradient_checkpointing=False,
-            optimizer=OptimizerConfig(),
-            backend=EngineBackendConfig(type="hf"),
-        )
+    engine_config = EngineConfig(
+        type=ModelFamily("qwen2", False),
+        path="Qwen/Qwen2.5-0.5B-Instruct",
+        gradient_checkpointing=False,
+        optimizer=OptimizerConfig(),
+        backend=EngineBackendConfig(type="hf"),
+    )
 
-        hf_client_config = LLMClientConfig(
-            server_backend="hf",
-            tokenizer_path="Qwen/Qwen2.5-0.5B-Instruct",
-        )
+    sglang_client_config = LLMClientConfig(
+        server_backend="sglang",
+        tokenizer_path="Qwen/Qwen2.5-0.5B-Instruct",
+    )
+    
+    ppo_config = PPOTrainerConfig(
+        actor=engine_config,
+    )
+    
+    train_config = TrainerConfig(
+        type="ppo",
+        ppo=ppo_config,
+    )
+    
+    rollout_controller_config = RolloutControllerConfig(
+        inf_service=sglang_client_config,
+    )
+    
+    args = TrainingArgs(
+        mode="local",
+        n_nodes=1,
+        n_gpus_per_node=1,
+        train_dataset=train_dataset,
+        valid_dataset=valid_dataset,
+        trainer=train_config,
+        rollout=rollout_controller_config,
+    )
 
-        ppo_config = PPOTrainerConfig(
-            actor=engine_config,
-            inf_service=hf_client_config,
-        )
-
-        train_config = TrainerConfig(
-            type="ppo",
-            ppo=ppo_config,
-        )
-
-        rollout_controller_config = RolloutControllerConfig(
-
-        )
-
-        args = TrainingArgs(
-            mode="local",
-            n_nodes=1,
-            n_gpus_per_node=1,
+    rollout_controller = None
+    if args.rollout is not None:
+        rollout_controller = RolloutController(args, args.rollout)
+    train_dataset = create_dataset(args.train_dataset)
+    valid_dataset = None
+    if args.valid_dataset is not None:
+        valid_dataset = create_dataset(args.valid_dataset)
+    if args.trainer is not None:
+        trainer_factory = TrainerFactory(args)
+        trainer = trainer_factory.make_trainer(
+            args.trainer,
             train_dataset=train_dataset,
             valid_dataset=valid_dataset,
-            trainer=train_config,
-            rollout=rollout_controller_config,
+            rollout_controller=rollout_controller,
         )
-
-        rollout_controller = None
-        if args.rollout is not None:
-            rollout_controller = RolloutController(args, args.rollout)
-
-        train_dataset = create_dataset(args.train_dataset)
-        valid_dataset = None
-        if args.valid_dataset is not None:
-            valid_dataset = create_dataset(args.valid_dataset)
-
-        if args.trainer is not None:
-            trainer_factory = TrainerFactory(args)
-            trainer = trainer_factory.make_trainer(
-                args.trainer,
-                train_dataset=train_dataset,
-                valid_dataset=valid_dataset,
-                rollout_controller=rollout_controller,
-            )
-
-            trainer.train()
-        
-        print("All tests passed!")
-
-    except Exception as e:
-        print(f"✗ Test failed with error: {e}")
-        import traceback
-
-        traceback.print_exc()
-
-
-if __name__ == "__main__":
-    test_engine()
+        trainer.train()
+    
+    print("All tests passed!")
