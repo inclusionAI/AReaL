@@ -41,7 +41,22 @@ jobs:
       - name: Synchronize repository to remote machine
         run: |
           # Use rsync to synchronize repository to remote machine
-          rsync -avz --delete --exclude='.git' -e 'ssh -p 8107' . fuwei@101.6.96.205:/tmp/areal-validation/
+          rsync -avz --delete \
+            --exclude='.git' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='*.pyo' \
+            --exclude='*.egg-info' \
+            --exclude='build/' \
+            --exclude='dist/' \
+            --exclude='.pytest_cache' \
+            --exclude='.coverage' \
+            --exclude='*.so' \
+            --exclude='*.dylib' \
+            --exclude='node_modules/' \
+            --exclude='.env' \
+            --exclude='.venv' \
+            -e 'ssh -p 8107' . fuwei@101.6.96.205:/tmp/areal-validation/
           
       - name: Run installation validation on remote machine
         run: |
