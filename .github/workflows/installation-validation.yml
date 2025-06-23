@@ -75,6 +75,8 @@ jobs:
             
             echo "=== Installing dependencies ==="
             docker exec $CONTAINER_NAME bash -c "
+              python -m pip install --upgrade pip
+              pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
               # Run the installation script
               bash examples/env/scripts/setup-pip-deps.sh
             "
