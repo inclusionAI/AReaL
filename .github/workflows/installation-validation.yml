@@ -3,8 +3,23 @@ name: Installation Validation
 on:
   push:
     branches: [ main, dev ]
+    paths:
+      - 'examples/env/scripts/setup-pip-deps.sh'
+      - 'docs/tutorial/installation.md'
+      - 'examples/env/validate_installation.py'
+      - 'setup.py'
+      - 'requirements*.txt'
+      - '.github/workflows/installation-validation.yml'
   pull_request:
     branches: [ main, dev ]
+    paths:
+      - 'examples/env/scripts/setup-pip-deps.sh'
+      - 'docs/tutorial/installation.md'
+      - 'examples/env/validate_installation.py'
+      - 'setup.py'
+      - 'requirements*.txt'
+      - '.github/workflows/installation-validation.yml'
+  workflow_dispatch:
 
 jobs:
   validate-installation:
