@@ -1,0 +1,77 @@
+name: Installation Validation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'examples/env/scripts/setup-pip-deps.sh'
+      - 'docs/tutorial/installation.md'
+      - 'examples/env/validate_installation.py'
+      - 'setup.py'
+      - 'requirements*.txt'
+      - '.github/workflows/installation-validation.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'examples/env/scripts/setup-pip-deps.sh'
+      - 'docs/tutorial/installation.md'
+      - 'examples/env/validate_installation.py'
+      - 'setup.py'
+      - 'requirements*.txt'
+      - '.github/workflows/installation-validation.yml'
+  workflow_dispatch:
+
+jobs:
+  validate-installation:
+    runs-on: self-hosted
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+          
+      - name: Verify CUDA 12.8 environment
+        run: |
+          echo "=== CUDA Environment ==="
+          nvidia-smi
+          nvcc --version
+          echo "Expected CUDA 12.8"
+          
+      - name: Install Miniconda
+        run: |
+          wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
+          bash miniconda.sh -b -p $HOME/miniconda
+          export PATH="$HOME/miniconda/bin:$PATH"
+          conda init bash
+          
+      - name: Create conda environment
+        run: |
+          export PATH="$HOME/miniconda/bin:$PATH"
+          conda create -n areal python=3.12 -y
+          
+      - name: Install dependencies using setup script
+        run: |
+          export PATH="$HOME/miniconda/bin:$PATH"
+          source $HOME/miniconda/etc/profile.d/conda.sh
+          conda activate areal
+          
+          # Set CUDA environment variables for CUDA 12.8
+          export CUDA_HOME=/usr/local/cuda-12.8
+          export PATH=$CUDA_HOME/bin:$PATH
+          export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+          
+          # Run the installation script
+          bash examples/env/scripts/setup-pip-deps.sh
+          
+      - name: Run installation validation
+        run: |
+          export PATH="$HOME/miniconda/bin:$PATH"
+          source $HOME/miniconda/etc/profile.d/conda.sh
+          conda activate areal
+          python examples/env/validate_installation.py
