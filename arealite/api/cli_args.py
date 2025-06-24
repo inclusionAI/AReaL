@@ -162,9 +162,11 @@ class FSDPConfig:
     sync_module_states: bool = True
     use_orig_params: bool = False
 
+
 @dataclass
 class HFConfig:
     device: str = "cuda:0"
+
 
 @dataclass
 class EngineBackendConfig:
@@ -178,6 +180,7 @@ class EngineBackendConfig:
     hf: Optional[HFConfig] = field(
         default=None, metadata={"help": "HF configuration (if using HF backend)"}
     )
+
 
 @dataclass
 class EngineConfig:

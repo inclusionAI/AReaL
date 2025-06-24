@@ -8,10 +8,16 @@ import torch.nn as nn
 import transformers
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs, ParallelismConfig
+from arealite.api.cli_args import (
+    EngineConfig,
+    MicroBatchSpec,
+    ParallelismConfig,
+    TrainingArgs,
+)
 from arealite.api.engine_api import SPMDWrapper
-from arealite.utils import split_dict_tensor_with_cu_seqlens
 from arealite.api.io_struct import FinetuneSpec
+from arealite.utils import split_dict_tensor_with_cu_seqlens
+
 
 def get_cosine_schedule_with_warmup(
     optimizer: torch.optim.Optimizer,

@@ -4,26 +4,25 @@ import os
 from typing import Dict
 
 import torch
+from datasets import load_dataset
 
 from arealite.api.cli_args import (
+    DatasetConfig,
     EngineBackendConfig,
     EngineConfig,
     FSDPConfig,
+    LLMClientConfig,
     MicroBatchSpec,
     ModelFamily,
     OptimizerConfig,
+    PPOTrainerConfig,
+    RolloutControllerConfig,
     TrainerConfig,
     TrainingArgs,
-    PPOTrainerConfig,
-    DatasetConfig,
-    RolloutControllerConfig,
-    LLMClientConfig,
 )
 from arealite.api.engine_api import EngineFactory
 from arealite.api.trainer_api import TrainerFactory
 from arealite.impl.rollout_controller import RolloutController
-
-from datasets import load_dataset
 from arealite.utils import (
     compute_varlen_position_indices,
     split_dict_tensor_with_cu_seqlens,
@@ -72,6 +71,7 @@ def mock_loss_weight_fn(logits: torch.Tensor, input_data: Dict) -> float:
     """Mock loss weight function for testing."""
     return float(input_data["attention_mask"].sum())
 
+
 def create_dataset(cfg: DatasetConfig):
     # select five data for test
     dataset = load_dataset(
@@ -81,6 +81,7 @@ def create_dataset(cfg: DatasetConfig):
     )
     dataset = dataset.select(range(5))
     return dataset
+
 
 def test_engine():
     """Test engine creation and basic functionality."""
@@ -118,20 +119,20 @@ def test_engine():
         server_backend="sglang",
         tokenizer_path="Qwen/Qwen2.5-0.5B-Instruct",
     )
-    
+
     ppo_config = PPOTrainerConfig(
         actor=engine_config,
     )
-    
+
     train_config = TrainerConfig(
         type="ppo",
         ppo=ppo_config,
     )
-    
+
     rollout_controller_config = RolloutControllerConfig(
         llm_client=sglang_client_config,
     )
-    
+
     args = TrainingArgs(
         mode="local",
         n_nodes=1,
@@ -158,5 +159,5 @@ def test_engine():
             rollout_controller=rollout_controller,
         )
         trainer.train()
-    
+
     print("All tests passed!")

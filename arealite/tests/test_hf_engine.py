@@ -16,9 +16,8 @@ from arealite.api.cli_args import (
     MicroBatchSpec,
     ModelFamily,
     OptimizerConfig,
-    TrainingArgs
+    TrainingArgs,
 )
-
 from arealite.api.engine_api import EngineFactory
 from arealite.api.io_struct import FinetuneSpec
 from arealite.utils import (
@@ -34,7 +33,9 @@ def create_mock_input(bs: int = 2, min_seqlen: int = 3, max_seqlen: int = 12) ->
         min_seqlen, max_seqlen, (bs,), dtype=torch.int, device="cuda:0"
     )
     max_seqlen = int(max(seqlens))
-    input_ids = torch.randint(0, 100, (bs, max_seqlen), dtype=torch.long, device="cuda:0")
+    input_ids = torch.randint(
+        0, 100, (bs, max_seqlen), dtype=torch.long, device="cuda:0"
+    )
 
     attn_mask = torch.zeros((bs, max_seqlen), dtype=torch.bool, device="cuda:0")
     attn_mask[
@@ -68,33 +69,32 @@ def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
 def test_hf_engine():
     """Test engine creation and basic functionality."""
     print("Testing HF Engine creation...")
-    
+
     engine_config = EngineConfig(
         type=ModelFamily("qwen2", False),
         path="Qwen/Qwen2.5-0.5B-Instruct",
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
-        backend=EngineBackendConfig(type="hf", hf=HFConfig(
-            device="cuda:0",
-        ))
+        backend=EngineBackendConfig(
+            type="hf",
+            hf=HFConfig(
+                device="cuda:0",
+            ),
+        ),
     )
 
-    mock_args = TrainingArgs(
-        n_nodes=1, n_gpus_per_node=1
-    )
-    
+    mock_args = TrainingArgs(n_nodes=1, n_gpus_per_node=1)
+
     engine_factory = EngineFactory(mock_args)
     engine = engine_factory.make_engine(engine_config)
-    ft_spec = FinetuneSpec(
-        total_train_epochs=1, dataset_size=100, train_batch_size=2
-    )
+    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
     engine.init_distributed(None, ft_spec)
     print("✓ Engine created successfully")
 
     print("Testing forward pass...")
     input_data = create_mock_input(bs=4)
     mb_spec = MicroBatchSpec(n_mbs=2)
-    
+
     def simple_post_hook(logits, inp):
         return logits.shape
 
@@ -117,7 +117,7 @@ def test_hf_engine():
         print(
             "✓ Evaluation completed (no loss returned - expected for non-final pipeline stages)"
         )
-    
+
     print("Testing train ...")
     train_result = engine.train_batch(
         input_=input_data,
@@ -150,4 +150,3 @@ def test_hf_engine():
     print("✓ Optimizer loaded successfully")
 
     print("All tests passed!")
-
