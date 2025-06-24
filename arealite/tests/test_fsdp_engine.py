@@ -52,6 +52,7 @@ def test_split_mbs():
         print(f"***** data batch {i} *****")
         print_data(mb)
 
+
 def create_mock_input(bs: int = 2, min_seqlen: int = 3, max_seqlen: int = 12) -> Dict:
     """Create mock input data for testing."""
     seqlens = torch.randint(
@@ -83,8 +84,10 @@ def create_mock_input(bs: int = 2, min_seqlen: int = 3, max_seqlen: int = 12) ->
         use_cache=False,
     )
 
+
 def test_hf_forward():
     from transformers import AutoModelForCausalLM
+
     path = "/storage/openpsi/models/Qwen__Qwen2.5-0.5B-Instruct"
     # path = "/storage/openpsi/models/Qwen__Qwen3-1.7B"
     model = AutoModelForCausalLM.from_pretrained(
@@ -99,6 +102,7 @@ def test_hf_forward():
     r = model(**data)
 
     print(r.logits.shape)
+
 
 def test_engine():
     """Test engine creation and basic functionality."""

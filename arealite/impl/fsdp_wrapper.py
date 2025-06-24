@@ -1,7 +1,7 @@
+import functools
 import math
 import os
 from typing import Any, Callable, Dict, List, Literal, Optional
-import functools
 
 import torch
 import torch.distributed as dist
@@ -10,10 +10,10 @@ import transformers
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import StateDictType
 from transformers import (
-    AutoConfig, 
+    AutoConfig,
     AutoModelForCausalLM,
     get_constant_schedule_with_warmup,
-    get_linear_schedule_with_warmup
+    get_linear_schedule_with_warmup,
 )
 
 from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
@@ -48,7 +48,9 @@ else:
 from torch.distributed.device_mesh import init_device_mesh
 
 
-def fsdp2_clip_grad_norm_(parameters, max_norm, norm_type=2.0, error_if_nonfinite=False, foreach=None):
+def fsdp2_clip_grad_norm_(
+    parameters, max_norm, norm_type=2.0, error_if_nonfinite=False, foreach=None
+):
     """torch.nn.utils.clip_grad_norm_ cann't run on cpu parameter DTensor"""
     from torch.nn.utils.clip_grad import _clip_grads_with_norm_, _get_total_norm
 
@@ -85,7 +87,10 @@ def apply_fsdp2(model, fsdp_kwargs, wrap_policy):
     ), "PyTorch version >= 2.4 is required for using fully_shard API (FSDP2)"
 
     default_transformer_cls_names_to_wrap = getattr(model, "_no_split_modules", None)
-    fsdp_transformer_layer_cls_to_wrap = wrap_policy.transformer_layer_cls_to_wrap or default_transformer_cls_names_to_wrap
+    fsdp_transformer_layer_cls_to_wrap = (
+        wrap_policy.transformer_layer_cls_to_wrap
+        or default_transformer_cls_names_to_wrap
+    )
 
     if isinstance(fsdp_transformer_layer_cls_to_wrap, str):
         fsdp_transformer_layer_cls_to_wrap = [fsdp_transformer_layer_cls_to_wrap]
@@ -185,12 +190,17 @@ def get_cosine_schedule_with_warmup(
 
     def lr_lambda(current_step):
         if current_step < num_warmup_steps:
-            return min_lr_ratio + (1.0 - min_lr_ratio) * (float(current_step) / float(max(1, num_warmup_steps)))
-        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+            return min_lr_ratio + (1.0 - min_lr_ratio) * (
+                float(current_step) / float(max(1, num_warmup_steps))
+            )
+        progress = float(current_step - num_warmup_steps) / float(
+            max(1, num_training_steps - num_warmup_steps)
+        )
         x = math.cos(math.pi * float(num_cycles) * 2.0 * progress)
         return max(min_lr_ratio, x * coef + intercept)
 
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
+
 
 class FSDPEngine(SPMDWrapper):
     """Simplified FSDP engine for transformer models."""
@@ -251,7 +261,9 @@ class FSDPEngine(SPMDWrapper):
         device_mesh = create_fsdp_device_mesh(self.world_size, self.world_size)
         self.device_mesh = device_mesh
         # sharding_strategy = ShardingStrategy.FULL_SHARD
-        self.cpu_offload = CPUOffloadPolicy() if self.fsdp_config.offload_params else None
+        self.cpu_offload = (
+            CPUOffloadPolicy() if self.fsdp_config.offload_params else None
+        )
 
         fsdp_kwargs = {
             "mesh": device_mesh,
@@ -312,7 +324,7 @@ class FSDPEngine(SPMDWrapper):
                 raise ValueError(
                     f"Unknown lr scheduler type {self.optimizer_config.lr_scheduler_type}"
                 )
-        
+
     def train(self, mode: bool = True):
         self.model.train()
         return self
@@ -326,7 +338,7 @@ class FSDPEngine(SPMDWrapper):
         input_: Dict,
         mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
-        loss_weight_fn: Callable[[Dict], float]
+        loss_weight_fn: Callable[[Dict], float],
     ) -> Dict:
         """Train on a batch using gradient accumulation."""
         # self._initialize_fsdp_train()
@@ -348,7 +360,7 @@ class FSDPEngine(SPMDWrapper):
         # TODO: step lr scheduler if required
         for i, mb_input in enumerate(mb_inputs):
             outputs = self.model(**mb_input)
-        
+
             loss = loss_fn(outputs.logits, mb_input)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
 
@@ -360,8 +372,7 @@ class FSDPEngine(SPMDWrapper):
             loss.backward()
 
         grad_norm = fsdp2_clip_grad_norm_(
-            self.model.parameters(), 
-            max_norm=self.optimizer_config.gradient_clipping
+            self.model.parameters(), max_norm=self.optimizer_config.gradient_clipping
         )
         if not torch.isfinite(grad_norm):
             self.optimizer.zero_grad()

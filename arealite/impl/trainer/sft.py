@@ -1,31 +1,29 @@
-from dataclasses import dataclass
-from typing import Any, Dict, Optional, List
-import time
 import os
+import time
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
 from datasets import Dataset
 
 from arealite.api.cli_args import MicroBatchSpec, TrainerConfig, TrainingArgs
-from arealite.api.trainer_api import Trainer
 from arealite.api.engine_api import EngineFactory
+from arealite.api.trainer_api import Trainer
 from arealite.impl.rollout_controller import RolloutController
 from arealite.utils import (
+    build_shift_one_indices,
     close_wandb_tensorboard,
     compute_varlen_position_indices,
     gather_packed_shifted_log_probs,
-    build_shift_one_indices,
     get_save_checkpoint_path,
     init_stats_logging,
     log_wandb_tensorboard,
-    close_wandb_tensorboard,
-    record_timing
+    record_timing,
 )
 from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
 from realhf.api.core.model_api import FinetuneSpec
 from realhf.base import logging, stats_tracker, timeutil
-
 
 logger = logging.getLogger("SFT Trainer")
 
@@ -40,7 +38,7 @@ def compute_packed_sft_loss(
     cu_seqlens = torch.nn.functional.pad(input_lens.cumsum(0), (1, 0)).int()
     prompt_mask = input_["prompt_mask"].squeeze(dim=0)
     logits = logits.squeeze(dim=0)
-    total_seqlen = int(cu_seqlens[-1].item()) 
+    total_seqlen = int(cu_seqlens[-1].item())
 
     shift_one_indices = build_shift_one_indices(total_seqlen, cu_seqlens)
     logprobs = gather_packed_shifted_log_probs(
@@ -87,6 +85,7 @@ def compute_packed_sft_loss(
 
     return loss
 
+
 class SFTTrainer(Trainer):
 
     def __init__(
@@ -109,11 +108,11 @@ class SFTTrainer(Trainer):
 
         self.config = config = trainer_config.sft
         assert config is not None
-        
+
         engine_factory = EngineFactory(args)
         self.model = engine_factory.make_engine(config.model)
         self.tokenizer = load_hf_tokenizer(config.model.path)
-        
+
         self.mb_spec = config.mb_spec
 
         self.save_ctl = timeutil.EpochStepTimeFreqCtl(
@@ -127,7 +126,6 @@ class SFTTrainer(Trainer):
             freq_sec=self.args.exp_ctrl.eval_freq_steps,
         )
         self.summary_writer = init_stats_logging(args)
-
 
     def _tokenize(self, strs: List[str]):
         # tokenize strings into unpadded tokens with lengths.
@@ -144,7 +142,8 @@ class SFTTrainer(Trainer):
         prompts = data["prompt"]
         answers = data["answer"]
         inputs = [
-            prompt + answer + self.tokenizer.eos_token for prompt, answer in zip(prompts, answers)
+            prompt + answer + self.tokenizer.eos_token
+            for prompt, answer in zip(prompts, answers)
         ]
         tokenized_prompts = self._tokenize(prompts)
         tokenized_inputs = self._tokenize(inputs)
@@ -154,7 +153,9 @@ class SFTTrainer(Trainer):
         input_lens = tokenized_inputs["length"]
 
         input_lens = torch.tensor(input_lens, dtype=torch.int)
-        input_ids = [torch.tensor(seq, dtype=torch.long) for seq in tokenized_inputs["input_ids"]]
+        input_ids = [
+            torch.tensor(seq, dtype=torch.long) for seq in tokenized_inputs["input_ids"]
+        ]
 
         prompt_mask = []
         for input_len, prompt_len in zip(input_lens, prompt_lens):
@@ -181,7 +182,7 @@ class SFTTrainer(Trainer):
             use_cache=False,
         )
 
-    def train(self, resume_from_checkpoint = None):
+    def train(self, resume_from_checkpoint=None):
         self.create_train_dataloader()
 
         total_epochs = self.args.exp_ctrl.total_train_epochs
@@ -208,63 +209,69 @@ class SFTTrainer(Trainer):
                     data = next(self.data_generator)
                     packed_input_data = self._get_packed_input(data)
                     dist.barrier()
-                
+
                 with record_timing("timeperf/train_step", timing_stats):
                     with stats_tracker.scope("sft"):
                         stats = self.model.train_batch(
                             input_=packed_input_data,
                             loss_fn=compute_packed_sft_loss,
                             loss_weight_fn=lambda x: x["prompt_mask"]
-                                .logical_not()
-                                .count_nonzero(),
+                            .logical_not()
+                            .count_nonzero(),
                             mb_spec=self.mb_spec,
                         )
                         self.model.lr_scheduler_step()
                         lr = self.model.get_current_lr()
                         stats_tracker.scalar(**stats, lr=lr)
-                
-                if self.save_ctl.check(epochs=int(step==steps_per_epoch - 1), steps=1):     
+
+                if self.save_ctl.check(
+                    epochs=int(step == steps_per_epoch - 1), steps=1
+                ):
                     if dist.get_rank() == 0:
                         print("Saving model ...")
-                    
+
                     with record_timing("timeperf/save", timing_stats):
                         save_path = get_save_checkpoint_path(
                             self.args, epoch, step, global_step
                         )
                         self.model.save_model_to_hf(save_path, self.tokenizer)
-                
-                if self.eval_ctl.check(epochs=int(step==steps_per_epoch - 1), steps=1):
+
+                if self.eval_ctl.check(
+                    epochs=int(step == steps_per_epoch - 1), steps=1
+                ):
                     if dist.get_rank() == 0:
                         print("Running evaluation ...")
                     with record_timing("timeperf/eval", timing_stats):
                         self._eval(global_step)
-                
+
                 training_stats = stats_tracker.export()
                 training_stats.update(timing_stats)
-                log_wandb_tensorboard(
-                    global_step, training_stats, self.summary_writer
-                )
+                log_wandb_tensorboard(global_step, training_stats, self.summary_writer)
 
                 if dist.get_rank() == 0:
-                    print(f"Epoch {epoch} Step {step} GlobalStep {global_step} done. Detailed time stats:"
-                          f"\n{tabulate_stats(timing_stats, floatfmt='.2f')}")
+                    print(
+                        f"Epoch {epoch} Step {step} GlobalStep {global_step} done. Detailed time stats:"
+                        f"\n{tabulate_stats(timing_stats, floatfmt='.2f')}"
+                    )
                 global_step += 1
-            
+
         if dist.get_rank() == 0:
-            print(f"Training completes! Total time elapsed {time.monotonic() - start_time:.2f}.")
-        
+            print(
+                f"Training completes! Total time elapsed {time.monotonic() - start_time:.2f}."
+            )
+
         close_wandb_tensorboard(self.summary_writer)
 
     def _eval(self, global_step):
         self.create_valid_dataloader()
         if self.valid_dataloader is None:
             return
-        
+
         self.eval_data_generator = iter(self.valid_dataloader)
         n_steps = len(self.valid_dataloader)
-        
+
         losses = []
-        
+
         start_time = time.monotonic()
         for step in range(n_steps):
             data = next(self.eval_data_generator)
@@ -277,6 +284,8 @@ class SFTTrainer(Trainer):
                 )
                 losses.append(avg_loss)
         val_loss = torch.mean(torch.stack(losses))
-        
-        print(f"Global step: {global_step} evaluation time cost {time.monotonic() - start_time:.2f} "
-              f"val_loss={val_loss}")
+
+        print(
+            f"Global step: {global_step} evaluation time cost {time.monotonic() - start_time:.2f} "
+            f"val_loss={val_loss}"
+        )

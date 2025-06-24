@@ -158,10 +158,12 @@ class DatasetConfig:
 class FSDPWrapPolicy:
     transformer_layer_cls_to_wrap: Optional[List[str]] = None
 
+
 @dataclass
 class FSDPConfig:
     wrap_policy: Optional[FSDPWrapPolicy] = None
     offload_params: bool = False
+
 
 @dataclass
 class EngineBackendConfig:
