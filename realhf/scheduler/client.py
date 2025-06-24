@@ -170,4 +170,4 @@ def make(args: "BaseExperimentConfig", **kwargs) -> SchedulerClient:
 
         return LocalSchedulerClient(args)
     else:
-        raise NotImplementedError(f"Scheduler {mode} not found")
+        raise NotImplementedError(f"Scheduler {args.mode} not found")
