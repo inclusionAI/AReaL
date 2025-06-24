@@ -15,6 +15,7 @@ from arealite.utils import (
     build_shift_one_indices,
     close_wandb_tensorboard,
     compute_varlen_position_indices,
+    gather_logprobs,
     gather_packed_shifted_log_probs,
     get_save_checkpoint_path,
     init_stats_logging,
@@ -37,14 +38,9 @@ def compute_packed_sft_loss(
     input_lens: torch.Tensor = cu_seqlens[1:] - cu_seqlens[:-1]
     cu_seqlens = torch.nn.functional.pad(input_lens.cumsum(0), (1, 0)).int()
     prompt_mask = input_["prompt_mask"].squeeze(dim=0)
-    logits = logits.squeeze(dim=0)
-    total_seqlen = int(cu_seqlens[-1].item())
+    logits = logits.squeeze(dim=0).float()
 
-    shift_one_indices = build_shift_one_indices(total_seqlen, cu_seqlens)
-    logprobs = gather_packed_shifted_log_probs(
-        logits, cu_seqlens, packed_input_ids
-    ).float()
-    prompt_mask = prompt_mask[shift_one_indices]
+    logprobs = gather_logprobs(logits, torch.roll(packed_input_ids, shifts=-1))
     logprobs = torch.where(prompt_mask, 0, logprobs)
 
     loss = -logprobs.sum() / prompt_mask.logical_not().count_nonzero()
@@ -287,5 +283,5 @@ class SFTTrainer(Trainer):
 
         print(
             f"Global step: {global_step} evaluation time cost {time.monotonic() - start_time:.2f} "
-            f"val_loss={val_loss}"
+            f"val_loss={val_loss:.4f}"
         )

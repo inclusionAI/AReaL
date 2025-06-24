@@ -326,11 +326,7 @@ class FSDPEngine(SPMDWrapper):
                 )
 
     def train(self, mode: bool = True):
-        self.model.train()
-        return self
-
-    def eval(self):
-        self.model.eval()
+        self.model.train(mode)
         return self
 
     def train_batch(

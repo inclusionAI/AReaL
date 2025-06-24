@@ -20,8 +20,6 @@ wandb:
 tensorboard:
   path: null
 
-
-
 exp_ctrl:
   total_train_epochs: 2
   save_freq_epochs: 1
@@ -48,6 +46,9 @@ cluster:
 
 train_dataset: 
   path: /storage/openpsi/users/meizhiyu.mzy/datasets/sft/json/
+  name: null
+  split: null
+  data_files: null
   batch_size: 128
   shuffle: true
   pin_memory: true
@@ -55,6 +56,9 @@ train_dataset:
 
 valid_dataset: 
   path: /storage/openpsi/users/meizhiyu.mzy/datasets/sft/json/
+  name: null
+  split: null
+  data_files: null
   batch_size: 128
   shuffle: true
   pin_memory: true

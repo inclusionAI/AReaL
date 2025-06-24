@@ -49,7 +49,7 @@ class Trainer(abc.ABC):
 
     def create_train_dataloader(self):
         cfg = self.args.train_dataset
-        if dist.is_available() and dist.is_initialized():
+        if dist.is_initialized():
             batch_size = cfg.batch_size // dist.get_world_size()
         else:
             batch_size = cfg.batch_size
@@ -66,7 +66,7 @@ class Trainer(abc.ABC):
         if self.args.valid_dataset is None:
             return
         cfg = self.args.valid_dataset
-        if dist.is_available() and dist.is_initialized():
+        if dist.is_initialized():
             batch_size = cfg.batch_size // dist.get_world_size()
         else:
             batch_size = cfg.batch_size

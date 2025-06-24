@@ -17,9 +17,9 @@ def create_distributed_dataset(cfg: DatasetConfig):
     world_size = int(os.environ["WORLD_SIZE"])
     dataset = load_dataset(
         cfg.path,
-        # name=cfg.name,
-        # split=cfg.split,
-        # data_files=cfg.data_files,
+        name=cfg.name,
+        split=cfg.split,
+        data_files=cfg.data_files,
     )
     dataset = split_dataset_by_node(dataset["train"], rank=rank, world_size=world_size)
     return dataset
@@ -55,8 +55,8 @@ def main(args: TrainingArgs):
         trainer.train()
 
     # After training, run rollout over the entire dataset
-    # if valid_dataset and rollout_controller:
-    #     rollout_controller.eval_dataset(valid_dataset)
+    if valid_dataset and rollout_controller:
+        rollout_controller.eval_dataset(valid_dataset)
 
 
 if __name__ == "__main__":
