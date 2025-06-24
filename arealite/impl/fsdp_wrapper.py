@@ -1,6 +1,7 @@
 import math
 import os
 from typing import Any, Callable, Dict, List, Literal, Optional
+import functools
 
 import torch
 import torch.distributed as dist
@@ -8,7 +9,12 @@ import torch.nn as nn
 import transformers
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import StateDictType
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import (
+    AutoConfig, 
+    AutoModelForCausalLM,
+    get_constant_schedule_with_warmup,
+    get_linear_schedule_with_warmup
+)
 
 from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
 from arealite.api.engine_api import SPMDWrapper
@@ -42,6 +48,22 @@ else:
 from torch.distributed.device_mesh import init_device_mesh
 
 
+def fsdp2_clip_grad_norm_(parameters, max_norm, norm_type=2.0, error_if_nonfinite=False, foreach=None):
+    """torch.nn.utils.clip_grad_norm_ cann't run on cpu parameter DTensor"""
+    from torch.nn.utils.clip_grad import _clip_grads_with_norm_, _get_total_norm
+
+    if isinstance(parameters, torch.Tensor):
+        parameters = [parameters]
+    else:
+        # prevent generators from being exhausted
+        parameters = list(parameters)
+    grads = [p.grad for p in parameters if p.grad is not None]
+    total_norm = _get_total_norm(grads, norm_type, error_if_nonfinite, foreach)
+    total_norm = total_norm.to(torch.cuda.current_device(), non_blocking=True)
+    _clip_grads_with_norm_(parameters, max_norm, total_norm, foreach)
+    return total_norm
+
+
 def create_fsdp_device_mesh(shard_size, world_size):
     if shard_size < 0 or shard_size >= world_size:
         device_mesh = init_device_mesh(
@@ -56,15 +78,14 @@ def create_fsdp_device_mesh(shard_size, world_size):
     return device_mesh
 
 
-def apply_fsdp2(model, fsdp_kwargs):
+def apply_fsdp2(model, fsdp_kwargs, wrap_policy):
     """model: AutoModelForCausalLM"""
     assert (
         CPUOffloadPolicy is not None
     ), "PyTorch version >= 2.4 is required for using fully_shard API (FSDP2)"
 
     default_transformer_cls_names_to_wrap = getattr(model, "_no_split_modules", None)
-    # fsdp_transformer_layer_cls_to_wrap = config.get("wrap_policy", {}).get("transformer_layer_cls_to_wrap", default_transformer_cls_names_to_wrap)
-    fsdp_transformer_layer_cls_to_wrap = default_transformer_cls_names_to_wrap
+    fsdp_transformer_layer_cls_to_wrap = wrap_policy.transformer_layer_cls_to_wrap or default_transformer_cls_names_to_wrap
 
     if isinstance(fsdp_transformer_layer_cls_to_wrap, str):
         fsdp_transformer_layer_cls_to_wrap = [fsdp_transformer_layer_cls_to_wrap]
@@ -157,21 +178,19 @@ def get_cosine_schedule_with_warmup(
     Return:
         :obj:`torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
     """
+    min_lr_ratio = 0.0 if min_lr_ratio is None else min_lr_ratio
     assert min_lr_ratio >= 0 and min_lr_ratio <= 1.0
     coef = (1 - min_lr_ratio) * 0.5
     intercept = (1 + min_lr_ratio) * 0.5
 
     def lr_lambda(current_step):
         if current_step < num_warmup_steps:
-            return float(current_step) / float(max(1, num_warmup_steps))
-        progress = float(current_step - num_warmup_steps) / float(
-            max(1, num_training_steps - num_warmup_steps)
-        )
+            return min_lr_ratio + (1.0 - min_lr_ratio) * (float(current_step) / float(max(1, num_warmup_steps)))
+        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
         x = math.cos(math.pi * float(num_cycles) * 2.0 * progress)
-        return max(0.0, x * coef + intercept)
+        return max(min_lr_ratio, x * coef + intercept)
 
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
-
 
 class FSDPEngine(SPMDWrapper):
     """Simplified FSDP engine for transformer models."""
@@ -182,7 +201,9 @@ class FSDPEngine(SPMDWrapper):
             "torch", "2.4.0"
         ), f"arealite only supports FSDP2, which requires torch>=2.4.0"
 
-        self.config = engine_config.backend.fsdp
+        self.fsdp_config = engine_config.backend.fsdp
+        assert self.fsdp_config is not None
+        self.optimizer_config = engine_config.optimizer
 
         self.model = None
         self.optimizer = None
@@ -222,7 +243,6 @@ class FSDPEngine(SPMDWrapper):
 
         # Simple auto wrap policy
         # TODO: fix wrap policy
-
         mixed_precision_policy = MixedPrecisionPolicy(
             param_dtype=torch.bfloat16,
             reduce_dtype=torch.float32,
@@ -231,43 +251,32 @@ class FSDPEngine(SPMDWrapper):
         device_mesh = create_fsdp_device_mesh(self.world_size, self.world_size)
         self.device_mesh = device_mesh
         # sharding_strategy = ShardingStrategy.FULL_SHARD
-        cpu_offload = None
-        self.cpu_offload = cpu_offload
+        self.cpu_offload = CPUOffloadPolicy() if self.fsdp_config.offload_params else None
 
         fsdp_kwargs = {
             "mesh": device_mesh,
             "mp_policy": mixed_precision_policy,
-            "offload_policy": cpu_offload,
+            "offload_policy": self.cpu_offload,
             "reshard_after_forward": True,
         }
 
         # Wrap with FSDP2
-        # self.model = FSDP(
-        #     model,
-        #     auto_wrap_policy=auto_wrap_policy,
-        #     sharding_strategy=ShardingStrategy.FULL_SHARD,
-        #     device_id=torch.cuda.current_device(),
-        #     sync_module_states=self.config.sync_module_states,
-        #     use_orig_params=self.config.use_orig_params,
-        # )
-
         full_state = model.state_dict()
-        apply_fsdp2(model, fsdp_kwargs)
-        fsdp2_load_full_state_dict(model, full_state, device_mesh, cpu_offload)
+        apply_fsdp2(model, fsdp_kwargs, self.fsdp_config.wrap_policy)
+        fsdp2_load_full_state_dict(model, full_state, device_mesh, self.cpu_offload)
 
         self.model = model
 
         # Set up optimizer
-        optimizer_config = self.engine_config.optimizer
-        if optimizer_config is not None:
+        if self.optimizer_config is not None:
             assert (
-                optimizer_config.type == "adam"
+                self.optimizer_config.type == "adam"
             ), "Only AdamW optimizer is supported in this engine."
-            lr = optimizer_config.lr
-            weight_decay = optimizer_config.weight_decay
-            beta1 = optimizer_config.beta1
-            beta2 = optimizer_config.beta2
-            eps = optimizer_config.eps
+            lr = self.optimizer_config.lr
+            weight_decay = self.optimizer_config.weight_decay
+            beta1 = self.optimizer_config.beta1
+            beta2 = self.optimizer_config.beta2
+            eps = self.optimizer_config.eps
 
             self.optimizer = torch.optim.AdamW(
                 self.model.parameters(),
@@ -278,43 +287,32 @@ class FSDPEngine(SPMDWrapper):
             )
             total_train_steps = ft_spec.total_train_steps
             num_warmup_steps = int(
-                optimizer_config.warmup_steps_proportion * total_train_steps
+                self.optimizer_config.warmup_steps_proportion * total_train_steps
             )
 
-            self.lr_scheduler = get_cosine_schedule_with_warmup(
-                self.optimizer,
-                num_warmup_steps,
-                total_train_steps,
-                min_lr_ratio=optimizer_config.min_lr_ratio,
-            )
-
-    # def _split_microbatches(self, input_: Dict, mb_spec: MicroBatchSpec) -> List[Dict]:
-    #     """Split input into microbatches."""
-    #     batch_size = len(input_["input_ids"])
-    #     n_mbs = min(mb_spec.n_mbs, batch_size)
-    #     mb_size = batch_size // n_mbs
-
-    #     microbatches = []
-    #     for i in range(n_mbs):
-    #         start = i * mb_size
-    #         end = start + mb_size if i < n_mbs - 1 else batch_size
-
-    #         mb = {}
-    #         for key, value in input_.items():
-    #             if isinstance(value, (list, torch.Tensor)):
-    #                 mb[key] = value[start:end]
-    #             else:
-    #                 mb[key] = value
-    #         microbatches.append(mb)
-
-    #     return microbatches
-
-    # def _initialize_fsdp_train(self):
-    #     if not self.train_initialized:
-    #         for fsdp_state in traversal_utils._get_fsdp_states(self.module):
-    #             fsdp_state._is_root = None
-    #         self.train_initialized = True
-
+            if self.optimizer_config.lr_scheduler_type == "cosine":
+                self.lr_scheduler = get_cosine_schedule_with_warmup(
+                    self.optimizer,
+                    num_warmup_steps,
+                    total_train_steps,
+                    min_lr_ratio=self.optimizer_config.min_lr_ratio,
+                )
+            elif self.optimizer_config.lr_scheduler_type == "linear":
+                self.lr_scheduler = get_linear_schedule_with_warmup(
+                    self.optimizer,
+                    num_warmup_steps,
+                    total_train_steps,
+                )
+            elif self.optimizer_config.lr_scheduler_type == "constant":
+                self.lr_scheduler = get_constant_schedule_with_warmup(
+                    self.optimizer,
+                    num_warmup_steps,
+                )
+            else:
+                raise ValueError(
+                    f"Unknown lr scheduler type {self.optimizer_config.lr_scheduler_type}"
+                )
+        
     def train(self, mode: bool = True):
         self.model.train()
         return self
@@ -328,13 +326,12 @@ class FSDPEngine(SPMDWrapper):
         input_: Dict,
         mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
-        loss_weight_fn: Callable[[Dict], float],
-        version_steps: int,
-        token_normalize_scope: Literal["global", "dp"] = "global",
+        loss_weight_fn: Callable[[Dict], float]
     ) -> Dict:
         """Train on a batch using gradient accumulation."""
         # self._initialize_fsdp_train()
         assert self.optimizer is not None
+        assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
 
         self.optimizer.zero_grad()
@@ -345,30 +342,47 @@ class FSDPEngine(SPMDWrapper):
             sum([loss_weight_fn(mb) for mb in mb_inputs]), dtype=torch.float32
         )
         assert total_loss_weight != 0
-        if token_normalize_scope == "global":
-            dist.all_reduce(total_loss_weight)
+        dist.all_reduce(total_loss_weight)
 
-        # total_loss = 0.0
-        # total_n_tokens = 0
         # Process microbatches with gradient accumulation
         # TODO: step lr scheduler if required
-        for mb_input in mb_inputs:
+        for i, mb_input in enumerate(mb_inputs):
             outputs = self.model(**mb_input)
+        
             loss = loss_fn(outputs.logits, mb_input)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
 
             # Scale loss for accumulation
-            # TODO: check if this is required for FSDP
-            if token_normalize_scope == "global":
-                loss_scale *= self.world_size
+            # Revert gradient averaging across dp ranks
+            loss_scale *= self.world_size
 
             loss *= loss_scale
             loss.backward()
 
+        grad_norm = fsdp2_clip_grad_norm_(
+            self.model.parameters(), 
+            max_norm=self.optimizer_config.gradient_clipping
+        )
+        if not torch.isfinite(grad_norm):
+            self.optimizer.zero_grad()
+            update_successful = False
+        else:
+            self.optimizer.step()
+            update_successful = True
+
         # Optimizer step
         self.optimizer.step()
+        return dict(
+            update_successful=float(update_successful),
+            grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
+        )
 
-        return {}
+    def lr_scheduler_step(self):
+        assert self.lr_scheduler is not None
+        self.lr_scheduler.step()
+
+    def get_current_lr(self):
+        return self.lr_scheduler.get_last_lr()[0]
 
     @torch.no_grad()
     def eval_batch(
@@ -378,26 +392,33 @@ class FSDPEngine(SPMDWrapper):
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
-        self.eval()
+        # self.eval()
 
-        assert "cu_seqlens" in input_
-        input_["cu_seqlens"]
+        # assert "cu_seqlens" in input_
+        # input_["cu_seqlens"]
         mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
 
         total_loss = 0.0
-        total_weight = 0.0
+        total_n_tokens = 0.0
 
         for mb_input in mb_inputs:
             outputs = self.model(**mb_input)
             loss = loss_fn(outputs.logits, mb_input)
 
-            # Simple weight calculation (could be improved)
-            weight = mb_input["input_ids"].numel()
+            n_tokens = mb_input["input_ids"].numel()
 
-            total_loss += loss.item() * weight
-            total_weight += weight
+            total_loss += loss.item() * n_tokens
+            total_n_tokens += n_tokens
 
-        return torch.tensor(total_loss / max(total_weight, 1e-8))
+        # aggregate across data parallel ranks
+        total_loss = torch.tensor(total_loss, dtype=torch.float32).cuda()
+        dist.all_reduce(total_loss, op=dist.ReduceOp.SUM)
+
+        total_n_tokens = torch.tensor(total_n_tokens, dtype=torch.int).cuda()
+        dist.all_reduce(total_n_tokens, op=dist.ReduceOp.SUM)
+
+        avg_loss = torch.tensor(total_loss / max(total_n_tokens.item(), 1e-8))
+        return avg_loss
 
     @torch.no_grad()
     def forward(
@@ -409,7 +430,7 @@ class FSDPEngine(SPMDWrapper):
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""
-        self.model.eval()
+        # self.eval()
         mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
 
         results = []
@@ -435,8 +456,8 @@ class FSDPEngine(SPMDWrapper):
 
     def save_model_to_hf(
         self,
-        tokenizer: transformers.PreTrainedTokenizerFast,
         path: str,
+        tokenizer: transformers.PreTrainedTokenizerFast,
         base_model_path: Optional[str] = None,
     ):
         """Save model in HuggingFace format."""

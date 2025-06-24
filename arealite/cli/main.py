@@ -5,7 +5,6 @@ import torch.distributed as dist
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 from torch.distributed.elastic.multiprocessing.errors import record
-
 from arealite.api.cli_args import DatasetConfig, TrainingArgs
 from arealite.api.rollout_api import RolloutWorkflowFactory
 from arealite.api.trainer_api import TrainerFactory
@@ -55,8 +54,8 @@ def main(args: TrainingArgs):
         trainer.train()
 
     # After training, run rollout over the entire dataset
-    if valid_dataset and rollout_controller:
-        rollout_controller.eval_dataset(valid_dataset)
+    # if valid_dataset and rollout_controller:
+    #     rollout_controller.eval_dataset(valid_dataset)
 
 
 if __name__ == "__main__":

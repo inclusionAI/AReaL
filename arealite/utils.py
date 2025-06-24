@@ -1,12 +1,18 @@
+import os
 from typing import Any, Dict, List, Optional, Tuple
+import getpass
+from contextlib import contextmanager
+import time
 
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from einops import rearrange, repeat
+import wandb
+from tensorboardX import SummaryWriter
 
-from arealite.api.cli_args import MicroBatchSpec
+from arealite.api.cli_args import TrainingArgs, MicroBatchSpec
 from realhf.base import datapack
 
 
@@ -288,6 +294,42 @@ def gather_logprobs(
     """
     log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
     log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+    return log_probs_labels
+
+
+def gather_packed_shifted_log_probs(
+    logits: torch.FloatTensor,
+    cu_seqlens: torch.Tensor,
+    labels: torch.LongTensor,
+) -> torch.FloatTensor:
+    """Gather log probs from packed input_ids and logits.
+
+    Args:
+        logits (torch.FloatTensor): Shape [tot_seqlen]. The final value at the end of
+            each sequence is not used.
+        cu_seqlens (torch.Tensor): Shape [#seqs + 1]. Indices marking the start
+            and end of each sequence.
+        labels (torch.LongTensor): Labels or input_ids with shape [tot_seqlen].
+            The first value at the beginning of each sequence has no corresponding log prob.
+
+    Returns:
+        torch.FloatTensor: Log probability with shape [tot_seqlen - #seqs].
+    """
+    labels = torch.nn.functional.pad(labels[1:], (0, 1), value=0)
+    logits_shape = logits.shape
+    total_seqlen = logits.shape[0]
+    leave_one_indices = build_leave_one_indices(total_seqlen, cu_seqlens)
+
+    # shift labels one step to the left and pad it to match the shape of logits
+    log_probs_labels = gather_logprobs(logits, labels)
+    log_probs_labels = log_probs_labels[leave_one_indices]
+    assert log_probs_labels.shape[0] == logits_shape[0] - cu_seqlens.shape[0] + 1, (
+        log_probs_labels.shape,
+        logits_shape,
+        cu_seqlens.shape,
+        cu_seqlens,
+        # shift_one_indices,
+    )
     return log_probs_labels
 
 
@@ -707,3 +749,90 @@ def list_of_dict2dict_of_list(
 
     # Convert to dict of lists
     return {key: [dict_item[key] for dict_item in list_of_dicts] for key in keys}
+
+def get_save_checkpoint_path(args: TrainingArgs, epoch: int, step: int, globalstep: int):
+    path = os.path.join(
+        args.cluster.fileroot,
+        "checkpoints",
+        getpass.getuser(),
+        args.experiment_name,
+        args.trial_name,
+        "model",
+        f"epoch{epoch}epochstep{step}globalstep{globalstep}",
+    )
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def get_log_path(args: TrainingArgs) -> str:
+    log_path = os.path.join(
+        f"{args.cluster.fileroot}",
+        "logs",
+        f"{getpass.getuser()}",
+        f"{args.experiment_name}",
+        f"{args.trial_name}"
+    )
+    os.makedirs(log_path, exist_ok=True)
+    return log_path
+
+
+def init_stats_logging(args: TrainingArgs):
+    """ 
+    Initialize wandb and/or tensorboard according to config.
+    If torch.distributed is initialized
+
+    Return:
+        tensorboard SummaryWriter if args.tensorboard.path is not None
+    """
+    if dist.is_initialized() and dist.get_rank() != 0:
+        return
+        
+    # wandb init, connect to remote wandb host
+    if args.wandb.mode != "disabled":
+        wandb.login()
+    wandb.init(
+        mode=args.wandb.mode,
+        entity=args.wandb.entity,
+        project=args.wandb.project or args.experiment_name,
+        name=args.wandb.name or args.trial_name,
+        job_type=args.wandb.job_type,
+        group=args.wandb.group
+        or f"{args.experiment_name}_{args.trial_name}",
+        notes=args.wandb.notes,
+        tags=args.wandb.tags,
+        config=args.wandb.config,
+        dir=get_log_path(args),
+        force=True,
+        id=f"{args.experiment_name}_{args.trial_name}_train",
+        resume="allow",
+        settings=wandb.Settings(start_method="fork"),
+    )
+    # tensorboard logging
+    summary_writer = None
+    if args.tensorboard.path is not None:
+        summary_writer = SummaryWriter(log_dir=args.tensorboard.path)
+    
+    return summary_writer
+
+def log_wandb_tensorboard(step, data, summary_writer=None):
+    if dist.is_initialized() and dist.get_rank() != 0:
+        return
+
+    wandb.log(data, step=step)
+    if summary_writer is not None:
+        for key, val in data.items():
+            summary_writer.add_scalar(f"{key}", val, step)
+
+def close_wandb_tensorboard(summary_writer=None):
+    if dist.is_initialized() and dist.get_rank() != 0:
+        return
+
+    wandb.finish()
+    if summary_writer is not None:
+        summary_writer.close()
+
+@contextmanager
+def record_timing(name, timing_stats):
+    start_time = time.perf_counter()
+    yield
+    timing_stats[name] = time.perf_counter() - start_time
+

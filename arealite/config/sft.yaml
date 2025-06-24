@@ -6,15 +6,31 @@ mode: ray
 n_nodes: 1
 n_gpus_per_node: 8
 
+wandb:
+  mode: online
+  entity: null
+  project: null
+  name: null
+  job_type: null
+  group: null
+  notes: null
+  tags: null
+  config: null
+
+tensorboard:
+  path: null
+
+
+
 exp_ctrl:
   total_train_epochs: 2
-  save_freq_epochs: null
-  save_freq_steps: 20
+  save_freq_epochs: 1
+  save_freq_steps: null
   save_freq_secs: null
   ckpt_freq_epochs: null
   ckpt_freq_steps: null
   ckpt_freq_secs: 600
-  eval_freq_epochs: null
+  eval_freq_epochs: 1
   eval_freq_steps: null
   eval_freq_secs: null
   benchmark_steps: null
@@ -37,7 +53,12 @@ train_dataset:
   pin_memory: true
   num_workers: 0
 
-valid_dataset: null
+valid_dataset: 
+  path: /storage/openpsi/users/meizhiyu.mzy/datasets/sft/json/
+  batch_size: 128
+  shuffle: true
+  pin_memory: true
+  num_workers: 0
 
 trainer:
   type: sft
@@ -66,7 +87,10 @@ trainer:
         gradient_clipping: 1.0
       backend:
         type: fsdp
-        fsdp: null
+        fsdp: 
+          wrap_policy:
+            transformer_layer_cls_to_wrap: null
+          offload_params: false
     mb_spec:
       n_mbs: 1
       max_tokens_per_mb: 10240

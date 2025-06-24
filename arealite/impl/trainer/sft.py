@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
 import time
+import os
 
 import torch
 import torch.distributed as dist
@@ -10,31 +11,38 @@ from arealite.api.cli_args import MicroBatchSpec, TrainerConfig, TrainingArgs
 from arealite.api.trainer_api import Trainer
 from arealite.api.engine_api import EngineFactory
 from arealite.impl.rollout_controller import RolloutController
-from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import logging, stats_tracker
 from arealite.utils import (
+    close_wandb_tensorboard,
     compute_varlen_position_indices,
-    split_dict_tensor_with_cu_seqlens,
-)
-from realhf.impl.model.utils.functional import (
-    build_shift_one_indices,
     gather_packed_shifted_log_probs,
+    build_shift_one_indices,
+    get_save_checkpoint_path,
+    init_stats_logging,
+    log_wandb_tensorboard,
+    close_wandb_tensorboard,
+    record_timing
 )
+from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
+from realhf.api.core.model_api import FinetuneSpec
+from realhf.base import logging, stats_tracker, timeutil
 
 
 logger = logging.getLogger("SFT Trainer")
+
 
 def compute_packed_sft_loss(
     logits: torch.Tensor,
     input_: Dict[str, torch.Tensor],
 ) -> torch.Tensor:
-    packed_input_ids: torch.Tensor = input_["packed_input_ids"].squeeze()
-    cu_seqlens: torch.Tensor = input_["cu_seqlens"].squeeze()
+    packed_input_ids: torch.Tensor = input_["input_ids"].squeeze(dim=0)
+    cu_seqlens: torch.Tensor = input_["cu_seqlens"]
     input_lens: torch.Tensor = cu_seqlens[1:] - cu_seqlens[:-1]
     cu_seqlens = torch.nn.functional.pad(input_lens.cumsum(0), (1, 0)).int()
-    prompt_mask = input_["prompt_mask"].squeeze()
+    prompt_mask = input_["prompt_mask"].squeeze(dim=0)
+    logits = logits.squeeze(dim=0)
+    total_seqlen = int(cu_seqlens[-1].item()) 
 
-    shift_one_indices = build_shift_one_indices(logits, cu_seqlens)
+    shift_one_indices = build_shift_one_indices(total_seqlen, cu_seqlens)
     logprobs = gather_packed_shifted_log_probs(
         logits, cu_seqlens, packed_input_ids
     ).float()
@@ -71,12 +79,6 @@ def compute_packed_sft_loss(
     stats_tracker.stat(loss=-logprobs.detach(), denominator="n_valid_tokens")
     vocab_min_logits = logits.detach().min(-1).values.float()
     vocab_max_logits = logits.detach().max(-1).values.float()
-    # dist.all_reduce(
-    #     vocab_min_logits, group=constants.tensor_parallel_group(), op=dist.ReduceOp.MIN
-    # )
-    # dist.all_reduce(
-    #     vocab_max_logits, group=constants.tensor_parallel_group(), op=dist.ReduceOp.MAX
-    # )
     stats_tracker.stat(
         vocab_min_logits=vocab_min_logits,
         vocab_max_logits=vocab_max_logits,
@@ -114,6 +116,19 @@ class SFTTrainer(Trainer):
         
         self.mb_spec = config.mb_spec
 
+        self.save_ctl = timeutil.EpochStepTimeFreqCtl(
+            freq_epoch=self.args.exp_ctrl.save_freq_epochs,
+            freq_step=self.args.exp_ctrl.save_freq_steps,
+            freq_sec=self.args.exp_ctrl.save_freq_secs,
+        )
+        self.eval_ctl = timeutil.EpochStepTimeFreqCtl(
+            freq_epoch=self.args.exp_ctrl.eval_freq_epochs,
+            freq_step=self.args.exp_ctrl.eval_freq_steps,
+            freq_sec=self.args.exp_ctrl.eval_freq_steps,
+        )
+        self.summary_writer = init_stats_logging(args)
+
+
     def _tokenize(self, strs: List[str]):
         # tokenize strings into unpadded tokens with lengths.
         return self.tokenizer(
@@ -138,9 +153,8 @@ class SFTTrainer(Trainer):
         prompt_lens = tokenized_prompts["length"]
         input_lens = tokenized_inputs["length"]
 
-        print(input_lens)
         input_lens = torch.tensor(input_lens, dtype=torch.int)
-        input_ids = [torch.tensor(seq, dtype=torch.long) for seq in tokenized_prompts["input_ids"]]
+        input_ids = [torch.tensor(seq, dtype=torch.long) for seq in tokenized_inputs["input_ids"]]
 
         prompt_mask = []
         for input_len, prompt_len in zip(input_lens, prompt_lens):
@@ -168,51 +182,101 @@ class SFTTrainer(Trainer):
         )
 
     def train(self, resume_from_checkpoint = None):
-        self.model.init_distributed(None)
         self.create_train_dataloader()
-        self.model.train()
 
         total_epochs = self.args.exp_ctrl.total_train_epochs
         steps_per_epoch = len(self.train_dataloader)
+        ft_spec = FinetuneSpec(
+            total_train_epochs=steps_per_epoch,
+            dataset_size=len(self.train_dataset),
+            train_batch_size=self.args.train_dataset.batch_size,
+        )
 
-        print(f"total_epochs={total_epochs} step_per_epoch={steps_per_epoch}")
-        model_version = 0
+        self.model.init_distributed(None, ft_spec)
+        self.model.train()
+
+        if dist.get_rank() == 0:
+            print(f"total_epochs={total_epochs} step_per_epoch={steps_per_epoch}")
+        global_step = 0
         start_time = time.monotonic()
         # dataloader: self.train_data_loader
         for epoch in range(total_epochs):
+            self.data_generator = iter(self.train_dataloader)
             for step in range(steps_per_epoch):
-                t = time.monotonic()
-                self.data_generator = iter(self.train_dataloader)
-                data = next(self.data_generator)
+                timing_stats = {}
+                with record_timing("timeperf/data_processing", timing_stats):
+                    data = next(self.data_generator)
+                    packed_input_data = self._get_packed_input(data)
+                    dist.barrier()
                 
+                with record_timing("timeperf/train_step", timing_stats):
+                    with stats_tracker.scope("sft"):
+                        stats = self.model.train_batch(
+                            input_=packed_input_data,
+                            loss_fn=compute_packed_sft_loss,
+                            loss_weight_fn=lambda x: x["prompt_mask"]
+                                .logical_not()
+                                .count_nonzero(),
+                            mb_spec=self.mb_spec,
+                        )
+                        self.model.lr_scheduler_step()
+                        lr = self.model.get_current_lr()
+                        stats_tracker.scalar(**stats, lr=lr)
+                
+                if self.save_ctl.check(epochs=int(step==steps_per_epoch - 1), steps=1):     
+                    if dist.get_rank() == 0:
+                        print("Saving model ...")
+                    
+                    with record_timing("timeperf/save", timing_stats):
+                        save_path = get_save_checkpoint_path(
+                            self.args, epoch, step, global_step
+                        )
+                        self.model.save_model_to_hf(save_path, self.tokenizer)
+                
+                if self.eval_ctl.check(epochs=int(step==steps_per_epoch - 1), steps=1):
+                    if dist.get_rank() == 0:
+                        print("Running evaluation ...")
+                    with record_timing("timeperf/eval", timing_stats):
+                        self._eval(global_step)
+                
+                training_stats = stats_tracker.export()
+                training_stats.update(timing_stats)
+                log_wandb_tensorboard(
+                    global_step, training_stats, self.summary_writer
+                )
+
                 if dist.get_rank() == 0:
-                    print(f"Epoch {epoch} Step {step} start ...")
-                packed_input_data = self._get_packed_input(data)
-                dist.barrier()
-                if dist.get_rank() == 0:
-                    print(f"Epoch {epoch} Step {step} data pre-process done.")
-                model_version += 1
-                stats = self.model.train_batch(
+                    print(f"Epoch {epoch} Step {step} GlobalStep {global_step} done. Detailed time stats:"
+                          f"\n{tabulate_stats(timing_stats, floatfmt='.2f')}")
+                global_step += 1
+            
+        if dist.get_rank() == 0:
+            print(f"Training completes! Total time elapsed {time.monotonic() - start_time:.2f}.")
+        
+        close_wandb_tensorboard(self.summary_writer)
+
+    def _eval(self, global_step):
+        self.create_valid_dataloader()
+        if self.valid_dataloader is None:
+            return
+        
+        self.eval_data_generator = iter(self.valid_dataloader)
+        n_steps = len(self.valid_dataloader)
+        
+        losses = []
+        
+        start_time = time.monotonic()
+        for step in range(n_steps):
+            data = next(self.eval_data_generator)
+            packed_input_data = self._get_packed_input(data)
+            with stats_tracker.scope("sft-eval"):
+                avg_loss = self.model.eval_batch(
                     input_=packed_input_data,
                     loss_fn=compute_packed_sft_loss,
-                    loss_weight_fn=lambda x: x["prompt_mask"]
-                        .logical_not()
-                        .count_nonzero(),
                     mb_spec=self.mb_spec,
-                    version_steps=model_version,
                 )
-                stats_tracker.scalar(**stats)
-                if dist.get_rank() == 0:
-                    print(f"Epoch {epoch} Step {step} done. "
-                        f"This step time elapsed {time.monotonic() - t:.2f}. "
-                        f"Total time elapsed {time.monotonic() - start_time:.2f}")
-                
-                # if dist.get_rank() == 0:
-                #     print(f"epoch {epoch} step {step}")
-                #     print(f"input_ids={input_data["input_ids"].shape}")
-                #     print(f"position_ids={input_data["position_ids"].shape}")
-                #     print(f"cu_seqlens={input_data["cu_seqlens"]}")
-                #     print(f"max_seqlen={input_data["max_seqlen"]}")                
-
-    def save_checkpoint(self):
-        pass
+                losses.append(avg_loss)
+        val_loss = torch.mean(torch.stack(losses))
+        
+        print(f"Global step: {global_step} evaluation time cost {time.monotonic() - start_time:.2f} "
+              f"val_loss={val_loss}")

@@ -21,38 +21,6 @@ from arealite.utils import (
 from realhf.impl.model.utils.padding import unpad_input
 
 
-def create_mock_input(bs: int = 2, min_seqlen: int = 3, max_seqlen: int = 12) -> Dict:
-    """Create mock input data for testing."""
-    seqlens = torch.randint(
-        min_seqlen, max_seqlen, (bs,), dtype=torch.int, device="cuda"
-    )
-    max_seqlen = int(max(seqlens))
-    input_ids = torch.randint(0, 100, (bs, max_seqlen), dtype=torch.long, device="cuda")
-
-    attn_mask = torch.zeros((bs, max_seqlen), dtype=torch.bool, device="cuda")
-    attn_mask[
-        torch.arange(0, max_seqlen, device="cuda").unsqueeze(0) < seqlens.unsqueeze(1)
-    ] = 1
-
-    packed_input_ids, indices, cu_seqlens, max_seqlen = unpad_input(
-        input_ids, attn_mask
-    )
-
-    assert torch.allclose(
-        cu_seqlens, torch.nn.functional.pad(seqlens.cumsum(0, dtype=torch.int), (1, 0))
-    )
-    position_ids = compute_varlen_position_indices(int(sum(seqlens)), cu_seqlens)
-
-    return dict(
-        input_ids=packed_input_ids.unsqueeze(0),
-        attention_mask=None,
-        position_ids=position_ids.unsqueeze(0),
-        cu_seqlens=cu_seqlens,
-        max_seqlen=max_seqlen,
-        use_cache=False,
-    )
-
-
 def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
     """Mock loss function for testing."""
     return torch.mean(logits)
@@ -84,6 +52,53 @@ def test_split_mbs():
         print(f"***** data batch {i} *****")
         print_data(mb)
 
+def create_mock_input(bs: int = 2, min_seqlen: int = 3, max_seqlen: int = 12) -> Dict:
+    """Create mock input data for testing."""
+    seqlens = torch.randint(
+        min_seqlen, max_seqlen, (bs,), dtype=torch.int, device="cuda"
+    )
+    max_seqlen = int(max(seqlens))
+    input_ids = torch.randint(0, 100, (bs, max_seqlen), dtype=torch.long, device="cuda")
+
+    attn_mask = torch.zeros((bs, max_seqlen), dtype=torch.bool, device="cuda")
+    attn_mask[
+        torch.arange(0, max_seqlen, device="cuda").unsqueeze(0) < seqlens.unsqueeze(1)
+    ] = 1
+
+    packed_input_ids, indices, cu_seqlens, max_seqlen = unpad_input(
+        input_ids, attn_mask
+    )
+
+    assert torch.allclose(
+        cu_seqlens, torch.nn.functional.pad(seqlens.cumsum(0, dtype=torch.int), (1, 0))
+    )
+    position_ids = compute_varlen_position_indices(int(sum(seqlens)), cu_seqlens)
+
+    return dict(
+        input_ids=packed_input_ids.unsqueeze(0),
+        attention_mask=None,
+        position_ids=position_ids.unsqueeze(0),
+        cu_seqlens=cu_seqlens,
+        max_seqlen=max_seqlen,
+        use_cache=False,
+    )
+
+def test_hf_forward():
+    from transformers import AutoModelForCausalLM
+    path = "/storage/openpsi/models/Qwen__Qwen2.5-0.5B-Instruct"
+    # path = "/storage/openpsi/models/Qwen__Qwen3-1.7B"
+    model = AutoModelForCausalLM.from_pretrained(
+        pretrained_model_name_or_path=path,
+        torch_dtype=torch.float16,
+        attn_implementation="flash_attention_2",
+        trust_remote_code=True,
+    )
+    model = model.to("cuda")
+
+    data = create_mock_input(bs=1, min_seqlen=100, max_seqlen=200)
+    r = model(**data)
+
+    print(r.logits.shape)
 
 def test_engine():
     """Test engine creation and basic functionality."""
@@ -115,8 +130,8 @@ def test_engine():
 
         # Test forward pass
         print("Testing forward pass...")
-        input_data = create_mock_input(bs=4)
-        mb_spec = MicroBatchSpec(n_mbs=2)
+        input_data = create_mock_input(bs=1)
+        mb_spec = MicroBatchSpec(n_mbs=1)
 
         def simple_post_hook(logits, inp):
             return logits.shape
@@ -149,7 +164,6 @@ def test_engine():
             mb_spec=mb_spec,
             loss_fn=mock_loss_fn,
             loss_weight_fn=lambda x: x["cu_seqlens"][-1],
-            version_steps=0,
         )
         print(f"✓ Train successful")
 
@@ -171,8 +185,10 @@ if __name__ == "__main__":
     # print("Engine implementation completed successfully!")
     # test_split_mbs()
     os.environ["RANK"] = "0"
+    os.environ["LOCAL_RANK"] = "0"
     os.environ["WORLD_SIZE"] = "1"
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "7777"
 
-    test_engine()
+    # test_engine()
+    test_hf_forward()

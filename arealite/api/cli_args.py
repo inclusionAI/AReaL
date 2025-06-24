@@ -155,10 +155,13 @@ class DatasetConfig:
 
 
 @dataclass
-class FSDPConfig:
-    sync_module_states: bool = True
-    use_orig_params: bool = False
+class FSDPWrapPolicy:
+    transformer_layer_cls_to_wrap: Optional[List[str]] = None
 
+@dataclass
+class FSDPConfig:
+    wrap_policy: Optional[FSDPWrapPolicy] = None
+    offload_params: bool = False
 
 @dataclass
 class EngineBackendConfig:

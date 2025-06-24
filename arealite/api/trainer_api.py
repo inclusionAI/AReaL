@@ -44,6 +44,9 @@ class Trainer(abc.ABC):
 
         self.extra_args = extra_args
 
+        self.train_dataloader = None
+        self.valid_dataloader = None
+
     def create_train_dataloader(self):
         cfg = self.args.train_dataset
         if dist.is_available() and dist.is_initialized():
@@ -60,6 +63,8 @@ class Trainer(abc.ABC):
         )
 
     def create_valid_dataloader(self):
+        if self.args.valid_dataset is None:
+            return
         cfg = self.args.valid_dataset
         if dist.is_available() and dist.is_initialized():
             batch_size = cfg.batch_size // dist.get_world_size()
@@ -80,9 +85,6 @@ class Trainer(abc.ABC):
 
     # TODO: check HF trainer signature
     def train(self, resume_from_checkpoint: Optional[Union[str, bool]] = None):
-        raise NotImplementedError()
-
-    def save_checkpoint(self):
         raise NotImplementedError()
 
 
