@@ -94,7 +94,7 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
         raise RuntimeError("Experiment initial setup failed.") from e
 
     evaluator = (
-        AutomaticEvaluator(exp_cfg, exp_cfg.evaluator, exp_cfg.wandb)
+        AutomaticEvaluator(exp_cfg, exp_cfg.evaluator, exp_cfg.wandb, exp_cfg.swanlab)
         if exp_cfg.auto_eval
         else None
     )

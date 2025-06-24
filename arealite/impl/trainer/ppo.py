@@ -1,3 +1,6 @@
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -21,7 +24,6 @@ from arealite.utils import (
     list_of_dict2dict_of_list,
     masked_normalization,
     to_device,
-    unpack_sequence,
     unpad_input,
 )
 from realhf.api.core.data_api import load_hf_tokenizer
@@ -49,7 +51,6 @@ class SpmdPPOTrainer(Trainer):
         train_dataset: Dataset,
         valid_dataset: Optional[Dataset] = None,
         rollout_controller: Optional[RolloutController] = None,
-        extra_args: Optional[Dict] = None,
     ):
         super().__init__(
             args,
@@ -57,7 +58,6 @@ class SpmdPPOTrainer(Trainer):
             train_dataset,
             valid_dataset,
             rollout_controller,
-            extra_args,
         )
         if self.rollout_controller is None:
             raise ValueError("PPO Trainer requires a rollout controller.")
@@ -78,22 +78,7 @@ class SpmdPPOTrainer(Trainer):
 
         # Create a client to generate responses and update weights
         client_factory = LLMClientFactory(args)
-        self.llm_client = client_factory.make_client(config.inf_service)
-
-        self.agentic = args.rollout.workflow is not None
-
-        if extra_args and "reward_func" in extra_args:
-            if self.agentic:
-                logger.warning(
-                    "The reward function will be ignored in the agentic pipeline."
-                )
-            else:
-                self.reward_func = extra_args["reward_func"]
-        elif not self.agentic:
-            raise RuntimeError(
-                "No reward functions provided in `extra_args` in an agentic pipeline. "
-                "Either specifiying a workflow configuration or providing the reward function"
-            )
+        self.llm_client = client_factory.make_client(args.rollout.llm_client)
 
         # Algorithm related attributes
         self.kl_ctl = self.config.kl_ctl
@@ -106,9 +91,10 @@ class SpmdPPOTrainer(Trainer):
 
     def _setup_models(self):
         # TODO: disable dropout
-        self.actor.init_distributed()
+        # TODO: Temporary for hf test. Fix the parameter passing logic bug
+        self.actor.init_distributed(None)
         if self.ref is not None:
-            self.ref.init_distributed()
+            self.ref.init_distributed(None)
 
     def _get_rollout_batch(self):
         if self.config.async_training:
@@ -130,35 +116,6 @@ class SpmdPPOTrainer(Trainer):
         data = concat_padded_tensors([traj.data for traj in trajs])
         prompt = list_of_dict2dict_of_list([traj.prompt for traj in trajs])
         return prompt, data
-
-    def _get_rlvr_reward(self, rollout_output: UnpaddedRolloutOutput):
-        assert not (self.config.async_training or self.agentic)
-        query_ids = rollout_output.loaded_data["query_ids"]
-        prompt_ids = rollout_output.loaded_data["input_ids"]
-        prompts = self.actor_tokenizer.decode(
-            prompt_ids,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=True,
-        )
-        seq_tensors = unpack_sequence(
-            rollout_output.model_inputs["input_ids"],
-            rollout_output.model_inputs["cu_seqlens"],
-        )
-        seq_ids = [x.cpu().numpy().tolist() for x in seq_tensors]
-        completion_ids = [x[len(p) :] for x, p in zip(seq_ids, prompt_ids)]
-        completions = self.actor_tokenizer.decode(
-            completion_ids,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=True,
-        )
-        rewards = self.reward_func(
-            query_ids, prompts, completions, prompt_ids, completion_ids
-        )
-        return torch.tensor(
-            rewards,
-            dtype=torch.float32,
-            device=rollout_output.model_inputs["input_ids"].device,
-        )
 
     def _rollout_step(self) -> UnpaddedRolloutOutput:
         # Run generation or rollout to collect data
@@ -243,8 +200,6 @@ class SpmdPPOTrainer(Trainer):
 
         # Compute rewards using the reward function in synchronous RLVR pipeline.
         reward_score = rollout_output.rewards
-        if reward_score is None:
-            reward_score = self._get_rlvr_reward(rollout_output)
         if self.config.group_reward_norm:
             for i in range(n_seqs // self.group_size):
                 s = slice(i * self.group_size, (i + 1) * self.group_size)
@@ -309,7 +264,6 @@ class SpmdPPOTrainer(Trainer):
             **rollout_output.model_inputs,
             old_logp=old_logp,
             advantages=advantages,
-            old_logp=old_logp,
             ppo_loss_mask=ppo_loss_mask,
         )
         input_lens = (
@@ -482,11 +436,11 @@ class SpmdPPOTrainer(Trainer):
         global_step = 0
         for epoch in range(total_epochs):
             for step, data in enumerate(self.train_dataloader):
+                self.rollout_controller.submit(data)
                 if self.config.async_training:
                     # Submitted data will not actually be sent for rollout.
                     # The rollout controller over-subscribe the data to
                     # ensure that there are enough data being generated.
-                    self.rollout_controller.submit(data)
                     if global_step < self.args.rollout.max_head_offpolicyness + 1:
                         continue
 

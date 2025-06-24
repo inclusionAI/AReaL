@@ -1,3 +1,6 @@
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
 import abc
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, SupportsFloat

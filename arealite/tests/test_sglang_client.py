@@ -1,3 +1,6 @@
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
 import uuid
 
 import pytest
@@ -15,7 +18,7 @@ from realhf.base import constants, name_resolve, seeding
 
 EXPR_NAME = "test_sglang_client"
 TRIAL_NAME = "test_sglang_client"
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "Qwen/Qwen2-0.5B"
 
 
 @pytest.fixture(scope="module")

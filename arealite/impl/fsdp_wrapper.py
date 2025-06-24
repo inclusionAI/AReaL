@@ -1,4 +1,6 @@
-import functools
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
 import math
 import os
 from typing import Any, Callable, Dict, List, Literal, Optional
@@ -432,7 +434,7 @@ class FSDPEngine(SPMDWrapper):
         self,
         input_: Dict,
         mb_spec: MicroBatchSpec,
-        output_seqlens: List[List[int]] | None = None,
+        output_seqlens: List[int] | None = None,
         post_hook: Callable[[torch.Tensor, Dict], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:

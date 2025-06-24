@@ -1,3 +1,6 @@
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
 import time
 
 from arealite.api.io_struct import LLMRequest, LLMResponse, LLMServerInfo

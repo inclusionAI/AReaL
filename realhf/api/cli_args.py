@@ -856,6 +856,16 @@ class WandBConfig:
 
 
 @dataclass
+class SwanlabConfig:
+    project: Optional[str] = None
+    name: Optional[str] = None
+    config: Optional[Dict] = None
+    logdir: Optional[str] = None
+    mode: Optional[str] = "local"
+    api_key: Optional[str] = os.getenv("SWANLAB_API_KEY", None)
+
+
+@dataclass
 class TensorBoardConfig:
     path: Optional[str] = None
 
@@ -986,6 +996,10 @@ class BaseExperimentConfig:
         default_factory=WandBConfig,
         metadata={"help": "Weights & Biases configuration."},
     )
+    swanlab: SwanlabConfig = field(
+        default_factory=SwanlabConfig,
+        metadata={"help": "SwanLab configuration."},
+    )
     tensorboard: TensorBoardConfig = field(
         default_factory=TensorBoardConfig,
         metadata={"help": "TensorBoard configuration. Only 'path' field required."},
@@ -1061,7 +1075,7 @@ class BaseExperimentConfig:
         default=False,
         metadata={
             "help": "Enable automatic evaluation during training. "
-            "Results logged to disk and WandB (if active)."
+            "Results logged to disk and WandB or Swanlab(if active)."
         },
     )
     auto_eval_config: AutomaticEvaluator = field(

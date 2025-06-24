@@ -1,3 +1,6 @@
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
 import abc
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Optional, Union
@@ -32,7 +35,6 @@ class Trainer(abc.ABC):
         train_dataset: Dataset,
         valid_dataset: Optional[Dataset] = None,
         rollout_controller: Optional["RolloutController"] = None,
-        extra_args: Optional[Dict] = None,
     ):
         self.args = args
         self.trainer_config = trainer_config
@@ -41,8 +43,6 @@ class Trainer(abc.ABC):
         self.valid_dataset = valid_dataset
 
         self.rollout_controller = rollout_controller
-
-        self.extra_args = extra_args
 
         self.train_dataloader = None
         self.valid_dataloader = None
@@ -98,7 +98,6 @@ class TrainerFactory:
         train_dataset: Dataset,
         valid_dataset: Optional[Dataset] = None,
         rollout_controller: Optional["RolloutController"] = None,
-        extra_args: Optional[Dict] = None,
     ) -> Trainer:
         if config.type == "ppo":
             from arealite.impl.trainer.ppo import SpmdPPOTrainer
@@ -109,7 +108,6 @@ class TrainerFactory:
                 train_dataset=train_dataset,
                 valid_dataset=valid_dataset,
                 rollout_controller=rollout_controller,
-                extra_args=extra_args,
             )
         elif config.type == "sft":
             from arealite.impl.trainer.sft import SFTTrainer
@@ -119,8 +117,7 @@ class TrainerFactory:
                 config,
                 train_dataset=train_dataset,
                 valid_dataset=valid_dataset,
-                rollout_controller=rollout_controller,
-                extra_args=extra_args,
+                rollout_controller=rollout_controller
             )
         else:
             raise NotImplementedError(f"Unknown trainer type: {config.type}")

@@ -1,3 +1,6 @@
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
 import abc
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional
@@ -42,7 +45,6 @@ class SPMDWrapper(abc.ABC):
         mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[Dict], float],
-        token_normalize_scope: Literal["global", "dp"] = "global",
     ) -> Dict:
         """Update the model with a batch of data and a loss function."""
         raise NotImplementedError()
@@ -53,31 +55,23 @@ class SPMDWrapper(abc.ABC):
         input_: Dict,
         mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
+        loss_weight_fn: Callable[[Dict], float],
     ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function."""
-
-        def _loss_fn(out, inp_):
-            return float(loss_fn(out, inp_))
-
-        return self.forward(
-            input_=input_,
-            mb_spec=mb_spec,
-            post_hook=_loss_fn,
-            aggregate_fn=sum,
-        )
+        raise NotImplementedError()
 
     def forward(
         self,
         input_: Dict,
         mb_spec: MicroBatchSpec,
-        output_seqlens: List[List[int]] | None = None,
+        output_seqlens: List[int] | None = None,
         post_hook: Callable[[torch.Tensor, Dict], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Run the forward pass or inference on the model."""
         raise NotImplementedError()
 
-    def lr_scheduler_step(self):
+    def step_lr_scheduler(self):
         """Step learning rate scheduler."""
         raise NotImplementedError()
 
@@ -119,5 +113,9 @@ class EngineFactory:
             from arealite.impl.fsdp_wrapper import FSDPEngine
 
             return FSDPEngine(self.args, engine_config)
+        elif engine_config.backend.type == "hf":
+            from arealite.impl.hf_wrapper import HFEngine
+
+            return HFEngine(self.args, engine_config)
         else:
             raise ValueError(f"Unsupported engine type: {engine_config.backend.type}")
