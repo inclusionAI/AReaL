@@ -239,5 +239,4 @@ class LLMClientFactory:
             from arealite.impl.sglang_client import SGLangClient
 
             return SGLangClient(self.args, config)
-        else:
-            raise ValueError(f"Unknown LLMClient type: {config.server_backend}")
+        raise ValueError(f"Unknown LLMClient type: {config.server_backend}")

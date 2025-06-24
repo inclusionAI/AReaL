@@ -118,5 +118,9 @@ class EngineFactory:
             from arealite.impl.fsdp_wrapper import FSDPEngine
 
             return FSDPEngine(self.args, engine_config)
+        elif engine_config.backend.type == "hf":
+            from arealite.impl.hf_wrapper import HFEngine
+
+            return HFEngine(self.args, engine_config)
         else:
             raise ValueError(f"Unsupported engine type: {engine_config.backend.type}")

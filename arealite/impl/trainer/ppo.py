@@ -79,7 +79,7 @@ class SpmdPPOTrainer(Trainer):
 
         # Create a client to generate responses and update weights
         client_factory = LLMClientFactory(args)
-        self.llm_client = client_factory.make_client(config.inf_service)
+        self.llm_client = client_factory.make_client(args.rollout.llm_client)
 
         # Algorithm related attributes
         self.kl_ctl = self.config.kl_ctl
@@ -92,9 +92,10 @@ class SpmdPPOTrainer(Trainer):
 
     def _setup_models(self):
         # TODO: disable dropout
-        self.actor.init_distributed()
+        # TODO: Temporary for hf test. Fix the parameter passing logic bug
+        self.actor.init_distributed(None)
         if self.ref is not None:
-            self.ref.init_distributed()
+            self.ref.init_distributed(None)
 
     def _get_rollout_batch(self):
         if self.config.async_training:
@@ -264,7 +265,6 @@ class SpmdPPOTrainer(Trainer):
             **rollout_output.model_inputs,
             old_logp=old_logp,
             advantages=advantages,
-            old_logp=old_logp,
             ppo_loss_mask=ppo_loss_mask,
         )
         input_lens = (
