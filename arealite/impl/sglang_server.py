@@ -101,7 +101,8 @@ class SGLangServer(LLMServer):
         elif gpu_utils.gpu_count() == mp_size:
             self.base_gpu_id = 0
         else:
-            raise RuntimeError("Cannot resolve base GPU ID.")
+            logger.warning("Unknown GPU configuration, setting base_gpu_id to 0. ")
+            self.base_gpu_id = 0
 
     def launch_server(self) -> LLMServerInfo | None:
         """Launch the SGLang server subprocess."""

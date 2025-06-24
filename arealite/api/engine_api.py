@@ -45,8 +45,6 @@ class SPMDWrapper(abc.ABC):
         mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[Dict], float],
-        version_steps: int,
-        token_normalize_scope: Literal["global", "dp"] = "global",
     ) -> Dict:
         """Update the model with a batch of data and a loss function."""
         raise NotImplementedError()
@@ -57,31 +55,24 @@ class SPMDWrapper(abc.ABC):
         input_: Dict,
         mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
+        loss_weight_fn: Callable[[Dict], float],
     ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function."""
-
-        def _loss_fn(out, inp_):
-            return float(loss_fn(out, inp_))
-
-        return self.forward(
-            input_=input_,
-            mb_spec=mb_spec,
-            post_hook=_loss_fn,
-            aggregate_fn=sum,
-        )
+        raise NotImplementedError()
 
     def forward(
         self,
         input_: Dict,
         mb_spec: MicroBatchSpec,
-        output_seqlens: List[List[int]] | None = None,
+        output_seqlens: List[int] | None = None,
         post_hook: Callable[[torch.Tensor, Dict], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Run the forward pass or inference on the model."""
         raise NotImplementedError()
 
-    def get_version(self) -> int:
+    def step_lr_scheduler(self):
+        """Step the learning rate scheduler."""
         raise NotImplementedError()
 
     def save_model_to_hf(

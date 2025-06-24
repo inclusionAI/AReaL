@@ -164,11 +164,6 @@ class FSDPConfig:
 
 
 @dataclass
-class HFConfig:
-    device: str = "cuda:0"
-
-
-@dataclass
 class EngineBackendConfig:
     type: str = field(
         default="hf",
@@ -176,9 +171,6 @@ class EngineBackendConfig:
     )
     fsdp: Optional[FSDPConfig] = field(
         default=None, metadata={"help": "FSDP configuration (if using FSDP backend)"}
-    )
-    hf: Optional[HFConfig] = field(
-        default=None, metadata={"help": "HF configuration (if using HF backend)"}
     )
 
 

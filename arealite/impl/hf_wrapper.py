@@ -16,7 +16,11 @@ from arealite.api.cli_args import (
 )
 from arealite.api.engine_api import SPMDWrapper
 from arealite.api.io_struct import FinetuneSpec
-from arealite.utils import split_dict_tensor_with_cu_seqlens
+from arealite.utils import (
+    recorder_list,
+    split_dict_tensor_with_cu_seqlens,
+    unpack_sequence,
+)
 
 
 def get_cosine_schedule_with_warmup(
@@ -84,7 +88,7 @@ class HFEngine(SPMDWrapper):
             torch_dtype=dtype,
             attn_implementation="flash_attention_2",
             trust_remote_code=True,
-            device_map=self.engine_config.backend.hf.device,
+            device_map="cuda:0",
         )
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.engine_config.path,
@@ -124,51 +128,49 @@ class HFEngine(SPMDWrapper):
                 min_lr_ratio=optimizer_config.min_lr_ratio,
             )
 
+    def train(self, mode: bool = True):
+        """Set the module in training mode."""
+        return self.model.train(mode)
+
     def train_batch(
         self,
         input_: Dict,
         mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[Dict], float],
-        version_steps: int,
-        token_normalize_scope: Literal["global", "dp"] = "global",
     ) -> Dict:
         """Train on a batch using gradient accumulation."""
         assert self.optimizer is not None
         assert self.lr_scheduler is not None
 
-        self.model.train()
         self.optimizer.zero_grad()
-
-        mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
-
+        mb_splits = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
         total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_inputs]), dtype=torch.float32
+            sum([loss_weight_fn(mb) for mb in mb_splits.mbs]), dtype=torch.float32
         )
         assert total_loss_weight != 0
 
-        for mb_input in mb_inputs:
+        for mb_input in mb_splits.mbs:
             outputs = self.model(**mb_input)
             loss = loss_fn(outputs.logits, mb_input)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
-
             loss *= loss_scale
             loss.backward()
 
-        gradients = {}
-        for name, param in self.model.named_parameters():
-            if param.grad is not None:
-                gradients[name] = param.grad.clone().detach()
-
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            self.model.parameters(),
+            self.engine_config.optimizer.gradient_clipping,
+            norm_type=2.0,
+            error_if_nonfinite=False,
+            foreach=None,
+        )
         current_lr = self.lr_scheduler.get_last_lr()[0]
-
         # Optimizer step
         self.optimizer.step()
-        self.lr_scheduler.step()
 
         return {
-            "grad_norm": gradients,
-            "learning_rate": current_lr,
+            "grad_norm": grad_norm,
+            "lr": current_lr,
         }
 
     @torch.no_grad()
@@ -177,58 +179,60 @@ class HFEngine(SPMDWrapper):
         input_: Dict,
         mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
+        loss_weight_fn: Callable[[Dict], float],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
-        self.model.eval()
-        mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
+        mb_splits = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
+        total_loss_weight = torch.tensor(
+            sum([loss_weight_fn(mb) for mb in mb_splits.mbs]), dtype=torch.float32
+        )
+        assert total_loss_weight != 0
 
         total_loss = 0.0
         total_weight = 0.0
 
-        for mb_input in mb_inputs:
+        for mb_input in mb_splits.mbs:
             outputs = self.model(**mb_input)
             loss = loss_fn(outputs.logits, mb_input)
 
             # Simple weight calculation (could be improved)
-            weight = mb_input["input_ids"].numel()
+            loss_scale = loss_weight_fn(mb_input) / total_loss_weight
+            total_loss += loss.item() * loss_scale
+            total_weight += loss_scale
 
-            total_loss += loss.item() * weight
-            total_weight += weight
-
-        return torch.tensor(total_loss / max(total_weight, 1e-8))
+        return torch.tensor(total_loss / total_weight)
 
     @torch.no_grad()
     def forward(
         self,
         input_: Dict,
         mb_spec: MicroBatchSpec,
-        output_seqlens: List[List[int]] | None = None,
+        output_seqlens: List[int] | None = None,
         post_hook: Callable[[torch.Tensor, Dict], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""
-        self.model.eval()
-        mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
+        mb_splits = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
+        if output_seqlens is None:
+            cu_seqlens = input_["cu_seqlens"]
+            output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
 
         results = []
-
-        for mb_input in mb_inputs:
+        for mb_input in mb_splits.mbs:
             outputs = self.model(**mb_input)
-
             if post_hook:
                 result = post_hook(outputs.logits, mb_input)
                 results.append(result)
             else:
                 results.append(outputs.logits)
 
-        return aggregate_fn(results)
+        res = aggregate_fn(results)
+        unpacked = unpack_sequence(res, lens=output_seqlens, dim=1)
+        return aggregate_fn(recorder_list(unpacked, mb_splits.backward_indices))
 
-    def get_hf_model_state_dict(self) -> Dict[str, torch.Tensor]:
-        """Get model state dict for saving."""
-        if self.model is None:
-            raise RuntimeError("Model not initialized")
-
-        return self.model.state_dict()
+    def step_lr_scheduler(self):
+        """Step the learning rate scheduler."""
+        return self.lr_scheduler.step()
 
     def save_model_to_hf(
         self,
@@ -255,7 +259,7 @@ class HFEngine(SPMDWrapper):
             torch_dtype=dtype,
             attn_implementation="flash_attention_2",
             trust_remote_code=True,
-            device_map=self.engine_config.backend.hf.device,
+            device_map="cuda:0",
         )
         full_state = model.state_dict()
         self.model.load_state_dict(full_state)
@@ -280,3 +284,6 @@ class HFEngine(SPMDWrapper):
             )
         else:
             raise RuntimeError(f"Optimizer state file not found: {optimizer_path}")
+
+    def update_weights_to(self, llm_client):
+        raise NotImplementedError()

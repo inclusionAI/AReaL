@@ -24,7 +24,6 @@ from arealite.utils import (
     list_of_dict2dict_of_list,
     masked_normalization,
     to_device,
-    unpack_sequence,
     unpad_input,
 )
 from realhf.api.core.data_api import load_hf_tokenizer

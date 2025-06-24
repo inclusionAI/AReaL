@@ -3,16 +3,15 @@
 
 """Test script for HF Engine implementation."""
 
-import os
 from typing import Dict
 
+import pytest
 import torch
-from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from arealite.api.cli_args import (
     EngineBackendConfig,
     EngineConfig,
-    HFConfig,
     MicroBatchSpec,
     ModelFamily,
     OptimizerConfig,
@@ -26,15 +25,18 @@ from arealite.utils import (
 )
 from realhf.impl.model.utils.padding import unpad_input
 
+VOCAB_SIZE = 100
 
-def create_mock_input(bs: int = 2, min_seqlen: int = 3, max_seqlen: int = 12) -> Dict:
+
+@pytest.fixture(scope="module")
+def mock_input(bs: int = 3, min_seqlen: int = 3, max_seqlen: int = 12) -> Dict:
     """Create mock input data for testing."""
     seqlens = torch.randint(
         min_seqlen, max_seqlen, (bs,), dtype=torch.int, device="cuda:0"
     )
     max_seqlen = int(max(seqlens))
     input_ids = torch.randint(
-        0, 100, (bs, max_seqlen), dtype=torch.long, device="cuda:0"
+        0, VOCAB_SIZE, (bs, max_seqlen), dtype=torch.long, device="cuda:0"
     )
 
     attn_mask = torch.zeros((bs, max_seqlen), dtype=torch.bool, device="cuda:0")
@@ -66,21 +68,14 @@ def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
     return torch.mean(logits)
 
 
-def test_hf_engine():
-    """Test engine creation and basic functionality."""
-    print("Testing HF Engine creation...")
-
+@pytest.fixture(scope="module")
+def engine():
     engine_config = EngineConfig(
         type=ModelFamily("qwen2", False),
-        path="Qwen/Qwen2.5-0.5B-Instruct",
+        path="Qwen/Qwen2.5-0.5B",
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
-        backend=EngineBackendConfig(
-            type="hf",
-            hf=HFConfig(
-                device="cuda:0",
-            ),
-        ),
+        backend=EngineBackendConfig(type="hf"),
     )
 
     mock_args = TrainingArgs(n_nodes=1, n_gpus_per_node=1)
@@ -90,63 +85,77 @@ def test_hf_engine():
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
     engine.init_distributed(None, ft_spec)
     print("✓ Engine created successfully")
+    yield engine
 
-    print("Testing forward pass...")
-    input_data = create_mock_input(bs=4)
-    mb_spec = MicroBatchSpec(n_mbs=2)
 
-    def simple_post_hook(logits, inp):
-        return logits.shape
-
-    result = engine.forward(
-        input_=input_data,
-        mb_spec=mb_spec,
-        post_hook=simple_post_hook,
-        aggregate_fn=lambda x: x[0] if x else None,
-    )
-    print(f"✓ Forward pass successful, output shape: {result}")
-
-    print("Testing evaluation...")
-    eval_result = engine.eval_batch(
-        input_=input_data, mb_spec=mb_spec, loss_fn=mock_loss_fn
-    )
-
-    if eval_result is not None:
-        print(f"✓ Evaluation successful, loss: {eval_result}")
-    else:
-        print(
-            "✓ Evaluation completed (no loss returned - expected for non-final pipeline stages)"
+def test_forward_microbatch(engine, mock_input):
+    x2 = (
+        engine.forward(
+            input_=mock_input,
+            mb_spec=MicroBatchSpec(n_mbs=2),
+            aggregate_fn=lambda x: torch.cat(x, dim=1),
         )
+        .squeeze(0)
+        .mean(-1)
+    )
+    x1 = (
+        engine.forward(
+            input_=mock_input,
+            mb_spec=MicroBatchSpec(n_mbs=1),
+            aggregate_fn=lambda x: torch.cat(x, dim=1),
+        )
+        .squeeze(0)
+        .mean(-1)
+    )
+    input_ids = mock_input["input_ids"].squeeze(0)
+    assert x1.shape[0] == input_ids.shape[0]
+    assert x2.shape[0] == input_ids.shape[0]
+    assert torch.allclose(x1, x2, atol=1e-2, rtol=1e-2), (x1 - x2).abs().max().item()
 
-    print("Testing train ...")
-    train_result = engine.train_batch(
-        input_=input_data,
-        mb_spec=mb_spec,
+
+def test_eval_batch(engine, mock_input):
+    eval_result = engine.eval_batch(
+        input_=mock_input,
+        mb_spec=MicroBatchSpec(n_mbs=2),
         loss_fn=mock_loss_fn,
         loss_weight_fn=lambda x: x["cu_seqlens"][-1],
-        version_steps=0,
     )
-    print(f"✓ Train successful")
+    assert isinstance(eval_result, torch.Tensor), "Evaluation should return a tensor"
+    assert eval_result.is_cuda, "Evaluation tensor should be on CUDA device"
+    assert eval_result is not None, "Evaluation should return a loss value"
+    print(f"✓ Evaluation successful, loss: {eval_result.item()}")
 
-    print("Testing get_hf_model_state_dict ...")
-    model_dict = engine.get_hf_model_state_dict()
-    print(f"✓ Model state dict retrieved successfully, dict is {model_dict}")
 
-    print("Testing save_model_to_hf ...")
+def test_train_batch(tmp_path_factory, engine, mock_input):
+    path = tmp_path_factory.mktemp("hf_engine_train_batch")
+    engine.save_optimizer_state(path)
+
+    train_result = engine.train_batch(
+        input_=mock_input,
+        mb_spec=MicroBatchSpec(n_mbs=2),
+        loss_fn=mock_loss_fn,
+        loss_weight_fn=lambda x: x["cu_seqlens"][-1],
+    )
+    assert isinstance(train_result, dict), "Training should return a dictionary"
+    assert train_result["grad_norm"] is not None
+    assert train_result["lr"] is not None
+    print("✓ Training successful")
+
+    engine.load_optimizer_state(path)
+
+
+def test_save_load_weights(tmp_path_factory, engine):
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
-    engine.save_model_to_hf(tokenizer=tokenizer, path="test_model")
-    print("✓ Model saved successfully")
+    path = tmp_path_factory.mktemp("hf_engine_test")
+    engine.save_model_to_hf(path=path, tokenizer=tokenizer)
 
-    print("Testing load_model_from_hf ...")
-    engine.load_model_from_hf("Qwen/Qwen2.5-0.5B-Instruct")
-    print("✓ Model loaded successfully")
-
-    print("Testing save_optimizer_state ...")
-    engine.save_optimizer_state("test_optimizer")
-    print("✓ Optimizer saved successfully")
-
-    print("Testing load_optimizer_state ...")
-    engine.load_optimizer_state("test_optimizer")
-    print("✓ Optimizer loaded successfully")
-
-    print("All tests passed!")
+    model = AutoModelForCausalLM.from_pretrained(
+        pretrained_model_name_or_path=path,
+        torch_dtype=torch.float16,
+        attn_implementation="flash_attention_2",
+        trust_remote_code=True,
+        device_map="cuda:0",
+    )
+    sd = engine.model.state_dict()
+    for k, v in sd.items():
+        assert torch.allclose(v, model.state_dict()[k])
