@@ -117,7 +117,7 @@ class TrainerFactory:
                 config,
                 train_dataset=train_dataset,
                 valid_dataset=valid_dataset,
-                rollout_controller=rollout_controller
+                rollout_controller=rollout_controller,
             )
         else:
             raise NotImplementedError(f"Unknown trainer type: {config.type}")

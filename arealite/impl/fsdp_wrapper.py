@@ -346,7 +346,7 @@ class FSDPEngine(SPMDWrapper):
 
         self.optimizer.zero_grad()
 
-        mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
+        mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec).mbs
 
         total_loss_weight = torch.tensor(
             sum([loss_weight_fn(mb) for mb in mb_inputs]), dtype=torch.float32
@@ -386,7 +386,7 @@ class FSDPEngine(SPMDWrapper):
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
         )
 
-    def lr_scheduler_step(self):
+    def step_lr_scheduler(self):
         assert self.lr_scheduler is not None
         self.lr_scheduler.step()
 
@@ -405,7 +405,7 @@ class FSDPEngine(SPMDWrapper):
 
         # assert "cu_seqlens" in input_
         # input_["cu_seqlens"]
-        mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
+        mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec).mbs
 
         total_loss = 0.0
         total_n_tokens = 0.0
@@ -440,7 +440,8 @@ class FSDPEngine(SPMDWrapper):
     ) -> Any | None:
         """Forward pass with optional post-processing."""
         # self.eval()
-        mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
+        splitted = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
+        mb_inputs = splitted.mbs
 
         results = []
 
@@ -453,7 +454,9 @@ class FSDPEngine(SPMDWrapper):
             else:
                 results.append(outputs.logits)
 
-        return aggregate_fn(results) if results else None
+        res = aggregate_fn(results)
+        # FIXME: reorder
+        return res
 
     def get_hf_model_state_dict(self) -> Dict[str, torch.Tensor]:
         """Get model state dict for saving."""

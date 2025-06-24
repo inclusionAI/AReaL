@@ -12,11 +12,9 @@ from arealite.api.engine_api import EngineFactory
 from arealite.api.trainer_api import Trainer
 from arealite.impl.rollout_controller import RolloutController
 from arealite.utils import (
-    build_shift_one_indices,
     close_wandb_tensorboard,
     compute_varlen_position_indices,
     gather_logprobs,
-    gather_packed_shifted_log_probs,
     get_save_checkpoint_path,
     init_stats_logging,
     log_wandb_tensorboard,
@@ -91,7 +89,6 @@ class SFTTrainer(Trainer):
         train_dataset: Dataset,
         valid_dataset: Optional[Dataset] = None,
         rollout_controller: Optional[RolloutController] = None,
-        extra_args: Optional[Dict] = None,
     ):
         super().__init__(
             args,
@@ -99,7 +96,6 @@ class SFTTrainer(Trainer):
             train_dataset,
             valid_dataset,
             rollout_controller,
-            extra_args,
         )
 
         self.config = config = trainer_config.sft
@@ -216,7 +212,7 @@ class SFTTrainer(Trainer):
                             .count_nonzero(),
                             mb_spec=self.mb_spec,
                         )
-                        self.model.lr_scheduler_step()
+                        self.model.step_lr_scheduler()
                         lr = self.model.get_current_lr()
                         stats_tracker.scalar(**stats, lr=lr)
 
