@@ -8,12 +8,16 @@ import subprocess
 import time
 from typing import Any, Dict, Optional
 
-import swanlab
 import wandb
 
 import realhf.api.core.system_api as config_pkg
 from realhf.api.cli_args import BaseExperimentConfig
 from realhf.base import constants, logging
+
+try:
+    import swanlab
+except (ModuleNotFoundError, ImportError):
+    swanlab = None
 
 logger = logging.getLogger("AutomaticEvaluator", "colored")
 
@@ -132,7 +136,8 @@ class EvaluationStep:
             for k, v in d.items():
                 log_data[f"{data_name}_{k}"] = v
         wandb.log(log_data, step=self.global_step)
-        swanlab.log(log_data, step=self.global_step)
+        if swanlab is not None:
+            swanlab.log(log_data, step=self.global_step)
         self.status = EvaluationStepStatus.LOGGED
         logger.info(f"Logging eval result {log_data} to step {self.global_step}")
 
@@ -236,21 +241,19 @@ class AutomaticEvaluator:
     def __lazy_swanlab_init(self):
         if self.__swanlab_config.api_key:
             swanlab.login(self.__swanlab_config.api_key)
-        if self.swanlab_config.config is None:
+        if self.__swanlab_config.config is None:
             import yaml
 
             with open(
                 os.path.join(
-                    constants.LOG_ROOT,
-                    constants.experiment_name(),
-                    constants.trial_name(),
+                    constants.get_log_path(self.args),
                     "config.yaml",
                 ),
                 "r",
             ) as f:
                 __config = yaml.safe_load(f)
         else:
-            __config = self.swanlab_config.config
+            __config = self.__swanlab_config.config
         __config["FRAMEWORK"] = "AReaL"
         swanlab.init(
             project=self.__swanlab_config.project or constants.experiment_name(),
@@ -259,9 +262,7 @@ class AutomaticEvaluator:
             config=__config,
             logdir=self.__swanlab_config.logdir
             or os.path.join(
-                constants.LOG_ROOT,
-                constants.experiment_name(),
-                constants.trial_name(),
+                constants.get_log_path(self.args),
                 "swanlab",
             ),
             mode=self.__swanlab_config.mode,
@@ -329,7 +330,7 @@ class AutomaticEvaluator:
                 if not self.__wandb_initialized:
                     self.__lazy_wandb_init()
                     self.__wandb_initialized = True
-                if not self.__swanlab_initialized:
+                if not self.__swanlab_initialized and swanlab is not None:
                     self.__lazy_swanlab_init()
                     self.__swanlab_initialized = True
                 self.__eval_steps[log_step].log(self.__config)

@@ -452,9 +452,6 @@ class SGLangGenerationBackend(ModelBackend, SGLangConfig):
                     high=60000,
                     experiment_name=constants.experiment_name(),
                     trial_name=constants.trial_name(),
-                    lockfile_root=os.path.join(
-                        constants.get_cache_path(self.args), "ports"
-                    ),
                 ),
                 group=constants.data_parallel_group(),
             )
