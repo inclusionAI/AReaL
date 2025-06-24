@@ -568,6 +568,7 @@ class Worker:
         self.__worker_index = worker_info.worker_index
 
         experiment = system_api.make_experiment(name=worker_info.experiment_name)
+        self.args = experiment
 
         expr_config = experiment.initial_setup()
         if isinstance(expr_config, list):
@@ -580,7 +581,9 @@ class Worker:
         )
         expr_config.lazy_init()
         self.wandb_config = expr_config.wandb
+        self.swanlab_config = expr_config.swanlab
         os.environ["WANDB_MODE"] = self.wandb_config.mode
+        os.environ["SWANLAB_MODE"] = self.swanlab_config.mode
         self.tensorboard_config = expr_config.tensorboard
         config = expr_config.resolve_worker_config(
             self.__worker_type, self.__worker_index

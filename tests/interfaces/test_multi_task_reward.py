@@ -16,7 +16,7 @@ from realhf.api.core.data_api import (
     load_hf_tokenizer,
 )
 from realhf.api.core.model_api import FinetuneSpec, Model
-from realhf.base import constants, network, testing
+from realhf.base import constants, name_resolve, network, testing
 from tests.fixtures import *
 
 
@@ -61,8 +61,12 @@ def math_code_dataset(request, save_path):
     "tokenizer_path", ["/storage/openpsi/models/Qwen__Qwen2-1.5B-Instruct/"]
 )
 def test_multi_task_reward_interface(save_path, tokenizer_path, math_code_dataset):
+    from realhf.api.cli_args import NameResolveConfig
     from realhf.impl.dataset.math_code_dataset import MATHCodePromptDataset
 
+    name_resolve.reconfigure(
+        NameResolveConfig("nfs", f"/tmp/areal/{str(uuid.uuid4())}/")
+    )
     dist.init_process_group(
         rank=0, world_size=1, init_method=f"tcp://localhost:{network.find_free_port()}"
     )

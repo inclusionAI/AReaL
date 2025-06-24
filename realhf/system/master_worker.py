@@ -12,6 +12,7 @@ from typing import Dict
 import colorama
 import networkx as nx
 import numpy as np
+import swanlab
 import wandb
 from tensorboardX import SummaryWriter
 
@@ -96,15 +97,8 @@ class MasterWorker(worker_base.AsyncWorker):
             freq_sec=config.exp_ctrl.eval_freq_secs,
         )
 
-        self.MODEL_SAVE_ROOT = os.path.join(
-            constants.MODEL_SAVE_ROOT,
-            config.worker_info.experiment_name,
-            config.worker_info.trial_name,
-        )
-        os.makedirs(self.MODEL_SAVE_ROOT, exist_ok=True)
-
         self.__initialized = False
-        self.__recover_run, self.__recover_info = recover.load_recover_info()
+        self.__recover_run, self.__recover_info = recover.load_recover_info(self.args)
         if self.__recover_info is not None:
             logger.info(
                 f"Loaded recover info: recover_start={self.__recover_info.recover_start}, "
@@ -304,13 +298,45 @@ class MasterWorker(worker_base.AsyncWorker):
             notes=self.wandb_config.notes,
             tags=self.wandb_config.tags,
             config=self.wandb_config.config,
-            dir=os.path.join(
-                constants.LOG_ROOT, constants.experiment_name(), constants.trial_name()
-            ),
+            dir=constants.get_log_path(self.args),
             force=True,
             id=f"{constants.experiment_name()}_{constants.trial_name()}_train",
             resume="allow",
             settings=wandb.Settings(start_method="fork"),
+        )
+
+        # swanlab init, connect to remote or local swanlab host
+        if self.swanlab_config.mode != "disabled" and self.swanlab_config.api_key:
+            swanlab.login(self.swanlab_config.api_key)
+        if self.swanlab_config.config is None:
+            import yaml
+
+            with open(
+                os.path.join(
+                    constants.LOG_ROOT,
+                    constants.experiment_name(),
+                    constants.trial_name(),
+                    "config.yaml",
+                ),
+                "r",
+            ) as f:
+                __config = yaml.safe_load(f)
+        else:
+            __config = self.swanlab_config.config
+        __config["FRAMEWORK"] = "AReaL"
+        swanlab.init(
+            project=self.swanlab_config.project or constants.experiment_name(),
+            experiment_name=self.swanlab_config.name
+            or f"{constants.trial_name()}_train",
+            config=__config,
+            logdir=self.swanlab_config.logdir
+            or os.path.join(
+                constants.LOG_ROOT,
+                constants.experiment_name(),
+                constants.trial_name(),
+                "swanlab",
+            ),
+            mode=self.swanlab_config.mode,
         )
         # tensorboard logging
         self.__summary_writer = None
@@ -320,6 +346,7 @@ class MasterWorker(worker_base.AsyncWorker):
         # Create coroutines for model RPCs.
         logger.debug(f"Creating asyncio coroutines...")
         self.func_executor = FunctionExecutor(
+            args=self.args,
             rpcs=self.__model_rpcs,
             msid2mwid=self.config.msid2mwid,
             stream=self.__stream,
@@ -487,7 +514,7 @@ class MasterWorker(worker_base.AsyncWorker):
         s += f"(global step {global_step}) finishes. "
         s += f"#End to end# execution time: *{e2e_time:.3f}*s. "
         s += f"Total time consumption: {time_since_configure:.3f}s. "
-        logging.log_wandb_tensorboard({"timeperf/e2e": e2e_time})
+        logging.log_swanlab_wandb_tensorboard({"timeperf/e2e": e2e_time})
         if len(self.e2e_time_history) > 2:
             remaining_steps = self._steps_per_epoch - epoch_step
             remaining_epochs = self.__total_train_epochs - epoch
@@ -540,6 +567,7 @@ class MasterWorker(worker_base.AsyncWorker):
         )
 
         wandb.finish()
+        swanlab.finish()
         if self.__summary_writer is not None:
             self.__summary_writer.close()
         gc.collect()
@@ -563,7 +591,7 @@ class MasterWorker(worker_base.AsyncWorker):
             hash_vals_to_ignore=self.__rpc_ctrl.used_hash_vals_this_epoch,
         )
 
-        recover.dump_recover_info(recover_info)
+        recover.dump_recover_info(self.args, recover_info)
         logger.info("Dumped recover info to file.")
         logger.info(f"Will recover from: {recover_info.recover_start}")
         logger.info(

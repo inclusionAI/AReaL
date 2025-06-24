@@ -10,6 +10,7 @@ import uuid
 from collections import defaultdict
 from typing import Dict, Hashable, List, Set, Tuple
 
+import swanlab
 import wandb
 from tensorboardX import SummaryWriter
 
@@ -55,6 +56,7 @@ class RPCCorountineControl:
 class ModelFunctionCall:
     def __init__(
         self,
+        args,
         rpc: dfg.MFCDef,
         src_rpc: dfg.MFCDef,
         stream: request_reply_stream.NameResolvingRequestClient,
@@ -66,6 +68,8 @@ class ModelFunctionCall:
         redistrib_planner: RedistribPlanner,
         summary_writer: SummaryWriter | None,
     ):
+
+        self.args = args
 
         self.rpc = rpc
         self.src_rpc = src_rpc
@@ -80,12 +84,6 @@ class ModelFunctionCall:
         self.mwid2msids = defaultdict(list)
         for msid, mwid in msid2mwid.items():
             self.mwid2msids[mwid].append(msid)
-
-        self.model_save_root = os.path.join(
-            constants.MODEL_SAVE_ROOT,
-            constants.experiment_name(),
-            constants.trial_name(),
-        )
 
         self.rpc_ctrl = ctrl
         self.buffers = buffers
@@ -220,7 +218,7 @@ class ModelFunctionCall:
             for p in payloads.values():
                 p.post_hooks.append("save")
                 save_dir = os.path.join(
-                    self.model_save_root,
+                    constants.get_log_path(self.args),
                     rpc.model_name.role,
                     f"epoch{ctrl.step_info.epoch + 1}"
                     f"epochstep{ctrl.step_info.epoch_step + 1}"
@@ -442,7 +440,7 @@ class ModelFunctionCall:
                 logger.info(
                     f"RPC name {rpc.name} returns\n{data_api.tabulate_stats(res)}"
                 )
-                logging.log_wandb_tensorboard(
+                logging.log_swanlab_wandb_tensorboard(
                     res,
                     step=ctrl.step_info.global_step,
                     summary_writer=self.summary_writer,
@@ -453,7 +451,7 @@ class ModelFunctionCall:
                         f"RPC name {rpc.name} returns ({j + 1}/{len(res)})\n{data_api.tabulate_stats(r)}"
                     )
                     offset = len(res) * ctrl.step_info.global_step
-                    logging.log_wandb_tensorboard(
+                    logging.log_swanlab_wandb_tensorboard(
                         r,
                         step=offset + j,
                         summary_writer=self.summary_writer,
@@ -465,11 +463,10 @@ class ModelFunctionCall:
         for time_record in time_records:
             stats_tracker.scalar(**time_record)
         time_stats = stats_tracker.export()
-        logging.log_wandb_tensorboard(
+        logging.log_swanlab_wandb_tensorboard(
             time_stats,
             summary_writer=self.summary_writer,
         )
-
         logger.info(
             f"Model rpc {rpc.name} finished. "
             f"Request-reply time {time.perf_counter() - tik:.4f}s. "

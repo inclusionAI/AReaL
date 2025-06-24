@@ -20,10 +20,10 @@ from typing import Callable, Dict, List, Literal, Optional, Union
 
 import pandas as pd
 
-import realhf.base.cluster as cluster
 import realhf.base.logging as logging
 import realhf.version as version
-from realhf.base.constants import LOG_ROOT
+from realhf.api.cli_args import BaseExperimentConfig
+from realhf.base.constants import get_log_path
 from realhf.scheduler.client import JobException, JobInfo, JobState
 
 logger = logging.getLogger("scheduler.slurm.utils")
@@ -190,6 +190,7 @@ class SlurmLaunchInfo:
         multiprog_content (str, optional): The content of the multiprog file.
     """
 
+    args: BaseExperimentConfig
     run_name: str
     exper_name: str
     trial_name: str
@@ -198,6 +199,10 @@ class SlurmLaunchInfo:
     wprocs_in_job: int
     job_group_id: str
     job_group_index: str
+
+    log_path: str
+    multiprog_path: str
+    hostfile_path: str
 
     resource_requirement: SlurmResource
     cmd: str
@@ -251,41 +256,6 @@ class SlurmLaunchInfo:
             return self.job_info.slurm_id
         else:
             return None
-
-    @property
-    def log_path(self) -> str:
-        return os.path.join(
-            LOG_ROOT,
-            self.exper_name,
-            self.trial_name,
-            f"{self.worker_type}-{self.worker_submission_idx}.log",
-        )
-
-    @property
-    def multiprog_path(self) -> str:
-        path = os.path.join(
-            LOG_ROOT,
-            self.exper_name,
-            self.trial_name,
-            "slurm",
-            "multiprog",
-            f"{self.worker_type}-{self.worker_submission_idx}.multiprog",
-        )
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        return path
-
-    @property
-    def hostfile_path(self) -> str:
-        path = os.path.join(
-            LOG_ROOT,
-            self.exper_name,
-            self.trial_name,
-            "slurm",
-            "hostfile",
-            f"{self.worker_type}-{self.worker_submission_idx}.hostfile",
-        )
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        return path
 
     def show_log(self):
         try:
@@ -364,14 +334,14 @@ class SlurmLaunchInfo:
         # head
         gres_line = ""
         if gpu >= 1:
-            assert (gpu * ntasks) % cluster.spec.n_gpus_per_node == 0
+            assert (gpu * ntasks) % self.args.cluster.n_gpus_per_node == 0
             # In current slurm cluster setup, we can only use "--gres" to
             # allocate PPUs per node. There are no options to allocate customized
             # gres per tasks.
-            if cluster.spec.gpu_type == "ppu":
-                gres_line = f"--gres=ppu:{cluster.spec.n_gpus_per_node}"
+            if self.args.cluster.gpu_type == "ppu":
+                gres_line = f"--gres=ppu:{self.args.cluster.n_gpus_per_node}"
             else:
-                gres_line = f"--gres=gpu:{cluster.spec.n_gpus_per_node}"
+                gres_line = f"--gres=gpu:{self.args.cluster.n_gpus_per_node}"
 
         srun_env = os.environ.copy()
         job_metadata = {
@@ -391,7 +361,7 @@ class SlurmLaunchInfo:
             f"#SBATCH --output={self.log_path}",
             "#SBATCH --open-mode=append",
             f"#SBATCH --ntasks={ntasks}",
-            f"#SBATCH {gres_line}",
+            f"#SBATCH {gres_line}" if gpu >= 1 else "",
             f"#SBATCH --cpus-per-task={cpu}",
             f"#SBATCH --mem-per-cpu={mem // max(1, cpu)}M",
             "#SBATCH --distribution=arbitrary" if self.hostfile else "",
@@ -722,6 +692,9 @@ def allocate_resources(
         infos, key=lambda x: x.n_jobsteps * x.resource_requirement, reverse=True
     )
     prioritized_hosts = set()
+    if len(infos) == 0:
+        return infos
+    cluster_config = infos[0].args.cluster
     for info_idx, info in enumerate(infos):
         valid_hostnames = available_hostnames(
             nodelist=info.nodelist,
@@ -764,12 +737,12 @@ def allocate_resources(
                 gpu_per_task = info.resource_requirement.gpu
                 if gpu_per_task > 0:
                     assert (
-                        task_left * gpu_per_task % cluster.spec.n_gpus_per_node == 0
+                        task_left * gpu_per_task % cluster_config.n_gpus_per_node == 0
                     ), (task_left, gpu_per_task)
                     assert (
-                        cluster.spec.n_gpus_per_node % gpu_per_task == 0
+                        cluster_config.n_gpus_per_node % gpu_per_task == 0
                     ), gpu_per_task
-                    batched_ntasks = int(cluster.spec.n_gpus_per_node // gpu_per_task)
+                    batched_ntasks = int(cluster_config.n_gpus_per_node // gpu_per_task)
                     batched_requirement = batched_ntasks * info.resource_requirement
                 try:
                     resource = resource - batched_requirement
@@ -787,10 +760,10 @@ def allocate_resources(
                 allocated[hostname] = tmp - task_left
             all_resources[hostname] = resource
         if task_left > 0:
-            if cluster.spec.gpu_type == "ppu" and info.resource_requirement.gpu > 0:
+            if cluster_config.gpu_type == "ppu" and info.resource_requirement.gpu > 0:
                 logger.warning(
                     "For PPU resources, we can only allocate tasks in the "
-                    f"granularity of nodes ({cluster.spec.n_gpus_per_node} PPUs)"
+                    f"granularity of nodes ({cluster_config.n_gpus_per_node} PPUs)"
                 )
             logger.warning(
                 f'Unable to allocate {info.n_jobsteps} Jobs with name "{info.slurm_name}". '

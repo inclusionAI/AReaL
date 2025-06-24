@@ -4,12 +4,12 @@
 
 import random
 import time
+import uuid
 
 import pytest
 import torch
 
-import realhf.base.constants as constants
-import realhf.base.testing as testing
+from realhf.base import constants, name_resolve, testing
 
 
 # This is a test for grouped_gemm experts implementation of MoE.
@@ -99,10 +99,7 @@ def run_grouped_mlp(num_tokens, tp_size, token_dispatch_strategy, seed=1):
         )
 
 
-@pytest.mark.skipif(
-    not torch.cuda.is_available(),
-    reason="This test requires GPU to run",
-)
+@pytest.mark.skip("grouped_gemm is not used for now.")
 @pytest.mark.parametrize("num_tokens", [200])
 @pytest.mark.parametrize("tp_size", [1, 2])
 @pytest.mark.parametrize("token_dispatch_strategy", ["random"])
@@ -123,10 +120,7 @@ def test_grouped_mlp(
     test.launch()
 
 
-@pytest.mark.skipif(
-    not torch.cuda.is_available(),
-    reason="This test requires GPU to run",
-)
+@pytest.mark.skip("grouped_gemm is not used for now.")
 @pytest.mark.gpu
 def test_grouped_gemm():
     torch.manual_seed(1)

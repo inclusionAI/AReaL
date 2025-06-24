@@ -5,7 +5,9 @@ from typing import Dict, List, Optional, Tuple, Type, Union
 
 from omegaconf import MISSING
 
-from realhf.base import pkg_version
+from realhf.base import logging, pkg_version
+
+logger = logging.getLogger("CLI args")
 
 ## Data and datasets. ##
 
@@ -351,10 +353,6 @@ class SGLangConfig:
             tp_size=tp_size,
             # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
             base_gpu_id=base_gpu_id,
-            file_storage_path=os.path.join(
-                constants.SGLANG_CACHE_PATH,
-                f"sglang_storage{server_index}",
-            ),
             # Data parallelism
             dp_size=1,  # TODO: check whether we require SGLang dp
             load_balance_method="round_robin",
@@ -849,6 +847,16 @@ class WandBConfig:
 
 
 @dataclass
+class SwanlabConfig:
+    project: Optional[str] = None
+    name: Optional[str] = None
+    config: Optional[Dict] = None
+    logdir: Optional[str] = None
+    mode: Optional[str] = "local"
+    api_key: Optional[str] = os.getenv("SWANLAB_API_KEY", None)
+
+
+@dataclass
 class TensorBoardConfig:
     path: Optional[str] = None
 
@@ -861,12 +869,40 @@ def get_user_tmp():
 
 
 @dataclass
+class NameResolveConfig:
+    type: str = field(
+        default="nfs",
+        metadata={
+            "help": "Type of the distributed KV store for name resolving.",
+            "choices": ["nfs", "etcd3", "ray"],
+        },
+    )
+    nfs_record_root: str = field(
+        default="/tmp/areal/name_resolve",
+        metadata={
+            "help": "Record root for NFS name resolving. Should be available in all nodes."
+        },
+    )
+    etcd3_addr: str = field(
+        default="localhost:2379", metadata={"help": "Address of the ETCD3 server."}
+    )
+    ray_actor_name: str = field(
+        default="ray_kv_store",
+        metadata={"help": "Name of the distributed Ray KV store."},
+    )
+
+
+@dataclass
 class ClusterSpecConfig:
     config_path: str = field(
         default="",
         metadata={
             "help": "JSON config path. If not given, use the following CLI args."
         },
+    )
+    name_resolve: NameResolveConfig = field(
+        default_factory=NameResolveConfig,
+        metadata={"help": "Name resolving configuration."},
     )
     cluster_name: str = field(
         default="local",
@@ -951,6 +987,10 @@ class BaseExperimentConfig:
         default_factory=WandBConfig,
         metadata={"help": "Weights & Biases configuration."},
     )
+    swanlab: SwanlabConfig = field(
+        default_factory=SwanlabConfig,
+        metadata={"help": "SwanLab configuration."},
+    )
     tensorboard: TensorBoardConfig = field(
         default_factory=TensorBoardConfig,
         metadata={"help": "TensorBoard configuration. Only 'path' field required."},
@@ -1026,7 +1066,7 @@ class BaseExperimentConfig:
         default=False,
         metadata={
             "help": "Enable automatic evaluation during training. "
-            "Results logged to disk and WandB (if active)."
+            "Results logged to disk and WandB or Swanlab(if active)."
         },
     )
     auto_eval_config: AutomaticEvaluator = field(

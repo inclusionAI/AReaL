@@ -2,9 +2,9 @@
 # Copyright 2024 Wei Fu & Zhiyu Mei
 # Licensed under the Apache License, Version 2.0 (the "License").
 import dataclasses
+import os
 from typing import Dict
 
-import realhf.base.logging as logging
 from realhf.api.cli_args import MathCodeEvalOptions, ModelTrainEvalConfig
 from realhf.api.core.config import (
     DatasetAbstraction,
@@ -13,6 +13,7 @@ from realhf.api.core.config import (
 )
 from realhf.api.core.dfg import MFCDef
 from realhf.api.quickstart.entrypoint import register_quickstart_exp
+from realhf.base import constants, logging
 from realhf.experiments.common.common import CommonExperimentConfig
 from realhf.experiments.common.utils import asdict
 
@@ -55,6 +56,9 @@ class MathCodeEvalConfig(MathCodeEvalOptions, CommonExperimentConfig):
                 dataset_path=self.dataset.path,
                 tokenizer_path=self.actor.path,
                 rw_type=self.rw_type,
+                answer_save_path=os.path.join(
+                    constants.get_log_path(self), "generated"
+                ),
                 check_xml_format=self.check_xml_format,
                 group_size=self.group_size,
                 check_verifier_status=self.check_verifier_status,

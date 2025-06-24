@@ -8,6 +8,7 @@ from typing import *
 import pytest
 
 from realhf.api.cli_args import (
+    ClusterSpecConfig,
     ExperimentSaveEvalControl,
     MFCConfig,
     ModelTrainEvalConfig,
@@ -15,7 +16,7 @@ from realhf.api.cli_args import (
     PromptAnswerDatasetConfig,
     PromptOnlyDatasetConfig,
 )
-from realhf.base import cluster, logging, name_resolve, testing
+from realhf.base import logging, name_resolve, testing
 from realhf.experiments.common.null_exp import NullPPOConfig, NullSFTConfig
 from tests.experiments.utils import run_test_exp
 from tests.fixtures import *
@@ -64,11 +65,8 @@ def test_buffer_recover(
 ):
     _, dataset_size = math_code_dataset_with_size
     # Setup experiment env. Should be done before any other operations.
-    log_root = tmp_path_factory.mktemp("buffer-recover")
-    cluster.spec.fileroot = str(log_root)
     expr_name = str(uuid.uuid4())
     trial_name = str(uuid.uuid4())
-    testing.clear_name_resolve(expr_name, trial_name)
     constants.set_experiment_trial_names(expr_name, trial_name)
 
     exp_cfg = NullPPOConfig(
@@ -113,6 +111,10 @@ def test_buffer_recover(
             total_train_epochs=100,
             save_freq_steps=2,
             benchmark_steps=0,
+        ),
+        cluster=ClusterSpecConfig(
+            fileroot=str(tmp_path_factory.mktemp("buffer-recover")),
+            n_gpus_per_node=16,
         ),
     )
 

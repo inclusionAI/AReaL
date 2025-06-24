@@ -23,14 +23,20 @@ def gethostip():
 
 
 def find_free_port(
-    low=1, high=65536, exclude_ports=None, experiment_name="port", trial_name="port"
+    low=1,
+    high=65536,
+    exclude_ports=None,
+    experiment_name="port",
+    trial_name="port",
+    lockfile_root=constants.PORT_LOCKFILE_ROOT,
 ):
     """Find a free port within the specified range, excluding certain ports."""
 
     ports_name = names.used_ports(experiment_name, trial_name, gethostip())
 
     free_port = None
-    lockfile = os.path.join(constants.PORT_LOCK_FILE_ROOT, gethostip())
+    os.makedirs(lockfile_root, exist_ok=True)
+    lockfile = os.path.join(lockfile_root, gethostip())
     while True:
         with open(lockfile, "w") as fd:
             # This will block until lock is acquired
@@ -58,7 +64,12 @@ def find_free_port(
 
 
 def find_multiple_free_ports(
-    count, low=1, high=65536, experiment_name="port", trial_name="port"
+    count,
+    low=1,
+    high=65536,
+    experiment_name="port",
+    trial_name="port",
+    lockfile_root=constants.PORT_LOCKFILE_ROOT,
 ):
     """Find multiple mutually exclusive free ports."""
     free_ports = set()
@@ -69,6 +80,7 @@ def find_multiple_free_ports(
             exclude_ports=free_ports,
             experiment_name=experiment_name,
             trial_name=trial_name,
+            lockfile_root=lockfile_root,
         )
         free_ports.add(port)
     return list(free_ports)

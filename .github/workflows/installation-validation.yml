@@ -1,0 +1,128 @@
+name: Installation Validation
+
+on:
+  push:
+    branches: [ none ]
+    paths:
+      - 'examples/env/scripts/setup-pip-deps.sh'
+      - 'docs/tutorial/installation.md'
+      - 'examples/env/validate_installation.py'
+      - 'setup.py'
+      - 'requirements*.txt'
+      - '.github/workflows/installation-validation.yml'
+  pull_request:
+    branches: [ none ]
+    paths:
+      - 'examples/env/scripts/setup-pip-deps.sh'
+      - 'docs/tutorial/installation.md'
+      - 'examples/env/validate_installation.py'
+      - 'setup.py'
+      - 'requirements*.txt'
+      - '.github/workflows/installation-validation.yml'
+  workflow_dispatch:
+
+jobs:
+  validate-installation:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.REMOTE_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p 8107 101.6.96.205 >> ~/.ssh/known_hosts
+          
+      - name: Synchronize repository to remote machine
+        run: |
+          # Use rsync to synchronize repository to remote machine
+          rsync -avz --delete \
+            --exclude='.git' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='*.pyo' \
+            --exclude='*.egg-info' \
+            --exclude='build/' \
+            --exclude='dist/' \
+            --exclude='.pytest_cache' \
+            --exclude='.coverage' \
+            --exclude='*.so' \
+            --exclude='*.dylib' \
+            --exclude='node_modules/' \
+            --exclude='.env' \
+            --exclude='.venv' \
+            -e 'ssh -p 8107' . fuwei@101.6.96.205:/tmp/areal-validation/
+          
+      - name: Run installation validation on remote machine
+        run: |
+          ssh -p 8107 fuwei@101.6.96.205 << 'EOF'
+            set -e
+            
+            # Navigate to the synchronized repository
+            cd /tmp/areal-validation
+            
+            # Create persistent pip cache directory
+            mkdir -p /tmp/pip-cache
+            
+            # Generate a unique container name
+            CONTAINER_NAME="areal-validation-$(date +%s)"
+            
+            # Stop and remove any existing container with the same name
+            docker stop $CONTAINER_NAME 2>/dev/null || true
+            docker rm $CONTAINER_NAME 2>/dev/null || true
+            
+            echo "=== Starting Docker container ==="
+            # Launch Docker container with NVIDIA PyTorch image
+            docker run -d \
+              --name $CONTAINER_NAME \
+              --gpus all \
+              --shm-size=8g \
+              -v $(pwd):/workspace \
+              -v /tmp/pip-cache:/root/.cache/pip \
+              -w /workspace \
+              nvcr.io/nvidia/pytorch:25.01-py3 \
+              sleep infinity
+              
+            echo "=== Verifying CUDA environment in container ==="
+            docker exec $CONTAINER_NAME nvidia-smi
+            docker exec $CONTAINER_NAME nvcc --version
+            
+            echo "=== Verifying workspace contents ==="
+            docker exec $CONTAINER_NAME pwd
+            docker exec $CONTAINER_NAME ls -la /workspace
+            docker exec $CONTAINER_NAME ls -la /workspace/examples/env/ || echo "examples/env directory not found"
+            
+            echo "=== Checking pip cache before installation ==="
+            du -sh /tmp/pip-cache 2>/dev/null || echo "Cache directory empty"
+            
+            echo "=== Installing dependencies ==="
+            docker exec $CONTAINER_NAME bash -c "
+              python -m pip install --upgrade pip
+              pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+              pip config unset global.extra-index-url
+              # Run the installation script
+              bash examples/env/scripts/setup-pip-deps.sh
+              python examples/env/validate_installation.py
+            "
+            
+            echo "=== Checking pip cache after installation ==="
+            du -sh /tmp/pip-cache 2>/dev/null || echo "Cache directory still empty"
+            
+            echo "=== Installation validation completed successfully ==="
+            
+            # Cleanup
+            docker stop $CONTAINER_NAME
+            docker rm $CONTAINER_NAME
+            cd ~
+            rm -rf /tmp/areal-validation
+          EOF
+          
+      - name: Cleanup SSH key
+        if: always()
+        run: |
+          rm -f ~/.ssh/id_rsa

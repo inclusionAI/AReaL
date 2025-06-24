@@ -14,6 +14,13 @@ wandb:
   notes: null
   tags: null
   config: null
+swanlab:
+  mode: disabled
+  api_key: null
+  project: null
+  name: null
+  config: null
+  logdir: null
 tensorboard:
   path: null
 recover_mode: auto

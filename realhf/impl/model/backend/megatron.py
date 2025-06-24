@@ -21,7 +21,6 @@ from realhf.api.core import model_api
 from realhf.api.core.data_api import SequenceSample
 from realhf.base import constants, logging, pkg_version
 from realhf.base.datapack import flat2d
-from realhf.base.monitor import CUDATimeMarkType, cuda_tmarked
 from realhf.impl.model.backend.inference import PipelinableInferenceEngine
 from realhf.impl.model.backend.pipe_runner import PipelineRunner, PipeTrainInstrSet
 from realhf.impl.model.modules.mlp import get_activation_fn
@@ -304,7 +303,6 @@ class PipeTrainInstrSetForMegatron(PipeTrainInstrSet):
             self._no_sync_context.__exit__(None, None, None)
             self._no_sync_context = None
 
-    @cuda_tmarked("bwd", CUDATimeMarkType.backward)
     def _exec_backward_pass(
         self,
         module: ReaLModel,
@@ -342,7 +340,6 @@ class PipeTrainInstrSetForMegatron(PipeTrainInstrSet):
         # self.engine.ddp.start_grad_sync()
         self.engine.finalize_grads()
 
-    @cuda_tmarked("opt", CUDATimeMarkType.optim_step)
     def _exec_optimizer_step(
         self,
         module: ReaLModel,
@@ -489,8 +486,7 @@ class ReaLMegatronEngine(model_api.PipelinableEngine):
                     loss_scale *= constants.data_parallel_world_size()
                 loss_scale *= self.engine.optim.get_loss_scale().item()
                 loss *= loss_scale
-                with cuda_tmarked("bwd", CUDATimeMarkType.backward):
-                    loss.backward()
+                loss.backward()
 
             self.engine.finalize_grads()
             return self._step(version_steps)
@@ -530,7 +526,6 @@ class ReaLMegatronEngine(model_api.PipelinableEngine):
         )
 
     # wrapper for profiler
-    @cuda_tmarked("opt", CUDATimeMarkType.optim_step)
     def _step(self, version_steps):
         # omit the number of zeros in grads
         update_successful, grad_norm, _ = self.engine.optim.step()
