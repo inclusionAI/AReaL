@@ -75,10 +75,6 @@ class SPMDWrapper(abc.ABC):
         """Step learning rate scheduler."""
         raise NotImplementedError()
 
-    def get_current_lr(self):
-        """Get current learning rate"""
-        raise NotImplementedError()
-
     def save_model_to_hf(
         self,
         path: str,

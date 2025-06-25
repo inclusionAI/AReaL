@@ -213,8 +213,7 @@ class SFTTrainer(Trainer):
                             mb_spec=self.mb_spec,
                         )
                         self.model.step_lr_scheduler()
-                        lr = self.model.get_current_lr()
-                        stats_tracker.scalar(**stats, lr=lr)
+                        stats_tracker.scalar(**stats)
 
                 if self.save_ctl.check(
                     epochs=int(step == steps_per_epoch - 1), steps=1
@@ -272,6 +271,9 @@ class SFTTrainer(Trainer):
                 avg_loss = self.model.eval_batch(
                     input_=packed_input_data,
                     loss_fn=compute_packed_sft_loss,
+                    loss_weight_fn=lambda x: x["prompt_mask"]
+                    .logical_not()
+                    .count_nonzero(),
                     mb_spec=self.mb_spec,
                 )
                 losses.append(avg_loss)

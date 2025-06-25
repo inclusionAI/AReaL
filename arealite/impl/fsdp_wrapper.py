@@ -1,6 +1,7 @@
 # Copyright 2025 Ant Group Inc.
 # Licensed under the Apache License, Version 2.0
 
+import functools
 import math
 import os
 from typing import Any, Callable, Dict, List, Literal, Optional
@@ -18,10 +19,15 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
+from arealite.api.cli_args import EngineConfig, FSDPConfig, MicroBatchSpec, TrainingArgs
 from arealite.api.engine_api import SPMDWrapper
 from arealite.api.io_struct import FinetuneSpec
-from arealite.utils import split_dict_tensor_with_cu_seqlens
+from arealite.utils import (
+    find_free_port,
+    recorder_list,
+    split_dict_tensor_with_cu_seqlens,
+    unpack_sequence,
+)
 from realhf.api.cli_args import ParallelismConfig
 from realhf.base.pkg_version import is_version_greater_or_equal
 
@@ -88,11 +94,12 @@ def apply_fsdp2(model, fsdp_kwargs, wrap_policy):
         CPUOffloadPolicy is not None
     ), "PyTorch version >= 2.4 is required for using fully_shard API (FSDP2)"
 
-    default_transformer_cls_names_to_wrap = getattr(model, "_no_split_modules", None)
+    default_transformer_cls_names_to_wrap = getattr(model, "_no_split_modules", list())
     fsdp_transformer_layer_cls_to_wrap = (
-        wrap_policy.transformer_layer_cls_to_wrap
-        or default_transformer_cls_names_to_wrap
+        wrap_policy.transformer_layer_cls_to_wrap if wrap_policy is not None else list()
     )
+    if not fsdp_transformer_layer_cls_to_wrap:
+        fsdp_transformer_layer_cls_to_wrap = default_transformer_cls_names_to_wrap
 
     if isinstance(fsdp_transformer_layer_cls_to_wrap, str):
         fsdp_transformer_layer_cls_to_wrap = [fsdp_transformer_layer_cls_to_wrap]
@@ -214,7 +221,8 @@ class FSDPEngine(SPMDWrapper):
         ), f"arealite only supports FSDP2, which requires torch>=2.4.0"
 
         self.fsdp_config = engine_config.backend.fsdp
-        assert self.fsdp_config is not None
+        if self.fsdp_config is None:
+            self.fsdp_config = FSDPConfig()
         self.optimizer_config = engine_config.optimizer
 
         self.model = None
@@ -233,12 +241,22 @@ class FSDPEngine(SPMDWrapper):
 
     def init_distributed(self, config: ParallelismConfig, ft_spec: FinetuneSpec):
         """Initialize distributed communication and model."""
-        if not dist.is_initialized():
-            dist.init_process_group(backend="nccl")
+        if self.args.n_gpus_per_node == 1 and self.args.n_nodes == 1:
+            if not dist.is_initialized():
+                dist.init_process_group(
+                    backend="nccl",
+                    rank=0,
+                    world_size=1,
+                    init_method=f"tcp://localhost:{find_free_port()}",
+                )
+            torch.cuda.set_device("cuda:0")
+        else:
+            if not dist.is_initialized():
+                dist.init_process_group(backend="nccl")
 
-        # print(f"LOCAL_RANK = {os.environ["LOCAL_RANK"]}")
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-        # print(f"current rank = {dist.get_rank()}, current device = {torch.cuda.current_device()}")
+            # print(f"LOCAL_RANK = {os.environ["LOCAL_RANK"]}")
+            torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+            # print(f"current rank = {dist.get_rank()}, current device = {torch.cuda.current_device()}")
 
         # Load model
         dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
@@ -379,19 +397,18 @@ class FSDPEngine(SPMDWrapper):
             self.optimizer.step()
             update_successful = True
 
+        current_lr = self.lr_scheduler.get_last_lr()[0]
         # Optimizer step
         self.optimizer.step()
         return dict(
             update_successful=float(update_successful),
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
+            lr=current_lr,
         )
 
     def step_lr_scheduler(self):
         assert self.lr_scheduler is not None
         self.lr_scheduler.step()
-
-    def get_current_lr(self):
-        return self.lr_scheduler.get_last_lr()[0]
 
     @torch.no_grad()
     def eval_batch(
@@ -399,35 +416,28 @@ class FSDPEngine(SPMDWrapper):
         input_: Dict,
         mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
+        loss_weight_fn: Callable[[Dict], float],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
-        # self.eval()
-
-        # assert "cu_seqlens" in input_
-        # input_["cu_seqlens"]
-        mb_inputs = split_dict_tensor_with_cu_seqlens(input_, mb_spec).mbs
+        mb_splits = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
+        total_loss_weight = torch.tensor(
+            sum([loss_weight_fn(mb) for mb in mb_splits.mbs]), dtype=torch.float32
+        )
+        assert total_loss_weight != 0
 
         total_loss = 0.0
-        total_n_tokens = 0.0
+        total_weight = 0.0
 
-        for mb_input in mb_inputs:
+        for mb_input in mb_splits.mbs:
             outputs = self.model(**mb_input)
             loss = loss_fn(outputs.logits, mb_input)
 
-            n_tokens = mb_input["input_ids"].numel()
+            # Simple weight calculation (could be improved)
+            loss_scale = loss_weight_fn(mb_input) / total_loss_weight
+            total_loss += loss.item() * loss_scale
+            total_weight += loss_scale
 
-            total_loss += loss.item() * n_tokens
-            total_n_tokens += n_tokens
-
-        # aggregate across data parallel ranks
-        total_loss = torch.tensor(total_loss, dtype=torch.float32).cuda()
-        dist.all_reduce(total_loss, op=dist.ReduceOp.SUM)
-
-        total_n_tokens = torch.tensor(total_n_tokens, dtype=torch.int).cuda()
-        dist.all_reduce(total_n_tokens, op=dist.ReduceOp.SUM)
-
-        avg_loss = torch.tensor(total_loss / max(total_n_tokens.item(), 1e-8))
-        return avg_loss
+        return torch.tensor(total_loss / total_weight)
 
     @torch.no_grad()
     def forward(
@@ -436,18 +446,17 @@ class FSDPEngine(SPMDWrapper):
         mb_spec: MicroBatchSpec,
         output_seqlens: List[int] | None = None,
         post_hook: Callable[[torch.Tensor, Dict], Any] | None = None,
-        aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
+        aggregate_fn: Callable[[List[Any]], Any] = functools.partial(torch.cat, dim=1),
     ) -> Any | None:
         """Forward pass with optional post-processing."""
-        # self.eval()
-        splitted = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
-        mb_inputs = splitted.mbs
+        mb_splits = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
+        if output_seqlens is None:
+            cu_seqlens = input_["cu_seqlens"]
+            output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
 
         results = []
-
-        for mb_input in mb_inputs:
+        for mb_input in mb_splits.mbs:
             outputs = self.model(**mb_input)
-
             if post_hook:
                 result = post_hook(outputs.logits, mb_input)
                 results.append(result)
@@ -455,8 +464,8 @@ class FSDPEngine(SPMDWrapper):
                 results.append(outputs.logits)
 
         res = aggregate_fn(results)
-        # FIXME: reorder
-        return res
+        unpacked = unpack_sequence(res, lens=output_seqlens, dim=1)
+        return aggregate_fn(recorder_list(unpacked, mb_splits.backward_indices))
 
     def get_hf_model_state_dict(self) -> Dict[str, torch.Tensor]:
         """Get model state dict for saving."""
@@ -539,3 +548,5 @@ class FSDPEngine(SPMDWrapper):
             self.optimizer.load_state_dict(
                 torch.load(optimizer_path, map_location="cpu")
             )
+        else:
+            raise RuntimeError(f"Optimizer state file not found: {optimizer_path}")

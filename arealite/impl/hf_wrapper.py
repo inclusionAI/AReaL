@@ -1,3 +1,4 @@
+import functools
 import math
 import os
 from typing import Any, Callable, Dict, List, Literal, Optional
@@ -17,6 +18,7 @@ from arealite.api.cli_args import (
 from arealite.api.engine_api import SPMDWrapper
 from arealite.api.io_struct import FinetuneSpec
 from arealite.utils import (
+    find_free_port,
     recorder_list,
     split_dict_tensor_with_cu_seqlens,
     unpack_sequence,
@@ -79,7 +81,15 @@ class HFEngine(SPMDWrapper):
         self.model_config = None
 
     def init_distributed(self, config: ParallelismConfig, ft_spec: FinetuneSpec):
-        """Initialize model in single node."""
+        """Initialize model on a single GPU."""
+        if not dist.is_initialized():
+            dist.init_process_group(
+                backend="nccl",
+                rank=0,
+                world_size=1,
+                init_method=f"tcp://localhost:{find_free_port()}",
+            )
+        torch.cuda.set_device("cuda:0")
 
         # Load model
         dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
@@ -209,7 +219,7 @@ class HFEngine(SPMDWrapper):
         mb_spec: MicroBatchSpec,
         output_seqlens: List[int] | None = None,
         post_hook: Callable[[torch.Tensor, Dict], Any] | None = None,
-        aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
+        aggregate_fn: Callable[[List[Any]], Any] = functools.partial(torch.cat, dim=1),
     ) -> Any | None:
         """Forward pass with optional post-processing."""
         mb_splits = split_dict_tensor_with_cu_seqlens(input_, mb_spec)

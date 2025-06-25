@@ -6,6 +6,7 @@
 
 import getpass
 import os
+import socket
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -697,3 +698,9 @@ def record_timing(name, timing_stats):
     start_time = time.perf_counter()
     yield
     timing_stats[name] = time.perf_counter() - start_time
+
+
+def find_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("localhost", 0))
+        return s.getsockname()[1]
