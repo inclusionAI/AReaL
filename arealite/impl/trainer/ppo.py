@@ -1,45 +1,57 @@
 # Copyright 2025 Ant Group Inc.
 # Licensed under the Apache License, Version 2.0
 
+import os
+import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
 from datasets import Dataset
 
 from arealite import ppo_functional
-from arealite.api.cli_args import MicroBatchSpec, TrainerConfig, TrainingArgs
+from arealite.api.cli_args import (
+    MicroBatchSpec,
+    PPOTrainerConfig,
+    TrainerConfig,
+    TrainingArgs,
+)
 from arealite.api.engine_api import EngineFactory
+from arealite.api.io_struct import FinetuneSpec
 from arealite.api.llm_client_api import LLMClientFactory
 from arealite.api.trainer_api import Trainer
 from arealite.impl.rollout_controller import RolloutController
 from arealite.utils import (
     calc_entropy,
+    close_wandb_tensorboard,
     compute_varlen_position_indices,
     concat_padded_tensors,
     dict_of_list2list_of_dict,
-    dict_split_mbs,
     gather_logprobs,
+    init_stats_logging,
     list_of_dict2dict_of_list,
+    log_wandb_tensorboard,
     masked_normalization,
+    record_timing,
+    split_dict_tensor_with_cu_seqlens,
     to_device,
     unpad_input,
 )
-from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import logging, stats_tracker
+from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
+from realhf.base import constants, logging, name_resolve, names, stats_tracker, timeutil
 
-logger = logging.getLogger("SPMD RLVR PPO Trainer")
+logger = logging.getLogger("PPO Trainer")
 
 
 @dataclass
 class UnpaddedRolloutOutput:
     loaded_data: Dict[str, Any]
     model_inputs: Dict[str, Any]
-    prompt_mask: torch.BoolTensor
-    seq_no_eos_mask: Optional[torch.BoolTensor] = None
-    logprobs: Optional[torch.Tensor] = None
-    rewards: Optional[torch.FloatTensor] = None
+    prompt_mask: torch.Tensor
+    rewards: torch.Tensor
+    seq_no_eos_mask: torch.Tensor
+    logprobs: torch.Tensor
 
 
 class SpmdPPOTrainer(Trainer):
@@ -62,19 +74,22 @@ class SpmdPPOTrainer(Trainer):
         if self.rollout_controller is None:
             raise ValueError("PPO Trainer requires a rollout controller.")
 
-        self.config = config = trainer_config.ppo
+        assert trainer_config.ppo is not None
+        self.config: PPOTrainerConfig = trainer_config.ppo
+        assert args.rollout is not None
+        assert self.config.actor is not None
 
         # Create actor model
         engine_factory = EngineFactory(args)
-        self.actor = engine_factory.make_engine(config.actor)
+        self.actor = engine_factory.make_engine(self.config.actor)
 
-        self.actor_tokenizer = load_hf_tokenizer(config.actor.path)
+        self.actor_tokenizer = load_hf_tokenizer(self.config.actor.path)
         self.gconfig = args.rollout.gconfig
 
         # Create reference model is specified
         self.ref = None
-        if config.ref is not None:
-            self.ref = engine_factory.make_engine(config.ref)
+        if self.config.ref is not None:
+            self.ref = engine_factory.make_engine(self.config.ref)
 
         # Create a client to generate responses and update weights
         client_factory = LLMClientFactory(args)
@@ -87,16 +102,25 @@ class SpmdPPOTrainer(Trainer):
         self.adv_norm = self.config.adv_norm
         self.max_reward_clip = self.config.max_reward_clip
         self.group_adv_norm = self.config.group_adv_norm
-        self.group_size = self.args.rollout.gconfig.n_samples
+        self.group_size = args.rollout.gconfig.n_samples
+        self.max_head_offpolicyness = args.rollout.max_head_offpolicyness
 
-    def _setup_models(self):
-        # TODO: disable dropout
-        # TODO: Temporary for hf test. Fix the parameter passing logic bug
-        self.actor.init_distributed(None)
-        if self.ref is not None:
-            self.ref.init_distributed(None)
+        self.save_ctl = timeutil.EpochStepTimeFreqCtl(
+            freq_epoch=self.args.exp_ctrl.save_freq_epochs,
+            freq_step=self.args.exp_ctrl.save_freq_steps,
+            freq_sec=self.args.exp_ctrl.save_freq_secs,
+        )
+        self.eval_ctl = timeutil.EpochStepTimeFreqCtl(
+            freq_epoch=self.args.exp_ctrl.eval_freq_epochs,
+            freq_step=self.args.exp_ctrl.eval_freq_steps,
+            freq_sec=self.args.exp_ctrl.eval_freq_steps,
+        )
+        self.summary_writer = init_stats_logging(args)
 
-    def _get_rollout_batch(self):
+    def _get_rollout_batch(
+        self, prompt
+    ) -> Tuple[Dict[str, List], Dict[str, torch.Tensor]]:
+        assert self.rollout_controller is not None
         if self.config.async_training:
             # Wait until enough trajectories has been collected.
             trajs = self.rollout_controller.prepare_batch(
@@ -107,7 +131,6 @@ class SpmdPPOTrainer(Trainer):
             return prompt, data
 
         # Run batched rollout by submitting requests to LLM servers
-        prompt = next(self.data_generator)
         env_options = dict_of_list2list_of_dict(prompt)
         trajs = self.rollout_controller.generate_batch(
             batch_size=len(env_options),
@@ -117,11 +140,10 @@ class SpmdPPOTrainer(Trainer):
         prompt = list_of_dict2dict_of_list([traj.prompt for traj in trajs])
         return prompt, data
 
-    def _rollout_step(self) -> UnpaddedRolloutOutput:
+    def _rollout_step(self, loaded_data) -> UnpaddedRolloutOutput:
         # Run generation or rollout to collect data
-        loaded_data, rollout = self._get_rollout_batch()
-        [int(m.sum()) for m in rollout["attention_mask"]]
-        rollout = to_device(rollout)
+        loaded_data, rollout = self._get_rollout_batch(loaded_data)
+        rollout = to_device(rollout, torch.cuda.current_device())
 
         # Marks which sequence does not has an EOS token, i.e.,
         # generation is truncated by the configured maximum generation length
@@ -154,7 +176,7 @@ class SpmdPPOTrainer(Trainer):
             logprobs=old_logp,
             prompt_mask=prompt_mask,
             seq_no_eos_mask=seq_no_eos_mask,
-            rewards=rollout.get("rewards", None),
+            rewards=rollout["rewards"],
         )
 
     def _train_step(self, rollout_output: UnpaddedRolloutOutput):
@@ -303,7 +325,7 @@ class SpmdPPOTrainer(Trainer):
             seq_stats = dict(
                 no_eos_ratios=seq_no_eos_mask.float(),
                 task_reward=reward_score,
-                prompt_len=ppo_loss_mask.logical_not.float(),
+                prompt_len=ppo_loss_mask.logical_not().float(),
                 seq_len=input_lens.float(),
             )
             stats_tracker.stat(**seq_stats, denominator="n_seqs")
@@ -326,11 +348,11 @@ class SpmdPPOTrainer(Trainer):
                 global_stats.pop(f"ppo_actor/{k}")
             ########## Logging code ends ##########
 
-            for mb in dict_split_mbs(
+            mb_inputs = split_dict_tensor_with_cu_seqlens(
                 ppo_global_batch,
                 mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
-                lens=lens,
-            ):
+            )
+            for mb in mb_inputs.mbs:
                 model_inputs = {k: mb[k] for k in rollout_output.model_inputs}
                 loss_fn = self._get_ppo_loss_fn(
                     old_logp=mb["old_logp"],
@@ -342,13 +364,13 @@ class SpmdPPOTrainer(Trainer):
                     model_inputs,
                     loss_fn=loss_fn,
                     mb_spec=self.config.mb_spec,
-                    loss_weight_fn=lambda x: x.data["ppo_loss_mask"].count_nonzero(),
-                    token_normalize_scope=self.token_normalize_scope,
+                    loss_weight_fn=lambda x: x["ppo_loss_mask"].count_nonzero(),
                 )
                 stats_tracker.scalar(**train_stat)
                 all_stats.append(stats_tracker.export())
 
-        self.actor.inc_version()
+            self.actor.step_lr_scheduler()
+
         all_stats[0].update(global_stats)
         return all_stats
 
@@ -425,36 +447,94 @@ class SpmdPPOTrainer(Trainer):
 
         return ppo_loss
 
-    def train(self):
-        self._setup_models()
+    def train(self, resume_from_checkpoint=None):
+        # TODO: handle recover
         self.create_train_dataloader()
+        assert self.rollout_controller is not None
+        assert self.train_dataloader is not None
 
+        total_epochs = self.args.exp_ctrl.total_train_epochs
+        steps_per_epoch = len(self.train_dataloader)
+        ft_spec = FinetuneSpec(
+            total_train_epochs=steps_per_epoch,
+            dataset_size=len(self.train_dataset),
+            train_batch_size=self.args.train_dataset.batch_size,
+        )
+
+        # Setting up models.
+        self.actor.init_distributed(None, ft_spec)
+        self.actor.eval()
+        if self.ref is not None:
+            self.ref.init_distributed(None, ft_spec)
+            self.ref.eval()
+        self.actor.update_weights_to(self.llm_client)
+
+        # Start rollout for asynchronous RL.
         if self.config.async_training:
             self.rollout_controller.start_generate_loop()
 
+        # Main RL training loop.
         total_epochs = self.args.exp_ctrl.total_train_epochs
         global_step = 0
+        start_time = time.monotonic()
         for epoch in range(total_epochs):
             for step, data in enumerate(self.train_dataloader):
-                self.rollout_controller.submit(data)
-                if self.config.async_training:
-                    # Submitted data will not actually be sent for rollout.
-                    # The rollout controller over-subscribe the data to
-                    # ensure that there are enough data being generated.
-                    if global_step < self.args.rollout.max_head_offpolicyness + 1:
-                        continue
+                timing_stats = {}
+                with record_timing("timeperf/rollout", timing_stats):
+                    if self.config.async_training:
+                        self.rollout_controller.submit(data)
+                        # Submitted data will not actually be sent for rollout.
+                        # The rollout controller over-subscribe the data to
+                        # ensure that there are enough data being generated.
+                        if global_step < self.max_head_offpolicyness + 1:
+                            continue
+                    # Run rollout
+                    rollout_output = self._rollout_step(data)
 
-                # Run rollout
-                rollout_output = self._rollout_step()
+                with record_timing("timeperf/train_step", timing_stats):
+                    # Run RL training and update weights.
+                    mb_stats = self._train_step(rollout_output)
 
-                # Run RL training and update weights.
-                self._train_step(rollout_output)
+                with record_timing("timeperf/sync_weights", timing_stats):
+                    # Synchronize weights to the client.
+                    self.actor.update_weights_to(self.llm_client)
+                    # Update model version
+                    name = names.model_version(
+                        self.args.experiment_name, self.args.trial_name, "actor"
+                    )
+                    name_resolve.add(name, str(1), replace=True)
 
-                # Synchronize weights to the client.
-                self.actor.update_weights_to(self.llm_client)
+                if self.save_ctl.check(
+                    epochs=int(step == steps_per_epoch - 1), steps=1
+                ):
+                    if dist.get_rank() == 0:
+                        logger.info("Saving model ...")
 
-                # IMPORTANT! Update the version for staleness control
-                self.rollout_controller.set_version(self.actor.get_version())
-                # TODO: update version through name resolve
+                    with record_timing("timeperf/save", timing_stats):
+                        save_path = os.path.join(
+                            constants.get_save_path(self.args), "actor"
+                        )
+                        self.actor.save_model_to_hf(
+                            save_path,
+                            tokenizer=self.actor_tokenizer,
+                            base_model_path=self.config.actor.path,
+                        )
+
+                for stats in mb_stats:
+                    log_wandb_tensorboard(global_step, stats, self.summary_writer)
+                log_wandb_tensorboard(global_step, timing_stats, self.summary_writer)
+
+                if dist.get_rank() == 0:
+                    logger.info(
+                        f"Epoch {epoch} Step {step} GlobalStep {global_step} done. Detailed time stats:"
+                        f"\n{tabulate_stats(timing_stats, floatfmt='.2f')}"
+                    )
 
                 global_step += 1
+
+        if dist.get_rank() == 0:
+            logger.info(
+                f"Training completes! Total time elapsed {time.monotonic() - start_time:.2f}."
+            )
+
+        close_wandb_tensorboard(self.summary_writer)

@@ -49,14 +49,14 @@ class FixedKLController(KLController):
 
 
 def actor_loss_fn(
-    logprobs: torch.FloatTensor,
-    old_logprobs: torch.FloatTensor,
-    advantages: torch.FloatTensor,
+    logprobs: torch.Tensor,
+    old_logprobs: torch.Tensor,
+    advantages: torch.Tensor,
     eps_clip: float,
-    loss_mask: Optional[torch.BoolTensor] = None,
+    loss_mask: Optional[torch.Tensor] = None,
     c_clip: Optional[float] = None,
-    proximal_logprobs: Optional[torch.FloatTensor] = None,
-    behav_imp_weight_cap: Optional[torch.FloatTensor] = None,
+    proximal_logprobs: Optional[torch.Tensor] = None,
+    behav_imp_weight_cap: Optional[float] = None,
 ) -> Tuple[torch.Tensor, Dict]:
     """Compute PPO actor loss function.
 
@@ -64,13 +64,13 @@ def actor_loss_fn(
     Either [bs, max_seqlen] for batch padded inputs or [tot_seqlen] for padded inputs.
 
     Args:
-        logprobs (torch.FloatTensor): Log probabilities of actions.
-        old_logprobs (torch.FloatTensor): Old log probabilities of actions.
-        advantages (torch.FloatTensor): GAE (normalized) advantages.
+        logprobs (torch.Tensor): Log probabilities of actions.
+        old_logprobs (torch.Tensor): Old log probabilities of actions.
+        advantages (torch.Tensor): GAE (normalized) advantages.
         eps_clip (float): Clip ratio of PPO.
         c_clip (float | None): The dual clip factor.
             Check https://arxiv.org/pdf/1912.09729 for details.
-        loss_mask (Optional[torch.BoolTensor], optional): Mask for loss computation.
+        loss_mask (Optional[torch.Tensor], optional): Mask for loss computation.
             1 if valid else 0. Defaults to None.
 
     Returns:
@@ -96,7 +96,7 @@ def actor_loss_fn(
     # create mask
     if loss_mask is None:
         loss_mask = torch.ones_like(logprobs, dtype=torch.bool)
-    loss_mask: torch.BoolTensor
+    loss_mask: torch.Tensor
 
     loss_mask_count = loss_mask.count_nonzero() or 1
     # For numerical stability.
@@ -159,11 +159,11 @@ def _mse_loss(x: torch.Tensor, y: torch.Tensor):
 
 
 def critic_loss_fn(
-    value: torch.FloatTensor,
-    old_value: torch.FloatTensor,
-    target_value: torch.FloatTensor,
+    value: torch.Tensor,
+    old_value: torch.Tensor,
+    target_value: torch.Tensor,
     value_eps_clip: float,
-    loss_mask: Optional[torch.FloatTensor] = None,
+    loss_mask: Optional[torch.Tensor] = None,
     loss_fn_type: str = "mse",
 ) -> Tuple[torch.Tensor, Dict]:
     """Compute PPO critic loss function given padded batch inputs.
@@ -172,12 +172,12 @@ def critic_loss_fn(
     Either [bs, max_seqlen] for batch padded inputs or [tot_seqlen] for padded inputs.
 
     Args:
-        value (torch.FloatTensor): Values. The position of the final token is not included.
+        value (torch.Tensor): Values. The position of the final token is not included.
             (The whole generated sequence is not a state.)
-        old_value (torch.FloatTensor): Old values.
-        target_value (torch.FloatTensor): Returns computed by GAE.
+        old_value (torch.Tensor): Old values.
+        target_value (torch.Tensor): Returns computed by GAE.
         value_eps_clip (float): Clip ratio.
-        loss_mask (Optional[torch.FloatTensor], optional): Mask for loss computation.
+        loss_mask (Optional[torch.Tensor], optional): Mask for loss computation.
             1 if valid else 0. Defaults to None.
         loss_fn_type (str, optional): Type of loss function. Defaults to 'huber'.
 
@@ -229,13 +229,13 @@ def critic_loss_fn(
 def get_packed_rewards(
     kl_ctl: float,
     clip_reward_value: float,
-    log_probs: torch.FloatTensor,
-    ref_log_probs: torch.FloatTensor,
-    reward_score: torch.FloatTensor,
-    cu_seqlens: torch.IntTensor,
-    seq_no_eos_mask: torch.BoolTensor,
+    log_probs: torch.Tensor,
+    ref_log_probs: torch.Tensor,
+    reward_score: torch.Tensor,
+    cu_seqlens: torch.Tensor,
+    seq_no_eos_mask: torch.Tensor,
     mask_no_eos_with_zero: bool = False,
-) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     tot_rewards = -kl_ctl * (log_probs - ref_log_probs)
     # Set the KL reward at the EOS token to be zero.
     tot_rewards[cu_seqlens[1:] - 1] = 0
@@ -251,13 +251,13 @@ def get_packed_rewards(
 
 
 def pygae1d_nolp_misalign(
-    rewards: torch.FloatTensor,
-    values: torch.FloatTensor,
-    cu_seqlens_: torch.IntTensor,
-    bootstrap: torch.FloatTensor,
+    rewards: torch.Tensor,
+    values: torch.Tensor,
+    cu_seqlens_: torch.Tensor,
+    bootstrap: torch.Tensor,
     gamma: float,
     lam: float,
-) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     cu_seqlens = cu_seqlens_.clone()
     cu_seqlens[1:] += torch.ones_like(cu_seqlens_[1:]).cumsum(0)
 
@@ -285,13 +285,13 @@ def pygae1d_nolp_misalign(
 
 
 def cugae1d_nolp_misalign_func(
-    rewards: torch.FloatTensor,
-    values: torch.FloatTensor,
-    cu_seqlens: torch.IntTensor,
-    truncate: torch.BoolTensor,
+    rewards: torch.Tensor,
+    values: torch.Tensor,
+    cu_seqlens: torch.Tensor,
+    truncate: torch.Tensor,
     gamma: float,
     lam: float,
-) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Compute GAE over a batch of packed sequences with different lengths.
 
     This function assumes that rewards and values are packed into an 1D tensor.
@@ -303,18 +303,18 @@ def cugae1d_nolp_misalign_func(
     "nolp" (non-overlap) and "misalign".
 
     Args:
-        rewards (torch.FloatTensor): Shape [total_seqlen], rewards across sequences.
-        values (torch.FloatTensor): Shape [total_seqlen + batch_size], values across sequences.
+        rewards (torch.Tensor): Shape [total_seqlen], rewards across sequences.
+        values (torch.Tensor): Shape [total_seqlen + batch_size], values across sequences.
             Values are bootstrapped, so it's longer than rewards.
-        cu_seqlens (torch.IntTensor): Marker of sequence boundaries in rewards,
+        cu_seqlens (torch.Tensor): Marker of sequence boundaries in rewards,
             e.g., [0, s1, s1+s2, ..., total_seqlen]. It should starts with 0 and ends with total_seqlen.
-        truncate (torch.BoolTensor): Whether each sequence is truncated because of exceeding max length.
+        truncate (torch.Tensor): Whether each sequence is truncated because of exceeding max length.
             If truncate, the next value of the last step will be bootstraped, otherwise 0.
         gamma (float): Discount factor.
         lam (float): GAE discount factor.
 
     Returns:
-        Tuple[torch.FloatTensor, torch.FloatTensor]: Advantages and returns (value targets).
+        Tuple[torch.Tensor, torch.Tensor]: Advantages and returns (value targets).
             Both have the same shape as rewards.
     """
     if pkg_version.is_available("cugae"):
@@ -331,11 +331,11 @@ def cugae1d_nolp_misalign_func(
 def get_packed_advantages_and_returns(
     gamma: float,
     lam: float,
-    values: torch.FloatTensor,
-    rewards: torch.FloatTensor,
-    short1cu_seqlens: torch.IntTensor,
-    seq_no_eos_mask: torch.FloatTensor,
-) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
+    values: torch.Tensor,
+    rewards: torch.Tensor,
+    short1cu_seqlens: torch.Tensor,
+    seq_no_eos_mask: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
     if rewards.get_device() == -1:
         return pygae1d_nolp_misalign(
             rewards, values, short1cu_seqlens, seq_no_eos_mask, gamma, lam

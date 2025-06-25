@@ -256,7 +256,9 @@ class IndexFirstAxisResidual(torch.autograd.Function):
 index_first_axis_residual = IndexFirstAxisResidual.apply
 
 
-def unpad_input(hidden_states, attention_mask):
+def unpad_input(
+    hidden_states, attention_mask
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
     """
     Arguments:
         hidden_states: (batch, seqlen, ...)
@@ -352,9 +354,7 @@ def concat_padded_tensors(
 ############### Tensor transformations begin ###############
 
 
-def to_device(
-    data: Dict[str, torch.Tensor | Any], device: torch.device
-) -> Dict[str, torch.Tensor]:
+def to_device(data: Dict[str, torch.Tensor | Any], device) -> Dict[str, torch.Tensor]:
     """Move tensors in a dictionary to the specified device."""
     return {
         key: value.to(device) if torch.is_tensor(value) else value
@@ -364,7 +364,7 @@ def to_device(
 
 def unpack_sequence(
     x: torch.Tensor,
-    cu_seqlens: Optional[torch.IntTensor] = None,
+    cu_seqlens: Optional[torch.Tensor] = None,
     lens: Optional[List[int]] = None,
     dim: int = 0,
 ):
@@ -497,8 +497,8 @@ def split_dict_tensor_with_cu_seqlens(
 @torch.no_grad()
 def compute_varlen_position_indices(
     total_seqlen: int,
-    cu_seqlens: torch.IntTensor,
-    seqlen_offsets: Optional[torch.IntTensor] = None,
+    cu_seqlens: torch.Tensor,
+    seqlen_offsets: Optional[torch.Tensor] = None,
 ) -> torch.LongTensor:
     indexing_t = torch.arange(
         total_seqlen, dtype=torch.long, device=cu_seqlens.device
@@ -523,7 +523,7 @@ def calc_entropy(logits, cu_seqlens):
 @torch.no_grad()
 def masked_normalization(
     x: torch.Tensor,
-    mask: Optional[torch.BoolTensor] = None,
+    mask: Optional[torch.Tensor] = None,
     dim=None,
     inplace=False,
     unbiased=False,
@@ -595,13 +595,13 @@ def gather_logprobs(
     """Gather log probs from logits and labels.
 
     Args:
-        logits (torch.FloatTensor): Shape [tot_seqlen]. The final value at the end of
+        logits (torch.Tensor): Shape [tot_seqlen]. The final value at the end of
             each sequence is not used.
         labels (torch.LongTensor): Labels or input_ids with shape [tot_seqlen].
             The first value at the beginning of each sequence has no corresponding log prob.
 
     Returns:
-        torch.FloatTensor: Log probability with shape [tot_seqlen - #seqs].
+        torch.Tensor: Log probability with shape [tot_seqlen - #seqs].
     """
     log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
     log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
