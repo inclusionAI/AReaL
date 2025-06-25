@@ -25,7 +25,7 @@ from realhf.base import constants, name_resolve, seeding
 
 EXPR_NAME = "test_sglang_client"
 TRIAL_NAME = "test_sglang_client"
-MODEL_PATH = "Qwen/Qwen2-0.5B"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B"
 
 
 @pytest.fixture(scope="module")
@@ -41,7 +41,7 @@ def args():
 @pytest.fixture(scope="module")
 def sglang_server(args):
     server_args = LLMServiceConfig(EXPR_NAME, TRIAL_NAME, model_path=MODEL_PATH)
-    server_args.sglang = SGLangConfig()
+    server_args.sglang = SGLangConfig(mem_fraction_static=0.3)
     server = LLMServerFactory.make_server(server_args)
     server._startup()
     yield
@@ -61,7 +61,6 @@ def sglang_client(args, sglang_server):
     yield client
 
 
-@pytest.mark.skip("")
 def test_sglang_generate(sglang_client):
     req = LLMRequest(
         rid=str(uuid.uuid4()),
@@ -79,7 +78,6 @@ def test_sglang_generate(sglang_client):
     assert isinstance(resp.completion, str)
 
 
-@pytest.mark.skip("")
 @pytest.mark.asyncio
 async def test_sglang_update_weights_from_disk(sglang_client: LLMClient):
     servers = sglang_client.get_healthy_servers()

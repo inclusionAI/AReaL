@@ -24,15 +24,14 @@ def create_distributed_dataset(cfg: DatasetConfig):
         split=cfg.split,
         data_files=cfg.data_files,
     )
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+    dataset = split_dataset_by_node(dataset["train"], rank=rank, world_size=world_size)
     return dataset
 
 
 @record
-@hydra.main(version_base=None)
+@hydra.main(version_base=None, config_path="../config")
 def main(args: TrainingArgs):
-    # TODO: set random seed
-    dist.init_process_group("nccl|gloo")
+    dist.init_process_group("nccl")
 
     # Load and split dataset
     train_dataset = create_distributed_dataset(args.train_dataset)

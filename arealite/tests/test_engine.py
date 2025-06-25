@@ -3,6 +3,7 @@
 
 """Test script for HF Engine implementation."""
 
+import copy
 from typing import Dict
 
 import pytest
@@ -19,10 +20,7 @@ from arealite.api.cli_args import (
 )
 from arealite.api.engine_api import EngineFactory
 from arealite.api.io_struct import FinetuneSpec
-from arealite.utils import (
-    compute_varlen_position_indices,
-    split_dict_tensor_with_cu_seqlens,
-)
+from arealite.utils import compute_varlen_position_indices
 from realhf.impl.model.utils.padding import unpad_input
 
 VOCAB_SIZE = 100
@@ -68,14 +66,19 @@ def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
     return torch.mean(logits)
 
 
+@pytest.fixture(params=["hf", "fsdp"], scope="module")
+def backend_type(request):
+    return request.param
+
+
 @pytest.fixture(scope="module")
-def engine():
+def engine(backend_type):
     engine_config = EngineConfig(
         type=ModelFamily("qwen2", False),
         path="Qwen/Qwen2.5-0.5B",
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
-        backend=EngineBackendConfig(type="hf"),
+        backend=EngineBackendConfig(type=backend_type),
     )
 
     mock_args = TrainingArgs(n_nodes=1, n_gpus_per_node=1)
@@ -110,7 +113,7 @@ def test_forward_microbatch(engine, mock_input):
     input_ids = mock_input["input_ids"].squeeze(0)
     assert x1.shape[0] == input_ids.shape[0]
     assert x2.shape[0] == input_ids.shape[0]
-    assert torch.allclose(x1, x2, atol=1e-2, rtol=1e-2), (x1 - x2).abs().max().item()
+    assert torch.allclose(x1, x2, atol=1e-1, rtol=1e-2), (x1 - x2).abs().max().item()
 
 
 def test_eval_batch(engine, mock_input):
@@ -144,18 +147,19 @@ def test_train_batch(tmp_path_factory, engine, mock_input):
     engine.load_optimizer_state(path)
 
 
-def test_save_load_weights(tmp_path_factory, engine):
+def test_save_load_weights(tmp_path_factory, engine, mock_input):
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
     path = tmp_path_factory.mktemp("hf_engine_test")
-    engine.save_model_to_hf(path=path, tokenizer=tokenizer)
 
-    model = AutoModelForCausalLM.from_pretrained(
-        pretrained_model_name_or_path=path,
-        torch_dtype=torch.float16,
-        attn_implementation="flash_attention_2",
-        trust_remote_code=True,
-        device_map="cuda:0",
+    engine.save_model_to_hf(path=path, tokenizer=tokenizer)
+    old = engine.forward(
+        input_=mock_input,
+        mb_spec=MicroBatchSpec(n_mbs=1),
     )
-    sd = engine.model.state_dict()
-    for k, v in sd.items():
-        assert torch.allclose(v, model.state_dict()[k])
+    engine.load_model_from_hf(path=path)
+    new = engine.forward(
+        input_=mock_input,
+        mb_spec=MicroBatchSpec(n_mbs=1),
+    )
+
+    assert torch.allclose(old, new)

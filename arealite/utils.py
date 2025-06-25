@@ -4,6 +4,11 @@
 # Pad/unpad operations are modified from flash-attention under BSD-3 license.
 # Copyright (c) 2023, Tri Dao.
 
+import getpass
+import os
+import socket
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -11,9 +16,11 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+import wandb
 from einops import rearrange, repeat
+from tensorboardX import SummaryWriter
 
-from arealite.api.cli_args import MicroBatchSpec
+from arealite.api.cli_args import MicroBatchSpec, TrainingArgs
 from realhf.base import datapack
 
 ############### Dict and list operations begin ###############
@@ -601,4 +608,99 @@ def gather_logprobs(
     return log_probs_labels
 
 
-############### Tensor computations end ###############
+def get_save_checkpoint_path(
+    args: TrainingArgs, epoch: int, step: int, globalstep: int
+):
+    path = os.path.join(
+        args.cluster.fileroot,
+        "checkpoints",
+        getpass.getuser(),
+        args.experiment_name,
+        args.trial_name,
+        "model",
+        f"epoch{epoch}epochstep{step}globalstep{globalstep}",
+    )
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def get_log_path(args: TrainingArgs) -> str:
+    log_path = os.path.join(
+        f"{args.cluster.fileroot}",
+        "logs",
+        f"{getpass.getuser()}",
+        f"{args.experiment_name}",
+        f"{args.trial_name}",
+    )
+    os.makedirs(log_path, exist_ok=True)
+    return log_path
+
+
+def init_stats_logging(args: TrainingArgs):
+    """
+    Initialize wandb and/or tensorboard according to config.
+    If torch.distributed is initialized
+
+    Return:
+        tensorboard SummaryWriter if args.tensorboard.path is not None
+    """
+    if dist.is_initialized() and dist.get_rank() != 0:
+        return
+
+    # wandb init, connect to remote wandb host
+    if args.wandb.mode != "disabled":
+        wandb.login()
+    wandb.init(
+        mode=args.wandb.mode,
+        entity=args.wandb.entity,
+        project=args.wandb.project or args.experiment_name,
+        name=args.wandb.name or args.trial_name,
+        job_type=args.wandb.job_type,
+        group=args.wandb.group or f"{args.experiment_name}_{args.trial_name}",
+        notes=args.wandb.notes,
+        tags=args.wandb.tags,
+        config=args.wandb.config,
+        dir=get_log_path(args),
+        force=True,
+        id=f"{args.experiment_name}_{args.trial_name}_train",
+        resume="allow",
+        settings=wandb.Settings(start_method="fork"),
+    )
+    # tensorboard logging
+    summary_writer = None
+    if args.tensorboard.path is not None:
+        summary_writer = SummaryWriter(log_dir=args.tensorboard.path)
+
+    return summary_writer
+
+
+def log_wandb_tensorboard(step, data, summary_writer=None):
+    if dist.is_initialized() and dist.get_rank() != 0:
+        return
+
+    wandb.log(data, step=step)
+    if summary_writer is not None:
+        for key, val in data.items():
+            summary_writer.add_scalar(f"{key}", val, step)
+
+
+def close_wandb_tensorboard(summary_writer=None):
+    if dist.is_initialized() and dist.get_rank() != 0:
+        return
+
+    wandb.finish()
+    if summary_writer is not None:
+        summary_writer.close()
+
+
+@contextmanager
+def record_timing(name, timing_stats):
+    start_time = time.perf_counter()
+    yield
+    timing_stats[name] = time.perf_counter() - start_time
+
+
+def find_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("localhost", 0))
+        return s.getsockname()[1]

@@ -158,9 +158,23 @@ class DatasetConfig:
 
 
 @dataclass
+class FSDPWrapPolicy:
+    transformer_layer_cls_to_wrap: Optional[List[str]] = field(
+        default=None,
+        metadata={"help": "A list of transformer layer names for FSDP to wrap."},
+    )
+
+
+@dataclass
 class FSDPConfig:
-    sync_module_states: bool = True
-    use_orig_params: bool = False
+    wrap_policy: Optional[FSDPWrapPolicy] = field(
+        default=None,
+        metadata={"help": "FSDP wrap policy, specifying model layers to wrap."},
+    )
+    offload_params: bool = field(
+        default=False,
+        metadata={"help": "Whether to offload FSDP parameters to CPU."},
+    )
 
 
 @dataclass

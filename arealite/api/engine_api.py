@@ -72,7 +72,7 @@ class SPMDWrapper(abc.ABC):
         raise NotImplementedError()
 
     def step_lr_scheduler(self):
-        """Step the learning rate scheduler."""
+        """Step learning rate scheduler."""
         raise NotImplementedError()
 
     def save_model_to_hf(
