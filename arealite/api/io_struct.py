@@ -117,14 +117,17 @@ class FinetuneSpec:
 
 @dataclass
 class WeightUpdateGroupMeta:
-    group_name: str
-    ranks: List[int]
-    comm_type: str
+    master_address: str
+    master_port: int
+    rank_offset: int
+    world_size: int
+    group_name: str = "weight_update_group"
+    backend: str = "nccl"
 
 
 @dataclass
 class WeightMeta:
-    group_name: str
     param_name: str
-    shape: torch.Size
-    dtype: torch.dtype
+    shape: List[str]
+    dtype: str
+    group_name: str = "weight_update_group"

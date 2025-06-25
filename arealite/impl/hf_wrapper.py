@@ -1,5 +1,7 @@
+import asyncio
 import math
 import os
+import threading
 from typing import Any, Callable, Dict, List, Literal, Optional
 
 import torch
@@ -16,11 +18,13 @@ from arealite.api.cli_args import (
 )
 from arealite.api.engine_api import SPMDWrapper
 from arealite.api.io_struct import FinetuneSpec
+from arealite.api.llm_client_api import LLMClient
 from arealite.utils import (
     recorder_list,
     split_dict_tensor_with_cu_seqlens,
     unpack_sequence,
 )
+from realhf.base import constants, network
 
 
 def get_cosine_schedule_with_warmup(
@@ -78,8 +82,24 @@ class HFEngine(SPMDWrapper):
         self.optimizer = None
         self.model_config = None
 
+        self.weight_update_group_initialized = False
+
     def init_distributed(self, config: ParallelismConfig, ft_spec: FinetuneSpec):
         """Initialize model in single node."""
+        if not dist.is_initialized():
+            addr = network.gethostip()
+            port = network.find_free_port()
+            dist.init_process_group(
+                backend="nccl",
+                init_method=f"tcp://{addr}:{port}",
+                world_size=1,
+                rank=0,
+            )
+        if dist.get_world_size() > 1:
+            raise RuntimeError(
+                "Distributed training is not supported in this engine. "
+                "Please use FSDP for distributed training."
+            )
 
         # Load model
         dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
@@ -236,8 +256,8 @@ class HFEngine(SPMDWrapper):
 
     def save_model_to_hf(
         self,
-        tokenizer: transformers.PreTrainedTokenizerFast,
         path: str,
+        tokenizer: Optional[transformers.PreTrainedTokenizerFast] = None,
         base_model_path: Optional[str] = None,
     ):
         """Save model in HuggingFace format."""
@@ -249,7 +269,8 @@ class HFEngine(SPMDWrapper):
         state_dict = {k: v.cpu() for k, v in self.model.state_dict().items()}
         self.model.save_pretrained(path, state_dict=state_dict)
         self.model_config.save_pretrained(path)
-        tokenizer.save_pretrained(path)
+        if tokenizer is not None:
+            tokenizer.save_pretrained(path)
 
     def load_model_from_hf(self, path: str):
         """Load model from HuggingFace format."""
@@ -285,5 +306,18 @@ class HFEngine(SPMDWrapper):
         else:
             raise RuntimeError(f"Optimizer state file not found: {optimizer_path}")
 
-    def update_weights_to(self, llm_client):
-        raise NotImplementedError()
+    async def aupdate_weights_to(self, llm_client: LLMClient):
+        path = constants.get_param_realloc_path(self.args)
+        self.save_model_to_hf(path)
+        tasks = [
+            llm_client.aupdate_weights_from_disk(server_info=server_info, path=path)
+            for server_info in llm_client.get_healthy_servers()
+        ]
+        await asyncio.gather(*tasks)
+
+    def update_weights_to(self, llm_client: LLMClient):
+        try:
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(self.aupdate_weights_to(llm_client))
+        finally:
+            loop.close()

@@ -213,3 +213,40 @@ class SGLangClient(LLMClient):
         self.registry.update_heartbeat(
             server_info.server_id, "healthy", version=server_info.version + 1
         )
+
+    async def ainit_weight_update_group(self, server_info, group_meta):
+        payload = dict(
+            master_address=group_meta.master_address,
+            master_port=group_meta.master_port,
+            rank_offset=group_meta.rank_offset,
+            world_size=group_meta.world_size,
+            group_name=group_meta.group_name,
+            backend=group_meta.backend,
+        )
+        response, _ = await self.arequest_with_retry(
+            endpoint="/init_weights_update_group",
+            payload=payload,
+            method="POST",
+            max_retries=3,
+            timeout=self.client_config.request_timeout,
+            target_server=server_info,
+        )
+        res = await response.json()
+        assert res["success"], res["message"]
+
+    async def aupdate_weights_from_distributed(self, server_info, weight_meta):
+        payload = dict(
+            name=weight_meta.param_name,
+            dtype=weight_meta.dtype,
+            shape=weight_meta.shape,
+        )
+        response, _ = await self.arequest_with_retry(
+            endpoint="/update_weights_from_distributed",
+            payload=payload,
+            method="POST",
+            max_retries=3,
+            timeout=self.client_config.request_timeout,
+            target_server=server_info,
+        )
+        res = await response.json()
+        assert res["success"], res["message"]

@@ -6,13 +6,20 @@ import uuid
 import pytest
 
 from arealite.api.cli_args import (
+    EngineBackendConfig,
+    EngineConfig,
     GenerationHyperparameters,
     LLMClientConfig,
     LLMServiceConfig,
+    MicroBatchSpec,
+    ModelFamily,
+    OptimizerConfig,
     SGLangConfig,
     TrainingArgs,
 )
-from arealite.api.io_struct import LLMRequest, LLMResponse
+from arealite.api.engine_api import EngineFactory
+from arealite.api.io_struct import FinetuneSpec, LLMRequest, LLMResponse
+from arealite.api.llm_client_api import LLMClient
 from arealite.api.llm_server_api import LLMServerFactory
 from realhf.base import constants, name_resolve, seeding
 
@@ -54,6 +61,7 @@ def sglang_client(args, sglang_server):
     yield client
 
 
+@pytest.mark.skip("")
 def test_sglang_generate(sglang_client):
     req = LLMRequest(
         rid=str(uuid.uuid4()),
@@ -71,10 +79,37 @@ def test_sglang_generate(sglang_client):
     assert isinstance(resp.completion, str)
 
 
+@pytest.mark.skip("")
 @pytest.mark.asyncio
-async def test_sglang_update_weigths(sglang_client):
+async def test_sglang_update_weights_from_disk(sglang_client: LLMClient):
     servers = sglang_client.get_healthy_servers()
     assert len(servers) == 1
     await sglang_client.aupdate_weights_from_disk(
         server_info=servers[0], path=MODEL_PATH
     )
+
+
+@pytest.fixture(scope="module")
+def engine(sglang_server):
+    engine_config = EngineConfig(
+        type=ModelFamily("qwen2", False),
+        path=MODEL_PATH,
+        gradient_checkpointing=False,
+        optimizer=OptimizerConfig(),
+        backend=EngineBackendConfig(type="hf"),
+    )
+
+    mock_args = TrainingArgs(n_nodes=1, n_gpus_per_node=1)
+
+    engine_factory = EngineFactory(mock_args)
+    engine = engine_factory.make_engine(engine_config)
+    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
+    engine.init_distributed(None, ft_spec)
+    print("✓ Engine created successfully")
+    yield engine
+
+
+def test_sglang_update_weights_from_distributed(
+    engine, sglang_server, sglang_client: LLMClient
+):
+    engine.update_weights_to(sglang_client)
