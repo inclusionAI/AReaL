@@ -322,10 +322,14 @@ class SpmdPPOTrainer(Trainer):
             )
             stats_tracker.stat(**stats, denominator="n_valid_tokens")
 
+            prompt_lens = []
+            for s, e in zip(cu_seqlens[:-1], cu_seqlens[1:]):
+                prompt_lens.append(rollout_output.prompt_mask[s:e].sum())
+            prompt_lens = torch.tensor(prompt_lens, device=reward_score.device)
             seq_stats = dict(
                 no_eos_ratios=seq_no_eos_mask.float(),
                 task_reward=reward_score,
-                prompt_len=ppo_loss_mask.logical_not().float(),
+                prompt_len=prompt_lens.float(),
                 seq_len=input_lens.float(),
             )
             stats_tracker.stat(**seq_stats, denominator="n_seqs")

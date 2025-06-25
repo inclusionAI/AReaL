@@ -81,6 +81,8 @@ class Trainer(abc.ABC):
 
     @property
     def local_train_batch_size(self):
+        if not dist.is_initialized():
+            return self.args.train_dataset.batch_size
         return self.args.train_dataset.batch_size // dist.get_world_size()
 
     # TODO: check HF trainer signature
