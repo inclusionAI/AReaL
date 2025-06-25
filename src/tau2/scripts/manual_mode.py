@@ -3,7 +3,7 @@ from loguru import logger
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
@@ -212,33 +212,46 @@ def format_observation(observation: str, step_count: int):
     console.print(panel)
 
 
-def get_user_action(env: AgentGymEnv, step_count: int, tools, policy: str) -> str:
+def get_user_action(
+    env: AgentGymEnv, step_count: int, tools, policy: str, task=None, solo_mode=False
+) -> str:
     """Get the next action from the user."""
     console.print(
         f"\n[bold cyan] STEP {step_count} - Enter your action as the agent:[/bold cyan]"
     )
-    console.print(
-        "[dim](Type 'quit' to exit, 'help' for commands, 'tools' to see available tools, 'policy' to see agent policy)[/dim]"
-    )
+    help_text = "[dim](Type 'quit' to exit, 'help' for commands, 'tools' to see available tools, 'policy' to see agent policy"
+    if solo_mode:
+        help_text += ", 'ticket' to see task ticket"
+    help_text += ")[/dim]"
+    console.print(help_text)
 
     while True:
         action = Prompt.ask("[bold green]Action[/bold green]")
         if action.lower() == "quit":
             return None
         elif action.lower() == "help":
-            help_panel = Panel(
-                """[bold]📋 Available commands:[/bold]
+            help_content = """[bold]📋 Available commands:[/bold]
 • Type any text to send as your response
 • 'quit': Exit the simulation
 • 'help': Show this help message
 • 'tools': Show available tools
-• 'policy': Show agent policy
+• 'policy': Show agent policy"""
+            if solo_mode:
+                help_content += "\n• 'ticket': Show task ticket"
+
+            help_content += """
 
 [bold]💡 Tips:[/bold]
 • You can use tools by typing their names and parameters
-• Example: [cyan]search_flights(origin="NYC", destination="LAX")[/cyan]
-• Be conversational and helpful to the user
-• Follow the agent policy guidelines""",
+• Example: [cyan]search_flights(origin="NYC", destination="LAX")[/cyan]"""
+            if solo_mode:
+                help_content += "\n• In solo mode, work through the ticket step by step"
+            else:
+                help_content += "\n• Be conversational and helpful to the user"
+            help_content += "\n• Follow the agent policy guidelines"
+
+            help_panel = Panel(
+                help_content,
                 title="🆘 Help",
                 border_style="green",
                 box=box.ROUNDED,
@@ -248,6 +261,13 @@ def get_user_action(env: AgentGymEnv, step_count: int, tools, policy: str) -> st
             display_tools(tools)
         elif action.lower() == "policy":
             display_policy(policy)
+        elif action.lower() == "ticket":
+            if solo_mode and task:
+                display_ticket(task)
+            else:
+                console.print(
+                    "[yellow]Ticket command is only available in solo mode.[/yellow]"
+                )
         elif action:
             # Check if the action looks like a functional tool call
             if is_functional_tool_call(action):
@@ -269,6 +289,67 @@ def get_user_action(env: AgentGymEnv, step_count: int, tools, policy: str) -> st
             return action
         else:
             console.print("[red]Please enter a valid action[/red]")
+
+
+def display_mode_selection():
+    """Display mode selection (solo or normal) and let user choose."""
+    mode_panel = Panel(
+        """[bold]🎭 Choose your interaction mode:[/bold]
+
+[bold blue]Normal Mode:[/bold blue] You interact with a simulated user
+• The user simulator will respond based on the task scenario
+• You'll have conversations back and forth
+
+[bold green]Solo Mode:[/bold green] You work independently on a ticket
+• No user interaction - you solve the task directly
+• You'll see a ticket with the problem description
+• Work through the solution step by step""",
+        title="🔧 Mode Selection",
+        border_style="cyan",
+        box=box.ROUNDED,
+    )
+    console.print(mode_panel)
+
+    return Confirm.ask("\n[bold blue]Enable Solo Mode?[/bold blue]", default=False)
+
+
+def get_user_llm_config():
+    """Get user LLM configuration."""
+    llm_panel = Panel(
+        """[bold]🤖 User Simulator LLM Configuration:[/bold]
+
+Configure which LLM to use for the user simulator.
+Leave empty to use the default LLM.
+
+[dim]Examples: gpt-4, claude-3-sonnet, etc.[/dim]""",
+        title="⚙️ LLM Configuration",
+        border_style="yellow",
+        box=box.ROUNDED,
+    )
+    console.print(llm_panel)
+
+    user_llm = Prompt.ask(
+        "\n[bold blue]Enter User LLM name[/bold blue] (or press Enter for default)",
+        default="",
+    )
+
+    return user_llm if user_llm.strip() else None
+
+
+def display_ticket(task):
+    """Display the task ticket when in solo mode."""
+    if not hasattr(task, "ticket") or not task.ticket:
+        console.print(Panel("No ticket available for this task.", style="yellow"))
+        return
+
+    ticket_panel = Panel(
+        task.ticket,
+        title="🎫 Task Ticket",
+        border_style="green",
+        box=box.ROUNDED,
+        width=100,
+    )
+    console.print(ticket_panel)
 
 
 def main():
@@ -314,11 +395,28 @@ This allows you to interact with the simulation as if you were the AI agent.
                     "[dim]📝 Task description: [red]Unable to display[/red][/dim]"
                 )
 
-        # Step 3: Create TauGymEnv instance
-        with console.status("[bold green]Initializing environment...", spinner="dots"):
-            env = AgentGymEnv(domain=domain, task_id=task.id)
+        # Step 3: Choose mode (solo or normal)
+        solo_mode = display_mode_selection()
+        console.print(
+            f"\n[green]✅ Selected mode:[/green] [bold]{'Solo' if solo_mode else 'Normal'}[/bold]"
+        )
 
-        # Step 4: Reset environment and get initial observation
+        # Step 4: Get user LLM configuration (only for normal mode)
+        user_llm = None
+        if not solo_mode:
+            user_llm = get_user_llm_config()
+            if user_llm:
+                console.print(f"\n[green]✅ User LLM:[/green] [bold]{user_llm}[/bold]")
+            else:
+                console.print(f"\n[green]✅ User LLM:[/green] [bold]Default[/bold]")
+
+        # Step 5: Create TauGymEnv instance
+        with console.status("[bold green]Initializing environment...", spinner="dots"):
+            env = AgentGymEnv(
+                domain=domain, task_id=task.id, solo_mode=solo_mode, user_llm=user_llm
+            )
+
+        # Step 6: Reset environment and get initial observation
         console.print("\n[bold green]🚀 Starting simulation...[/bold green]")
         observation, info = env.reset()
 
@@ -327,6 +425,10 @@ This allows you to interact with the simulation as if you were the AI agent.
         policy = info.get("policy", "")
         display_tools(tools)
         display_policy(policy)
+
+        # Step 7: Display ticket if in solo mode
+        if solo_mode:
+            display_ticket(task)
 
         # Main interaction loop
         step_count = 0
@@ -337,7 +439,7 @@ This allows you to interact with the simulation as if you were the AI agent.
             format_observation(observation, step_count)
 
             # Get user action
-            action = get_user_action(env, step_count, tools, policy)
+            action = get_user_action(env, step_count, tools, policy, task, solo_mode)
             if action is None:
                 console.print("[yellow]👋 Exiting simulation...[/yellow]")
                 break

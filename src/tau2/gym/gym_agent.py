@@ -22,7 +22,7 @@ from tau2.environment.tool import Tool
 from tau2.evaluator.evaluator import EvaluationType, evaluate_simulation
 from tau2.orchestrator.orchestrator import Orchestrator
 from tau2.registry import registry
-from tau2.user.user_simulator import UserSimulator
+from tau2.user.user_simulator import DummyUser, UserSimulator
 from tau2.utils.tools import parse_action_string, to_functional_format
 
 TAU_BENCH_ENV_NAME = "tau-bench"
@@ -192,8 +192,11 @@ class GymAgent(LocalAgent):
             logger.info(f"Got message: {message}")
             if isinstance(message, MultiToolMessage):
                 state.messages.extend(message.tool_messages)
-            else:
+            elif (
+                message is not None
+            ):  # TODO: Review. Added this to handle solo mode. But there might be a better way to do this.
                 state.messages.append(message)
+            # If message is None, we don't add it to the messages list
             self._observation = deepcopy(state.messages)
             logger.info(f"Setting observation: {self._observation}")
 
@@ -243,6 +246,18 @@ class GymAgent(LocalAgent):
         return not self._agent_turn_finished.is_set()
 
 
+class GymConfig(BaseModel):
+    """
+    Configuration for the Gym environment.
+    """
+
+    domain: str
+    task_id: str
+    solo_mode: bool = False
+    user_llm: str = DEFAULT_LLM_USER
+    user_llm_args: dict = deepcopy(DEFAULT_LLM_ARGS_USER)
+
+
 class AgentGymEnv(gym.Env):
     """
     A Gymnasium environment that wraps the Tau2 simulation system.
@@ -281,7 +296,14 @@ class AgentGymEnv(gym.Env):
     to perform actions like searching databases, making bookings, or retrieving information.
     """
 
-    def __init__(self, domain: str, task_id: str):
+    def __init__(
+        self,
+        domain: str,
+        task_id: str,
+        solo_mode: bool = False,
+        user_llm: Optional[str] = None,
+        user_llm_args: Optional[dict] = None,
+    ):
         """
         Initialize the Tau2 gym environment.
 
@@ -291,6 +313,11 @@ class AgentGymEnv(gym.Env):
         """
         self.domain = domain
         self.task_id = task_id
+        self.solo_mode = solo_mode
+        self.user_llm = user_llm if user_llm else DEFAULT_LLM_USER
+        self.user_llm_args = (
+            user_llm_args if user_llm_args else deepcopy(DEFAULT_LLM_ARGS_USER)
+        )
         self._lock = threading.Lock()
         self._agent: Optional[GymAgent] = None
         self._user: Optional[UserSimulator] = None
@@ -604,7 +631,7 @@ class AgentGymEnv(gym.Env):
         Raises:
             ValueError: If the domain is not registered in the registry
         """
-        return registry.get_env_constructor(self.domain)()
+        return registry.get_env_constructor(self.domain)(solo_mode=self.solo_mode)
 
     def _get_task(self) -> Task:
         """
@@ -651,8 +678,9 @@ class AgentGymEnv(gym.Env):
             step-by-step control.
         """
         environment = self._get_environment()
+        user_tools = environment.get_user_tools() if environment.user_tools else []
         return GymAgent(
-            tools=environment.get_tools(),
+            tools=environment.get_tools() + user_tools,
             domain_policy=environment.get_policy(),
         )
 
@@ -684,12 +712,16 @@ class AgentGymEnv(gym.Env):
             user_tools = environment.get_user_tools()
         except ValueError:
             user_tools = None
-        return UserSimulator(
-            tools=user_tools,
-            instructions=task.user_scenario,
-            llm=DEFAULT_LLM_USER,
-            llm_args=deepcopy(DEFAULT_LLM_ARGS_USER),
-        )
+        if self.solo_mode:
+            user_simulator = DummyUser()
+        else:
+            user_simulator = UserSimulator(
+                tools=user_tools,
+                instructions=task.user_scenario,
+                llm=self.user_llm,
+                llm_args=self.user_llm_args,
+            )
+        return user_simulator
 
     def _get_orchestrator(self) -> Orchestrator:
         """
@@ -717,4 +749,5 @@ class AgentGymEnv(gym.Env):
             user=self._get_user(),
             environment=self._get_environment(),
             task=self._get_task(),
+            solo_mode=self.solo_mode,
         )

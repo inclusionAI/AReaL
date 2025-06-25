@@ -22,18 +22,114 @@ domain = "mock"
 task_id = "create_task_1"
 
 env = gym.make(TAU_BENCH_ENV_ID, domain=domain, task_id=task_id)
+
+# Or with additional configuration
+env = gym.make(
+    TAU_BENCH_ENV_ID, 
+    domain=domain, 
+    task_id=task_id,
+    solo_mode=True,
+    user_llm="gpt-4",
+    user_llm_args={"temperature": 0.7}
+)
+```
+
+### Environment Configuration
+
+The `AgentGymEnv` supports several configuration options to customize the simulation behavior:
+
+```python
+from tau2.gym.gym_agent import AgentGymEnv
+
+# Basic environment (normal mode with default user simulator)
+env = AgentGymEnv(domain="retail", task_id="book_flight_1")
+
+# Solo mode - agent works independently on tickets
+env = AgentGymEnv(
+    domain="retail", 
+    task_id="book_flight_1",
+    solo_mode=True
+)
+
+# Custom user LLM configuration  
+env = AgentGymEnv(
+    domain="retail", 
+    task_id="book_flight_1",
+    user_llm="gpt-4",
+    user_llm_args={"temperature": 0.7, "max_tokens": 1000}
+)
+
+# Combined configuration
+env = AgentGymEnv(
+    domain="telecom",
+    task_id="troubleshoot_mobile_data_1", 
+    solo_mode=False,
+    user_llm="claude-3-sonnet",
+    user_llm_args={"temperature": 0.5}
+)
+```
+
+#### Configuration Parameters
+
+**`solo_mode` (bool, optional):** 
+- **Default:** `False`
+- **Description:** When `True`, the agent works independently on task tickets without user interaction. When `False`, the agent interacts with a user simulator.
+- **Usage:** Set to `True` for independent problem-solving scenarios, `False` for conversational interactions.
+
+**`user_llm` (str, optional):**
+- **Default:** Uses system default user LLM
+- **Description:** Specifies which language model to use for the user simulator (only applies when `solo_mode=False`).
+- **Examples:** `"gpt-4"`, `"claude-3-sonnet"`, `"gpt-3.5-turbo"`
+
+**`user_llm_args` (dict, optional):**
+- **Default:** Uses system default LLM arguments
+- **Description:** Additional parameters to pass to the user simulator LLM (only applies when `solo_mode=False`).
+- **Common parameters:** `temperature`, `max_tokens`, `top_p`, `frequency_penalty`, etc.
+
+### Mode Comparison
+
+#### Normal Mode (`solo_mode=False`)
+- **Interaction:** Agent communicates with a user simulator
+- **Use case:** Conversational scenarios, customer service, interactive problem-solving
+- **Task input:** User scenario with persona and instructions
+- **Example:** Customer service representative helping a user book a flight
+
+```python
+env = AgentGymEnv(domain="airline", task_id="book_flight_1", solo_mode=False)
+observation, info = env.reset()
+# Observation includes user messages and responses
+action = "Hello! I'd be happy to help you book a flight. Where would you like to travel?"
+observation, reward, terminated, truncated, info = env.step(action)
+```
+
+#### Solo Mode (`solo_mode=True`)
+- **Interaction:** Agent works independently on task tickets (no user simulator)
+- **Use case:** Technical troubleshooting, independent problem-solving, ticket resolution
+- **Task input:** Task ticket defined in the task configuration (not shown in initial observation)
+- **Initial observation:** Empty/None (no conversation history)
+- **Example:** IT support agent troubleshooting a network issue from a ticket
+
+```python
+env = AgentGymEnv(domain="telecom", task_id="troubleshoot_network_1", solo_mode=True)
+observation, info = env.reset()
+# Observation includes the task ticket and any initial context
+action = "check_network_status(user_id='user_123')"
+observation, reward, terminated, truncated, info = env.step(action)
 ```
 
 ### Simple Agent Interaction
 
+#### Normal Mode Example
+
 ```python
-# Initialize the environment
+# Initialize environment in normal mode (default)
+env = AgentGymEnv(domain="mock", task_id="create_task_1", solo_mode=False)
 observation, info = env.reset()
 print(f"Initial observation: {observation}")
 
 # Access available tools and policy from info
-print(f"Available tools: {info['tools']}")
-print(f"Agent policy: {info['policy']}")
+print(f"Available tools: {len(info['tools'])} tools available")
+print(f"Agent policy: {info['policy'][:100]}...")
 
 # Execute agent actions step by step
 action = "Hello! I'm here to help you with your request."
@@ -43,10 +139,54 @@ print(f"Observation: {observation}")
 print(f"Reward: {reward}")
 print(f"Terminated: {terminated}")
 
+# Use a tool
 next_action = "create_task(user_id='user_1', title='Important Meeting')"
 observation, reward, terminated, truncated, info = env.step(next_action)
 print(f"Observation: {observation}")
 print(f"Step reward: {reward}")
+```
+
+#### Solo Mode Example
+
+```python
+# Initialize environment in solo mode
+env = AgentGymEnv(domain="telecom", task_id="troubleshoot_mobile_data_1", solo_mode=True)
+observation, info = env.reset()
+print(f"Initial observation: {observation}")  # Will be empty/None in solo mode
+
+# In solo mode, agent works independently on the ticket
+# The task ticket information is available through the task definition, not the observation
+action = "get_user_details(user_id='customer_123')"
+observation, reward, terminated, truncated, info = env.step(action)
+
+print(f"After getting user details: {observation}")
+
+# Continue troubleshooting
+next_action = "check_mobile_data_usage(user_id='customer_123')"
+observation, reward, terminated, truncated, info = env.step(next_action)
+print(f"Usage check result: {observation}")
+```
+
+#### Custom LLM Configuration Example
+
+```python
+# Use a specific LLM for user simulation
+env = AgentGymEnv(
+    domain="airline", 
+    task_id="book_flight_1",
+    solo_mode=False,
+    user_llm="gpt-4",
+    user_llm_args={
+        "temperature": 0.8,
+        "max_tokens": 500,
+        "top_p": 0.9
+    }
+)
+
+observation, info = env.reset()
+# The user simulator will now use GPT-4 with the specified parameters
+action = "I'd be happy to help you find and book a flight. Where would you like to go?"
+observation, reward, terminated, truncated, info = env.step(action)
 ```
 
 ### Info Dictionary
@@ -111,6 +251,8 @@ observation, reward, terminated, truncated, info = env.step(action)
 ### Observation Format
 
 The `observation` returned by `reset()` and `step()` is a string representation of the conversation history. Each message is formatted as `"role: content"` and messages are separated by newlines.
+
+**Note:** In solo mode (`solo_mode=True`), the initial observation is empty (None), as there is no user interaction. The task ticket information is available through the task definition. Subsequent observations show the results of agent actions and tool calls without user interactions.
 
 #### Message Types
 

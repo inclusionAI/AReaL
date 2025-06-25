@@ -101,8 +101,8 @@ class Orchestrator:
 
         if self.solo_mode:
             assert self.environment.solo_mode, "Environment should be in solo mode"
-            assert isinstance(self.agent, LLMSoloAgent), (
-                "Agent must be a LLMSoloAgent in solo mode"
+            assert isinstance(self.agent, LLMSoloAgent) or self.agent.__class__.__name__ == "GymAgent", (
+                "Agent must be a LLMSoloAgent or GymAgent in solo mode"
             )
             assert isinstance(self.user, DummyUser), (
                 "User must be a DummyUser in solo mode"
