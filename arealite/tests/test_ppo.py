@@ -1,5 +1,6 @@
 """Test script for PPO Trainer implementation."""
 
+import random
 from typing import Dict
 
 import pytest
@@ -22,11 +23,11 @@ from arealite.api.cli_args import (
     TrainingArgs,
 )
 from arealite.api.engine_api import EngineFactory
-from arealite.api.io_struct import FinetuneSpec
+from arealite.api.io_struct import FinetuneSpec, Trajectory, TrajStats
 from arealite.api.rollout_api import RolloutWorkflowFactory
 from arealite.api.trainer_api import TrainerFactory
 from arealite.impl.rollout_controller import RolloutController
-from arealite.impl.trainer.ppo import SpmdPPOTrainer, UnpaddedRolloutOutput
+from arealite.impl.trainer.ppo import SpmdPPOTrainer
 from arealite.utils import (
     compute_varlen_position_indices,
     split_dict_tensor_with_cu_seqlens,
@@ -219,12 +220,47 @@ def args():
     name_resolve.reset()
 
 
+def mock_rollout_output(bs, n_samples):
+    trajs = []
+    min_seqlen, max_seqlen = 8, 16
+    for _ in range(bs * n_samples):
+        input_len = random.randint(min_seqlen, max_seqlen)
+        prompt_len = random.randint(1, min_seqlen - 1)
+        input_ids = torch.randint(0, 100, (input_len,))
+        prompt_mask = torch.tensor([1] * prompt_len + [0] * (input_len - prompt_len))
+        logprobs = -torch.randn(input_len).abs()
+        versions = torch.zeros(input_len)
+        traj = Trajectory(
+            prompt=None,
+            data=dict(
+                input_ids=input_ids.unsqueeze(0),
+                prompt_mask=prompt_mask.unsqueeze(0),
+                logprobs=logprobs.unsqueeze(0),
+                versions=versions.unsqueeze(0),
+                rewards=torch.tensor([random.random()]),
+            ),
+            stats=TrajStats(
+                start_time=0,
+                total_reward=0,
+                episode_length=1,
+                info={},
+            ),
+        )
+        trajs.append(traj)
+
+    return trajs
+
+
 @pytest.mark.parametrize("kl_ctl", [0.0, 0.1])
-@pytest.mark.parametrize("bs", [2, 4])
-@pytest.mark.parametrize("n_samples", [1, 2])
-def test_train_step(args, kl_ctl, bs, n_samples):
+@pytest.mark.parametrize("bs", [4])
+@pytest.mark.parametrize("n_samples", [2])
+@pytest.mark.parametrize("recompute", [False, True])
+@pytest.mark.parametrize("use_decoupled_loss", [False, True])
+def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
     args.rollout.gconfig.n_samples = n_samples
     args.trainer.ppo.kl_ctl = kl_ctl
+    args.trainer.ppo.recompute_logprobs = recompute
+    args.trainer.ppo.use_decoupled_loss = use_decoupled_loss
     args.train_dataset.batch_size = bs
     # Create mock rollout controller and trainer
     rollout_factory = RolloutWorkflowFactory(args)
@@ -249,42 +285,13 @@ def test_train_step(args, kl_ctl, bs, n_samples):
         trainer.ref.init_distributed(None, ft_spec)
         trainer.ref.eval()
 
-    # Create mock UnpaddedRolloutOutput
-    min_seqlen, max_seqlen = 8, 16
-    mock_inputs = create_mock_input(bs * n_samples, min_seqlen, max_seqlen)
-    input_ids = mock_inputs["input_ids"]
-    prompt_mask = mock_inputs["prompt_mask"].squeeze(0)
-    device = input_ids.device
-    logprobs = (
-        -torch.randn_like(
-            input_ids.squeeze(0), dtype=torch.float32, device=device
-        ).abs()
-        * 0.1
-    )
-    rewards = torch.randn(bs * n_samples, dtype=torch.float32, device=device)
-    seq_no_eos_mask = torch.randint(
-        0, 2, (bs * n_samples,), dtype=torch.bool, device=device
-    )
-    rollout_output = UnpaddedRolloutOutput(
-        loaded_data={},
-        model_inputs=mock_inputs,
-        prompt_mask=prompt_mask,
-        rewards=rewards,
-        seq_no_eos_mask=seq_no_eos_mask,
-        logprobs=logprobs,
-    )
+    rollout_output = mock_rollout_output(bs, n_samples)
     stats_list = trainer._train_step(rollout_output)
 
     # Verify the output
-    assert isinstance(stats_list, list), "Should return a list of stats"
-    assert len(stats_list) > 0, "Should return non-empty stats list"
-    assert isinstance(stats_list[0], dict), "Each stat should be a dictionary"
-
-    # Check that stats contain expected keys
-    expected_keys = [
-        "ppo_actor/advantages",
-        "ppo_actor/kl_rewards",
-        "ppo_actor/final_reward",
-    ]
-    for key in expected_keys:
-        assert any(key in stats for stats in stats_list), f"Missing expected key: {key}"
+    assert isinstance(stats_list, list)
+    assert len(stats_list) == args.trainer.ppo.ppo_n_minibatches
+    for stats in stats_list:
+        assert isinstance(stats, dict)
+        for k, v in stats.items():
+            assert isinstance(v, float)

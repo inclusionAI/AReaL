@@ -18,7 +18,7 @@ from arealite.api.cli_args import (
     TrainingArgs,
 )
 from arealite.api.engine_api import EngineFactory
-from arealite.api.io_struct import FinetuneSpec
+from arealite.api.io_struct import FinetuneSpec, Trajectory
 from arealite.api.llm_client_api import LLMClientFactory
 from arealite.api.trainer_api import Trainer
 from arealite.impl.rollout_controller import RolloutController
@@ -33,6 +33,7 @@ from arealite.utils import (
     list_of_dict2dict_of_list,
     log_wandb_tensorboard,
     masked_normalization,
+    pad_sequences_to_tensors,
     record_timing,
     split_dict_tensor_with_cu_seqlens,
     to_device,
@@ -42,16 +43,6 @@ from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
 from realhf.base import constants, logging, name_resolve, names, stats_tracker, timeutil
 
 logger = logging.getLogger("PPO Trainer")
-
-
-@dataclass
-class UnpaddedRolloutOutput:
-    loaded_data: Dict[str, Any]
-    model_inputs: Dict[str, Any]
-    prompt_mask: torch.Tensor
-    rewards: torch.Tensor
-    seq_no_eos_mask: torch.Tensor
-    logprobs: torch.Tensor
 
 
 class SpmdPPOTrainer(Trainer):
@@ -117,32 +108,8 @@ class SpmdPPOTrainer(Trainer):
         )
         self.summary_writer = init_stats_logging(args)
 
-    def _get_rollout_batch(
-        self, prompt
-    ) -> Tuple[Dict[str, List], Dict[str, torch.Tensor]]:
-        assert self.rollout_controller is not None
-        if self.config.async_training:
-            # Wait until enough trajectories has been collected.
-            trajs = self.rollout_controller.prepare_batch(
-                batch_size=self.args.train_dataset.batch_size // dist.get_world_size()
-            )
-            data = concat_padded_tensors([traj.data for traj in trajs])
-            prompt = list_of_dict2dict_of_list([traj.prompt for traj in trajs])
-            return prompt, data
-
-        # Run batched rollout by submitting requests to LLM servers
-        env_options = dict_of_list2list_of_dict(prompt)
-        trajs = self.rollout_controller.generate_batch(
-            batch_size=len(env_options),
-            env_options=env_options,
-        )
-        data = concat_padded_tensors([traj.data for traj in trajs])
-        prompt = list_of_dict2dict_of_list([traj.prompt for traj in trajs])
-        return prompt, data
-
-    def _rollout_step(self, loaded_data) -> UnpaddedRolloutOutput:
-        # Run generation or rollout to collect data
-        loaded_data, rollout = self._get_rollout_batch(loaded_data)
+    def _train_step(self, trajs: List[Trajectory]):
+        rollout = concat_padded_tensors([traj.data for traj in trajs])
         rollout = to_device(rollout, torch.cuda.current_device())
 
         # Marks which sequence does not has an EOS token, i.e.,
@@ -154,13 +121,13 @@ class SpmdPPOTrainer(Trainer):
 
         # Remove padding to use flash-attn
         attn_mask = rollout["attention_mask"]
-        input_ids, cu_seqlens, max_seqlen, _ = unpad_input(
+        input_ids, _, cu_seqlens, max_seqlen = unpad_input(
             rollout["input_ids"], attn_mask
         )
         position_ids = compute_varlen_position_indices(input_ids.shape[0], cu_seqlens)
 
         # Transformer forward input data
-        input_data = dict(
+        model_inputs = dict(
             input_ids=input_ids.unsqueeze(0),
             attention_mask=None,
             position_ids=position_ids.unsqueeze(0),
@@ -170,18 +137,9 @@ class SpmdPPOTrainer(Trainer):
         )
         old_logp, *_ = unpad_input(rollout["logprobs"], attn_mask)
         prompt_mask, *_ = unpad_input(rollout["prompt_mask"], attn_mask)
-        return UnpaddedRolloutOutput(
-            loaded_data=loaded_data,
-            model_inputs=input_data,
-            logprobs=old_logp,
-            prompt_mask=prompt_mask,
-            seq_no_eos_mask=seq_no_eos_mask,
-            rewards=rollout["rewards"],
-        )
 
-    def _train_step(self, rollout_output: UnpaddedRolloutOutput):
-        input_ids = rollout_output.model_inputs["input_ids"].squeeze(0)
-        n_seqs = rollout_output.seq_no_eos_mask.shape[0]
+        input_ids = model_inputs["input_ids"].squeeze(0)
+        n_seqs = seq_no_eos_mask.shape[0]
         assert n_seqs == self.local_train_batch_size * self.group_size, (
             n_seqs,
             self.group_size,
@@ -194,26 +152,25 @@ class SpmdPPOTrainer(Trainer):
             labels = torch.roll(input_data["input_ids"].squeeze(0), shifts=-1)
             logits /= self.gconfig.temperature
             logprobs = gather_logprobs(logits, labels)
-            return logprobs
+            return logprobs.unsqueeze(0)
 
         if self.ref is not None and self.config.kl_ctl != 0.0:
             ref_logp = self.ref.forward(
-                rollout_output.model_inputs,
+                model_inputs,
                 mb_spec=self.config.mb_spec,
                 post_hook=calc_logprobs,
-            )
+            ).squeeze(0)
         else:
             ref_logp = torch.zeros_like(input_ids, dtype=torch.float32)
 
         # Recompute logprobs using the current actor model.
         prox_logp = None
-        old_logp = rollout_output.logprobs
         if self.config.recompute_logprob:
             _logp = self.actor.forward(
-                rollout_output.model_inputs,
+                model_inputs,
                 mb_spec=self.config.mb_spec,
                 post_hook=calc_logprobs,
-            )
+            ).squeeze(0)
             if self.config.use_decoupled_loss:
                 prox_logp = _logp
             else:
@@ -221,7 +178,7 @@ class SpmdPPOTrainer(Trainer):
                 old_logp = _logp
 
         # Compute rewards using the reward function in synchronous RLVR pipeline.
-        reward_score = rollout_output.rewards
+        reward_score = rollout["rewards"]
         if self.config.group_reward_norm:
             for i in range(n_seqs // self.group_size):
                 s = slice(i * self.group_size, (i + 1) * self.group_size)
@@ -229,15 +186,15 @@ class SpmdPPOTrainer(Trainer):
                 reward_score[s] = (r - r.mean()) / (r.std() + 1e-9)
 
         # Shift logprobs and mask for computing loss.
-        ppo_loss_mask = rollout_output.prompt_mask.logical_not()
+        ppo_loss_mask = prompt_mask.logical_not()
         ppo_loss_mask = torch.roll(ppo_loss_mask, shifts=-1)
         # Apply the mask to log probabilities.
         ref_logp *= ppo_loss_mask
         old_logp *= ppo_loss_mask
 
         # Compute KL-regularized rewards and GAEs.
-        cu_seqlens = rollout_output.model_inputs["cu_seqlens"]
-        seq_no_eos_mask = rollout_output.seq_no_eos_mask
+        cu_seqlens = model_inputs["cu_seqlens"]
+        seq_no_eos_mask = seq_no_eos_mask
         kl_rewards, rewards = ppo_functional.get_packed_rewards(
             kl_ctl=self.kl_ctl,
             clip_reward_value=self.max_reward_clip,
@@ -283,16 +240,12 @@ class SpmdPPOTrainer(Trainer):
 
         # Prepare data to be splitted into mini-batches.
         ppo_global_batch = dict(
-            **rollout_output.model_inputs,
+            **model_inputs,
             old_logp=old_logp,
             advantages=advantages,
             ppo_loss_mask=ppo_loss_mask,
         )
-        input_lens = (
-            rollout_output.model_inputs["cu_seqlens"][1:]
-            - rollout_output.model_inputs["cu_seqlens"][:-1]
-        )
-        lens = input_lens.cpu().numpy().tolist()
+        input_lens = model_inputs["cu_seqlens"][1:] - model_inputs["cu_seqlens"][:-1]
 
         all_stats = []
         with stats_tracker.scope("ppo_actor"):
@@ -324,7 +277,7 @@ class SpmdPPOTrainer(Trainer):
 
             prompt_lens = []
             for s, e in zip(cu_seqlens[:-1], cu_seqlens[1:]):
-                prompt_lens.append(rollout_output.prompt_mask[s:e].sum())
+                prompt_lens.append(prompt_mask[s:e].sum())
             prompt_lens = torch.tensor(prompt_lens, device=reward_score.device)
             seq_stats = dict(
                 no_eos_ratios=seq_no_eos_mask.float(),
@@ -357,7 +310,8 @@ class SpmdPPOTrainer(Trainer):
                 mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
             )
             for mb in mb_inputs.mbs:
-                model_inputs = {k: mb[k] for k in rollout_output.model_inputs}
+                model_inputs = {k: mb[k] for k in model_inputs}
+                model_inputs["ppo_loss_mask"] = mb["ppo_loss_mask"]
                 loss_fn = self._get_ppo_loss_fn(
                     old_logp=mb["old_logp"],
                     advantages=mb["advantages"],
@@ -372,9 +326,6 @@ class SpmdPPOTrainer(Trainer):
                 )
                 stats_tracker.scalar(**train_stat)
                 all_stats.append(stats_tracker.export())
-
-            self.actor.step_lr_scheduler()
-
         all_stats[0].update(global_stats)
         return all_stats
 
@@ -492,12 +443,26 @@ class SpmdPPOTrainer(Trainer):
                         # ensure that there are enough data being generated.
                         if global_step < self.max_head_offpolicyness + 1:
                             continue
-                    # Run rollout
-                    rollout_output = self._rollout_step(data)
+
+                    # Run generation or rollout to collect data
+                    if self.config.async_training:
+                        # Wait until enough trajectories has been collected.
+                        trajs = self.rollout_controller.prepare_batch(
+                            batch_size=self.args.train_dataset.batch_size
+                            // dist.get_world_size()
+                        )
+                    else:
+                        # Run batched rollout by submitting requests to LLM servers
+                        env_options = dict_of_list2list_of_dict(data)
+                        trajs = self.rollout_controller.generate_batch(
+                            batch_size=len(env_options),
+                            env_options=env_options,
+                        )
 
                 with record_timing("timeperf/train_step", timing_stats):
                     # Run RL training and update weights.
-                    mb_stats = self._train_step(rollout_output)
+                    mb_stats = self._train_step(trajs)
+                    self.actor.step_lr_scheduler()
 
                 with record_timing("timeperf/sync_weights", timing_stats):
                     # Synchronize weights to the client.
@@ -540,5 +505,7 @@ class SpmdPPOTrainer(Trainer):
             logger.info(
                 f"Training completes! Total time elapsed {time.monotonic() - start_time:.2f}."
             )
+        if self.config.async_training:
+            self.rollout_controller.stop_generate_loop()
 
         close_wandb_tensorboard(self.summary_writer)

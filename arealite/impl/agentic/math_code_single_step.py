@@ -262,6 +262,7 @@ class MathCodeSingleStepWorkflow(RolloutWorkflow):
         await self.agent.areset()
 
         data = []
+        rewards = []
         tik = datetime.now().timestamp()
         ret = 0.0
         ep_len = 0
@@ -294,6 +295,7 @@ class MathCodeSingleStepWorkflow(RolloutWorkflow):
                 versions=torch.tensor(versions, dtype=torch.long),
             )
             data.append(d)
+            rewards.append(reward)
 
             ret += reward
             ep_len += 1
@@ -304,7 +306,7 @@ class MathCodeSingleStepWorkflow(RolloutWorkflow):
 
         return Trajectory(
             prompt=env_option,
-            data=pad_sequences_to_tensors(data),
+            data=dict(rewards=torch.tensor(rewards), **pad_sequences_to_tensors(data)),
             stats=TrajStats(
                 start_time=tik,
                 total_reward=ret,

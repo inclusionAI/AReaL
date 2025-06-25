@@ -310,23 +310,26 @@ def concat_padded_tensors(
         return {}
 
     # Find max sequence length across all dictionaries
-    max_length = max(
-        tensor.shape[1]
-        for tensor_dict in tensor_dicts
-        for key, tensor in tensor_dict.items()
-        if key != "attention_mask"
-    )
+    lens = []
+    for tensor_dict in tensor_dicts:
+        for key, tensor in tensor_dict.items():
+            if key != "attention_mask" and len(tensor.shape) == 2:
+                lens.append(tensor.shape[1])
+                break
+    max_length = max(lens)
+    attn_mask = torch.arange(max_length).unsqueeze(0) < torch.tensor(lens).unsqueeze(1)
 
     result = {}
-
     # Process each key
     for key in tensor_dicts[0].keys():
         tensors_to_concat = []
-
         for tensor_dict in tensor_dicts:
             tensor = tensor_dict[key]
+            # Skip 1D tensors like rewards
+            if len(tensor.shape) == 1:
+                tensors_to_concat.append(tensor)
+                continue
             current_length = tensor.shape[1]
-
             if current_length < max_length:
                 # Pad tensor to max_length
                 pad_width = max_length - current_length
@@ -341,11 +344,11 @@ def concat_padded_tensors(
                         (tensor.shape[0], pad_width), pad_value, dtype=tensor.dtype
                     )
                 tensor = torch.cat([tensor, padding], dim=1)
-
             tensors_to_concat.append(tensor)
 
         result[key] = torch.cat(tensors_to_concat, dim=0)
-
+    if "attention_mask" not in result:
+        result["attention_mask"] = attn_mask
     return result
 
 

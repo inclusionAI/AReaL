@@ -110,10 +110,13 @@ class RlvrWorkflow(RolloutWorkflow):
         return Trajectory(
             prompt=env_option,
             data=dict(
-                input_ids=torch.tensor(input_ids),
-                prompt_mask=torch.tensor(prompt_mask),
-                logprobs=torch.tensor(logprobs),
-                versions=torch.tensor(versions),
+                # unsqueeze to add an additional batch dimension
+                input_ids=torch.tensor(input_ids).unsqueeze(0),
+                prompt_mask=torch.tensor(prompt_mask).unsqueeze(0),
+                logprobs=torch.tensor(logprobs).unsqueeze(0),
+                versions=torch.tensor(versions).unsqueeze(0),
+                # reward
+                rewards=torch.tensor([reward]),
             ),
             stats=TrajStats(
                 start_time=tik,
