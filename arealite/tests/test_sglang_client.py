@@ -49,7 +49,7 @@ def sglang_server(args):
 
 @pytest.fixture(scope="module")
 def sglang_client(args, sglang_server):
-    from arealite.impl.sglang_client import SGLangClient
+    from arealite.system.sglang_client import SGLangClient
 
     llm_client = LLMClientConfig(
         server_backend="sglang",

@@ -14,7 +14,7 @@ import numpy as np
 from arealite.api.cli_args import RolloutControllerConfig, TrainingArgs
 from arealite.api.io_struct import Trajectory
 from arealite.api.rollout_api import RolloutWorkflow
-from arealite.impl.rollout_worker import RolloutWorker
+from arealite.system.rollout_worker import RolloutWorker
 from realhf.base import datapack, logging, network
 from realhf.system.push_pull_stream import ZMQJsonPuller, ZMQJsonPusher
 
@@ -152,7 +152,7 @@ class RolloutController:
 
     def _run_worker_process(self, worker_id: int):
         """Run a worker process using multiprocessing."""
-        from arealite.impl.rollout_worker import RolloutWorker
+        from arealite.system.rollout_worker import RolloutWorker
 
         # Create and run worker directly
         worker = RolloutWorker(

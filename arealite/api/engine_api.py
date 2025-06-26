@@ -106,11 +106,11 @@ class EngineFactory:
     def make_engine(self, engine_config: EngineConfig) -> SPMDWrapper:
         """Create an engine based on the configuration."""
         if engine_config.backend.type == "fsdp":
-            from arealite.impl.fsdp_wrapper import FSDPEngine
+            from arealite.impl.engine.fsdp_wrapper import FSDPEngine
 
             return FSDPEngine(self.args, engine_config)
         elif engine_config.backend.type == "hf":
-            from arealite.impl.hf_wrapper import HFEngine
+            from arealite.impl.engine.hf_wrapper import HFEngine
 
             return HFEngine(self.args, engine_config)
         else:

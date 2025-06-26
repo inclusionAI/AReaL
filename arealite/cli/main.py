@@ -12,7 +12,7 @@ from torch.distributed.elastic.multiprocessing.errors import record
 from arealite.api.cli_args import DatasetConfig, TrainingArgs
 from arealite.api.rollout_api import RolloutWorkflowFactory
 from arealite.api.trainer_api import TrainerFactory
-from arealite.impl.rollout_controller import RolloutController
+from arealite.system.rollout_controller import RolloutController
 
 
 def create_distributed_dataset(cfg: DatasetConfig):

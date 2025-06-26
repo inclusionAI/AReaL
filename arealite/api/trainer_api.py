@@ -12,7 +12,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from arealite.api.cli_args import TrainerConfig, TrainingArgs
 
 if TYPE_CHECKING:
-    from arealite.impl.rollout_controller import RolloutController
+    from arealite.system.rollout_controller import RolloutController
 # application code
 
 # 1. create a trimmed base trainer class for inheriance

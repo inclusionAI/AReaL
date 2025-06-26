@@ -8,7 +8,7 @@ from datasets import Dataset
 from arealite.api.cli_args import TrainerConfig, TrainingArgs
 from arealite.api.engine_api import EngineFactory
 from arealite.api.trainer_api import Trainer
-from arealite.impl.rollout_controller import RolloutController
+from arealite.system.rollout_controller import RolloutController
 from arealite.utils import (
     close_wandb_tensorboard,
     compute_varlen_position_indices,

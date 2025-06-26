@@ -256,7 +256,7 @@ class LLMServerFactory:
     def make_server(server_config: LLMServiceConfig) -> LLMServer:
         """Create an LLM server instance based on the configuration."""
         if server_config.server_backend == "sglang":
-            from arealite.impl.sglang_server import SGLangServer
+            from arealite.system.sglang_server import SGLangServer
 
             return SGLangServer(server_config)
         else:

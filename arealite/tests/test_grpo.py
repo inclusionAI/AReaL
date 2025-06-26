@@ -18,8 +18,8 @@ from arealite.api.cli_args import (
 )
 from arealite.api.io_struct import FinetuneSpec
 from arealite.api.rollout_api import RolloutWorkflowFactory
-from arealite.impl.rollout_controller import RolloutController
 from arealite.impl.trainer.grpo import SpmdGRPOTrainer
+from arealite.system.rollout_controller import RolloutController
 from arealite.tests.utils import mock_rollout_output
 from realhf.base import constants, name_resolve, seeding
 

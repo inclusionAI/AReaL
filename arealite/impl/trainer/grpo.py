@@ -20,7 +20,7 @@ from arealite.api.engine_api import EngineFactory
 from arealite.api.io_struct import FinetuneSpec, Trajectory
 from arealite.api.llm_client_api import LLMClientFactory
 from arealite.api.trainer_api import Trainer
-from arealite.impl.rollout_controller import RolloutController
+from arealite.system.rollout_controller import RolloutController
 from arealite.utils import (
     calc_entropy,
     close_wandb_tensorboard,

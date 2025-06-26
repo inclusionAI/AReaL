@@ -20,7 +20,7 @@ from arealite.api.cli_args import (
 from arealite.api.io_struct import Trajectory
 from arealite.api.llm_server_api import LLMServerFactory
 from arealite.api.rollout_api import RolloutWorkflowFactory
-from arealite.impl.rollout_controller import RolloutController
+from arealite.system.rollout_controller import RolloutController
 from arealite.tests.utils import mock_rollout_output
 from arealite.utils import concat_padded_tensors
 from realhf.api.core.data_api import load_hf_tokenizer
