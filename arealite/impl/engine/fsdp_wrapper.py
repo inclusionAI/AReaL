@@ -464,6 +464,7 @@ class FSDPEngine(SPMDWrapper):
                 results.append(outputs.logits)
 
         res = aggregate_fn(results)
+        output_seqlens = [output_seqlens[i] for i in mb_splits.forward_indices]
         unpacked = unpack_sequence(res, lens=output_seqlens, dim=1)
         return aggregate_fn(recorder_list(unpacked, mb_splits.backward_indices))
 

@@ -30,6 +30,9 @@ exp_ctrl:
   benchmark_steps: null
   benchmark_n_seqs: null
 
+# whether to allow persistent servers
+shutdown_server_on_exit: false
+
 # Allocation and parallelism
 allocation_mode: sglang.d4p1m1+d2p2m1
 n_nodes: 1
@@ -40,22 +43,59 @@ ray_temp_path: /tmp/ray
 cluster:
   cluster_name: local
   fileroot: /tmp/arealite/
-  n_nodes: 32
+  n_nodes: 1
   n_gpus_per_node: 8
   name_resolve:
     type: nfs
-    nfs_record_root: /tmp/arealite/llm_server/
+    nfs_record_root: /tmp/arealite/name_resolve/
 
-# Model
+# Datasets
+train_dataset:
+  path: openai/gsm8k
+  name: main
+  split: train
+  batch_size: 128
+  shuffle: True
+  preprocessor:
+    type: gsm8k
+    gsm8k:
+      reward_mode: strict
+valid_dataset: null
+
+# Rollout config
+rollout:
+  workflow:
+    type: rlvr
+    rlvr:
+      reward_type: gsm8k
+  num_workers: 1
+  max_concurrent_rollouts: null
+  max_head_offpolicyness: 4
+  filter_reward_lb: -10000
+  filter_reward_ub: 10000
+  llm_client:
+    server_backend: sglang
+    schedule_policy: round_robin
+    tokenizer_path: Qwen/Qwen2-0.5B-Instruct
+    request_timeout: 3600
+    request_retries: 3
+  gconfig:
+    n_samples: 16
+    max_new_tokens: 512
+    min_new_tokens: 0
+    top_p: 1.0
+    top_k: 1000000
+    temperature: 1.0
+
+# Trainer
 trainer:
   type: grpo
   grpo:
+    async_training: true
     actor:
-      type:
-        _class: qwen3
-      path: /storage/testing/models/Qwen__Qwen3-1.7B/
+      path: Qwen/Qwen2-0.5B-Instruct
       init_from_scratch: false
-      gradient_checkpointing: true
+      gradient_checkpointing: false
       bf16: false
       optimizer:
         type: adam
@@ -72,52 +112,24 @@ trainer:
         loss_scale_window: 5.0
         hysteresis: 2
         gradient_clipping: 1.0
+      backend:
+        type: hf
+    ref: null
     mb_spec:
-      max_tokens_per_mb: 30720
-    dataset:
-      path: /storage/testing/datasets/boba_106k_0319.jsonl
-      max_prompt_len: 1024
-      train_bs_n_seqs: 512
-    # Rollout
-    collector:
-      type: llm
-      agent:
-        type: math_code_single_step
-        math_code_single_step:
-          gconfig:
-            n: 1
-            max_new_tokens: 27648
-            min_new_tokens: 0
-            greedy: false
-            top_p: 1.0
-            top_k: 1000000
-            temperature: 1.0
-          tokenizer_path: /storage/testing/models/Qwen__Qwen3-1.7B/
-      env:
-        type: math_code_single_step
-        reward_scaling: 5.0
-        reward_bias: -0.5
-        math_code_single_step:
-          dataset_path: /storage/testing/datasets/boba_106k_0319.jsonl
+      max_tokens_per_mb: 10240
     # Algorithm
-    group_size: 16
+    group_adv_norm: False
     ppo_n_minibatches: 4
     eps_clip: 0.2
     c_clip: null
-    value_eps_clip: 0.2
-    early_stop_imp_ratio: 5.0
-    actor_sample_reuse: 1
-    critic_sample_reuse: 1
+    reward_scaling: 10.0
+    reward_bias: -0.5
     max_reward_clip: 20.0
-    reward_output_scaling: 5.0
-    reward_output_bias: 0.0
-    fuse_rew_ref: true
+    mask_no_eos_with_zero: false
     discount: 1.0
     gae_lambda: 1.0
     adv_norm: true
     kl_ctl: 0.0
-    use_adaptive_kl_ctl: false
-    disable_value: true
     recompute_logprob: true
     use_decoupled_loss: true
     behav_imp_weight_cap: null

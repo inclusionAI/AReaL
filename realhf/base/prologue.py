@@ -64,4 +64,4 @@ def get_trial_name(default_name: str = ""):
     return trial_name
 
 
-global_init()
+# global_init()
