@@ -23,7 +23,6 @@ from arealite.api.cli_args import EngineConfig, FSDPConfig, MicroBatchSpec, Trai
 from arealite.api.engine_api import SPMDWrapper
 from arealite.api.io_struct import FinetuneSpec
 from arealite.utils import (
-    find_free_port,
     recorder_list,
     split_dict_tensor_with_cu_seqlens,
     unpack_sequence,
@@ -192,7 +191,6 @@ def get_cosine_schedule_with_warmup(
     Return:
         :obj:`torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
     """
-    min_lr_ratio = 0.0 if min_lr_ratio is None else min_lr_ratio
     assert min_lr_ratio >= 0 and min_lr_ratio <= 1.0
     coef = (1 - min_lr_ratio) * 0.5
     intercept = (1 + min_lr_ratio) * 0.5
@@ -241,34 +239,21 @@ class FSDPEngine(SPMDWrapper):
 
     def init_distributed(self, config: ParallelismConfig, ft_spec: FinetuneSpec):
         """Initialize distributed communication and model."""
-        if self.args.n_gpus_per_node == 1 and self.args.n_nodes == 1:
-            if not dist.is_initialized():
-                dist.init_process_group(
-                    backend="nccl",
-                    rank=0,
-                    world_size=1,
-                    init_method=f"tcp://localhost:{find_free_port()}",
-                )
-            torch.cuda.set_device("cuda:0")
-        else:
-            if not dist.is_initialized():
-                dist.init_process_group(backend="nccl")
+        if not dist.is_initialized():
+            dist.init_process_group(backend="nccl")
 
-            # print(f"LOCAL_RANK = {os.environ["LOCAL_RANK"]}")
-            torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-            # print(f"current rank = {dist.get_rank()}, current device = {torch.cuda.current_device()}")
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
-        # Load model
         dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
-        model = AutoModelForCausalLM.from_pretrained(
-            pretrained_model_name_or_path=self.engine_config.path,
-            torch_dtype=dtype,
-            attn_implementation="flash_attention_2",
-            trust_remote_code=True,
-        )
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.engine_config.path,
             trust_remote_code=True,
+        )
+        # initialize scratch model from config
+        model = AutoModelForCausalLM.from_config(
+            self.model_config,
+            torch_dtype=dtype,
+            attn_implementation="flash_attention_2",
         )
 
         # Simple auto wrap policy
@@ -293,9 +278,7 @@ class FSDPEngine(SPMDWrapper):
         }
 
         # Wrap with FSDP2
-        full_state = model.state_dict()
         apply_fsdp2(model, fsdp_kwargs, self.fsdp_config.wrap_policy)
-        fsdp2_load_full_state_dict(model, full_state, device_mesh, self.cpu_offload)
 
         self.model = model
 
@@ -373,7 +356,6 @@ class FSDPEngine(SPMDWrapper):
         dist.all_reduce(total_loss_weight)
 
         # Process microbatches with gradient accumulation
-        # TODO: step lr scheduler if required
         for i, mb_input in enumerate(mb_inputs):
             outputs = self.model(**mb_input)
 
@@ -508,23 +490,17 @@ class FSDPEngine(SPMDWrapper):
 
     def load_model_from_hf(self, path: str):
         """Load model from HuggingFace format."""
-        # if self.model is None:
-        #     raise RuntimeError("Model not initialized")
-
-        # state_dict = torch.load(
-        #     os.path.join(path, "pytorch_model.bin"), map_location="cpu"
-        # )
-
-        # with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):
-        #     self.model.load_state_dict(state_dictt
-        dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
-        model = AutoModelForCausalLM.from_pretrained(
-            pretrained_model_name_or_path=path,
-            torch_dtype=dtype,
-            attn_implementation="flash_attention_2",
-            trust_remote_code=True,
-        )
-        full_state = model.state_dict()
+        if dist.get_rank() == 0:
+            dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
+            model = AutoModelForCausalLM.from_pretrained(
+                pretrained_model_name_or_path=path,
+                torch_dtype=dtype,
+                attn_implementation="flash_attention_2",
+                trust_remote_code=True,
+            )
+            full_state = model.state_dict()
+        else:
+            full_state = {}
 
         fsdp2_load_full_state_dict(
             self.model, full_state, self.device_mesh, self.cpu_offload

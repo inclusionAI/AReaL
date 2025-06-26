@@ -4,8 +4,6 @@
 # Pad/unpad operations are modified from flash-attention under BSD-3 license.
 # Copyright (c) 2023, Tri Dao.
 
-import getpass
-import os
 import socket
 import time
 from contextlib import contextmanager
@@ -21,7 +19,7 @@ from einops import rearrange, repeat
 from tensorboardX import SummaryWriter
 
 from arealite.api.cli_args import MicroBatchSpec, TrainingArgs
-from realhf.base import datapack
+from realhf.base import datapack, constants
 
 ############### Dict and list operations begin ###############
 
@@ -610,34 +608,7 @@ def gather_logprobs(
     log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
     return log_probs_labels
 
-
-def get_save_checkpoint_path(
-    args: TrainingArgs, epoch: int, step: int, globalstep: int
-):
-    path = os.path.join(
-        args.cluster.fileroot,
-        "checkpoints",
-        getpass.getuser(),
-        args.experiment_name,
-        args.trial_name,
-        "model",
-        f"epoch{epoch}epochstep{step}globalstep{globalstep}",
-    )
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def get_log_path(args: TrainingArgs) -> str:
-    log_path = os.path.join(
-        f"{args.cluster.fileroot}",
-        "logs",
-        f"{getpass.getuser()}",
-        f"{args.experiment_name}",
-        f"{args.trial_name}",
-    )
-    os.makedirs(log_path, exist_ok=True)
-    return log_path
-
+############### Tensor computations end ###############
 
 def init_stats_logging(args: TrainingArgs):
     """
@@ -663,7 +634,7 @@ def init_stats_logging(args: TrainingArgs):
         notes=args.wandb.notes,
         tags=args.wandb.tags,
         config=args.wandb.config,
-        dir=get_log_path(args),
+        dir=constants.get_log_path(args),
         force=True,
         id=f"{args.experiment_name}_{args.trial_name}_train",
         resume="allow",
@@ -702,8 +673,3 @@ def record_timing(name, timing_stats):
     yield
     timing_stats[name] = time.perf_counter() - start_time
 
-
-def find_free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("localhost", 0))
-        return s.getsockname()[1]

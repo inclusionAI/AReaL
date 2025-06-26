@@ -1,6 +1,7 @@
 """Test script for FSDP Engine implementation."""
 
 from typing import Dict
+import os
 
 import torch
 from datasets import load_dataset
@@ -14,7 +15,9 @@ from arealite.api.cli_args import (
     SFTTrainerConfig,
     TrainerConfig,
     TrainingArgs,
+    DatasetPreprocessor
 )
+from arealite.api.dataset_api import DatasetFactory
 from arealite.api.trainer_api import TrainerFactory
 
 
@@ -28,22 +31,20 @@ def mock_loss_weight_fn(logits: torch.Tensor, input_data: Dict) -> float:
     return float(input_data["attention_mask"].sum())
 
 
-def create_dataset(cfg: DatasetConfig):
-    dataset = load_dataset(
-        cfg.path,
-        name=cfg.name,
-        split=cfg.split,
-    )
-    return dataset
-
-
-def test_engine():
+def test_sft():
     """Test engine creation and basic functionality."""
+    # environment variables for torch distributed
+    os.environ["WORLD_SIZE"] = "1"
+    os.environ["RANK"] = "0"
+    os.environ["LOCAL_RANK"] = "0"
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "7777"
 
     train_dataset = DatasetConfig(
-        path="/storage/openpsi/users/meizhiyu.mzy/datasets/sft/json/",
-        # name="main",
-        # split="train",
+        path="openai/gsm8k",
+        preprocessor=DatasetPreprocessor("gsm8k_sft"),
+        name="main",
+        split="train",
         batch_size=8,
         shuffle=True,
         pin_memory=True,
@@ -51,9 +52,10 @@ def test_engine():
     )
 
     valid_dataset = DatasetConfig(
-        path="/storage/openpsi/users/meizhiyu.mzy/datasets/sft/json/",
-        # name="main",
-        # split="test",
+        path="openai/gsm8k",
+        preprocessor=DatasetPreprocessor("gsm8k_sft"),
+        name="main",
+        split="test",
         batch_size=8,
         shuffle=False,
         pin_memory=True,
@@ -62,7 +64,7 @@ def test_engine():
 
     engine_config = EngineConfig(
         type=ModelFamily("qwen2", False),
-        path="/storage/openpsi/models/Qwen__Qwen2.5-0.5B-Instruct/",
+        path="Qwen/Qwen2.5-0.5B",
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
         backend=EngineBackendConfig(type="hf"),
@@ -89,10 +91,13 @@ def test_engine():
     )
 
     rollout_controller = None
-    train_dataset = create_dataset(args.train_dataset)
+    dataset_factory = DatasetFactory(args)
+    train_dataset = dataset_factory.make_dataset(args.train_dataset, 0, 1)
+    train_dataset = train_dataset.select(range(100))
     valid_dataset = None
     if args.valid_dataset is not None:
-        valid_dataset = create_dataset(args.valid_dataset)
+        valid_dataset = dataset_factory.make_dataset(args.valid_dataset, 0, 1)
+        valid_dataset = valid_dataset.select(range(100))
     if args.trainer is not None:
         trainer_factory = TrainerFactory(args)
         trainer = trainer_factory.make_trainer(

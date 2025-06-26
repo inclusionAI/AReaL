@@ -1,5 +1,6 @@
 import time
-from typing import Dict, List, Optional
+import os
+from typing import Dict, List, Optional, Callable
 
 import torch
 import torch.distributed as dist
@@ -13,17 +14,29 @@ from arealite.utils import (
     close_wandb_tensorboard,
     compute_varlen_position_indices,
     gather_logprobs,
-    get_save_checkpoint_path,
     init_stats_logging,
     log_wandb_tensorboard,
     record_timing,
 )
 from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
 from realhf.api.core.model_api import FinetuneSpec
-from realhf.base import logging, stats_tracker, timeutil
+from realhf.base import logging, stats_tracker, timeutil, constants
+
+import torch.utils.data
 
 logger = logging.getLogger("SFT Trainer")
 
+
+def get_save_checkpoint_path(
+   args: TrainingArgs, epoch: int, step: int, globalstep: int
+):
+    path = os.path.join(
+        constants.get_save_path(args),
+        "model",
+        f"epoch{epoch}epochstep{step}globalstep{globalstep}"
+    )
+    os.makedirs(path, exist_ok=True)
+    return path
 
 def compute_packed_sft_loss(
     logits: torch.Tensor,
@@ -93,7 +106,7 @@ class SFTTrainer(Trainer):
             trainer_config,
             train_dataset,
             valid_dataset,
-            rollout_controller,
+            rollout_controller
         )
 
         self.config = config = trainer_config.sft
@@ -129,22 +142,13 @@ class SFTTrainer(Trainer):
         )
 
     def _get_packed_input(self, data: Dict):
-        prompts = data["prompt"]
-        answers = data["answer"]
-        inputs = [
-            prompt + answer + self.tokenizer.eos_token
-            for prompt, answer in zip(prompts, answers)
-        ]
-        tokenized_prompts = self._tokenize(prompts)
-        tokenized_inputs = self._tokenize(inputs)
-
-        # form a data batch
-        prompt_lens = tokenized_prompts["length"]
-        input_lens = tokenized_inputs["length"]
+        tokenized_seqs = data["seq"]
+        prompt_lens = data["prompt_len"]
+        input_lens = data["seq_len"]
 
         input_lens = torch.tensor(input_lens, dtype=torch.int)
         input_ids = [
-            torch.tensor(seq, dtype=torch.long) for seq in tokenized_inputs["input_ids"]
+            torch.tensor(seq, dtype=torch.long) for seq in tokenized_seqs
         ]
 
         prompt_mask = []
@@ -184,22 +188,19 @@ class SFTTrainer(Trainer):
         )
 
         self.model.init_distributed(None, ft_spec)
+        self.model.load_model_from_hf(self.config.model.path)
         self.model.train()
 
         if dist.get_rank() == 0:
-            print(f"total_epochs={total_epochs} step_per_epoch={steps_per_epoch}")
+            logger.info(f"total_epochs={total_epochs} step_per_epoch={steps_per_epoch}")
         global_step = 0
         start_time = time.monotonic()
-        # dataloader: self.train_data_loader
         for epoch in range(total_epochs):
-            self.data_generator = iter(self.train_dataloader)
-            for step in range(steps_per_epoch):
+            for step, data in enumerate(self.train_dataloader):
                 timing_stats = {}
                 with record_timing("timeperf/data_processing", timing_stats):
-                    data = next(self.data_generator)
                     packed_input_data = self._get_packed_input(data)
-                    dist.barrier()
-
+                   
                 with record_timing("timeperf/train_step", timing_stats):
                     with stats_tracker.scope("sft"):
                         stats = self.model.train_batch(
@@ -217,7 +218,7 @@ class SFTTrainer(Trainer):
                     epochs=int(step == steps_per_epoch - 1), steps=1
                 ):
                     if dist.get_rank() == 0:
-                        print("Saving model ...")
+                        logger.info("Saving model ...")
 
                     with record_timing("timeperf/save", timing_stats):
                         save_path = get_save_checkpoint_path(
@@ -229,7 +230,7 @@ class SFTTrainer(Trainer):
                     epochs=int(step == steps_per_epoch - 1), steps=1
                 ):
                     if dist.get_rank() == 0:
-                        print("Running evaluation ...")
+                        logger.info("Running evaluation ...")
                     with record_timing("timeperf/eval", timing_stats):
                         self._eval(global_step)
 
@@ -238,14 +239,14 @@ class SFTTrainer(Trainer):
                 log_wandb_tensorboard(global_step, training_stats, self.summary_writer)
 
                 if dist.get_rank() == 0:
-                    print(
+                    logger.info(
                         f"Epoch {epoch} Step {step} GlobalStep {global_step} done. Detailed time stats:"
                         f"\n{tabulate_stats(timing_stats, floatfmt='.2f')}"
                     )
                 global_step += 1
 
         if dist.get_rank() == 0:
-            print(
+            logger.info(
                 f"Training completes! Total time elapsed {time.monotonic() - start_time:.2f}."
             )
 
@@ -277,7 +278,7 @@ class SFTTrainer(Trainer):
                 losses.append(avg_loss)
         val_loss = torch.mean(torch.stack(losses))
 
-        print(
+        logger.info(
             f"Global step: {global_step} evaluation time cost {time.monotonic() - start_time:.2f} "
             f"val_loss={val_loss:.4f}"
         )

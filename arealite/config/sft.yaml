@@ -7,7 +7,7 @@ n_nodes: 1
 n_gpus_per_node: 8
 
 wandb:
-  mode: online
+  mode: disabled
   entity: null
   project: null
   name: null
@@ -42,27 +42,31 @@ cluster:
   n_gpus_per_node: 8
   name_resolve:
     type: nfs
-    nfs_record_root: /tmp/arealite/llm_server/
+    nfs_record_root: /tmp/arealite/nfs_record_root/
 
 train_dataset: 
-  path: /storage/openpsi/users/meizhiyu.mzy/datasets/sft/json/
-  name: null
-  split: null
+  path: openai/gsm8k
+  preprocessor:
+    type: gsm8k_sft
+  name: main
+  split: train
   data_files: null
   batch_size: 128
   shuffle: true
   pin_memory: true
-  num_workers: 0
+  num_workers: 4
 
 valid_dataset: 
-  path: /storage/openpsi/users/meizhiyu.mzy/datasets/sft/json/
-  name: null
-  split: null
+  path: openai/gsm8k
+  preprocessor:
+    type: gsm8k_sft
+  name: main
+  split: test
   data_files: null
   batch_size: 128
   shuffle: true
   pin_memory: true
-  num_workers: 0
+  num_workers: 4
 
 trainer:
   type: sft
@@ -70,7 +74,7 @@ trainer:
     model:
       type:
         _class: qwen2
-      path: /storage/openpsi/models/Qwen__Qwen2.5-0.5B-Instruct/
+      path: Qwen/Qwen2.5-0.5B
       init_from_scratch: false
       gradient_checkpointing: false
       bf16: false

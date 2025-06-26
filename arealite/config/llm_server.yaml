@@ -10,7 +10,7 @@ cluster:
   n_gpus_per_node: 8
   name_resolve:
     type: nfs
-    nfs_record_root: /tmp/arealite/llm_server/
+    nfs_record_root: /tmp/arealite/nfs_record_root/
 parallel:
   tensor_parallel_size: 1
   pipeline_parallel_size: 1

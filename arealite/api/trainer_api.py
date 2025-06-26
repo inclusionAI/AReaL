@@ -3,7 +3,7 @@
 
 import abc
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Optional, Union, Callable, List, Dict
 
 import torch.distributed as dist
 from datasets import Dataset
@@ -26,6 +26,12 @@ if TYPE_CHECKING:
 # distributed sampler
 # process group init
 
+def _collate_fn(data_list: List[Dict]) -> Dict:
+    keys = data_list[0].keys()
+    result = {}
+    for k in keys:
+        result[k] = [d[k] for d in data_list]
+    return result
 
 class Trainer(abc.ABC):
     def __init__(
@@ -59,6 +65,7 @@ class Trainer(abc.ABC):
             shuffle=cfg.shuffle,
             pin_memory=cfg.pin_memory,
             num_workers=cfg.num_workers,
+            collate_fn=_collate_fn,
             drop_last=True,
         )
 
@@ -76,6 +83,7 @@ class Trainer(abc.ABC):
             shuffle=cfg.shuffle,
             pin_memory=cfg.pin_memory,
             num_workers=cfg.num_workers,
+            collate_fn=_collate_fn,
             drop_last=True,
         )
 
@@ -99,7 +107,7 @@ class TrainerFactory:
         config: TrainerConfig,
         train_dataset: Dataset,
         valid_dataset: Optional[Dataset] = None,
-        rollout_controller: Optional["RolloutController"] = None,
+        rollout_controller: Optional["RolloutController"] = None
     ) -> Trainer:
         if config.type == "grpo":
             from arealite.impl.trainer.grpo import SpmdGRPOTrainer
