@@ -1,8 +1,5 @@
 """Test script for PPO Trainer implementation."""
 
-import random
-from typing import Dict
-
 import pytest
 import torch
 from datasets import load_dataset
@@ -11,30 +8,20 @@ from arealite.api.cli_args import (
     DatasetConfig,
     EngineBackendConfig,
     EngineConfig,
-    FSDPConfig,
     LLMClientConfig,
-    MicroBatchSpec,
     ModelFamily,
     OptimizerConfig,
     PPOTrainerConfig,
     RLVRConfig,
-    RolloutControllerConfig,
     TrainerConfig,
     TrainingArgs,
 )
-from arealite.api.engine_api import EngineFactory
-from arealite.api.io_struct import FinetuneSpec, Trajectory, TrajStats
+from arealite.api.io_struct import FinetuneSpec
 from arealite.api.rollout_api import RolloutWorkflowFactory
-from arealite.api.trainer_api import TrainerFactory
 from arealite.impl.rollout_controller import RolloutController
 from arealite.impl.trainer.ppo import SpmdPPOTrainer
 from arealite.tests.utils import mock_rollout_output
-from arealite.utils import (
-    compute_varlen_position_indices,
-    split_dict_tensor_with_cu_seqlens,
-)
 from realhf.base import constants, name_resolve, seeding
-from realhf.impl.model.utils.padding import unpad_input
 
 EXPR_NAME = "test_ppo"
 TRIAL_NAME = "test_ppo"

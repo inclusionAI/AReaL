@@ -3,7 +3,7 @@
 
 import abc
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import torch
 import transformers

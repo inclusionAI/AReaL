@@ -3,8 +3,7 @@
 
 import os
 import time
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -30,10 +29,8 @@ from arealite.utils import (
     dict_of_list2list_of_dict,
     gather_logprobs,
     init_stats_logging,
-    list_of_dict2dict_of_list,
     log_wandb_tensorboard,
     masked_normalization,
-    pad_sequences_to_tensors,
     record_timing,
     split_dict_tensor_with_cu_seqlens,
     to_device,

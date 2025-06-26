@@ -2,8 +2,7 @@ import asyncio
 import functools
 import math
 import os
-import threading
-from typing import Any, Callable, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -26,7 +25,7 @@ from arealite.utils import (
     split_dict_tensor_with_cu_seqlens,
     unpack_sequence,
 )
-from realhf.base import constants, network
+from realhf.base import constants
 
 
 def get_cosine_schedule_with_warmup(

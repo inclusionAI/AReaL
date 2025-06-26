@@ -11,7 +11,6 @@ from arealite.api.cli_args import (
     GenerationHyperparameters,
     LLMClientConfig,
     LLMServiceConfig,
-    MicroBatchSpec,
     ModelFamily,
     OptimizerConfig,
     SGLangConfig,

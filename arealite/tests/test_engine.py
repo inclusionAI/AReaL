@@ -3,7 +3,6 @@
 
 """Test script for HF Engine implementation."""
 
-import copy
 from typing import Dict
 
 import pytest
