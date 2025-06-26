@@ -1,9 +1,10 @@
-import time
 import os
-from typing import Dict, List, Optional, Callable
+import time
+from typing import Callable, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
+import torch.utils.data
 from datasets import Dataset
 
 from arealite.api.cli_args import TrainerConfig, TrainingArgs
@@ -20,23 +21,22 @@ from arealite.utils import (
 )
 from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
 from realhf.api.core.model_api import FinetuneSpec
-from realhf.base import logging, stats_tracker, timeutil, constants
-
-import torch.utils.data
+from realhf.base import constants, logging, stats_tracker, timeutil
 
 logger = logging.getLogger("SFT Trainer")
 
 
 def get_save_checkpoint_path(
-   args: TrainingArgs, epoch: int, step: int, globalstep: int
+    args: TrainingArgs, epoch: int, step: int, globalstep: int
 ):
     path = os.path.join(
         constants.get_save_path(args),
         "model",
-        f"epoch{epoch}epochstep{step}globalstep{globalstep}"
+        f"epoch{epoch}epochstep{step}globalstep{globalstep}",
     )
     os.makedirs(path, exist_ok=True)
     return path
+
 
 def compute_packed_sft_loss(
     logits: torch.Tensor,
@@ -102,11 +102,7 @@ class SFTTrainer(Trainer):
         rollout_controller: Optional[RolloutController] = None,
     ):
         super().__init__(
-            args,
-            trainer_config,
-            train_dataset,
-            valid_dataset,
-            rollout_controller
+            args, trainer_config, train_dataset, valid_dataset, rollout_controller
         )
 
         self.config = config = trainer_config.sft
@@ -147,9 +143,7 @@ class SFTTrainer(Trainer):
         input_lens = data["seq_len"]
 
         input_lens = torch.tensor(input_lens, dtype=torch.int)
-        input_ids = [
-            torch.tensor(seq, dtype=torch.long) for seq in tokenized_seqs
-        ]
+        input_ids = [torch.tensor(seq, dtype=torch.long) for seq in tokenized_seqs]
 
         prompt_mask = []
         for input_len, prompt_len in zip(input_lens, prompt_lens):
@@ -200,7 +194,7 @@ class SFTTrainer(Trainer):
                 timing_stats = {}
                 with record_timing("timeperf/data_processing", timing_stats):
                     packed_input_data = self._get_packed_input(data)
-                   
+
                 with record_timing("timeperf/train_step", timing_stats):
                     with stats_tracker.scope("sft"):
                         stats = self.model.train_batch(

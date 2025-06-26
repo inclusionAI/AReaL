@@ -46,10 +46,7 @@ class DatasetFactory:
             from realhf.api.core.data_api import load_hf_tokenizer
 
             tokenizer = load_hf_tokenizer(tokenizer_path)
-            return process_gsm8k_sft_dataset(
-                dataset,
-                tokenizer=tokenizer
-            )
+            return process_gsm8k_sft_dataset(dataset, tokenizer=tokenizer)
         if config.preprocessor.type == "areal":
             tokenizer_path = self.args.rollout.llm_client.tokenizer_path
             assert self.args.rollout.llm_client.tokenizer_path is not None

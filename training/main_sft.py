@@ -46,7 +46,7 @@ def main(args):
         yaml.dump(
             config_dict,
             f,
-            default_flow_style=False
+            default_flow_style=False,
             sort_keys=False,
         )
 

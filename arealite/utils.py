@@ -4,7 +4,6 @@
 # Pad/unpad operations are modified from flash-attention under BSD-3 license.
 # Copyright (c) 2023, Tri Dao.
 
-import socket
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -19,7 +18,7 @@ from einops import rearrange, repeat
 from tensorboardX import SummaryWriter
 
 from arealite.api.cli_args import MicroBatchSpec, TrainingArgs
-from realhf.base import datapack, constants
+from realhf.base import constants, datapack
 
 ############### Dict and list operations begin ###############
 
@@ -608,7 +607,9 @@ def gather_logprobs(
     log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
     return log_probs_labels
 
+
 ############### Tensor computations end ###############
+
 
 def init_stats_logging(args: TrainingArgs):
     """
@@ -672,4 +673,3 @@ def record_timing(name, timing_stats):
     start_time = time.perf_counter()
     yield
     timing_stats[name] = time.perf_counter() - start_time
-

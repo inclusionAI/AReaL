@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import Dict, List
 
 import torch
 from datasets import Dataset
@@ -22,6 +22,7 @@ def process_gsm8k_rl_dataset(dataset: Dataset, tokenizer, reward_mode):
         lambda x: tokenizer(x["question"], return_attention_mask=False), batched=True
     )
 
+
 def process_gsm8k_sft_dataset(dataset: Dataset, tokenizer):
     def _tokenize(example, idx):
         # Add query_id column
@@ -39,12 +40,8 @@ def process_gsm8k_sft_dataset(dataset: Dataset, tokenizer):
         )["input_ids"]
         seq_len = len(tokenized_seq)
         prompt_len = len(tokenized_prompt)
-        
-        return {
-            "seq": tokenized_seq,
-            "prompt_len": prompt_len,
-            "seq_len": seq_len
-        }
+
+        return {"seq": tokenized_seq, "prompt_len": prompt_len, "seq_len": seq_len}
 
     dataset = dataset.map(
         lambda example, idx: _tokenize(example, idx),

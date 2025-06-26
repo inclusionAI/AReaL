@@ -26,16 +26,16 @@ def main():
         "--config", help="The path of the main configuration file", required=True
     )
     args, overrides = parser.parse_known_args()
-    
+
     # Initialize hydra config
     config_file = Path(args.config).absolute()
     assert config_file.exists()
     relpath = Path(os.path.relpath(str(config_file), Path(__file__).parent.absolute()))
     hydra_init(config_path=str(relpath.parent), job_name="app")
     cfg = hydra_compose(
-        config_name=str(relpath.name).rstrip('.yaml'), overrides=overrides
+        config_name=str(relpath.name).rstrip(".yaml"), overrides=overrides
     )
-    
+
     # Merge with the default configuration
     default_cfg = OmegaConf.structured(TrainingArgs)
     cfg = OmegaConf.merge(default_cfg, cfg)
@@ -70,7 +70,7 @@ def main():
             cfg.trainer,
             train_dataset=train_dataset,
             valid_dataset=valid_dataset,
-            rollout_controller=rollout_controller
+            rollout_controller=rollout_controller,
         )
         trainer.train()
 

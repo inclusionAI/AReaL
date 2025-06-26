@@ -152,6 +152,7 @@ def test_train_batch(tmp_path_factory, engine, mock_input):
 
     engine.load_optimizer_state(path)
 
+
 @torch.no_grad()
 def test_save_load_weights(tmp_path_factory, engine, mock_input):
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
