@@ -123,6 +123,25 @@ class LLMClientConfig:
 
 
 ## Dataset configs. ##
+
+
+@dataclass
+class GSM8KPreprocessor:
+    reward_mode: str = "strict"
+
+
+@dataclass
+class DatasetPreprocessor:
+    type: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Number of retries for each request",
+            "choices": ["gsm8k", "areal"],
+        },
+    )
+    gsm8k: Optional[GSM8KPreprocessor] = None
+
+
 @dataclass
 class DatasetConfig:
     path: str = field(
@@ -151,6 +170,10 @@ class DatasetConfig:
     )
     num_workers: int = field(
         default=0, metadata={"help": "Number of worker processes for data loading"}
+    )
+    preprocessor: Optional[DatasetPreprocessor] = field(
+        default=None,
+        metadata={"help": "Dataset preprocessor config. None means no preprocessing."},
     )
 
 

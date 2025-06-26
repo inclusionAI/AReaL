@@ -77,6 +77,7 @@ def gsm8k_reward_fn(
     prompt_ids: List[int],
     completion_ids: List[int],
     answer: str,
+    method: str,
     **kwargs,
 ) -> float:
-    return compute_score(completion, extract_solution(answer))
+    return compute_score(completion, extract_solution(answer), method=method)

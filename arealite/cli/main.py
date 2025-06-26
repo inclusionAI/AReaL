@@ -5,27 +5,13 @@ import os
 
 import hydra
 import torch.distributed as dist
-from datasets import load_dataset
-from datasets.distributed import split_dataset_by_node
 from torch.distributed.elastic.multiprocessing.errors import record
 
 from arealite.api.cli_args import DatasetConfig, TrainingArgs
+from arealite.api.dataset_api import DatasetFactory
 from arealite.api.rollout_api import RolloutWorkflowFactory
 from arealite.api.trainer_api import TrainerFactory
 from arealite.system.rollout_controller import RolloutController
-
-
-def create_distributed_dataset(cfg: DatasetConfig):
-    rank = int(os.environ["RANK"])
-    world_size = int(os.environ["WORLD_SIZE"])
-    dataset = load_dataset(
-        cfg.path,
-        name=cfg.name,
-        split=cfg.split,
-        data_files=cfg.data_files,
-    )
-    dataset = split_dataset_by_node(dataset["train"], rank=rank, world_size=world_size)
-    return dataset
 
 
 @record
@@ -33,11 +19,17 @@ def create_distributed_dataset(cfg: DatasetConfig):
 def main(args: TrainingArgs):
     dist.init_process_group("nccl")
 
+    rank = int(os.getenv("RANK", "0"))
+    world_size = int(os.getenv("WORLD_SIZE", "1"))
+
     # Load and split dataset
-    train_dataset = create_distributed_dataset(args.train_dataset)
+    dataset_factory = DatasetFactory(args)
+    train_dataset = dataset_factory.make_dataset(args.train_dataset, rank, world_size)
     valid_dataset = None
     if args.valid_dataset is not None:
-        valid_dataset = create_distributed_dataset(args.valid_dataset)
+        valid_dataset = dataset_factory.make_dataset(
+            args.valid_dataset, rank, world_size
+        )
 
     # Create rollout controller for online training and evaluation.
     rollout_controller = None
@@ -56,10 +48,6 @@ def main(args: TrainingArgs):
             rollout_controller=rollout_controller,
         )
         trainer.train()
-
-    # After training, run rollout over the entire dataset
-    if valid_dataset and rollout_controller:
-        rollout_controller.eval_dataset(valid_dataset)
 
 
 if __name__ == "__main__":

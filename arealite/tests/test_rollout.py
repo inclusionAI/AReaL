@@ -9,7 +9,9 @@ import pytest
 from datasets import load_dataset
 
 from arealite.api.cli_args import (
+    DatasetPreprocessor,
     GenerationHyperparameters,
+    GSM8KPreprocessor,
     LLMClientConfig,
     LLMServiceConfig,
     MathCodeSingleStepConfig,
@@ -77,6 +79,7 @@ def test_rlvr_rollout(args, sglang_server, tokenizer, task):
             env_option = dict(
                 query_id=data["query_id"],
                 input_ids=tokenizer.encode(data["prompt"]),
+                prompt=data["prompt"],
             )
             res = collector.run_episode(
                 gconfig,
@@ -105,19 +108,19 @@ def test_gsm8k_rollout(args, sglang_server, tokenizer):
     )
     collector = RolloutWorkflowFactory(args).make_workflow(args.rollout.workflow)
 
-    dataset = load_dataset("gsm8k", name="main", split="train")
-    dataset = dataset.select(range(10))
+    args.train_dataset.path = "openai/gsm8k"
+    args.train_dataset.name = "main"
+    args.train_dataset.split = "train"
+    args.train_dataset.preprocessor = DatasetPreprocessor(
+        "gsm8k", gsm8k=GSM8KPreprocessor("strict")
+    )
 
-    def process_example(example, idx):
-        # Add the tokenized input_ids
-        example["input_ids"] = tokenizer.encode(example["question"])
-        # Add query_id column
-        example["query_id"] = str(idx)
-        example["prompt"] = example["question"]
-        return example
+    from arealite.api.dataset_api import DatasetFactory
 
-    dataset = dataset.map(
-        lambda example, idx: process_example(example, idx), with_indices=True
+    dataset = (
+        DatasetFactory(args)
+        .make_dataset(args.train_dataset, rank=0, world_size=1)
+        .select(range(10))
     )
     for i in range(len(dataset)):
         env_option = dataset[i]
