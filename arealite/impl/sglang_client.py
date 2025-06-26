@@ -21,6 +21,7 @@ class SGLangClient(LLMClient):
 
     def generate(self, req: LLMRequest) -> LLMResponse:
         """Generate response using SGLang server."""
+        # TODO: cache-aware scheduling
 
         # Convert messages to prompt
         if not req.text:

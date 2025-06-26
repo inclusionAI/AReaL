@@ -23,6 +23,7 @@ from arealite.api.io_struct import Trajectory, TrajStats
 from arealite.api.llm_server_api import LLMServerFactory
 from arealite.api.rollout_api import RolloutWorkflowFactory
 from arealite.impl.rollout_controller import RolloutController
+from arealite.tests.utils import mock_rollout_output
 from arealite.utils import (
     concat_padded_tensors,
     list_of_dict2dict_of_list,
@@ -33,7 +34,7 @@ from realhf.base import constants, name_resolve, names, seeding
 
 EXPR_NAME = "test_rollout_controller"
 TRIAL_NAME = "test_rollout_controller"
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "Qwen/Qwen2.5-0.5B"
 
 
 @pytest.fixture(scope="module")
@@ -96,17 +97,39 @@ def test_generate_batch(args, sglang_server, dataloader, n_samples, num_workers)
     assert all(isinstance(traj, Trajectory) for traj in result)
     for traj in result:
         shape = traj.data["input_ids"].shape
+        assert len(shape) == 2
         for v in traj.data.values():
-            assert v.shape == shape
-    data = pad_sequences_to_tensors([traj.data for traj in result])
+            assert v.shape == shape or len(v.shape) == 1
+    data = concat_padded_tensors([traj.data for traj in result])
     assert data["input_ids"].shape[0] == batch_size * n_samples
     shape = data["input_ids"].shape
+    assert len(shape) == 2
     for v in data.values():
-        assert v.shape == shape
+        assert v.shape == shape or len(v.shape) == 1
+
+
+@pytest.mark.parametrize("batch_size", [1, 2, 3])
+@pytest.mark.parametrize("n_samples", [1, 2, 4])
+def test_mock_trajs(batch_size, n_samples):
+    # Test the consistency with mocked rollout output
+    result = mock_rollout_output(batch_size, n_samples)
+    assert len(result) == batch_size * n_samples
+    assert all(isinstance(traj, Trajectory) for traj in result)
+    for traj in result:
+        shape = traj.data["input_ids"].shape
+        assert len(shape) == 2
+        for v in traj.data.values():
+            assert v.shape == shape or len(v.shape) == 1
+    data = concat_padded_tensors([traj.data for traj in result])
+    assert data["input_ids"].shape[0] == batch_size * n_samples
+    shape = data["input_ids"].shape
+    assert len(shape) == 2
+    for v in data.values():
+        assert v.shape == shape or len(v.shape) == 1
 
 
 @pytest.mark.parametrize("n_samples", [1, 4, 16])
-@pytest.mark.parametrize("num_workers", [1, 2, 4])
+@pytest.mark.parametrize("num_workers", [1, 2, 5])
 def test_async_rollout(args, sglang_server, dataloader, n_samples, num_workers):
     args = deepcopy(args)
     args.rollout.gconfig.n_samples = n_samples
@@ -134,13 +157,15 @@ def test_async_rollout(args, sglang_server, dataloader, n_samples, num_workers):
     assert all(isinstance(traj, Trajectory) for traj in result)
     for traj in result:
         shape = traj.data["input_ids"].shape
+        assert len(shape) == 2
         for v in traj.data.values():
-            assert v.shape == shape
-    data = pad_sequences_to_tensors([traj.data for traj in result])
+            assert v.shape == shape or len(v.shape) == 1
+    data = concat_padded_tensors([traj.data for traj in result])
     assert data["input_ids"].shape[0] == batch_size * n_samples
     shape = data["input_ids"].shape
+    assert len(shape) == 2
     for v in data.values():
-        assert v.shape == shape
+        assert v.shape == shape or len(v.shape) == 1
 
     # exit
     rollout_controller.stop_generate_loop()

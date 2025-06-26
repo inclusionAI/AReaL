@@ -14,6 +14,7 @@ import numpy as np
 from arealite.api.cli_args import RolloutControllerConfig, TrainingArgs
 from arealite.api.io_struct import Trajectory
 from arealite.api.rollout_api import RolloutWorkflow
+from arealite.impl.rollout_worker import RolloutWorker
 from realhf.base import datapack, logging, network
 from realhf.system.push_pull_stream import ZMQJsonPuller, ZMQJsonPusher
 
@@ -38,7 +39,7 @@ class RolloutController:
         self._buffer: List[List[Trajectory]] = []
         self._version = 0
 
-        # Worker processes
+        # Worker processes for asynchronous rollout
         self._worker_processes: List[mp.Process] = []
 
         # PushPull communication for data to workers
@@ -62,7 +63,7 @@ class RolloutController:
 
         # For multi-worker, we rely on the continuous generation loop
         # This method should primarily be used for immediate batch generation
-        return self._generate_batch_sequential(batch_size, env_options, seeds)
+        return self._generate_batch_parallel(batch_size, env_options, seeds)
 
     def start_generate_loop(self):
         """Start worker processes that run generation loops."""
@@ -104,7 +105,7 @@ class RolloutController:
         assert isinstance(data, list)
         for d in data:
             self._data_pusher.push(d)
-        logger.info(f"Submitted {len(data)} data to workers")
+        logger.debug(f"Submitted {len(data)} data to workers")
 
     def prepare_batch(self, batch_size: int) -> List[Trajectory]:
         """Prepare and wait for a batch of trajectories."""
@@ -240,30 +241,16 @@ class RolloutController:
             assert len(seeds) == batch_size
 
         async def run_parallel_gen():
+            worker = RolloutWorker(
+                worker_id=0,
+                args=self.args,
+                config=self.config,
+            )
             tasks = [
-                self._run_grouped_episode_async(None, env_option, seed)
+                worker._run_grouped_episode_async(None, env_option, seed)
                 for env_option, seed in zip(env_options, seeds)
             ]
             results = await asyncio.gather(*tasks)
             return sum([r[1] for r in results], [])
 
         return asyncio.run(run_parallel_gen())
-
-    async def _prepare_batch_async(self, batch_size: int):
-        """Asynchronously wait for and return a batch of trajectories."""
-        import numpy as np
-
-        buf_size = -1
-        while buf_size < batch_size:
-            with self._lock:
-                buf_size = len(self._buffer)
-            await asyncio.sleep(0.1)
-
-        with self._lock:
-            self._buffer = sorted(
-                self._buffer, key=lambda x: np.mean([xx.stats.start_time for xx in x])
-            )
-            data, self._buffer = self._buffer[:batch_size], self._buffer[batch_size:]
-
-        # Flatten the list of lists
-        return [traj for batch in data for traj in batch]

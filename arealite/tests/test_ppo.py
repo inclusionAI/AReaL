@@ -28,6 +28,7 @@ from arealite.api.rollout_api import RolloutWorkflowFactory
 from arealite.api.trainer_api import TrainerFactory
 from arealite.impl.rollout_controller import RolloutController
 from arealite.impl.trainer.ppo import SpmdPPOTrainer
+from arealite.tests.utils import mock_rollout_output
 from arealite.utils import (
     compute_varlen_position_indices,
     split_dict_tensor_with_cu_seqlens,
@@ -38,146 +39,6 @@ from realhf.impl.model.utils.padding import unpad_input
 EXPR_NAME = "test_ppo"
 TRIAL_NAME = "test_ppo"
 MODEL_PATH = "Qwen/Qwen2.5-0.5B"
-
-
-def create_mock_input(bs: int = 2, min_seqlen: int = 3, max_seqlen: int = 12) -> Dict:
-    """Create mock input data for testing."""
-    seqlens = torch.randint(
-        min_seqlen, max_seqlen, (bs,), dtype=torch.int, device="cuda"
-    )
-    max_seqlen = int(max(seqlens))
-    input_ids = torch.randint(0, 100, (bs, max_seqlen), dtype=torch.long, device="cuda")
-
-    attn_mask = torch.zeros((bs, max_seqlen), dtype=torch.bool, device="cuda")
-    attn_mask[
-        torch.arange(0, max_seqlen, device="cuda").unsqueeze(0) < seqlens.unsqueeze(1)
-    ] = 1
-
-    packed_input_ids, indices, cu_seqlens, max_seqlen = unpad_input(
-        input_ids, attn_mask
-    )
-
-    assert torch.allclose(
-        cu_seqlens, torch.nn.functional.pad(seqlens.cumsum(0, dtype=torch.int), (1, 0))
-    )
-    position_ids = compute_varlen_position_indices(int(sum(seqlens)), cu_seqlens)
-    prompt_lens = torch.randint(1, min_seqlen, (bs,), dtype=torch.int, device="cuda")
-    prompt_mask = torch.arange(max_seqlen, device="cuda").unsqueeze(
-        0
-    ) < prompt_lens.unsqueeze(1)
-    prompt_mask, *_ = unpad_input(prompt_mask, attn_mask)
-
-    return dict(
-        input_ids=packed_input_ids.unsqueeze(0),
-        attention_mask=None,
-        position_ids=position_ids.unsqueeze(0),
-        cu_seqlens=cu_seqlens,
-        max_seqlen=max_seqlen,
-        prompt_mask=prompt_mask.unsqueeze(0),
-        use_cache=False,
-    )
-
-
-def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
-    """Mock loss function for testing."""
-    return torch.mean(logits)
-
-
-def mock_loss_weight_fn(logits: torch.Tensor, input_data: Dict) -> float:
-    """Mock loss weight function for testing."""
-    return float(input_data["attention_mask"].sum())
-
-
-def create_dataset(cfg: DatasetConfig):
-    # select five data for test
-    dataset = load_dataset(
-        cfg.path,
-        name=cfg.name,
-        split=cfg.split,
-    )
-    dataset = dataset.select(range(5))
-    return dataset
-
-
-@pytest.mark.skip("")
-def test_engine():
-    """Test engine creation and basic functionality."""
-    print("Testing PPO train creation...")
-
-    train_dataset = DatasetConfig(
-        path="openai/gsm8k",
-        name="main",
-        split="train",
-        batch_size=8,
-        shuffle=True,
-        pin_memory=True,
-        num_workers=4,
-    )
-
-    valid_dataset = DatasetConfig(
-        path="openai/gsm8k",
-        name="main",
-        split="test",
-        batch_size=8,
-        shuffle=False,
-        pin_memory=True,
-        num_workers=4,
-    )
-
-    engine_config = EngineConfig(
-        type=ModelFamily("qwen2", False),
-        path=MODEL_PATH,
-        gradient_checkpointing=False,
-        optimizer=OptimizerConfig(),
-        backend=EngineBackendConfig(type="hf"),
-    )
-
-    sglang_client_config = LLMClientConfig(
-        server_backend="sglang",
-        tokenizer_path=MODEL_PATH,
-    )
-
-    ppo_config = PPOTrainerConfig(
-        actor=engine_config,
-    )
-
-    train_config = TrainerConfig(
-        type="ppo",
-        ppo=ppo_config,
-    )
-
-    rollout_controller_config = RolloutControllerConfig(
-        llm_client=sglang_client_config,
-    )
-
-    args = TrainingArgs(
-        mode="local",
-        n_nodes=1,
-        n_gpus_per_node=1,
-        train_dataset=train_dataset,
-        valid_dataset=valid_dataset,
-        trainer=train_config,
-        rollout=rollout_controller_config,
-    )
-
-    rollout_controller = None
-    if args.rollout is not None:
-        rollout_controller = RolloutController(args, args.rollout)
-    train_dataset = create_dataset(args.train_dataset)
-    valid_dataset = None
-    if args.valid_dataset is not None:
-        valid_dataset = create_dataset(args.valid_dataset)
-    if args.trainer is not None:
-        trainer_factory = TrainerFactory(args)
-        trainer = trainer_factory.make_trainer(
-            args.trainer,
-            train_dataset=train_dataset,
-            valid_dataset=valid_dataset,
-            rollout_controller=rollout_controller,
-        )
-        trainer.train()
-
-    print("All tests passed!")
 
 
 @pytest.fixture(scope="module")
@@ -218,37 +79,6 @@ def args():
     name_resolve.reconfigure(args.cluster.name_resolve)
     yield args
     name_resolve.reset()
-
-
-def mock_rollout_output(bs, n_samples):
-    trajs = []
-    min_seqlen, max_seqlen = 8, 16
-    for _ in range(bs * n_samples):
-        input_len = random.randint(min_seqlen, max_seqlen)
-        prompt_len = random.randint(1, min_seqlen - 1)
-        input_ids = torch.randint(0, 100, (input_len,))
-        prompt_mask = torch.tensor([1] * prompt_len + [0] * (input_len - prompt_len))
-        logprobs = -torch.randn(input_len).abs()
-        versions = torch.zeros(input_len)
-        traj = Trajectory(
-            prompt=None,
-            data=dict(
-                input_ids=input_ids.unsqueeze(0),
-                prompt_mask=prompt_mask.unsqueeze(0),
-                logprobs=logprobs.unsqueeze(0),
-                versions=versions.unsqueeze(0),
-                rewards=torch.tensor([random.random()]),
-            ),
-            stats=TrajStats(
-                start_time=0,
-                total_reward=0,
-                episode_length=1,
-                info={},
-            ),
-        )
-        trajs.append(traj)
-
-    return trajs
 
 
 @pytest.mark.parametrize("kl_ctl", [0.0, 0.1])

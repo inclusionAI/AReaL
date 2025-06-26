@@ -28,10 +28,10 @@ class RolloutWorker:
         worker_id: int,
         args: TrainingArgs,
         config: RolloutControllerConfig,
-        pusher_host: str = "localhost",
-        pusher_port: int = 5555,
-        data_puller_host: str = "localhost",
-        data_puller_port: int = 5556,
+        pusher_host: Optional[str] = "localhost",
+        pusher_port: Optional[int] = 5555,
+        data_puller_host: Optional[str] = "localhost",
+        data_puller_port: Optional[int] = 5556,
     ):
         self.worker_id = worker_id
         self.args = args
@@ -73,7 +73,6 @@ class RolloutWorker:
             # Create workflow
             factory = RolloutWorkflowFactory(self.args)
             workflow = factory.make_workflow(self.config.workflow)
-            print("////////", self.gconfig.new(n_samples=1))
             tasks += [
                 workflow.arun_episode(
                     self.gconfig.new(n_samples=1),
@@ -117,9 +116,9 @@ class RolloutWorker:
                 if data is None:
                     try:
                         data = self.data_puller.pull(timeout_ms=50)
-                        logger.info(f"Get data from puller: {data}")
+                        logger.debug(f"Get data from puller: {data}")
                     except queue.Empty:
-                        logger.info(f"No data from puller stream.")
+                        logger.debug(f"No data from puller stream.")
 
                 # Check capacity
                 if dist.is_initialized():
@@ -151,7 +150,7 @@ class RolloutWorker:
                     )
 
                 if not can_rollout:
-                    logger.info(
+                    logger.debug(
                         f"Worker {self.worker_id}: Cannot submit new rollouts. "
                         + "\n".join(cannot_rollout_reason)
                     )
@@ -166,7 +165,7 @@ class RolloutWorker:
                     rollout_stat.submitted += 1
                     rollout_stat.running += 1
                     logger.info(
-                        f"Worker {self.worker_id}: Submit rollout {rid}. "
+                        f"Worker {self.worker_id}: Submit rollout rid {rid}. "
                         f"Submit: {rollout_stat.submitted}, "
                         f"running: {rollout_stat.running}, "
                         f"accepted: {rollout_stat.accepted}."

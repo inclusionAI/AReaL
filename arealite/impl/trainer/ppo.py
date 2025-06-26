@@ -108,6 +108,114 @@ class SpmdPPOTrainer(Trainer):
         )
         self.summary_writer = init_stats_logging(args)
 
+    def train(self, resume_from_checkpoint=None):
+        # TODO: handle recover
+        self.create_train_dataloader()
+        assert self.rollout_controller is not None
+        assert self.train_dataloader is not None
+
+        total_epochs = self.args.exp_ctrl.total_train_epochs
+        steps_per_epoch = len(self.train_dataloader)
+        ft_spec = FinetuneSpec(
+            total_train_epochs=steps_per_epoch,
+            dataset_size=len(self.train_dataset),
+            train_batch_size=self.args.train_dataset.batch_size,
+        )
+
+        # Setting up models.
+        self.actor.init_distributed(None, ft_spec)
+        self.actor.eval()
+        if self.ref is not None:
+            self.ref.init_distributed(None, ft_spec)
+            self.ref.eval()
+        self.actor.update_weights_to(self.llm_client)
+
+        # Start rollout for asynchronous RL.
+        if self.config.async_training:
+            self.rollout_controller.start_generate_loop()
+
+        # Main RL training loop.
+        total_epochs = self.args.exp_ctrl.total_train_epochs
+        global_step = 0
+        start_time = time.monotonic()
+        for epoch in range(total_epochs):
+            for step, data in enumerate(self.train_dataloader):
+                timing_stats = {}
+                with record_timing("timeperf/rollout", timing_stats):
+                    if self.config.async_training:
+                        self.rollout_controller.submit(data)
+                        # Submitted data will not actually be sent for rollout.
+                        # The rollout controller over-subscribe the data to
+                        # ensure that there are enough data being generated.
+                        if global_step < self.max_head_offpolicyness + 1:
+                            continue
+
+                    # Run generation or rollout to collect data
+                    if self.config.async_training:
+                        # Wait until enough trajectories has been collected.
+                        trajs = self.rollout_controller.prepare_batch(
+                            batch_size=self.args.train_dataset.batch_size
+                            // dist.get_world_size()
+                        )
+                    else:
+                        # Run batched rollout by submitting requests to LLM servers
+                        env_options = dict_of_list2list_of_dict(data)
+                        trajs = self.rollout_controller.generate_batch(
+                            batch_size=len(env_options),
+                            env_options=env_options,
+                        )
+
+                with record_timing("timeperf/train_step", timing_stats):
+                    # Run RL training and update weights.
+                    mb_stats = self._train_step(trajs)
+                    self.actor.step_lr_scheduler()
+
+                with record_timing("timeperf/sync_weights", timing_stats):
+                    # Synchronize weights to the client.
+                    self.actor.update_weights_to(self.llm_client)
+                    # Update model version
+                    name = names.model_version(
+                        self.args.experiment_name, self.args.trial_name, "actor"
+                    )
+                    name_resolve.add(name, str(1), replace=True)
+
+                if self.save_ctl.check(
+                    epochs=int(step == steps_per_epoch - 1), steps=1
+                ):
+                    if dist.get_rank() == 0:
+                        logger.info("Saving model ...")
+
+                    with record_timing("timeperf/save", timing_stats):
+                        save_path = os.path.join(
+                            constants.get_save_path(self.args), "actor"
+                        )
+                        self.actor.save_model_to_hf(
+                            save_path,
+                            tokenizer=self.actor_tokenizer,
+                            base_model_path=self.config.actor.path,
+                        )
+
+                for stats in mb_stats:
+                    log_wandb_tensorboard(global_step, stats, self.summary_writer)
+                log_wandb_tensorboard(global_step, timing_stats, self.summary_writer)
+
+                if dist.get_rank() == 0:
+                    logger.info(
+                        f"Epoch {epoch} Step {step} GlobalStep {global_step} done. Detailed time stats:"
+                        f"\n{tabulate_stats(timing_stats, floatfmt='.2f')}"
+                    )
+
+                global_step += 1
+
+        if dist.get_rank() == 0:
+            logger.info(
+                f"Training completes! Total time elapsed {time.monotonic() - start_time:.2f}."
+            )
+        if self.config.async_training:
+            self.rollout_controller.stop_generate_loop()
+
+        close_wandb_tensorboard(self.summary_writer)
+
     def _train_step(self, trajs: List[Trajectory]):
         rollout = concat_padded_tensors([traj.data for traj in trajs])
         rollout = to_device(rollout, torch.cuda.current_device())
@@ -401,111 +509,3 @@ class SpmdPPOTrainer(Trainer):
             return loss
 
         return ppo_loss
-
-    def train(self, resume_from_checkpoint=None):
-        # TODO: handle recover
-        self.create_train_dataloader()
-        assert self.rollout_controller is not None
-        assert self.train_dataloader is not None
-
-        total_epochs = self.args.exp_ctrl.total_train_epochs
-        steps_per_epoch = len(self.train_dataloader)
-        ft_spec = FinetuneSpec(
-            total_train_epochs=steps_per_epoch,
-            dataset_size=len(self.train_dataset),
-            train_batch_size=self.args.train_dataset.batch_size,
-        )
-
-        # Setting up models.
-        self.actor.init_distributed(None, ft_spec)
-        self.actor.eval()
-        if self.ref is not None:
-            self.ref.init_distributed(None, ft_spec)
-            self.ref.eval()
-        self.actor.update_weights_to(self.llm_client)
-
-        # Start rollout for asynchronous RL.
-        if self.config.async_training:
-            self.rollout_controller.start_generate_loop()
-
-        # Main RL training loop.
-        total_epochs = self.args.exp_ctrl.total_train_epochs
-        global_step = 0
-        start_time = time.monotonic()
-        for epoch in range(total_epochs):
-            for step, data in enumerate(self.train_dataloader):
-                timing_stats = {}
-                with record_timing("timeperf/rollout", timing_stats):
-                    if self.config.async_training:
-                        self.rollout_controller.submit(data)
-                        # Submitted data will not actually be sent for rollout.
-                        # The rollout controller over-subscribe the data to
-                        # ensure that there are enough data being generated.
-                        if global_step < self.max_head_offpolicyness + 1:
-                            continue
-
-                    # Run generation or rollout to collect data
-                    if self.config.async_training:
-                        # Wait until enough trajectories has been collected.
-                        trajs = self.rollout_controller.prepare_batch(
-                            batch_size=self.args.train_dataset.batch_size
-                            // dist.get_world_size()
-                        )
-                    else:
-                        # Run batched rollout by submitting requests to LLM servers
-                        env_options = dict_of_list2list_of_dict(data)
-                        trajs = self.rollout_controller.generate_batch(
-                            batch_size=len(env_options),
-                            env_options=env_options,
-                        )
-
-                with record_timing("timeperf/train_step", timing_stats):
-                    # Run RL training and update weights.
-                    mb_stats = self._train_step(trajs)
-                    self.actor.step_lr_scheduler()
-
-                with record_timing("timeperf/sync_weights", timing_stats):
-                    # Synchronize weights to the client.
-                    self.actor.update_weights_to(self.llm_client)
-                    # Update model version
-                    name = names.model_version(
-                        self.args.experiment_name, self.args.trial_name, "actor"
-                    )
-                    name_resolve.add(name, str(1), replace=True)
-
-                if self.save_ctl.check(
-                    epochs=int(step == steps_per_epoch - 1), steps=1
-                ):
-                    if dist.get_rank() == 0:
-                        logger.info("Saving model ...")
-
-                    with record_timing("timeperf/save", timing_stats):
-                        save_path = os.path.join(
-                            constants.get_save_path(self.args), "actor"
-                        )
-                        self.actor.save_model_to_hf(
-                            save_path,
-                            tokenizer=self.actor_tokenizer,
-                            base_model_path=self.config.actor.path,
-                        )
-
-                for stats in mb_stats:
-                    log_wandb_tensorboard(global_step, stats, self.summary_writer)
-                log_wandb_tensorboard(global_step, timing_stats, self.summary_writer)
-
-                if dist.get_rank() == 0:
-                    logger.info(
-                        f"Epoch {epoch} Step {step} GlobalStep {global_step} done. Detailed time stats:"
-                        f"\n{tabulate_stats(timing_stats, floatfmt='.2f')}"
-                    )
-
-                global_step += 1
-
-        if dist.get_rank() == 0:
-            logger.info(
-                f"Training completes! Total time elapsed {time.monotonic() - start_time:.2f}."
-            )
-        if self.config.async_training:
-            self.rollout_controller.stop_generate_loop()
-
-        close_wandb_tensorboard(self.summary_writer)
