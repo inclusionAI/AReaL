@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from datasets import load_dataset
 
 from arealite.api.cli_args import (
     GenerationHyperparameters,
@@ -25,7 +26,7 @@ from realhf.base import constants, name_resolve, seeding
 
 EXPR_NAME = "test_rollout"
 TRIAL_NAME = "test_rollout"
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "Qwen/Qwen2-0.5B"
 
 
 @pytest.fixture(scope="module")
@@ -63,7 +64,8 @@ def test_rlvr_rollout(args, sglang_server, tokenizer, task):
     )
     args.rollout.gconfig = gconfig = GenerationHyperparameters(max_new_tokens=16)
     args.rollout.workflow = RolloutWorkflowConfig(
-        type="rlvr", rlvr=RLVRConfig(reward_type=task, solution_path=jsonl_file)
+        type="rlvr",
+        rlvr=RLVRConfig(reward_type=f"areal-{task}", solution_path=jsonl_file),
     )
 
     collector = RolloutWorkflowFactory(args).make_workflow(args.rollout.workflow)
@@ -89,6 +91,49 @@ def test_rlvr_rollout(args, sglang_server, tokenizer, task):
             assert res.stats.episode_length == 1
             assert res.stats.total_reward in [0, 1], res.stats.total_reward
             assert res.stats.start_time < datetime.now().timestamp()
+
+
+def test_gsm8k_rollout(args, sglang_server, tokenizer):
+    args.rollout.llm_client = LLMClientConfig(
+        server_backend="sglang",
+        tokenizer_path=MODEL_PATH,
+        request_timeout=10,
+    )
+    args.rollout.gconfig = gconfig = GenerationHyperparameters(max_new_tokens=16)
+    args.rollout.workflow = RolloutWorkflowConfig(
+        type="rlvr", rlvr=RLVRConfig(reward_type="gsm8k")
+    )
+    collector = RolloutWorkflowFactory(args).make_workflow(args.rollout.workflow)
+
+    dataset = load_dataset("gsm8k", name="main", split="train")
+    dataset = dataset.select(range(10))
+
+    def process_example(example, idx):
+        # Add the tokenized input_ids
+        example["input_ids"] = tokenizer.encode(example["question"])
+        # Add query_id column
+        example["query_id"] = str(idx)
+        example["prompt"] = example["question"]
+        return example
+
+    dataset = dataset.map(
+        lambda example, idx: process_example(example, idx), with_indices=True
+    )
+    for i in range(len(dataset)):
+        env_option = dataset[i]
+        res = collector.run_episode(
+            gconfig,
+            env_option=env_option,
+        )
+        assert isinstance(res, Trajectory)
+        assert isinstance(res.data, dict)
+        assert res.prompt == env_option
+        shape = res.data["input_ids"].shape
+        for k in ["prompt_mask", "logprobs", "versions"]:
+            assert res.data[k].shape == shape
+        assert res.stats.episode_length == 1
+        assert res.stats.total_reward in [0, 1], res.stats.total_reward
+        assert res.stats.start_time < datetime.now().timestamp()
 
 
 @pytest.mark.parametrize("task", ["math", "code"])

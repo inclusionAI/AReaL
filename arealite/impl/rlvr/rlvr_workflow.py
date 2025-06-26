@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0
 
 from datetime import datetime
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 import torch
 
@@ -31,7 +31,7 @@ class RlvrWorkflow(RolloutWorkflow):
     def run_episode(
         self,
         gconfig: GenerationHyperparameters,
-        env_option: Optional[Any] = None,
+        env_option: Optional[Dict[str, Any]] = None,
         seed: Optional[int] = None,
     ) -> Trajectory:
         """Run a single episode and return the trajectory."""
@@ -42,13 +42,17 @@ class RlvrWorkflow(RolloutWorkflow):
         req = LLMRequest(input_ids=prompt_ids, gconfig=gconfig)
         resp = self.llm_client.generate(req)
 
+        reward_kwargs = env_option.copy()
+        reward_kwargs.pop("query_id")
+        reward_kwargs.pop("prompt")
         reward = self.reward_fn(
-            query_ids=[query_id],
-            prompts=[req.text],
-            prompt_ids=[prompt_ids],
-            completions=[resp.completion],
-            completion_ids=[resp.output_tokens],
-        )[0]
+            query_id=query_id,
+            prompt=req.text,
+            completion=resp.completion,
+            prompt_ids=prompt_ids,
+            completion_ids=resp.output_tokens,
+            **reward_kwargs,
+        )
 
         input_len = len(resp.input_tokens)
         output_len = len(resp.output_tokens)
@@ -80,7 +84,7 @@ class RlvrWorkflow(RolloutWorkflow):
     async def arun_episode(
         self,
         gconfig: GenerationHyperparameters,
-        env_option: Optional[Any] = None,
+        env_option: Optional[Dict[str, Any]] = None,
         seed: Optional[int] = None,
     ) -> Trajectory:
         """Async version of run_episode. Run a single episode and return the trajectory."""
@@ -94,13 +98,17 @@ class RlvrWorkflow(RolloutWorkflow):
         resp = await self.llm_client.agenerate(req)
 
         # Run reward computation in executor to avoid blocking
+        reward_kwargs = env_option.copy()
+        reward_kwargs.pop("query_id")
+        reward_kwargs.pop("prompt")
         reward = self.reward_fn(
-            query_ids=[query_id],
-            prompts=[req.text],
-            prompt_ids=[prompt_ids],
-            completions=[resp.completion],
-            completion_ids=[resp.output_tokens],
-        )[0]
+            query_id=query_id,
+            prompt=req.text,
+            completion=resp.completion,
+            prompt_ids=prompt_ids,
+            completion_ids=resp.output_tokens,
+            **reward_kwargs,
+        )
 
         input_len = len(resp.input_tokens)
         output_len = len(resp.output_tokens)

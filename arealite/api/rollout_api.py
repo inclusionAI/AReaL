@@ -116,14 +116,19 @@ class RolloutWorkflowFactory:
             from arealite.impl.rlvr.rlvr_workflow import RlvrWorkflow
 
             rlvr_config = config.rlvr
-            if rlvr_config.reward_type == "math":
-                from arealite.impl.rlvr.math_reward import get_math_reward_fn
+            assert rlvr_config is not None
+            if rlvr_config.reward_type == "areal-math":
+                from arealite.impl.rlvr.rewards.areal_math import get_math_reward_fn
 
                 reward_fn = get_math_reward_fn(rlvr_config.solution_path)
-            elif rlvr_config.reward_type == "code":
-                from arealite.impl.rlvr.code_reward import get_code_reward_fn
+            elif rlvr_config.reward_type == "areal-code":
+                from arealite.impl.rlvr.rewards.areal_code import get_code_reward_fn
 
                 reward_fn = get_code_reward_fn(rlvr_config.solution_path)
+            elif rlvr_config.reward_type == "gsm8k":
+                from arealite.impl.rlvr.rewards.gsm8k import (
+                    gsm8k_reward_fn as reward_fn,
+                )
             else:
                 raise NotImplementedError(
                     f"Unknown reward type: {rlvr_config.reward_type}"

@@ -34,15 +34,16 @@ def extract_code(text, min_length=20):
 
 def get_code_reward_fn(dataset_path):
     def code_reward(
-        query_ids: List[str],
-        prompts: List[str],
-        completions: List[str],
-        prompt_ids: List[List[int]],
-        completion_ids: List[List[int]],
-    ) -> List[int]:
-
+        query_id: str,
+        prompt: str,
+        completion: str,
+        prompt_ids: List[int],
+        completion_ids: List[int],
+        **kwargs,
+    ) -> float:
         id2info, _ = _load_metadata(dataset_path)
-        [extract_code(c) for c in completions]
-        return code_verify(id2info=id2info, generateds=completions, query_ids=query_ids)
+        return code_verify(
+            id2info=id2info, generateds=[extract_code(completion)], query_ids=[query_id]
+        )[0]
 
     return code_reward

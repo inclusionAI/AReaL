@@ -228,8 +228,16 @@ class MathCodeSingleStepConfig:
 
 @dataclass
 class RLVRConfig:
-    reward_type: str = "math"
-    solution_path: str = field(default="", metadata={"help": "Path to solutions"})
+    reward_type: str = field(
+        default="areal-math",
+        metadata={
+            "help": "The type of the reward function",
+            "choices": ["areal-math", "areal-code", "gsm8k"],
+        },
+    )
+    solution_path: str = field(
+        default="", metadata={"help": "Path to solutions. Required by areal-math/code."}
+    )
 
 
 @dataclass

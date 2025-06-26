@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import List
 
 from realhf.impl.dataset.math_code_dataset import load_metadata
-from realhf.impl.dataset.math_parser import parse_lines_in_parallel
+from realhf.impl.dataset.math_parser import parse_line
 
 
 @lru_cache(maxsize=1)
@@ -16,18 +16,14 @@ def _load_metadata(dataset_path: str):
 
 def get_math_reward_fn(dataset_path):
     def math_reward(
-        query_ids: List[str],
-        prompts: List[str],
-        completions: List[str],
-        prompt_ids: List[List[int]],
-        completion_ids: List[List[int]],
-    ) -> List[int]:
+        query_id: str,
+        prompt: str,
+        completion: str,
+        prompt_ids: List[int],
+        completion_ids: List[int],
+        **kwargs,
+    ) -> float:
         id2info, _ = _load_metadata(dataset_path)
-        for qid in query_ids:
-            assert qid in id2info
-            assert id2info[qid].get("task", "math") == "math"
-        return parse_lines_in_parallel(
-            id2info=id2info, generateds=completions, query_ids=query_ids
-        )
+        return parse_line(id2info=id2info, generated=completion, query_id=query_id)
 
     return math_reward

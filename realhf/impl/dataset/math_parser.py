@@ -813,7 +813,7 @@ def loadJson(dataDir):
     return samples
 
 
-def parse_line(id2info, prompt_str, generated, query_id):
+def parse_line(id2info, generated, query_id):
     info = id2info[query_id.split("@idx:")[0]]
 
     label = 0
