@@ -1,6 +1,6 @@
 # Basic experiment info
-experiment_name: test-exp
-trial_name: test-trial
+experiment_name: gsm8k-test
+trial_name: my-trial
 seed: 1
 mode: ray
 wandb:

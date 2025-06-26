@@ -62,4 +62,3 @@ sglang:
   show_time_cost: false
   enable_metrics: true
   decode_log_interval: 1
-vllm: null

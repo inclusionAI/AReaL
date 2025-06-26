@@ -21,12 +21,14 @@ def main():
     parser.add_argument(
         "--config", help="The path of the main configuration file", required=True
     )
-    args = parser.parse_args()
+    args, overrides = parser.parse_known_args()
 
     # Initialize hydra config
     config_file = Path(args.config)
     hydra_init(config_path=str(config_file.parent), job_name="app")
-    cfg = hydra_compose(config_name=str(config_file.name.rstrip(".yaml")))
+    cfg = hydra_compose(
+        config_name=str(config_file.name.rstrip(".yaml")), overrides=overrides
+    )
 
     # Merge with the default configuration
     default_cfg = OmegaConf.structured(LLMServiceConfig)
