@@ -1,16 +1,20 @@
+experiment_name: gsm8k-test
+trial_name: my-trial
 server_backend: sglang
-model_path: /storage/testing/models/Qwen__Qwen3-1.7B/
-experiment_name: test-exp
-trial_name: test-trial
 served_model_name: null
+model_path: Qwen/Qwen2-0.5B-Instruct
+seed: 1
+
+# Cluster configuration
 cluster:
   cluster_name: local
   fileroot: /tmp/arealite/
-  n_nodes: 32
+  n_nodes: 1
   n_gpus_per_node: 8
   name_resolve:
     type: nfs
-    nfs_record_root: /tmp/arealite/nfs_record_root/
+    nfs_record_root: /tmp/arealite/name_resolve/
+
 parallel:
   tensor_parallel_size: 1
   pipeline_parallel_size: 1

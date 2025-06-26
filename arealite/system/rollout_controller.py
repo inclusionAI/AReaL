@@ -185,7 +185,7 @@ class RolloutController:
                 # Add to buffer
                 with self._lock:
                     self._buffer.append(trajs)
-                logger.info(
+                logger.debug(
                     f"Received {len(trajs)} trajectories from worker {data['worker_id']}"
                 )
             except QueueEmpty:

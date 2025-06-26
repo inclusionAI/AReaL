@@ -40,6 +40,9 @@ class RolloutWorker:
 
         # For staleness control
         self.train_batch_size = args.train_dataset.batch_size
+        self.max_concurrent_rollouts = (
+            config.max_concurrent_rollouts or self.train_batch_size
+        )
 
         self.pusher_host = pusher_host
         self.pusher_port = pusher_port
@@ -127,7 +130,7 @@ class RolloutWorker:
                     world_size = 1
 
                 cannot_rollout_reason = []
-                capacity = max(1, self.config.max_concurrent_rollouts // world_size)
+                capacity = max(1, self.max_concurrent_rollouts // world_size)
                 can_rollout = len(rollout_tasks) < capacity
                 if not can_rollout:
                     cannot_rollout_reason.append(
@@ -164,7 +167,7 @@ class RolloutWorker:
 
                     rollout_stat.submitted += 1
                     rollout_stat.running += 1
-                    logger.info(
+                    logger.debug(
                         f"Worker {self.worker_id}: Submit rollout rid {rid}. "
                         f"Submit: {rollout_stat.submitted}, "
                         f"running: {rollout_stat.running}, "
@@ -207,7 +210,7 @@ class RolloutWorker:
                         self.pusher.push(trajectory_data)
                         rollout_stat.accepted += 1
 
-                    logger.info(
+                    logger.debug(
                         f"Worker {self.worker_id}: Finish rollout {task_rid}. "
                         f"Submit: {rollout_stat.submitted}, "
                         f"running: {rollout_stat.running}, "

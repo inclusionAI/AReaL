@@ -1,6 +1,7 @@
 # Copyright 2025 Ant Group Inc.
 # Licensed under the Apache License, Version 2.0
 
+import functools
 import os
 import time
 from typing import Dict, List, Optional
@@ -39,7 +40,7 @@ from arealite.utils import (
 from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
 from realhf.base import constants, logging, name_resolve, names, stats_tracker, timeutil
 
-logger = logging.getLogger("GRPO Trainer")
+logger = logging.getLogger("GRPO Trainer", "system")
 
 
 class SpmdGRPOTrainer(Trainer):
@@ -92,6 +93,9 @@ class SpmdGRPOTrainer(Trainer):
         self.group_adv_norm = self.config.group_adv_norm
         self.group_size = args.rollout.gconfig.n_samples
         self.max_head_offpolicyness = args.rollout.max_head_offpolicyness
+        self.reward_bias = self.config.reward_bias
+        self.reward_scaling = self.config.reward_scaling
+        self.max_reward_clip = self.config.max_reward_clip
 
         self.save_ctl = timeutil.EpochStepTimeFreqCtl(
             freq_epoch=self.args.exp_ctrl.save_freq_epochs,
@@ -114,7 +118,7 @@ class SpmdGRPOTrainer(Trainer):
         total_epochs = self.args.exp_ctrl.total_train_epochs
         steps_per_epoch = len(self.train_dataloader)
         ft_spec = FinetuneSpec(
-            total_train_epochs=steps_per_epoch,
+            total_train_epochs=total_epochs,
             dataset_size=len(self.train_dataset),
             train_batch_size=self.args.train_dataset.batch_size,
         )
@@ -133,7 +137,13 @@ class SpmdGRPOTrainer(Trainer):
 
         # Main RL training loop.
         total_epochs = self.args.exp_ctrl.total_train_epochs
+        if dist.is_initialized():
+            world_size = dist.get_world_size()
+        else:
+            world_size = 1
         global_step = 0
+        warmup_steps = self.max_head_offpolicyness + 1
+        assert steps_per_epoch >= warmup_steps
         start_time = time.monotonic()
         for epoch in range(total_epochs):
             for step, data in enumerate(self.train_dataloader):
@@ -144,15 +154,11 @@ class SpmdGRPOTrainer(Trainer):
                         # Submitted data will not actually be sent for rollout.
                         # The rollout controller over-subscribe the data to
                         # ensure that there are enough data being generated.
-                        if global_step < self.max_head_offpolicyness + 1:
+                        if epoch == 0 and step < warmup_steps:
                             continue
-
-                    # Run generation or rollout to collect data
-                    if self.config.async_training:
                         # Wait until enough trajectories has been collected.
                         trajs = self.rollout_controller.prepare_batch(
-                            batch_size=self.args.train_dataset.batch_size
-                            // dist.get_world_size()
+                            batch_size=self.args.train_dataset.batch_size // world_size
                         )
                     else:
                         # Run batched rollout by submitting requests to LLM servers
@@ -174,14 +180,13 @@ class SpmdGRPOTrainer(Trainer):
                     name = names.model_version(
                         self.args.experiment_name, self.args.trial_name, "actor"
                     )
-                    name_resolve.add(name, str(1), replace=True)
+                    name_resolve.add(name, str(global_step + 1), replace=True)
 
                 if self.save_ctl.check(
                     epochs=int(step == steps_per_epoch - 1), steps=1
                 ):
                     if dist.get_rank() == 0:
                         logger.info("Saving model ...")
-
                     with record_timing("timeperf/save", timing_stats):
                         save_path = os.path.join(
                             constants.get_save_path(self.args), "actor"
@@ -192,15 +197,25 @@ class SpmdGRPOTrainer(Trainer):
                             base_model_path=self.config.actor.path,
                         )
 
-                for stats in mb_stats:
-                    log_wandb_tensorboard(global_step, stats, self.summary_writer)
-                log_wandb_tensorboard(global_step, timing_stats, self.summary_writer)
+                assert len(mb_stats) == self.config.ppo_n_minibatches
+                log_step = self.config.ppo_n_minibatches * global_step
+                for i, stats in enumerate(mb_stats):
+                    log_wandb_tensorboard(log_step + i, stats, self.summary_writer)
+                log_wandb_tensorboard(log_step, timing_stats, self.summary_writer)
 
                 if dist.get_rank() == 0:
                     logger.info(
-                        f"Epoch {epoch} Step {step} GlobalStep {global_step} done. Detailed time stats:"
-                        f"\n{tabulate_stats(timing_stats, floatfmt='.2f')}"
+                        f"Epoch {epoch+1}/{total_epochs} "
+                        f"Step {step+1}/{steps_per_epoch} "
+                        f"Train step {global_step + 1}/{total_epochs * steps_per_epoch - warmup_steps} done."
                     )
+                    logger.info(
+                        f"Detailed time stats: \n{tabulate_stats(timing_stats, floatfmt='.2f')}"
+                    )
+                    for i, stats in enumerate(mb_stats):
+                        logger.info(
+                            f"GRPO training stats ({i + 1}/{len(mb_stats)}):\n{tabulate_stats(stats)}"
+                        )
 
                 global_step += 1
 
@@ -242,6 +257,10 @@ class SpmdGRPOTrainer(Trainer):
         )
         old_logp, *_ = unpad_input(rollout["logprobs"], attn_mask)
         prompt_mask, *_ = unpad_input(rollout["prompt_mask"], attn_mask)
+        # Shift logprobs and mask for computing loss.
+        loss_mask = prompt_mask.logical_not()
+        loss_mask = torch.roll(loss_mask, shifts=-1)
+        old_logp = torch.roll(old_logp, shifts=-1)
 
         input_ids = model_inputs["input_ids"].squeeze(0)
         n_seqs = seq_no_eos_mask.shape[0]
@@ -284,15 +303,14 @@ class SpmdGRPOTrainer(Trainer):
 
         # Compute rewards using the reward function in synchronous RLVR pipeline.
         reward_score = rollout["rewards"]
+        reward_score = (reward_score + self.reward_bias) * self.reward_scaling
+        reward_score = torch.clip(reward_score, max=self.max_reward_clip)
         if self.config.group_reward_norm:
             for i in range(n_seqs // self.group_size):
                 s = slice(i * self.group_size, (i + 1) * self.group_size)
                 r = reward_score[s]
                 reward_score[s] = (r - r.mean()) / (r.std() + 1e-9)
 
-        # Shift logprobs and mask for computing loss.
-        loss_mask = prompt_mask.logical_not()
-        loss_mask = torch.roll(loss_mask, shifts=-1)
         # Apply the mask to log probabilities.
         ref_logp *= loss_mask
         old_logp *= loss_mask
@@ -347,6 +365,7 @@ class SpmdGRPOTrainer(Trainer):
             old_logp=old_logp,
             advantages=advantages,
             loss_mask=loss_mask,
+            prox_logp=prox_logp,
         )
         input_lens = model_inputs["cu_seqlens"][1:] - model_inputs["cu_seqlens"][:-1]
 
@@ -414,16 +433,15 @@ class SpmdGRPOTrainer(Trainer):
             )
             for mb in mb_inputs.mbs:
                 model_inputs = {k: mb[k] for k in model_inputs}
-                model_inputs["loss_mask"] = mb["loss_mask"]
-                loss_fn = self._get_loss_fn(
-                    old_logp=mb["old_logp"],
-                    advantages=mb["advantages"],
-                    loss_mask=mb["loss_mask"],
-                    prox_logp=prox_logp if self.config.use_decoupled_loss else None,
-                )
                 train_stat = self.actor.train_batch(
-                    model_inputs,
-                    loss_fn=loss_fn,
+                    mb,
+                    loss_fn=functools.partial(
+                        grpo_loss_fn,
+                        temperature=self.gconfig.temperature,
+                        eps_clip=self.config.eps_clip,
+                        c_clip=self.config.c_clip,
+                        behav_imp_weight_cap=self.config.behav_imp_weight_cap,
+                    ),
                     mb_spec=self.config.mb_spec,
                     loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
                 )
@@ -432,73 +450,80 @@ class SpmdGRPOTrainer(Trainer):
         all_stats[0].update(global_stats)
         return all_stats
 
-    def _get_loss_fn(self, old_logp, advantages, loss_mask, prox_logp):
-        def loss_fn(logits: torch.Tensor, input_data: Dict):
-            """Loss function for actor step, all inputs should be splitted into
-            pipeline micro batches, returns loss and logging stats."""
-            input_ids = input_data["input_ids"].squeeze(0)
-            cu_seqlens = input_data["cu_seqlens"]
 
-            logits = logits.squeeze(0).float()
-            logits /= self.gconfig.temperature
-            logprobs = gather_logprobs(logits, torch.roll(input_ids, shifts=-1))
-            loss, stat = ppo_functional.actor_loss_fn(
-                logprobs=logprobs,
-                old_logprobs=old_logp,
-                advantages=advantages,
-                eps_clip=self.config.eps_clip,
-                loss_mask=loss_mask,
-                c_clip=self.config.c_clip,
-                proximal_logprobs=prox_logp,
-                behav_imp_weight_cap=self.config.behav_imp_weight_cap,
-            )
+def grpo_loss_fn(
+    logits: torch.Tensor,
+    input_data: Dict,
+    temperature: float,
+    eps_clip: float,
+    c_clip: float | None,
+    behav_imp_weight_cap: float | None,
+):
+    """Loss function for actor step, all inputs should be splitted into
+    pipeline micro batches, returns loss and logging stats."""
+    input_ids = input_data["input_ids"].squeeze(0)
+    cu_seqlens = input_data["cu_seqlens"]
+    old_logp = input_data["old_logp"]
+    advantages = input_data["advantages"]
+    loss_mask = input_data["loss_mask"]
+    prox_logp = input_data["prox_logp"]
 
-            entropy = calc_entropy(logits=logits, cu_seqlens=cu_seqlens)
+    logits = logits.squeeze(0).float()
+    logits /= temperature
+    logprobs = gather_logprobs(logits, torch.roll(input_ids, shifts=-1))
+    loss, stat = ppo_functional.actor_loss_fn(
+        logprobs=logprobs,
+        old_logprobs=old_logp,
+        advantages=advantages,
+        eps_clip=eps_clip,
+        loss_mask=loss_mask,
+        c_clip=c_clip,
+        proximal_logprobs=prox_logp,
+        behav_imp_weight_cap=behav_imp_weight_cap,
+    )
 
-            # Log training statistics
-            stats_tracker.denominator(
-                n_tokens=torch.ones(
-                    logits.shape[0], dtype=torch.bool, device=logits.device
-                ),
-                n_valid_tokens=loss_mask.bool(),
-                clipped_tokens=stat["clip_mask"],
-                dual_clipped_tokens=stat["dual_clip_mask"],
-            )
+    entropy = calc_entropy(logits=logits, cu_seqlens=cu_seqlens)
 
-            stats_tracker.stat(
-                importance_weight=stat["importance_weight"],
-                approx_kl=stat["approx_kl"],
-                new_logp=logprobs.detach(),
-                old_logp=old_logp,
-                entropy=entropy.float(),
-                actor_loss=stat["loss"],
-                clip_ratio=stat["clip_mask"].float(),
-                dual_clip_ratio=stat["dual_clip_mask"].float(),
-                denominator="n_valid_tokens",
-            )
-            if "behave_imp_weight" in stat:
-                stats_tracker.denominator(unclipped_behave_tokens=stat["behave_mask"])
-                stats_tracker.stat(
-                    behave_imp_weight=stat["behave_imp_weight"],
-                    behave_approx_kl=stat["behave_approx_kl"],
-                    denominator="unclipped_behave_tokens",
-                )
-            vocab_min_logits = logits.detach().min(-1).values.float()
-            vocab_max_logits = logits.detach().max(-1).values.float()
-            stats_tracker.stat(
-                vocab_min_logits=vocab_min_logits,
-                vocab_max_logits=vocab_max_logits,
-                denominator="n_tokens",
-            )
+    # Log training statistics
+    stats_tracker.denominator(
+        n_tokens=torch.ones(logits.shape[0], dtype=torch.bool, device=logits.device),
+        n_valid_tokens=loss_mask.bool(),
+        clipped_tokens=stat["clip_mask"],
+        dual_clipped_tokens=stat["dual_clip_mask"],
+    )
 
-            clip_mask = stat["clip_mask"]
-            clipped_new_logp = torch.where(clip_mask, logprobs.detach(), 0.0)
-            clipped_old_logp = torch.where(clip_mask, old_logp, 0.0)
-            stats_tracker.stat(
-                clipped_new_logp=clipped_new_logp,
-                clipped_old_logp=clipped_old_logp,
-                denominator="clipped_tokens",
-            )
-            return loss
+    stats_tracker.stat(
+        importance_weight=stat["importance_weight"],
+        approx_kl=stat["approx_kl"],
+        new_logp=logprobs.detach(),
+        old_logp=old_logp,
+        entropy=entropy.float(),
+        actor_loss=stat["loss"],
+        clip_ratio=stat["clip_mask"].float(),
+        dual_clip_ratio=stat["dual_clip_mask"].float(),
+        denominator="n_valid_tokens",
+    )
+    if "behave_imp_weight" in stat:
+        stats_tracker.denominator(unclipped_behave_tokens=stat["behave_mask"])
+        stats_tracker.stat(
+            behave_imp_weight=stat["behave_imp_weight"],
+            behave_approx_kl=stat["behave_approx_kl"],
+            denominator="unclipped_behave_tokens",
+        )
+    vocab_min_logits = logits.detach().min(-1).values.float()
+    vocab_max_logits = logits.detach().max(-1).values.float()
+    stats_tracker.stat(
+        vocab_min_logits=vocab_min_logits,
+        vocab_max_logits=vocab_max_logits,
+        denominator="n_tokens",
+    )
 
-        return loss_fn
+    clip_mask = stat["clip_mask"]
+    clipped_new_logp = torch.where(clip_mask, logprobs.detach(), 0.0)
+    clipped_old_logp = torch.where(clip_mask, old_logp, 0.0)
+    stats_tracker.stat(
+        clipped_new_logp=clipped_new_logp,
+        clipped_old_logp=clipped_old_logp,
+        denominator="clipped_tokens",
+    )
+    return loss

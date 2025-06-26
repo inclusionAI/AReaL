@@ -13,18 +13,11 @@ from arealite.api.cli_args import TrainerConfig, TrainingArgs
 
 if TYPE_CHECKING:
     from arealite.system.rollout_controller import RolloutController
-# application code
 
-# 1. create a trimmed base trainer class for inheriance
-# 2. use legacy CLI args
-# 3. directly use huggingface Dataset
 # 4. use huggingface.trainerstate
 # TODO: how to do checkpointing?
 
 # follow the signature of transformers.Trainer if possible
-
-# distributed sampler
-# process group init
 
 
 def _collate_fn(data_list: List[Dict]) -> Dict:
@@ -69,6 +62,7 @@ class Trainer(abc.ABC):
             num_workers=cfg.num_workers,
             collate_fn=_collate_fn,
             drop_last=True,
+            collate_fn=lambda x: x,
         )
 
     def create_valid_dataloader(self):
@@ -87,6 +81,7 @@ class Trainer(abc.ABC):
             num_workers=cfg.num_workers,
             collate_fn=_collate_fn,
             drop_last=True,
+            collate_fn=lambda x: x,
         )
 
     @property

@@ -240,6 +240,7 @@ class HFEngine(SPMDWrapper):
                 results.append(outputs.logits)
 
         res = aggregate_fn(results)
+        output_seqlens = [output_seqlens[i] for i in mb_splits.forward_indices]
         unpacked = unpack_sequence(res, lens=output_seqlens, dim=1)
         return aggregate_fn(recorder_list(unpacked, mb_splits.backward_indices))
 
@@ -309,8 +310,8 @@ class HFEngine(SPMDWrapper):
         await asyncio.gather(*tasks)
 
     def update_weights_to(self, llm_client: LLMClient):
+        loop = asyncio.new_event_loop()
         try:
-            loop = asyncio.get_event_loop()
             loop.run_until_complete(self.aupdate_weights_to(llm_client))
         finally:
             loop.close()

@@ -68,19 +68,19 @@ class LLMServiceConfig:
     trial_name: str = field(
         default=MISSING, metadata={"help": "Name of the trial. Required."}
     )
+    server_backend: str = field(
+        default="sglang",
+        metadata={"help": "Backend for serving", "choices": ["sglang", "vllm"]},
+    )
     served_model_name: Optional[str] = field(
         default=None, metadata={"help": "Name of the served model"}
     )
+    model_path: str = field(default="", metadata={"help": "Path to model"})
     seed: int = field(default=1, metadata={"help": "Random seed"})
     cluster: ClusterSpecConfig = field(
         default_factory=ClusterSpecConfig,
         metadata={"help": "Cluster specification configuration"},
     )
-    server_backend: str = field(
-        default="sglang",
-        metadata={"help": "Backend for serving", "choices": ["sglang", "vllm"]},
-    )
-    model_path: str = field(default="", metadata={"help": "Path to model"})
     parallel: ParallelismConfig = field(
         default_factory=ParallelismConfig,
         metadata={"help": "Model parallelism configuration"},
@@ -214,10 +214,6 @@ class EngineBackendConfig:
 @dataclass
 class EngineConfig:
     # Model Architecture Configuration
-    type: ModelFamily = field(
-        default_factory=lambda: ModelFamily("llama", False),
-        metadata={"help": "Model family specification"},
-    )
     path: str = field(default="", metadata={"help": "Path to HuggingFace checkpoint"})
     init_from_scratch: bool = field(
         default=False, metadata={"help": "Initialize model weights randomly"}
@@ -294,8 +290,11 @@ class RolloutControllerConfig:
     num_workers: int = field(
         default=1, metadata={"help": "Number of rollout worker processes"}
     )
-    max_concurrent_rollouts: int = field(
-        default=1, metadata={"help": "Maximum number of concurrent rollouts"}
+    max_concurrent_rollouts: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Maximum number of concurrent rollouts. Defaults to train batch size."
+        },
     )
     max_head_offpolicyness: int = field(
         default=0,
@@ -351,7 +350,7 @@ class GRPOTrainerConfig:
 
     # Core PPO/GRPO Parameters
     group_adv_norm: bool = field(
-        default=True,
+        default=False,
         metadata={
             "help": "Normalize advantages within each prompt group rather than globally"
         },
@@ -383,6 +382,9 @@ class GRPOTrainerConfig:
         default=1.0, metadata={"help": "Reward scaling factor"}
     )
     reward_bias: float = field(default=0.0, metadata={"help": "Reward bias"})
+    max_reward_clip: float = field(
+        default=20.0, metadata={"help": "Maximum absolute value for reward clipping"}
+    )
     mask_no_eos_with_zero: bool = field(
         default=False,
         metadata={
@@ -404,10 +406,7 @@ class GRPOTrainerConfig:
     # KL Control
     kl_ctl: float = field(default=0.1, metadata={"help": "KL divergence coefficient"})
 
-    # Reward clipping
-    max_reward_clip: float = field(
-        default=20.0, metadata={"help": "Maximum absolute value for reward clipping"}
-    )
+    # Asynchronous PPO
     recompute_logprob: bool = field(
         default=False,
         metadata={"help": "Recompute logp and replace the logp returned by inference."},
@@ -486,10 +485,6 @@ class TrainingArgs:
     exp_ctrl: ExperimentSaveEvalControl = field(
         default_factory=ExperimentSaveEvalControl,
         metadata={"help": "Experiment save/evaluation control configuration."},
-    )
-    min_required_servers: int = field(
-        default=0,
-        metadata={"help": "The minimum LLM server instances for RL training."},
     )
     shutdown_server_on_exit: bool = field(
         default=False,
