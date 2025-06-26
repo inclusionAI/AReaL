@@ -1,4 +1,4 @@
-"""Test script for PPO Trainer implementation."""
+"""Test script for GRPO Trainer implementation."""
 
 import pytest
 import torch
@@ -8,10 +8,10 @@ from arealite.api.cli_args import (
     DatasetConfig,
     EngineBackendConfig,
     EngineConfig,
+    GRPOTrainerConfig,
     LLMClientConfig,
     ModelFamily,
     OptimizerConfig,
-    PPOTrainerConfig,
     RLVRConfig,
     TrainerConfig,
     TrainingArgs,
@@ -19,12 +19,12 @@ from arealite.api.cli_args import (
 from arealite.api.io_struct import FinetuneSpec
 from arealite.api.rollout_api import RolloutWorkflowFactory
 from arealite.impl.rollout_controller import RolloutController
-from arealite.impl.trainer.ppo import SpmdPPOTrainer
+from arealite.impl.trainer.grpo import SpmdGRPOTrainer
 from arealite.tests.utils import mock_rollout_output
 from realhf.base import constants, name_resolve, seeding
 
-EXPR_NAME = "test_ppo"
-TRIAL_NAME = "test_ppo"
+EXPR_NAME = "test_grpo"
+TRIAL_NAME = "test_grpo"
 MODEL_PATH = "Qwen/Qwen2.5-0.5B"
 
 
@@ -43,15 +43,15 @@ def args():
         pin_memory=True,
         num_workers=1,
     )
-    args.trainer = TrainerConfig(type="ppo", ppo=PPOTrainerConfig())
-    args.trainer.ppo.actor = EngineConfig(
+    args.trainer = TrainerConfig(type="grpo", grpo=GRPOTrainerConfig())
+    args.trainer.grpo.actor = EngineConfig(
         type=ModelFamily("qwen2", False),
         path=MODEL_PATH,
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
         backend=EngineBackendConfig(type="hf"),
     )
-    args.trainer.ppo.ref = EngineConfig(
+    args.trainer.grpo.ref = EngineConfig(
         type=ModelFamily("qwen2", False),
         path=MODEL_PATH,
         gradient_checkpointing=False,
@@ -75,9 +75,9 @@ def args():
 @pytest.mark.parametrize("use_decoupled_loss", [False, True])
 def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
     args.rollout.gconfig.n_samples = n_samples
-    args.trainer.ppo.kl_ctl = kl_ctl
-    args.trainer.ppo.recompute_logprobs = recompute
-    args.trainer.ppo.use_decoupled_loss = use_decoupled_loss
+    args.trainer.grpo.kl_ctl = kl_ctl
+    args.trainer.grpo.recompute_logprobs = recompute
+    args.trainer.grpo.use_decoupled_loss = use_decoupled_loss
     args.train_dataset.batch_size = bs
     # Create mock rollout controller and trainer
     rollout_factory = RolloutWorkflowFactory(args)
@@ -85,7 +85,7 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
     rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
     dataset = load_dataset("openai/gsm8k", name="main", split="train").select(range(10))
 
-    trainer = SpmdPPOTrainer(
+    trainer = SpmdGRPOTrainer(
         args=args,
         trainer_config=args.trainer,
         train_dataset=dataset,
@@ -107,7 +107,7 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
 
     # Verify the output
     assert isinstance(stats_list, list)
-    assert len(stats_list) == args.trainer.ppo.ppo_n_minibatches
+    assert len(stats_list) == args.trainer.grpo.ppo_n_minibatches
     for stats in stats_list:
         assert isinstance(stats, dict)
         for k, v in stats.items():

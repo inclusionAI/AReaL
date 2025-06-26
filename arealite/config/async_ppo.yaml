@@ -48,8 +48,8 @@ cluster:
 
 # Model
 trainer:
-  type: ppo
-  ppo:
+  type: grpo
+  grpo:
     actor:
       type:
         _class: qwen3

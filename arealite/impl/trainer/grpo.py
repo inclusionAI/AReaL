@@ -11,8 +11,8 @@ from datasets import Dataset
 
 from arealite import ppo_functional
 from arealite.api.cli_args import (
+    GRPOTrainerConfig,
     MicroBatchSpec,
-    PPOTrainerConfig,
     TrainerConfig,
     TrainingArgs,
 )
@@ -39,10 +39,10 @@ from arealite.utils import (
 from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
 from realhf.base import constants, logging, name_resolve, names, stats_tracker, timeutil
 
-logger = logging.getLogger("PPO Trainer")
+logger = logging.getLogger("GRPO Trainer")
 
 
-class SpmdPPOTrainer(Trainer):
+class SpmdGRPOTrainer(Trainer):
 
     def __init__(
         self,
@@ -60,10 +60,10 @@ class SpmdPPOTrainer(Trainer):
             rollout_controller,
         )
         if self.rollout_controller is None:
-            raise ValueError("PPO Trainer requires a rollout controller.")
+            raise ValueError("GRPO Trainer requires a rollout controller.")
 
-        assert trainer_config.ppo is not None
-        self.config: PPOTrainerConfig = trainer_config.ppo
+        assert trainer_config.grpo is not None
+        self.config: GRPOTrainerConfig = trainer_config.grpo
         assert args.rollout is not None
         assert self.config.actor is not None
 
@@ -291,11 +291,11 @@ class SpmdPPOTrainer(Trainer):
                 reward_score[s] = (r - r.mean()) / (r.std() + 1e-9)
 
         # Shift logprobs and mask for computing loss.
-        ppo_loss_mask = prompt_mask.logical_not()
-        ppo_loss_mask = torch.roll(ppo_loss_mask, shifts=-1)
+        loss_mask = prompt_mask.logical_not()
+        loss_mask = torch.roll(loss_mask, shifts=-1)
         # Apply the mask to log probabilities.
-        ref_logp *= ppo_loss_mask
-        old_logp *= ppo_loss_mask
+        ref_logp *= loss_mask
+        old_logp *= loss_mask
 
         # Compute KL-regularized rewards and GAEs.
         cu_seqlens = model_inputs["cu_seqlens"]
@@ -333,27 +333,25 @@ class SpmdPPOTrainer(Trainer):
                     adv_list.append(
                         masked_normalization(
                             advantages[cu_seqlens[i] : cu_seqlens[i + self.group_size]],
-                            ppo_loss_mask[
-                                cu_seqlens[i] : cu_seqlens[i + self.group_size]
-                            ],
+                            loss_mask[cu_seqlens[i] : cu_seqlens[i + self.group_size]],
                             all_reduce=False,
                         )
                     )
                 advantages = torch.cat(adv_list, 0)
             else:
-                advantages = masked_normalization(advantages, ppo_loss_mask)
+                advantages = masked_normalization(advantages, loss_mask)
 
         # Prepare data to be splitted into mini-batches.
-        ppo_global_batch = dict(
+        global_batch = dict(
             **model_inputs,
             old_logp=old_logp,
             advantages=advantages,
-            ppo_loss_mask=ppo_loss_mask,
+            loss_mask=loss_mask,
         )
         input_lens = model_inputs["cu_seqlens"][1:] - model_inputs["cu_seqlens"][:-1]
 
         all_stats = []
-        with stats_tracker.scope("ppo_actor"):
+        with stats_tracker.scope("actor"):
             ########## Logging code starts ##########
             result_denominators = {
                 "correct_n_seqs": (reward_score > 0).bool(),
@@ -361,8 +359,8 @@ class SpmdPPOTrainer(Trainer):
             }
             global_denominators = dict(
                 n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
-                n_tokens=torch.ones_like(ppo_loss_mask, dtype=torch.bool),
-                n_valid_tokens=ppo_loss_mask.bool(),
+                n_tokens=torch.ones_like(loss_mask, dtype=torch.bool),
+                n_valid_tokens=loss_mask.bool(),
                 **result_denominators,
             )
             stats_tracker.denominator(**global_denominators)
@@ -407,36 +405,36 @@ class SpmdPPOTrainer(Trainer):
 
             global_stats = stats_tracker.export()
             for k in global_denominators:
-                global_stats.pop(f"ppo_actor/{k}")
+                global_stats.pop(f"actor/{k}")
             ########## Logging code ends ##########
 
             mb_inputs = split_dict_tensor_with_cu_seqlens(
-                ppo_global_batch,
+                global_batch,
                 mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
             )
             for mb in mb_inputs.mbs:
                 model_inputs = {k: mb[k] for k in model_inputs}
-                model_inputs["ppo_loss_mask"] = mb["ppo_loss_mask"]
-                loss_fn = self._get_ppo_loss_fn(
+                model_inputs["loss_mask"] = mb["loss_mask"]
+                loss_fn = self._get_loss_fn(
                     old_logp=mb["old_logp"],
                     advantages=mb["advantages"],
-                    ppo_loss_mask=mb["ppo_loss_mask"],
+                    loss_mask=mb["loss_mask"],
                     prox_logp=prox_logp if self.config.use_decoupled_loss else None,
                 )
                 train_stat = self.actor.train_batch(
                     model_inputs,
                     loss_fn=loss_fn,
                     mb_spec=self.config.mb_spec,
-                    loss_weight_fn=lambda x: x["ppo_loss_mask"].count_nonzero(),
+                    loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
                 )
                 stats_tracker.scalar(**train_stat)
                 all_stats.append(stats_tracker.export())
         all_stats[0].update(global_stats)
         return all_stats
 
-    def _get_ppo_loss_fn(self, old_logp, advantages, ppo_loss_mask, prox_logp):
-        def ppo_loss(logits: torch.Tensor, input_data: Dict):
-            """Loss function for ppo actor step, all inputs should be splitted into
+    def _get_loss_fn(self, old_logp, advantages, loss_mask, prox_logp):
+        def loss_fn(logits: torch.Tensor, input_data: Dict):
+            """Loss function for actor step, all inputs should be splitted into
             pipeline micro batches, returns loss and logging stats."""
             input_ids = input_data["input_ids"].squeeze(0)
             cu_seqlens = input_data["cu_seqlens"]
@@ -444,12 +442,12 @@ class SpmdPPOTrainer(Trainer):
             logits = logits.squeeze(0).float()
             logits /= self.gconfig.temperature
             logprobs = gather_logprobs(logits, torch.roll(input_ids, shifts=-1))
-            loss, ppo_stat = ppo_functional.actor_loss_fn(
+            loss, stat = ppo_functional.actor_loss_fn(
                 logprobs=logprobs,
                 old_logprobs=old_logp,
                 advantages=advantages,
                 eps_clip=self.config.eps_clip,
-                loss_mask=ppo_loss_mask,
+                loss_mask=loss_mask,
                 c_clip=self.config.c_clip,
                 proximal_logprobs=prox_logp,
                 behav_imp_weight_cap=self.config.behav_imp_weight_cap,
@@ -462,29 +460,27 @@ class SpmdPPOTrainer(Trainer):
                 n_tokens=torch.ones(
                     logits.shape[0], dtype=torch.bool, device=logits.device
                 ),
-                n_valid_tokens=ppo_loss_mask.bool(),
-                clipped_tokens=ppo_stat["clip_mask"],
-                dual_clipped_tokens=ppo_stat["dual_clip_mask"],
+                n_valid_tokens=loss_mask.bool(),
+                clipped_tokens=stat["clip_mask"],
+                dual_clipped_tokens=stat["dual_clip_mask"],
             )
 
             stats_tracker.stat(
-                importance_weight=ppo_stat["importance_weight"],
-                approx_kl=ppo_stat["approx_kl"],
+                importance_weight=stat["importance_weight"],
+                approx_kl=stat["approx_kl"],
                 new_logp=logprobs.detach(),
                 old_logp=old_logp,
                 entropy=entropy.float(),
-                actor_loss=ppo_stat["loss"],
-                clip_ratio=ppo_stat["clip_mask"].float(),
-                dual_clip_ratio=ppo_stat["dual_clip_mask"].float(),
+                actor_loss=stat["loss"],
+                clip_ratio=stat["clip_mask"].float(),
+                dual_clip_ratio=stat["dual_clip_mask"].float(),
                 denominator="n_valid_tokens",
             )
-            if "behave_imp_weight" in ppo_stat:
-                stats_tracker.denominator(
-                    unclipped_behave_tokens=ppo_stat["behave_mask"]
-                )
+            if "behave_imp_weight" in stat:
+                stats_tracker.denominator(unclipped_behave_tokens=stat["behave_mask"])
                 stats_tracker.stat(
-                    behave_imp_weight=ppo_stat["behave_imp_weight"],
-                    behave_approx_kl=ppo_stat["behave_approx_kl"],
+                    behave_imp_weight=stat["behave_imp_weight"],
+                    behave_approx_kl=stat["behave_approx_kl"],
                     denominator="unclipped_behave_tokens",
                 )
             vocab_min_logits = logits.detach().min(-1).values.float()
@@ -495,7 +491,7 @@ class SpmdPPOTrainer(Trainer):
                 denominator="n_tokens",
             )
 
-            clip_mask = ppo_stat["clip_mask"]
+            clip_mask = stat["clip_mask"]
             clipped_new_logp = torch.where(clip_mask, logprobs.detach(), 0.0)
             clipped_old_logp = torch.where(clip_mask, old_logp, 0.0)
             stats_tracker.stat(
@@ -505,4 +501,4 @@ class SpmdPPOTrainer(Trainer):
             )
             return loss
 
-        return ppo_loss
+        return loss_fn

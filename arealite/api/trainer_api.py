@@ -101,10 +101,10 @@ class TrainerFactory:
         valid_dataset: Optional[Dataset] = None,
         rollout_controller: Optional["RolloutController"] = None,
     ) -> Trainer:
-        if config.type == "ppo":
-            from arealite.impl.trainer.ppo import SpmdPPOTrainer
+        if config.type == "grpo":
+            from arealite.impl.trainer.grpo import SpmdGRPOTrainer
 
-            return SpmdPPOTrainer(
+            return SpmdGRPOTrainer(
                 self.args,
                 config,
                 train_dataset=train_dataset,

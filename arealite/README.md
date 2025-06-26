@@ -55,7 +55,7 @@ The API layer defines abstract interfaces and data structures that provide a cle
 The implementation layer contains concrete implementations of the API interfaces:
 
 - **`fsdp_wrapper.py`**: FSDP-based training engine using PyTorch FSDP2
-- **`trainer/ppo.py`**: PPO trainer implementation for reinforcement learning
+- **`trainer/grpo.py`**: GRPO trainer implementation for reinforcement learning
 - **`rollout_controller.py`**: Coordinates rollout data collection across workers
 - **`rlvr/`**: RLVR (RL via Verification and Refinement) workflow implementations
 - **`agentic/`**: Agentic workflow implementations (math, code tasks)
@@ -124,8 +124,8 @@ The rollout system supports arbitrary agentic rollout paradigms, implemented as 
 ```bash
 python3 arealite.cli.main \
     experiment_name=my-exp trial_name=my-trial \
-    trainer.type=ppo \
-    trainer.ppo.actor.path=Qwen/Qwen2-0.5B
+    trainer.type=grpo \
+    trainer.grpo.actor.path=Qwen/Qwen2-0.5B
 ```
 
 ### Rollout-Only Evaluation
@@ -140,7 +140,7 @@ python3 arealite.cli.main \
 python3 arealite.cli.main \
     mode=ray \
     allocation_mode=sglang.d16p1m1+d32p2m1 \
-    trainer.type=ppo
+    trainer.type=grpo
 ```
 
 ## Customization Guide
@@ -202,7 +202,7 @@ def make_workflow(self, config: RolloutWorkflowConfig):
 - [ ] FSDP2 engine with transformers models. (In-progress)
 - [ ] SFT trainer. (In-progress)
 - [ ] SGLang update weights. (In-progress)
-- [ ] PPO trainer. (In-progress)
+- [x] GRPO trainer.
 - [ ] Add benchmarking against original AReaL
 - [ ] CI and unittests.
 - [ ] Other RL algorithms (DPO, REINFORCE, etc.)

@@ -21,7 +21,7 @@ from realhf.api.cli_args import (
 
 @dataclass
 class GenerationHyperparameters:
-    """Controls text generation behavior for PPO training."""
+    """Controls text generation behavior for RL training."""
 
     n_samples: int = field(
         default=1, metadata={"help": "Number of sequences to generate per prompt."}
@@ -302,20 +302,20 @@ class SFTTrainerConfig:
 
 
 @dataclass
-class PPOTrainerConfig:
+class GRPOTrainerConfig:
     async_training: bool = field(
         default=True, metadata={"help": "Enable asynchronous training mode"}
     )
     actor: EngineConfig = field(
         default_factory=EngineConfig,
-        metadata={"help": "Actor model configuration for PPO training"},
+        metadata={"help": "Actor model configuration"},
     )
     ref: Optional[EngineConfig] = field(
         default=None, metadata={"help": "Reference model configuration"}
     )
     mb_spec: MicroBatchSpec = field(
         default_factory=MicroBatchSpec,
-        metadata={"help": "Micro-batch specification for PPO training"},
+        metadata={"help": "Micro-batch specification"},
     )
 
     # Core PPO/GRPO Parameters
@@ -396,11 +396,11 @@ class PPOTrainerConfig:
 @dataclass
 class TrainerConfig:
     type: str = field(
-        default="ppo",
-        metadata={"help": "Trainer type", "choices": ["ppo", "sft", "null"]},
+        default="grpo",
+        metadata={"help": "Trainer type", "choices": ["grpo", "sft", "null"]},
     )
-    ppo: Optional[PPOTrainerConfig] = field(
-        default=None, metadata={"help": "PPO trainer configuration (if using PPO)"}
+    grpo: Optional[GRPOTrainerConfig] = field(
+        default=None, metadata={"help": "GRPO trainer configuration (if using GRPO)"}
     )
     sft: Optional[SFTTrainerConfig] = field(
         default=None, metadata={"help": "SFT trainer configuration (if using SFT)"}

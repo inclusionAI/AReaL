@@ -39,7 +39,6 @@ def create_dataset(cfg: DatasetConfig):
 
 def test_engine():
     """Test engine creation and basic functionality."""
-    print("Testing PPO train creation...")
 
     train_dataset = DatasetConfig(
         path="/storage/openpsi/users/meizhiyu.mzy/datasets/sft/json/",
