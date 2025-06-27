@@ -49,9 +49,9 @@ def args():
 
 @pytest.fixture(scope="module")
 def sglang_server(args):
-    server_args = LLMServiceConfig(EXPR_NAME, TRIAL_NAME, model_path=MODEL_PATH)
+    server_args = LLMServiceConfig(model_path=MODEL_PATH)
     server_args.sglang = SGLangConfig()
-    server = LLMServerFactory.make_server(server_args)
+    server = LLMServerFactory(args).make_server(server_args)
     server._startup()
     yield
     server._graceful_exit(0)

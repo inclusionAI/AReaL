@@ -43,7 +43,7 @@ def main():
     constants.set_experiment_trial_names(cfg.experiment_name, cfg.trial_name)
     name_resolve.reconfigure(cfg.cluster.name_resolve)
 
-    server = LLMServerFactory.make_server(cfg.llm_service)
+    server = LLMServerFactory(cfg).make_server(cfg.llm_service)
     server.start()
 
 

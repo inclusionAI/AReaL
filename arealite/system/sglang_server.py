@@ -66,8 +66,8 @@ def apply_sglang_path():
 class SGLangServer(LLMServer):
     """SGLang implementation of LLMServer."""
 
-    def __init__(self, service_config: LLMServiceConfig):
-        super().__init__(service_config)
+    def __init__(self, args, service_config: LLMServiceConfig):
+        super().__init__(args, service_config)
         self.server_info: LLMServerInfo | None = None
         self.base_gpu_id = 0
         self.config = service_config.sglang

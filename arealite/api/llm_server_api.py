@@ -8,11 +8,11 @@ import threading
 import time
 import traceback
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import List, Optional
 
-from arealite.api.cli_args import LLMServiceConfig
+from arealite.api.cli_args import LLMServiceConfig, TrainingArgs
 from arealite.api.io_struct import LLMServerInfo
 from realhf.base import logging, name_resolve, names
 
@@ -89,11 +89,10 @@ class LLMServiceRegistry:
 
 
 class LLMServer:
-    def __init__(self, service_config: LLMServiceConfig):
+    def __init__(self, args: TrainingArgs, service_config: LLMServiceConfig):
+        self.args = args
         self.server_id = str(uuid.uuid4())
-        self.registry = LLMServiceRegistry(
-            service_config.experiment_name, service_config.trial_name
-        )
+        self.registry = LLMServiceRegistry(args.experiment_name, args.trial_name)
         self.running = False
         self.load = 0.0
         self.process: Optional[subprocess.Popen] = None
@@ -250,15 +249,16 @@ class LLMServer:
             sys.exit(exit_code)
 
 
+@dataclass
 class LLMServerFactory:
+    args: TrainingArgs
 
-    @staticmethod
-    def make_server(server_config: LLMServiceConfig) -> LLMServer:
+    def make_server(self, server_config: LLMServiceConfig) -> LLMServer:
         """Create an LLM server instance based on the configuration."""
         if server_config.server_backend == "sglang":
             from arealite.system.sglang_server import SGLangServer
 
-            return SGLangServer(server_config)
+            return SGLangServer(self.args, server_config)
         else:
             raise ValueError(
                 f"Unsupported server backend: {server_config.server_backend}"

@@ -40,9 +40,9 @@ def args():
 
 @pytest.fixture(scope="module")
 def sglang_server(args):
-    server_args = LLMServiceConfig(EXPR_NAME, TRIAL_NAME, model_path=MODEL_PATH)
+    server_args = LLMServiceConfig(model_path=MODEL_PATH)
     server_args.sglang = SGLangConfig(mem_fraction_static=0.3)
-    server = LLMServerFactory.make_server(server_args)
+    server = LLMServerFactory(args).make_server(server_args)
     server._startup()
     yield
     server._graceful_exit(0)
@@ -91,13 +91,14 @@ async def test_sglang_update_weights_from_disk(sglang_client: LLMClient):
 def engine(sglang_server):
     os.environ["WORLD_SIZE"] = "1"
     os.environ["RANK"] = "0"
+    os.environ["LOCAL_RANK"] = "0"
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "7777"
     engine_config = EngineConfig(
         path=MODEL_PATH,
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
-        backend=EngineBackendConfig(type="hf"),
+        backend=EngineBackendConfig(type="fsdp"),
     )
 
     mock_args = TrainingArgs(n_nodes=1, n_gpus_per_node=1)
