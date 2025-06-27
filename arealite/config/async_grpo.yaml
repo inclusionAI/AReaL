@@ -57,7 +57,7 @@ train_dataset:
   batch_size: 128
   shuffle: True
   preprocessor:
-    type: gsm8k
+    type: gsm8k_rl
     gsm8k:
       reward_mode: strict
 valid_dataset: null

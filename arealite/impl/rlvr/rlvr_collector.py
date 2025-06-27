@@ -14,6 +14,9 @@ from arealite.api.cli_args import (
 from arealite.api.io_struct import LLMRequest, Trajectory, TrajStats
 from arealite.api.llm_client_api import LLMClient
 from arealite.api.rollout_api import RolloutCollector
+from realhf.base import logging
+
+logger = logging.getLogger(__file__)
 
 
 class RlvrCollector(RolloutCollector):
@@ -117,6 +120,10 @@ class RlvrCollector(RolloutCollector):
         prompt_mask = [1] * input_len + [0] * output_len
         logprobs = [0.0] * input_len + resp.output_logprobs
         versions = [-1] * input_len + resp.output_versions
+
+        logger.info(
+            f"Prompt: {req.text}, reward: {reward}\nCompletion: {resp.completion}"
+        )
 
         return Trajectory(
             prompt=env_option,

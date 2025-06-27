@@ -172,10 +172,16 @@ class SGLangServer(LLMServer):
             # Check server endpoint
             base_url = f"http://{self.server_info.host}:{self.server_info.port}"
             response = requests.get(
-                f"{base_url}/v1/models",
-                headers={"Authorization": "Bearer None"},
-                timeout=5,
+                f"{base_url}/metrics",
+                timeout=30,
             )
-            return response.status_code == 200
+            if response.status_code != 200:
+                return False
+            # Update server load
+            for line in response.text.split("\n"):
+                if line.startswith("sglang:num_running_reqs"):
+                    self.load = float(line.split(" ")[1])
+                    break
+            return True
         except requests.exceptions.RequestException:
             return False

@@ -3,6 +3,7 @@
 
 import abc
 import asyncio
+import random
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -32,16 +33,13 @@ class LLMClient(abc.ABC):
         self.tokenizer: transformers.PreTrainedTokenizerFast = load_hf_tokenizer(
             client_config.tokenizer_path
         )
-        self._server_idx = 0
 
     def select_server(self):
         """Get an available healthy server."""
         servers = self.get_healthy_servers()
-        assert self.client_config.schedule_policy == "round_robin"
-        # Simple round-robin selection (could be improved with load balancing)
-        server_info = servers[self._server_idx % len(servers)]
-        self._server_idx += 1
-        return server_info
+        min_load = min([server.load for server in servers])
+        servers = [server for server in servers if server.load == min_load]
+        return random.choice(servers)
 
     def get_healthy_servers(self):
         servers = self.registry.get_healthy_servers()

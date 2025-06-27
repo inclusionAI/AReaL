@@ -20,14 +20,6 @@ if TYPE_CHECKING:
 # follow the signature of transformers.Trainer if possible
 
 
-def _collate_fn(data_list: List[Dict]) -> Dict:
-    keys = data_list[0].keys()
-    result = {}
-    for k in keys:
-        result[k] = [d[k] for d in data_list]
-    return result
-
-
 class Trainer(abc.ABC):
     def __init__(
         self,
@@ -60,7 +52,6 @@ class Trainer(abc.ABC):
             shuffle=cfg.shuffle,
             pin_memory=cfg.pin_memory,
             num_workers=cfg.num_workers,
-            collate_fn=_collate_fn,
             drop_last=True,
             collate_fn=lambda x: x,
         )
@@ -79,7 +70,6 @@ class Trainer(abc.ABC):
             shuffle=cfg.shuffle,
             pin_memory=cfg.pin_memory,
             num_workers=cfg.num_workers,
-            collate_fn=_collate_fn,
             drop_last=True,
             collate_fn=lambda x: x,
         )
