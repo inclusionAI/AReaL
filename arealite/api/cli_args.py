@@ -260,21 +260,21 @@ class RLVRConfig:
 
 
 @dataclass
-class RolloutWorkflowConfig:
+class RolloutCollectorConfig:
     type: str = field(
         default="rlvr",
         metadata={
-            "help": "Rollout workflow type",
+            "help": "Rollout collector type",
             "choices": ["rlvr", "math_code_single_step"],
         },
     )
     rlvr: Optional[RLVRConfig] = field(
         default=None,
-        metadata={"help": "The configuration for the single-step math/code workflow"},
+        metadata={"help": "The configuration for the RLVR collector"},
     )
     math_code_single_step: Optional[MathCodeSingleStepConfig] = field(
         default=None,
-        metadata={"help": "The configuration for the single-step math/code workflow"},
+        metadata={"help": "The configuration for the single-step math/code collector"},
     )
 
 
@@ -283,9 +283,9 @@ class RolloutWorkflowConfig:
 
 @dataclass
 class RolloutControllerConfig:
-    workflow: RolloutWorkflowConfig = field(
-        default_factory=RolloutWorkflowConfig,
-        metadata={"help": "Rollout workflow configuration."},
+    collector: RolloutCollectorConfig = field(
+        default_factory=RolloutCollectorConfig,
+        metadata={"help": "Rollout collector configuration."},
     )
     num_workers: int = field(
         default=1, metadata={"help": "Number of rollout worker processes"}
@@ -494,8 +494,6 @@ class TrainingArgs:
         default_factory=ClusterSpecConfig,
         metadata={"help": "Cluster specification. Mainly used by slurm."},
     )
-
-    # RL workflow configuration
     train_dataset: DatasetConfig = field(
         default_factory=DatasetConfig, metadata={"help": "Train dataset configuration"}
     )

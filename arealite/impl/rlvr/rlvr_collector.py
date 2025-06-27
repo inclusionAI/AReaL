@@ -8,19 +8,19 @@ import torch
 
 from arealite.api.cli_args import (
     GenerationHyperparameters,
-    RolloutWorkflowConfig,
+    RolloutCollectorConfig,
     TrainingArgs,
 )
 from arealite.api.io_struct import LLMRequest, Trajectory, TrajStats
 from arealite.api.llm_client_api import LLMClient
-from arealite.api.rollout_api import RolloutWorkflow
+from arealite.api.rollout_api import RolloutCollector
 
 
-class RlvrWorkflow(RolloutWorkflow):
+class RlvrCollector(RolloutCollector):
     def __init__(
         self,
         args: TrainingArgs,
-        config: RolloutWorkflowConfig,
+        config: RolloutCollectorConfig,
         llm_client: LLMClient,
         reward_fn: Callable,
     ):

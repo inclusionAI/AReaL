@@ -13,7 +13,7 @@ from torch.distributed.elastic.multiprocessing.errors import record
 
 from arealite.api.cli_args import DatasetConfig, TrainingArgs
 from arealite.api.dataset_api import DatasetFactory
-from arealite.api.rollout_api import RolloutWorkflowFactory
+from arealite.api.rollout_api import RolloutCollectorFactory
 from arealite.api.trainer_api import TrainerFactory
 from arealite.system.rollout_controller import RolloutController
 from realhf.base import constants, name_resolve, seeding
@@ -65,9 +65,9 @@ def main():
     # Create rollout controller for online training and evaluation.
     rollout_controller = None
     if cfg.rollout is not None:
-        rollout_factory = RolloutWorkflowFactory(cfg)
-        workflow = rollout_factory.make_workflow(cfg.rollout.workflow)
-        rollout_controller = RolloutController(cfg, cfg.rollout, workflow=workflow)
+        rollout_factory = RolloutCollectorFactory(cfg)
+        collector = rollout_factory.make_collector(cfg.rollout.collector)
+        rollout_controller = RolloutController(cfg, cfg.rollout, collector=collector)
 
     # If trainer is given, run RL or offline training.
     if cfg.trainer is not None:

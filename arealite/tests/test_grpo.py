@@ -17,7 +17,7 @@ from arealite.api.cli_args import (
     TrainingArgs,
 )
 from arealite.api.io_struct import FinetuneSpec
-from arealite.api.rollout_api import RolloutWorkflowFactory
+from arealite.api.rollout_api import RolloutCollectorFactory
 from arealite.impl.trainer.grpo import SpmdGRPOTrainer
 from arealite.system.rollout_controller import RolloutController
 from arealite.tests.utils import mock_rollout_output
@@ -61,7 +61,7 @@ def args():
         server_backend="sglang",
         tokenizer_path=MODEL_PATH,
     )
-    args.rollout.workflow.rlvr = RLVRConfig(solution_path="nothing")
+    args.rollout.collector.rlvr = RLVRConfig(solution_path="nothing")
     args.rollout.gconfig.max_new_tokens = 16
     name_resolve.reconfigure(args.cluster.name_resolve)
     yield args
@@ -80,9 +80,9 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
     args.trainer.grpo.use_decoupled_loss = use_decoupled_loss
     args.train_dataset.batch_size = bs
     # Create mock rollout controller and trainer
-    rollout_factory = RolloutWorkflowFactory(args)
-    workflow = rollout_factory.make_workflow(args.rollout.workflow)
-    rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
+    rollout_factory = RolloutCollectorFactory(args)
+    collector = rollout_factory.make_collector(args.rollout.collector)
+    rollout_controller = RolloutController(args, args.rollout, collector=collector)
     dataset = load_dataset("openai/gsm8k", name="main", split="train").select(range(10))
 
     trainer = SpmdGRPOTrainer(

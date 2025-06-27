@@ -11,7 +11,7 @@ from gymnasium.utils import seeding
 
 from arealite.api.cli_args import (
     GenerationHyperparameters,
-    RolloutWorkflowConfig,
+    RolloutCollectorConfig,
     TrainingArgs,
 )
 from arealite.api.io_struct import AgentInferInput, AgentInferOutput, Trajectory
@@ -67,12 +67,12 @@ class Environment(abc.ABC, Env):
             self._np_random, self._np_random_seed = seeding.np_random(seed)
 
 
-class RolloutWorkflow(abc.ABC):
+class RolloutCollector(abc.ABC):
 
     def __init__(
         self,
         args: TrainingArgs,
-        config: RolloutWorkflowConfig,
+        config: RolloutCollectorConfig,
         agent: Agent | None = None,
         env: Environment | None = None,
         reward_func: Callable | None = None,
@@ -107,13 +107,13 @@ class RolloutWorkflow(abc.ABC):
 
 
 @dataclass
-class RolloutWorkflowFactory:
+class RolloutCollectorFactory:
     args: TrainingArgs
 
-    def make_workflow(self, config: RolloutWorkflowConfig) -> RolloutWorkflow:
+    def make_collector(self, config: RolloutCollectorConfig) -> RolloutCollector:
         client = LLMClientFactory(self.args).make_client(self.args.rollout.llm_client)
         if config.type == "rlvr":
-            from arealite.impl.rlvr.rlvr_workflow import RlvrWorkflow
+            from arealite.impl.rlvr.rlvr_collector import RlvrCollector
 
             rlvr_config = config.rlvr
             assert rlvr_config is not None
@@ -134,7 +134,7 @@ class RolloutWorkflowFactory:
                     f"Unknown reward type: {rlvr_config.reward_type}"
                 )
 
-            return RlvrWorkflow(
+            return RlvrCollector(
                 self.args,
                 config=config,
                 llm_client=client,
@@ -143,8 +143,8 @@ class RolloutWorkflowFactory:
         if config.type == "math_code_single_step":
             from arealite.impl.agentic.math_code_single_step import (
                 MathCodeAgent,
+                MathCodeSingleStepCollector,
                 MathCodeSingleStepEnv,
-                MathCodeSingleStepWorkflow,
             )
 
             agent = MathCodeAgent(self.args, llm_client=client)
@@ -153,7 +153,7 @@ class RolloutWorkflowFactory:
                 solution_path=config.math_code_single_step.solution_path,
             )
 
-            return MathCodeSingleStepWorkflow(
+            return MathCodeSingleStepCollector(
                 self.args,
                 config=config,
                 agent=agent,

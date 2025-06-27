@@ -16,13 +16,13 @@ from arealite.api.cli_args import (
     LLMServiceConfig,
     MathCodeSingleStepConfig,
     RLVRConfig,
-    RolloutWorkflowConfig,
+    RolloutCollectorConfig,
     SGLangConfig,
     TrainingArgs,
 )
 from arealite.api.io_struct import Trajectory
 from arealite.api.llm_server_api import LLMServerFactory
-from arealite.api.rollout_api import RolloutWorkflowFactory
+from arealite.api.rollout_api import RolloutCollectorFactory
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import constants, name_resolve, seeding
 
@@ -65,14 +65,14 @@ def test_rlvr_rollout(args, sglang_server, tokenizer, task):
         request_timeout=10,
     )
     args.rollout.gconfig = gconfig = GenerationHyperparameters(max_new_tokens=16)
-    args.rollout.workflow = RolloutWorkflowConfig(
+    args.rollout.collector = RolloutCollectorConfig(
         type="rlvr",
         rlvr=RLVRConfig(reward_type=f"areal-{task}", solution_path=jsonl_file),
     )
 
-    collector = RolloutWorkflowFactory(args).make_workflow(args.rollout.workflow)
+    collector = RolloutCollectorFactory(args).make_collector(args.rollout.collector)
 
-    # Test the rollout workflow with the provided JSONL data
+    # Test the rollout collector with the provided JSONL data
     with open(jsonl_file, "r") as f:
         for i, l in enumerate(f.readlines()):
             data = json.loads(l)
@@ -103,10 +103,10 @@ def test_gsm8k_rollout(args, sglang_server, tokenizer):
         request_timeout=10,
     )
     args.rollout.gconfig = gconfig = GenerationHyperparameters(max_new_tokens=16)
-    args.rollout.workflow = RolloutWorkflowConfig(
+    args.rollout.collector = RolloutCollectorConfig(
         type="rlvr", rlvr=RLVRConfig(reward_type="gsm8k")
     )
-    collector = RolloutWorkflowFactory(args).make_workflow(args.rollout.workflow)
+    collector = RolloutCollectorFactory(args).make_collector(args.rollout.collector)
 
     args.train_dataset.path = "openai/gsm8k"
     args.train_dataset.name = "main"
@@ -148,14 +148,14 @@ def test_math_code_agentic_rollout(args, task, sglang_server, tokenizer):
         request_timeout=10,
     )
     args.rollout.gconfig = gconfig = GenerationHyperparameters(max_new_tokens=16)
-    args.rollout.workflow = RolloutWorkflowConfig(
+    args.rollout.collector = RolloutCollectorConfig(
         type="math_code_single_step",
         math_code_single_step=MathCodeSingleStepConfig(solution_path=jsonl_file),
     )
 
-    collector = RolloutWorkflowFactory(args).make_workflow(args.rollout.workflow)
+    collector = RolloutCollectorFactory(args).make_collector(args.rollout.collector)
 
-    # Test the rollout workflow with the provided JSONL data
+    # Test the rollout collector with the provided JSONL data
     with open(jsonl_file, "r") as f:
         for i, l in enumerate(f.readlines()):
             data = json.loads(l)

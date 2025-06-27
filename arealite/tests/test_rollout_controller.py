@@ -19,7 +19,7 @@ from arealite.api.cli_args import (
 )
 from arealite.api.io_struct import Trajectory
 from arealite.api.llm_server_api import LLMServerFactory
-from arealite.api.rollout_api import RolloutWorkflowFactory
+from arealite.api.rollout_api import RolloutCollectorFactory
 from arealite.system.rollout_controller import RolloutController
 from arealite.tests.utils import mock_rollout_output
 from arealite.utils import concat_padded_tensors
@@ -37,7 +37,7 @@ def args():
     constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     seeding.set_random_seed(args.seed, EXPR_NAME)
     args.rollout.llm_client.tokenizer_path = MODEL_PATH
-    args.rollout.workflow.rlvr = RLVRConfig(
+    args.rollout.collector.rlvr = RLVRConfig(
         solution_path=str(Path(__file__).parent / "data" / f"rlvr_math_dataset.jsonl")
     )
     name_resolve.reconfigure(args.cluster.name_resolve)
@@ -79,9 +79,9 @@ def test_generate_batch(args, sglang_server, dataloader, n_samples, num_workers)
     args.rollout.num_workers = num_workers
     args.rollout.gconfig.n_samples = n_samples
     args.rollout.gconfig.max_new_tokens = 16
-    rollout_factory = RolloutWorkflowFactory(args)
-    workflow = rollout_factory.make_workflow(args.rollout.workflow)
-    rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
+    rollout_factory = RolloutCollectorFactory(args)
+    collector = rollout_factory.make_collector(args.rollout.collector)
+    rollout_controller = RolloutController(args, args.rollout, collector=collector)
 
     data = next(iter(dataloader))
     batch_size = len(data)
@@ -131,9 +131,9 @@ def test_async_rollout(args, sglang_server, dataloader, n_samples, num_workers):
     args.train_dataset.batch_size = 2
     args.rollout.max_concurrent_rollouts = 16
     args.rollout.num_workers = num_workers
-    rollout_factory = RolloutWorkflowFactory(args)
-    workflow = rollout_factory.make_workflow(args.rollout.workflow)
-    rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
+    rollout_factory = RolloutCollectorFactory(args)
+    collector = rollout_factory.make_collector(args.rollout.collector)
+    rollout_controller = RolloutController(args, args.rollout, collector=collector)
 
     # start loop
     rollout_controller.start_generate_loop()
@@ -176,9 +176,9 @@ def test_async_staleness_control(args, sglang_server, dataloader, ofp):
     args.rollout.max_head_offpolicyness = ofp
     args.train_dataset.batch_size = 2
     args.rollout.max_concurrent_rollouts = 100
-    rollout_factory = RolloutWorkflowFactory(args)
-    workflow = rollout_factory.make_workflow(args.rollout.workflow)
-    rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
+    rollout_factory = RolloutCollectorFactory(args)
+    collector = rollout_factory.make_collector(args.rollout.collector)
+    rollout_controller = RolloutController(args, args.rollout, collector=collector)
     name = names.model_version(args.experiment_name, args.trial_name, "actor")
     name_resolve.add(name, str(0), replace=True)
 

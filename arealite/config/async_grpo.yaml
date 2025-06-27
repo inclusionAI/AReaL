@@ -64,7 +64,7 @@ valid_dataset: null
 
 # Rollout config
 rollout:
-  workflow:
+  collector:
     type: rlvr
     rlvr:
       reward_type: gsm8k

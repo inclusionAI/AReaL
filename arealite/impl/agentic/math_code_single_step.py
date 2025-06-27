@@ -19,7 +19,7 @@ from arealite.api.io_struct import (
     Trajectory,
     TrajStats,
 )
-from arealite.api.rollout_api import Agent, Environment, RolloutWorkflow
+from arealite.api.rollout_api import Agent, Environment, RolloutCollector
 from arealite.utils import pad_sequences_to_tensors
 from functioncall.code.local_verify import code_verify as local_code_verify
 from functioncall.code.verify import code_verify
@@ -186,7 +186,7 @@ class MathCodeAgent(Agent):
         pass  # Stateless agent, no memory to reset
 
 
-class MathCodeSingleStepWorkflow(RolloutWorkflow):
+class MathCodeSingleStepCollector(RolloutCollector):
 
     def run_episode(
         self,

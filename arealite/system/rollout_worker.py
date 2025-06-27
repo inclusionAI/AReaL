@@ -10,7 +10,7 @@ import torch.distributed as dist
 
 from arealite.api.cli_args import RolloutControllerConfig, TrainingArgs
 from arealite.api.io_struct import Trajectory
-from arealite.api.rollout_api import RolloutWorkflowFactory
+from arealite.api.rollout_api import RolloutCollectorFactory
 from realhf.base import logging, name_resolve, names
 from realhf.base.monitor import RolloutStat
 from realhf.system.push_pull_stream import ZMQJsonPuller, ZMQJsonPusher
@@ -73,11 +73,11 @@ class RolloutWorker:
         """Run grouped episode asynchronously."""
         tasks = []
         for _ in range(self.gconfig.n_samples):
-            # Create workflow
-            factory = RolloutWorkflowFactory(self.args)
-            workflow = factory.make_workflow(self.config.workflow)
+            # Create collector
+            factory = RolloutCollectorFactory(self.args)
+            collector = factory.make_collector(self.config.collector)
             tasks += [
-                workflow.arun_episode(
+                collector.arun_episode(
                     self.gconfig.new(n_samples=1),
                     env_option=data,
                     seed=seed,

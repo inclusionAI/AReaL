@@ -17,7 +17,7 @@ AReaLite is the first step in AReaL's refactoring process. It is not only a stan
 + Fully asynchronous training with decoupled inference and training.
 + Elastic inference device scaling — users can shut down or launch more inference processes independently during training.
 + Full SFT/RL algorithmic functionality matching AReaL.
-+ Arbitrary agentic rollout workflow customization in a single file.
++ Arbitrary agentic rollout collector customization in a single file.
 + Easy navigation to implementation references via Ctrl+click in VSCode.
 + Support for distributed launching with Ray/SLURM/torchrun.
 
@@ -47,7 +47,7 @@ The API layer defines abstract interfaces and data structures that provide a cle
 
 - **`engine_api.py`**: Defines `SPMDWrapper` for SPMD-based training backends (FSDP) and `EngineFactory`
 - **`trainer_api.py`**: Defines `Trainer` base class for different training algorithms and `TrainerFactory`
-- **`rollout_api.py`**: Defines `RolloutWorkflow`, `Agent`, `Environment` for RL data collection and `RolloutWorkflowFactory`
+- **`rollout_api.py`**: Defines `RolloutCollector`, `Agent`, `Environment` for RL data collection and `RolloutCollectorFactory`
 - **`cli_args.py`**: Defines configuration dataclasses for all components
 
 #### 2. Implementation Layer (`impl/`)
@@ -57,8 +57,8 @@ The implementation layer contains concrete implementations of the API interfaces
 - **`fsdp_wrapper.py`**: FSDP-based training engine using PyTorch FSDP2
 - **`trainer/grpo.py`**: GRPO trainer implementation for reinforcement learning
 - **`rollout_controller.py`**: Coordinates rollout data collection across workers
-- **`rlvr/`**: RLVR (RL via Verification and Refinement) workflow implementations
-- **`agentic/`**: Agentic workflow implementations (math, code tasks)
+- **`rlvr/`**: RLVR (RL via Verification and Refinement) collector implementations
+- **`agentic/`**: Agentic collector implementations (math, code tasks)
 
 #### 3. CLI Layer (`cli/`)
 
@@ -89,14 +89,14 @@ AReaLite uses an **async producer-consumer pattern**:
 #### 1. **AI-Centric API Design**
 Unlike the original AReaL's system-centric approach with workers and model functions, AReaLite uses familiar ML concepts:
 - `Agent` and `Environment` (from RL literature)
-- `RolloutWorkflow` (combines multiple agents and the environment to generate rollout data)
+- `RolloutCollector` (combines multiple agents and the environment to generate rollout data)
 - `Trainer` (from HuggingFace/PyTorch, fetches rollout data and updates model parameters)
 
 #### 2. **Factory Pattern for Extensibility**
 Each major component uses a factory pattern for easy customization:
 - `EngineFactory` creates training backends
 - `TrainerFactory` creates training algorithms  
-- `RolloutWorkflowFactory` creates rollout workflows
+- `RolloutCollectorFactory` creates rollout collectors
 
 #### 3. **Configuration-Driven Architecture**
 All components are configured through dataclasses defined in `cli_args.py`, enabling:
@@ -109,14 +109,14 @@ All components are configured through dataclasses defined in `cli_args.py`, enab
 
 ### Training Pipeline
 
-1. **Initialization**: Factory classes create configured instances of engines, trainers, and rollout workflows
+1. **Initialization**: Factory classes create configured instances of engines, trainers, and rollout collectors
 2. **Rollout Phase**: `RolloutController` coordinates async data collection across multiple `RolloutWorker` instances
 3. **Training Phase**: `Trainer` performs synchronous gradient updates using collected data
 4. **Weight Updates**: Updated model weights are pushed to LLM servers via `update_weights_to()`
 
 ### Rollout System
 
-The rollout system supports arbitrary agentic rollout paradigms, implemented as `RolloutWorkflow` instances. `RolloutWorkflow` exposes a `run_episode` method for users to implement the logic of collecting a complete agentic trajectory. Users can implement gymnasium-compatible `Agent` and `Environment` interfaces first and combine them as a workflow as in normal RL literature (in `arealite/impl/agentic/`), or users can implement the workflow directly if the agent-environment interfaces are not compatible with the desired use cases (in `arealite/impl/rlvr/`).
+The rollout system supports arbitrary agentic rollout paradigms, implemented as `RolloutCollector` instances. `RolloutCollector` exposes a `run_episode` method for users to implement the logic of collecting a complete agentic trajectory. Users can implement gymnasium-compatible `Agent` and `Environment` interfaces first and combine them as a collector as in normal RL literature (in `arealite/impl/agentic/`), or users can implement the collector directly if the agent-environment interfaces are not compatible with the desired use cases (in `arealite/impl/rlvr/`).
 
 ## Expected Usage
 
@@ -171,13 +171,13 @@ def make_trainer(self, config: TrainerConfig) -> Trainer:
         return MyTrainer(...)
 ```
 
-### Adding New Rollout Workflows
+### Adding New Rollout Collectors
 
-1. **Implement workflow** in `impl/`:
+1. **Implement collector** in `impl/`:
 ```python
-from arealite.api.rollout_api import RolloutWorkflow
+from arealite.api.rollout_api import RolloutCollector
 
-class MyWorkflow(RolloutWorkflow):
+class MyCollector(RolloutCollector):
     async def arun_episode(self, gconfig, env_option=None, seed=None):
         # Implementation here
         pass
@@ -185,9 +185,9 @@ class MyWorkflow(RolloutWorkflow):
 
 2. **Register in factory** in `rollout_api.py`:
 ```python
-def make_workflow(self, config: RolloutWorkflowConfig):
-    if config.type == "my_workflow":
-        return MyWorkflow(...)
+def make_collector(self, config: RolloutCollectorConfig):
+    if config.type == "my_collector":
+        return MyCollector(...)
 ```
 
 ## Roadmap
@@ -208,6 +208,6 @@ def make_workflow(self, config: RolloutWorkflowConfig):
 - [ ] Other RL algorithms (DPO, REINFORCE, etc.)
 - [ ] Support for multi-modal models
 - [ ] User guide for transitioning from v0.3.0.
-- [ ] Advanced agentic workflows (tool use, planning)
+- [ ] Advanced agentic collectors (tool use, planning)
 - [ ] Examples of training GSM8K, TLDR, and a search agent.
 - [ ] Allow external persistent SGLang servers for debugging purposes.
