@@ -21,15 +21,14 @@ class RlvrCollector(RolloutCollector):
         self,
         args: TrainingArgs,
         config: RolloutCollectorConfig,
-        llm_client: LLMClient,
         reward_fn: Callable,
     ):
         super().__init__(args, config, None, None)
-        self.llm_client = llm_client
         self.reward_fn = reward_fn
 
     def run_episode(
         self,
+        llm_client: LLMClient,
         gconfig: GenerationHyperparameters,
         env_option: Optional[Dict[str, Any]] = None,
         seed: Optional[int] = None,
@@ -40,7 +39,7 @@ class RlvrCollector(RolloutCollector):
         prompt_ids = env_option["input_ids"]
         query_id = env_option["query_id"]
         req = LLMRequest(input_ids=prompt_ids, gconfig=gconfig)
-        resp = self.llm_client.generate(req)
+        resp = llm_client.generate(req)
 
         reward_kwargs = env_option.copy()
         reward_kwargs.pop("query_id")
@@ -83,6 +82,7 @@ class RlvrCollector(RolloutCollector):
 
     async def arun_episode(
         self,
+        llm_client: LLMClient,
         gconfig: GenerationHyperparameters,
         env_option: Optional[Dict[str, Any]] = None,
         seed: Optional[int] = None,
@@ -95,7 +95,7 @@ class RlvrCollector(RolloutCollector):
         req = LLMRequest(input_ids=prompt_ids, gconfig=gconfig)
 
         # Use async LLM client
-        resp = await self.llm_client.agenerate(req)
+        resp = await llm_client.agenerate(req)
 
         # Run reward computation in executor to avoid blocking
         reward_kwargs = env_option.copy()

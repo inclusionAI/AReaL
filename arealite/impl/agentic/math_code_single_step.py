@@ -19,6 +19,7 @@ from arealite.api.io_struct import (
     Trajectory,
     TrajStats,
 )
+from arealite.api.llm_client_api import LLMClient
 from arealite.api.rollout_api import Agent, Environment, RolloutCollector
 from arealite.utils import pad_sequences_to_tensors
 from functioncall.code.local_verify import code_verify as local_code_verify
@@ -140,7 +141,7 @@ class MathCodeAgent(Agent):
         )
 
         # Generate response using LLM client
-        llm_resp = self.llm_client.generate(llm_req)
+        llm_resp = inp.llm_client.generate(llm_req)
 
         # Extract answers from completion
         answer = llm_resp.completion
@@ -166,7 +167,7 @@ class MathCodeAgent(Agent):
         )
 
         # Generate response using async LLM client
-        llm_resp = await self.llm_client.agenerate(llm_req)
+        llm_resp = await inp.llm_client.agenerate(llm_req)
 
         # Extract answers from completion
         answer = llm_resp.completion
@@ -190,6 +191,7 @@ class MathCodeSingleStepCollector(RolloutCollector):
 
     def run_episode(
         self,
+        llm_client: LLMClient,
         gconfig: GenerationHyperparameters,
         env_option: Optional[Any] = None,
         seed: Optional[int] = None,
@@ -208,7 +210,9 @@ class MathCodeSingleStepCollector(RolloutCollector):
         # Episode loop.
         while not done:
             # Take an action by sending a request to generation server.
-            agent_infer_in = AgentInferInput(obs=obs, gconfig=gconfig)
+            agent_infer_in = AgentInferInput(
+                obs=obs, gconfig=gconfig, llm_client=llm_client
+            )
             agent_infer_out = self.agent.act(agent_infer_in)
             action = agent_infer_out.action
 
@@ -234,7 +238,7 @@ class MathCodeSingleStepCollector(RolloutCollector):
             data.append(d)
             rewards.append(reward)
 
-            ret += reward
+            ret += float(reward)
             ep_len += 1
 
             # Prepare information for the next step.
@@ -254,6 +258,7 @@ class MathCodeSingleStepCollector(RolloutCollector):
 
     async def arun_episode(
         self,
+        llm_client: LLMClient,
         gconfig: GenerationHyperparameters,
         env_option: Optional[Any] = None,
         seed: Optional[int] = None,
@@ -273,7 +278,9 @@ class MathCodeSingleStepCollector(RolloutCollector):
         # Episode loop.
         while not done:
             # Take an action by sending a request to generation server.
-            agent_infer_in = AgentInferInput(obs=obs, gconfig=gconfig)
+            agent_infer_in = AgentInferInput(
+                obs=obs, gconfig=gconfig, llm_client=llm_client
+            )
             agent_infer_out = await self.agent.aact(agent_infer_in)
             action = agent_infer_out.action
 
@@ -299,7 +306,7 @@ class MathCodeSingleStepCollector(RolloutCollector):
             data.append(d)
             rewards.append(reward)
 
-            ret += reward
+            ret += float(reward)
             ep_len += 1
 
             # Prepare information for the next step.

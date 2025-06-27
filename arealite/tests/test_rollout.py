@@ -21,6 +21,7 @@ from arealite.api.cli_args import (
     TrainingArgs,
 )
 from arealite.api.io_struct import Trajectory
+from arealite.api.llm_client_api import LLMClient, LLMClientFactory
 from arealite.api.llm_server_api import LLMServerFactory
 from arealite.api.rollout_api import RolloutCollectorFactory
 from realhf.api.core.data_api import load_hf_tokenizer
@@ -69,7 +70,7 @@ def test_rlvr_rollout(args, sglang_server, tokenizer, task):
         type="rlvr",
         rlvr=RLVRConfig(reward_type=f"areal-{task}", solution_path=jsonl_file),
     )
-
+    llm_client = LLMClientFactory(args).make_client(args.rollout.llm_client)
     collector = RolloutCollectorFactory(args).make_collector(args.rollout.collector)
 
     # Test the rollout collector with the provided JSONL data
@@ -82,7 +83,8 @@ def test_rlvr_rollout(args, sglang_server, tokenizer, task):
                 prompt=data["prompt"],
             )
             res = collector.run_episode(
-                gconfig,
+                llm_client=llm_client,
+                gconfig=gconfig,
                 env_option=env_option,
             )
             assert isinstance(res, Trajectory)
@@ -112,11 +114,12 @@ def test_gsm8k_rollout(args, sglang_server, tokenizer):
     args.train_dataset.name = "main"
     args.train_dataset.split = "train"
     args.train_dataset.preprocessor = DatasetPreprocessor(
-        "gsm8k", gsm8k=GSM8KPreprocessor("strict")
+        "gsm8k_rl", gsm8k=GSM8KPreprocessor("strict")
     )
 
     from arealite.api.dataset_api import DatasetFactory
 
+    llm_client = LLMClientFactory(args).make_client(args.rollout.llm_client)
     dataset = (
         DatasetFactory(args)
         .make_dataset(args.train_dataset, rank=0, world_size=1)
@@ -125,7 +128,8 @@ def test_gsm8k_rollout(args, sglang_server, tokenizer):
     for i in range(len(dataset)):
         env_option = dataset[i]
         res = collector.run_episode(
-            gconfig,
+            llm_client=llm_client,
+            gconfig=gconfig,
             env_option=env_option,
         )
         assert isinstance(res, Trajectory)
@@ -154,6 +158,7 @@ def test_math_code_agentic_rollout(args, task, sglang_server, tokenizer):
     )
 
     collector = RolloutCollectorFactory(args).make_collector(args.rollout.collector)
+    llm_client = LLMClientFactory(args).make_client(args.rollout.llm_client)
 
     # Test the rollout collector with the provided JSONL data
     with open(jsonl_file, "r") as f:
@@ -164,7 +169,8 @@ def test_math_code_agentic_rollout(args, task, sglang_server, tokenizer):
                 input_ids=tokenizer.encode(data["prompt"]),
             )
             res = collector.run_episode(
-                gconfig,
+                llm_client=llm_client,
+                gconfig=gconfig,
                 env_option=env_option,
             )
             assert isinstance(res, Trajectory)

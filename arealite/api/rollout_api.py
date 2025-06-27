@@ -19,13 +19,8 @@ from arealite.api.llm_client_api import LLMClient, LLMClientFactory
 
 
 class Agent(abc.ABC):
-    def __init__(
-        self,
-        args: TrainingArgs,
-        llm_client: LLMClient | None = None,
-    ):
+    def __init__(self, args: TrainingArgs):
         self.args = args
-        self.llm_client = llm_client
 
     def act(self, inp: AgentInferInput) -> AgentInferOutput:
         """Given an observation, return an action and data used for RL training."""
@@ -89,6 +84,7 @@ class RolloutCollector(abc.ABC):
 
     def run_episode(
         self,
+        llm_client: LLMClient,
         gconfig: GenerationHyperparameters,
         env_option: Optional[Any] = None,
         seed: Optional[int] = None,
@@ -98,6 +94,7 @@ class RolloutCollector(abc.ABC):
 
     async def arun_episode(
         self,
+        llm_client: LLMClient,
         gconfig: GenerationHyperparameters,
         env_option: Optional[Any] = None,
         seed: Optional[int] = None,
@@ -111,7 +108,6 @@ class RolloutCollectorFactory:
     args: TrainingArgs
 
     def make_collector(self, config: RolloutCollectorConfig) -> RolloutCollector:
-        client = LLMClientFactory(self.args).make_client(self.args.rollout.llm_client)
         if config.type == "rlvr":
             from arealite.impl.rlvr.rlvr_collector import RlvrCollector
 
@@ -137,7 +133,6 @@ class RolloutCollectorFactory:
             return RlvrCollector(
                 self.args,
                 config=config,
-                llm_client=client,
                 reward_fn=reward_fn,
             )
         if config.type == "math_code_single_step":
@@ -147,7 +142,7 @@ class RolloutCollectorFactory:
                 MathCodeSingleStepEnv,
             )
 
-            agent = MathCodeAgent(self.args, llm_client=client)
+            agent = MathCodeAgent(self.args)
             env = MathCodeSingleStepEnv(
                 self.args,
                 solution_path=config.math_code_single_step.solution_path,

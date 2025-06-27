@@ -13,6 +13,7 @@ import numpy as np
 
 from arealite.api.cli_args import RolloutControllerConfig, TrainingArgs
 from arealite.api.io_struct import Trajectory
+from arealite.api.llm_client_api import LLMClient, LLMClientFactory
 from arealite.api.rollout_api import RolloutCollector
 from arealite.system.rollout_worker import RolloutWorker
 from realhf.base import datapack, logging, network
@@ -41,6 +42,8 @@ class RolloutController:
 
         # Worker processes for asynchronous rollout
         self._worker_processes: List[mp.Process] = []
+
+        self.llm_client = LLMClientFactory(args).make_client(config.llm_client)
 
         # PushPull communication for data to workers
         self._data_pusher = None
@@ -220,7 +223,10 @@ class RolloutController:
         for env_option, seed in zip(env_options, seeds):
             trajs.append(
                 self.collector.run_episode(
-                    self.gconfig.new(n_samples=1), env_option, seed
+                    llm_client=self.llm_client,
+                    gconfig=self.gconfig.new(n_samples=1),
+                    env_option=env_option,
+                    seed=seed,
                 )
             )
         return trajs
@@ -245,6 +251,7 @@ class RolloutController:
                 worker_id=0,
                 args=self.args,
                 config=self.config,
+                llm_client=self.llm_client,
             )
             tasks = [
                 worker._run_grouped_episode_async(None, env_option, seed)

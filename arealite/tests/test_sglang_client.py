@@ -1,6 +1,7 @@
 # Copyright 2025 Ant Group Inc.
 # Licensed under the Apache License, Version 2.0
 
+import os
 import uuid
 
 import pytest
@@ -24,7 +25,7 @@ from realhf.base import constants, name_resolve, seeding
 
 EXPR_NAME = "test_sglang_client"
 TRIAL_NAME = "test_sglang_client"
-MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B"
+MODEL_PATH = "Qwen/Qwen2-0.5B"
 
 
 @pytest.fixture(scope="module")
@@ -88,8 +89,11 @@ async def test_sglang_update_weights_from_disk(sglang_client: LLMClient):
 
 @pytest.fixture(scope="module")
 def engine(sglang_server):
+    os.environ["WORLD_SIZE"] = "1"
+    os.environ["RANK"] = "0"
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "7777"
     engine_config = EngineConfig(
-        type=ModelFamily("qwen2", False),
         path=MODEL_PATH,
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),

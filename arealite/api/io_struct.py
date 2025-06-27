@@ -3,12 +3,15 @@
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 import torch
 from gymnasium.core import ActType, ObsType
 
 from arealite.api.cli_args import GenerationHyperparameters
+
+if TYPE_CHECKING:
+    from arealite.api.llm_client_api import LLMClient
 
 
 @dataclass
@@ -53,6 +56,7 @@ class LLMResponse:
 @dataclass
 class AgentInferInput:
     obs: ObsType
+    llm_client: "LLMClient"
     gconfig: GenerationHyperparameters
 
 
