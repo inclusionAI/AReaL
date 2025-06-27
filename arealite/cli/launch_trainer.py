@@ -43,15 +43,15 @@ def main():
     cfg = OmegaConf.merge(default_cfg, cfg)
     cfg: TrainingArgs = OmegaConf.to_object(cfg)
 
-    seeding.set_random_seed(cfg.seed, "llm_server")
+    rank = int(os.getenv("RANK", "0"))
+    world_size = int(os.getenv("WORLD_SIZE", "1"))
+
+    seeding.set_random_seed(cfg.seed, f"trainer{rank}")
     constants.set_experiment_trial_names(cfg.experiment_name, cfg.trial_name)
     name_resolve.reconfigure(cfg.cluster.name_resolve)
 
     # Initialize the global pytorch distributed communication group.
     dist.init_process_group("nccl")
-
-    rank = int(os.getenv("RANK", "0"))
-    world_size = int(os.getenv("WORLD_SIZE", "1"))
 
     # Load and split dataset
     dataset_factory = DatasetFactory(cfg)

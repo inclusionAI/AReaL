@@ -134,3 +134,59 @@ trainer:
     use_decoupled_loss: true
     behav_imp_weight_cap: null
 
+# LLM service
+llm_service:
+  server_backend: sglang
+  served_model_name: null
+  model_path: Qwen/Qwen2-0.5B-Instruct
+  parallel:
+    tensor_parallel_size: 1
+    pipeline_parallel_size: 1
+    data_parallel_size: 1
+    use_sequence_parallel: false
+  health_check_interval: 5
+  startup_timeout: 300
+  max_unhealth_count: 3
+  graceful_shutdown_on_unhealthy: true
+  sglang:
+    disable_cuda_graph: false
+    disable_radix_cache: false
+    disable_cuda_graph_padding: false
+    enable_nccl_nvls: false
+    disable_outlines_disk_cache: false
+    disable_custom_all_reduce: false
+    disable_overlap_schedule: false
+    enable_mixed_chunk: false
+    enable_dp_attention: false
+    enable_ep_moe: false
+    enable_torch_compile: false
+    torch_compile_max_bs: 32
+    cuda_graph_max_bs: null
+    cuda_graph_bs: null
+    torchao_config: ""
+    enable_nan_detection: false
+    enable_p2p_check: false
+    triton_attention_reduce_in_fp32: false
+    triton_attention_num_kv_splits: 8
+    num_continuous_decode_steps: 1
+    enable_memory_saver: false
+    allow_auto_truncate: false
+    attention_backend: "flashinfer"
+    sampling_backend: null
+    context_length: 32768
+    mem_fraction_static: 0.9
+    max_running_requests: null
+    chunked_prefill_size: -1
+    max_prefill_tokens: 32768
+    schedule_policy: "lpm"
+    schedule_conservativeness: 1.0
+    cpu_offload_gb: 0
+    dtype: "float16"
+    kv_cache_dtype: "auto"
+    log_level: "warning"
+    log_level_http: "warning"
+    log_requests: false
+    log_requests_level: 0
+    show_time_cost: false
+    enable_metrics: true
+    decode_log_interval: 1

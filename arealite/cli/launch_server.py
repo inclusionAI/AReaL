@@ -9,7 +9,7 @@ from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
 from omegaconf import OmegaConf
 
-from arealite.api.cli_args import LLMServiceConfig
+from arealite.api.cli_args import TrainingArgs
 from arealite.api.llm_server_api import LLMServerFactory
 from realhf.base import constants, logging, name_resolve, seeding
 
@@ -35,15 +35,15 @@ def main():
     )
 
     # Merge with the default configuration
-    default_cfg = OmegaConf.structured(LLMServiceConfig)
+    default_cfg = OmegaConf.structured(TrainingArgs)
     cfg = OmegaConf.merge(default_cfg, cfg)
-    cfg: LLMServiceConfig = OmegaConf.to_object(cfg)
+    cfg: TrainingArgs = OmegaConf.to_object(cfg)
 
     seeding.set_random_seed(cfg.seed, "llm_server")
     constants.set_experiment_trial_names(cfg.experiment_name, cfg.trial_name)
     name_resolve.reconfigure(cfg.cluster.name_resolve)
 
-    server = LLMServerFactory.make_server(cfg)
+    server = LLMServerFactory.make_server(cfg.llm_service)
     server.start()
 
 

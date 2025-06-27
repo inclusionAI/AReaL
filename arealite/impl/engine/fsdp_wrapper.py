@@ -1,6 +1,7 @@
 # Copyright 2025 Ant Group Inc.
 # Licensed under the Apache License, Version 2.0
 
+import asyncio
 import functools
 import math
 import os
@@ -22,12 +23,14 @@ from transformers import (
 from arealite.api.cli_args import EngineConfig, FSDPConfig, MicroBatchSpec, TrainingArgs
 from arealite.api.engine_api import SPMDWrapper
 from arealite.api.io_struct import FinetuneSpec
+from arealite.api.llm_client_api import LLMClient
 from arealite.utils import (
     recorder_list,
     split_dict_tensor_with_cu_seqlens,
     unpack_sequence,
 )
 from realhf.api.cli_args import ParallelismConfig
+from realhf.base import constants
 from realhf.base.pkg_version import is_version_greater_or_equal
 
 if is_version_greater_or_equal("torch", "2.6.0"):
@@ -461,7 +464,7 @@ class FSDPEngine(SPMDWrapper):
     def save_model_to_hf(
         self,
         path: str,
-        tokenizer: transformers.PreTrainedTokenizerFast,
+        tokenizer: Optional[transformers.PreTrainedTokenizerFast] = None,
         base_model_path: Optional[str] = None,
     ):
         """Save model in HuggingFace format."""
@@ -485,7 +488,8 @@ class FSDPEngine(SPMDWrapper):
             os.makedirs(path, exist_ok=True)
             self.model.save_pretrained(path, state_dict=state_dict)
             self.model_config.save_pretrained(path)
-            tokenizer.save_pretrained(path)
+            if tokenizer is not None:
+                tokenizer.save_pretrained(path)
 
         dist.barrier()
 
@@ -527,3 +531,21 @@ class FSDPEngine(SPMDWrapper):
             )
         else:
             raise RuntimeError(f"Optimizer state file not found: {optimizer_path}")
+
+    async def aupdate_weights_to(self, llm_client: LLMClient):
+        """Async method to update weights to all healthy servers."""
+        path = constants.get_param_realloc_path(self.args)
+        self.save_model_to_hf(path)
+        tasks = [
+            llm_client.aupdate_weights_from_disk(server_info=server_info, path=path)
+            for server_info in llm_client.get_healthy_servers()
+        ]
+        await asyncio.gather(*tasks)
+
+    def update_weights_to(self, llm_client: LLMClient):
+        """Update the weights to the server by sending requests to the client."""
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(self.aupdate_weights_to(llm_client))
+        finally:
+            loop.close()
