@@ -68,6 +68,28 @@ def load_hf_tokenizer(
         tokenizer.pad_token_id = tokenizer.eos_token_id
     return tokenizer
 
+@lru_cache(maxsize=8)
+def load_hf_processor_and_tokenizer(
+    model_name_or_path: str,
+    fast_tokenizer=True,
+    padding_side: Optional[str] = None,
+) -> Tuple[transformers.PreTrainedTokenizerFast, transformers.PreTrainedProcessor]:
+    """Load a tokenizer and processor from Hugging Face."""
+    tokenizer = load_hf_tokenizer(model_name_or_path, fast_tokenizer, padding_side)
+    try:
+        processor = transformers.AutoProcessor.from_pretrained(
+            model_name_or_path, trust_remote_code=True, force_download=True
+        )
+    except Exception:
+        processor = None
+        logger.warning(
+            f"Failed to load processor for {model_name_or_path}. "
+            "Using tokenizer only. This may cause issues with some models."
+        )
+    if processor is None:
+        processor.tokenizer = tokenizer
+    return tokenizer, processor
+
 
 @pdclasses.dataclass
 class SequenceSplitSpec:

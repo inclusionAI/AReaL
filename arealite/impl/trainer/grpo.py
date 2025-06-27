@@ -36,7 +36,7 @@ from arealite.utils import (
     to_device,
     unpad_input,
 )
-from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
+from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats,load_hf_processor_and_tokenizer
 from realhf.base import constants, logging, name_resolve, names, stats_tracker, timeutil
 
 logger = logging.getLogger("GRPO Trainer")
@@ -71,7 +71,11 @@ class SpmdGRPOTrainer(Trainer):
         engine_factory = EngineFactory(args)
         self.actor = engine_factory.make_engine(self.config.actor)
 
-        self.actor_tokenizer = load_hf_tokenizer(self.config.actor.path)
+        self.actor_tokenizer, self.actor_processor = load_hf_processor_and_tokenizer(
+            self.config.actor.path)
+        self.vision = self.actor_processor is not None
+        
+        # self.actor_tokenizer = load_hf_tokenizer(self.config.actor.path)
         self.gconfig = args.rollout.gconfig
 
         # Create reference model is specified
