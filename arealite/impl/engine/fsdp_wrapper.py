@@ -144,7 +144,7 @@ def fsdp2_load_full_state_dict(
     device = torch.cuda.current_device()
 
     # To broadcast, it needs to be instantiated in the GPU.
-    if dist.get_rank() == 0:
+    if dist.get_rank() != 0:
         model = model.to(device=device, non_blocking=True)
     else:
         model = model.to_empty(device=device)
@@ -252,12 +252,13 @@ class FSDPEngine(SPMDWrapper):
             pretrained_model_name_or_path=self.engine_config.path,
             trust_remote_code=True,
         )
+        with torch.device("cuda"):
         # initialize scratch model from config
-        model = AutoModelForCausalLM.from_config(
-            self.model_config,
-            torch_dtype=dtype,
-            attn_implementation="flash_attention_2",
-        )
+            model = AutoModelForCausalLM.from_config(
+                self.model_config,
+                torch_dtype=dtype,
+                attn_implementation="flash_attention_2",
+            )
 
         # Simple auto wrap policy
         # TODO: fix wrap policy
@@ -497,13 +498,14 @@ class FSDPEngine(SPMDWrapper):
         """Load model from HuggingFace format."""
         if dist.get_rank() == 0:
             dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
-            model = AutoModelForCausalLM.from_pretrained(
-                pretrained_model_name_or_path=path,
-                torch_dtype=dtype,
-                attn_implementation="flash_attention_2",
-                trust_remote_code=True,
-            )
-            full_state = model.state_dict()
+            with torch.device("cpu"):
+                model = AutoModelForCausalLM.from_pretrained(
+                    pretrained_model_name_or_path=path,
+                    torch_dtype=dtype,
+                    attn_implementation="flash_attention_2",
+                    trust_remote_code=True,
+                )
+                full_state = model.state_dict()
         else:
             full_state = {}
 

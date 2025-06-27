@@ -611,6 +611,9 @@ def gather_logprobs(
 ############### Tensor computations end ###############
 
 
+############### Logging related begin ###############
+
+
 def init_stats_logging(args: TrainingArgs):
     """
     Initialize wandb and/or tensorboard according to config.
@@ -673,3 +676,6 @@ def record_timing(name, timing_stats):
     start_time = time.perf_counter()
     yield
     timing_stats[name] = time.perf_counter() - start_time
+
+
+############### Logging related end ###############

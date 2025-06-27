@@ -100,12 +100,14 @@ class HFEngine(SPMDWrapper):
             pretrained_model_name_or_path=self.engine_config.path,
             trust_remote_code=True,
         )
-        # initialize scratch model from config
-        model = AutoModelForCausalLM.from_config(
-            self.model_config,
-            torch_dtype=dtype,
-            attn_implementation="flash_attention_2",
-        )
+        with torch.device("cuda"):
+            # initialize scratch model from config
+            model = AutoModelForCausalLM.from_config(
+                self.model_config,
+                torch_dtype=dtype,
+                attn_implementation="flash_attention_2",
+            )
+            
         model = model.cuda()
 
         self.model = model
