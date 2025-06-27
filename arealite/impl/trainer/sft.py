@@ -16,9 +16,9 @@ from arealite.utils import (
     compute_varlen_position_indices,
     gather_logprobs,
     init_stats_logging,
+    list_of_dict2dict_of_list,
     log_wandb_tensorboard,
     record_timing,
-    list_of_dict2dict_of_list
 )
 from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
 from realhf.api.core.model_api import FinetuneSpec

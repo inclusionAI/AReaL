@@ -107,7 +107,7 @@ class HFEngine(SPMDWrapper):
                 torch_dtype=dtype,
                 attn_implementation="flash_attention_2",
             )
-            
+
         model = model.cuda()
 
         self.model = model

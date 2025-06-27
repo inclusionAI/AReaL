@@ -253,7 +253,7 @@ class FSDPEngine(SPMDWrapper):
             trust_remote_code=True,
         )
         with torch.device("cuda"):
-        # initialize scratch model from config
+            # initialize scratch model from config
             model = AutoModelForCausalLM.from_config(
                 self.model_config,
                 torch_dtype=dtype,
