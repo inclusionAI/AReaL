@@ -35,6 +35,7 @@ def load_hf_or_local_file(path: str) -> str:
     =>
     /root/.cache/huggingface/hub/models--inclusionAI--AReaL-RL-Data/data/boba_106k_0319.jsonl
     """
+    path = str(path)
     if path.startswith("hf://") or path.startswith("hf-dataset://"):
         repo_type = "dataset" if path.startswith("hf-dataset://") else "model"
         hf_path = path.strip().split("://")[1]
