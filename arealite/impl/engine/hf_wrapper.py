@@ -20,10 +20,10 @@ from arealite.api.engine_api import SPMDWrapper
 from arealite.api.io_struct import FinetuneSpec
 from arealite.api.llm_client_api import LLMClient
 from arealite.utils import (
+    get_state_dict_from_repo_id_or_path,
     recorder_list,
     split_dict_tensor_with_cu_seqlens,
     unpack_sequence,
-    get_state_dict_from_repo_id_or_path
 )
 from realhf.base import constants
 
@@ -276,8 +276,7 @@ class HFEngine(SPMDWrapper):
             full_state, strict=not self.model_config.tie_word_embeddings
         )
         if self.model_config.tie_word_embeddings:
-            self.model.tie_weights()    
-        
+            self.model.tie_weights()
 
     def save_optimizer_state(self, path: str):
         """Save optimizer state."""

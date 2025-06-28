@@ -26,10 +26,10 @@ from arealite.api.engine_api import SPMDWrapper
 from arealite.api.io_struct import FinetuneSpec
 from arealite.api.llm_client_api import LLMClient
 from arealite.utils import (
+    get_state_dict_from_repo_id_or_path,
     recorder_list,
     split_dict_tensor_with_cu_seqlens,
     unpack_sequence,
-    get_state_dict_from_repo_id_or_path
 )
 from realhf.api.cli_args import ParallelismConfig
 from realhf.base import constants
@@ -128,7 +128,10 @@ def apply_fsdp2(model, fsdp_kwargs, wrap_policy):
 
 
 def fsdp2_load_full_state_dict(
-    model: PreTrainedModel, full_state: dict, cpu_offload=None, tie_word_embeddings=False
+    model: PreTrainedModel,
+    full_state: dict,
+    cpu_offload=None,
+    tie_word_embeddings=False,
 ):
     """
     Loads the full state dict (could be only on rank 0) into the sharded model. This is done by broadcasting the
@@ -153,10 +156,10 @@ def fsdp2_load_full_state_dict(
 
     cpu_offload = cpu_offload is not None
     options = StateDictOptions(
-        full_state_dict=True, 
-        cpu_offload=cpu_offload, 
+        full_state_dict=True,
+        cpu_offload=cpu_offload,
         broadcast_from_rank0=True,
-        strict=not tie_word_embeddings
+        strict=not tie_word_embeddings,
     )
     set_model_state_dict(model, full_state, options=options)
 
@@ -510,10 +513,10 @@ class FSDPEngine(SPMDWrapper):
             full_state = {}
 
         fsdp2_load_full_state_dict(
-            self.model, 
+            self.model,
             full_state,
-            self.cpu_offload, 
-            tie_word_embeddings=self.model_config.tie_word_embeddings
+            self.cpu_offload,
+            tie_word_embeddings=self.model_config.tie_word_embeddings,
         )
 
     def save_optimizer_state(self, path: str):
