@@ -16,6 +16,7 @@ from torch.distributed.fsdp import StateDictType
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
+    PreTrainedModel,
     get_constant_schedule_with_warmup,
     get_linear_schedule_with_warmup,
 )
@@ -28,6 +29,7 @@ from arealite.utils import (
     recorder_list,
     split_dict_tensor_with_cu_seqlens,
     unpack_sequence,
+    get_state_dict_from_repo_id_or_path
 )
 from realhf.api.cli_args import ParallelismConfig
 from realhf.base import constants
@@ -126,7 +128,7 @@ def apply_fsdp2(model, fsdp_kwargs, wrap_policy):
 
 
 def fsdp2_load_full_state_dict(
-    model: torch.nn.Module, full_state: dict, device_mesh=None, cpu_offload=None
+    model: PreTrainedModel, full_state: dict, cpu_offload=None, tie_word_embeddings=False
 ):
     """
     Loads the full state dict (could be only on rank 0) into the sharded model. This is done by broadcasting the
@@ -151,9 +153,15 @@ def fsdp2_load_full_state_dict(
 
     cpu_offload = cpu_offload is not None
     options = StateDictOptions(
-        full_state_dict=True, cpu_offload=cpu_offload, broadcast_from_rank0=True
+        full_state_dict=True, 
+        cpu_offload=cpu_offload, 
+        broadcast_from_rank0=True,
+        strict=not tie_word_embeddings
     )
     set_model_state_dict(model, full_state, options=options)
+
+    if tie_word_embeddings:
+        model.tie_weights()
 
     # rotary_emb is not in state_dict, so we need to broadcast it manually
     for name, buf in model.named_buffers():
@@ -497,20 +505,15 @@ class FSDPEngine(SPMDWrapper):
     def load_model_from_hf(self, path: str):
         """Load model from HuggingFace format."""
         if dist.get_rank() == 0:
-            dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
-            with torch.device("cpu"):
-                model = AutoModelForCausalLM.from_pretrained(
-                    pretrained_model_name_or_path=path,
-                    torch_dtype=dtype,
-                    attn_implementation="flash_attention_2",
-                    trust_remote_code=True,
-                )
-                full_state = model.state_dict()
+            full_state = get_state_dict_from_repo_id_or_path(path)
         else:
             full_state = {}
 
         fsdp2_load_full_state_dict(
-            self.model, full_state, self.device_mesh, self.cpu_offload
+            self.model, 
+            full_state,
+            self.cpu_offload, 
+            tie_word_embeddings=self.model_config.tie_word_embeddings
         )
 
     def save_optimizer_state(self, path: str):

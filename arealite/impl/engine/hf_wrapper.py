@@ -23,6 +23,7 @@ from arealite.utils import (
     recorder_list,
     split_dict_tensor_with_cu_seqlens,
     unpack_sequence,
+    get_state_dict_from_repo_id_or_path
 )
 from realhf.base import constants
 
@@ -270,16 +271,13 @@ class HFEngine(SPMDWrapper):
 
     def load_model_from_hf(self, path: str):
         """Load model from HuggingFace format."""
-        dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
-        model = AutoModelForCausalLM.from_pretrained(
-            pretrained_model_name_or_path=path,
-            torch_dtype=dtype,
-            attn_implementation="flash_attention_2",
-            trust_remote_code=True,
-            device_map="cuda:0",
+        full_state = get_state_dict_from_repo_id_or_path(path)
+        self.model.load_state_dict(
+            full_state, strict=not self.model_config.tie_word_embeddings
         )
-        full_state = model.state_dict()
-        self.model.load_state_dict(full_state)
+        if self.model_config.tie_word_embeddings:
+            self.model.tie_weights()    
+        
 
     def save_optimizer_state(self, path: str):
         """Save optimizer state."""
