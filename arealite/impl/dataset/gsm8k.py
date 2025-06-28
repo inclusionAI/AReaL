@@ -24,27 +24,26 @@ def process_gsm8k_rl_dataset(dataset: Dataset, tokenizer, reward_mode):
 
 
 def process_gsm8k_sft_dataset(dataset: Dataset, tokenizer):
-    def _tokenize(example, idx):
+    def process_example(example, idx):
         # Add query_id column
         example["query_id"] = str(idx)
         example["prompt"] = example["question"]
         example["seq"] = example["prompt"] + example["answer"] + tokenizer.eos_token
-
-        tokenized_prompt = tokenizer(
-            example["question"],
-            return_attention_mask=False,
-        )["input_ids"]
-        tokenized_seq = tokenizer(
-            example["prompt"] + example["answer"] + tokenizer.eos_token,
-            return_attention_mask=False,
-        )["input_ids"]
-        seq_len = len(tokenized_seq)
-        prompt_len = len(tokenized_prompt)
-
-        return {"seq": tokenized_seq, "prompt_len": prompt_len, "seq_len": seq_len}
+        return example
 
     dataset = dataset.map(
-        lambda example, idx: _tokenize(example, idx),
+        lambda example, idx: process_example(example, idx),
         with_indices=True,
     )
+
+    def _tokenize(example):
+        example["prompt"] = tokenizer(example["prompt"], return_attention_mask=False)[
+            "input_ids"
+        ]
+        example["seq"] = tokenizer(example["seq"], return_attention_mask=False)[
+            "input_ids"
+        ]
+        return example
+
+    dataset = dataset.map(lambda x: _tokenize(x), batched=True)
     return dataset

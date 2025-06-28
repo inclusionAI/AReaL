@@ -80,7 +80,6 @@ def engine(backend_type):
     os.environ["MASTER_PORT"] = "7777"
 
     engine_config = EngineConfig(
-        type=ModelFamily("qwen2", False),
         path="Qwen/Qwen2.5-0.5B",
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
@@ -93,6 +92,7 @@ def engine(backend_type):
     engine = engine_factory.make_engine(engine_config)
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
     engine.init_distributed(None, ft_spec)
+    engine.load_model_from_hf(engine_config.path)
     print("✓ Engine created successfully")
     yield engine
 

@@ -20,6 +20,7 @@ from arealite.api.engine_api import SPMDWrapper
 from arealite.api.io_struct import FinetuneSpec
 from arealite.api.llm_client_api import LLMClient
 from arealite.utils import (
+    get_state_dict_from_repo_id_or_path,
     recorder_list,
     split_dict_tensor_with_cu_seqlens,
     unpack_sequence,
@@ -100,12 +101,14 @@ class HFEngine(SPMDWrapper):
             pretrained_model_name_or_path=self.engine_config.path,
             trust_remote_code=True,
         )
-        # initialize scratch model from config
-        model = AutoModelForCausalLM.from_config(
-            self.model_config,
-            torch_dtype=dtype,
-            attn_implementation="flash_attention_2",
-        )
+        with torch.device("cuda"):
+            # initialize scratch model from config
+            model = AutoModelForCausalLM.from_config(
+                self.model_config,
+                torch_dtype=dtype,
+                attn_implementation="flash_attention_2",
+            )
+
         model = model.cuda()
 
         self.model = model
@@ -268,16 +271,12 @@ class HFEngine(SPMDWrapper):
 
     def load_model_from_hf(self, path: str):
         """Load model from HuggingFace format."""
-        dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
-        model = AutoModelForCausalLM.from_pretrained(
-            pretrained_model_name_or_path=path,
-            torch_dtype=dtype,
-            attn_implementation="flash_attention_2",
-            trust_remote_code=True,
-            device_map="cuda:0",
+        full_state = get_state_dict_from_repo_id_or_path(path)
+        self.model.load_state_dict(
+            full_state, strict=not self.model_config.tie_word_embeddings
         )
-        full_state = model.state_dict()
-        self.model.load_state_dict(full_state)
+        if self.model_config.tie_word_embeddings:
+            self.model.tie_weights()
 
     def save_optimizer_state(self, path: str):
         """Save optimizer state."""
