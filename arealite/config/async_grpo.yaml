@@ -1,8 +1,8 @@
 # Basic experiment info
 experiment_name: gsm8k-test
-trial_name: my-trial
+trial_name: my-trial-3
 seed: 1
-mode: ray
+mode: local
 wandb:
   mode: disabled
   entity: null
@@ -31,10 +31,10 @@ exp_ctrl:
   benchmark_n_seqs: null
 
 # whether to allow persistent servers
-shutdown_server_on_exit: false
+shutdown_server_on_exit: true
 
 # Allocation and parallelism
-allocation_mode: sglang.d4p1m1+d2p2m1
+allocation_mode: sglang.d4p1t1+d4p1t1
 n_nodes: 1
 n_gpus_per_node: 8
 
@@ -54,12 +54,13 @@ train_dataset:
   path: openai/gsm8k
   name: main
   split: train
-  batch_size: 128
+  batch_size: 32
   shuffle: True
   preprocessor:
     type: gsm8k_rl
     gsm8k:
       reward_mode: strict
+
 valid_dataset: null
 
 # Rollout config
@@ -70,15 +71,11 @@ rollout:
       reward_type: gsm8k
   num_workers: 1
   max_concurrent_rollouts: null
-  max_head_offpolicyness: 4
+  max_head_offpolicyness: 0
   filter_reward_lb: -10000
   filter_reward_ub: 10000
-  llm_client:
-    server_backend: sglang
-    schedule_policy: round_robin
-    tokenizer_path: Qwen/Qwen2-0.5B-Instruct
-    request_timeout: 3600
-    request_retries: 3
+  server_backend: sglang
+  model_path: Qwen/Qwen2-0.5B-Instruct
   gconfig:
     n_samples: 16
     max_new_tokens: 512
@@ -86,6 +83,44 @@ rollout:
     top_p: 1.0
     top_k: 1000000
     temperature: 1.0
+  llm_client:
+    schedule_policy: round_robin
+    request_timeout: 3600
+    request_retries: 3
+  llm_service:
+    served_model_name: null
+    health_check_interval: 5
+    startup_timeout: 300
+    max_unhealth_count: 3
+    graceful_shutdown_on_unhealthy: true
+  server_backend: sglang
+  sglang:
+    enable_mixed_chunk: false
+    enable_torch_compile: false
+    torch_compile_max_bs: 32
+    cuda_graph_max_bs: null
+    cuda_graph_bs: null
+    triton_attention_reduce_in_fp32: false
+    triton_attention_num_kv_splits: 8
+    num_continuous_decode_steps: 1
+    attention_backend: "flashinfer"
+    sampling_backend: null
+    context_length: 32768
+    mem_fraction_static: 0.9
+    max_running_requests: null
+    chunked_prefill_size: -1
+    max_prefill_tokens: 32768
+    schedule_policy: "lpm"
+    schedule_conservativeness: 1.0
+    cpu_offload_gb: 0
+    kv_cache_dtype: "auto"
+    log_level: "warning"
+    log_level_http: "warning"
+    log_requests: false
+    log_requests_level: 0
+    show_time_cost: false
+    enable_metrics: true
+    decode_log_interval: 1
 
 # Trainer
 trainer:
@@ -96,14 +131,14 @@ trainer:
       path: Qwen/Qwen2-0.5B-Instruct
       init_from_scratch: false
       gradient_checkpointing: false
-      bf16: false
+      bf16: true
       optimizer:
         type: adam
-        lr: 2.0e-05
+        lr: 1.0e-6
         weight_decay: 0.05
         beta1: 0.9
-        beta2: 0.95
-        eps: 1.0e-05
+        beta2: 0.999
+        eps: 1.0e-08
         min_lr_ratio: 0.0
         lr_scheduler_type: constant
         warmup_steps_proportion: 0.001
@@ -113,7 +148,7 @@ trainer:
         hysteresis: 2
         gradient_clipping: 1.0
       backend:
-        type: hf
+        type: fsdp
     ref: null
     mb_spec:
       max_tokens_per_mb: 10240
@@ -134,59 +169,3 @@ trainer:
     use_decoupled_loss: true
     behav_imp_weight_cap: null
 
-# LLM service
-llm_service:
-  server_backend: sglang
-  served_model_name: null
-  model_path: Qwen/Qwen2-0.5B-Instruct
-  parallel:
-    tensor_parallel_size: 1
-    pipeline_parallel_size: 1
-    data_parallel_size: 1
-    use_sequence_parallel: false
-  health_check_interval: 5
-  startup_timeout: 300
-  max_unhealth_count: 3
-  graceful_shutdown_on_unhealthy: true
-  sglang:
-    disable_cuda_graph: false
-    disable_radix_cache: false
-    disable_cuda_graph_padding: false
-    enable_nccl_nvls: false
-    disable_outlines_disk_cache: false
-    disable_custom_all_reduce: false
-    disable_overlap_schedule: false
-    enable_mixed_chunk: false
-    enable_dp_attention: false
-    enable_ep_moe: false
-    enable_torch_compile: false
-    torch_compile_max_bs: 32
-    cuda_graph_max_bs: null
-    cuda_graph_bs: null
-    torchao_config: ""
-    enable_nan_detection: false
-    enable_p2p_check: false
-    triton_attention_reduce_in_fp32: false
-    triton_attention_num_kv_splits: 8
-    num_continuous_decode_steps: 1
-    enable_memory_saver: false
-    allow_auto_truncate: false
-    attention_backend: "flashinfer"
-    sampling_backend: null
-    context_length: 32768
-    mem_fraction_static: 0.9
-    max_running_requests: null
-    chunked_prefill_size: -1
-    max_prefill_tokens: 32768
-    schedule_policy: "lpm"
-    schedule_conservativeness: 1.0
-    cpu_offload_gb: 0
-    dtype: "float16"
-    kv_cache_dtype: "auto"
-    log_level: "warning"
-    log_level_http: "warning"
-    log_requests: false
-    log_requests_level: 0
-    show_time_cost: false
-    enable_metrics: true
-    decode_log_interval: 1

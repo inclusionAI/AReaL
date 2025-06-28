@@ -10,7 +10,7 @@ from pathlib import Path
 import requests
 
 from arealite.api.cli_args import LLMServiceConfig
-from arealite.api.io_struct import LLMServerInfo
+from arealite.api.io_struct import AllocationMode, LLMServerInfo
 from arealite.api.llm_server_api import LLMServer
 from realhf.api.cli_args import SGLangConfig
 from realhf.base import gpu_utils, logging, network, pkg_version
@@ -72,12 +72,14 @@ class SGLangServer(LLMServer):
         self.base_gpu_id = 0
         self.config = service_config.sglang
 
+        self.alloc_mode = AllocationMode.from_str(args.allocation_mode)
+
     def _resolve_base_gpu_id(self):
         # Determine GPU configuration
         import ray
 
-        tp_size = self.service_config.parallel.tensor_parallel_size
-        pp_size = self.service_config.parallel.pipeline_parallel_size
+        tp_size = self.alloc_mode.gen_tp_size
+        pp_size = self.alloc_mode.gen_pp_size
         mp_size = tp_size * pp_size
         if ray.is_initialized():
             self.base_gpu_id = 0
@@ -128,10 +130,10 @@ class SGLangServer(LLMServer):
             nccl_port = ports[1]
 
             # Build command
-            tp_size = self.service_config.parallel.tensor_parallel_size
+            tp_size = self.alloc_mode.gen_tp_size
             cmd = SGLangConfig.build_cmd(
                 self.config,
-                self.service_config.model_path,
+                self.args.rollout.model_path,
                 tp_size=tp_size,
                 base_gpu_id=self.base_gpu_id,
                 dist_init_addr=f"{host}:{nccl_port}",

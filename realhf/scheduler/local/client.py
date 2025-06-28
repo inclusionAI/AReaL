@@ -76,7 +76,7 @@ class LocalSchedulerClient(SchedulerClient):
     def log_path_of(self, worker_type) -> str:
         return os.path.join(
             get_log_path(self.args),
-            f"{worker_type}-0",
+            f"{worker_type}-0.log",
         )
 
     def __init__(self, args):
@@ -90,8 +90,8 @@ class LocalSchedulerClient(SchedulerClient):
         ).split(",")
 
         self._job_counter: Dict[str, int] = defaultdict(int)
-        self._job_with_gpu: Dict[str, bool] = defaultdict(int)
-        self._job_env_vars: Dict[str, Dict] = defaultdict(int)
+        self._job_gpu_cnt: Dict[str, int] = defaultdict(int)
+        self._job_env_vars: Dict[str, Dict] = defaultdict(dict)
         self._job_cmd = {}
         self._job_states = {}
 
@@ -117,12 +117,12 @@ class LocalSchedulerClient(SchedulerClient):
             env_vars = {}
 
         self._job_counter[worker_type] += count
-        if worker_type in self._job_with_gpu:
-            assert self._job_with_gpu[worker_type] == (
-                gpu > 0
+        if worker_type in self._job_gpu_cnt:
+            assert self._job_gpu_cnt[worker_type] == (
+                gpu
             ), "All workers of the same type must either use GPU or not use GPU."
         else:
-            self._job_with_gpu[worker_type] = gpu > 0
+            self._job_gpu_cnt[worker_type] = gpu
 
         if worker_type in self._job_env_vars:
             assert (
@@ -142,10 +142,10 @@ class LocalSchedulerClient(SchedulerClient):
         self.submit_array(worker_type, cmd, count=1, **kwargs)
 
     def __commit_all(self):
-        for worker_type, count, use_gpu, env_vars in zip(
+        for worker_type, count, gpu, env_vars in zip(
             self._job_counter.keys(),
             self._job_counter.values(),
-            self._job_with_gpu.values(),
+            self._job_gpu_cnt.values(),
             self._job_env_vars.values(),
         ):
             os.makedirs(
@@ -154,12 +154,18 @@ class LocalSchedulerClient(SchedulerClient):
                 mode=0o775,
             )
             for i in range(count):
-                if use_gpu:
-                    available_device_id = self._gpu_counter % len(self._cuda_devices)
-                    env_vars["CUDA_VISIBLE_DEVICES"] = str(
-                        self._cuda_devices[available_device_id]
+                if gpu > 0:
+                    # Allocate GPUs in a round-robin manner
+                    visible_devices = []
+                    for _ in range(gpu):
+                        available_device_id = self._gpu_counter % len(
+                            self._cuda_devices
+                        )
+                        self._gpu_counter += 1
+                        visible_devices.append(available_device_id)
+                    env_vars["CUDA_VISIBLE_DEVICES"] = ",".join(
+                        str(self._cuda_devices[j]) for j in visible_devices
                     )
-                    self._gpu_counter += 1
                 cmd = (
                     " ".join(str(k) + "=" + str(v) for k, v in env_vars.items())
                     + " stdbuf -oL "
@@ -278,11 +284,11 @@ class LocalSchedulerClient(SchedulerClient):
                     assert worker_type in self._job_counter
                     self._job_counter[worker_type] -= 1
                     if self._job_counter[worker_type] <= 0:
-                        assert worker_type in self._job_with_gpu
+                        assert worker_type in self._job_gpu_cnt
                         assert worker_type in self._job_env_vars
                         assert worker_type in self._job_cmd
                         self._job_counter.pop(worker_type)
-                        self._job_with_gpu.pop(worker_type)
+                        self._job_gpu_cnt.pop(worker_type)
                         self._job_env_vars.pop(worker_type)
                         self._job_cmd.pop(worker_type)
 

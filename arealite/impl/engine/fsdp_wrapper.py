@@ -232,7 +232,7 @@ class FSDPEngine(SPMDWrapper):
         self.device_mesh = None
         self.cpu_offload = None
 
-        self.world_size = args.n_gpus_per_node * args.n_nodes
+        self.world_size = int(os.environ["WORLD_SIZE"])
 
     def train(self, mode: bool = True):
         """Set the module in training mode."""

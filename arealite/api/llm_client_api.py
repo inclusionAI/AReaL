@@ -31,7 +31,7 @@ class LLMClient(abc.ABC):
 
         self.registry = LLMServiceRegistry(args.experiment_name, args.trial_name)
         self.tokenizer: transformers.PreTrainedTokenizerFast = load_hf_tokenizer(
-            client_config.tokenizer_path
+            args.rollout.model_path
         )
 
     def select_server(self):
@@ -57,29 +57,10 @@ class LLMClient(abc.ABC):
         retry_delay: float = 1.0,
         target_server: Optional[LLMServerInfo] = None,
     ) -> tuple[requests.Response, LLMServerInfo]:
-        """
-        Send HTTP request to servers with retry logic and server switching.
-
-        Args:
-            endpoint: API endpoint (e.g., "/generate", "/health")
-            payload: Request payload for POST/PUT requests
-            method: HTTP method ("GET", "POST", "PUT", "DELETE")
-            max_retries: Maximum number of retry attempts per server
-            timeout: Request timeout in seconds
-            retry_delay: Delay between retries in seconds
-
-        Returns:
-            tuple: (requests.Response, server_info) - Successful HTTP response and server info
-
-        Raises:
-            RuntimeError: If all servers fail after max retries
-        """
-
         timeout = timeout or self.client_config.request_timeout
         last_exception = None
         max_retries = max_retries or self.client_config.request_retries
 
-        # Try each server with retries
         for _ in range(max_retries):
             if target_server is None:
                 server_info = self.select_server()
@@ -112,14 +93,8 @@ class LLMClient(abc.ABC):
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
                     continue
-
-            # Mark server as potentially unhealthy after all retries failed
-            # Note: Could implement more sophisticated health tracking here
-
-        # All servers exhausted
         raise RuntimeError(
-            f"All servers failed after {max_retries} retries each. "
-            f"Last error: {last_exception}"
+            f"Failed after {max_retries} retries each. " f"Last error: {last_exception}"
         )
 
     async def arequest_with_retry(
@@ -132,29 +107,11 @@ class LLMClient(abc.ABC):
         retry_delay: float = 1.0,
         target_server: Optional[LLMServerInfo] = None,
     ) -> tuple[aiohttp.ClientResponse, LLMServerInfo]:
-        """
-        Send async HTTP request to servers with retry logic and server switching.
-
-        Args:
-            endpoint: API endpoint (e.g., "/generate", "/health")
-            payload: Request payload for POST/PUT requests
-            method: HTTP method ("GET", "POST", "PUT", "DELETE")
-            max_retries: Maximum number of retry attempts per server
-            timeout: Request timeout in seconds
-            retry_delay: Delay between retries in seconds
-
-        Returns:
-            tuple: (aiohttp.ClientResponse, server_info) - Successful HTTP response and server info
-
-        Raises:
-            RuntimeError: If all servers fail after max retries
-        """
-
         timeout = timeout or self.client_config.request_timeout
         last_exception = None
         max_retries = max_retries or self.client_config.request_retries
 
-        # Try each server with retries
+        # Try with retries
         for _ in range(max_retries):
             if target_server is None:
                 server_info = self.select_server()
@@ -195,14 +152,8 @@ class LLMClient(abc.ABC):
                     if attempt < max_retries - 1:
                         await asyncio.sleep(retry_delay)
                     continue
-
-            # Mark server as potentially unhealthy after all retries failed
-            # Note: Could implement more sophisticated health tracking here
-
-        # All servers exhausted
         raise RuntimeError(
-            f"All servers failed after {max_retries} retries each. "
-            f"Last error: {last_exception}"
+            f"Failed after {max_retries} retries each. " f"Last error: {last_exception}"
         )
 
     def generate(self, req: LLMRequest) -> LLMResponse:
@@ -233,8 +184,8 @@ class LLMClientFactory:
 
     def make_client(self, config: LLMClientConfig) -> LLMClient:
         """Create an instance of LLMClient based on the specified type."""
-        if config.server_backend == "sglang":
+        if self.args.rollout.server_backend == "sglang":
             from arealite.system.sglang_client import SGLangClient
 
             return SGLangClient(self.args, config)
-        raise ValueError(f"Unknown LLMClient type: {config.server_backend}")
+        raise ValueError(f"Unknown LLMClient type: {self.args.rollout.server_backend}")

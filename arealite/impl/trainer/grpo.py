@@ -125,9 +125,11 @@ class SpmdGRPOTrainer(Trainer):
 
         # Setting up models.
         self.actor.init_distributed(None, ft_spec)
+        self.actor.load_model_from_hf(self.config.actor.path)
         self.actor.eval()
         if self.ref is not None:
             self.ref.init_distributed(None, ft_spec)
+            self.ref.load_model_from_hf(self.config.ref.path)
             self.ref.eval()
         self.actor.update_weights_to(self.llm_client)
 
@@ -162,10 +164,9 @@ class SpmdGRPOTrainer(Trainer):
                         )
                     else:
                         # Run batched rollout by submitting requests to LLM servers
-                        env_options = dict_of_list2list_of_dict(data)
                         trajs = self.rollout_controller.generate_batch(
-                            batch_size=len(env_options),
-                            env_options=env_options,
+                            batch_size=len(data),
+                            env_options=data,
                         )
 
                 with record_timing("timeperf/train_step", timing_stats):

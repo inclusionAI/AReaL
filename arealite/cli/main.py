@@ -42,12 +42,17 @@ def main():
     constants.set_experiment_trial_names(cfg.experiment_name, cfg.trial_name)
     # NOTE: do not reset the name resolve repo to discover previous LLM servers
     name_resolve.reconfigure(cfg.cluster.name_resolve)
+    if cfg.shutdown_server_on_exit:
+        name_resolve.clear_subtree(
+            names.trial_root(
+                experiment_name=cfg.experiment_name, trial_name=cfg.trial_name
+            )
+        )
 
     # Launch inference and training jobs
     alloc_mode = AllocationMode.from_str(cfg.allocation_mode)
     assert cfg.mode == "local"
     scheduler = make_scheduler(cfg)
-    jobs = []
     BASE_ENVIRONS = constants.get_env_vars(cfg)
     for k, v in BASE_ENVIRONS.items():
         os.environ[k] = v
@@ -57,12 +62,13 @@ def main():
         cfg.experiment_name, cfg.trial_name
     ).get_healthy_servers()
     # Launch LLM servers.
-    if len(existing_servers) < alloc_mode.gen_dp_size:
+    if len(existing_servers) == 0:
         n_gpus_per_instance = alloc_mode.gen_pp_size * alloc_mode.gen_tp_size
-        jobs += scheduler.submit_array(
+        servers_to_launch = alloc_mode.gen_dp_size - len(existing_servers)
+        scheduler.submit_array(
             worker_type="llm_server",
             cmd=f"python3 arealite/cli/launch_server.py --config {str(config_file)}",
-            count=len(existing_servers) - alloc_mode.gen_dp_size,
+            count=servers_to_launch,
             cpu=cfg.cpu_per_inf_proc * n_gpus_per_instance,
             gpu=n_gpus_per_instance,
             mem=cfg.mem_per_inf_proc * n_gpus_per_instance,
@@ -70,10 +76,9 @@ def main():
             container_image=cfg.cluster.gpu_infer_image,
         )
     # Launch trainers.
-    jobs += scheduler.submit(
+    scheduler.submit(
         worker_type="trainer",
         cmd=f"torchrun --nnodes 1 --nproc-per-node {alloc_mode.train_world_size} arealite/cli/launch_trainer.py --config {str(config_file)}",
-        count=1,
         cpu=cfg.cpu_per_train_proc * alloc_mode.train_world_size,
         gpu=alloc_mode.train_world_size,
         mem=cfg.cpu_per_train_proc * cfg.mem_per_train_proc,

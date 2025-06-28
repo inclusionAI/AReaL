@@ -26,6 +26,8 @@ class SGLangClient(LLMClient):
         if not req.text:
             assert req.input_ids is not None
             req.text = self.tokenizer.decode(req.input_ids)
+        if not req.input_ids:
+            req.input_ids = self.tokenizer.encode(req.text)
 
         # Prepare request payload
         gconfig = req.gconfig

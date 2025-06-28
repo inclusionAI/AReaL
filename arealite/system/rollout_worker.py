@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import torch.distributed as dist
 
-from arealite.api.cli_args import RolloutControllerConfig, TrainingArgs
+from arealite.api.cli_args import RolloutConfig, TrainingArgs
 from arealite.api.io_struct import Trajectory
 from arealite.api.llm_client_api import LLMClient, LLMClientFactory
 from arealite.api.rollout_api import RolloutCollectorFactory
@@ -28,7 +28,7 @@ class RolloutWorker:
         self,
         worker_id: int,
         args: TrainingArgs,
-        config: RolloutControllerConfig,
+        config: RolloutConfig,
         llm_client: LLMClient | None = None,
         pusher_host: Optional[str] = "localhost",
         pusher_port: Optional[int] = 5555,

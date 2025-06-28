@@ -255,11 +255,11 @@ class LLMServerFactory:
 
     def make_server(self, server_config: LLMServiceConfig) -> LLMServer:
         """Create an LLM server instance based on the configuration."""
-        if server_config.server_backend == "sglang":
+        if self.args.rollout.server_backend == "sglang":
             from arealite.system.sglang_server import SGLangServer
 
             return SGLangServer(self.args, server_config)
         else:
             raise ValueError(
-                f"Unsupported server backend: {server_config.server_backend}"
+                f"Unsupported server backend: {self.args.rollout.server_backend}"
             )

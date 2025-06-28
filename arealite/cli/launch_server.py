@@ -3,6 +3,7 @@
 
 import argparse
 import os
+import uuid
 from pathlib import Path
 
 from hydra import compose as hydra_compose
@@ -43,7 +44,7 @@ def main():
     constants.set_experiment_trial_names(cfg.experiment_name, cfg.trial_name)
     name_resolve.reconfigure(cfg.cluster.name_resolve)
 
-    server = LLMServerFactory(cfg).make_server(cfg.llm_service)
+    server = LLMServerFactory(cfg).make_server(cfg.rollout.llm_service)
     server.start()
 
 

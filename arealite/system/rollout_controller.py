@@ -11,7 +11,7 @@ from typing import Any, List, Optional
 
 import numpy as np
 
-from arealite.api.cli_args import RolloutControllerConfig, TrainingArgs
+from arealite.api.cli_args import RolloutConfig, TrainingArgs
 from arealite.api.io_struct import Trajectory
 from arealite.api.llm_client_api import LLMClient, LLMClientFactory
 from arealite.api.rollout_api import RolloutCollector
@@ -26,7 +26,7 @@ class RolloutController:
     def __init__(
         self,
         args: TrainingArgs,
-        config: RolloutControllerConfig,
+        config: RolloutConfig,
         collector: RolloutCollector,
     ):
         self.args = args
