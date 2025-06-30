@@ -30,7 +30,6 @@ MODEL_PATH = "Qwen/Qwen2-0.5B"
 @pytest.fixture(scope="module")
 def args():
     args = TrainingArgs(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
-    constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     seeding.set_random_seed(args.seed, EXPR_NAME)
     name_resolve.reconfigure(args.cluster.name_resolve)
     yield args
@@ -51,22 +50,21 @@ def sglang_server(args):
 def sglang_client(args, sglang_server):
     from arealite.system.sglang_client import SGLangClient
 
-    llm_client = LLMClientConfig(
-        server_backend="sglang",
-        tokenizer_path=MODEL_PATH,
-        request_timeout=10,
-    )
+    args.rollout.server_backend = "sglang"
+    args.rollout.model_path = MODEL_PATH
+    llm_client = LLMClientConfig()
     client = SGLangClient(args, client_config=llm_client)
     yield client
 
 
-def test_sglang_generate(sglang_client):
+@pytest.mark.asyncio
+async def test_sglang_generate(sglang_client):
     req = LLMRequest(
         rid=str(uuid.uuid4()),
         text="hello! how are you today",
         gconfig=GenerationHyperparameters(max_new_tokens=16),
     )
-    resp = sglang_client.generate(req)
+    resp = await sglang_client.agenerate(req)
     assert isinstance(resp, LLMResponse)
     assert resp.input_tokens == req.input_ids
     assert (

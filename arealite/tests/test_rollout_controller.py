@@ -32,7 +32,6 @@ MODEL_PATH = "Qwen/Qwen2.5-0.5B"
 @pytest.fixture(scope="module")
 def args():
     args = TrainingArgs(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
-    constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     seeding.set_random_seed(args.seed, EXPR_NAME)
     args.rollout.llm_client.tokenizer_path = MODEL_PATH
     args.rollout.collector.rlvr = RLVRConfig(

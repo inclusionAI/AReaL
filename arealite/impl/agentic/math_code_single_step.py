@@ -126,32 +126,6 @@ class MathCodeSingleStepEnv(Environment):
 
 class MathCodeAgent(Agent):
 
-    def act(self, inp: AgentInferInput) -> AgentInferOutput:
-        """Given an observation, return an action."""
-        # Extract information from observation
-        obs: MathCodeObs = inp.obs
-        query_id = obs.query_id
-        prompt_ids = obs.prompt_ids
-
-        # Create LLM request
-        llm_req = LLMRequest(
-            rid=str(query_id) + "-" + str(uuid.uuid4()),
-            input_ids=prompt_ids,
-            gconfig=inp.gconfig,
-        )
-
-        # Generate response using LLM client
-        llm_resp = inp.llm_client.generate(llm_req)
-
-        # Extract answers from completion
-        answer = llm_resp.completion
-
-        return AgentInferOutput(
-            action=MathCodeAction(query_id=query_id, answer=answer),
-            llm_req=llm_req,
-            llm_resp=llm_resp,
-        )
-
     async def aact(self, inp: AgentInferInput) -> AgentInferOutput:
         """Async version of act. Given an observation, return an action."""
         # Extract information from observation

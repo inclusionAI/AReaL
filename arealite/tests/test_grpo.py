@@ -8,8 +8,6 @@ from arealite.api.cli_args import (
     EngineBackendConfig,
     EngineConfig,
     GRPOTrainerConfig,
-    LLMClientConfig,
-    ModelFamily,
     OptimizerConfig,
     RLVRConfig,
     TrainerConfig,
@@ -32,7 +30,6 @@ def args():
     args = TrainingArgs(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
     constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     seeding.set_random_seed(args.seed, EXPR_NAME)
-    args.rollout.llm_client.tokenizer_path = MODEL_PATH
     args.train_dataset = DatasetConfig(
         path="openai/gsm8k",
         name="main",
@@ -44,22 +41,18 @@ def args():
     )
     args.trainer = TrainerConfig(type="grpo", grpo=GRPOTrainerConfig())
     args.trainer.grpo.actor = EngineConfig(
-        type=ModelFamily("qwen2", False),
         path=MODEL_PATH,
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
         backend=EngineBackendConfig(type="hf"),
     )
     args.trainer.grpo.ref = EngineConfig(
-        type=ModelFamily("qwen2", False),
         path=MODEL_PATH,
         gradient_checkpointing=False,
         backend=EngineBackendConfig(type="hf"),
     )
-    args.rollout.llm_client = LLMClientConfig(
-        server_backend="sglang",
-        tokenizer_path=MODEL_PATH,
-    )
+    args.rollout.model_path = MODEL_PATH
+    args.rollout.server_backend = "sglang"
     args.rollout.collector.rlvr = RLVRConfig(solution_path="nothing")
     args.rollout.gconfig.max_new_tokens = 16
     name_resolve.reconfigure(args.cluster.name_resolve)

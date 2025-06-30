@@ -20,6 +20,52 @@ from realhf.api.cli_args import (
 )
 
 
+@dataclass(unsafe_hash=True)
+class ParallelismConfig:
+    """Configuration for 3D parallelism (tensor, pipeline, and data parallelism).
+
+    Note:
+        Sequence parallelism is only used in combination with tensor-model parallelism.
+    """
+
+    tensor_parallel_size: int = field(
+        default=1, metadata={"help": "Size of tensor-model parallelism"}
+    )
+    pipeline_parallel_size: int = field(
+        default=1, metadata={"help": "Number of pipeline parallel stages"}
+    )
+    data_parallel_size: int = field(
+        default=1, metadata={"help": "Data parallelism size for ZeRO optimization"}
+    )
+    use_sequence_parallel: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable sequence parallelism. Only used with tensor-model parallelism in Megatron",
+        },
+    )
+
+    def __str__(self):
+        """Returns compact string representation: 'Parallel(mp=X,pp=Y,dp=Z)'."""
+        return (
+            f"Parallel(mp={self.tensor_parallel_size},"
+            f"pp={self.pipeline_parallel_size},"
+            f"dp={self.data_parallel_size})"
+        )
+
+    @staticmethod
+    def parallelism_eq(this, other):
+        """Compare parallelism configurations (excluding sequence parallelism).
+
+        Note:
+            Implemented as static method to avoid OmegaConf compatibility issues.
+        """
+        return (
+            (this.tensor_parallel_size == other.tensor_parallel_size)
+            and (this.pipeline_parallel_size == other.pipeline_parallel_size)
+            and (this.data_parallel_size == other.data_parallel_size)
+        )
+
+
 @dataclass
 class GenerationHyperparameters:
     """Controls text generation behavior for RL training."""
