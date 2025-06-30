@@ -23,6 +23,7 @@ from arealite.utils import compute_varlen_position_indices
 from realhf.impl.model.utils.padding import unpad_input
 
 VOCAB_SIZE = 100
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B/"
 
 
 @pytest.fixture(scope="module")
@@ -79,7 +80,7 @@ def engine(backend_type):
     os.environ["MASTER_PORT"] = "7777"
 
     engine_config = EngineConfig(
-        path="Qwen/Qwen2.5-0.5B",
+        path=MODEL_PATH,
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
         backend=EngineBackendConfig(type=backend_type),
@@ -154,7 +155,7 @@ def test_train_batch(tmp_path_factory, engine, mock_input):
 
 @torch.no_grad()
 def test_save_load_weights(tmp_path_factory, engine, mock_input):
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
     path = tmp_path_factory.mktemp("hf_engine_test")
 
     old = engine.forward(

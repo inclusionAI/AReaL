@@ -26,7 +26,7 @@ from realhf.base import constants, name_resolve, names, seeding
 
 EXPR_NAME = "test_rollout_controller"
 TRIAL_NAME = "test_rollout_controller"
-MODEL_PATH = "Qwen/Qwen2.5-0.5B"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B/"
 
 
 @pytest.fixture(scope="module")
@@ -166,7 +166,7 @@ def test_async_rollout(args, sglang_server, dataloader, n_samples, num_workers):
     assert not rollout_controller._worker_processes
 
 
-@pytest.mark.parametrize("ofp", [1])
+@pytest.mark.parametrize("ofp", [1, 2, 4, 16])
 def test_async_staleness_control(args, sglang_server, dataloader, ofp):
     args = deepcopy(args)
     args.rollout.gconfig.n_samples = 2
@@ -187,7 +187,7 @@ def test_async_staleness_control(args, sglang_server, dataloader, ofp):
     rollout_controller.submit(next(gen))
     rollout_controller.submit(next(gen))
     # wait for some time
-    time.sleep(30)
+    time.sleep(15)
     assert len(rollout_controller._buffer) == min(
         batch_size * 2, batch_size * (ofp + 1)
     )

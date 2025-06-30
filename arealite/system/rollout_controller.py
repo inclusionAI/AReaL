@@ -9,6 +9,8 @@ from queue import Empty as QueueEmpty
 from typing import Any, List, Optional
 
 import numpy as np
+
+# NOTE: the start method of mp should be fork rather than spawn
 import torch.multiprocessing as mp
 
 from arealite.api.cli_args import RolloutConfig, TrainingArgs
@@ -213,10 +215,6 @@ class RolloutController:
 
 
 def _run_worker_process(worker_id: int, args, config, puller_port, data_pusher_port):
-    from realhf.base import name_resolve
-
-    name_resolve.reconfigure(args.cluster.name_resolve)
-    # Create and run worker directly
     worker = RolloutWorker(
         worker_id=worker_id,
         args=args,

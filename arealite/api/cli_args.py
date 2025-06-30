@@ -6,6 +6,9 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import uvloop
+
+uvloop.install()
 from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
 from omegaconf import MISSING, OmegaConf

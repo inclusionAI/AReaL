@@ -75,7 +75,7 @@ rollout:
   filter_reward_lb: -10000
   filter_reward_ub: 10000
   server_backend: sglang
-  model_path: Qwen/Qwen2-0.5B-Instruct
+  model_path: /storage/openpsi/models/Qwen__Qwen3-1.7B/
   gconfig:
     n_samples: 16
     max_new_tokens: 512
@@ -128,7 +128,7 @@ trainer:
   grpo:
     async_training: true
     actor:
-      path: Qwen/Qwen2-0.5B-Instruct
+      path: /storage/openpsi/models/Qwen__Qwen3-1.7B/
       init_from_scratch: false
       gradient_checkpointing: false
       bf16: true
