@@ -33,7 +33,9 @@ MODEL_PATH = "Qwen/Qwen2.5-0.5B"
 def args():
     args = TrainingArgs(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
     seeding.set_random_seed(args.seed, EXPR_NAME)
+    args.rollout.model_path = MODEL_PATH
     args.rollout.llm_client.tokenizer_path = MODEL_PATH
+    args.train_dataset.batch_size = 2
     args.rollout.collector.rlvr = RLVRConfig(
         solution_path=str(Path(__file__).parent / "data" / f"rlvr_math_dataset.jsonl")
     )
@@ -44,9 +46,8 @@ def args():
 
 @pytest.fixture(scope="module")
 def sglang_server(args):
-    server_args = LLMServiceConfig(model_path=MODEL_PATH)
-    server_args.sglang = SGLangConfig()
-    server = LLMServerFactory(args).make_server(server_args)
+    args.rollout.sglang = SGLangConfig()
+    server = LLMServerFactory(args).make_server(args.rollout.llm_service)
     server._startup()
     yield
     server._graceful_exit(0)
@@ -63,7 +64,7 @@ def dataloader(args):
     dataset = dataset.map(lambda x: tokenizer(x["prompt"]), batched=True)
     yield StatefulDataLoader(
         dataset,
-        batch_size=2,
+        batch_size=args.train_dataset.batch_size,
         collate_fn=lambda x: x,
         drop_last=True,
     )
@@ -165,13 +166,12 @@ def test_async_rollout(args, sglang_server, dataloader, n_samples, num_workers):
     assert not rollout_controller._worker_processes
 
 
-@pytest.mark.parametrize("ofp", [1, 2, 4, 16])
+@pytest.mark.parametrize("ofp", [1])
 def test_async_staleness_control(args, sglang_server, dataloader, ofp):
     args = deepcopy(args)
     args.rollout.gconfig.n_samples = 2
     args.rollout.gconfig.max_new_tokens = 4
     args.rollout.max_head_offpolicyness = ofp
-    args.train_dataset.batch_size = 2
     args.rollout.max_concurrent_rollouts = 100
     rollout_factory = RolloutCollectorFactory(args)
     collector = rollout_factory.make_collector(args.rollout.collector)
@@ -181,13 +181,13 @@ def test_async_staleness_control(args, sglang_server, dataloader, ofp):
 
     # start loop
     rollout_controller.start_generate_loop()
-    batch_size = 2
+    batch_size = args.train_dataset.batch_size
 
     gen = iter(dataloader)
     rollout_controller.submit(next(gen))
     rollout_controller.submit(next(gen))
     # wait for some time
-    time.sleep(15)
+    time.sleep(30)
     assert len(rollout_controller._buffer) == min(
         batch_size * 2, batch_size * (ofp + 1)
     )

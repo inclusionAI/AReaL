@@ -40,6 +40,7 @@ def tokenizer():
 @pytest.fixture(scope="module")
 def args():
     args = TrainingArgs(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
+    args.rollout.model_path = MODEL_PATH
     seeding.set_random_seed(args.seed, EXPR_NAME)
     name_resolve.reconfigure(args.cluster.name_resolve)
     yield args
@@ -48,9 +49,8 @@ def args():
 
 @pytest.fixture(scope="module")
 def sglang_server(args):
-    server_args = LLMServiceConfig(model_path=MODEL_PATH)
-    server_args.sglang = SGLangConfig()
-    server = LLMServerFactory(args).make_server(server_args)
+    args.rollout.sglang = SGLangConfig()
+    server = LLMServerFactory(args).make_server(args.rollout.llm_service)
     server._startup()
     yield
     server._graceful_exit(0)
@@ -61,7 +61,6 @@ def sglang_server(args):
 async def test_rlvr_rollout(args, sglang_server, tokenizer, task):
     jsonl_file = Path(__file__).parent / "data" / f"rlvr_{task}_dataset.jsonl"
     args.rollout.server_backend = "sglang"
-    args.rollout.model_path = MODEL_PATH
     args.rollout.gconfig = gconfig = GenerationHyperparameters(max_new_tokens=16)
     args.rollout.collector = RolloutCollectorConfig(
         type="rlvr",
@@ -98,7 +97,6 @@ async def test_rlvr_rollout(args, sglang_server, tokenizer, task):
 @pytest.mark.asyncio
 async def test_gsm8k_rollout(args, sglang_server, tokenizer):
     args.rollout.server_backend = "sglang"
-    args.rollout.model_path = MODEL_PATH
     args.rollout.gconfig = gconfig = GenerationHyperparameters(max_new_tokens=16)
     args.rollout.collector = RolloutCollectorConfig(
         type="rlvr", rlvr=RLVRConfig(reward_type="gsm8k")
@@ -143,7 +141,6 @@ async def test_gsm8k_rollout(args, sglang_server, tokenizer):
 async def test_math_code_agentic_rollout(args, task, sglang_server, tokenizer):
     jsonl_file = Path(__file__).parent / "data" / f"rlvr_{task}_dataset.jsonl"
     args.rollout.server_backend = "sglang"
-    args.rollout.model_path = MODEL_PATH
     args.rollout.gconfig = gconfig = GenerationHyperparameters(max_new_tokens=16)
     args.rollout.collector = RolloutCollectorConfig(
         type="math_code_single_step",

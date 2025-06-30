@@ -67,9 +67,9 @@ class RlvrCollector(RolloutCollector):
         logprobs = [0.0] * input_len + resp.output_logprobs
         versions = [-1] * input_len + resp.output_versions
 
-        logger.info(
-            f"Prompt: {req.text}, reward: {reward}\nCompletion: {resp.completion}"
-        )
+        # logger.info(
+        #     f"Prompt: {req.text}, reward: {reward}\nCompletion: {resp.completion}"
+        # )
 
         return Trajectory(
             prompt=env_option,

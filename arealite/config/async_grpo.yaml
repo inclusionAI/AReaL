@@ -94,6 +94,7 @@ rollout:
     max_unhealth_count: 3
     graceful_shutdown_on_unhealthy: true
   sglang:
+    dtype: "float16"
     enable_mixed_chunk: false
     enable_torch_compile: false
     torch_compile_max_bs: 32

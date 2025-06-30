@@ -9,10 +9,9 @@ from pathlib import Path
 
 import requests
 
-from arealite.api.cli_args import LLMServiceConfig
+from arealite.api.cli_args import LLMServiceConfig, SGLangConfig
 from arealite.api.io_struct import AllocationMode, LLMServerInfo
 from arealite.api.llm_server_api import LLMServer
-from realhf.api.cli_args import SGLangConfig
 from realhf.base import gpu_utils, logging, network, pkg_version
 
 logger = logging.getLogger(__name__)
@@ -95,65 +94,50 @@ class SGLangServer(LLMServer):
             self.base_gpu_id = 0
 
     def launch_server(self) -> LLMServerInfo | None:
-        """Launch the SGLang server subprocess."""
-        try:
-
-            # Apply SGLang patch
-            apply_sglang_path()
-
-            self._resolve_base_gpu_id()
-
-            # Get host and ports
-            host_ip = network.gethostip()
-            host = "localhost" if not self.config.enable_metrics else host_ip
-
-            ports = network.find_multiple_free_ports(
-                2,
-                low=10000,
-                high=60000,
-                experiment_name=self.registry.expr_name,
-                trial_name=self.registry.trial_name,
-            )
-            server_port = ports[0]
-            nccl_port = ports[1]
-
-            # Build command
-            tp_size = self.alloc_mode.gen_tp_size
-            cmd = SGLangConfig.build_cmd(
-                self.config,
-                self.args.rollout.model_path,
-                tp_size=tp_size,
-                base_gpu_id=self.base_gpu_id,
-                dist_init_addr=f"{host}:{nccl_port}",
-                served_model_name=self.service_config.served_model_name,
-                skip_tokenizer_init=False,
-            )
-
-            # Launch process
-            full_command = f"{cmd} --port {server_port}"
-            full_command = full_command.replace("\\\n", " ").replace("\\", " ")
-            self.process = subprocess.Popen(
-                full_command.split(),
-                text=True,
-                stdout=sys.stdout,
-                stderr=subprocess.STDOUT,
-            )
-
-            # Create server info
-            self.server_info = LLMServerInfo(
-                server_id=self.server_id,
-                host=host,
-                port=server_port,
-                status="starting",
-                version=0,
-            )
-
-            return self.server_info
-
-        except Exception as e:
-            logger.error(f"Failed to launch SGLang server: {e}")
-            logger.error(traceback.format_exc())
-            return None
+        # Apply SGLang patch
+        apply_sglang_path()
+        self._resolve_base_gpu_id()
+        # Get host and ports
+        host_ip = network.gethostip()
+        host = "localhost" if not self.config.enable_metrics else host_ip
+        ports = network.find_multiple_free_ports(
+            2,
+            low=10000,
+            high=60000,
+            experiment_name=self.registry.expr_name,
+            trial_name=self.registry.trial_name,
+        )
+        server_port = ports[0]
+        nccl_port = ports[1]
+        # Build command
+        tp_size = self.alloc_mode.gen_tp_size
+        cmd = SGLangConfig.build_cmd(
+            sglang_config=self.config,
+            model_path=self.args.rollout.model_path,
+            tp_size=tp_size,
+            base_gpu_id=self.base_gpu_id,
+            dist_init_addr=f"{host}:{nccl_port}",
+            served_model_name=self.service_config.served_model_name,
+            skip_tokenizer_init=False,
+        )
+        # Launch process
+        full_command = f"{cmd} --port {server_port}"
+        full_command = full_command.replace("\\\n", " ").replace("\\", " ")
+        self.process = subprocess.Popen(
+            full_command.split(),
+            text=True,
+            stdout=sys.stdout,
+            stderr=subprocess.STDOUT,
+        )
+        # Create server info
+        self.server_info = LLMServerInfo(
+            server_id=self.server_id,
+            host=host,
+            port=server_port,
+            status="starting",
+            version=0,
+        )
+        return self.server_info
 
     def check_health(self) -> bool:
         """Check if the SGLang server is healthy."""

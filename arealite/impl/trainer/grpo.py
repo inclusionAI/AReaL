@@ -131,6 +131,7 @@ class SpmdGRPOTrainer(Trainer):
             self.ref.init_distributed(None, ft_spec)
             self.ref.load_model_from_hf(self.config.ref.path)
             self.ref.eval()
+        self.llm_client.wait_until_servers_ready()
         self.actor.update_weights_to(self.llm_client)
 
         # Start rollout for asynchronous RL.

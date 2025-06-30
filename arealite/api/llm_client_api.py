@@ -47,6 +47,10 @@ class LLMClient(abc.ABC):
             raise RuntimeError("No healthy SGLang servers available")
         return servers
 
+    def wait_until_servers_ready(self):
+        while len(self.registry.get_healthy_servers()) == 0:
+            time.sleep(10)
+
     async def arequest_with_retry(
         self,
         endpoint: str,

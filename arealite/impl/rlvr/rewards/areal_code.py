@@ -32,18 +32,16 @@ def extract_code(text, min_length=20):
     return valid_blocks[-1]
 
 
-def get_code_reward_fn(dataset_path):
-    def code_reward(
-        query_id: str,
-        prompt: str,
-        completion: str,
-        prompt_ids: List[int],
-        completion_ids: List[int],
-        **kwargs,
-    ) -> float:
-        id2info, _ = _load_metadata(dataset_path)
-        return code_verify(
-            id2info=id2info, generateds=[extract_code(completion)], query_ids=[query_id]
-        )[0]
-
-    return code_reward
+def code_reward(
+    query_id: str,
+    prompt: str,
+    completion: str,
+    prompt_ids: List[int],
+    completion_ids: List[int],
+    dataset_path: str,
+    **kwargs,
+) -> float:
+    id2info, _ = _load_metadata(dataset_path)
+    return code_verify(
+        id2info=id2info, generateds=[extract_code(completion)], query_ids=[query_id]
+    )[0]

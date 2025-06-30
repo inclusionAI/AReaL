@@ -126,9 +126,9 @@ class RolloutWorker:
                 if data is None:
                     try:
                         data = self.data_puller.pull(timeout_ms=50)
-                        logger.debug(f"Get data from puller: {data}")
+                        logger.info(f"Get data from puller: {data}")
                     except queue.Empty:
-                        logger.debug(f"No data from puller stream.")
+                        logger.info(f"No data from puller stream.")
 
                 # Check capacity
                 if dist.is_initialized():
@@ -160,7 +160,7 @@ class RolloutWorker:
                     )
 
                 if not can_rollout:
-                    logger.debug(
+                    logger.info(
                         f"Worker {self.worker_id}: Cannot submit new rollouts. "
                         + "\n".join(cannot_rollout_reason)
                     )
@@ -174,7 +174,7 @@ class RolloutWorker:
 
                     rollout_stat.submitted += 1
                     rollout_stat.running += 1
-                    logger.debug(
+                    logger.info(
                         f"Worker {self.worker_id}: Submit rollout rid {rid}. "
                         f"Submit: {rollout_stat.submitted}, "
                         f"running: {rollout_stat.running}, "
@@ -217,7 +217,7 @@ class RolloutWorker:
                         self.pusher.push(trajectory_data)
                         rollout_stat.accepted += 1
 
-                    logger.debug(
+                    logger.info(
                         f"Worker {self.worker_id}: Finish rollout {task_rid}. "
                         f"Submit: {rollout_stat.submitted}, "
                         f"running: {rollout_stat.running}, "

@@ -150,6 +150,8 @@ class SGLangConfig:
     schedule_policy: str = "lpm"
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
+
+    dtype: str = "float16"
     kv_cache_dtype: str = "auto"
 
     # logging
@@ -168,7 +170,6 @@ class SGLangConfig:
     def build_cmd(
         sglang_config: "SGLangConfig",
         model_path,
-        dtype,
         tp_size,
         base_gpu_id,
         dist_init_addr: Optional[str] = None,
@@ -179,7 +180,6 @@ class SGLangConfig:
         from realhf.experiments.common.utils import asdict as conf_as_dict
 
         args: Dict = conf_as_dict(sglang_config)
-        args.pop("hybrid_train")
         args["random_seed"] = seeding.get_seed()
 
         if served_model_name is None:
@@ -198,7 +198,6 @@ class SGLangConfig:
             served_model_name=served_model_name,
             is_embedding=False,
             skip_tokenizer_init=skip_tokenizer_init,
-            dtype=dtype,
             # Other runtime options
             tp_size=tp_size,
             # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
@@ -464,8 +463,8 @@ class RolloutConfig:
         default_factory=GenerationHyperparameters,
         metadata={"help": "Generation hyperparameters for rollouts"},
     )
-    llm_service: Optional[LLMServiceConfig] = field(
-        default=None, metadata={"help": "LLM server configuration"}
+    llm_service: LLMServiceConfig = field(
+        default_factory=LLMServiceConfig, metadata={"help": "LLM server configuration"}
     )
     sglang: Optional[SGLangConfig] = field(
         default_factory=SGLangConfig,
@@ -623,7 +622,7 @@ class TrainingArgs:
         metadata={"help": "TensorBoard configuration. Only 'path' field required."},
     )
     allocation_mode: str = field(
-        default="",
+        default="sglang.d1p1t1+d1p1t1",
         metadata={
             "help": "GPU parallel strategy allocation mode. "
             "Options: manual/heuristic or pattern-based."

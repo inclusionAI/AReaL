@@ -30,6 +30,7 @@ MODEL_PATH = "Qwen/Qwen2-0.5B"
 @pytest.fixture(scope="module")
 def args():
     args = TrainingArgs(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
+    args.rollout.model_path = MODEL_PATH
     seeding.set_random_seed(args.seed, EXPR_NAME)
     name_resolve.reconfigure(args.cluster.name_resolve)
     yield args
@@ -38,9 +39,8 @@ def args():
 
 @pytest.fixture(scope="module")
 def sglang_server(args):
-    server_args = LLMServiceConfig(model_path=MODEL_PATH)
-    server_args.sglang = SGLangConfig(mem_fraction_static=0.3)
-    server = LLMServerFactory(args).make_server(server_args)
+    args.rollout.sglang = SGLangConfig(mem_fraction_static=0.3)
+    server = LLMServerFactory(args).make_server(args.rollout.llm_service)
     server._startup()
     yield
     server._graceful_exit(0)
@@ -51,7 +51,6 @@ def sglang_client(args, sglang_server):
     from arealite.system.sglang_client import SGLangClient
 
     args.rollout.server_backend = "sglang"
-    args.rollout.model_path = MODEL_PATH
     llm_client = LLMClientConfig()
     client = SGLangClient(args, client_config=llm_client)
     yield client

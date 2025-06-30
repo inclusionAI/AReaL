@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0
 
 import abc
+import functools
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, SupportsFloat
 
@@ -96,13 +97,17 @@ class RolloutCollectorFactory:
             rlvr_config = config.rlvr
             assert rlvr_config is not None
             if rlvr_config.reward_type == "areal-math":
-                from arealite.impl.rlvr.rewards.areal_math import get_math_reward_fn
+                from arealite.impl.rlvr.rewards.areal_math import math_reward
 
-                reward_fn = get_math_reward_fn(rlvr_config.solution_path)
+                reward_fn = functools.partial(
+                    math_reward, dataset_path=rlvr_config.solution_path
+                )
             elif rlvr_config.reward_type == "areal-code":
-                from arealite.impl.rlvr.rewards.areal_code import get_code_reward_fn
+                from arealite.impl.rlvr.rewards.areal_code import code_reward
 
-                reward_fn = get_code_reward_fn(rlvr_config.solution_path)
+                reward_fn = functools.partial(
+                    code_reward, dataset_path=rlvr_config.solution_path
+                )
             elif rlvr_config.reward_type == "gsm8k":
                 from arealite.impl.rlvr.rewards.gsm8k import (
                     gsm8k_reward_fn as reward_fn,

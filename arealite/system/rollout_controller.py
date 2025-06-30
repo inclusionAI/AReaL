@@ -2,7 +2,6 @@
 # Licensed under the Apache License, Version 2.0
 
 import asyncio
-import multiprocessing as mp
 import threading
 import time
 import traceback
@@ -10,6 +9,7 @@ from queue import Empty as QueueEmpty
 from typing import Any, List, Optional
 
 import numpy as np
+import torch.multiprocessing as mp
 
 from arealite.api.cli_args import RolloutConfig, TrainingArgs
 from arealite.api.io_struct import Trajectory
@@ -110,7 +110,16 @@ class RolloutController:
 
         num_workers = self.config.num_workers
         for worker_id in range(num_workers):
-            process = mp.Process(target=self._run_worker_process, args=(worker_id,))
+            process = mp.Process(
+                target=_run_worker_process,
+                args=(
+                    worker_id,
+                    self.args,
+                    self.config,
+                    self._puller_port,
+                    self._data_pusher_port,
+                ),
+            )
             process.start()
             self._worker_processes.append(process)
             logger.info(f"Started worker process {worker_id}")
@@ -126,7 +135,7 @@ class RolloutController:
         assert isinstance(data, list)
         for d in data:
             self._data_pusher.push(d)
-        logger.debug(f"Submitted {len(data)} data to workers")
+        logger.info(f"Submitted {len(data)} data to workers")
 
     def prepare_batch(self, batch_size: int) -> List[Trajectory]:
         """Prepare and wait for a batch of trajectories."""
@@ -171,23 +180,6 @@ class RolloutController:
 
     ################## User Interfaces End ##################
 
-    def _run_worker_process(self, worker_id: int):
-        """Run a worker process using multiprocessing."""
-        from arealite.system.rollout_worker import RolloutWorker
-
-        # Create and run worker directly
-        worker = RolloutWorker(
-            worker_id=worker_id,
-            args=self.args,
-            config=self.config,
-            pusher_host="localhost",
-            pusher_port=self._puller_port,
-            data_puller_host="localhost",
-            data_puller_port=self._data_pusher_port,
-        )
-        logger.info(f"Worker {worker_id} starting generation loop...")
-        worker.run_generation_loop()
-
     def _collect_from_workers(self):
         """Background thread to collect trajectories from workers."""
         # Find a free port
@@ -206,7 +198,7 @@ class RolloutController:
                 # Add to buffer
                 with self._lock:
                     self._buffer.append(trajs)
-                logger.debug(
+                logger.info(
                     f"Received {len(trajs)} trajectories from worker {data['worker_id']}"
                 )
             except QueueEmpty:
@@ -218,3 +210,21 @@ class RolloutController:
                     logger.error(f"Error in collector thread: {e}")
                     logger.error(traceback.format_exc())
                 break
+
+
+def _run_worker_process(worker_id: int, args, config, puller_port, data_pusher_port):
+    from realhf.base import name_resolve
+
+    name_resolve.reconfigure(args.cluster.name_resolve)
+    # Create and run worker directly
+    worker = RolloutWorker(
+        worker_id=worker_id,
+        args=args,
+        config=config,
+        pusher_host="localhost",
+        pusher_port=puller_port,
+        data_puller_host="localhost",
+        data_puller_port=data_pusher_port,
+    )
+    logger.info(f"Worker {worker_id} starting generation loop...")
+    worker.run_generation_loop()
