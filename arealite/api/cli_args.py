@@ -136,7 +136,7 @@ class DatasetPreprocessor:
         default=None,
         metadata={
             "help": "Number of retries for each request",
-            "choices": ["gsm8k", "areal"],
+            "choices": ["gsm8k", "areal", "MathVista"],
         },
     )
     gsm8k: Optional[GSM8KPreprocessor] = None

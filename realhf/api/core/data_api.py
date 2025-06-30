@@ -73,7 +73,7 @@ def load_hf_processor_and_tokenizer(
     model_name_or_path: str,
     fast_tokenizer=True,
     padding_side: Optional[str] = None,
-) -> Tuple[transformers.PreTrainedTokenizerFast, transformers.PreTrainedProcessor]:
+) -> Tuple[transformers.PreTrainedTokenizerFast, transformers.AutoProcessor]:
     """Load a tokenizer and processor from Hugging Face."""
     tokenizer = load_hf_tokenizer(model_name_or_path, fast_tokenizer, padding_side)
     try:
