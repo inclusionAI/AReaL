@@ -289,7 +289,6 @@ def strip_string(string, skip_unit=False):
 
     # remove percentage
     string = string.replace("\\%", "")
-    string = string.replace("\%", "")
     string = string.replace("%", "")
 
     # " 0." equivalent to " ." and "{0." equivalent to "{." Alternatively, add "0" if "." is the start of the string
@@ -399,7 +398,7 @@ def extract_answer(pred_str, data_name, use_last_number=True):
         pred = pred_str.split("答案是")[1].strip().split("\n\n")[0].strip()
     else:  # use the last number
         if use_last_number:
-            pattern = "-?\d*\.?\d+"
+            pattern = r"-?\d*\.?\d+"
             pred = re.findall(pattern, pred_str.replace(",", ""))
             if len(pred) >= 1:
                 pred = pred[-1]
