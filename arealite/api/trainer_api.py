@@ -86,7 +86,9 @@ class Trainer(abc.ABC):
     def train(self, resume_from_checkpoint: Optional[Union[str, bool]] = None):
         raise NotImplementedError()
 
-    def get_save_checkpoint_path(self, epoch: int, step: int, globalstep: int, name: str = "model"):
+    def get_save_checkpoint_path(
+        self, epoch: int, step: int, globalstep: int, name: str = "model"
+    ):
         path = os.path.join(
             constants.get_save_path(self.args),
             name,
