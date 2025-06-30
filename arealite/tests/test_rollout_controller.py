@@ -6,9 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-import torch.distributed as dist
 from datasets import load_dataset
-from torch.utils.data import DataLoader, Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import (

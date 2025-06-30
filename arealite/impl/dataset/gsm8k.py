@@ -1,6 +1,3 @@
-from typing import Dict, List
-
-import torch
 from datasets import Dataset
 
 

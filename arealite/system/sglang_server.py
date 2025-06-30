@@ -18,18 +18,6 @@ from realhf.base import gpu_utils, logging, network, pkg_version
 logger = logging.getLogger(__name__)
 
 
-def execute_shell_command(command: str) -> subprocess.Popen:
-    """Execute a shell command and return its process handle."""
-    command = command.replace("\\\n", " ").replace("\\", " ")
-    parts = command.split()
-    return subprocess.Popen(
-        parts,
-        text=True,
-        stdout=sys.stdout,
-        stderr=subprocess.STDOUT,
-    )
-
-
 def apply_sglang_path():
     """Apply SGLang patch if available."""
     p = Path(os.path.dirname(__file__))
@@ -70,7 +58,7 @@ class SGLangServer(LLMServer):
         super().__init__(args, service_config)
         self.server_info: LLMServerInfo | None = None
         self.base_gpu_id = 0
-        self.config = service_config.sglang
+        self.config = args.rollout.sglang
 
         self.alloc_mode = AllocationMode.from_str(args.allocation_mode)
 
@@ -143,7 +131,13 @@ class SGLangServer(LLMServer):
 
             # Launch process
             full_command = f"{cmd} --port {server_port}"
-            self.process = execute_shell_command(full_command)
+            full_command = full_command.replace("\\\n", " ").replace("\\", " ")
+            self.process = subprocess.Popen(
+                full_command.split(),
+                text=True,
+                stdout=sys.stdout,
+                stderr=subprocess.STDOUT,
+            )
 
             # Create server info
             self.server_info = LLMServerInfo(

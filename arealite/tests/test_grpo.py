@@ -1,7 +1,6 @@
 """Test script for GRPO Trainer implementation."""
 
 import pytest
-import torch
 from datasets import load_dataset
 
 from arealite.api.cli_args import (

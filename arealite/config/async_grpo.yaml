@@ -93,7 +93,6 @@ rollout:
     startup_timeout: 300
     max_unhealth_count: 3
     graceful_shutdown_on_unhealthy: true
-  server_backend: sglang
   sglang:
     enable_mixed_chunk: false
     enable_torch_compile: false

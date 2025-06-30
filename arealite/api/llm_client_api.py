@@ -47,56 +47,6 @@ class LLMClient(abc.ABC):
             raise RuntimeError("No healthy SGLang servers available")
         return servers
 
-    def request_with_retry(
-        self,
-        endpoint: str,
-        payload: Optional[Dict[str, Any]] = None,
-        method: str = "POST",
-        max_retries: Optional[int] = None,
-        timeout: Optional[float] = None,
-        retry_delay: float = 1.0,
-        target_server: Optional[LLMServerInfo] = None,
-    ) -> tuple[requests.Response, LLMServerInfo]:
-        timeout = timeout or self.client_config.request_timeout
-        last_exception = None
-        max_retries = max_retries or self.client_config.request_retries
-
-        for _ in range(max_retries):
-            if target_server is None:
-                server_info = self.select_server()
-            else:
-                server_info = target_server
-            base_url = f"http://{server_info.host}:{server_info.port}"
-            url = f"{base_url}{endpoint}"
-
-            for attempt in range(max_retries):
-                try:
-                    if method.upper() == "GET":
-                        response = requests.get(url, timeout=timeout)
-                    elif method.upper() == "POST":
-                        response = requests.post(url, json=payload, timeout=timeout)
-                    elif method.upper() == "PUT":
-                        response = requests.put(url, json=payload, timeout=timeout)
-                    elif method.upper() == "DELETE":
-                        response = requests.delete(url, timeout=timeout)
-                    else:
-                        raise ValueError(f"Unsupported HTTP method: {method}")
-
-                    response.raise_for_status()
-                    return response, server_info
-
-                except (
-                    requests.exceptions.RequestException,
-                    requests.exceptions.HTTPError,
-                ) as e:
-                    last_exception = e
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                    continue
-        raise RuntimeError(
-            f"Failed after {max_retries} retries each. " f"Last error: {last_exception}"
-        )
-
     async def arequest_with_retry(
         self,
         endpoint: str,
@@ -155,9 +105,6 @@ class LLMClient(abc.ABC):
         raise RuntimeError(
             f"Failed after {max_retries} retries each. " f"Last error: {last_exception}"
         )
-
-    def generate(self, req: LLMRequest) -> LLMResponse:
-        raise NotImplementedError()
 
     async def agenerate(self, req: LLMRequest) -> LLMResponse:
         raise NotImplementedError()

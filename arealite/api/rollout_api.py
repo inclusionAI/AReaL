@@ -15,23 +15,15 @@ from arealite.api.cli_args import (
     TrainingArgs,
 )
 from arealite.api.io_struct import AgentInferInput, AgentInferOutput, Trajectory
-from arealite.api.llm_client_api import LLMClient, LLMClientFactory
+from arealite.api.llm_client_api import LLMClient
 
 
 class Agent(abc.ABC):
     def __init__(self, args: TrainingArgs):
         self.args = args
 
-    def act(self, inp: AgentInferInput) -> AgentInferOutput:
-        """Given an observation, return an action and data used for RL training."""
-        raise NotImplementedError()
-
     async def aact(self, inp: AgentInferInput) -> AgentInferOutput:
         """Async version of act. Given an observation, return an action and data used for RL training."""
-        raise NotImplementedError()
-
-    def reset(self) -> None:
-        """Resets the agent's memory."""
         raise NotImplementedError()
 
     async def areset(self) -> None:
@@ -81,16 +73,6 @@ class RolloutCollector(abc.ABC):
 
         # Used in RLVR
         self.reward_func = reward_func
-
-    def run_episode(
-        self,
-        llm_client: LLMClient,
-        gconfig: GenerationHyperparameters,
-        env_option: Optional[Any] = None,
-        seed: Optional[int] = None,
-    ) -> Trajectory:
-        """Run a single episode and return the trajectory."""
-        raise NotImplementedError()
 
     async def arun_episode(
         self,

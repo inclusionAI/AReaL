@@ -13,7 +13,7 @@ import numpy as np
 
 from arealite.api.cli_args import RolloutConfig, TrainingArgs
 from arealite.api.io_struct import Trajectory
-from arealite.api.llm_client_api import LLMClient, LLMClientFactory
+from arealite.api.llm_client_api import LLMClientFactory
 from arealite.api.rollout_api import RolloutCollector
 from arealite.system.rollout_worker import RolloutWorker
 from realhf.base import datapack, logging, network
@@ -61,12 +61,30 @@ class RolloutController:
         seeds: Optional[List[int]] = None,
     ) -> List[Trajectory]:
         """Run episodes in batch using the collector directly (for compatibility)."""
-        if self.config.num_workers == 1:
-            return self._generate_batch_sequential(batch_size, env_options, seeds)
+        if env_options is None:
+            env_options = [None] * batch_size
+        else:
+            assert len(env_options) == batch_size
+        if seeds is None:
+            seeds = [None] * batch_size
+        else:
+            assert len(seeds) == batch_size
 
-        # For multi-worker, we rely on the continuous generation loop
-        # This method should primarily be used for immediate batch generation
-        return self._generate_batch_parallel(batch_size, env_options, seeds)
+        async def run_parallel_gen():
+            worker = RolloutWorker(
+                worker_id=0,
+                args=self.args,
+                config=self.config,
+                llm_client=self.llm_client,
+            )
+            tasks = [
+                worker._run_grouped_episode_async(None, env_option, seed)
+                for env_option, seed in zip(env_options, seeds)
+            ]
+            results = await asyncio.gather(*tasks)
+            return sum([r[1] for r in results], [])
+
+        return asyncio.run(run_parallel_gen())
 
     def start_generate_loop(self):
         """Start worker processes that run generation loops."""
@@ -200,64 +218,3 @@ class RolloutController:
                     logger.error(f"Error in collector thread: {e}")
                     logger.error(traceback.format_exc())
                 break
-
-    def _generate_batch_sequential(
-        self,
-        batch_size: int,
-        env_options: Optional[List[Any]] = None,
-        seeds: Optional[List[int]] = None,
-    ) -> List[Trajectory]:
-        n_reqs = batch_size * self.gconfig.n_samples
-        if env_options is None:
-            env_options = [None] * n_reqs
-        else:
-            assert len(env_options) == batch_size
-            env_options = [env_options[i % batch_size] for i in range(n_reqs)]
-        if seeds is None:
-            seeds = [None] * n_reqs
-        else:
-            assert len(seeds) == batch_size
-            seeds = [seeds[i % batch_size] for i in range(n_reqs)]
-        assert len(env_options) == len(seeds) == n_reqs
-        trajs = []
-        for env_option, seed in zip(env_options, seeds):
-            trajs.append(
-                self.collector.run_episode(
-                    llm_client=self.llm_client,
-                    gconfig=self.gconfig.new(n_samples=1),
-                    env_option=env_option,
-                    seed=seed,
-                )
-            )
-        return trajs
-
-    def _generate_batch_parallel(
-        self,
-        batch_size: int,
-        env_options: Optional[List[Any]] = None,
-        seeds: Optional[List[int]] = None,
-    ) -> List[Trajectory]:
-        if env_options is None:
-            env_options = [None] * batch_size
-        else:
-            assert len(env_options) == batch_size
-        if seeds is None:
-            seeds = [None] * batch_size
-        else:
-            assert len(seeds) == batch_size
-
-        async def run_parallel_gen():
-            worker = RolloutWorker(
-                worker_id=0,
-                args=self.args,
-                config=self.config,
-                llm_client=self.llm_client,
-            )
-            tasks = [
-                worker._run_grouped_episode_async(None, env_option, seed)
-                for env_option, seed in zip(env_options, seeds)
-            ]
-            results = await asyncio.gather(*tasks)
-            return sum([r[1] for r in results], [])
-
-        return asyncio.run(run_parallel_gen())

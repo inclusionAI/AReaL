@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import torch
 import torch.distributed as dist

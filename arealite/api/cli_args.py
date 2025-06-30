@@ -1,10 +1,14 @@
 # Copyright 2025 Ant Group Inc.
 # Licensed under the Apache License, Version 2.0
-
+import argparse
+import os
 from dataclasses import asdict, dataclass, field
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
-from omegaconf import MISSING
+from hydra import compose as hydra_compose
+from hydra import initialize as hydra_init
+from omegaconf import MISSING, OmegaConf
 
 from realhf.api.cli_args import (
     ClusterSpecConfig,
@@ -125,7 +129,7 @@ class SGLangConfig:
         served_model_name: Optional[str] = None,
         skip_tokenizer_init: bool = True,
     ):
-        from realhf.base import constants, network, pkg_version, seeding
+        from realhf.base import network, pkg_version, seeding
         from realhf.experiments.common.utils import asdict as conf_as_dict
 
         args: Dict = conf_as_dict(sglang_config)
@@ -202,10 +206,6 @@ class LLMServiceConfig:
     graceful_shutdown_on_unhealthy: bool = field(
         default=True, metadata={"help": "Enable graceful shutdown when unhealthy"}
     )
-    sglang: Optional[SGLangConfig] = field(
-        default=None,
-        metadata={"help": "SGLang configuration (if using SGLang backend)"},
-    )
 
 
 @dataclass
@@ -236,7 +236,6 @@ class DatasetPreprocessor:
         default=None,
         metadata={
             "help": "Number of retries for each request",
-            "choices": ["gsm8k", "areal"],
         },
     )
     gsm8k: Optional[GSM8KPreprocessor] = None
@@ -421,6 +420,10 @@ class RolloutConfig:
     )
     llm_service: Optional[LLMServiceConfig] = field(
         default=None, metadata={"help": "LLM server configuration"}
+    )
+    sglang: Optional[SGLangConfig] = field(
+        default_factory=SGLangConfig,
+        metadata={"help": "SGLang configuration (if using SGLang backend)"},
     )
 
 
@@ -633,3 +636,38 @@ class TrainingArgs:
     mem_per_inf_proc: int = 100000
     cpu_per_train_proc: int = 16
     mem_per_train_proc: int = 100000
+
+
+def prepare_training_args(argv: List[str]) -> Tuple[TrainingArgs, str]:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--config", help="The path of the main configuration file", required=True
+    )
+    args, overrides = parser.parse_known_args(argv)
+
+    # Initialize hydra config
+    config_file = Path(args.config).absolute()
+    assert config_file.exists()
+    # hydra only recognize relative paths
+    relpath = Path(
+        os.path.relpath(
+            str(config_file), (Path(__file__).parent.parent / "cli").absolute()
+        )
+    )
+    hydra_init(config_path=str(relpath.parent), job_name="app", version_base=None)
+    cfg = hydra_compose(
+        config_name=str(relpath.name).rstrip(".yaml"),
+        overrides=overrides,
+    )
+
+    # Merge with the default configuration
+    default_cfg = OmegaConf.structured(TrainingArgs)
+    cfg = OmegaConf.merge(default_cfg, cfg)
+    cfg: TrainingArgs = OmegaConf.to_object(cfg)
+
+    # Setup environment
+    from realhf.base import constants, name_resolve
+
+    constants.set_experiment_trial_names(cfg.experiment_name, cfg.trial_name)
+    name_resolve.reconfigure(cfg.cluster.name_resolve)
+    return cfg, str(config_file)
