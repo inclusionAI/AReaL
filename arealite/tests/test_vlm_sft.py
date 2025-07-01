@@ -41,7 +41,7 @@ def test_engine():
     """Test engine creation and basic functionality."""
 
     train_dataset = DatasetConfig(
-        path="MathLLMs/MM-MathInstruct",
+        path="/storage/openpsi/data/MM-MathInstruct/",
         # name="main",
         split="train",
         batch_size=8,
@@ -61,8 +61,8 @@ def test_engine():
     # )
 
     engine_config = EngineConfig(
-        type=ModelFamily("MathCoder-VL", False),
-        path="MathLLMs/MathCoder-VL-8B",
+        type=ModelFamily("qwen2_vl", False),
+        path="/storage/openpsi/models/Qwen2-VL-7B",
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
         backend=EngineBackendConfig(type="hf"),

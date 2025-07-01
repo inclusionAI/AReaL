@@ -8,8 +8,8 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import transformers
-from transformers import AutoConfig, AutoModelForCausalLM
-
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText
+from arealite.impl.engine.constant import VALID_VISION_MODELS 
 from arealite.api.cli_args import (
     EngineConfig,
     MicroBatchSpec,
@@ -103,17 +103,27 @@ class HFEngine(SPMDWrapper):
 
         # Load model
         dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
-        model = AutoModelForCausalLM.from_pretrained(
-            pretrained_model_name_or_path=self.engine_config.path,
-            torch_dtype=dtype,
-            attn_implementation="flash_attention_2",
-            trust_remote_code=True,
-            device_map="cuda:0",
-        )
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.engine_config.path,
             trust_remote_code=True,
         )
+        if self.model_config.__class__.__name__ in VALID_VISION_MODELS:
+            model=AutoModelForImageTextToText.from_pretrained(
+                pretrained_model_name_or_path=self.engine_config.path,
+                torch_dtype=dtype,
+                attn_implementation="flash_attention_2",
+                trust_remote_code=True,
+                device_map="cuda:0",
+            )
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                pretrained_model_name_or_path=self.engine_config.path,
+                torch_dtype=dtype,
+                attn_implementation="flash_attention_2",
+                trust_remote_code=True,
+                device_map="cuda:0",
+            )
+
 
         self.model = model
 
