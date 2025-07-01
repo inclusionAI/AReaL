@@ -107,7 +107,8 @@ class HFEngine(SPMDWrapper):
             pretrained_model_name_or_path=self.engine_config.path,
             trust_remote_code=True,
         )
-        if self.model_config.__class__.__name__ in VALID_VISION_MODELS:
+
+        if self.engine_config.type._class in VALID_VISION_MODELS:
             model=AutoModelForImageTextToText.from_pretrained(
                 pretrained_model_name_or_path=self.engine_config.path,
                 torch_dtype=dtype,

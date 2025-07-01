@@ -86,9 +86,7 @@ def load_hf_processor_and_tokenizer(
             f"Failed to load processor for {model_name_or_path}. "
             "Using tokenizer only. This may cause issues with some models."
         )
-    if processor is None:
-        processor.tokenizer = tokenizer
-    return tokenizer, processor
+    return processor,tokenizer
 
 
 @pdclasses.dataclass
