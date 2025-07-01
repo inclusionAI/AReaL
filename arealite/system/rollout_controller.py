@@ -137,7 +137,7 @@ class RolloutController:
         assert isinstance(data, list)
         for d in data:
             self._data_pusher.push(d)
-        logger.info(f"Submitted {len(data)} data to workers")
+        logger.debug(f"Submitted {len(data)} data to workers")
 
     def prepare_batch(self, batch_size: int) -> List[Trajectory]:
         """Prepare and wait for a batch of trajectories."""
@@ -200,7 +200,7 @@ class RolloutController:
                 # Add to buffer
                 with self._lock:
                     self._buffer.append(trajs)
-                logger.info(
+                logger.debug(
                     f"Received {len(trajs)} trajectories from worker {data['worker_id']}"
                 )
             except QueueEmpty:

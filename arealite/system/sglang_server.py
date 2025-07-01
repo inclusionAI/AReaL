@@ -127,7 +127,7 @@ class SGLangServer(LLMServer):
             full_command.split(),
             text=True,
             stdout=sys.stdout,
-            stderr=subprocess.STDOUT,
+            stderr=sys.stdout,
         )
         # Create server info
         self.server_info = LLMServerInfo(

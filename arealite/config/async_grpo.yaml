@@ -51,15 +51,14 @@ cluster:
 
 # Datasets
 train_dataset:
-  path: openai/gsm8k
-  name: main
+  path: json
+  name: null
   split: train
+  data_files: /storage/openpsi/users/xushusheng.xss/training_data/boba_106k_0319.jsonl
   batch_size: 32
   shuffle: True
   preprocessor:
-    type: gsm8k_rl
-    gsm8k:
-      reward_mode: strict
+    type: areal
 
 valid_dataset: null
 
@@ -68,7 +67,8 @@ rollout:
   collector:
     type: rlvr
     rlvr:
-      reward_type: gsm8k
+      reward_type: areal-math
+      solution_path: /storage/openpsi/users/xushusheng.xss/training_data/boba_106k_0319.jsonl
   num_workers: 1
   max_concurrent_rollouts: null
   max_head_offpolicyness: 0
@@ -94,7 +94,7 @@ rollout:
     max_unhealth_count: 3
     graceful_shutdown_on_unhealthy: true
   sglang:
-    dtype: "float16"
+    dtype: "bfloat16"
     enable_mixed_chunk: false
     enable_torch_compile: false
     torch_compile_max_bs: 32

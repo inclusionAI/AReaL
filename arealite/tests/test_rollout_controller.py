@@ -6,6 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+import torch.multiprocessing as mp
 from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -39,9 +40,12 @@ def args():
     args.rollout.collector.rlvr = RLVRConfig(
         solution_path=str(Path(__file__).parent / "data" / f"rlvr_math_dataset.jsonl")
     )
+    start_method = mp.get_start_method()
+    mp.set_start_method("fork", force=True)
     name_resolve.reconfigure(args.cluster.name_resolve)
     yield args
     name_resolve.reset()
+    mp.set_start_method(start_method, force=True)
 
 
 @pytest.fixture(scope="module")
