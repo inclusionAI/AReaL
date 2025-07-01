@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -16,6 +16,7 @@ from arealite.utils import (
     compute_varlen_position_indices,
     gather_logprobs,
     init_stats_logging,
+    list_of_dict2dict_of_list,
     log_wandb_tensorboard,
     record_timing,
 )
@@ -24,18 +25,6 @@ from realhf.api.core.model_api import FinetuneSpec
 from realhf.base import constants, logging, stats_tracker, timeutil
 
 logger = logging.getLogger("SFT Trainer")
-
-
-def get_save_checkpoint_path(
-    args: TrainingArgs, epoch: int, step: int, globalstep: int
-):
-    path = os.path.join(
-        constants.get_save_path(args),
-        "model",
-        f"epoch{epoch}epochstep{step}globalstep{globalstep}",
-    )
-    os.makedirs(path, exist_ok=True)
-    return path
 
 
 def compute_packed_sft_loss(
@@ -137,10 +126,13 @@ class SFTTrainer(Trainer):
             return_attention_mask=False,
         )
 
-    def _get_packed_input(self, data: Dict):
+    def _get_packed_input(self, data: List[Dict[str, Any]]):
+        data: Dict[str, List[Any]] = list_of_dict2dict_of_list(data)
+
         tokenized_seqs = data["seq"]
-        prompt_lens = data["prompt_len"]
-        input_lens = data["seq_len"]
+        tokenized_prompts = data["prompt"]
+        prompt_lens = [len(prompt) for prompt in tokenized_prompts]
+        input_lens = [len(prompt) for prompt in tokenized_seqs]
 
         input_lens = torch.tensor(input_lens, dtype=torch.int)
         input_ids = [torch.tensor(seq, dtype=torch.long) for seq in tokenized_seqs]
@@ -215,8 +207,8 @@ class SFTTrainer(Trainer):
                         logger.info("Saving model ...")
 
                     with record_timing("timeperf/save", timing_stats):
-                        save_path = get_save_checkpoint_path(
-                            self.args, epoch, step, global_step
+                        save_path = self.get_save_checkpoint_path(
+                            epoch, step, global_step
                         )
                         self.model.save_model_to_hf(save_path, self.tokenizer)
 

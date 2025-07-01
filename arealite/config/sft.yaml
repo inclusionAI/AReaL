@@ -72,8 +72,6 @@ trainer:
   type: sft
   sft:
     model:
-      type:
-        _class: qwen2
       path: Qwen/Qwen2.5-0.5B
       init_from_scratch: false
       gradient_checkpointing: false
