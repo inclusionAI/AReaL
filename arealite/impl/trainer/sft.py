@@ -21,7 +21,7 @@ from arealite.utils import (
 from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
 from realhf.api.core.model_api import FinetuneSpec
 from realhf.base import logging, stats_tracker, timeutil
-
+from arealite.impl.engine.constant import VALID_VISION_MODELS 
 logger = logging.getLogger("SFT Trainer")
 
 
@@ -127,8 +127,11 @@ class SFTTrainer(Trainer):
             max_length=self.mb_spec.max_tokens_per_mb,
             return_attention_mask=False,
         )
+    def _process(self,image):
+        pass
 
     def _get_packed_input(self, data: Dict):
+        breakpoint()
         prompts = data["prompt"]
         answers = data["answer"]
         inputs = [
@@ -172,6 +175,52 @@ class SFTTrainer(Trainer):
             use_cache=False,
         )
 
+    def _get_packed_vl_input(self, data: Dict):
+        breakpoint()
+        questions = data["question"]
+        solutions = data["solution"]
+        inputs = [
+            questions + solutions + self.tokenizer.eos_token
+            for question, solutions in zip(questions, solutions)
+        ]
+        tokenized_questions = self._tokenize(questions)
+        tokenized_inputs = self._tokenize(inputs)
+        processed_image=self._process(data["image"])
+        # form a data batch
+        prompt_lens = tokenized_questions["length"]
+        input_lens = tokenized_inputs["length"]
+
+        input_lens = torch.tensor(input_lens, dtype=torch.int)
+        input_ids = [
+            torch.tensor(seq, dtype=torch.long) for seq in tokenized_inputs["input_ids"]
+        ]
+
+        prompt_mask = []
+        for input_len, prompt_len in zip(input_lens, prompt_lens):
+            assert input_len >= prompt_len, (input_len, prompt_len)
+            pm = [1] * prompt_len + [0] * (input_len - prompt_len)
+            prompt_mask.append(torch.tensor(pm, dtype=torch.bool))
+
+        cu_seqlens = torch.nn.functional.pad(
+            input_lens.cumsum(0, dtype=torch.int), (1, 0)
+        )
+        max_seqlen = int(torch.max(input_lens).item())
+        packed_input_ids = torch.cat(input_ids, dim=0)
+        prompt_mask = torch.cat(prompt_mask, dim=0)
+        total_seqlen = int(cu_seqlens[-1].item())
+        position_ids = compute_varlen_position_indices(total_seqlen, cu_seqlens)
+
+        return dict(
+            input_ids=packed_input_ids.unsqueeze(0).cuda(),
+            attention_mask=None,
+            position_ids=position_ids.unsqueeze(0).cuda(),
+            prompt_mask=prompt_mask.unsqueeze(0).cuda(),
+            cu_seqlens=cu_seqlens.cuda(),
+            max_seqlen=max_seqlen,
+            use_cache=False,
+        )
+
+
     def train(self, resume_from_checkpoint=None):
         self.create_train_dataloader()
 
@@ -197,7 +246,10 @@ class SFTTrainer(Trainer):
                 timing_stats = {}
                 with record_timing("timeperf/data_processing", timing_stats):
                     data = next(self.data_generator)
-                    packed_input_data = self._get_packed_input(data)
+                    if self.model.model_config.__class__.__name__ in VALID_VISION_MODELS:
+                        packed_input_data = self._get_packed_vl_input(data)
+                    else:
+                        packed_input_data = self._get_packed_input(data)
                     dist.barrier()
 
                 with record_timing("timeperf/train_step", timing_stats):
