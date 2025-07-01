@@ -32,7 +32,7 @@ def mock_loss_weight_fn(logits: torch.Tensor, input_data: Dict) -> float:
 
 
 def test_sft():
-    """Test engine creation and basic functionality."""
+    """Test SFTTrainer"""
     # environment variables for torch distributed
     os.environ["WORLD_SIZE"] = "1"
     os.environ["RANK"] = "0"
