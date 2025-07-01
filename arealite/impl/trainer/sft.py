@@ -18,10 +18,12 @@ from arealite.utils import (
     log_wandb_tensorboard,
     record_timing,
 )
-from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
+from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats, load_hf_processor_and_tokenizer
 from realhf.api.core.model_api import FinetuneSpec
 from realhf.base import logging, stats_tracker, timeutil
 from arealite.impl.engine.constant import VALID_VISION_MODELS 
+from PIL import Image
+
 logger = logging.getLogger("SFT Trainer")
 
 
@@ -102,6 +104,11 @@ class SFTTrainer(Trainer):
         engine_factory = EngineFactory(args)
         self.model = engine_factory.make_engine(config.model)
         self.tokenizer = load_hf_tokenizer(config.model.path)
+        self.processor=None
+        if self.model.model_config.__class__.__name__ in VALID_VISION_MODELS:
+            self.processor,self.tokenizer = load_hf_processor_and_tokenizer(
+                config.model.path,
+            )
 
         self.mb_spec = config.mb_spec
 
@@ -127,8 +134,15 @@ class SFTTrainer(Trainer):
             max_length=self.mb_spec.max_tokens_per_mb,
             return_attention_mask=False,
         )
-    def _process(self,image):
-        pass
+    def _process(self,image: List[Image.Image]):
+        assert self.processor is not None, "Processor is not initialized for vision model"
+        return self.processor(
+            image,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=self.mb_spec.max_image_tokens_per_mb,
+        ).pixel_values.cuda()
 
     def _get_packed_input(self, data: Dict):
         breakpoint()
