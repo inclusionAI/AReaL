@@ -1,10 +1,17 @@
 # Copyright 2025 Ant Group Inc.
 # Licensed under the Apache License, Version 2.0
-
+import argparse
+import os
 from dataclasses import asdict, dataclass, field
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
-from omegaconf import MISSING
+import uvloop
+
+uvloop.install()
+from hydra import compose as hydra_compose
+from hydra import initialize as hydra_init
+from omegaconf import MISSING, OmegaConf
 
 from realhf.api.cli_args import (
     ClusterSpecConfig,
@@ -14,6 +21,52 @@ from realhf.api.cli_args import (
     TensorBoardConfig,
     WandBConfig,
 )
+
+
+@dataclass(unsafe_hash=True)
+class ParallelismConfig:
+    """Configuration for 3D parallelism (tensor, pipeline, and data parallelism).
+
+    Note:
+        Sequence parallelism is only used in combination with tensor-model parallelism.
+    """
+
+    tensor_parallel_size: int = field(
+        default=1, metadata={"help": "Size of tensor-model parallelism"}
+    )
+    pipeline_parallel_size: int = field(
+        default=1, metadata={"help": "Number of pipeline parallel stages"}
+    )
+    data_parallel_size: int = field(
+        default=1, metadata={"help": "Data parallelism size for ZeRO optimization"}
+    )
+    use_sequence_parallel: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable sequence parallelism. Only used with tensor-model parallelism in Megatron",
+        },
+    )
+
+    def __str__(self):
+        """Returns compact string representation: 'Parallel(mp=X,pp=Y,dp=Z)'."""
+        return (
+            f"Parallel(mp={self.tensor_parallel_size},"
+            f"pp={self.pipeline_parallel_size},"
+            f"dp={self.data_parallel_size})"
+        )
+
+    @staticmethod
+    def parallelism_eq(this, other):
+        """Compare parallelism configurations (excluding sequence parallelism).
+
+        Note:
+            Implemented as static method to avoid OmegaConf compatibility issues.
+        """
+        return (
+            (this.tensor_parallel_size == other.tensor_parallel_size)
+            and (this.pipeline_parallel_size == other.pipeline_parallel_size)
+            and (this.data_parallel_size == other.data_parallel_size)
+        )
 
 
 @dataclass
@@ -100,6 +153,8 @@ class SGLangConfig:
     schedule_policy: str = "lpm"
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
+
+    dtype: str = "float16"
     kv_cache_dtype: str = "auto"
 
     # logging
@@ -118,18 +173,16 @@ class SGLangConfig:
     def build_cmd(
         sglang_config: "SGLangConfig",
         model_path,
-        dtype,
         tp_size,
         base_gpu_id,
         dist_init_addr: Optional[str] = None,
         served_model_name: Optional[str] = None,
         skip_tokenizer_init: bool = True,
     ):
-        from realhf.base import constants, network, pkg_version, seeding
+        from realhf.base import network, pkg_version, seeding
         from realhf.experiments.common.utils import asdict as conf_as_dict
 
         args: Dict = conf_as_dict(sglang_config)
-        args.pop("hybrid_train")
         args["random_seed"] = seeding.get_seed()
 
         if served_model_name is None:
@@ -148,7 +201,6 @@ class SGLangConfig:
             served_model_name=served_model_name,
             is_embedding=False,
             skip_tokenizer_init=skip_tokenizer_init,
-            dtype=dtype,
             # Other runtime options
             tp_size=tp_size,
             # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
@@ -202,10 +254,6 @@ class LLMServiceConfig:
     graceful_shutdown_on_unhealthy: bool = field(
         default=True, metadata={"help": "Enable graceful shutdown when unhealthy"}
     )
-    sglang: Optional[SGLangConfig] = field(
-        default=None,
-        metadata={"help": "SGLang configuration (if using SGLang backend)"},
-    )
 
 
 @dataclass
@@ -236,7 +284,6 @@ class DatasetPreprocessor:
         default=None,
         metadata={
             "help": "Number of retries for each request",
-            "choices": ["gsm8k", "areal"],
         },
     )
     gsm8k: Optional[GSM8KPreprocessor] = None
@@ -419,8 +466,12 @@ class RolloutConfig:
         default_factory=GenerationHyperparameters,
         metadata={"help": "Generation hyperparameters for rollouts"},
     )
-    llm_service: Optional[LLMServiceConfig] = field(
-        default=None, metadata={"help": "LLM server configuration"}
+    llm_service: LLMServiceConfig = field(
+        default_factory=LLMServiceConfig, metadata={"help": "LLM server configuration"}
+    )
+    sglang: Optional[SGLangConfig] = field(
+        default_factory=SGLangConfig,
+        metadata={"help": "SGLang configuration (if using SGLang backend)"},
     )
 
 
@@ -574,7 +625,7 @@ class TrainingArgs:
         metadata={"help": "TensorBoard configuration. Only 'path' field required."},
     )
     allocation_mode: str = field(
-        default="",
+        default="sglang.d1p1t1+d1p1t1",
         metadata={
             "help": "GPU parallel strategy allocation mode. "
             "Options: manual/heuristic or pattern-based."
@@ -633,3 +684,38 @@ class TrainingArgs:
     mem_per_inf_proc: int = 100000
     cpu_per_train_proc: int = 16
     mem_per_train_proc: int = 100000
+
+
+def prepare_training_args(argv: List[str]) -> Tuple[TrainingArgs, str]:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--config", help="The path of the main configuration file", required=True
+    )
+    args, overrides = parser.parse_known_args(argv)
+
+    # Initialize hydra config
+    config_file = Path(args.config).absolute()
+    assert config_file.exists()
+    # hydra only recognize relative paths
+    relpath = Path(
+        os.path.relpath(
+            str(config_file), (Path(__file__).parent.parent / "cli").absolute()
+        )
+    )
+    hydra_init(config_path=str(relpath.parent), job_name="app", version_base=None)
+    cfg = hydra_compose(
+        config_name=str(relpath.name).rstrip(".yaml"),
+        overrides=overrides,
+    )
+
+    # Merge with the default configuration
+    default_cfg = OmegaConf.structured(TrainingArgs)
+    cfg = OmegaConf.merge(default_cfg, cfg)
+    cfg: TrainingArgs = OmegaConf.to_object(cfg)
+
+    # Setup environment
+    from realhf.base import constants, name_resolve
+
+    constants.set_experiment_trial_names(cfg.experiment_name, cfg.trial_name)
+    name_resolve.reconfigure(cfg.cluster.name_resolve)
+    return cfg, str(config_file)

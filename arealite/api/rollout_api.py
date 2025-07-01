@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0
 
 import abc
+import functools
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, SupportsFloat
 
@@ -15,23 +16,15 @@ from arealite.api.cli_args import (
     TrainingArgs,
 )
 from arealite.api.io_struct import AgentInferInput, AgentInferOutput, Trajectory
-from arealite.api.llm_client_api import LLMClient, LLMClientFactory
+from arealite.api.llm_client_api import LLMClient
 
 
 class Agent(abc.ABC):
     def __init__(self, args: TrainingArgs):
         self.args = args
 
-    def act(self, inp: AgentInferInput) -> AgentInferOutput:
-        """Given an observation, return an action and data used for RL training."""
-        raise NotImplementedError()
-
     async def aact(self, inp: AgentInferInput) -> AgentInferOutput:
         """Async version of act. Given an observation, return an action and data used for RL training."""
-        raise NotImplementedError()
-
-    def reset(self) -> None:
-        """Resets the agent's memory."""
         raise NotImplementedError()
 
     async def areset(self) -> None:
@@ -82,16 +75,6 @@ class RolloutCollector(abc.ABC):
         # Used in RLVR
         self.reward_func = reward_func
 
-    def run_episode(
-        self,
-        llm_client: LLMClient,
-        gconfig: GenerationHyperparameters,
-        env_option: Optional[Any] = None,
-        seed: Optional[int] = None,
-    ) -> Trajectory:
-        """Run a single episode and return the trajectory."""
-        raise NotImplementedError()
-
     async def arun_episode(
         self,
         llm_client: LLMClient,
@@ -114,13 +97,17 @@ class RolloutCollectorFactory:
             rlvr_config = config.rlvr
             assert rlvr_config is not None
             if rlvr_config.reward_type == "areal-math":
-                from arealite.impl.rlvr.rewards.areal_math import get_math_reward_fn
+                from arealite.impl.rlvr.rewards.areal_math import math_reward
 
-                reward_fn = get_math_reward_fn(rlvr_config.solution_path)
+                reward_fn = functools.partial(
+                    math_reward, dataset_path=rlvr_config.solution_path
+                )
             elif rlvr_config.reward_type == "areal-code":
-                from arealite.impl.rlvr.rewards.areal_code import get_code_reward_fn
+                from arealite.impl.rlvr.rewards.areal_code import code_reward
 
-                reward_fn = get_code_reward_fn(rlvr_config.solution_path)
+                reward_fn = functools.partial(
+                    code_reward, dataset_path=rlvr_config.solution_path
+                )
             elif rlvr_config.reward_type == "gsm8k":
                 from arealite.impl.rlvr.rewards.gsm8k import (
                     gsm8k_reward_fn as reward_fn,

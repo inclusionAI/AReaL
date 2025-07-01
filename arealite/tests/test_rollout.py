@@ -21,7 +21,7 @@ from arealite.api.cli_args import (
     TrainingArgs,
 )
 from arealite.api.io_struct import Trajectory
-from arealite.api.llm_client_api import LLMClient, LLMClientFactory
+from arealite.api.llm_client_api import LLMClientFactory
 from arealite.api.llm_server_api import LLMServerFactory
 from arealite.api.rollout_api import RolloutCollectorFactory
 from realhf.api.core.data_api import load_hf_tokenizer
@@ -29,7 +29,7 @@ from realhf.base import constants, name_resolve, seeding
 
 EXPR_NAME = "test_rollout"
 TRIAL_NAME = "test_rollout"
-MODEL_PATH = "Qwen/Qwen2-0.5B"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B/"
 
 
 @pytest.fixture(scope="module")
@@ -40,7 +40,7 @@ def tokenizer():
 @pytest.fixture(scope="module")
 def args():
     args = TrainingArgs(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
-    constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
+    args.rollout.model_path = MODEL_PATH
     seeding.set_random_seed(args.seed, EXPR_NAME)
     name_resolve.reconfigure(args.cluster.name_resolve)
     yield args
@@ -49,22 +49,18 @@ def args():
 
 @pytest.fixture(scope="module")
 def sglang_server(args):
-    server_args = LLMServiceConfig(model_path=MODEL_PATH)
-    server_args.sglang = SGLangConfig()
-    server = LLMServerFactory(args).make_server(server_args)
+    args.rollout.sglang = SGLangConfig()
+    server = LLMServerFactory(args).make_server(args.rollout.llm_service)
     server._startup()
     yield
     server._graceful_exit(0)
 
 
 @pytest.mark.parametrize("task", ["math", "code"])
-def test_rlvr_rollout(args, sglang_server, tokenizer, task):
+@pytest.mark.asyncio
+async def test_rlvr_rollout(args, sglang_server, tokenizer, task):
     jsonl_file = Path(__file__).parent / "data" / f"rlvr_{task}_dataset.jsonl"
-    args.rollout.llm_client = LLMClientConfig(
-        server_backend="sglang",
-        tokenizer_path=MODEL_PATH,
-        request_timeout=10,
-    )
+    args.rollout.server_backend = "sglang"
     args.rollout.gconfig = gconfig = GenerationHyperparameters(max_new_tokens=16)
     args.rollout.collector = RolloutCollectorConfig(
         type="rlvr",
@@ -82,7 +78,7 @@ def test_rlvr_rollout(args, sglang_server, tokenizer, task):
                 input_ids=tokenizer.encode(data["prompt"]),
                 prompt=data["prompt"],
             )
-            res = collector.run_episode(
+            res = await collector.arun_episode(
                 llm_client=llm_client,
                 gconfig=gconfig,
                 env_option=env_option,
@@ -98,12 +94,9 @@ def test_rlvr_rollout(args, sglang_server, tokenizer, task):
             assert res.stats.start_time < datetime.now().timestamp()
 
 
-def test_gsm8k_rollout(args, sglang_server, tokenizer):
-    args.rollout.llm_client = LLMClientConfig(
-        server_backend="sglang",
-        tokenizer_path=MODEL_PATH,
-        request_timeout=10,
-    )
+@pytest.mark.asyncio
+async def test_gsm8k_rollout(args, sglang_server, tokenizer):
+    args.rollout.server_backend = "sglang"
     args.rollout.gconfig = gconfig = GenerationHyperparameters(max_new_tokens=16)
     args.rollout.collector = RolloutCollectorConfig(
         type="rlvr", rlvr=RLVRConfig(reward_type="gsm8k")
@@ -127,7 +120,7 @@ def test_gsm8k_rollout(args, sglang_server, tokenizer):
     )
     for i in range(len(dataset)):
         env_option = dataset[i]
-        res = collector.run_episode(
+        res = await collector.arun_episode(
             llm_client=llm_client,
             gconfig=gconfig,
             env_option=env_option,
@@ -144,13 +137,10 @@ def test_gsm8k_rollout(args, sglang_server, tokenizer):
 
 
 @pytest.mark.parametrize("task", ["math", "code"])
-def test_math_code_agentic_rollout(args, task, sglang_server, tokenizer):
+@pytest.mark.asyncio
+async def test_math_code_agentic_rollout(args, task, sglang_server, tokenizer):
     jsonl_file = Path(__file__).parent / "data" / f"rlvr_{task}_dataset.jsonl"
-    args.rollout.llm_client = LLMClientConfig(
-        server_backend="sglang",
-        tokenizer_path=MODEL_PATH,
-        request_timeout=10,
-    )
+    args.rollout.server_backend = "sglang"
     args.rollout.gconfig = gconfig = GenerationHyperparameters(max_new_tokens=16)
     args.rollout.collector = RolloutCollectorConfig(
         type="math_code_single_step",
@@ -168,7 +158,7 @@ def test_math_code_agentic_rollout(args, task, sglang_server, tokenizer):
                 query_id=data["query_id"],
                 input_ids=tokenizer.encode(data["prompt"]),
             )
-            res = collector.run_episode(
+            res = await collector.arun_episode(
                 llm_client=llm_client,
                 gconfig=gconfig,
                 env_option=env_option,

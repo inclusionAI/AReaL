@@ -72,7 +72,7 @@ trainer:
   type: sft
   sft:
     model:
-      path: Qwen/Qwen2.5-0.5B
+      path: /storage/openpsi/models/Qwen__Qwen3-1.7B/
       init_from_scratch: false
       gradient_checkpointing: false
       bf16: false

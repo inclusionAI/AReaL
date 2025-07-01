@@ -51,15 +51,14 @@ cluster:
 
 # Datasets
 train_dataset:
-  path: openai/gsm8k
-  name: main
+  path: json
+  name: null
   split: train
+  data_files: /storage/openpsi/users/xushusheng.xss/training_data/boba_106k_0319.jsonl
   batch_size: 32
   shuffle: True
   preprocessor:
-    type: gsm8k_rl
-    gsm8k:
-      reward_mode: strict
+    type: areal
 
 valid_dataset: null
 
@@ -68,14 +67,15 @@ rollout:
   collector:
     type: rlvr
     rlvr:
-      reward_type: gsm8k
+      reward_type: areal-math
+      solution_path: /storage/openpsi/users/xushusheng.xss/training_data/boba_106k_0319.jsonl
   num_workers: 1
   max_concurrent_rollouts: null
   max_head_offpolicyness: 0
   filter_reward_lb: -10000
   filter_reward_ub: 10000
   server_backend: sglang
-  model_path: Qwen/Qwen2-0.5B-Instruct
+  model_path: /storage/openpsi/models/Qwen__Qwen3-1.7B/
   gconfig:
     n_samples: 16
     max_new_tokens: 512
@@ -93,8 +93,8 @@ rollout:
     startup_timeout: 300
     max_unhealth_count: 3
     graceful_shutdown_on_unhealthy: true
-  server_backend: sglang
   sglang:
+    dtype: "bfloat16"
     enable_mixed_chunk: false
     enable_torch_compile: false
     torch_compile_max_bs: 32
@@ -128,7 +128,7 @@ trainer:
   grpo:
     async_training: true
     actor:
-      path: Qwen/Qwen2-0.5B-Instruct
+      path: /storage/openpsi/models/Qwen__Qwen3-1.7B/
       init_from_scratch: false
       gradient_checkpointing: false
       bf16: true

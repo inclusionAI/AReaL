@@ -11,7 +11,6 @@ from arealite.api.cli_args import (
     DatasetPreprocessor,
     EngineBackendConfig,
     EngineConfig,
-    ModelFamily,
     OptimizerConfig,
     SFTTrainerConfig,
     TrainerConfig,
@@ -48,7 +47,6 @@ def test_sft():
         batch_size=8,
         shuffle=True,
         pin_memory=True,
-        num_workers=4,
     )
 
     valid_dataset = DatasetConfig(
@@ -59,12 +57,10 @@ def test_sft():
         batch_size=8,
         shuffle=False,
         pin_memory=True,
-        num_workers=4,
     )
 
     engine_config = EngineConfig(
-        type=ModelFamily("qwen2", False),
-        path="Qwen/Qwen2.5-0.5B",
+        path="/storage/openpsi/models/Qwen__Qwen3-1.7B/",
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
         backend=EngineBackendConfig(type="hf"),

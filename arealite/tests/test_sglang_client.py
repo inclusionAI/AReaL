@@ -12,7 +12,6 @@ from arealite.api.cli_args import (
     GenerationHyperparameters,
     LLMClientConfig,
     LLMServiceConfig,
-    ModelFamily,
     OptimizerConfig,
     SGLangConfig,
     TrainingArgs,
@@ -25,13 +24,13 @@ from realhf.base import constants, name_resolve, seeding
 
 EXPR_NAME = "test_sglang_client"
 TRIAL_NAME = "test_sglang_client"
-MODEL_PATH = "Qwen/Qwen2-0.5B"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B/"
 
 
 @pytest.fixture(scope="module")
 def args():
     args = TrainingArgs(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
-    constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
+    args.rollout.model_path = MODEL_PATH
     seeding.set_random_seed(args.seed, EXPR_NAME)
     name_resolve.reconfigure(args.cluster.name_resolve)
     yield args
@@ -40,9 +39,8 @@ def args():
 
 @pytest.fixture(scope="module")
 def sglang_server(args):
-    server_args = LLMServiceConfig(model_path=MODEL_PATH)
-    server_args.sglang = SGLangConfig(mem_fraction_static=0.3)
-    server = LLMServerFactory(args).make_server(server_args)
+    args.rollout.sglang = SGLangConfig(mem_fraction_static=0.3)
+    server = LLMServerFactory(args).make_server(args.rollout.llm_service)
     server._startup()
     yield
     server._graceful_exit(0)
@@ -52,22 +50,20 @@ def sglang_server(args):
 def sglang_client(args, sglang_server):
     from arealite.system.sglang_client import SGLangClient
 
-    llm_client = LLMClientConfig(
-        server_backend="sglang",
-        tokenizer_path=MODEL_PATH,
-        request_timeout=10,
-    )
+    args.rollout.server_backend = "sglang"
+    llm_client = LLMClientConfig()
     client = SGLangClient(args, client_config=llm_client)
     yield client
 
 
-def test_sglang_generate(sglang_client):
+@pytest.mark.asyncio
+async def test_sglang_generate(sglang_client):
     req = LLMRequest(
         rid=str(uuid.uuid4()),
         text="hello! how are you today",
         gconfig=GenerationHyperparameters(max_new_tokens=16),
     )
-    resp = sglang_client.generate(req)
+    resp = await sglang_client.agenerate(req)
     assert isinstance(resp, LLMResponse)
     assert resp.input_tokens == req.input_ids
     assert (

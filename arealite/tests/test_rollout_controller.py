@@ -6,9 +6,8 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-import torch.distributed as dist
+import torch.multiprocessing as mp
 from datasets import load_dataset
-from torch.utils.data import DataLoader, Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import (
@@ -28,28 +27,31 @@ from realhf.base import constants, name_resolve, names, seeding
 
 EXPR_NAME = "test_rollout_controller"
 TRIAL_NAME = "test_rollout_controller"
-MODEL_PATH = "Qwen/Qwen2.5-0.5B"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B/"
 
 
 @pytest.fixture(scope="module")
 def args():
     args = TrainingArgs(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
-    constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     seeding.set_random_seed(args.seed, EXPR_NAME)
+    args.rollout.model_path = MODEL_PATH
     args.rollout.llm_client.tokenizer_path = MODEL_PATH
+    args.train_dataset.batch_size = 2
     args.rollout.collector.rlvr = RLVRConfig(
         solution_path=str(Path(__file__).parent / "data" / f"rlvr_math_dataset.jsonl")
     )
+    start_method = mp.get_start_method()
+    mp.set_start_method("fork", force=True)
     name_resolve.reconfigure(args.cluster.name_resolve)
     yield args
     name_resolve.reset()
+    mp.set_start_method(start_method, force=True)
 
 
 @pytest.fixture(scope="module")
 def sglang_server(args):
-    server_args = LLMServiceConfig(model_path=MODEL_PATH)
-    server_args.sglang = SGLangConfig()
-    server = LLMServerFactory(args).make_server(server_args)
+    args.rollout.sglang = SGLangConfig()
+    server = LLMServerFactory(args).make_server(args.rollout.llm_service)
     server._startup()
     yield
     server._graceful_exit(0)
@@ -66,7 +68,7 @@ def dataloader(args):
     dataset = dataset.map(lambda x: tokenizer(x["prompt"]), batched=True)
     yield StatefulDataLoader(
         dataset,
-        batch_size=2,
+        batch_size=args.train_dataset.batch_size,
         collate_fn=lambda x: x,
         drop_last=True,
     )
@@ -174,7 +176,6 @@ def test_async_staleness_control(args, sglang_server, dataloader, ofp):
     args.rollout.gconfig.n_samples = 2
     args.rollout.gconfig.max_new_tokens = 4
     args.rollout.max_head_offpolicyness = ofp
-    args.train_dataset.batch_size = 2
     args.rollout.max_concurrent_rollouts = 100
     rollout_factory = RolloutCollectorFactory(args)
     collector = rollout_factory.make_collector(args.rollout.collector)
@@ -184,7 +185,7 @@ def test_async_staleness_control(args, sglang_server, dataloader, ofp):
 
     # start loop
     rollout_controller.start_generate_loop()
-    batch_size = 2
+    batch_size = args.train_dataset.batch_size
 
     gen = iter(dataloader)
     rollout_controller.submit(next(gen))

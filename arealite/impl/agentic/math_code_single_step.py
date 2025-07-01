@@ -126,32 +126,6 @@ class MathCodeSingleStepEnv(Environment):
 
 class MathCodeAgent(Agent):
 
-    def act(self, inp: AgentInferInput) -> AgentInferOutput:
-        """Given an observation, return an action."""
-        # Extract information from observation
-        obs: MathCodeObs = inp.obs
-        query_id = obs.query_id
-        prompt_ids = obs.prompt_ids
-
-        # Create LLM request
-        llm_req = LLMRequest(
-            rid=str(query_id) + "-" + str(uuid.uuid4()),
-            input_ids=prompt_ids,
-            gconfig=inp.gconfig,
-        )
-
-        # Generate response using LLM client
-        llm_resp = inp.llm_client.generate(llm_req)
-
-        # Extract answers from completion
-        answer = llm_resp.completion
-
-        return AgentInferOutput(
-            action=MathCodeAction(query_id=query_id, answer=answer),
-            llm_req=llm_req,
-            llm_resp=llm_resp,
-        )
-
     async def aact(self, inp: AgentInferInput) -> AgentInferOutput:
         """Async version of act. Given an observation, return an action."""
         # Extract information from observation
@@ -188,73 +162,6 @@ class MathCodeAgent(Agent):
 
 
 class MathCodeSingleStepCollector(RolloutCollector):
-
-    def run_episode(
-        self,
-        llm_client: LLMClient,
-        gconfig: GenerationHyperparameters,
-        env_option: Optional[Any] = None,
-        seed: Optional[int] = None,
-    ) -> Trajectory:
-        # Reset the environment and the agent's memory.
-        obs, _ = self.env.reset(options=env_option, seed=seed)
-        self.agent.reset()
-
-        data = []
-        rewards = []
-        tik = datetime.now().timestamp()
-        ret = 0.0
-        ep_len = 0
-
-        done = False
-        # Episode loop.
-        while not done:
-            # Take an action by sending a request to generation server.
-            agent_infer_in = AgentInferInput(
-                obs=obs, gconfig=gconfig, llm_client=llm_client
-            )
-            agent_infer_out = self.agent.act(agent_infer_in)
-            action = agent_infer_out.action
-
-            # Advance one step in the environment.
-            nex_obs, reward, terminated, truncated, _ = self.env.step(action)
-
-            # Collect the step data.
-            resp = agent_infer_out.llm_resp
-            input_len = len(resp.input_tokens)
-            output_len = len(resp.output_tokens)
-
-            input_ids = resp.input_tokens + resp.output_tokens
-            prompt_mask = [1] * input_len + [0] * output_len
-            logprobs = [0.0] * input_len + resp.output_logprobs
-            versions = [-1] * input_len + resp.output_versions
-
-            d = dict(
-                input_ids=torch.tensor(input_ids, dtype=torch.long),
-                prompt_mask=torch.tensor(prompt_mask, dtype=torch.bool),
-                logprobs=torch.tensor(logprobs, dtype=torch.float32),
-                versions=torch.tensor(versions, dtype=torch.long),
-            )
-            data.append(d)
-            rewards.append(reward)
-
-            ret += float(reward)
-            ep_len += 1
-
-            # Prepare information for the next step.
-            done = terminated or truncated
-            obs = nex_obs
-
-        return Trajectory(
-            prompt=env_option,
-            data=dict(rewards=torch.tensor(rewards), **pad_sequences_to_tensors(data)),
-            stats=TrajStats(
-                start_time=tik,
-                total_reward=ret,
-                episode_length=ep_len,
-                info={},
-            ),
-        )
 
     async def arun_episode(
         self,
