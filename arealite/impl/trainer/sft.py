@@ -105,7 +105,7 @@ class SFTTrainer(Trainer):
         self.model = engine_factory.make_engine(config.model)
         self.tokenizer = load_hf_tokenizer(config.model.path)
         self.processor=None
-        if self.model.model_config.__class__.__name__ in VALID_VISION_MODELS:
+        if self.model.engine_config.type._class in VALID_VISION_MODELS:
             self.processor,self.tokenizer = load_hf_processor_and_tokenizer(
                 config.model.path,
             )
@@ -141,11 +141,10 @@ class SFTTrainer(Trainer):
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=self.mb_spec.max_image_tokens_per_mb,
-        ).pixel_values.cuda()
+        )
 
     def _get_packed_input(self, data: Dict):
-        breakpoint()
+
         prompts = data["prompt"]
         answers = data["answer"]
         inputs = [
@@ -190,15 +189,15 @@ class SFTTrainer(Trainer):
         )
 
     def _get_packed_vl_input(self, data: Dict):
-        breakpoint()
         questions = data["question"]
         solutions = data["solution"]
         inputs = [
-            questions + solutions + self.tokenizer.eos_token
-            for question, solutions in zip(questions, solutions)
+            question + solution + self.tokenizer.eos_token
+            for question, solution in zip(questions, solutions)
         ]
         tokenized_questions = self._tokenize(questions)
         tokenized_inputs = self._tokenize(inputs)
+        breakpoint()
         processed_image=self._process(data["image"])
         # form a data batch
         prompt_lens = tokenized_questions["length"]
@@ -260,7 +259,7 @@ class SFTTrainer(Trainer):
                 timing_stats = {}
                 with record_timing("timeperf/data_processing", timing_stats):
                     data = next(self.data_generator)
-                    if self.model.model_config.__class__.__name__ in VALID_VISION_MODELS:
+                    if self.model.engine_config.type._class in VALID_VISION_MODELS:
                         packed_input_data = self._get_packed_vl_input(data)
                     else:
                         packed_input_data = self._get_packed_input(data)
