@@ -4,7 +4,6 @@
 import os
 import subprocess
 import sys
-import traceback
 from pathlib import Path
 
 import requests

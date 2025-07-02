@@ -11,7 +11,6 @@ from arealite.api.cli_args import (
     EngineConfig,
     GenerationHyperparameters,
     LLMClientConfig,
-    LLMServiceConfig,
     OptimizerConfig,
     SGLangConfig,
     TrainingArgs,
@@ -20,7 +19,7 @@ from arealite.api.engine_api import EngineFactory
 from arealite.api.io_struct import FinetuneSpec, LLMRequest, LLMResponse
 from arealite.api.llm_client_api import LLMClient
 from arealite.api.llm_server_api import LLMServerFactory
-from realhf.base import constants, name_resolve, seeding
+from realhf.base import name_resolve, seeding
 
 EXPR_NAME = "test_sglang_client"
 TRIAL_NAME = "test_sglang_client"

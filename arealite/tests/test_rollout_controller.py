@@ -10,12 +10,7 @@ import torch.multiprocessing as mp
 from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from arealite.api.cli_args import (
-    LLMServiceConfig,
-    RLVRConfig,
-    SGLangConfig,
-    TrainingArgs,
-)
+from arealite.api.cli_args import RLVRConfig, SGLangConfig, TrainingArgs
 from arealite.api.io_struct import Trajectory
 from arealite.api.llm_server_api import LLMServerFactory
 from arealite.api.rollout_api import RolloutCollectorFactory
@@ -23,7 +18,7 @@ from arealite.system.rollout_controller import RolloutController
 from arealite.tests.utils import mock_rollout_output
 from arealite.utils import concat_padded_tensors
 from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import constants, name_resolve, names, seeding
+from realhf.base import name_resolve, names, seeding
 
 EXPR_NAME = "test_rollout_controller"
 TRIAL_NAME = "test_rollout_controller"

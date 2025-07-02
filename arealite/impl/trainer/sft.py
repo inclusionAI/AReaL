@@ -1,4 +1,3 @@
-import os
 import time
 from typing import Any, Dict, List, Optional
 
@@ -22,7 +21,7 @@ from arealite.utils import (
 )
 from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
 from realhf.api.core.model_api import FinetuneSpec
-from realhf.base import constants, logging, stats_tracker, timeutil
+from realhf.base import logging, stats_tracker, timeutil
 
 logger = logging.getLogger("SFT Trainer")
 

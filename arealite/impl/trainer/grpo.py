@@ -27,7 +27,6 @@ from arealite.utils import (
     close_wandb_tensorboard,
     compute_varlen_position_indices,
     concat_padded_tensors,
-    dict_of_list2list_of_dict,
     gather_logprobs,
     init_stats_logging,
     log_wandb_tensorboard,
