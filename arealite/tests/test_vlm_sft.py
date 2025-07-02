@@ -34,8 +34,8 @@ def create_dataset(cfg: DatasetConfig):
         name=cfg.name,
         split=cfg.split,
     )
-    breakpoint()
-    if cfg.name.lower() in VL_DATASET:
+
+    if dataset.info.dataset_name.lower() in VL_DATASET:
         dataset = process_VL_dataset(dataset)
     return dataset
 
