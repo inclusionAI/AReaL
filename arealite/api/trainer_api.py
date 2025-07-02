@@ -11,6 +11,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import TrainerConfig, TrainingArgs
 
+
 if TYPE_CHECKING:
     from arealite.system.rollout_controller import RolloutController
 # application code
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
 
 # distributed sampler
 # process group init
+
+
 
 
 class Trainer(abc.ABC):
@@ -53,6 +56,7 @@ class Trainer(abc.ABC):
             batch_size = cfg.batch_size // dist.get_world_size()
         else:
             batch_size = cfg.batch_size
+
         self.train_dataloader = StatefulDataLoader(
             dataset=self.train_dataset,
             batch_size=batch_size,
@@ -60,6 +64,7 @@ class Trainer(abc.ABC):
             pin_memory=cfg.pin_memory,
             num_workers=cfg.num_workers,
             drop_last=True,
+            collate_fn=collate_fn
         )
 
     def create_valid_dataloader(self):
@@ -77,6 +82,7 @@ class Trainer(abc.ABC):
             pin_memory=cfg.pin_memory,
             num_workers=cfg.num_workers,
             drop_last=True,
+            collate_fn=collate_fn
         )
 
     @property

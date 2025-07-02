@@ -1,10 +1,9 @@
 import time
-from typing import Dict, List, Optional
 
 import torch
 import torch.distributed as dist
 from datasets import Dataset
-
+from typing import Any, Dict, List, Optional, Tuple, Union
 from arealite.api.cli_args import TrainerConfig, TrainingArgs
 from arealite.api.engine_api import EngineFactory
 from arealite.api.trainer_api import Trainer
@@ -24,9 +23,36 @@ from realhf.base import logging, stats_tracker, timeutil
 from arealite.impl.engine.constant import VALID_VISION_MODELS 
 from PIL import Image
 from PIL.Image import Image as ImageObject
+from io import BytesIO
 
+import math
 logger = logging.getLogger("SFT Trainer")
 
+# def process_image(
+#     image: Union[Dict[str, Any], ImageObject, str], min_pixels: Optional[int]=None, max_pixels: Optional[int]=None
+# ) -> ImageObject:
+    
+#     if isinstance(image, str):
+#         image = Image.open(image)
+#     elif isinstance(image, dict):
+#         image = Image.open(BytesIO(image["bytes"]))
+#     elif isinstance(image, bytes):
+#         image = Image.open(BytesIO(image))
+
+#     image.load()  # avoid "Too many open files" errors
+#     if max_pixels is not None and (image.width * image.height) > max_pixels:
+#         resize_factor = math.sqrt(max_pixels / (image.width * image.height))
+#         width, height = int(image.width * resize_factor), int(image.height * resize_factor)
+#         image = image.resize((width, height))
+
+#     if min_pixels is not None and (image.width * image.height) < min_pixels:
+#         resize_factor = math.sqrt(min_pixels / (image.width * image.height))
+#         width, height = int(image.width * resize_factor), int(image.height * resize_factor)
+#         image = image.resize((width, height))
+
+#     if image.mode != "RGB":
+#         image = image.convert("RGB")
+#     return image
 
 def compute_packed_sft_loss(
     logits: torch.Tensor,
@@ -135,10 +161,15 @@ class SFTTrainer(Trainer):
             max_length=self.mb_spec.max_tokens_per_mb,
             return_attention_mask=False,
         )
-    def _process(self,image: List[ImageObject]):
+    def _process(self,images):
         assert self.processor is not None, "Processor is not initialized for vision model"
+        # image_list=[]
+        breakpoint()
+        # for image in images:
+        #     image_list.append(process_image(image))
+
         return self.processor(
-            image,
+            images,
             return_tensors="pt",
             padding=True,
             truncation=True,
@@ -190,6 +221,7 @@ class SFTTrainer(Trainer):
         )
 
     def _get_packed_vl_input(self, data: Dict):
+        breakpoint()
         questions = data["question"]
         solutions = data["solution"]
         inputs = [
@@ -254,7 +286,7 @@ class SFTTrainer(Trainer):
         global_step = 0
         start_time = time.monotonic()
         # dataloader: self.train_data_loader
-        breakpoint()
+
         for epoch in range(total_epochs):
             self.data_generator = iter(self.train_dataloader)
             for step in range(steps_per_epoch):

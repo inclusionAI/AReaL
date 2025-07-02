@@ -106,3 +106,5 @@ def test_engine():
         trainer.train()
 
     print("All tests passed!")
+
+test_engine()
