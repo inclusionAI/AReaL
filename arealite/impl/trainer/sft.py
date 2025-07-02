@@ -189,6 +189,7 @@ class SFTTrainer(Trainer):
         )
 
     def _get_packed_vl_input(self, data: Dict):
+        breakpoint()
         questions = data["question"]
         solutions = data["solution"]
         inputs = [

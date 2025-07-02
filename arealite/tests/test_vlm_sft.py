@@ -41,7 +41,7 @@ def test_engine():
     """Test engine creation and basic functionality."""
 
     train_dataset = DatasetConfig(
-        path="/storage/openpsi/data/MM-MathInstruct/",
+        path="/storage/openpsi/data/clevr_count_70k/",
         # name="main",
         split="train",
         batch_size=8,
