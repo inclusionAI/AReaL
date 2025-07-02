@@ -16,7 +16,7 @@ from arealite.api.cli_args import (
     TrainingArgs,
 )
 from arealite.api.trainer_api import TrainerFactory
-
+from arealite.impl.dataset.VL_dataset import process_VL_dataset,VL_DATASET
 
 def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
     """Mock loss function for testing."""
@@ -34,6 +34,9 @@ def create_dataset(cfg: DatasetConfig):
         name=cfg.name,
         split=cfg.split,
     )
+    breakpoint()
+    if cfg.name.lower() in VL_DATASET:
+        dataset = process_VL_dataset(dataset)
     return dataset
 
 

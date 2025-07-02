@@ -8,6 +8,19 @@ import re
 import math
 
 #Standard dataset Key:"id", "image", "question", "solution", "hash"
+VL_DATASET=["clevr_count_70k", "llava_cot", "mm_mathinstruct"]
+
+def process_VL_dataset(
+    dataset: Dataset,
+):
+    if dataset.info.name.lower() == "clevr_count_70k":
+        return process_clevr_count_dataset(dataset)
+    elif dataset.info.name.lower() == "llava_cot":
+        return process_llava_cot_dataset(dataset)
+    elif dataset.info.name.lower() == "mm_mathinstruct":
+        return process_MathInstruct_dataset(dataset)
+    else:
+        raise ValueError(f"Unsupported VL dataset: {dataset.info.name}. Supported datasets are: {VL_DATASET}")
 
 def process_image(
     image: Union[Dict[str, Any], ImageObject, str], min_pixels: Optional[int], max_pixels: Optional[int]
@@ -46,7 +59,7 @@ DatasetDict({
 })
 '''
 
-def process_clevr_count_dataset(dataset: Dataset, processor, reward_mode):
+def process_clevr_count_dataset(dataset: Dataset):
 
     def process_example(example):
         img= process_image(example["images"])
@@ -72,7 +85,7 @@ def process_clevr_count_dataset(dataset: Dataset, processor, reward_mode):
 
 '''
 
-def process_llava_cot_dataset(dataset: Dataset, processor,):
+def process_llava_cot_dataset(dataset: Dataset):
     solution_pattern =r"^(.*?)<CONCLUSION>"
     answer_pattern = r"<CONCLUSION>\n\n(.*?)\n\n</CONCLUSION>"
     def process_example(example):
