@@ -23,6 +23,7 @@ from realhf.api.core.model_api import FinetuneSpec
 from realhf.base import logging, stats_tracker, timeutil
 from arealite.impl.engine.constant import VALID_VISION_MODELS 
 from PIL import Image
+from PIL.Image import Image as ImageObject
 
 logger = logging.getLogger("SFT Trainer")
 
@@ -134,7 +135,7 @@ class SFTTrainer(Trainer):
             max_length=self.mb_spec.max_tokens_per_mb,
             return_attention_mask=False,
         )
-    def _process(self,image: List[Image.Image]):
+    def _process(self,image: List[ImageObject]):
         assert self.processor is not None, "Processor is not initialized for vision model"
         return self.processor(
             image,
@@ -189,7 +190,6 @@ class SFTTrainer(Trainer):
         )
 
     def _get_packed_vl_input(self, data: Dict):
-        breakpoint()
         questions = data["question"]
         solutions = data["solution"]
         inputs = [

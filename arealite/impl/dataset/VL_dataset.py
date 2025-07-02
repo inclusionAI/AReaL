@@ -7,6 +7,8 @@ from io import BytesIO
 import re
 import math
 
+#Standard dataset Key:"id", "image", "question", "solution", "hash"
+
 def process_image(
     image: Union[Dict[str, Any], ImageObject, str], min_pixels: Optional[int], max_pixels: Optional[int]
 ) -> ImageObject:
@@ -74,9 +76,6 @@ def process_llava_cot_dataset(dataset: Dataset, processor,):
     solution_pattern =r"^(.*?)<CONCLUSION>"
     answer_pattern = r"<CONCLUSION>\n\n(.*?)\n\n</CONCLUSION>"
     def process_example(example):
-        # Add query_id column
-        example["query_id"] =example["id"]
-    
         # the query text used as input (prompt) for the evaluation model
         example["hash"] = generate_hash(example["conversations"]+example["image"])
         example["question"] = example["conversations"][0]["value"]
@@ -94,7 +93,6 @@ def process_llava_cot_dataset(dataset: Dataset, processor,):
     dataset = dataset.map(
         lambda example: process_example(example),
         batched=True,
-        
     )
     return dataset
 
