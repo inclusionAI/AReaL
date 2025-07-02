@@ -13,18 +13,19 @@ VL_DATASET=["clevr_count_70k", "llava_cot", "mm_mathinstruct"]
 def process_VL_dataset(
     dataset: Dataset,
 ):
-    if dataset.info.name.lower() == "clevr_count_70k":
+    if dataset.info.dataset_name.lower() == "clevr_count_70k":
         return process_clevr_count_dataset(dataset)
-    elif dataset.info.name.lower() == "llava_cot":
+    elif dataset.info.dataset_name.lower() == "llava_cot":
         return process_llava_cot_dataset(dataset)
-    elif dataset.info.name.lower() == "mm_mathinstruct":
+    elif dataset.info.dataset_name.lower() == "mm_mathinstruct":
         return process_MathInstruct_dataset(dataset)
     else:
-        raise ValueError(f"Unsupported VL dataset: {dataset.info.name}. Supported datasets are: {VL_DATASET}")
+        raise ValueError(f"Unsupported VL dataset: {dataset.info.dataset_name}. Supported datasets are: {VL_DATASET}")
 
 def process_image(
-    image: Union[Dict[str, Any], ImageObject, str], min_pixels: Optional[int], max_pixels: Optional[int]
+    image: Union[Dict[str, Any], ImageObject, str], min_pixels: Optional[int]=None, max_pixels: Optional[int]=None
 ) -> ImageObject:
+
     if isinstance(image, str):
         image = Image.open(image)
     elif isinstance(image, dict):
@@ -48,8 +49,23 @@ def process_image(
 
     return image
 
-def generate_hash(text):
-    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+def generate_image_hash(image: Image.Image) -> str:
+    img_byte_arr = BytesIO()
+    image.save(img_byte_arr, format='PNG') 
+    img_byte_arr = img_byte_arr.getvalue()
+    return hashlib.sha256(img_byte_arr).hexdigest()
+
+def generate_question_hash(question: str) -> str:
+    return hashlib.sha256(question.encode('utf-8')).hexdigest()
+
+def generate_hash(images: list, question: str) -> str:
+    image_hashes = [generate_image_hash(image) for image in images]
+    
+    question_hash = generate_question_hash(question)
+    
+    combined_hash_input = question_hash + ''.join(image_hashes)
+    return hashlib.sha256(combined_hash_input.encode('utf-8')).hexdigest()
+
 '''
 DatasetDict({
     train: Dataset({
@@ -62,16 +78,18 @@ DatasetDict({
 def process_clevr_count_dataset(dataset: Dataset):
 
     def process_example(example):
-        img= process_image(example["images"])
+        processed_image=[]
+
+        for image in example["images"]:
+            processed_image.append(process_image(image))
         example["question"]=example["problem"]
         example["solution"]=example["answer"]
-        example["hash"] = generate_hash(example["images"]+example["question"])
-        example["image"]=img
-        return example
+        example["image"]=processed_image
+        example["hash"] = generate_hash(example["image"], example["question"])
 
+        return example
     dataset = dataset.map(
         lambda example: process_example(example),
-        batched=True,
         remove_columns=["problem","answer"]
     )
     return dataset
@@ -86,26 +104,21 @@ def process_clevr_count_dataset(dataset: Dataset):
 '''
 
 def process_llava_cot_dataset(dataset: Dataset):
-    solution_pattern =r"^(.*?)<CONCLUSION>"
-    answer_pattern = r"<CONCLUSION>\n\n(.*?)\n\n</CONCLUSION>"
+
     def process_example(example):
+        processed_image=[]
+        for image in example["image"]:
+            processed_image.append(process_image(image))
+        example["image"]=processed_image
         # the query text used as input (prompt) for the evaluation model
-        example["hash"] = generate_hash(example["conversations"]+example["image"])
+        example["hash"] = generate_hash(example["image"], example["conversations"])
         example["question"] = example["conversations"][0]["value"]
-        solution_match = re.search(solution_pattern, example["conversations"][1]["value"], re.DOTALL)
-        if solution_match:
-            example["solution"] = solution_match.group(1).strip()
-        else:
-            example["solution"] =None
-        answer_match = re.search(answer_pattern, example["conversations"][1]["value"], re.DOTALL)
-        if answer_match:
-            example["answer"] = answer_match.group(1).strip()
+        example["solution"]= example["conversations"][1]["value"]
 
         return example
 
     dataset = dataset.map(
         lambda example: process_example(example),
-        batched=True,
     )
     return dataset
 
@@ -120,13 +133,14 @@ DatasetDict({
 
 def process_MathInstruct_dataset(dataset: Dataset):
     def process_example(example):
-        img= Image.open(BytesIO(example["image"]))
-        example["hash"] = generate_hash(example["image"]+example["question"])
-        example["image"]=img
+        processed_image=[]
+        for image in example["image"]:
+            processed_image.append(process_image(image))
+        example["image"]=processed_image
+        example["hash"] = generate_hash(example["image"], example["question"])
         return example
 
     dataset = dataset.map(
         lambda example: process_example(example),
-        batched=True,
     )
     return dataset
