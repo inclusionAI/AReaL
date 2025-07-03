@@ -221,7 +221,7 @@ class SFTTrainer(Trainer):
         )
 
     def _get_packed_vl_input(self, data: Dict):
-        breakpoint()
+        # breakpoint()
         vl_prompt_input_ids= data["vl_prompt_input_ids"]
         vl_prompt_length = data["vl_prompt_length"]
         answer_input_ids = data["answer_input_ids"]
@@ -243,8 +243,8 @@ class SFTTrainer(Trainer):
             "length": [vl_prompt_length[i] + answer_length[i] + 1 for i in range(len(vl_prompt_length))],
         }
 
-        breakpoint()
-        images= [images["images"] for images in data["multimodal_data"]]
+        # breakpoint()
+        images= [images["images"] for images in data["multi_modal_data"]]
         # form a data batch
         prompt_lens = vl_prompt_length
         input_lens = tokenized_inputs["length"]
@@ -268,7 +268,7 @@ class SFTTrainer(Trainer):
         prompt_mask = torch.cat(prompt_mask, dim=0)
         total_seqlen = int(cu_seqlens[-1].item())
         position_ids = compute_varlen_position_indices(total_seqlen, cu_seqlens)
-        breakpoint()
+        # breakpoint()
         return dict(
             input_ids=packed_input_ids.unsqueeze(0).cuda(),
             attention_mask=None,
