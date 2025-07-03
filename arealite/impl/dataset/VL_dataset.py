@@ -282,7 +282,7 @@ class VLDataset(Dataset):
         self.answer_key = self.dataset_info["answer_key"]
         self.image_key = self.dataset_info.get("image_key", None)
         self.image_dir = self.dataset_info.get("image_dir", None)
-        breakpoint()
+
         self.format_prompt = None
         if format_prompt:
             with open(format_prompt, encoding="utf-8") as f:
@@ -375,7 +375,7 @@ class VLDataset(Dataset):
             for image in images:
                 processed_images.append(process_image(image, self.min_pixels, self.max_pixels))
             
-            model_inputs = self.processor(processed_images, prompt, add_special_tokens=False, return_tensors="pt")
+            model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt")
             vl_prompt_input_ids= model_inputs.pop("input_ids")[0]
             attention_mask = model_inputs.pop("attention_mask")[0]
             example["multi_modal_data"] = {"images": images}
