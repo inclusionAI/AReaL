@@ -41,7 +41,7 @@ def create_vl_dataset(cfg: DatasetConfig, model_name_or_path: str) -> VLDataset:
         format_prompt=cfg.format_prompt,
         min_pixels=cfg.min_pixels,
         max_pixels=cfg.max_pixels,
-        filter_overlong_prompts=cfg.filter_overlong_prompts,
+        filter_overlong_prompts=False,
         filter_overlong_prompts_workers=cfg.filter_overlong_prompts_workers,
     )
     return train_dataset
