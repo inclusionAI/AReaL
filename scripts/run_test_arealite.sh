@@ -14,7 +14,10 @@ mkdir -p /tmp/pip-cache
 mkdir -p "/tmp/$RUN_ID"
 cd "/tmp/$RUN_ID"
 
-git clone "https://github.bibk.top/$GIT_REPO" --depth 1 --branch "$GIT_COMMIT_SHA" --single-branch $(pwd)
+git init
+git remote add origin "https://github.bibk.top/$GIT_REPO"
+git fetch --depth 1 origin "$GIT_COMMIT_SHA"
+git checkout FETCH_HEAD
 
 if docker ps -a --format '{{.Names}}' | grep -q "$RUN_ID"; then
     docker rm -f $RUN_ID
