@@ -432,9 +432,9 @@ def split_dict_tensor_with_cu_seqlens(
     not_to_split = {}
     keys_to_unsqueeze = set()
     for key, value in data.items():
-        if key == "cu_seqlens" or key == "max_seqlen":
+        if key == "cu_seqlens" or key == "max_seqlen" or key=="image_grid_thw" or key=="pixel_values":
             continue
-        if not torch.is_tensor(value):
+        if not torch.is_tensor(value) :
             not_to_split[key] = value
         else:
             assert value.numel() == total_lens, (key, value.shape)
@@ -455,6 +455,11 @@ def split_dict_tensor_with_cu_seqlens(
     backward_indices = np.zeros(bs, dtype=np.int64)
     backward_indices[forward_indices] = np.arange(bs)
     
+    breakpoint()
+    to_split = dict_map(to_split, lambda x: unpack_sequence(x, cu_seqlens=cu_seqlens))
+    to_split = dict_map(to_split, lambda x: recorder_list(x, forward_indices))
+    to_split = dict_map(to_split, lambda x: torch.cat(x))
+    to_split = dict_map(to_split, lambda x: unpack_sequence(x, lens=group_lens))
     if data.get("pixel_values", None) is not None:
         pixel_values = data.get("pixel_values", [])
         image_grid_thw = data.get("image_grid_thw", [])
@@ -475,14 +480,10 @@ def split_dict_tensor_with_cu_seqlens(
         # Pack the split pixel_values and image_grid_thw back into the data
         to_split["pixel_values"] = pixel_values_split
         to_split["image_grid_thw"] = image_grid_thw_split
-
-    to_split = dict_map(to_split, lambda x: unpack_sequence(x, cu_seqlens=cu_seqlens))
-    to_split = dict_map(to_split, lambda x: recorder_list(x, forward_indices))
-    to_split = dict_map(to_split, lambda x: torch.cat(x))
-    to_split = dict_map(to_split, lambda x: unpack_sequence(x, lens=group_lens))
     mbs = dict_of_list2list_of_dict(to_split)
 
     results = []
+    breakpoint()
     # organize splitted micro batches
     assert len(mbs) == len(splitted_lens), (len(mbs), len(splitted_lens))
     for i, (mb, lens) in enumerate(zip(mbs, splitted_lens)):

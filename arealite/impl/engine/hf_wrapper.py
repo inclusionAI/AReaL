@@ -177,13 +177,14 @@ class HFEngine(SPMDWrapper):
         self.optimizer.zero_grad()
         
         mb_splits = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
+
         total_loss_weight = torch.tensor(
             sum([loss_weight_fn(mb) for mb in mb_splits.mbs]), dtype=torch.float32
         )
         assert total_loss_weight != 0
 
         for mb_input in mb_splits.mbs:
-
+            breakpoint()
             outputs = self.model(**mb_input)
             loss = loss_fn(outputs.logits, mb_input)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight

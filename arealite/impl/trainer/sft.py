@@ -243,7 +243,7 @@ class SFTTrainer(Trainer):
             "length": [vl_prompt_length[i] + answer_length[i] + 1 for i in range(len(vl_prompt_length))],
         }
 
-        # breakpoint()
+        
         pixel_values = data["pixel_values"]
         image_grid_thw = data.get("image_grid_thw", None)
         # form a data batch
@@ -314,7 +314,7 @@ class SFTTrainer(Trainer):
                     else:
                         packed_input_data = self._get_packed_input(data)
                     dist.barrier()
-
+                breakpoint()
                 with record_timing("timeperf/train_step", timing_stats):
                     with stats_tracker.scope("sft"):
                         stats = self.model.train_batch(
