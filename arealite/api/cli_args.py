@@ -176,19 +176,19 @@ class DatasetConfig:
         metadata={"help": "Dataset preprocessor config. None means no preprocessing."},
     )
     # ---------------------------------For VLM dataset----------------------------
-    prompt_key: Optional[str] = field(
-        default="prompt", metadata={"help": "Key for the prompt text"}
-    )
-    answer_key: Optional[str] = field(
-        default="answer", metadata={"help": "Key for the answer text"}
-    )
-    image_key: Optional[str] = field(
-        default="images",
-        metadata={"help": "Key for the image data (if applicable)"},
-    )
-    image_dir: Optional[str] = field(
-        default=None, metadata={"help": "Directory for the image data (if applicable)"}
-    )
+    # prompt_key: Optional[str] = field(
+    #     default="prompt", metadata={"help": "Key for the prompt text"}
+    # )
+    # answer_key: Optional[str] = field(
+    #     default="answer", metadata={"help": "Key for the answer text"}
+    # )
+    # image_key: Optional[str] = field(
+    #     default="images",
+    #     metadata={"help": "Key for the image data (if applicable)"},
+    # )
+    # image_dir: Optional[str] = field(
+    #     default=None, metadata={"help": "Directory for the image data (if applicable)"}
+    # )
     max_prompt_length: int = field(
         default=2048, metadata={"help": "Maximum length of the prompt text"}
     )
