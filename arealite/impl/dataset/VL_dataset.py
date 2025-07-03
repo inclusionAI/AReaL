@@ -385,7 +385,7 @@ class VLDataset(Dataset):
             model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt",return_length=True,padding=False,truncation=True,return_attention_mask=False,max_length=self.max_prompt_length)
             vl_prompt_input_ids= model_inputs.pop("input_ids")[0]
             vl_prompt_length = model_inputs.pop("length")[0]
-            attention_mask = model_inputs.pop("attention_mask")[0]
+            # attention_mask = model_inputs.pop("attention_mask")[0]
             example["multi_modal_data"] = {"images": images}
         # elif self.video_key in example:
         #     prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
@@ -431,7 +431,7 @@ class VLDataset(Dataset):
         #     )  # (3, seq_length)
         # else:
         #     position_ids = torch.clip(attention_mask.cumsum(dim=0) - 1, min=0, max=None)  # (seq_length,)
-        position_ids = torch.clip(attention_mask.cumsum(dim=0) - 1, min=0, max=None) 
+        # position_ids = torch.clip(attention_mask.cumsum(dim=0) - 1, min=0, max=None) 
 
         # vl_prompt_input_ids, attention_mask, position_ids = postprocess_data(
         #     input_ids=vl_prompt_input_ids,

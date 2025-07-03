@@ -232,7 +232,7 @@ class SFTTrainer(Trainer):
         # tokenized_inputs = self._tokenize(inputs)
         vl_prompt_input_ids= data["vl_prompt_input_ids"]
         answer_input_ids = data["answer_input_ids"]
-        eos_token_tensor = torch.tensor([self.tokenizer.eos_token_id], dtype=torch.long, device=vl_prompt_input_ids.device)
+        eos_token_tensor = torch.tensor([self.tokenizer.eos_token_id], dtype=torch.long)
         # merge vl_prompt_input_ids, answer_input_ids, adding eos token,the first column is batch size
         tokenized_inputs = torch.cat((vl_prompt_input_ids, answer_input_ids, eos_token_tensor), dim=1)
 
