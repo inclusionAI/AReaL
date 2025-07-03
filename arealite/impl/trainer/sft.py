@@ -245,7 +245,7 @@ class SFTTrainer(Trainer):
 
         
         pixel_values = [pixel_value.cuda() for pixel_value in data["pixel_values"]]
-        image_grid_thw = [image_grid.cuda() for image_grid in data.get("image_grid_thw", [])]
+        image_grid_thw = [image_grid_thw_.cuda() for image_grid_thw_ in data["image_grid_thw"]]
         # form a data batch
         prompt_lens = vl_prompt_length
         input_lens = tokenized_inputs["length"]
@@ -314,7 +314,6 @@ class SFTTrainer(Trainer):
                     else:
                         packed_input_data = self._get_packed_input(data)
                     dist.barrier()
-                breakpoint()
                 with record_timing("timeperf/train_step", timing_stats):
                     with stats_tracker.scope("sft"):
                         stats = self.model.train_batch(
