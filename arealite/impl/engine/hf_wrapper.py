@@ -175,7 +175,7 @@ class HFEngine(SPMDWrapper):
         assert self.lr_scheduler is not None
 
         self.optimizer.zero_grad()
-        #
+        
         mb_splits = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
         total_loss_weight = torch.tensor(
             sum([loss_weight_fn(mb) for mb in mb_splits.mbs]), dtype=torch.float32
