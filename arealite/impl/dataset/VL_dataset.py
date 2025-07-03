@@ -240,7 +240,7 @@ class VLDataset(Dataset):
         format_prompt: Optional[str] = None,
         min_pixels: Optional[int] = None,
         max_pixels: Optional[int] = None,
-        filter_overlong_prompts: bool = True,
+        filter_overlong_prompts: bool = False,
         filter_overlong_prompts_workers: int = 16,
         data_split: str = "train",
     ):
@@ -257,27 +257,31 @@ class VLDataset(Dataset):
         self.min_pixels = min_pixels
         self.max_pixels = max_pixels
 
-        self.dataset_info = register_VL_dataset(self.dataset.info.dataset_name)
-        self.prompt_key = self.dataset_info["question_key"]
-        self.answer_key = self.dataset_info["answer_key"]
-        self.image_key = self.dataset_info.get("image_key", None)
-        self.image_dir = self.dataset_info.get("image_dir", None)
+
 
         # if "@" in data_path:
         #     data_path, data_split = data_path.split("@")
         # else:
         #     data_split = "train"
 
-        if os.path.isdir(data_path):
-            # when we use dataset builder, we should always refer to the train split
-            file_type = os.path.splitext(os.listdir(data_path)[0])[-1][1:].replace("jsonl", "json")
-            self.dataset = load_dataset(file_type, data_dir=data_path, split=data_split)
-        elif os.path.isfile(data_path):
-            file_type = os.path.splitext(data_path)[-1][1:].replace("jsonl", "json")
-            self.dataset = load_dataset(file_type, data_files=data_path, split=data_split)
-        else:
-            # load remote dataset from huggingface hub
-            self.dataset = load_dataset(data_path, split=data_split)
+        # if os.path.isdir(data_path):
+        #     breakpoint()
+        #     # when we use dataset builder, we should always refer to the train split
+        #     file_type = os.path.splitext(os.listdir(data_path)[0])[-1][1:].replace("jsonl", "json")
+        #     self.dataset = load_dataset(file_type, data_dir=data_path, split=data_split)
+        # elif os.path.isfile(data_path):
+        #     file_type = os.path.splitext(data_path)[-1][1:].replace("jsonl", "json")
+        #     self.dataset = load_dataset(file_type, data_files=data_path, split=data_split)
+        # else:
+        #     # load remote dataset from huggingface hub
+        #     self.dataset = load_dataset(data_path, split=data_split)
+        self.dataset = load_dataset(data_path, split=data_split)
+
+        self.dataset_info = register_VL_dataset(self.dataset.info.dataset_name)
+        self.prompt_key = self.dataset_info["question_key"]
+        self.answer_key = self.dataset_info["answer_key"]
+        self.image_key = self.dataset_info.get("image_key", None)
+        self.image_dir = self.dataset_info.get("image_dir", None)
 
         self.format_prompt = None
         if format_prompt:
@@ -322,7 +326,6 @@ class VLDataset(Dataset):
             return [{"role": "user", "content": prompt_str}]
 
     def _filter_overlong_prompts(self, example: Dict[str, Any]) -> bool:
-        breakpoint()
         messages = self._build_vl_question(example)
         if self.image_key in example:
             prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
@@ -372,7 +375,7 @@ class VLDataset(Dataset):
                 processed_images.append(process_image(image, self.min_pixels, self.max_pixels))
 
             model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt")
-            question_input_ids = model_inputs.pop("input_ids")[0]
+            vl_prompt_input_ids= model_inputs.pop("input_ids")[0]
             attention_mask = model_inputs.pop("attention_mask")[0]
             example["multi_modal_data"] = {"images": images}
         # elif self.video_key in example:
