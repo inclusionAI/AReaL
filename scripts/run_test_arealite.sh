@@ -37,6 +37,7 @@ docker exec $RUN_ID bash -c "
     python -m pip install --upgrade pip
     pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
     pip config unset global.extra-index-url
+    pip config set global.no-cache-dir false
     bash examples/env/scripts/setup-pip-deps.sh
     python -m pytest arealite/
 "
