@@ -244,7 +244,7 @@ class SFTTrainer(Trainer):
         }
 
         breakpoint()
-        image= data["multi_modal_data"]["images"]
+        images= [images["images"] for images in data["multimodal_data"]]
         # form a data batch
         prompt_lens = vl_prompt_length
         input_lens = tokenized_inputs["length"]
@@ -274,6 +274,7 @@ class SFTTrainer(Trainer):
             attention_mask=None,
             position_ids=position_ids.unsqueeze(0).cuda(),
             prompt_mask=prompt_mask.unsqueeze(0).cuda(),
+            images=images,
             cu_seqlens=cu_seqlens.cuda(),
             max_seqlen=max_seqlen,
             use_cache=False,
