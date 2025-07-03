@@ -17,7 +17,7 @@ jobs:
 
       - uses: appleboy/ssh-action@v1
         env:
-          GIT_REPO_URL: ${{ github.repositoryUrl }}
+          GIT_REPO: ${{ github.repository }}
           GIT_COMMIT_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.CI_NODE_ADDR }}

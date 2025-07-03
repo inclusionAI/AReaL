@@ -2,11 +2,11 @@
 
 set -e
 
-GIT_REPO_URL=${GIT_REPO_URL:?"GIT_REPO_URL is not set"}
+GIT_REPO=${GIT_REPO:?"GIT_REPO is not set"}
 GIT_COMMIT_SHA=${GIT_COMMIT_SHA:?"GIT_COMMIT_SHA is not set"}
 RUN_ID="areal-$(date +%s%N)"
 
-echo "GIT_REPO_URL: $GIT_REPO_URL"
+echo "GIT_REPO: $GIT_REPO"
 echo "GIT_COMMIT_SHA: $GIT_COMMIT_SHA"
 
 mkdir -p /tmp/pip-cache
@@ -14,7 +14,7 @@ mkdir -p /tmp/pip-cache
 mkdir -p "/tmp/$RUN_ID"
 cd "/tmp/$RUN_ID"
 
-git clone "$GIT_REPO_URL" --depth 1 --branch "$GIT_COMMIT_SHA" --single-branch .
+git clone "https://github.bibk.top/$GIT_REPO" --depth 1 --branch "$GIT_COMMIT_SHA" --single-branch $(pwd)
 
 if docker ps -a --format '{{.Names}}' | grep -q "$RUN_ID"; then
     docker rm -f $RUN_ID
