@@ -16,8 +16,8 @@ from arealite.api.cli_args import (
     TrainingArgs,
 )
 from arealite.api.trainer_api import TrainerFactory
-from arealite.impl.dataset.VL_dataset import process_VL_dataset,VL_DATASET
-
+from arealite.impl.dataset.VL_dataset import VLDataset
+from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
     """Mock loss function for testing."""
     return torch.mean(logits)
@@ -28,16 +28,27 @@ def mock_loss_weight_fn(logits: torch.Tensor, input_data: Dict) -> float:
     return float(input_data["attention_mask"].sum())
 
 
-def create_dataset(cfg: DatasetConfig):
-    dataset = load_dataset(
-        cfg.path,
-        name=cfg.name,
-        split=cfg.split,
+def create_vl_dataset(cfg: DatasetConfig, model_name_or_path: str) -> VLDataset:
+    processor, tokenizer = load_hf_processor_and_tokenizer(
+        model_name_or_path=model_name_or_path,
     )
-
-    if dataset.info.dataset_name.lower() in VL_DATASET:
-        dataset = process_VL_dataset(dataset)
-    return dataset
+    train_dataset = VLDataset(
+        data_path=cfg.train_files,
+        tokenizer=tokenizer,
+        processor=processor,
+        prompt_key=cfg.prompt_key,
+        answer_key=cfg.answer_key,
+        image_key=cfg.image_key,
+        image_dir=cfg.image_dir,
+        max_prompt_length=cfg.max_prompt_length,
+        truncation="right",
+        format_prompt=cfg.format_prompt,
+        min_pixels=cfg.min_pixels,
+        max_pixels=cfg.max_pixels,
+        filter_overlong_prompts=cfg.filter_overlong_prompts,
+        filter_overlong_prompts_workers=cfg.filter_overlong_prompts_workers,
+    )
+    return train_dataset
 
 
 def test_engine():
@@ -91,10 +102,16 @@ def test_engine():
     )
 
     rollout_controller = None
-    train_dataset = create_dataset(args.train_dataset)
+    train_dataset = create_vl_dataset(
+        args.train_dataset,
+        model_name_or_path=args.trainer.sft.model.path,
+    )
     valid_dataset = None
     if args.valid_dataset is not None:
-        valid_dataset = create_dataset(args.valid_dataset)
+        valid_dataset = create_vl_dataset(
+            args.valid_dataset,
+            model_name_or_path=args.trainer.sft.model.path,
+        )
     if args.trainer is not None:
         trainer_factory = TrainerFactory(args)
         trainer = trainer_factory.make_trainer(
