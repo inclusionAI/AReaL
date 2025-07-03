@@ -183,9 +183,18 @@ class HFEngine(SPMDWrapper):
         assert total_loss_weight != 0
 
         for mb_input in mb_splits.mbs:
-            prompt_mask = mb_input.pop('prompt_mask', None)
-            outputs = self.model(**mb_input)
-            mb_input['prompt_mask'] = prompt_mask
+            kwargs = {
+                "use_cache":mb_input.get("use_cache", False),
+                "pixel_values": mb_input.get("pixel_values", None),
+                "image_grid_thw": mb_input.get("image_grid_thw", None),
+                "max_seqlen": mb_input.get("max_seqlen", None),
+                "cu_seqlens": mb_input.get("cu_seqlens", None),
+                "prompt_mask": mb_input.get("prompt_mask", None),
+            }
+            outputs = self.model(input_ids=mb_input["input_ids"],
+                                 attention_mask=mb_input.get("attention_mask", None),
+                                 position_ids=mb_input.get("position_ids", None),
+                                 **kwargs)
             loss = loss_fn(outputs.logits, mb_input)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
             loss *= loss_scale
