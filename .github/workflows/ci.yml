@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/ci.yml
       - arealite/**
+      - scripts/run_test_arealite.sh
   workflow_dispatch:
 
 jobs:
