@@ -282,7 +282,7 @@ class VLDataset(Dataset):
         self.answer_key = self.dataset_info["answer_key"]
         self.image_key = self.dataset_info.get("image_key", None)
         self.image_dir = self.dataset_info.get("image_dir", None)
-
+        breakpoint()
         self.format_prompt = None
         if format_prompt:
             with open(format_prompt, encoding="utf-8") as f:
@@ -296,7 +296,7 @@ class VLDataset(Dataset):
             )
 
     def _build_vl_question(self, example: Dict[str, Any]) -> List[Dict[str, Any]]:
-        prompt_str: str = example[self.prompt_key]
+        prompt_str= example[self.prompt_key]
         if self.format_prompt:
             format_prompt = Template(self.format_prompt.strip())
             prompt_str = format_prompt.render(content=prompt_str)
@@ -363,9 +363,9 @@ class VLDataset(Dataset):
     def __getitem__(self, index):
         example: dict = self.dataset[index]
         messages = self._build_vl_question(example)
-
         if self.image_key in example:
-            prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+            prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
+
             images = example.pop(self.image_key)
             if self.image_dir is not None and len(images) != 0 and isinstance(images[0], str):  # image paths
                 images = [os.path.join(self.image_dir, image) for image in images]
@@ -373,8 +373,8 @@ class VLDataset(Dataset):
             processed_images = [] if len(images) != 0 else None  # text-only data
             for image in images:
                 processed_images.append(process_image(image, self.min_pixels, self.max_pixels))
-
-            model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt")
+            
+            model_inputs = self.processor(processed_images, prompt, add_special_tokens=False, return_tensors="pt")
             vl_prompt_input_ids= model_inputs.pop("input_ids")[0]
             attention_mask = model_inputs.pop("attention_mask")[0]
             example["multi_modal_data"] = {"images": images}
@@ -432,6 +432,7 @@ class VLDataset(Dataset):
             truncation=self.truncation,
         )
         answer_input_ids = self.tokenizer.encode(example["answer"], add_special_tokens=False)
+        answer_input_ids = torch.tensor(answer_input_ids, dtype=torch.long)
         raw_prompt_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
         if len(raw_prompt_ids) > self.max_prompt_length:
             if self.truncation == "left":
