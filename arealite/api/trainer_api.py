@@ -62,9 +62,10 @@ class Trainer(abc.ABC):
             batch_size=batch_size,
             shuffle=cfg.shuffle,
             pin_memory=cfg.pin_memory,
-            num_workers=cfg.num_workers,
+            num_workers=0,
             drop_last=True,
             collate_fn=collate_fn
+            
         )
 
     def create_valid_dataloader(self):
