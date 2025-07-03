@@ -455,7 +455,7 @@ def split_dict_tensor_with_cu_seqlens(
     backward_indices = np.zeros(bs, dtype=np.int64)
     backward_indices[forward_indices] = np.arange(bs)
     
-    breakpoint()
+    # breakpoint()
     to_split = dict_map(to_split, lambda x: unpack_sequence(x, cu_seqlens=cu_seqlens))
     to_split = dict_map(to_split, lambda x: recorder_list(x, forward_indices))
     to_split = dict_map(to_split, lambda x: torch.cat(x))
@@ -470,11 +470,10 @@ def split_dict_tensor_with_cu_seqlens(
 
         for group_index in group_indices:
             group_pixel_values = [pixel_values[i] for i in group_index]
-            group_image_grid_thw = [image_grid_thw[i] for i in group_index]
+            group_image_grid_thw = [image_grid_thw[i].squeeze()for i in group_index]
 
             # Stack pixel_values for each group (assuming pixel_values is a list of tensors)
             pixel_values_split.append(torch.stack(group_pixel_values))
-            # Stack image_grid_thw for each group (assuming image_grid_thw is a list of tensors)
             image_grid_thw_split.append(torch.stack(group_image_grid_thw))
 
         # Pack the split pixel_values and image_grid_thw back into the data
@@ -483,7 +482,7 @@ def split_dict_tensor_with_cu_seqlens(
     mbs = dict_of_list2list_of_dict(to_split)
 
     results = []
-    breakpoint()
+    # breakpoint()
     # organize splitted micro batches
     assert len(mbs) == len(splitted_lens), (len(mbs), len(splitted_lens))
     for i, (mb, lens) in enumerate(zip(mbs, splitted_lens)):

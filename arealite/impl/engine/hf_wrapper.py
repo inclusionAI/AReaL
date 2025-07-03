@@ -184,7 +184,6 @@ class HFEngine(SPMDWrapper):
         assert total_loss_weight != 0
 
         for mb_input in mb_splits.mbs:
-            breakpoint()
             outputs = self.model(**mb_input)
             loss = loss_fn(outputs.logits, mb_input)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight

@@ -49,7 +49,7 @@ def create_vl_dataset(cfg: DatasetConfig, model_name_or_path: str) -> VLDataset:
 
 def test_engine():
     """Test engine creation and basic functionality."""
-
+    breakpoint()
     train_dataset = DatasetConfig(
         path="/storage/openpsi/data/clevr_count_70k/",
         # name="main",
