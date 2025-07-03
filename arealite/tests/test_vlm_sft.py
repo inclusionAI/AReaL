@@ -33,13 +33,9 @@ def create_vl_dataset(cfg: DatasetConfig, model_name_or_path: str) -> VLDataset:
         model_name_or_path=model_name_or_path,
     )
     train_dataset = VLDataset(
-        data_path=cfg.train_files,
+        data_path=cfg.path,
         tokenizer=tokenizer,
         processor=processor,
-        prompt_key=cfg.prompt_key,
-        answer_key=cfg.answer_key,
-        image_key=cfg.image_key,
-        image_dir=cfg.image_dir,
         max_prompt_length=cfg.max_prompt_length,
         truncation="right",
         format_prompt=cfg.format_prompt,

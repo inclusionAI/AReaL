@@ -12,7 +12,7 @@ from PIL import Image
 from PIL.Image import Image as ImageObject
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer, ProcessorMixin
-
+from .VLdataset_dic import register_VL_dataset
 
 
 def collate_fn(features: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -246,16 +246,22 @@ class VLDataset(Dataset):
     ):
         self.tokenizer = tokenizer
         self.processor = processor
-        self.prompt_key = prompt_key
-        self.answer_key = answer_key
-        self.image_key = image_key
-        self.video_key = video_key
-        self.image_dir = image_dir
-        self.video_fps = video_fps
+        # self.prompt_key = prompt_key
+        # self.answer_key = answer_key
+        # self.image_key = image_key
+        # self.video_key = video_key
+        # self.image_dir = image_dir
+        # self.video_fps = video_fps
         self.max_prompt_length = max_prompt_length
         self.truncation = truncation
         self.min_pixels = min_pixels
         self.max_pixels = max_pixels
+
+        self.dataset_info = register_VL_dataset(self.dataset.info.dataset_name)
+        self.prompt_key = self.dataset_info["question_key"]
+        self.answer_key = self.dataset_info["answer_key"]
+        self.image_key = self.dataset_info.get("image_key", None)
+        self.image_dir = self.dataset_info.get("image_dir", None)
 
         # if "@" in data_path:
         #     data_path, data_split = data_path.split("@")
