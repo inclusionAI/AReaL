@@ -244,8 +244,8 @@ class SFTTrainer(Trainer):
         }
 
         
-        pixel_values = data["pixel_values"]
-        image_grid_thw = data.get("image_grid_thw", None)
+        pixel_values = [pixel_value.cuda() for pixel_value in data["pixel_values"]]
+        image_grid_thw = [image_grid.cuda() for image_grid in data.get("image_grid_thw", [])]
         # form a data batch
         prompt_lens = vl_prompt_length
         input_lens = tokenized_inputs["length"]
