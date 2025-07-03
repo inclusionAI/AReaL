@@ -62,7 +62,7 @@ class Trainer(abc.ABC):
             batch_size=batch_size,
             shuffle=cfg.shuffle,
             pin_memory=cfg.pin_memory,
-            num_workers=0,
+            num_workers=cfg.num_workers,
             drop_last=True,
             collate_fn=collate_fn
             

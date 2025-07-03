@@ -222,25 +222,32 @@ class SFTTrainer(Trainer):
 
     def _get_packed_vl_input(self, data: Dict):
         breakpoint()
-        # questions = data["question"]
-        # solutions = data["solution"]
-        # inputs = [
-        #     question + solution + self.tokenizer.eos_token
-        #     for question, solution in zip(questions, solutions)
-        # ]
-        # tokenized_questions = self._tokenize(questions)
-        # tokenized_inputs = self._tokenize(inputs)
         vl_prompt_input_ids= data["vl_prompt_input_ids"]
+        vl_prompt_length = data["vl_prompt_length"]
         answer_input_ids = data["answer_input_ids"]
+        answer_length = data["answer_length"]
         eos_token_tensor = torch.tensor([self.tokenizer.eos_token_id], dtype=torch.long)
         # merge vl_prompt_input_ids, answer_input_ids, adding eos token,the first column is batch size
-        tokenized_inputs = torch.cat((vl_prompt_input_ids, answer_input_ids, eos_token_tensor), dim=1)
+        tokenized_inputs = {
+            "input_ids": [
+                torch.cat(
+                    [
+                        vl_prompt_input_ids[i],
+                        answer_input_ids[i],
+                        eos_token_tensor,
+                    ],
+                    dim=0,
+                )
+                for i in range(len(vl_prompt_input_ids))
+            ],
+            "length": [vl_prompt_length[i] + answer_length[i] + 1 for i in range(len(vl_prompt_length))],
+        }
 
         breakpoint()
         image= data["multi_modal_data"]["images"]
         # form a data batch
-        prompt_lens = vl_prompt_input_ids.shape[1]
-        input_lens = tokenized_inputs.shape[1]
+        prompt_lens = vl_prompt_length
+        input_lens = tokenized_inputs["length"]
 
         input_lens = torch.tensor(input_lens, dtype=torch.int)
         input_ids = [
