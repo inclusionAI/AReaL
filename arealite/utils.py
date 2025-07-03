@@ -454,6 +454,27 @@ def split_dict_tensor_with_cu_seqlens(
     forward_indices = datapack.flat2d(group_indices)
     backward_indices = np.zeros(bs, dtype=np.int64)
     backward_indices[forward_indices] = np.arange(bs)
+    
+    if data.get("pixel_values", None) is not None:
+        pixel_values = data.get("pixel_values", [])
+        image_grid_thw = data.get("image_grid_thw", [])
+
+        # Prepare the pixel_values and image_grid_thw for each group
+        pixel_values_split = []
+        image_grid_thw_split = []
+
+        for group_index in group_indices:
+            group_pixel_values = [pixel_values[i] for i in group_index]
+            group_image_grid_thw = [image_grid_thw[i] for i in group_index]
+
+            # Stack pixel_values for each group (assuming pixel_values is a list of tensors)
+            pixel_values_split.append(torch.stack(group_pixel_values))
+            # Stack image_grid_thw for each group (assuming image_grid_thw is a list of tensors)
+            image_grid_thw_split.append(torch.stack(group_image_grid_thw))
+
+        # Pack the split pixel_values and image_grid_thw back into the data
+        to_split["pixel_values"] = pixel_values_split
+        to_split["image_grid_thw"] = image_grid_thw_split
 
     to_split = dict_map(to_split, lambda x: unpack_sequence(x, cu_seqlens=cu_seqlens))
     to_split = dict_map(to_split, lambda x: recorder_list(x, forward_indices))
