@@ -15,23 +15,30 @@ from transformers import PreTrainedTokenizer, ProcessorMixin
 from .VLdataset_dic import register_VL_dataset
 
 
+import torch
+import numpy as np
+from collections import defaultdict
+from torch.nn.utils.rnn import pad_sequence
+
 def collate_fn(features: List[Dict[str, Any]]) -> Dict[str, Any]:
     tensors = defaultdict(list)
     non_tensors = defaultdict(list)
+
     for feature in features:
         for key, value in feature.items():
             if isinstance(value, torch.Tensor):
-                tensors[key].append(value)
+                tensors[key].append(value) 
             else:
-                non_tensors[key].append(value)
+                non_tensors[key].append(value) 
 
     for key, value in tensors.items():
-        tensors[key] = torch.stack(value, dim=0)
+        tensors[key] = value  
 
     for key, value in non_tensors.items():
         non_tensors[key] = np.array(value, dtype=object)
 
     return {**tensors, **non_tensors}
+
 
 
 def process_image(
@@ -60,53 +67,53 @@ def process_image(
 
     return image
 
-def pad_sequence_to_length(
-    tensor: torch.Tensor, max_seq_len: int, pad_token_id: int, left_pad: bool = False
-) -> torch.Tensor:
-    """Pad a nD tensors in the last dim to max_seq_len."""
-    if tensor.size(-1) >= max_seq_len:
-        return tensor
+# def pad_sequence_to_length(
+#     tensor: torch.Tensor, max_seq_len: int, pad_token_id: int, left_pad: bool = False
+# ) -> torch.Tensor:
+#     """Pad a nD tensors in the last dim to max_seq_len."""
+#     if tensor.size(-1) >= max_seq_len:
+#         return tensor
 
-    pad_shape = list(tensor.shape)
-    pad_shape[-1] = max_seq_len - tensor.size(-1)
-    pad_tensor = torch.full(pad_shape, fill_value=pad_token_id, dtype=tensor.dtype, device=tensor.device)
-    return torch.cat((pad_tensor, tensor), dim=-1) if left_pad else torch.cat((tensor, pad_tensor), dim=-1)
+#     pad_shape = list(tensor.shape)
+#     pad_shape[-1] = max_seq_len - tensor.size(-1)
+#     pad_tensor = torch.full(pad_shape, fill_value=pad_token_id, dtype=tensor.dtype, device=tensor.device)
+#     return torch.cat((pad_tensor, tensor), dim=-1) if left_pad else torch.cat((tensor, pad_tensor), dim=-1)
 
-def postprocess_data(
-    input_ids: torch.Tensor,
-    attention_mask: torch.Tensor,
-    position_ids: torch.Tensor,
-    max_length: int,
-    pad_token_id: int,
-    left_pad: bool = True,
-    truncation: Literal["left", "right", "error"] = "error",
-):
-    """Pad or truncate data."""
-    assert truncation in ["left", "right", "error"]
-    seq_length = len(input_ids)
-    if seq_length < max_length:
-        input_ids = pad_sequence_to_length(
-            input_ids, max_seq_len=max_length, pad_token_id=pad_token_id, left_pad=left_pad
-        )
-        attention_mask = pad_sequence_to_length(
-            attention_mask, max_seq_len=max_length, pad_token_id=0, left_pad=left_pad
-        )
-        position_ids = pad_sequence_to_length(position_ids, max_seq_len=max_length, pad_token_id=0, left_pad=left_pad)
-    elif seq_length > max_length:
-        if truncation == "left":  # actually, left truncation may not be reasonable
-            input_ids = input_ids[..., -max_length:]
-            attention_mask = attention_mask[..., -max_length:]
-            position_ids = position_ids[..., -max_length:]
-        elif truncation == "right":
-            input_ids = input_ids[..., :max_length]
-            attention_mask = attention_mask[..., :max_length]
-            position_ids = position_ids[..., :max_length]
-        elif truncation == "error":
-            raise RuntimeError(f"Input sequence length {seq_length} is longer than max length {max_length}.")
-        else:
-            raise NotImplementedError(f"Unknown truncation method {truncation}.")
+# def postprocess_data(
+#     input_ids: torch.Tensor,
+#     attention_mask: torch.Tensor,
+#     position_ids: torch.Tensor,
+#     max_length: int,
+#     pad_token_id: int,
+#     left_pad: bool = True,
+#     truncation: Literal["left", "right", "error"] = "error",
+# ):
+#     """Pad or truncate data."""
+#     assert truncation in ["left", "right", "error"]
+#     seq_length = len(input_ids)
+#     if seq_length < max_length:
+#         input_ids = pad_sequence_to_length(
+#             input_ids, max_seq_len=max_length, pad_token_id=pad_token_id, left_pad=left_pad
+#         )
+#         attention_mask = pad_sequence_to_length(
+#             attention_mask, max_seq_len=max_length, pad_token_id=0, left_pad=left_pad
+#         )
+#         position_ids = pad_sequence_to_length(position_ids, max_seq_len=max_length, pad_token_id=0, left_pad=left_pad)
+#     elif seq_length > max_length:
+#         if truncation == "left":  # actually, left truncation may not be reasonable
+#             input_ids = input_ids[..., -max_length:]
+#             attention_mask = attention_mask[..., -max_length:]
+#             position_ids = position_ids[..., -max_length:]
+#         elif truncation == "right":
+#             input_ids = input_ids[..., :max_length]
+#             attention_mask = attention_mask[..., :max_length]
+#             position_ids = position_ids[..., :max_length]
+#         elif truncation == "error":
+#             raise RuntimeError(f"Input sequence length {seq_length} is longer than max length {max_length}.")
+#         else:
+#             raise NotImplementedError(f"Unknown truncation method {truncation}.")
 
-    return input_ids, attention_mask, position_ids
+#     return input_ids, attention_mask, position_ids
 
 def get_rope_index(
     processor: "Qwen2VLProcessor",
@@ -375,8 +382,9 @@ class VLDataset(Dataset):
             for image in images:
                 processed_images.append(process_image(image, self.min_pixels, self.max_pixels))
             
-            model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt")
+            model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt",return_length=True,padding=False,truncation=True,return_attention_mask=False,max_length=self.max_prompt_length)
             vl_prompt_input_ids= model_inputs.pop("input_ids")[0]
+            vl_prompt_length = model_inputs.pop("length")[0]
             attention_mask = model_inputs.pop("attention_mask")[0]
             example["multi_modal_data"] = {"images": images}
         # elif self.video_key in example:
@@ -406,8 +414,9 @@ class VLDataset(Dataset):
         else:
             # prompt = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
             prompt=messages
-            model_inputs = self.tokenizer(prompt, add_special_tokens=False, return_tensors="pt")
+            model_inputs = self.tokenizer(prompt, add_special_tokens=False, return_tensors="pt", return_length=True, padding=False, truncation=True, max_length=self.max_prompt_length)
             vl_prompt_input_ids = model_inputs.pop("input_ids")[0]
+            vl_prompt_length = model_inputs.pop("length")[0]
             attention_mask = model_inputs.pop("attention_mask")[0]
 
         # if self.processor is not None and "Qwen2VLImageProcessor" in self.processor.image_processor.__class__.__name__:
@@ -424,31 +433,42 @@ class VLDataset(Dataset):
         #     position_ids = torch.clip(attention_mask.cumsum(dim=0) - 1, min=0, max=None)  # (seq_length,)
         position_ids = torch.clip(attention_mask.cumsum(dim=0) - 1, min=0, max=None) 
 
-        vl_prompt_input_ids, attention_mask, position_ids = postprocess_data(
-            input_ids=vl_prompt_input_ids,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
+        # vl_prompt_input_ids, attention_mask, position_ids = postprocess_data(
+        #     input_ids=vl_prompt_input_ids,
+        #     attention_mask=attention_mask,
+        #     position_ids=position_ids,
+        #     max_length=self.max_prompt_length,
+        #     pad_token_id=self.tokenizer.pad_token_id,
+        #     left_pad=True,
+        #     truncation=self.truncation,
+        # )
+        answer_input = self.tokenizer(
+            example[self.answer_key],
+            add_special_tokens=False,
+            return_tensors="pt",
+            return_length=True,
+            padding=False,
+            truncation=True,
             max_length=self.max_prompt_length,
-            pad_token_id=self.tokenizer.pad_token_id,
-            left_pad=True,
-            truncation=self.truncation,
         )
-        answer_input_ids = self.tokenizer.encode(example["answer"], add_special_tokens=False)
-        answer_input_ids = torch.tensor(answer_input_ids, dtype=torch.long)
-        raw_prompt_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
-        if len(raw_prompt_ids) > self.max_prompt_length:
-            if self.truncation == "left":
-                raw_prompt_ids = raw_prompt_ids[-self.max_prompt_length :]
-            elif self.truncation == "right":
-                raw_prompt_ids = raw_prompt_ids[: self.max_prompt_length]
-            elif self.truncation == "error":
-                raise RuntimeError(f"Prompt length {len(raw_prompt_ids)} is longer than {self.max_prompt_length}.")
+        answer_input_ids = answer_input.pop("input_ids")[0]
+        answer_length = answer_input.pop("length")[0]
+        # raw_prompt_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
+        # if len(raw_prompt_ids) > self.max_prompt_length:
+        #     if self.truncation == "left":
+        #         raw_prompt_ids = raw_prompt_ids[-self.max_prompt_length :]
+        #     elif self.truncation == "right":
+        #         raw_prompt_ids = raw_prompt_ids[: self.max_prompt_length]
+        #     elif self.truncation == "error":
+        #         raise RuntimeError(f"Prompt length {len(raw_prompt_ids)} is longer than {self.max_prompt_length}.")
 
         example["vl_prompt_input_ids"] = vl_prompt_input_ids
         # example["attention_mask"] = attention_mask
         # example["position_ids"] = position_ids
-        example["raw_prompt_ids"] = raw_prompt_ids
+        # example["raw_prompt_ids"] = raw_prompt_ids
+        example["vl_prompt_length"] = vl_prompt_length
         example["answer_input_ids"] = answer_input_ids
+        example["answer_length"] = answer_length
         example["answer"] = example.pop(self.answer_key)
         
         return example
