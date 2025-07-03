@@ -387,6 +387,8 @@ class VLDataset(Dataset):
             vl_prompt_length = model_inputs.pop("length")[0]
             # attention_mask = model_inputs.pop("attention_mask")[0]
             example["multi_modal_data"] = {"images": images}
+            example["pixel_values"] = model_inputs.pop("pixel_values")
+            example["image_grid_thw"] = model_inputs.pop("image_grid_thw", None)
         # elif self.video_key in example:
         #     prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
         #     videos = example.pop(self.video_key)
