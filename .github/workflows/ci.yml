@@ -18,5 +18,6 @@ jobs:
       - uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.CI_NODE_ADDR }}
+          username: ${{ secrets.CI_NODE_USER }}
           key: ${{ secrets.REMOTE_SSH_KEY }}
           script_path: scripts/run_test_arealite.sh
