@@ -190,7 +190,7 @@ class DatasetConfig:
     #     default=None, metadata={"help": "Directory for the image data (if applicable)"}
     # )
     max_prompt_length: int = field(
-        default=2048, metadata={"help": "Maximum length of the prompt text"}
+        default=512, metadata={"help": "Maximum length of the prompt text"}
     )
     format_prompt: str = field(
         default=None,
