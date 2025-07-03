@@ -131,11 +131,11 @@ class SFTTrainer(Trainer):
         engine_factory = EngineFactory(args)
         self.model = engine_factory.make_engine(config.model)
         self.tokenizer = load_hf_tokenizer(config.model.path)
-        self.processor=None
-        if self.model.engine_config.type._class in VALID_VISION_MODELS:
-            self.processor,self.tokenizer = load_hf_processor_and_tokenizer(
-                config.model.path,
-            )
+        # self.processor=None
+        # if self.model.engine_config.type._class in VALID_VISION_MODELS:
+        #     self.processor,self.tokenizer = load_hf_processor_and_tokenizer(
+        #         config.model.path,
+        #     )
 
         self.mb_spec = config.mb_spec
 
@@ -161,19 +161,19 @@ class SFTTrainer(Trainer):
             max_length=self.mb_spec.max_tokens_per_mb,
             return_attention_mask=False,
         )
-    def _process(self,images):
-        assert self.processor is not None, "Processor is not initialized for vision model"
-        # image_list=[]
-        breakpoint()
-        # for image in images:
-        #     image_list.append(process_image(image))
+    # def _process(self,images):
+    #     assert self.processor is not None, "Processor is not initialized for vision model"
+    #     # image_list=[]
+    #     breakpoint()
+    #     # for image in images:
+    #     #     image_list.append(process_image(image))
 
-        return self.processor(
-            images,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-        )
+    #     return self.processor(
+    #         images,
+    #         return_tensors="pt",
+    #         padding=True,
+    #         truncation=True,
+    #     )
 
     def _get_packed_input(self, data: Dict):
 
@@ -221,20 +221,26 @@ class SFTTrainer(Trainer):
         )
 
     def _get_packed_vl_input(self, data: Dict):
+        # breakpoint()
+        # questions = data["question"]
+        # solutions = data["solution"]
+        # inputs = [
+        #     question + solution + self.tokenizer.eos_token
+        #     for question, solution in zip(questions, solutions)
+        # ]
+        # tokenized_questions = self._tokenize(questions)
+        # tokenized_inputs = self._tokenize(inputs)
+        vl_prompt_input_ids= data["vl_prompt_input_ids"]
+        answer_input_ids = data["answer_input_ids"]
+        eos_token_tensor = torch.tensor([self.tokenizer.eos_token_id], dtype=torch.long, device=vl_prompt_input_ids.device)
+        # merge vl_prompt_input_ids, answer_input_ids, adding eos token,the first column is batch size
+        tokenized_inputs = torch.cat((vl_prompt_input_ids, answer_input_ids, eos_token_tensor), dim=1)
+
         breakpoint()
-        questions = data["question"]
-        solutions = data["solution"]
-        inputs = [
-            question + solution + self.tokenizer.eos_token
-            for question, solution in zip(questions, solutions)
-        ]
-        tokenized_questions = self._tokenize(questions)
-        tokenized_inputs = self._tokenize(inputs)
-        breakpoint()
-        processed_image=self._process(data["image"])
+        image= data["multi_modal_data"]["images"]
         # form a data batch
-        prompt_lens = tokenized_questions["length"]
-        input_lens = tokenized_inputs["length"]
+        prompt_lens = vl_prompt_input_ids.shape[1]
+        input_lens = tokenized_inputs.shape[1]
 
         input_lens = torch.tensor(input_lens, dtype=torch.int)
         input_ids = [
@@ -255,7 +261,7 @@ class SFTTrainer(Trainer):
         prompt_mask = torch.cat(prompt_mask, dim=0)
         total_seqlen = int(cu_seqlens[-1].item())
         position_ids = compute_varlen_position_indices(total_seqlen, cu_seqlens)
-
+        breakpoint()
         return dict(
             input_ids=packed_input_ids.unsqueeze(0).cuda(),
             attention_mask=None,

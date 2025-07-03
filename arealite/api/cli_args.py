@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, field
 from typing import List, Optional
 
 from omegaconf import MISSING
-
+import os
 from realhf.api.cli_args import (
     ClusterSpecConfig,
     ExperimentSaveEvalControl,
@@ -175,7 +175,58 @@ class DatasetConfig:
         default=None,
         metadata={"help": "Dataset preprocessor config. None means no preprocessing."},
     )
+    # ---------------------------------For VLM dataset----------------------------
+    prompt_key: Optional[str] = field(
+        default="prompt", metadata={"help": "Key for the prompt text"}
+    )
+    answer_key: Optional[str] = field(
+        default="answer", metadata={"help": "Key for the answer text"}
+    )
+    image_key: Optional[str] = field(
+        default="images",
+        metadata={"help": "Key for the image data (if applicable)"},
+    )
+    image_dir: Optional[str] = field(
+        default=None, metadata={"help": "Directory for the image data (if applicable)"}
+    )
+    max_prompt_length: int = field(
+        default=2048, metadata={"help": "Maximum length of the prompt text"}
+    )
+    format_prompt: str = field(
+        default=None,
+        metadata={"help": "Format for the prompt text"}
+    )
+    min_pixels: int = field(
+        default=262144,# from verl
+        metadata={"help": "Minimum number of pixels for image filtering"}
+    )
+    max_pixels: int = field(
+        default=4194304,  # from verl
+        metadata={"help": "Maximum number of pixels for image filtering"}
+    )
+    filter_overlong_prompts: bool = field(
+        default=True,
+        metadata={"help": "Whether to filter overlong prompts"}
+    )
+    filter_overlong_prompts_workers: int = field(
+        default=32,
+        metadata={"help": "Number of workers for filtering overlong prompts"}
+    )
+    def post_init(self):
+        if self.image_dir is not None:
+            if os.path.exists(self.image_dir):  # ray job uses absolute path
+                self.image_dir = os.path.abspath(self.image_dir)
+            else:
+                print(f"Image directory {self.image_dir} not found.")
+                self.image_dir = None
 
+        if self.format_prompt is not None:
+            if os.path.exists(self.format_prompt):  # ray job uses absolute path
+                self.format_prompt = os.path.abspath(self.format_prompt)
+            else:
+                print(f"Format prompt file {self.format_prompt} not found.")
+                self.format_prompt = None
+    # ---------------------------------End of VLM dataset----------------------------
 
 ## Training backend configs. ##
 

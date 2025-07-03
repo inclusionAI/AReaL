@@ -10,7 +10,7 @@ from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import TrainerConfig, TrainingArgs
-
+from arealite.impl.dataset.VL_dataset import collate_fn
 
 if TYPE_CHECKING:
     from arealite.system.rollout_controller import RolloutController
