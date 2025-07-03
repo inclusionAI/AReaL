@@ -408,19 +408,19 @@ class VLDataset(Dataset):
             vl_prompt_input_ids = model_inputs.pop("input_ids")[0]
             attention_mask = model_inputs.pop("attention_mask")[0]
 
-        breakpoint()
-        if self.processor is not None and "Qwen2VLImageProcessor" in self.processor.image_processor.__class__.__name__:
-            # qwen2vl mrope
-            position_ids = get_rope_index(
-                self.processor,
-                input_ids=vl_prompt_input_ids,
-                image_grid_thw=model_inputs.get("image_grid_thw", None),
-                video_grid_thw=model_inputs.get("video_grid_thw", None),
-                second_per_grid_ts=model_inputs.get("second_per_grid_ts", None),
-                attention_mask=attention_mask,
-            )  # (3, seq_length)
-        else:
-            position_ids = torch.clip(attention_mask.cumsum(dim=0) - 1, min=0, max=None)  # (seq_length,)
+        # if self.processor is not None and "Qwen2VLImageProcessor" in self.processor.image_processor.__class__.__name__:
+        #     # qwen2vl mrope
+        #     position_ids = get_rope_index(
+        #         self.processor,
+        #         input_ids=vl_prompt_input_ids,
+        #         image_grid_thw=model_inputs.get("image_grid_thw", None),
+        #         video_grid_thw=model_inputs.get("video_grid_thw", None),
+        #         second_per_grid_ts=model_inputs.get("second_per_grid_ts", None),
+        #         attention_mask=attention_mask,
+        #     )  # (3, seq_length)
+        # else:
+        #     position_ids = torch.clip(attention_mask.cumsum(dim=0) - 1, min=0, max=None)  # (seq_length,)
+        position_ids = torch.clip(attention_mask.cumsum(dim=0) - 1, min=0, max=None) 
 
         vl_prompt_input_ids, attention_mask, position_ids = postprocess_data(
             input_ids=vl_prompt_input_ids,
