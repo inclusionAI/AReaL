@@ -22,6 +22,7 @@ docker run \
     areal-env:latest \
     bash -c "
         pip uninstall -y transformer-engine
+        export HF_ENDPOINT=https://hf-mirror.com
         python -m pytest arealite/
     "
 

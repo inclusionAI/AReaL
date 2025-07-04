@@ -23,7 +23,7 @@ from arealite.utils import compute_varlen_position_indices
 from realhf.impl.model.utils.padding import unpad_input
 
 VOCAB_SIZE = 100
-MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "Qwen/Qwen2-0.5B"
 
 
 @pytest.fixture(scope="module")

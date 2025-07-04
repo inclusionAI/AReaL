@@ -22,7 +22,7 @@ from realhf.base import name_resolve, names, seeding
 
 EXPR_NAME = "test_rollout_controller"
 TRIAL_NAME = "test_rollout_controller"
-MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "Qwen/Qwen2-0.5B"
 
 
 @pytest.fixture(scope="module")
