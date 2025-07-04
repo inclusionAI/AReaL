@@ -6,12 +6,6 @@ GIT_COMMIT_SHA=${GIT_COMMIT_SHA:?"GIT_COMMIT_SHA is not set"}
 
 echo "GIT_COMMIT_SHA: $GIT_COMMIT_SHA"
 
-# If there is already an image named areal-env, skip.
-if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q 'areal-env:latest'; then
-    echo "Image areal-env already exists, skipping build."
-    exit 0
-fi
-
 RUN_ID="areal-$GIT_COMMIT_SHA"
 cd "/tmp/$RUN_ID"
 
