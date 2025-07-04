@@ -220,64 +220,68 @@ class SFTTrainer(Trainer):
             use_cache=False,
         )
 
-    def _get_packed_vl_input(self, data: Dict):
+    def _get_packed_vl_input(self, data: Dict)-> Dict[str, torch.Tensor]:
+        """
+        Get packed vision-language input tensors.
+        """
+        device=self.model.device()
         # breakpoint()
         vl_prompt_input_ids= data["vl_prompt_input_ids"]
         vl_prompt_length = data["vl_prompt_length"]
         answer_input_ids = data["answer_input_ids"]
         answer_length = data["answer_length"]
-        eos_token_tensor = torch.tensor([self.tokenizer.eos_token_id], dtype=torch.long)
+        eos_token_tensor = torch.tensor([self.tokenizer.eos_token_id], dtype=torch.long, device=device)  # 设置eos_token_tensor的设备
         # merge vl_prompt_input_ids, answer_input_ids, adding eos token,the first column is batch size
         tokenized_inputs = {
             "input_ids": [
                 torch.cat(
                     [
-                        vl_prompt_input_ids[i],
-                        answer_input_ids[i],
+                        vl_prompt_input_ids[i].to(device),  
+                        answer_input_ids[i].to(device),
                         eos_token_tensor,
                     ],
                     dim=0,
                 )
-                for i in range(len(vl_prompt_input_ids))
+            for i in range(len(vl_prompt_input_ids))
             ],
             "length": [vl_prompt_length[i] + answer_length[i] + 1 for i in range(len(vl_prompt_length))],
         }
 
         
-        pixel_values = [pixel_value.cuda() for pixel_value in data["pixel_values"]]
-        image_grid_thw = [image_grid_thw_.cuda() for image_grid_thw_ in data["image_grid_thw"]]
+        pixel_values = [pixel_value.to(device) for pixel_value in data["pixel_values"]]
+        image_grid_thw = [image_grid_thw_.to(device) for image_grid_thw_ in data["image_grid_thw"]]
         # form a data batch
         prompt_lens = vl_prompt_length
         input_lens = tokenized_inputs["length"]
 
-        input_lens = torch.tensor(input_lens, dtype=torch.int)
+        input_lens = torch.tensor(input_lens, dtype=torch.int, device=device)
         input_ids = [
-            torch.tensor(seq, dtype=torch.long) for seq in tokenized_inputs["input_ids"]
+            torch.tensor(seq, dtype=torch.long, device=device) for seq in tokenized_inputs["input_ids"]
         ]
 
         prompt_mask = []
         for input_len, prompt_len in zip(input_lens, prompt_lens):
             assert input_len >= prompt_len, (input_len, prompt_len)
             pm = [1] * prompt_len + [0] * (input_len - prompt_len)
-            prompt_mask.append(torch.tensor(pm, dtype=torch.bool))
+            prompt_mask.append(torch.tensor(pm, dtype=torch.bool, device=device))
 
         cu_seqlens = torch.nn.functional.pad(
             input_lens.cumsum(0, dtype=torch.int), (1, 0)
-        )
+        ).to(device)
         max_seqlen = int(torch.max(input_lens).item())
-        packed_input_ids = torch.cat(input_ids, dim=0)
-        prompt_mask = torch.cat(prompt_mask, dim=0)
+        packed_input_ids = torch.cat(input_ids, dim=0).to(device)
+        prompt_mask = torch.cat(prompt_mask, dim=0).to(device)
         total_seqlen = int(cu_seqlens[-1].item())
         position_ids = compute_varlen_position_indices(total_seqlen, cu_seqlens)
         # breakpoint()
         return dict(
-            input_ids=packed_input_ids.unsqueeze(0).cuda(),
+            input_ids=packed_input_ids.unsqueeze(0).to(device),
             attention_mask=None,
-            position_ids=position_ids.unsqueeze(0).cuda(),
-            prompt_mask=prompt_mask.unsqueeze(0).cuda(),
+            position_ids=position_ids.unsqueeze(0).to(device),
+            prompt_mask=prompt_mask.unsqueeze(0).to(device),
             pixel_values=pixel_values,
             image_grid_thw=image_grid_thw,
-            cu_seqlens=cu_seqlens.cuda(),
+            cu_seqlens=cu_seqlens.to(device),
             max_seqlen=max_seqlen,
             use_cache=False,
         )

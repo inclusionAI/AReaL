@@ -251,6 +251,12 @@ class VLDataset(Dataset):
         filter_overlong_prompts_workers: int = 16,
         data_split: str = "train",
     ):
+        '''
+        Universal Vision Language Dataset
+        loading a dataset from huggingface hub or local directory
+        register the dataset in VL_DATASET_KEY
+        operator:format_prompt, filter_overlong_prompts
+        '''
         self.tokenizer = tokenizer
         self.processor = processor
         # self.prompt_key = prompt_key
@@ -303,6 +309,11 @@ class VLDataset(Dataset):
             )
 
     def _build_vl_question(self, example: Dict[str, Any]) -> List[Dict[str, Any]]:
+        '''
+        Build the VL question from the example.
+        input: example dict with keys: prompt, answer, images
+        output standard format according to the processor
+        '''
         prompt_str= example[self.prompt_key]
         if self.format_prompt:
             format_prompt = Template(self.format_prompt.strip())
@@ -372,6 +383,17 @@ class VLDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, index):
+        '''
+        Get item from the dataset.
+        input:example key: prompt, answer, images
+        output: example dict with keys:
+            vl_prompt_input_ids: input ids of the prompt
+            vl_prompt_length: length of the prompt
+            answer_input_ids: input ids of the answer
+            answer_length: length of the answer
+            pixel_values: processed images if available
+            multi_modal_data: dict with images or videos if available
+        '''
         example: dict = self.dataset[index]
         messages = self._build_vl_question(example)
         if self.image_key in example:
