@@ -207,8 +207,7 @@ def splited_sum_bool_tensor(t: torch.BoolTensor, chunk_size=256 * 1024 * 1024) -
 
 
 @dataclasses.dataclass
-class PPOActor(model_api.ModelInterface):
-    engine: xxx
+class PPOActorInterface(model_api.ModelInterface):
     n_minibatches: int = 4
 
     # Use dict here to allow argument passing through commandline.
