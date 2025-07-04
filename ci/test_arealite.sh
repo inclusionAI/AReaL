@@ -24,11 +24,6 @@ docker run \
         pip uninstall -y transformer-engine
         export HF_ENDPOINT=https://hf-mirror.com
         python -m pytest -s arealite/
-    "
-
-if [ $status -ne 0 ]; then
-    docker rm -f $RUN_ID
-    exit 1
-fi
+    " || docker rm -f $RUN_ID && exit 1
 
 docker rm -f $RUN_ID

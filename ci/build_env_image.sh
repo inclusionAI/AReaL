@@ -32,12 +32,7 @@ docker run \
         pip config unset global.extra-index-url
         pip config set global.no-cache-dir false
         bash examples/env/scripts/setup-pip-deps.sh
-    "
-
-if [ $? -ne 0 ]; then
-    docker rm -f $RUN_ID
-    exit 1
-fi
+    " || docker rm -f $RUN_ID && exit 1
 
 docker commit $RUN_ID areal-env:latest
 docker rm -f $RUN_ID
