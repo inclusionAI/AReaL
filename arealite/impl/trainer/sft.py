@@ -224,7 +224,7 @@ class SFTTrainer(Trainer):
         """
         Get packed vision-language input tensors.
         """
-        device=self.model.device()
+        device=self.model.model.device
         # breakpoint()
         vl_prompt_input_ids= data["vl_prompt_input_ids"]
         vl_prompt_length = data["vl_prompt_length"]
