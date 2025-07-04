@@ -21,6 +21,7 @@ docker run \
     -w /workspace \
     areal-env:latest \
     bash -c "
+        pip uninstall transformer-engine
         python -m pytest arealite/
     "
 
