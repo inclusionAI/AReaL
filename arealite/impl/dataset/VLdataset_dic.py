@@ -20,7 +20,7 @@ VL_DATASET_KEY={
     }
 }
 
-def register_VL_dataset(dataset_name: str):
+def register_VL_dataset(dataset_name: str) -> Dict[str, Union[str, List[str]]]:
     if dataset_name.lower() not in VL_DATASET_KEY:
         raise ValueError(f"VL dataset {dataset_name} is not supported. Supported datasets are: {VL_DATASET_KEY}")
     return VL_DATASET_KEY[dataset_name.lower()]

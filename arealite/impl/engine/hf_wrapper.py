@@ -114,7 +114,6 @@ class HFEngine(SPMDWrapper):
                 torch_dtype=dtype,
                 attn_implementation="flash_attention_2",
                 trust_remote_code=True,
-                device_map="cuda:0",
             )
         else:
             model = AutoModelForCausalLM.from_pretrained(
