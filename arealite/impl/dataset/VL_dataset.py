@@ -307,6 +307,9 @@ class VLDataset(Dataset):
         if self.format_prompt:
             format_prompt = Template(self.format_prompt.strip())
             prompt_str = format_prompt.render(content=prompt_str)
+        if self.image_key in example:
+            image_token=self.processor.image_token if self.processor is not None else "<image>"
+            prompt_str = prompt_str.replace("<image>", image_token)
 
         # if self.image_key in example:
         #     content_list = []
@@ -328,8 +331,8 @@ class VLDataset(Dataset):
         #             content_list.append({"type": "text", "text": content})
 
         #     return [{"role": "user", "content": content_list}]
-        # else:
-        #     return [{"role": "user", "content": prompt_str}]
+        else:
+            return [{"role": "user", "content": prompt_str}]
         return prompt_str
 
     def _filter_overlong_prompts(self, example: Dict[str, Any]) -> bool:
@@ -372,8 +375,8 @@ class VLDataset(Dataset):
         example: dict = self.dataset[index]
         messages = self._build_vl_question(example)
         if self.image_key in example:
-            # prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
             prompt=messages
+            # prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
             images = example.pop(self.image_key)
             if self.image_dir is not None and len(images) != 0 and isinstance(images[0], str):  # image paths
                 images = [os.path.join(self.image_dir, image) for image in images]
@@ -381,8 +384,8 @@ class VLDataset(Dataset):
             processed_images = [] if len(images) != 0 else None  # text-only data
             for image in images:
                 processed_images.append(process_image(image, self.min_pixels, self.max_pixels))
-            
-            model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt",return_length=True,padding=False,truncation=True,return_attention_mask=False,max_length=self.max_prompt_length)
+
+            model_inputs = self.processor(images=processed_images, text=[prompt], add_special_tokens=False, return_tensors="pt",return_length=True,padding=False,truncation=True,return_attention_mask=False,max_length=self.max_prompt_length)
             vl_prompt_input_ids= model_inputs.pop("input_ids")[0]
             vl_prompt_length = model_inputs.pop("length")[0]
             # attention_mask = model_inputs.pop("attention_mask")[0]
