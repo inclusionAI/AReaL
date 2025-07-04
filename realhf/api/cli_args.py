@@ -303,7 +303,6 @@ class SGLangConfig:
     schedule_policy: str = "lpm"
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
-    hybrid_train: bool = False
     dtype: str = "float16"
     kv_cache_dtype: str = "auto"
 
@@ -318,15 +317,19 @@ class SGLangConfig:
     # and update prometheus metrics
     decode_log_interval: int = 1
 
+    # Not used.
+    hybrid_train: bool = False
+
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
     def build_cmd(
         sglang_config: "SGLangConfig",
         model_path,
         tp_size,
-        server_index,
         base_gpu_id,
         dist_init_addr: Optional[str] = None,
+        served_model_name: Optional[str] = None,
+        skip_tokenizer_init: bool = True,
     ):
         from realhf.base import constants, network, pkg_version, seeding
         from realhf.experiments.common.utils import asdict as conf_as_dict
@@ -335,6 +338,8 @@ class SGLangConfig:
         args.pop("hybrid_train")
         args["random_seed"] = seeding.get_seed()
 
+        if served_model_name is None:
+            served_model_name = model_path
         host_ip = network.gethostip()
         host = "localhost" if not sglang_config.enable_metrics else host_ip
         args = dict(
@@ -346,9 +351,9 @@ class SGLangConfig:
             load_format="auto",
             trust_remote_code=True,
             device="cuda",
-            served_model_name=f"{constants.experiment_name()}/{constants.trial_name()}/{model_path}",
+            served_model_name=served_model_name,
             is_embedding=False,
-            skip_tokenizer_init=True,
+            skip_tokenizer_init=skip_tokenizer_init,
             # Other runtime options
             tp_size=tp_size,
             # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
@@ -555,6 +560,10 @@ class GenerationHyperparameters:
     temperature: float = field(
         default=1.0,
         metadata={"help": "Sampling temperature. Higher values increase diversity."},
+    )
+    stop_token_ids: List[int] = field(
+        default_factory=list,
+        metadata={"help": "Stop generation when encoutering these token ids."},
     )
 
     # Deprecated parameters
