@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+set -e
+
+GIT_COMMIT_SHA=${GIT_COMMIT_SHA:?"GIT_COMMIT_SHA is not set"}
+
+echo "GIT_COMMIT_SHA: $GIT_COMMIT_SHA"
+
+# If there is already an image named areal-env, skip.
+if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q 'areal-env:latest'; then
+    echo "Image areal-env already exists, skipping build."
+    exit 0
+fi
+
+RUN_ID="areal-$GIT_COMMIT_SHA"
+cd "/tmp/$RUN_ID"
+
+if docker ps -a --format '{{.Names}}' | grep -q "$RUN_ID"; then
+    docker rm -f $RUN_ID
+fi
+
+docker run \
+    --name $RUN_ID \
+    --gpus all \
+    --shm-size=8g \
+    -v $(pwd):/workspace \
+    -w /workspace \
+    areal-env:latest \
+    bash -c "
+        python -m pytest arealite/
+    "
+
+if [ $status -ne 0 ]; then
+    docker rm -f $RUN_ID
+    exit 1
+fi
+
+docker rm -f $RUN_ID

@@ -2,22 +2,18 @@
 
 set -e
 
-GIT_REPO=${GIT_REPO:?"GIT_REPO is not set"}
 GIT_COMMIT_SHA=${GIT_COMMIT_SHA:?"GIT_COMMIT_SHA is not set"}
-RUN_ID="areal-$(date +%s%N)"
 
-echo "GIT_REPO: $GIT_REPO"
 echo "GIT_COMMIT_SHA: $GIT_COMMIT_SHA"
 
-mkdir -p "/tmp/$RUN_ID"
+# If there is already an image named areal-env, skip.
+if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q 'areal-env:latest'; then
+    echo "Image areal-env already exists, skipping build."
+    exit 0
+fi
+
+RUN_ID="areal-$GIT_COMMIT_SHA"
 cd "/tmp/$RUN_ID"
-
-git init
-git remote add origin "https://github.bibk.top/$GIT_REPO"
-git fetch --depth 1 origin "$GIT_COMMIT_SHA"
-git checkout FETCH_HEAD
-
-mkdir -p /tmp/pip-cache
 
 if docker ps -a --format '{{.Names}}' | grep -q "$RUN_ID"; then
     docker rm -f $RUN_ID
@@ -28,7 +24,6 @@ docker run \
     --gpus all \
     --shm-size=8g \
     -v $(pwd):/workspace \
-    -v /tmp/pip-cache:/root/.cache/pip \
     -w /workspace \
     nvcr.io/nvidia/pytorch:25.01-py3 \
     bash -c "
@@ -37,12 +32,12 @@ docker run \
         pip config unset global.extra-index-url
         pip config set global.no-cache-dir false
         bash examples/env/scripts/setup-pip-deps.sh
-        python -m pytest arealite/
     "
-status=$?
 
-docker rm -f $RUN_ID
-
-if [ $status -ne 0 ]; then
+if [ $? -ne 0 ]; then
+    docker rm -f $RUN_ID
     exit 1
 fi
+
+docker commit $RUN_ID areal-env:latest
+docker rm -f $RUN_ID
