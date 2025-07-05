@@ -21,9 +21,8 @@ docker run \
     -w /workspace \
     areal-env:latest \
     bash -c "
-        pip uninstall -y transformer-engine
-        export HF_ENDPOINT=https://hf-mirror.com
-        python -m pytest -s arealite/
+        mv /sglang ./sglang
+        HF_ENDPOINT=https://hf-mirror.com python -m pytest -s arealite/
     " || docker rm -f $RUN_ID && exit 1
 
 docker rm -f $RUN_ID

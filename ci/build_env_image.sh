@@ -30,8 +30,9 @@ docker run \
         python -m pip install --upgrade pip
         pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
         pip config unset global.extra-index-url
-        pip config set global.no-cache-dir false
         bash examples/env/scripts/setup-pip-deps.sh
+        pip uninstall -y transformer-engine
+        mv ./sglang /sglang
     " || docker rm -f $RUN_ID && exit 1
 
 docker commit $RUN_ID areal-env:latest
