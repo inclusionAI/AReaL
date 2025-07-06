@@ -11,6 +11,8 @@ on:
 jobs:
   test-arealite:
     runs-on: ubuntu-latest
+    concurrency:
+      group: test-arealite
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +34,7 @@ jobs:
           host: ${{ secrets.CI_NODE_ADDR }}
           username: ${{ secrets.CI_NODE_USER }}
           key: ${{ secrets.REMOTE_SSH_KEY }}
-          command_timeout: 60m
+          command_timeout: 2h
           envs: GIT_COMMIT_SHA
           script_path: ci/build_env_image.sh
 
@@ -43,6 +45,6 @@ jobs:
           host: ${{ secrets.CI_NODE_ADDR }}
           username: ${{ secrets.CI_NODE_USER }}
           key: ${{ secrets.REMOTE_SSH_KEY }}
-          command_timeout: 60m
+          command_timeout: 1h
           envs: GIT_COMMIT_SHA
           script_path: ci/test_arealite.sh
