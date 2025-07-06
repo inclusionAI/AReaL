@@ -23,6 +23,6 @@ docker run \
     bash -c "
         mv /sglang ./sglang
         HF_ENDPOINT=https://hf-mirror.com python -m pytest -s arealite/
-    " || docker rm -f $RUN_ID && exit 1
+    " || { docker rm -f $RUN_ID; exit 1; }
 
 docker rm -f $RUN_ID

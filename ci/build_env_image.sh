@@ -33,7 +33,7 @@ docker run \
         bash examples/env/scripts/setup-pip-deps.sh
         pip uninstall -y transformer-engine
         mv ./sglang /sglang
-    " || docker rm -f $RUN_ID && exit 1
+    " || { docker rm -f $RUN_ID; exit 1; }
 
 docker commit $RUN_ID areal-env:latest
 docker rm -f $RUN_ID
