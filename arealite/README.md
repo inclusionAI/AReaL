@@ -57,7 +57,7 @@ The implementation layer contains concrete implementations of the API interfaces
 - **`fsdp_wrapper.py`**: FSDP-based training engine using PyTorch FSDP2
 - **`trainer/grpo.py`**: GRPO trainer implementation for reinforcement learning
 - **`rollout_controller.py`**: Coordinates rollout data collection across workers
-- **`rlvr/`**: RLVR (RL via Verification and Refinement) collector implementations
+- **`rlvr/`**: RLVR collector implementations
 - **`agentic/`**: Agentic collector implementations (math, code tasks)
 
 #### 3. CLI Layer (`cli/`)
