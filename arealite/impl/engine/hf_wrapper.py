@@ -7,8 +7,8 @@ from typing import Any, Callable, Dict, List, Optional
 import torch
 import torch.distributed as dist
 import transformers
-from transformers import AutoConfig, AutoModelForCausalLM
-
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText
+from arealite.impl.engine.constant import VALID_VISION_MODELS 
 from arealite.api.cli_args import (
     EngineConfig,
     MicroBatchSpec,
@@ -110,6 +110,24 @@ class HFEngine(SPMDWrapper):
 
         model = model.cuda()
 
+        if self.engine_config.type._class in VALID_VISION_MODELS:
+            model=AutoModelForImageTextToText.from_pretrained(
+                pretrained_model_name_or_path=self.engine_config.path,
+                torch_dtype=dtype,
+                attn_implementation="flash_attention_2",
+                trust_remote_code=True,
+                device_map="auto",
+            )
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                pretrained_model_name_or_path=self.engine_config.path,
+                torch_dtype=dtype,
+                attn_implementation="flash_attention_2",
+                trust_remote_code=True,
+                device_map="auto",
+            )
+
+
         self.model = model
 
         # Set up optimizer
@@ -159,7 +177,9 @@ class HFEngine(SPMDWrapper):
         assert self.lr_scheduler is not None
 
         self.optimizer.zero_grad()
+        
         mb_splits = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
+
         total_loss_weight = torch.tensor(
             sum([loss_weight_fn(mb) for mb in mb_splits.mbs]), dtype=torch.float32
         )

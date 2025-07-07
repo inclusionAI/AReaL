@@ -56,6 +56,24 @@ class DatasetFactory:
             from arealite.impl.dataset.areal import process_areal_dataset
 
             return process_areal_dataset(dataset, tokenizer=tokenizer)
+        if config.preprocessor.type == "llava_cot":
+            tokenizer_path = self.args.rollout.llm_client.tokenizer_path
+            assert self.args.rollout.llm_client.tokenizer_path is not None
+            from realhf.api.core.data_api import load_hf_processor_and_tokenizer
+
+            processor, _ = load_hf_processor_and_tokenizer(tokenizer_path)
+            from arealite.impl.dataset.llava_cot100k import process_llava_cot_dataset
+
+            return process_llava_cot_dataset(dataset, processor=processor)
+        if config.preprocessor.type == "math_instruct":
+            tokenizer_path = self.args.rollout.llm_client.tokenizer_path
+            assert self.args.rollout.llm_client.tokenizer_path is not None
+            from realhf.api.core.data_api import load_hf_processor_and_tokenizer
+
+            processor, _ = load_hf_processor_and_tokenizer(tokenizer_path)
+            from arealite.impl.dataset.MM_MathInstruct import process_MathInstruct_dataset
+
+            return process_MathInstruct_dataset(dataset, processor=processor)
         raise NotImplementedError(
             f"Unknown dataset preprocessor type: {config.preprocessor.type}"
         )
