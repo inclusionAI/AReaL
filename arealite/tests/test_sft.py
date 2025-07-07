@@ -105,4 +105,7 @@ def test_sft():
         trainer.train()
 
     print("All tests passed!")
+<<<<<<< HEAD
 test_engine()
+=======
+>>>>>>> 50101070963e7d9931d035697afdba5075df2aa7

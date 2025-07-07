@@ -55,6 +55,15 @@ logger = logging.getLogger("SFT Trainer")
 #     if image.mode != "RGB":
 #         image = image.convert("RGB")
 #     return image
+<<<<<<< HEAD
+=======
+from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
+from realhf.api.core.model_api import FinetuneSpec
+from realhf.base import logging, stats_tracker, timeutil
+
+logger = logging.getLogger("SFT Trainer")
+
+>>>>>>> 50101070963e7d9931d035697afdba5075df2aa7
 
 def compute_packed_sft_loss(
     logits: torch.Tensor,
@@ -159,6 +168,7 @@ class SFTTrainer(Trainer):
             max_length=self.mb_spec.max_tokens_per_mb,
             return_attention_mask=False,
         )
+<<<<<<< HEAD
     # def _process(self,images):
     #     assert self.processor is not None, "Processor is not initialized for vision model"
     #     # image_list=[]
@@ -172,6 +182,8 @@ class SFTTrainer(Trainer):
     #         padding=True,
     #         truncation=True,
     #     )
+=======
+>>>>>>> 50101070963e7d9931d035697afdba5075df2aa7
 
     def _get_packed_input(self, data: List[Dict[str, Any]]):
         data: Dict[str, List[Any]] = list_of_dict2dict_of_list(data)
@@ -301,8 +313,11 @@ class SFTTrainer(Trainer):
             logger.info(f"total_epochs={total_epochs} step_per_epoch={steps_per_epoch}")
         global_step = 0
         start_time = time.monotonic()
+<<<<<<< HEAD
         # dataloader: self.train_data_loader
 
+=======
+>>>>>>> 50101070963e7d9931d035697afdba5075df2aa7
         for epoch in range(total_epochs):
             for step, data in enumerate(self.train_dataloader):
                 timing_stats = {}
