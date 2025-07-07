@@ -60,7 +60,7 @@ def test_sft():
     )
 
     engine_config = EngineConfig(
-        path="/storage/openpsi/models/Qwen__Qwen3-1.7B/",
+        path="Qwen/Qwen2-0.5B",
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
         backend=EngineBackendConfig(type="hf"),
