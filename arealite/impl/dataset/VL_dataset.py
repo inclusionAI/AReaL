@@ -20,6 +20,8 @@ import numpy as np
 from collections import defaultdict
 from torch.nn.utils.rnn import pad_sequence
 
+
+
 def collate_fn(features: List[Dict[str, Any]]) -> Dict[str, Any]:
     tensors = defaultdict(list)
     non_tensors = defaultdict(list)
@@ -291,7 +293,7 @@ class VLDataset(Dataset):
         # else:
         #     # load remote dataset from huggingface hub
         #     self.dataset = load_dataset(data_path, split=data_split)
-        self.dataset = load_dataset(data_path, split=data_split)
+        self.dataset = load_dataset(data_path, split=data_split,streaming=True)
 
         self.dataset_info = register_VL_dataset(self.dataset.info.dataset_name)
         self.prompt_key = self.dataset_info["question_key"]

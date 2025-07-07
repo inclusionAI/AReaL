@@ -141,5 +141,15 @@ class TrainerFactory:
                 valid_dataset=valid_dataset,
                 rollout_controller=rollout_controller,
             )
+        elif config.type == "vl_sft":
+            from arealite.impl.trainer.vl_sft import VL_SFTTrainer
+
+            return VL_SFTTrainer(
+                self.args,
+                config,
+                train_dataset=train_dataset,
+                valid_dataset=valid_dataset,
+                rollout_controller=rollout_controller,
+            )
         else:
             raise NotImplementedError(f"Unknown trainer type: {config.type}")

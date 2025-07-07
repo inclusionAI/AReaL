@@ -1,7 +1,6 @@
 """Test script for GRPO Trainer implementation."""
 
 import pytest
-import torch
 from datasets import load_dataset
 
 from arealite.api.cli_args import (
@@ -9,21 +8,19 @@ from arealite.api.cli_args import (
     EngineBackendConfig,
     EngineConfig,
     GRPOTrainerConfig,
-    LLMClientConfig,
-    ModelFamily,
     OptimizerConfig,
     RLVRConfig,
     TrainerConfig,
     TrainingArgs,
 )
 from arealite.api.io_struct import FinetuneSpec
-from arealite.api.rollout_api import RolloutWorkflowFactory
+from arealite.api.rollout_api import RolloutCollectorFactory
 from arealite.impl.trainer.grpo import SpmdGRPOTrainer
 from arealite.system.rollout_controller import RolloutController
 from arealite.tests.utils import mock_rollout_output
 from realhf.base import constants, name_resolve, seeding
-from arealite.impl.dataset.VL_dataset import VLDataset
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
+from arealite.impl.dataset.VL_dataset import VLDataset
 EXPR_NAME = "test_vlm_grpo"
 TRIAL_NAME = "test_vlm_grpo"
 MODEL_PATH = "/storage/openpsi/models/Qwen2-VL-7B"
@@ -45,14 +42,11 @@ def create_vl_dataset(cfg: DatasetConfig, model_name_or_path: str) -> VLDataset:
         filter_overlong_prompts_workers=cfg.filter_overlong_prompts_workers,
     )
     return train_dataset
-
-
 @pytest.fixture(scope="module")
 def args():
     args = TrainingArgs(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
     constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     seeding.set_random_seed(args.seed, EXPR_NAME)
-    args.rollout.llm_client.tokenizer_path = MODEL_PATH
     args.train_dataset = DatasetConfig(
         path="/storage/openpsi/data/clevr_count_70k/",
         name="main",
@@ -64,23 +58,19 @@ def args():
     )
     args.trainer = TrainerConfig(type="grpo", grpo=GRPOTrainerConfig())
     args.trainer.grpo.actor = EngineConfig(
-        type=ModelFamily("qwen2_vl", False),
         path=MODEL_PATH,
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
         backend=EngineBackendConfig(type="hf"),
     )
     args.trainer.grpo.ref = EngineConfig(
-        type=ModelFamily("qwen2_vl", False),
         path=MODEL_PATH,
         gradient_checkpointing=False,
         backend=EngineBackendConfig(type="hf"),
     )
-    args.rollout.llm_client = LLMClientConfig(
-        server_backend="sglang",
-        tokenizer_path=MODEL_PATH,
-    )
-    args.rollout.workflow.rlvr = RLVRConfig(solution_path="nothing")
+    args.rollout.model_path = MODEL_PATH
+    args.rollout.server_backend = "sglang"
+    args.rollout.collector.rlvr = RLVRConfig(solution_path="nothing")
     args.rollout.gconfig.max_new_tokens = 16
     name_resolve.reconfigure(args.cluster.name_resolve)
     yield args
@@ -99,13 +89,10 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
     args.trainer.grpo.use_decoupled_loss = use_decoupled_loss
     args.train_dataset.batch_size = bs
     # Create mock rollout controller and trainer
-    rollout_factory = RolloutWorkflowFactory(args)
-    workflow = rollout_factory.make_workflow(args.rollout.workflow)
-    rollout_controller = RolloutController(args, args.rollout, workflow=workflow)
-    dataset = create_vl_dataset(
-        args.train_dataset,
-        model_name_or_path=MODEL_PATH
-    )
+    rollout_factory = RolloutCollectorFactory(args)
+    collector = rollout_factory.make_collector(args.rollout.collector)
+    rollout_controller = RolloutController(args, args.rollout, collector=collector)
+    dataset = create_vl_dataset(args.train_dataset, MODEL_PATH)
 
     trainer = SpmdGRPOTrainer(
         args=args,

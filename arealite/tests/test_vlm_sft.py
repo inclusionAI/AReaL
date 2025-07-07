@@ -3,19 +3,20 @@
 from typing import Dict
 import os
 import torch
-from datasets import load_dataset
+from datasets import load_dataset, Image
 
 from arealite.api.cli_args import (
     DatasetConfig,
     EngineBackendConfig,
+    DatasetPreprocessor,
     EngineConfig,
     OptimizerConfig,
     SFTTrainerConfig,
     TrainerConfig,
     TrainingArgs,
 )
-from realhf.api.cli_args import     ModelFamily
 from arealite.api.trainer_api import TrainerFactory
+from arealite.api.dataset_api import Multimodal_DatasetFactory
 from arealite.impl.dataset.VL_dataset import VLDataset
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
@@ -47,16 +48,19 @@ def create_vl_dataset(cfg: DatasetConfig, model_name_or_path: str) -> VLDataset:
     return train_dataset
 
 
-def test_engine():
+def test_sft():
     """Test engine creation and basic functionality."""
     # breakpoint()
-    os.environ.setdefault("RANK", "0")
-    os.environ.setdefault("WORLD_SIZE", "1")
-    os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
-    os.environ.setdefault("MASTER_PORT", "29500")
+    os.environ["WORLD_SIZE"] = "1"
+    os.environ["RANK"] = "0"
+    os.environ["LOCAL_RANK"] = "0"
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "7777"
+
     train_dataset = DatasetConfig(
         path="/storage/openpsi/data/clevr_count_70k/",
-        # name="main",
+        preprocessor=DatasetPreprocessor("clevr_count_70k_sft"),
+        name="main",
         split="train",
         batch_size=8,
         shuffle=True,
@@ -65,9 +69,9 @@ def test_engine():
     )
 
     # valid_dataset = DatasetConfig(
-    #     path="MathLLMs/MM-MathInstruct",
-    #     # name="main",
-    #     # split="test",
+    #     path="/storage/openpsi/data/clevr_count_70k/",
+    #     name="main",
+    #     split="test",
     #     batch_size=8,
     #     shuffle=False,
     #     pin_memory=True,
@@ -94,6 +98,7 @@ def test_engine():
         experiment_name="vlm-test-sft",
         trial_name="test",
         mode="local",
+        type="VL_sft",
         n_nodes=1,
         n_gpus_per_node=8,
         train_dataset=train_dataset,
@@ -101,16 +106,12 @@ def test_engine():
     )
 
     rollout_controller = None
-    train_dataset = create_vl_dataset(
-        args.train_dataset,
-        model_name_or_path=args.trainer.sft.model.path,
-    )
+    dataset_factory =Multimodal_DatasetFactory(args)
+    train_dataset = dataset_factory.make_dataset(args.train_dataset, 0, 1)
     valid_dataset = None
     if args.valid_dataset is not None:
-        valid_dataset = create_vl_dataset(
-            args.valid_dataset,
-            model_name_or_path=args.trainer.sft.model.path,
-        )
+        valid_dataset = dataset_factory.make_dataset(args.valid_dataset, 0, 1)
+        valid_dataset = valid_dataset.select(range(100))
     if args.trainer is not None:
         trainer_factory = TrainerFactory(args)
         trainer = trainer_factory.make_trainer(
@@ -122,5 +123,4 @@ def test_engine():
         trainer.train()
 
     print("All tests passed!")
-
-test_engine()
+test_sft()

@@ -24,37 +24,12 @@ from realhf.api.core.model_api import FinetuneSpec
 from realhf.base import logging, stats_tracker, timeutil
 from arealite.impl.engine.constant import VALID_VISION_MODELS 
 from PIL import Image
-from PIL.Image import Image as ImageObject
+
 from io import BytesIO
 
 import math
 logger = logging.getLogger("SFT Trainer")
 
-# def process_image(
-#     image: Union[Dict[str, Any], ImageObject, str], min_pixels: Optional[int]=None, max_pixels: Optional[int]=None
-# ) -> ImageObject:
-    
-#     if isinstance(image, str):
-#         image = Image.open(image)
-#     elif isinstance(image, dict):
-#         image = Image.open(BytesIO(image["bytes"]))
-#     elif isinstance(image, bytes):
-#         image = Image.open(BytesIO(image))
-
-#     image.load()  # avoid "Too many open files" errors
-#     if max_pixels is not None and (image.width * image.height) > max_pixels:
-#         resize_factor = math.sqrt(max_pixels / (image.width * image.height))
-#         width, height = int(image.width * resize_factor), int(image.height * resize_factor)
-#         image = image.resize((width, height))
-
-#     if min_pixels is not None and (image.width * image.height) < min_pixels:
-#         resize_factor = math.sqrt(min_pixels / (image.width * image.height))
-#         width, height = int(image.width * resize_factor), int(image.height * resize_factor)
-#         image = image.resize((width, height))
-
-#     if image.mode != "RGB":
-#         image = image.convert("RGB")
-#     return image
 from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
 from realhf.api.core.model_api import FinetuneSpec
 from realhf.base import logging, stats_tracker, timeutil
@@ -135,12 +110,6 @@ class SFTTrainer(Trainer):
         engine_factory = EngineFactory(args)
         self.model = engine_factory.make_engine(config.model)
         self.tokenizer = load_hf_tokenizer(config.model.path)
-        # self.processor=None
-        # if self.model.engine_config.type._class in VALID_VISION_MODELS:
-        #     self.processor,self.tokenizer = load_hf_processor_and_tokenizer(
-        #         config.model.path,
-        #     )
-
         self.mb_spec = config.mb_spec
 
         self.save_ctl = timeutil.EpochStepTimeFreqCtl(
@@ -165,20 +134,6 @@ class SFTTrainer(Trainer):
             max_length=self.mb_spec.max_tokens_per_mb,
             return_attention_mask=False,
         )
-    # def _process(self,images):
-    #     assert self.processor is not None, "Processor is not initialized for vision model"
-    #     # image_list=[]
-    #     breakpoint()
-    #     # for image in images:
-    #     #     image_list.append(process_image(image))
-
-    #     return self.processor(
-    #         images,
-    #         return_tensors="pt",
-    #         padding=True,
-    #         truncation=True,
-    #     )
-
     def _get_packed_input(self, data: List[Dict[str, Any]]):
         data: Dict[str, List[Any]] = list_of_dict2dict_of_list(data)
 
@@ -215,78 +170,7 @@ class SFTTrainer(Trainer):
             use_cache=False,
         )
 
-    def _get_packed_vl_input(self, data: Dict)-> Dict[str, torch.Tensor]:
-        """
-        Get packed vision-language input tensors.
-        data.keys(): vl_prompt_input_ids, vl_prompt_length, pixel_values, image_grid_thw,
-        answer_input_ids, answer_length
-        
-        Output:
-        A dictionary with keys:
-        input_ids, attention_mask, position_ids, prompt_mask, pixel_values, image_grid_thw, cu_seqlens, max_seqlen, use_cache
-        """
-        device=self.model.model.device
-        # breakpoint()
-        vl_prompt_input_ids= data["vl_prompt_input_ids"]
-        vl_prompt_length = data["vl_prompt_length"]
-        answer_input_ids = data["answer_input_ids"]
-        answer_length = data["answer_length"]
-        eos_token_tensor = torch.tensor([self.tokenizer.eos_token_id], dtype=torch.long, device=device)  # 设置eos_token_tensor的设备
-        # merge vl_prompt_input_ids, answer_input_ids, adding eos token,the first column is batch size
-        tokenized_inputs = {
-            "input_ids": [
-                torch.cat(
-                    [
-                        vl_prompt_input_ids[i].to(device),  
-                        answer_input_ids[i].to(device),
-                        eos_token_tensor,
-                    ],
-                    dim=0,
-                )
-            for i in range(len(vl_prompt_input_ids))
-            ],
-            "length": [vl_prompt_length[i] + answer_length[i] + 1 for i in range(len(vl_prompt_length))],
-        }
-
-        
-        pixel_values = [pixel_value.to(device) for pixel_value in data["pixel_values"]]
-        image_grid_thw = [image_grid_thw_.to(device) for image_grid_thw_ in data["image_grid_thw"]]
-        # form a data batch
-        prompt_lens = vl_prompt_length
-        input_lens = tokenized_inputs["length"]
-
-        input_lens = torch.tensor(input_lens, dtype=torch.int, device=device)
-        input_ids = [
-            torch.tensor(seq, dtype=torch.long, device=device) for seq in tokenized_inputs["input_ids"]
-        ]
-
-        prompt_mask = []
-        for input_len, prompt_len in zip(input_lens, prompt_lens):
-            assert input_len >= prompt_len, (input_len, prompt_len)
-            pm = [1] * prompt_len + [0] * (input_len - prompt_len)
-            prompt_mask.append(torch.tensor(pm, dtype=torch.bool, device=device))
-
-        cu_seqlens = torch.nn.functional.pad(
-            input_lens.cumsum(0, dtype=torch.int), (1, 0)
-        ).to(device)
-        max_seqlen = int(torch.max(input_lens).item())
-        packed_input_ids = torch.cat(input_ids, dim=0).to(device)
-        prompt_mask = torch.cat(prompt_mask, dim=0).to(device)
-        total_seqlen = int(cu_seqlens[-1].item())
-        position_ids = compute_varlen_position_indices(total_seqlen, cu_seqlens)
-        # breakpoint()
-        return dict(
-            input_ids=packed_input_ids.unsqueeze(0).to(device),
-            attention_mask=None,
-            position_ids=position_ids.unsqueeze(0).to(device),
-            prompt_mask=prompt_mask.unsqueeze(0).to(device),
-            pixel_values=pixel_values,
-            image_grid_thw=image_grid_thw,
-            cu_seqlens=cu_seqlens.to(device),
-            max_seqlen=max_seqlen,
-            use_cache=False,
-        )
-
+    
 
     def train(self, resume_from_checkpoint=None):
         self.create_train_dataloader()
@@ -313,9 +197,6 @@ class SFTTrainer(Trainer):
             for step, data in enumerate(self.train_dataloader):
                 timing_stats = {}
                 with record_timing("timeperf/data_processing", timing_stats):
-                    if self.model.model_config.model_type in VALID_VISION_MODELS:
-                        packed_input_data = self._get_packed_vl_input(data)
-                    else:
                         packed_input_data = self._get_packed_input(data)
                     dist.barrier()
                 with record_timing("timeperf/train_step", timing_stats):

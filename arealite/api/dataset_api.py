@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from datasets import Dataset, load_dataset
+from datasets import Dataset, load_dataset,Image
 from datasets.distributed import split_dataset_by_node
 
 from arealite.api.cli_args import DatasetConfig
@@ -17,6 +17,16 @@ def create_distributed_dataset(cfg: DatasetConfig, rank, world_size):
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset
 
+def create_distributed_multimodal_dataset(cfg: DatasetConfig, rank, world_size):
+    dataset = load_dataset(
+        cfg.path,
+        name=cfg.name,
+        split=cfg.split,
+        data_files=cfg.data_files,
+        streaming=True,
+    ).cast_column("image", Image(decode=False))
+    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+    return dataset
 
 @dataclass
 class DatasetFactory:
@@ -56,24 +66,24 @@ class DatasetFactory:
             from arealite.impl.dataset.areal import process_areal_dataset
 
             return process_areal_dataset(dataset, tokenizer=tokenizer)
-        if config.preprocessor.type == "llava_cot":
-            tokenizer_path = self.args.rollout.llm_client.tokenizer_path
-            assert self.args.rollout.llm_client.tokenizer_path is not None
+       
+
+@dataclass
+class Multimodal_DatasetFactory(DatasetFactory):
+   args: TrainingArgs
+   def make_dataset(
+        self, config: DatasetConfig, rank: int, world_size: int
+    ) -> Dataset:
+        dataset = create_distributed_multimodal_dataset(config, rank, world_size)
+        if config.preprocessor.type == "clevr_count_70k_sft":
+            tokenizer_path = self.args.trainer.sft.model.path
+            assert self.args.trainer.sft.model.path is not None
             from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 
             processor, _ = load_hf_processor_and_tokenizer(tokenizer_path)
-            from arealite.impl.dataset.llava_cot100k import process_llava_cot_dataset
+            from arealite.impl.dataset.clevr_count_70k import process_clevr_count_70k_sft_dataset
 
-            return process_llava_cot_dataset(dataset, processor=processor)
-        if config.preprocessor.type == "math_instruct":
-            tokenizer_path = self.args.rollout.llm_client.tokenizer_path
-            assert self.args.rollout.llm_client.tokenizer_path is not None
-            from realhf.api.core.data_api import load_hf_processor_and_tokenizer
-
-            processor, _ = load_hf_processor_and_tokenizer(tokenizer_path)
-            from arealite.impl.dataset.MM_MathInstruct import process_MathInstruct_dataset
-
-            return process_MathInstruct_dataset(dataset, processor=processor)
+            return process_clevr_count_70k_sft_dataset(dataset, processor=processor)
         raise NotImplementedError(
             f"Unknown dataset preprocessor type: {config.preprocessor.type}"
         )
