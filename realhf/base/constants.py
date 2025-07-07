@@ -110,7 +110,7 @@ def get_save_path(args: "BaseExperimentConfig") -> str:
 
 
 def get_param_realloc_path(args: "BaseExperimentConfig"):
-    path = f"{args.cluster.fileroot}/.cache/{getpass.getuser()}/param_realloc"
+    path = f"{args.cluster.fileroot}/.cache/{getpass.getuser()}/param_realloc/{args.experiment_name}/{args.trial_name}"
     os.makedirs(path, exist_ok=True)
     return path
 
