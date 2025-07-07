@@ -221,9 +221,6 @@ def split_dict_tensor_with_cu_seqlens(
     mb_spec: MicroBatchSpec,
     group: Optional[dist.ProcessGroup] = None,
 ) -> MicroBatchSplitResult:
-    '''
-    Split a dictionary of tensors into micro-batches based on cumulative sequence lengths.
-    '''
     assert "cu_seqlens" in data
     cu_seqlens = data["cu_seqlens"]
     bs = cu_seqlens.shape[0] - 1
@@ -257,8 +254,6 @@ def split_dict_tensor_with_cu_seqlens(
     forward_indices = datapack.flat2d(group_indices)
     backward_indices = np.zeros(bs, dtype=np.int64)
     backward_indices[forward_indices] = np.arange(bs)
-    
-    # breakpoint()
     to_split = dict_map(to_split, lambda x: unpack_sequence(x, cu_seqlens=cu_seqlens))
     to_split = dict_map(to_split, lambda x: recorder_list(x, forward_indices))
     to_split = dict_map(to_split, lambda x: torch.cat(x))
@@ -285,7 +280,6 @@ def split_dict_tensor_with_cu_seqlens(
     mbs = dict_of_list2list_of_dict(to_split)
 
     results = []
-    # breakpoint()
     # organize splitted micro batches
     assert len(mbs) == len(splitted_lens), (len(mbs), len(splitted_lens))
     for i, (mb, lens) in enumerate(zip(mbs, splitted_lens)):

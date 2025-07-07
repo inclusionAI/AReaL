@@ -23,8 +23,6 @@ if TYPE_CHECKING:
 # follow the signature of transformers.Trainer if possible
 
 
-
-
 class Trainer(abc.ABC):
     def __init__(
         self,
