@@ -51,8 +51,10 @@ class Trainer(abc.ABC):
             batch_size = cfg.batch_size // dist.get_world_size()
         else:
             batch_size = cfg.batch_size
-        if self.dataset.info.dataset_name.lower() not in VL_DATASET_KEY:
-            collate_fn = None
+        if self.train_dataset.dataset.info.dataset_name.lower() not in VL_DATASET_KEY:
+            _collate_fn= lambda x: x
+        else:
+            _collate_fn=collate_fn
         self.train_dataloader = StatefulDataLoader(
             dataset=self.train_dataset,
             batch_size=batch_size,
@@ -60,7 +62,7 @@ class Trainer(abc.ABC):
             pin_memory=cfg.pin_memory,
             num_workers=cfg.num_workers,
             drop_last=True,
-            collate_fn=collate_fn if collate_fn else lambda x: x,
+            collate_fn=_collate_fn
             
         )
 
@@ -72,8 +74,10 @@ class Trainer(abc.ABC):
             batch_size = cfg.batch_size // dist.get_world_size()
         else:
             batch_size = cfg.batch_size
-        if self.dataset.info.dataset_name.lower() not in VL_DATASET_KEY:
-            collate_fn = None
+        if self.valid_dataset.dataset.info.dataset_name.lower() not in VL_DATASET_KEY:
+            _collate_fn= lambda x: x
+        else:
+            _collate_fn=collate_fn
         self.valid_dataloader = StatefulDataLoader(
             dataset=self.valid_dataset,
             batch_size=batch_size,
@@ -81,7 +85,7 @@ class Trainer(abc.ABC):
             pin_memory=cfg.pin_memory,
             num_workers=cfg.num_workers,
             drop_last=True,
-            collate_fn=collate_fn if collate_fn else lambda x: x,
+            collate_fn=_collate_fn
         )
 
     @property
