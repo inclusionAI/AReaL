@@ -223,6 +223,12 @@ class SFTTrainer(Trainer):
     def _get_packed_vl_input(self, data: Dict)-> Dict[str, torch.Tensor]:
         """
         Get packed vision-language input tensors.
+        data.keys(): vl_prompt_input_ids, vl_prompt_length, pixel_values, image_grid_thw,
+        answer_input_ids, answer_length
+        
+        Output:
+        A dictionary with keys:
+        input_ids, attention_mask, position_ids, prompt_mask, pixel_values, image_grid_thw, cu_seqlens, max_seqlen, use_cache
         """
         device=self.model.model.device
         # breakpoint()
