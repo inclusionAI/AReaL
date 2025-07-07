@@ -17,7 +17,8 @@ from arealite.utils import (
 
 from realhf.base import logging
 from .sft import SFTTrainer
-
+#list to tensor
+from torch.utils.data import DataLoader
 
 
 logger = logging.getLogger("VL_SFT Trainer")

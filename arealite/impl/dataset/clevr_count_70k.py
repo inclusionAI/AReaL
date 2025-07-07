@@ -34,9 +34,9 @@ def process_clevr_count_70k_sft_dataset(dataset: Dataset, processor):
         ]
         images=example["images"]
 
-        processed_image=processor.image_processor(images)
-        example["pixel_values"] = processed_image["pixel_values"]
-        example["image_grid_thw"]= processed_image["image_grid_thw"]
+        processed_input=processor(image=images,text=example["prompt"], return_tensors="pt")
+        example["pixel_values"] = processed_input["pixel_values"]
+        example["image_grid_thw"] = processed_input["image_grid_thw"]
         return example
 
     dataset = dataset.map(lambda x: _process(x), batched=True)
