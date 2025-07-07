@@ -44,6 +44,9 @@ def collate_fn(features: List[Dict[str, Any]]) -> Dict[str, Any]:
 def process_image(
     image: Union[Dict[str, Any], ImageObject, str], min_pixels: Optional[int], max_pixels: Optional[int]
 ) -> ImageObject:
+    '''
+    Process an image to ensure it is in RGB format and resized if necessary.
+    '''
     if isinstance(image, str):
         image = Image.open(image)
     elif isinstance(image, dict):

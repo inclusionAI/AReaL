@@ -421,6 +421,9 @@ def split_dict_tensor_with_cu_seqlens(
     mb_spec: MicroBatchSpec,
     group: Optional[dist.ProcessGroup] = None,
 ) -> MicroBatchSplitResult:
+    '''
+    Split a dictionary of tensors into micro-batches based on cumulative sequence lengths.
+    '''
     assert "cu_seqlens" in data
     cu_seqlens = data["cu_seqlens"]
     bs = cu_seqlens.shape[0] - 1
