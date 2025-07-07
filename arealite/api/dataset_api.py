@@ -18,13 +18,16 @@ def create_distributed_dataset(cfg: DatasetConfig, rank, world_size):
     return dataset
 
 def create_distributed_multimodal_dataset(cfg: DatasetConfig, rank, world_size):
+    '''
+    Create a distributed multimodal dataset.
+    Only supports image as path/url or PIL.Image.
+    '''
     dataset = load_dataset(
         cfg.path,
         name=cfg.name,
         split=cfg.split,
         data_files=cfg.data_files,
-    ).cast_column("images", Image(decode=False))
-    breakpoint()
+    )
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset
 

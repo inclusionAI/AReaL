@@ -1,5 +1,5 @@
 from datasets import Dataset
-from PIL import Image
+
 
 def process_clevr_count_70k_sft_dataset(dataset: Dataset, processor):
     '''
@@ -9,7 +9,6 @@ def process_clevr_count_70k_sft_dataset(dataset: Dataset, processor):
         "answer_key": "answer"
     },
     '''
-    breakpoint()
     tokenizer = processor.tokenizer
     image_token=processor.image_token if processor is not None else "<image>"      
     def process_example(example, idx):
@@ -18,12 +17,12 @@ def process_clevr_count_70k_sft_dataset(dataset: Dataset, processor):
         prompt_str = example["problem"].replace("<image>", image_token)
         example["prompt"] = prompt_str
         example["seq"] = example["prompt"] + example["answer"] + tokenizer.eos_token
-        example["image_path"]= example["images"]["path"]
         return example
 
     dataset = dataset.map(
         lambda example, idx: process_example(example, idx),
         with_indices=True,
+        remove_columns=['problem', 'answer'],
     )
 
     def _process(example):
@@ -33,7 +32,7 @@ def process_clevr_count_70k_sft_dataset(dataset: Dataset, processor):
         example["seq"] = tokenizer(example["seq"], return_attention_mask=False)[
             "input_ids"
         ]
-        images=[Image.open(image_path) for image_path in example["image_path"]]
+        images=example["images"]
 
         processed_image=processor.image_processor(images)
         example["pixel_values"] = processed_image["pixel_values"]
