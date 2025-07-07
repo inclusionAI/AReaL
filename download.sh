@@ -1,4 +1,4 @@
-# export HUGGINGFACE_TOKEN='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'
+
 # export HF_ENDPOINT=https://hf-mirror.com
 # huggingface-cli login --token $HUGGINGFACE_TOKEN
 # export CURL_CA_BUNDLE=""
