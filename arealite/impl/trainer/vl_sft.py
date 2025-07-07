@@ -65,9 +65,8 @@ class VL_SFTTrainer(SFTTrainer):
         total_seqlen = int(cu_seqlens[-1].item())
         position_ids = compute_varlen_position_indices(total_seqlen, cu_seqlens)
         
-        
-        pixel_values =[pixel_value.cuda() for pixel_value in data["pixel_values"]]
-        image_grid_thw = [image_grid_thw_.cuda() for image_grid_thw_ in data["image_grid_thw"]]
+        pixel_values =[torch.tensor(pixel_value).cuda() for pixel_value in data["pixel_values"]]
+        image_grid_thw = [torch.tensor(image_grid_thw_).cuda() for image_grid_thw_ in data["image_grid_thw"]]
         return dict(
             input_ids=packed_input_ids.unsqueeze(0).cuda(),
             attention_mask=None,
