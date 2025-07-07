@@ -303,6 +303,7 @@ class AgentGymEnv(gym.Env):
         solo_mode: bool = False,
         user_llm: Optional[str] = None,
         user_llm_args: Optional[dict] = None,
+        all_messages_as_observation: bool = False,
     ):
         """
         Initialize the Tau2 gym environment.
@@ -318,6 +319,8 @@ class AgentGymEnv(gym.Env):
         self.user_llm_args = (
             user_llm_args if user_llm_args else deepcopy(DEFAULT_LLM_ARGS_USER)
         )
+        self.all_messages_as_observation = all_messages_as_observation
+
         self._lock = threading.Lock()
         self._agent: Optional[GymAgent] = None
         self._user: Optional[UserSimulator] = None
@@ -421,6 +424,7 @@ class AgentGymEnv(gym.Env):
             in JSON format, or an empty dictionary if no simulation has run yet.
         """
         return {
+            "task": self._get_task(),
             "simulation_run": self._get_simulation_run(),
             "tools": self._get_tools(),
             "policy": self._get_policy(),
@@ -610,6 +614,9 @@ class AgentGymEnv(gym.Env):
                         [to_functional_format(t) for t in m.tool_calls]
                     )
                     turns.append(f"assistant: {tool_calls}")
+                if not self.all_messages_as_observation:
+                    # reset the turns contents, only keep the response to the assistant messages.
+                    turns = []
             else:
                 turns.append(f"{m.role}: {m.content}")
         return "\n".join(turns)

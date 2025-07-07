@@ -1,5 +1,6 @@
 # Copyright Sierra
 from functools import partial
+from pathlib import Path
 from typing import Optional
 
 from tau2.data_model.tasks import Task
@@ -159,6 +160,15 @@ def load_tasks(path: str) -> list[Task]:
     return [Task.model_validate(task) for task in tasks]
 
 
+def load_tasks_split(path: str) -> Optional[dict[str, list[str]]]:
+    """Load tasks split from a data file, could be json, yaml or toml file."""
+    split_file = Path(path).parent / f"split_{Path(path).stem}.json"
+    if split_file.exists():
+        tasks_split = load_file(split_file)
+        return tasks_split
+    return None
+
+
 def get_tasks_full() -> list[Task]:
     return load_tasks(TELECOM_TASK_SET_PATH_FULL)
 
@@ -169,6 +179,18 @@ def get_tasks_small() -> list[Task]:
 
 def get_tasks() -> list[Task]:
     return load_tasks(TELECOM_TASK_SET_PATH)
+
+
+def get_tasks_full_split() -> dict[str, list[str]]:
+    return load_tasks_split(TELECOM_TASK_SET_PATH_FULL)
+
+
+def get_tasks_small_split() -> dict[str, list[str]]:
+    return load_tasks_split(TELECOM_TASK_SET_PATH_SMALL)
+
+
+def get_tasks_split() -> dict[str, list[str]]:
+    return load_tasks_split(TELECOM_TASK_SET_PATH)
 
 
 if __name__ == "__main__":

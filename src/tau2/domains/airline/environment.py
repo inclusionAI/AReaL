@@ -1,5 +1,5 @@
 # Copyright Sierra
-import json
+from pathlib import Path
 from typing import Optional
 
 from tau2.data_model.tasks import Task
@@ -11,6 +11,7 @@ from tau2.domains.airline.utils import (
     AIRLINE_TASK_SET_PATH,
 )
 from tau2.environment.environment import Environment
+from tau2.utils import load_file
 
 
 def get_environment(
@@ -32,6 +33,13 @@ def get_environment(
 
 
 def get_tasks() -> list[Task]:
-    with open(AIRLINE_TASK_SET_PATH, "r") as fp:
-        tasks = json.load(fp)
+    tasks = load_file(AIRLINE_TASK_SET_PATH)
     return [Task.model_validate(task) for task in tasks]
+
+
+def get_tasks_split() -> dict[str, list[str]]:
+    split_file = (
+        Path(AIRLINE_TASK_SET_PATH).parent
+        / f"split_{Path(AIRLINE_TASK_SET_PATH).stem}.json"
+    )
+    return load_file(split_file)
