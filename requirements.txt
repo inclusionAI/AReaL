@@ -73,8 +73,4 @@ gymnasium>=1.1.1
 torchdata
 swanlab[dashboard]
 timm
-<<<<<<< HEAD
 nvitop
-=======
-nvitop
->>>>>>> 50101070963e7d9931d035697afdba5075df2aa7
