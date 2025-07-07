@@ -7,7 +7,7 @@ from typing import List, Union
 
 import regex
 from latex2sympy2 import latex2sympy
-from pebble import ProcessPool, ProcessExpired
+from pebble import ProcessExpired, ProcessPool
 from sympy import N, simplify
 from sympy.parsing.latex import parse_latex
 from sympy.parsing.sympy_parser import parse_expr
