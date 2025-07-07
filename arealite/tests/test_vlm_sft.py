@@ -60,10 +60,10 @@ def test_sft():
     train_dataset = DatasetConfig(
         path="/storage/openpsi/data/clevr_count_70k/",
         preprocessor=DatasetPreprocessor("clevr_count_70k_sft"),
-        name="main",
+        name="default",
         split="train",
         batch_size=8,
-        shuffle=True,
+        shuffle=False,
         pin_memory=True,
         num_workers=4,
     )
@@ -90,7 +90,7 @@ def test_sft():
     )
 
     train_config = TrainerConfig(
-        type="sft",
+        type="vl_sft",
         sft=sft_config,
     )
 
@@ -98,7 +98,6 @@ def test_sft():
         experiment_name="vlm-test-sft",
         trial_name="test",
         mode="local",
-        type="VL_sft",
         n_nodes=1,
         n_gpus_per_node=8,
         train_dataset=train_dataset,

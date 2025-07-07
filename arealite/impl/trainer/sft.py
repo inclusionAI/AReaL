@@ -198,7 +198,7 @@ class SFTTrainer(Trainer):
                 timing_stats = {}
                 with record_timing("timeperf/data_processing", timing_stats):
                         packed_input_data = self._get_packed_input(data)
-                    dist.barrier()
+                        dist.barrier()
                 with record_timing("timeperf/train_step", timing_stats):
                     with stats_tracker.scope("sft"):
                         stats = self.model.train_batch(

@@ -9,6 +9,7 @@ def process_clevr_count_70k_sft_dataset(dataset: Dataset, processor):
         "answer_key": "answer"
     },
     '''
+    breakpoint()
     tokenizer = processor.tokenizer
     image_token=processor.image_token if processor is not None else "<image>"      
     def process_example(example, idx):

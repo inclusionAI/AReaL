@@ -23,8 +23,8 @@ def create_distributed_multimodal_dataset(cfg: DatasetConfig, rank, world_size):
         name=cfg.name,
         split=cfg.split,
         data_files=cfg.data_files,
-        streaming=True,
-    ).cast_column("image", Image(decode=False))
+    ).cast_column("images", Image(decode=False))
+    breakpoint()
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset
 

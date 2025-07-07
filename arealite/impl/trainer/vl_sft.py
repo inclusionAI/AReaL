@@ -1,15 +1,10 @@
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import torch
-import torch.distributed as dist
 import torch.utils.data
-from datasets import Dataset
-from typing import Any, Dict, List, Optional, Tuple, Union
-from arealite.api.cli_args import TrainerConfig, TrainingArgs
-from arealite.api.engine_api import EngineFactory
-from arealite.api.trainer_api import Trainer
-from arealite.system.rollout_controller import RolloutController
+
+
 from arealite.utils import (
     close_wandb_tensorboard,
     compute_varlen_position_indices,
@@ -19,20 +14,14 @@ from arealite.utils import (
     log_wandb_tensorboard,
     record_timing,
 )
-from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats, load_hf_processor_and_tokenizer
-from realhf.api.core.model_api import FinetuneSpec
-from realhf.base import logging, stats_tracker, timeutil
-from arealite.impl.engine.constant import VALID_VISION_MODELS 
-from PIL import Image
 
-from io import BytesIO
+from realhf.base import logging
+from .sft import SFTTrainer
 
-import math
+
+
 logger = logging.getLogger("VL_SFT Trainer")
 
-from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
-from realhf.api.core.model_api import FinetuneSpec
-from realhf.base import logging, stats_tracker, timeutil
 
 logger = logging.getLogger("VL_SFT Trainer")
  
