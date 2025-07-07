@@ -83,7 +83,6 @@ def main_grpo():
             # or asynchronous rollout with filtering and off-policyness control
             # rollout_batch = rollout.prepare_batch(batch, 
             #                                       workflow=MyRolloutWorkflow(rollout_config.workflow),
-            #                                       offpolicyness=4,
             #                                       should_accept=lambda x: x['rewards'].mean() > 0)
 
             # In the single-controller mode

@@ -1,10 +1,9 @@
 import asyncio
 import threading
 import time
-import traceback
 from concurrent.futures import ThreadPoolExecutor
 from queue import Empty, Queue
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, List
 
 import aiohttp
 import torch.distributed as dist
@@ -31,14 +30,21 @@ if pkg_version.is_available("sglang"):
         SGLANG_TOKEN_OUTPUT_IDENTIFIER = "token_ids"
 
 ROLLOUT_POLL_WAIT_TIME = 0.4
+RID_CACHE_SIZE = 128
 
 
 class RemoteSGLangEngine(InferenceEngine):
 
     def __init__(self, config: InferenceEngineConfig):
+        config.max_concurrent_rollouts = (
+            config.max_concurrent_rollouts or config.consumer_batch_size
+        )
         self.config = config
 
         self.rid_to_address = {}
+        # Maintain the addresses for the recent 128 requests
+        self.rid_queue = []
+
         self.addresses = config.server_addrs
         self.server_idx = 0
 
@@ -108,13 +114,13 @@ class RemoteSGLangEngine(InferenceEngine):
                 ofp = self.config.max_head_offpolicyness
                 with self.lock:
                     sample_cnt = self.rollout_stat.accepted + self.rollout_stat.running
-                expected_version = sample_cnt // self.train_batch_size
+                expected_version = sample_cnt // self.config.consumer_batch_size
                 not_staled = expected_version <= ofp + version
                 can_rollout &= not_staled
                 if not not_staled:
                     cannot_rollout_reason.append(
                         f"Staled: expected version ({expected_version}) = "
-                        f"global sample cnt ({sample_cnt}) // batch size ({self.train_batch_size}), "
+                        f"global sample cnt ({sample_cnt}) // batch size ({self.config.consumer_batch_size}), "
                         f"current latest version {version}, "
                         f"offpolicyness {self.config.max_head_offpolicyness}."
                     )
@@ -256,7 +262,11 @@ class RemoteSGLangEngine(InferenceEngine):
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
 
-        assert gconfig.n_samples == 1
+        if gconfig.n_samples != 1:
+            raise ValueError(
+                "RemoteSGLangEngine does not support n_samples > 1. "
+                "Please call generate for multiple times with n_samples = 1."
+            )
         sample_params = {
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
@@ -265,8 +275,8 @@ class RemoteSGLangEngine(InferenceEngine):
             "stop_token_ids": stop_token_ids,
         }
 
+        # NOTE: rid should NOT be passed in payload
         payload = {
-            "rid": req.rid,
             "text": req.text,
             "sampling_params": sample_params,
             "return_logprob": True,
@@ -287,6 +297,17 @@ class RemoteSGLangEngine(InferenceEngine):
         completions = ""
         stop_reason = "length"
 
+        if req.rid in self.rid_to_address:
+            server_addr = self.rid_to_address[req.rid]
+        else:
+            server_addr = self.choose_server()
+            if len(self.rid_queue) >= RID_CACHE_SIZE:
+                # Remove the oldest entry if cache is full
+                oldest_rid = self.rid_queue.pop(0)
+                self.rid_to_address.pop(oldest_rid, None)
+            self.rid_to_address[req.rid] = server_addr
+            self.rid_queue.append(req.rid)
+
         while (
             stop_reason != "stop"
             and len(accumulated_output_tokens) < gconfig.max_new_tokens
@@ -298,6 +319,7 @@ class RemoteSGLangEngine(InferenceEngine):
                 method="POST",
                 max_retries=3,
                 timeout=self.config.request_timeout,
+                target_addr=server_addr,
             )
             result = await response.json()
 
@@ -399,3 +421,15 @@ class RemoteSGLangEngine(InferenceEngine):
             self.result_cache[count:],
         )
         return TensorDict.cat(results, dim=0)
+
+    def rollout(
+        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+    ) -> TensorDict:
+        """Submit a batch of requests to the inference engine and wait for the results."""
+        for item in data:
+            self.submit(item, workflow)
+        return self.wait(
+            count=len(data),
+            timeout=self.config.request_timeout,
+            should_accept=lambda x: True,
+        )
