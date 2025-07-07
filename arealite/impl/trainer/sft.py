@@ -307,8 +307,7 @@ class SFTTrainer(Trainer):
             for step, data in enumerate(self.train_dataloader):
                 timing_stats = {}
                 with record_timing("timeperf/data_processing", timing_stats):
-                    data = next(self.data_generator)
-                    if self.model.engine_config.type._class in VALID_VISION_MODELS:
+                    if self.model.model_config.model_type in VALID_VISION_MODELS:
                         packed_input_data = self._get_packed_vl_input(data)
                     else:
                         packed_input_data = self._get_packed_input(data)

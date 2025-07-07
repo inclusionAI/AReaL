@@ -93,24 +93,16 @@ class HFEngine(SPMDWrapper):
                 "Distributed training is not supported in this engine. "
                 "Please use FSDP for distributed training."
             )
-        torch.cuda.set_device("cuda:0")
+        
 
         dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.engine_config.path,
             trust_remote_code=True,
         )
-        with torch.device("cuda"):
-            # initialize scratch model from config
-            model = AutoModelForCausalLM.from_config(
-                self.model_config,
-                torch_dtype=dtype,
-                attn_implementation="flash_attention_2",
-            )
+       
 
-        model = model.cuda()
-
-        if self.engine_config.type._class in VALID_VISION_MODELS:
+        if self.model_config.model_type in VALID_VISION_MODELS:
             model=AutoModelForImageTextToText.from_pretrained(
                 pretrained_model_name_or_path=self.engine_config.path,
                 torch_dtype=dtype,
@@ -119,13 +111,18 @@ class HFEngine(SPMDWrapper):
                 device_map="auto",
             )
         else:
-            model = AutoModelForCausalLM.from_pretrained(
-                pretrained_model_name_or_path=self.engine_config.path,
-                torch_dtype=dtype,
-                attn_implementation="flash_attention_2",
-                trust_remote_code=True,
-                device_map="auto",
-            )
+            torch.cuda.set_device("cuda:0")
+            with torch.device("cuda"):
+                # initialize scratch model from config
+
+                model = AutoModelForCausalLM.from_config(
+                    self.model_config,
+                    torch_dtype=dtype,
+                    attn_implementation="flash_attention_2",
+                )
+
+            model = model.cuda()
+
 
 
         self.model = model
@@ -290,6 +287,8 @@ class HFEngine(SPMDWrapper):
 
     def load_model_from_hf(self, path: str):
         """Load model from HuggingFace format."""
+        if self.model_config.model_type in VALID_VISION_MODELS:
+            return
         full_state = get_state_dict_from_repo_id_or_path(path)
         self.model.load_state_dict(
             full_state, strict=not self.model_config.tie_word_embeddings

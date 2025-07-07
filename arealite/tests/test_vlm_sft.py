@@ -1,7 +1,7 @@
 """Test script for FSDP Engine implementation."""
 
 from typing import Dict
-
+import os
 import torch
 from datasets import load_dataset
 
@@ -9,12 +9,12 @@ from arealite.api.cli_args import (
     DatasetConfig,
     EngineBackendConfig,
     EngineConfig,
-    ModelFamily,
     OptimizerConfig,
     SFTTrainerConfig,
     TrainerConfig,
     TrainingArgs,
 )
+from realhf.api.cli_args import     ModelFamily
 from arealite.api.trainer_api import TrainerFactory
 from arealite.impl.dataset.VL_dataset import VLDataset
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
@@ -49,7 +49,11 @@ def create_vl_dataset(cfg: DatasetConfig, model_name_or_path: str) -> VLDataset:
 
 def test_engine():
     """Test engine creation and basic functionality."""
-    breakpoint()
+    # breakpoint()
+    os.environ.setdefault("RANK", "0")
+    os.environ.setdefault("WORLD_SIZE", "1")
+    os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+    os.environ.setdefault("MASTER_PORT", "29500")
     train_dataset = DatasetConfig(
         path="/storage/openpsi/data/clevr_count_70k/",
         # name="main",
@@ -71,7 +75,6 @@ def test_engine():
     # )
 
     engine_config = EngineConfig(
-        type=ModelFamily("qwen2_vl", False),
         path="/storage/openpsi/models/Qwen2-VL-7B",
         gradient_checkpointing=False,
         optimizer=OptimizerConfig(),
@@ -92,7 +95,7 @@ def test_engine():
         trial_name="test",
         mode="local",
         n_nodes=1,
-        n_gpus_per_node=1,
+        n_gpus_per_node=8,
         train_dataset=train_dataset,
         trainer=train_config,
     )
