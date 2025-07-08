@@ -485,7 +485,9 @@ class AgentGymEnv(gym.Env):
 
         with self._lock:
             if self._simulation_done.is_set():
-                raise ValueError("Simulation already terminated.")
+                logger.warning("Simulation already terminated.")
+                return "", 0.0, True, False, self._get_info()
+                # raise ValueError("Simulation already terminated.")
 
             # Parse the action string into a message
             action_msg = parse_action_string(action)
