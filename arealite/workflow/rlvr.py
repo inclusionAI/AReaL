@@ -1,7 +1,7 @@
+import asyncio
 import uuid
 
 import torch
-import asyncio
 from tensordict import TensorDict
 from transformers import PreTrainedTokenizerFast
 
@@ -32,9 +32,7 @@ class RLVRWorkflow(RolloutWorkflow):
             text=text,
             gconfig=self.gconfig.new(n_samples=1),
         )
-        resps = await asyncio.gather(
-            *[engine.agenerate(req) for _ in range(n_samples)]
-        )
+        resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
 
         results = []
         for resp in resps:

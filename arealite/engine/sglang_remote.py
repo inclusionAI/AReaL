@@ -1,9 +1,10 @@
 import asyncio
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
-from queue import Empty, Queue
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, List
+from queue import Empty, Full, Queue
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import aiohttp
 import torch.distributed as dist
@@ -17,7 +18,7 @@ from arealite.api.io_struct import (
     RolloutStat,
     WeightUpdateMeta,
 )
-from realhf.base import logging, name_resolve, names, pkg_version
+from realhf.base import logging, pkg_version
 
 if TYPE_CHECKING:
     from arealite.api.workflow_api import RolloutWorkflow
@@ -48,8 +49,9 @@ class RemoteSGLangEngine(InferenceEngine):
         self.addresses = config.server_addrs
         self.server_idx = 0
 
-        self.input_queue = Queue(maxsize=config.max_concurrent_rollouts)
-        self.output_queue = Queue(maxsize=config.max_concurrent_rollouts)
+        qsize = config.queue_size or config.max_concurrent_rollouts * 10
+        self.input_queue = Queue(maxsize=qsize)
+        self.output_queue = Queue(maxsize=qsize)
         self.result_cache = []
 
         self.exiting = threading.Event()
@@ -57,32 +59,35 @@ class RemoteSGLangEngine(InferenceEngine):
 
         self.rollout_stat = RolloutStat()
 
-    def _get_model_version(self) -> int:
-        name = names.model_version(
-            self.config.experiment_name,
-            self.config.trial_name,
-            "actor",
-        )
-        try:
-            return int(name_resolve.get(name))
-        except name_resolve.NameEntryNotFoundError:
-            return 0
+        self._version = 0
 
     def initialize(self, addr: str | None, ft_spec: Optional[Dict[str, Any]] = None):
         self.rollout_thread = threading.Thread(target=self._rollout_thread)
         self.rollout_thread.start()
 
+    def destroy(self):
+        self.exiting.set()
+        self.rollout_thread.join()
+
+    def set_version(self, version):
+        with self.lock:
+            self._version = version
+
+    def get_version(self):
+        with self.lock:
+            return self._version
+
     def _rollout_thread(self):
         """Thread that runs the rollout loop."""
         try:
-            asyncio.run_coroutine_threadsafe(self._rollout_thread_async())
-        finally:
-            self.exiting.set()
+            asyncio.run(self._rollout_thread_async())
+        except Exception as e:
+            traceback.print_exc()
 
     async def _rollout_thread_async(self):
         data = None
 
-        rollout_tasks: Dict[int, asyncio.Task] = {}
+        rollout_tasks: Dict[str, asyncio.Task] = {}
         rid = 0
 
         try:
@@ -91,7 +96,7 @@ class RemoteSGLangEngine(InferenceEngine):
                 if data is None:
                     try:
                         data, workflow = self.input_queue.get_nowait()
-                        logger.debug(f"Get data from puller: {data}")
+                        logger.info(f"Get data from puller: {data}")
                     except Empty:
                         logger.debug(f"No data from puller stream.")
 
@@ -110,7 +115,7 @@ class RemoteSGLangEngine(InferenceEngine):
                     )
 
                 # Staleness control
-                version = self._get_model_version()
+                version = self.get_version()
                 ofp = self.config.max_head_offpolicyness
                 with self.lock:
                     sample_cnt = self.rollout_stat.accepted + self.rollout_stat.running
@@ -136,12 +141,12 @@ class RemoteSGLangEngine(InferenceEngine):
                     task = asyncio.create_task(
                         workflow.arun_episode(self, data), name=str(rid)
                     )
-                    rollout_tasks[rid] = task
+                    rollout_tasks[str(rid)] = task
 
                     with self.lock:
                         self.rollout_stat.submitted += 1
                         self.rollout_stat.running += 1
-                        logger.debug(
+                        logger.info(
                             f"Submit rollout rid {rid}. "
                             f"Submit: {self.rollout_stat.submitted}, "
                             f"running: {self.rollout_stat.running}, "
@@ -169,12 +174,18 @@ class RemoteSGLangEngine(InferenceEngine):
                     traj: TensorDict
                     task_rid = task.get_name()
                     rollout_tasks.pop(task_rid)
+                    self.rollout_stat.accepted += 1
 
-                    self.output_queue.put(traj)
+                    try:
+                        self.output_queue.put_nowait(traj)
+                    except Full:
+                        raise RuntimeError(
+                            "Output queue full. Please increase queue_size."
+                        )
 
                     with self.lock:
                         self.rollout_stat.running -= 1
-                        logger.debug(
+                        logger.info(
                             f"Finish rollout {task_rid}. "
                             f"Submit: {self.rollout_stat.submitted}, "
                             f"running: {self.rollout_stat.running}, "
@@ -391,9 +402,12 @@ class RemoteSGLangEngine(InferenceEngine):
             )
 
     def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:
-        self.input_queue.put((workflow, data))
+        try:
+            self.input_queue.put_nowait((data, workflow))
+        except Full:
+            raise RuntimeError("Input queue full. Please increase queue_size.")
 
-    def wait(self, count: int, timeout: int, should_accept: Callable) -> TensorDict:
+    def wait(self, count: int, timeout: float, should_accept: Callable) -> TensorDict:
         tik = time.perf_counter()
         accepted = len(self.result_cache)
         while (
@@ -406,8 +420,9 @@ class RemoteSGLangEngine(InferenceEngine):
                 if should_accept(result):
                     self.result_cache.append(result)
                     accepted += 1
+                else:
                     with self.lock:
-                        self.rollout_stat.accepted += 1
+                        self.rollout_stat.accepted -= 1
             except Empty:
                 time.sleep(ROLLOUT_POLL_WAIT_TIME)
         if self.exiting.is_set():

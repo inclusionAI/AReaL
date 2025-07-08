@@ -109,6 +109,10 @@ class InferenceEngine(abc.ABC):
         """Initialize environments for distributed inference and load models."""
         raise NotImplementedError()
 
+    def destroy(self):
+        """Destroy the engine and release GPU memory."""
+        pass
+
     def update_weights(self, meta: WeightUpdateMeta) -> Future:
         """Update weights in the inference engine."""
         raise NotImplementedError()
@@ -121,7 +125,7 @@ class InferenceEngine(abc.ABC):
         """Asynchronously submit a request to the inference engine. Exits immediately."""
         raise NotImplementedError()
 
-    def wait(self, count: int, timeout: int) -> TensorDict:
+    def wait(self, count: int, timeout: float) -> TensorDict:
         """Wait for a specified number of requests to complete, with a timeout."""
         raise NotImplementedError()
 

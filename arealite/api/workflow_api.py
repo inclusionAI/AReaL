@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 class RolloutWorkflow:
 
     async def arun_episode(
-        self, engine: InferenceEngine, data: Dict[str, Any]
+        self, engine: "InferenceEngine", data: Dict[str, Any]
     ) -> TensorDict:
         """Run a single episode of the workflow.
 

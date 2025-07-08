@@ -1,6 +1,8 @@
+from typing import Any, Dict, List
+
 import torch
-from typing import List, Dict, Any
 from tensordict import TensorDict
+
 
 def concat_padded_tensors(
     tensor_dicts: List[TensorDict], pad_value: float = 0.0
@@ -8,6 +10,9 @@ def concat_padded_tensors(
     """Concatenate and pad tensors from multiple padded tensor dictionaries."""
     if not tensor_dicts:
         return TensorDict()
+
+    batch_sizes = [tuple(d.batch_size) for d in tensor_dicts]
+    new_batch_size = [sum(x[0] for x in batch_sizes), *batch_sizes[0][1:]]
 
     # Find max sequence length across all dictionaries
     lens = []
@@ -49,4 +54,4 @@ def concat_padded_tensors(
         result[key] = torch.cat(tensors_to_concat, dim=0)
     if "attention_mask" not in result:
         result["attention_mask"] = attn_mask
-    return TensorDict(result)
+    return TensorDict(result, batch_size=new_batch_size)

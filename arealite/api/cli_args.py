@@ -1,5 +1,5 @@
 from dataclasses import asdict, dataclass, field
-from typing import List, Optional, Dict
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -204,6 +204,10 @@ class InferenceEngineConfig:
         metadata={
             "help": "Maximum number of concurrent requests to the inference engine."
         },
+    )
+    queue_size: None | int = field(
+        default=None,
+        metadata={"help": "Input/Output queue size for async rollout."},
     )
     consumer_batch_size: int = field(
         default=1,
