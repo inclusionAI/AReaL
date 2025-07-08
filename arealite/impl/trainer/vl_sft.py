@@ -41,9 +41,10 @@ class VL_SFTTrainer(SFTTrainer):
         input_ids, attention_mask, position_ids, prompt_mask, pixel_values, image_grid_thw, cu_seqlens, max_seqlen, use_cache
         """
         data: Dict[str, List[Any]] = list_of_dict2dict_of_list(data)
-        breakpoint()
-        tokenized_seqs = data["seq"]
-        tokenized_prompts = data["prompt"]
+
+        tokenized_seqs = [seq[0] for seq in data["seq"]]
+        tokenized_prompts = [prompt[0] for prompt in data["prompt"]]
+        # breakpoint()
         prompt_lens = [len(prompt) for prompt in tokenized_prompts]
         input_lens = [len(prompt) for prompt in tokenized_seqs]
 
