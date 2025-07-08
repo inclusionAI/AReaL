@@ -6,6 +6,7 @@ from PIL.Image import Image as ImageObject
 from io import BytesIO
 import base64
 from jinja2 import Template
+
 def process_image(
     image: Union[Dict[str, Any], ImageObject, str], min_pixels: Optional[int], max_pixels: Optional[int]
 ) -> ImageObject:
@@ -28,35 +29,6 @@ def process_image(
 
     return img_base64
 
-def _build_messages(example: Dict[str, Any], prompt_key: str = "seq", image_key: str = "images", video_key: str = "videos") -> List[Dict[str, Any]]:
-        prompt_str: str = example[prompt_key]
-
-
-        if image_key in example:
-            content_list = []
-            for i, content in enumerate(prompt_str.split("<image>")):
-                if i != 0:
-                    content_list.append({"type": "image", "image": f"data:image/jpeg;base64,{example[image_key][i-1]}"})
-
-                if content:
-                    content_list.append({"type": "text", "text": content})
-
-            return [{"role": "user", "content": content_list}]
-        # elif video_key in example:
-        #     content_list = []
-        #     for i, content in enumerate(prompt_str.split("<video>")):
-        #         if i != 0:
-        #             content_list.append({"type": "video", "video": f"data:video/mp4;base64,{example[video_key][i-1]}"})
-
-        #         if content:
-        #             content_list.append({"type": "text", "text": content})
-
-        #     return [{"role": "user", "content": content_list}]
-        else:
-            return [{"role": "user", "content": prompt_str}]
-
-
-
 def process_clevr_count_70k_sft_dataset(dataset: Dataset, processor):
     '''
     "clevr_count_70k": {
@@ -70,22 +42,23 @@ def process_clevr_count_70k_sft_dataset(dataset: Dataset, processor):
         # Add query_id column
         example["query_id"] = str(idx)
         images=example["images"]
+        image_token = processor.image_token if processor is not None else "<image>"
+        example["problem"] = example["problem"].replace("<image>", image_token)
         processed_images=[]
         for image in images:
             processed_images.append(process_image(image,113*113,336*336))
         example["images"] = processed_images
         example["seq"] = example["problem"] + example["answer"] + tokenizer.eos_token
-        example["messages"] = _build_messages(example, prompt_key="seq", image_key="images")
         return example
 
     dataset = dataset.map(
         lambda example, idx: process_example(example, idx),
         with_indices=True,
-        remove_columns=["seq","images","answer"],
+        remove_columns=["answer"],
     )
 
     def _process(example):
-        text=processor.apply_chat_template(example["messages"], tokenize=False, add_generation_prompt=True)
+        text=example["seq"]
 
         processed_input=processor(
             text=[text],
