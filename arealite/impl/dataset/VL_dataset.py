@@ -313,43 +313,35 @@ class VLDataset(Dataset):
                 num_proc=filter_overlong_prompts_workers,
             )
 
-    def _build_vl_question(self, example: Dict[str, Any]) -> List[Dict[str, Any]]:
-        '''
-        Build the VL question from the example.
-        input: example dict with keys: prompt, answer, images
-        output standard format according to the processor
-        '''
-        prompt_str= example[self.prompt_key]
+    def _build_messages(self, example: Dict[str, Any]) -> List[Dict[str, Any]]:
+        prompt_str: str = example[self.prompt_key]
         if self.format_prompt:
             format_prompt = Template(self.format_prompt.strip())
             prompt_str = format_prompt.render(content=prompt_str)
+
         if self.image_key in example:
-            image_token=self.processor.image_token if self.processor is not None else "<image>"
-            prompt_str = prompt_str.replace("<image>", image_token)
+            # https://huggingface.co/docs/transformers/en/tasks/image_text_to_text
+            content_list = []
+            for i, content in enumerate(prompt_str.split("<image>")):
+                if i != 0:
+                    content_list.append({"type": "image"})
 
-        # if self.image_key in example:
-        #     content_list = []
-        #     for i, content in enumerate(prompt_str.split("<image>")):
-        #         if i != 0:
-        #             content_list.append({"type": "image"})
+                if content:
+                    content_list.append({"type": "text", "text": content})
 
-        #         if content:
-        #             content_list.append({"type": "text", "text": content})
+            return [{"role": "user", "content": content_list}]
+        elif self.video_key in example:
+            content_list = []
+            for i, content in enumerate(prompt_str.split("<video>")):
+                if i != 0:
+                    content_list.append({"type": "video"})
 
-        #     return [{"role": "user", "content": content_list}]
-        # elif self.video_key in example:
-        #     content_list = []
-        #     for i, content in enumerate(prompt_str.split("<video>")):
-        #         if i != 0:
-        #             content_list.append({"type": "video"})
+                if content:
+                    content_list.append({"type": "text", "text": content})
 
-        #         if content:
-        #             content_list.append({"type": "text", "text": content})
-
-        #     return [{"role": "user", "content": content_list}]
+            return [{"role": "user", "content": content_list}]
         else:
             return [{"role": "user", "content": prompt_str}]
-        return prompt_str
 
     def _filter_overlong_prompts(self, example: Dict[str, Any]) -> bool:
         messages = self._build_vl_question(example)

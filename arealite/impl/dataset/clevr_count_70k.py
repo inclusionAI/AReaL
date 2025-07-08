@@ -5,20 +5,10 @@ from PIL import Image
 from PIL.Image import Image as ImageObject
 from io import BytesIO
 import base64
+from jinja2 import Template
 def process_image(
     image: Union[Dict[str, Any], ImageObject, str], min_pixels: Optional[int], max_pixels: Optional[int]
 ) -> ImageObject:
-    '''
-    Process an image to ensure it is in RGB format and resized if necessary.
-    '''
-    if isinstance(image, str):
-        image = Image.open(image)
-    elif isinstance(image, dict):
-        image = Image.open(BytesIO(image["bytes"]))
-    elif isinstance(image, bytes):
-        image = Image.open(BytesIO(image))
-
-    image.load()  # avoid "Too many open files" errors
     if max_pixels is not None and (image.width * image.height) > max_pixels:
         resize_factor = math.sqrt(max_pixels / (image.width * image.height))
         width, height = int(image.width * resize_factor), int(image.height * resize_factor)
@@ -31,8 +21,39 @@ def process_image(
 
     if image.mode != "RGB":
         image = image.convert("RGB")
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")  # 或者根据你的图像格式调整，如 PNG
+    buffer.seek(0)
+    img_base64 = base64.b64encode(buffer.read()).decode("utf-8")
 
-    return image
+    return img_base64
+
+def _build_messages(example: Dict[str, Any], prompt_key: str = "seq", image_key: str = "images", video_key: str = "videos") -> List[Dict[str, Any]]:
+        prompt_str: str = example[prompt_key]
+
+
+        if image_key in example:
+            content_list = []
+            for i, content in enumerate(prompt_str.split("<image>")):
+                if i != 0:
+                    content_list.append({"type": "image", "image": f"data:image/jpeg;base64,{example[image_key][i-1]}"})
+
+                if content:
+                    content_list.append({"type": "text", "text": content})
+
+            return [{"role": "user", "content": content_list}]
+        # elif video_key in example:
+        #     content_list = []
+        #     for i, content in enumerate(prompt_str.split("<video>")):
+        #         if i != 0:
+        #             content_list.append({"type": "video", "video": f"data:video/mp4;base64,{example[video_key][i-1]}"})
+
+        #         if content:
+        #             content_list.append({"type": "text", "text": content})
+
+        #     return [{"role": "user", "content": content_list}]
+        else:
+            return [{"role": "user", "content": prompt_str}]
 
 
 
@@ -44,48 +65,42 @@ def process_clevr_count_70k_sft_dataset(dataset: Dataset, processor):
         "answer_key": "answer"
     },
     '''
-    tokenizer = processor.tokenizer
-    image_token=processor.image_token if processor is not None else "<image>"      
+    tokenizer = processor.tokenizer 
     def process_example(example, idx):
         # Add query_id column
         example["query_id"] = str(idx)
-        prompt_str = example["problem"].replace("<image>", image_token)
-        example["prompt"] = prompt_str
-
+        images=example["images"]
+        processed_images=[]
+        for image in images:
+            processed_images.append(process_image(image,113*113,336*336))
+        example["images"] = processed_images
+        example["seq"] = example["problem"] + example["answer"] + tokenizer.eos_token
+        example["messages"] = _build_messages(example, prompt_key="seq", image_key="images")
         return example
 
     dataset = dataset.map(
         lambda example, idx: process_example(example, idx),
         with_indices=True,
-        remove_columns=['problem'],
+        remove_columns=["seq","images","answer"],
     )
 
     def _process(example):
-        images=example["images"]
-        processed_images=[]
-        for image in images:
-            processed_image=process_image(image,113*113,336*336)
-            buffer = BytesIO()
-            processed_image.save(buffer, format="PNG")  # 或者根据你的图像格式调整，如 PNG
-            buffer.seek(0)
-            img_base64 = base64.b64encode(buffer.read()).decode("utf-8")
-            processed_images.append(img_base64)
-        seq=example["prompt"] + example["answer"] + tokenizer.eos_token
+        text=processor.apply_chat_template(example["messages"], tokenize=False, add_generation_prompt=True)
 
-        processed_input=processor(images,[seq],add_special_tokens=False, return_tensors="pt",return_length=True,padding=False,truncation=True,return_attention_mask=False)
+        processed_input=processor(
+            text=[text],
+            images=example["images"],
+            padding=False,
+            return_tensors="pt",
+            return_length=True,
+            return_attention_mask=False,
+        )
 
         example["seq"] =processed_input["input_ids"]
-        
-
-
-        
         example["pixel_values"] = processed_input["pixel_values"]
         example["image_grid_thw"] = processed_input["image_grid_thw"]
-        example["prompt"] = tokenizer(example["prompt"],add_special_tokens=False, return_tensors="pt",
-        return_length=True,padding=False,truncation=True,return_attention_mask=False,)[
-            "input_ids"
-        ]
+        example["prompt"] = tokenizer(example["prompt"],return_tensors="pt",return_length=True,padding=False,return_attention_mask=False,)["input_ids"]
         return example
 
-    dataset = dataset.map(lambda x: _process(x),remove_columns=["images"])
+    dataset = dataset.map(lambda x: _process(x))
     return dataset
