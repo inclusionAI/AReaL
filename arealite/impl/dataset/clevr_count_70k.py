@@ -73,3 +73,25 @@ def process_clevr_count_70k_sft_dataset(dataset: Dataset, processor):
 
     dataset = dataset.map(lambda x: _process(x),remove_columns=["images"],num_proc=os.cpu_count())
     return dataset
+
+def process_clevr_count_70k_rl_dataset(dataset: Dataset, processor):
+    tokenizer = processor.tokenizer 
+    def process_example(example, idx):
+        # Add query_id column
+        example["query_id"] = str(idx)
+        images=example["images"]
+        image_token = processor.image_token if processor is not None else "<image>"
+        example["problem"] = example["problem"].replace("<image>", image_token)
+        processed_images=[]
+        for image in images:
+            processed_images.append(process_image(image,113*113,336*336))
+        example["images"] = processed_images
+        example["seq"] = example["problem"] + example["answer"] + tokenizer.eos_token
+        return example
+
+    dataset = dataset.map(
+        lambda example, idx: process_example(example, idx),
+        with_indices=True,
+        num_proc=os.cpu_count()
+    )
+    return dataset

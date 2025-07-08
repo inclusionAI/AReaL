@@ -21,6 +21,7 @@ from arealite.tests.utils import mock_rollout_output
 from realhf.base import constants, name_resolve, seeding
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from arealite.impl.dataset.VL_dataset import VLDataset
+from arealite.api.trainer_api import TrainerFactory
 EXPR_NAME = "test_vlm_grpo"
 TRIAL_NAME = "test_vlm_grpo"
 MODEL_PATH = "/storage/openpsi/models/Qwen2-VL-7B"
@@ -49,14 +50,13 @@ def args():
     seeding.set_random_seed(args.seed, EXPR_NAME)
     args.train_dataset = DatasetConfig(
         path="/storage/openpsi/data/clevr_count_70k/",
-        name="main",
         split="train",
         batch_size=4,
         shuffle=True,
         pin_memory=True,
         num_workers=1,
     )
-    args.trainer = TrainerConfig(type="grpo", grpo=GRPOTrainerConfig())
+    args.trainer = TrainerConfig(type="vl_grpo", grpo=GRPOTrainerConfig())
     args.trainer.grpo.actor = EngineConfig(
         path=MODEL_PATH,
         gradient_checkpointing=False,
@@ -88,18 +88,22 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
     args.trainer.grpo.recompute_logprobs = recompute
     args.trainer.grpo.use_decoupled_loss = use_decoupled_loss
     args.train_dataset.batch_size = bs
+    args.rollout.collector.rlvr.reward_type = "clevr_count_70k"
     # Create mock rollout controller and trainer
     rollout_factory = RolloutCollectorFactory(args)
     collector = rollout_factory.make_collector(args.rollout.collector)
     rollout_controller = RolloutController(args, args.rollout, collector=collector)
     dataset = create_vl_dataset(args.train_dataset, MODEL_PATH)
 
-    trainer = SpmdGRPOTrainer(
-        args=args,
-        trainer_config=args.trainer,
-        train_dataset=dataset,
-        rollout_controller=rollout_controller,
-    )
+    if args.trainer is not None:
+        trainer_factory = TrainerFactory(args)
+        trainer = trainer_factory.make_trainer(
+            args.trainer,
+            train_dataset=dataset,
+            valid_dataset=None,
+            rollout_controller=rollout_controller,
+        )
+    
     ft_spec = FinetuneSpec(
         total_train_epochs=1,
         dataset_size=100,

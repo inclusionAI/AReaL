@@ -112,6 +112,10 @@ class RolloutCollectorFactory:
                 from arealite.impl.rlvr.rewards.gsm8k import (
                     gsm8k_reward_fn as reward_fn,
                 )
+            elif rlvr_config.reward_type == "clevr_count_70k":
+                from arealite.impl.rlvr.rewards.clevr_count_70k import (
+                    clevr_count_70k_reward_fn as reward_fn,
+                )
             else:
                 raise NotImplementedError(
                     f"Unknown reward type: {rlvr_config.reward_type}"

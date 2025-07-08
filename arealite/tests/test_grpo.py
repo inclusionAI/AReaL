@@ -71,6 +71,7 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
     args.trainer.grpo.recompute_logprobs = recompute
     args.trainer.grpo.use_decoupled_loss = use_decoupled_loss
     args.train_dataset.batch_size = bs
+
     # Create mock rollout controller and trainer
     rollout_factory = RolloutCollectorFactory(args)
     collector = rollout_factory.make_collector(args.rollout.collector)
