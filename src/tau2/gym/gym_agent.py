@@ -490,7 +490,11 @@ class AgentGymEnv(gym.Env):
                 # raise ValueError("Simulation already terminated.")
 
             # Parse the action string into a message
-            action_msg = parse_action_string(action)
+            try:
+                action_msg = parse_action_string(action)
+            except Exception as e:
+                logger.error(f"Error parsing action: {e}")
+                return f"Invalid action with error: {e}", 0.0, False, False, self._get_info()
 
             # Provide the action to the agent
             self._agent.set_action(action_msg)
