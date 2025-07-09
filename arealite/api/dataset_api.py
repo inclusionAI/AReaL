@@ -87,6 +87,15 @@ class Multimodal_DatasetFactory(DatasetFactory):
             from arealite.impl.dataset.clevr_count_70k import process_clevr_count_70k_sft_dataset
 
             return process_clevr_count_70k_sft_dataset(dataset, processor=processor)
+        if config.preprocessor.type == "clevr_count_70k_rl":
+            tokenizer_path = self.args.rollout.model_path
+            assert self.args.rollout.model_path is not None
+            from realhf.api.core.data_api import load_hf_processor_and_tokenizer
+
+            processor, _ = load_hf_processor_and_tokenizer(tokenizer_path)
+            from arealite.impl.dataset.clevr_count_70k import process_clevr_count_70k_rl_dataset
+
+            return process_clevr_count_70k_rl_dataset(dataset, processor=processor)
         raise NotImplementedError(
             f"Unknown dataset preprocessor type: {config.preprocessor.type}"
         )

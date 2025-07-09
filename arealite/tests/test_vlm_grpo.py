@@ -6,6 +6,7 @@ from datasets import load_dataset
 from arealite.api.cli_args import (
     DatasetConfig,
     EngineBackendConfig,
+    DatasetPreprocessor,
     EngineConfig,
     GRPOTrainerConfig,
     OptimizerConfig,
@@ -21,28 +22,13 @@ from realhf.base import constants, name_resolve, seeding
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from arealite.impl.dataset.VL_dataset import VLDataset
 from arealite.api.trainer_api import TrainerFactory
+from arealite.api.dataset_api import Multimodal_DatasetFactory
 import os
 EXPR_NAME = "test_vlm_grpo"
 TRIAL_NAME = "test_vlm_grpo"
 MODEL_PATH = "/storage/openpsi/models/Qwen2-VL-7B"
 
-def create_vl_dataset(cfg: DatasetConfig, model_name_or_path: str) -> VLDataset:
-    processor, tokenizer = load_hf_processor_and_tokenizer(
-        model_name_or_path=model_name_or_path,
-    )
-    train_dataset = VLDataset(
-        data_path=cfg.path,
-        tokenizer=tokenizer,
-        processor=processor,
-        max_prompt_length=cfg.max_prompt_length,
-        truncation="right",
-        format_prompt=cfg.format_prompt,
-        min_pixels=cfg.min_pixels,
-        max_pixels=cfg.max_pixels,
-        filter_overlong_prompts=False,
-        filter_overlong_prompts_workers=cfg.filter_overlong_prompts_workers,
-    )
-    return train_dataset
+
 @pytest.fixture(scope="module")
 def args():
     args = TrainingArgs(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
@@ -50,11 +36,13 @@ def args():
     seeding.set_random_seed(args.seed, EXPR_NAME)
     args.train_dataset = DatasetConfig(
         path="/storage/openpsi/data/clevr_count_70k/",
+        preprocessor=DatasetPreprocessor("clevr_count_70k_rl"),
         split="train",
         batch_size=4,
         shuffle=True,
         pin_memory=True,
         num_workers=1,
+        
     )
     args.trainer = TrainerConfig(type="vl_grpo", grpo=GRPOTrainerConfig())
     args.trainer.grpo.actor = EngineConfig(
@@ -98,7 +86,8 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
     rollout_factory = RolloutCollectorFactory(args)
     collector = rollout_factory.make_collector(args.rollout.collector)
     rollout_controller = RolloutController(args, args.rollout, collector=collector)
-    dataset = create_vl_dataset(args.train_dataset, MODEL_PATH)
+    dataset_factory = Multimodal_DatasetFactory(args)
+    dataset = dataset_factory.make_dataset(args.train_dataset, 0, 1)
 
     if args.trainer is not None:
         trainer_factory = TrainerFactory(args)
