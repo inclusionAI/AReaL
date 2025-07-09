@@ -1,8 +1,4 @@
-"""Test script for GRPO Trainer implementation."""
-
-import pytest
-from datasets import load_dataset
-
+import os
 from arealite.api.cli_args import (
     DatasetConfig,
     EngineBackendConfig,
@@ -23,14 +19,13 @@ from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from arealite.impl.dataset.VL_dataset import VLDataset
 from arealite.api.trainer_api import TrainerFactory
 from arealite.api.dataset_api import Multimodal_DatasetFactory
-import os
+
 EXPR_NAME = "test_vlm_grpo"
 TRIAL_NAME = "test_vlm_grpo"
 MODEL_PATH = "/storage/openpsi/models/Qwen2-VL-7B"
 
 
-@pytest.fixture(scope="module")
-def args():
+def create_args():
     args = TrainingArgs(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
     constants.set_experiment_trial_names(args.experiment_name, args.trial_name)
     seeding.set_random_seed(args.seed, EXPR_NAME)
@@ -42,7 +37,6 @@ def args():
         shuffle=True,
         pin_memory=True,
         num_workers=1,
-        
     )
     args.trainer = TrainerConfig(type="vl_grpo", grpo=GRPOTrainerConfig())
     args.trainer.grpo.actor = EngineConfig(
@@ -61,15 +55,9 @@ def args():
     args.rollout.collector.rlvr = RLVRConfig(solution_path="nothing")
     args.rollout.gconfig.max_new_tokens = 16
     name_resolve.reconfigure(args.cluster.name_resolve)
-    yield args
-    name_resolve.reset()
+    return args
 
 
-@pytest.mark.parametrize("kl_ctl", [0.0, 0.1])
-@pytest.mark.parametrize("bs", [4])
-@pytest.mark.parametrize("n_samples", [2])
-@pytest.mark.parametrize("recompute", [False, True])
-@pytest.mark.parametrize("use_decoupled_loss", [False, True])
 def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
     os.environ["WORLD_SIZE"] = "1"
     os.environ["RANK"] = "0"
@@ -82,6 +70,7 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
     args.trainer.grpo.use_decoupled_loss = use_decoupled_loss
     args.train_dataset.batch_size = bs
     args.rollout.collector.rlvr.reward_type = "clevr_count_70k"
+    
     # Create mock rollout controller and trainer
     rollout_factory = RolloutCollectorFactory(args)
     collector = rollout_factory.make_collector(args.rollout.collector)
@@ -109,7 +98,9 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
         trainer.ref.init_distributed(None, ft_spec)
         trainer.ref.eval()
 
+    example_image=dataset[0]["images"]
     rollout_output = mock_rollout_output(bs, n_samples)
+    rollout_output["images"] = [example_image] * bs * n_samples
     stats_list = trainer._train_step(rollout_output)
 
     # Verify the output
@@ -120,3 +111,32 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
         for k, v in stats.items():
             assert isinstance(v, float)
 
+
+# 参数化调用示例
+def run_tests():
+    args = create_args()
+    
+    kl_ctl_values = [0.0, 0.1]
+    bs_values = [4]
+    n_samples_values = [2]
+    recompute_values = [False, True]
+    use_decoupled_loss_values = [False, True]
+
+    for kl_ctl in kl_ctl_values:
+        for bs in bs_values:
+            for n_samples in n_samples_values:
+                for recompute in recompute_values:
+                    for use_decoupled_loss in use_decoupled_loss_values:
+                        test_train_step(
+                            args,
+                            kl_ctl,
+                            bs,
+                            n_samples,
+                            recompute,
+                            use_decoupled_loss,
+                        )
+
+
+# 运行测试
+if __name__ == "__main__":
+    run_tests()
