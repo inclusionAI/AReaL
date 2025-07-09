@@ -13,13 +13,12 @@ from arealite.api.cli_args import (
 )
 from arealite.api.io_struct import VLMRequest, Trajectory, TrajStats
 from arealite.api.vlm_client_api import VLMClient
-from arealite.api.rollout_api import RolloutCollector
 from realhf.base import logging
 from .rlvr_collector import RlvrCollector
 logger = logging.getLogger(__file__)
 
 
-class VL_RlvrCollector(RolloutCollector):
+class VL_RlvrCollector(RlvrCollector):
     def __init__(
         self,
         args: TrainingArgs,
