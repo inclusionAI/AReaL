@@ -13,7 +13,7 @@ from transformers import (
     get_constant_schedule_with_warmup,
     get_linear_schedule_with_warmup,
 )
-from arealite.utils.fsdp import get_cosine_schedule_with_warmup
+
 from arealite.api.cli_args import TrainEngineConfig
 from arealite.api.engine_api import (
     FinetuneSpec,
@@ -33,11 +33,13 @@ from arealite.utils.data import (
     unpack_sequence,
     unsqueeze_mb_list,
 )
+from arealite.utils.fsdp import get_cosine_schedule_with_warmup
 from arealite.utils.save_load import get_state_dict_from_repo_id_or_path
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import logging, name_resolve, names
 
 logger = logging.getLogger("HFEngine")
+
 
 class HFEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
@@ -233,7 +235,7 @@ class HFEngine(TrainEngine):
             name_resolve.add(update_name, str(time.time_ns()), keepalive_ttl=120)
         else:
             raise ValueError(f"Unknown weight update type {meta.type}")
-        
+
     def _init_distributed_weight_update(self, meta: WeightUpdateMeta):
         raise NotImplementedError(
             "Distributed weight update is not implemented for HFEngine yet. "
