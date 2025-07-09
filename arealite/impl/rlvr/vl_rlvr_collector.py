@@ -11,8 +11,8 @@ from arealite.api.cli_args import (
     RolloutCollectorConfig,
     TrainingArgs,
 )
-from arealite.api.io_struct import LLMRequest, Trajectory, TrajStats
-from arealite.api.llm_client_api import LLMClient
+from arealite.api.io_struct import VLMRequest, Trajectory, TrajStats
+from arealite.api.vlm_client_api import VLMClient
 from arealite.api.rollout_api import RolloutCollector
 from realhf.base import logging
 from .rlvr_collector import RlvrCollector
