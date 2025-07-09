@@ -8,6 +8,7 @@ import os
 import random
 import time
 from contextlib import contextmanager
+from functools import lru_cache
 
 # NOTE: We don't sue wildcard importing here because the type
 # `Sequence` has a very similar name to `SequenceSample`.
@@ -47,6 +48,7 @@ logger = logging.getLogger("api.data")
 RL_TASKS = ["math", "code", "rlhf", "stem"]
 
 
+@lru_cache(maxsize=8)
 def load_hf_tokenizer(
     model_name_or_path: str,
     fast_tokenizer=True,

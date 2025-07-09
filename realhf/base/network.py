@@ -30,6 +30,7 @@ def find_free_port(
     trial_name="port",
     lockfile_root=constants.PORT_LOCKFILE_ROOT,
 ):
+    # TODO: user random sampling instead of bind
     """Find a free port within the specified range, excluding certain ports."""
 
     ports_name = names.used_ports(experiment_name, trial_name, gethostip())

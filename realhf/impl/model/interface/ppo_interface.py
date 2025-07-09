@@ -298,15 +298,15 @@ class PPOActorInterface(model_api.ModelInterface):
         )
 
     @torch.no_grad()
-    def generate(
+    def compute_logps(
         self,
-        model: model_api.Model,
         input_: SequenceSample,
         mb_spec: MicroBatchSpec,
     ) -> SequenceSample:
         module = model.module
 
         module.eval()
+        self.engine.forward()
 
         # Remap the key `packed_prompts` to `packed_input_ids`,
         # because the pipe runner only recognizes `packed_input_ids`.
