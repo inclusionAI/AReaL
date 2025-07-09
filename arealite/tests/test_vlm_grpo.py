@@ -131,6 +131,3 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
         for k, v in stats.items():
             assert isinstance(v, float)
 
-test_args = args()
-
-test_train_step(test_args, kl_ctl=0.0, bs=4, n_samples=2, recompute=False, use_decoupled_loss=False)

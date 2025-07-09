@@ -37,13 +37,14 @@ class VL_SpmdGRPOTrainer(SpmdGRPOTrainer):
         self.actor_tokenizer, self.actor_processor = load_hf_processor_and_tokenizer(self.config.actor.path)
         
     def _train_step(self, trajs: List[Trajectory]):
+        breakpoint()
         rollout = concat_padded_tensors([traj.data for traj in trajs])
         rollout = to_device(rollout, torch.cuda.current_device())
 
         # Marks which sequence does not has an EOS token, i.e.,
         # generation is truncated by the configured maximum generation length
         batch_tokens = rollout["input_ids"]
-        images = rollout["images"]
+        images = concat_padded_tensors([traj.images for traj in trajs])
         if isinstance(images, List[str]):
             #paths/url to images
             images = [self.actor_processor.load_image(image) for image in images]

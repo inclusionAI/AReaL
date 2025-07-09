@@ -13,9 +13,9 @@ from gymnasium.core import ActType, ObsType
 
 from arealite.api.cli_args import GenerationHyperparameters
 from PIL.Image import Image as ImageObject
-if TYPE_CHECKING:
-    from arealite.api.llm_client_api import LLMClient
-from arealite.api.vlm_client_api import VLMClient
+# if TYPE_CHECKING:
+#     from arealite.api.llm_client_api import LLMClient
+# from arealite.api.vlm_client_api import VLMClient
 
 @dataclass
 class LLMServerInfo:
@@ -67,7 +67,7 @@ class VLMResponse(LLMResponse):
 @dataclass
 class AgentInferInput:
     obs: ObsType
-    llm_client: LLMClient| VLMClient
+    llm_client: Any
     gconfig: GenerationHyperparameters
 
 
@@ -89,12 +89,12 @@ class TrajStats:
 @dataclass
 class Trajectory:
     prompt: Dict[str, Any]
-    image: Optional[List[ImageObject|str]] = None
     data: Dict[str, torch.Tensor]
     stats: TrajStats
+    images: Optional[List[ImageObject|str]] =None
 
     def to_json_compatible(self):
-        if self.image is not None:
+        if self.images is not None:
             return {
                 "prompt": self.prompt,
                 "image": [img if isinstance(img, str) else img.tobytes() for img in self.image],

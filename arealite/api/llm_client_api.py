@@ -139,7 +139,7 @@ class LLMClientFactory:
             from arealite.system.sglang_client import SGLangClient
             return SGLangClient(self.args, config)
         elif self.args.rollout.server_backend == "vl_sglang":
-            from arealite.system.sglang_client import VL_SGLangClient
+            from arealite.system.vl_sglang_client import VL_SGLangClient
             return VL_SGLangClient(self.args, config)
 
             
