@@ -72,3 +72,5 @@ prettytable
 gymnasium>=1.1.1
 torchdata
 swanlab[dashboard]
+timm
+nvitop

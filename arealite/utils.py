@@ -232,7 +232,12 @@ def split_dict_tensor_with_cu_seqlens(
     not_to_split = {}
     keys_to_unsqueeze = set()
     for key, value in data.items():
-        if key == "cu_seqlens" or key == "max_seqlen":
+        if (
+            key == "cu_seqlens"
+            or key == "max_seqlen"
+            or key == "image_grid_thw"
+            or key == "pixel_values"
+        ):
             continue
         if not torch.is_tensor(value):
             not_to_split[key] = value
@@ -254,11 +259,29 @@ def split_dict_tensor_with_cu_seqlens(
     forward_indices = datapack.flat2d(group_indices)
     backward_indices = np.zeros(bs, dtype=np.int64)
     backward_indices[forward_indices] = np.arange(bs)
-
     to_split = dict_map(to_split, lambda x: unpack_sequence(x, cu_seqlens=cu_seqlens))
     to_split = dict_map(to_split, lambda x: recorder_list(x, forward_indices))
     to_split = dict_map(to_split, lambda x: torch.cat(x))
     to_split = dict_map(to_split, lambda x: unpack_sequence(x, lens=group_lens))
+    if data.get("pixel_values", None) is not None:
+        pixel_values = data.get("pixel_values", [])
+        image_grid_thw = data.get("image_grid_thw", [])
+
+        # Prepare the pixel_values and image_grid_thw for each group
+        pixel_values_split = []
+        image_grid_thw_split = []
+
+        for group_index in group_indices:
+            group_pixel_values = [pixel_values[i] for i in group_index]
+            group_image_grid_thw = [image_grid_thw[i].squeeze() for i in group_index]
+
+            # Stack pixel_values for each group (assuming pixel_values is a list of tensors)
+            pixel_values_split.append(torch.stack(group_pixel_values))
+            image_grid_thw_split.append(torch.stack(group_image_grid_thw))
+
+        # Pack the split pixel_values and image_grid_thw back into the data
+        to_split["pixel_values"] = pixel_values_split
+        to_split["image_grid_thw"] = image_grid_thw_split
     mbs = dict_of_list2list_of_dict(to_split)
 
     results = []

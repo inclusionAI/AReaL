@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Optional
 import torch
 import torch.distributed as dist
 import transformers
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText
 
 from arealite.api.cli_args import (
     EngineConfig,
@@ -18,6 +18,7 @@ from arealite.api.cli_args import (
 from arealite.api.engine_api import SPMDWrapper
 from arealite.api.io_struct import FinetuneSpec
 from arealite.api.llm_client_api import LLMClient
+from arealite.impl.engine.constant import VALID_VISION_MODELS
 from arealite.utils import (
     get_state_dict_from_repo_id_or_path,
     recorder_list,
@@ -93,22 +94,33 @@ class HFEngine(SPMDWrapper):
                 "Distributed training is not supported in this engine. "
                 "Please use FSDP for distributed training."
             )
-        torch.cuda.set_device("cuda:0")
 
         dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.engine_config.path,
             trust_remote_code=True,
         )
-        with torch.device("cuda"):
-            # initialize scratch model from config
-            model = AutoModelForCausalLM.from_config(
-                self.model_config,
+
+        if self.model_config.model_type in VALID_VISION_MODELS:
+            model = AutoModelForImageTextToText.from_pretrained(
+                pretrained_model_name_or_path=self.engine_config.path,
                 torch_dtype=dtype,
                 attn_implementation="flash_attention_2",
+                trust_remote_code=True,
+                device_map="auto",
             )
+        else:
+            torch.cuda.set_device("cuda:0")
+            with torch.device("cuda"):
+                # initialize scratch model from config
 
-        model = model.cuda()
+                model = AutoModelForCausalLM.from_config(
+                    self.model_config,
+                    torch_dtype=dtype,
+                    attn_implementation="flash_attention_2",
+                )
+
+            model = model.cuda()
 
         self.model = model
 
@@ -159,7 +171,9 @@ class HFEngine(SPMDWrapper):
         assert self.lr_scheduler is not None
 
         self.optimizer.zero_grad()
+
         mb_splits = split_dict_tensor_with_cu_seqlens(input_, mb_spec)
+
         total_loss_weight = torch.tensor(
             sum([loss_weight_fn(mb) for mb in mb_splits.mbs]), dtype=torch.float32
         )
@@ -270,6 +284,8 @@ class HFEngine(SPMDWrapper):
 
     def load_model_from_hf(self, path: str):
         """Load model from HuggingFace format."""
+        if self.model_config.model_type in VALID_VISION_MODELS:
+            return
         full_state = get_state_dict_from_repo_id_or_path(path)
         self.model.load_state_dict(
             full_state, strict=not self.model_config.tie_word_embeddings

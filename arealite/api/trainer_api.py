@@ -11,6 +11,8 @@ from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import TrainerConfig, TrainingArgs
+from arealite.impl.dataset.VL_dataset import collate_fn
+from arealite.impl.dataset.VLdataset_dic import VL_DATASET_KEY
 from realhf.base import constants
 
 if TYPE_CHECKING:
@@ -48,6 +50,10 @@ class Trainer(abc.ABC):
             batch_size = cfg.batch_size // dist.get_world_size()
         else:
             batch_size = cfg.batch_size
+        if self.train_dataset.dataset.info.dataset_name.lower() not in VL_DATASET_KEY:
+            _collate_fn = lambda x: x
+        else:
+            _collate_fn = collate_fn
         self.train_dataloader = StatefulDataLoader(
             dataset=self.train_dataset,
             batch_size=batch_size,
@@ -55,7 +61,7 @@ class Trainer(abc.ABC):
             pin_memory=cfg.pin_memory,
             num_workers=cfg.num_workers,
             drop_last=True,
-            collate_fn=lambda x: x,
+            collate_fn=_collate_fn,
         )
 
     def create_valid_dataloader(self):
@@ -66,6 +72,10 @@ class Trainer(abc.ABC):
             batch_size = cfg.batch_size // dist.get_world_size()
         else:
             batch_size = cfg.batch_size
+        if self.valid_dataset.dataset.info.dataset_name.lower() not in VL_DATASET_KEY:
+            _collate_fn = lambda x: x
+        else:
+            _collate_fn = collate_fn
         self.valid_dataloader = StatefulDataLoader(
             dataset=self.valid_dataset,
             batch_size=batch_size,
@@ -73,7 +83,7 @@ class Trainer(abc.ABC):
             pin_memory=cfg.pin_memory,
             num_workers=cfg.num_workers,
             drop_last=True,
-            collate_fn=lambda x: x,
+            collate_fn=_collate_fn,
         )
 
     @property
