@@ -45,11 +45,19 @@ class VL_SpmdGRPOTrainer(SpmdGRPOTrainer):
         # generation is truncated by the configured maximum generation length
         batch_tokens = rollout["input_ids"]
         images = [traj.images for traj in trajs]
-        if isinstance(images, List[str]):
+        if isinstance(images, List[List[str]]):
             #paths/url to images
-            images = [self.actor_processor.load_image(image) for image in images]
+            #convert to double list
+            tmp_images=[]
+            for image_list in images:
+                image_list = [ImageObject.open(image) for image in images]
+                tmp_images.append(image_list)
+            images = tmp_images
 
-        assert all(type(image) == ImageObject for image_list in images), "Images should be PIL Image objects"
+        assert all(type(image) == ImageObject for image_list in images for image in image_list), (
+            "All images should be PIL.Image objects, but got: "
+            f"{[type(image) for image_list in images for image in image_list]}"
+        )
         processed_inputs = self.actor_processor(
             images=images,
             return_tensors="pt",
