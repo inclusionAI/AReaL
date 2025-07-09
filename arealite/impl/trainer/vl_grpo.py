@@ -44,12 +44,12 @@ class VL_SpmdGRPOTrainer(SpmdGRPOTrainer):
         # Marks which sequence does not has an EOS token, i.e.,
         # generation is truncated by the configured maximum generation length
         batch_tokens = rollout["input_ids"]
-        images = concat_padded_tensors([traj.images for traj in trajs])
+        images = [traj.images for traj in trajs]
         if isinstance(images, List[str]):
             #paths/url to images
             images = [self.actor_processor.load_image(image) for image in images]
 
-        assert all(type(image) == ImageObject for image in images), "Images should be PIL Image objects"
+        assert all(type(image) == ImageObject for image_list in images), "Images should be PIL Image objects"
         processed_inputs = self.actor_processor(
             images=images,
             return_tensors="pt",

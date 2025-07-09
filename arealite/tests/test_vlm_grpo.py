@@ -100,7 +100,8 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
 
     example_image=dataset[0]["images"]
     rollout_output = mock_rollout_output(bs, n_samples)
-    rollout_output["images"] = [example_image] * bs * n_samples
+    for traj in rollout_output:
+        traj.images=example_image
     stats_list = trainer._train_step(rollout_output)
 
     # Verify the output
