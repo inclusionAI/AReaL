@@ -21,6 +21,7 @@ from realhf.base import constants, name_resolve, seeding
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from arealite.impl.dataset.VL_dataset import VLDataset
 from arealite.api.trainer_api import TrainerFactory
+import os
 EXPR_NAME = "test_vlm_grpo"
 TRIAL_NAME = "test_vlm_grpo"
 MODEL_PATH = "/storage/openpsi/models/Qwen2-VL-7B"
@@ -82,11 +83,15 @@ def args():
 @pytest.mark.parametrize("recompute", [False, True])
 @pytest.mark.parametrize("use_decoupled_loss", [False, True])
 def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
+    os.environ["WORLD_SIZE"] = "1"
+    os.environ["RANK"] = "0"
+    os.environ["LOCAL_RANK"] = "0"
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "7777"
     args.rollout.gconfig.n_samples = n_samples
     args.trainer.grpo.kl_ctl = kl_ctl
     args.trainer.grpo.recompute_logprobs = recompute
     args.trainer.grpo.use_decoupled_loss = use_decoupled_loss
-    args.trainer.type = "vl_grpo"
     args.train_dataset.batch_size = bs
     args.rollout.collector.rlvr.reward_type = "clevr_count_70k"
     # Create mock rollout controller and trainer
