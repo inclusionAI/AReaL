@@ -15,7 +15,6 @@ from arealite.api.cli_args import (
 )
 from arealite.api.io_struct import FinetuneSpec
 from arealite.api.rollout_api import RolloutCollectorFactory
-from arealite.impl.trainer.grpo import SpmdGRPOTrainer
 from arealite.system.rollout_controller import RolloutController
 from arealite.tests.utils import mock_rollout_output
 from realhf.base import constants, name_resolve, seeding
@@ -69,7 +68,7 @@ def args():
         backend=EngineBackendConfig(type="hf"),
     )
     args.rollout.model_path = MODEL_PATH
-    args.rollout.server_backend = "sglang"
+    args.rollout.server_backend = "vl_sglang"
     args.rollout.collector.rlvr = RLVRConfig(solution_path="nothing")
     args.rollout.gconfig.max_new_tokens = 16
     name_resolve.reconfigure(args.cluster.name_resolve)
@@ -87,6 +86,7 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
     args.trainer.grpo.kl_ctl = kl_ctl
     args.trainer.grpo.recompute_logprobs = recompute
     args.trainer.grpo.use_decoupled_loss = use_decoupled_loss
+    args.trainer.type = "vl_grpo"
     args.train_dataset.batch_size = bs
     args.rollout.collector.rlvr.reward_type = "clevr_count_70k"
     # Create mock rollout controller and trainer
@@ -125,3 +125,7 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
         assert isinstance(stats, dict)
         for k, v in stats.items():
             assert isinstance(v, float)
+
+test_args = args()
+
+test_train_step(test_args, kl_ctl=0.0, bs=4, n_samples=2, recompute=False, use_decoupled_loss=False)
