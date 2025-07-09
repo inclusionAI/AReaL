@@ -3,10 +3,11 @@
 
 import time
 
-from arealite.api.io_struct import LLMRequest, LLMResponse, LLMServerInfo
-from arealite.api.llm_client_api import LLMClient
+from arealite.api.io_struct import LLMServerInfo,VLMRequest,VLMResponse
 from realhf.base import logging, pkg_version
-
+from arealite.api.vlm_client_api import VLMClient
+from arealite.api.cli_args import LLMClientConfig, TrainingArgs
+from arealite.system.sglang_client import SGLangClient
 logger = logging.getLogger(__name__)
 
 if pkg_version.is_available("sglang"):
@@ -16,18 +17,25 @@ if pkg_version.is_available("sglang"):
         SGLANG_TOKEN_OUTPUT_IDENTIFIER = "token_ids"
 
 
-class SGLangClient(LLMClient):
-    """SGLang implementation of LLMClient."""
 
-    async def agenerate(self, req: LLMRequest) -> LLMResponse:
-        """Async version of generate using aiohttp."""
+class VL_SGLangClient(VLMClient, SGLangClient):
+    """A client for interacting with both VLM and SGLang servers."""
 
-        # Convert messages to prompt
+    def __init__(self, args: TrainingArgs, client_config: LLMClientConfig):
+        # Initialize the parent classes
+        VLMClient.__init__(self, args, client_config)
+        SGLangClient.__init__(self, args, client_config)
+
+    async def agenerate(self, req: VLMRequest) -> VLMResponse:
+        """Override the agenerate method to support both VLM and SGLang generation."""
+        if not req.images:
+            # If no images are provided, use SGLang generation
+            return await SGLangClient.agenerate(self, req)
         if not req.text:
             assert req.input_ids is not None
             req.text = self.tokenizer.decode(req.input_ids)
-
-        # Prepare request payload
+            
+         # Prepare request payload
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
         if self.tokenizer.eos_token_id not in stop_token_ids:
@@ -47,6 +55,7 @@ class SGLangClient(LLMClient):
         payload = {
             "rid": req.rid,
             "text": req.text,
+            "images": req.images, #  ImageObject or str
             "sampling_params": sample_params,
             "return_logprob": True,
             "stream": False,
@@ -95,9 +104,10 @@ class SGLangClient(LLMClient):
 
         latency = time.perf_counter() - start_time
 
-        return LLMResponse(
+        return VLMResponse(
             completion=completion,
             input_tokens=req.input_ids,
+            input_images=req.images,
             output_tokens=accumulated_output_tokens,
             output_logprobs=accumulated_output_logprobs,
             output_versions=accumulated_versions,
@@ -107,61 +117,13 @@ class SGLangClient(LLMClient):
         )
 
     async def aupdate_weights_from_disk(self, server_info: LLMServerInfo, path: str):
-        server_url = f"http://{server_info.host}:{server_info.port}"
-        response, _ = await self.arequest_with_retry(
-            endpoint="/update_weights_from_disk",
-            payload=dict(model_path=path, allow_interrupt=True),
-            method="POST",
-            max_retries=3,
-            timeout=self.client_config.request_timeout,
-            target_server=server_info,
-        )
-        res = await response.json()
-        assert res["success"]
-        if "num_paused_requests" in res:
-            logger.info(
-                f"{res['num_paused_requests']} requests are interrupted "
-                f"during updating weights for server {server_url}"
-            )
-        self.registry.update_heartbeat(
-            server_info.server_id, "healthy", version=server_info.version + 1
-        )
+        
+        await SGLangClient.aupdate_weights_from_disk(self, server_info, path)
 
     async def ainit_weight_update_group(self, server_info, group_meta):
-        payload = dict(
-            master_address=group_meta.master_address,
-            master_port=group_meta.master_port,
-            rank_offset=group_meta.rank_offset,
-            world_size=group_meta.world_size,
-            group_name=group_meta.group_name,
-            backend=group_meta.backend,
-        )
-        response, _ = await self.arequest_with_retry(
-            endpoint="/init_weights_update_group",
-            payload=payload,
-            method="POST",
-            max_retries=3,
-            timeout=self.client_config.request_timeout,
-            target_server=server_info,
-        )
-        res = await response.json()
-        assert res["success"], res["message"]
+
+        await SGLangClient.ainit_weight_update_group(self, server_info, group_meta)
 
     async def aupdate_weights_from_distributed(self, server_info, weight_meta):
-        payload = dict(
-            name=weight_meta.param_name,
-            dtype=weight_meta.dtype,
-            shape=weight_meta.shape,
-        )
-        response, _ = await self.arequest_with_retry(
-            endpoint="/update_weights_from_distributed",
-            payload=payload,
-            method="POST",
-            max_retries=3,
-            timeout=self.client_config.request_timeout,
-            target_server=server_info,
-        )
-        res = await response.json()
-        assert res["success"], res["message"]
 
-
+        await SGLangClient.aupdate_weights_from_distributed(self, server_info, weight_meta)

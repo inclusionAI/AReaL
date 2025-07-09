@@ -52,3 +52,4 @@ class VL_SpmdGRPOTrainer(SpmdGRPOTrainer):
         rollout_controller: Optional[RolloutController] = None,
     ):
         super().__init__(args, trainer_config, train_dataset, valid_dataset, rollout_controller)
+        self.actor_tokenizer, self.actor_processor = load_hf_processor_and_tokenizer(self.config.actor.path)

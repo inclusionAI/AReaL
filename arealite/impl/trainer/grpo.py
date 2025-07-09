@@ -71,9 +71,8 @@ class SpmdGRPOTrainer(Trainer):
         engine_factory = EngineFactory(args)
         self.actor = engine_factory.make_engine(self.config.actor)
 
-        self.actor_tokenizer, self.actor_processor = load_hf_processor_and_tokenizer(
-            self.config.actor.path)
-        self.vision = self.actor_processor is not None
+        
+
         
         # self.actor_tokenizer = load_hf_tokenizer(self.config.actor.path)
         self.gconfig = args.rollout.gconfig

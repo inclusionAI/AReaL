@@ -137,6 +137,10 @@ class LLMClientFactory:
         """Create an instance of LLMClient based on the specified type."""
         if self.args.rollout.server_backend == "sglang":
             from arealite.system.sglang_client import SGLangClient
-
             return SGLangClient(self.args, config)
+        elif self.args.rollout.server_backend == "vl_sglang":
+            from arealite.system.sglang_client import VL_SGLangClient
+            return VL_SGLangClient(self.args, config)
+
+            
         raise ValueError(f"Unknown LLMClient type: {self.args.rollout.server_backend}")

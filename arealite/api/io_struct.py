@@ -12,10 +12,10 @@ import torch
 from gymnasium.core import ActType, ObsType
 
 from arealite.api.cli_args import GenerationHyperparameters
-
+from PIL.Image import Image as ImageObject
 if TYPE_CHECKING:
     from arealite.api.llm_client_api import LLMClient
-
+from arealite.api.vlm_client_api import VLMClient
 
 @dataclass
 class LLMServerInfo:
@@ -54,20 +54,28 @@ class LLMResponse:
     latency: float = float("inf")
     ttft: float = float("inf")  # Time to first token
     itl: List[float] = field(default_factory=list)  # List of inter-token latencies
+    
+@dataclass
+class VLMRequest(LLMRequest):
+    images: Optional[List[ImageObject|str]] = field(default_factory=list)
+
+@dataclass
+class VLMResponse(LLMResponse):
+    input_images: List[ImageObject|str] = field(default_factory=list)
 
 
 @dataclass
 class AgentInferInput:
     obs: ObsType
-    llm_client: "LLMClient"
+    llm_client: LLMClient| VLMClient
     gconfig: GenerationHyperparameters
 
 
 @dataclass
 class AgentInferOutput:
     action: ActType
-    llm_req: LLMRequest
-    llm_resp: LLMResponse
+    llm_req: LLMRequest|VLMRequest
+    llm_resp: LLMResponse|VLMResponse
 
 
 @dataclass
@@ -81,33 +89,60 @@ class TrajStats:
 @dataclass
 class Trajectory:
     prompt: Dict[str, Any]
+    image: Optional[List[ImageObject|str]] = None
     data: Dict[str, torch.Tensor]
     stats: TrajStats
 
     def to_json_compatible(self):
-        return {
-            "prompt": self.prompt,
-            "data": {k: v.cpu().numpy().tolist() for k, v in self.data.items()},
-            "stats": {
-                "start_time": self.stats.start_time,
-                "total_reward": self.stats.total_reward,
-                "episode_length": self.stats.episode_length,
-                "info": self.stats.info,
-            },
-        }
+        if self.image is not None:
+            return {
+                "prompt": self.prompt,
+                "image": [img if isinstance(img, str) else img.tobytes() for img in self.image],
+                "data": {k: v.cpu().numpy().tolist() for k, v in self.data.items()},
+                "stats": {
+                    "start_time": self.stats.start_time,
+                    "total_reward": self.stats.total_reward,
+                    "episode_length": self.stats.episode_length,
+                    "info": self.stats.info,
+                },
+            }
+        else:
+            return {
+                "prompt": self.prompt,
+                "data": {k: v.cpu().numpy().tolist() for k, v in self.data.items()},
+                "stats": {
+                    "start_time": self.stats.start_time,
+                    "total_reward": self.stats.total_reward,
+                    "episode_length": self.stats.episode_length,
+                    "info": self.stats.info,
+                },
+            }
 
     @classmethod
     def from_json_compatible(cls, data: Dict[str, Any]) -> "Trajectory":
-        return cls(
-            prompt=data["prompt"],
-            data={k: torch.tensor(v) for k, v in data["data"].items()},
-            stats=TrajStats(
-                start_time=data["stats"]["start_time"],
-                total_reward=data["stats"]["total_reward"],
-                episode_length=data["stats"]["episode_length"],
-                info=data["stats"]["info"],
-            ),
-        )
+        if "image" in data:
+            return cls(
+                prompt=data["prompt"],
+                image=[ img for img in data["image"]],
+                data={k: torch.tensor(v) for k, v in data["data"].items()},
+                stats=TrajStats(
+                    start_time=data["stats"]["start_time"],
+                    total_reward=data["stats"]["total_reward"],
+                    episode_length=data["stats"]["episode_length"],
+                    info=data["stats"]["info"],
+                ),
+            )
+        else:
+            return cls(
+                prompt=data["prompt"],
+                data={k: torch.tensor(v) for k, v in data["data"].items()},
+                stats=TrajStats(
+                    start_time=data["stats"]["start_time"],
+                    total_reward=data["stats"]["total_reward"],
+                    episode_length=data["stats"]["episode_length"],
+                    info=data["stats"]["info"],
+                ),
+            )
 
 
 @dataclass
