@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0
 
 from typing import List, Optional
-
+from collections.abc import MutableSequence
 import torch
 from datasets import Dataset
 from arealite.api.cli_args import (
@@ -45,7 +45,9 @@ class VL_SpmdGRPOTrainer(SpmdGRPOTrainer):
         # generation is truncated by the configured maximum generation length
         batch_tokens = rollout["input_ids"]
         images = [traj.images for traj in trajs]
-        if isinstance(images, List[List[str]]):
+
+
+        if isinstance(images, MutableSequence) and all(isinstance(i, MutableSequence) and all(isinstance(x, str) for x in i) for i in images):
             #paths/url to images
             #convert to double list
             tmp_images=[]
