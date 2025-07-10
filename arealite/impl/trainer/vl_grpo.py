@@ -76,6 +76,14 @@ class VL_SpmdGRPOTrainer(SpmdGRPOTrainer):
         breakpoint()
         pixel_values = processed_inputs["pixel_values"]
         image_grid_thw = processed_inputs["image_grid_thw"]
+        batch_sizes=image_grid_thw.shape[0]
+        assert all(image_grid_thw.shape[1][0] == 1 for image_grid_thw in image_grid_thw), (
+            "All data should have 1 image, but got: "
+            f"{[image_grid_thw.shape[1][0] for image_grid_thw in image_grid_thw]}"
+        )
+        pixel_values = pixel_values.reshape(
+            batch_sizes, -1, *pixel_values.shape[1:]
+        )
         pixel_values = pixel_values.to(batch_tokens.device)
         image_grid_thw = image_grid_thw.to(batch_tokens.device)
 

@@ -97,7 +97,7 @@ class Trajectory:
         if self.images is not None:
             return {
                 "prompt": self.prompt,
-                "image": [img if isinstance(img, str) else img.tobytes() for img in self.image],
+                "image": [img if isinstance(img, str) else img.tobytes() for img in self.images],
                 "data": {k: v.cpu().numpy().tolist() for k, v in self.data.items()},
                 "stats": {
                     "start_time": self.stats.start_time,
@@ -120,10 +120,10 @@ class Trajectory:
 
     @classmethod
     def from_json_compatible(cls, data: Dict[str, Any]) -> "Trajectory":
-        if "image" in data:
+        if "images" in data:
             return cls(
                 prompt=data["prompt"],
-                image=[ img for img in data["image"]],
+                images=[img for img in data["images"]],
                 data={k: torch.tensor(v) for k, v in data["data"].items()},
                 stats=TrajStats(
                     start_time=data["stats"]["start_time"],
