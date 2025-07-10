@@ -260,6 +260,50 @@ class SGLangConfig:
         return f"python3 -m sglang.launch_server {flags}"
 
 
+    @staticmethod
+    def build_args(
+        sglang_config: "SGLangConfig",
+        model_path,
+        tp_size,
+        base_gpu_id,
+        dist_init_addr: Optional[str] = None,
+        served_model_name: Optional[str] = None,
+        skip_tokenizer_init: bool = True,
+    ):
+        from realhf.base import network, pkg_version, seeding
+        from realhf.experiments.common.utils import asdict as conf_as_dict
+
+        args: Dict = conf_as_dict(sglang_config)
+        args["random_seed"] = seeding.get_seed()
+
+        if served_model_name is None:
+            served_model_name = model_path
+        host_ip = network.gethostip()
+        host = "localhost" if not sglang_config.enable_metrics else host_ip
+        args = dict(
+            host=host,
+            model_path=model_path,
+            # Model and tokenizer
+            tokenizer_path=model_path,
+            tokenizer_mode="auto",
+            load_format="auto",
+            trust_remote_code=True,
+            device="cuda",
+            served_model_name=served_model_name,
+            is_embedding=False,
+            skip_tokenizer_init=skip_tokenizer_init,
+            # Other runtime options
+            tp_size=tp_size,
+            # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
+            base_gpu_id=base_gpu_id,
+            nnodes=1,
+            node_rank=0,
+            dist_init_addr=dist_init_addr,
+            **args,
+        )
+
+        return args
+
 @dataclass
 class InferenceEngineConfig:
     experiment_name: str
