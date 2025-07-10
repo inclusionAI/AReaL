@@ -73,6 +73,7 @@ HOST = network.gethostip()
 #     assert isinstance(resp.completions, str)
 #     time.sleep(5)
 #     engine.destroy()
+#     time.sleep(30)  # Allow time for the engine to clean up
 
 
 @pytest.mark.parametrize("n_samples", [1, 2])
@@ -94,7 +95,7 @@ def test_local_sglang_rollout(n_samples):
         tp_size=1,
         base_gpu_id=0,
         served_model_name=MODEL_PATH,
-        skip_tokenizer_init=True,
+        skip_tokenizer_init=False,
     )
 
     engine = LocalSGLangEngine(config, engine_args=engine_args)
@@ -116,14 +117,16 @@ def test_local_sglang_rollout(n_samples):
     }
     result = engine.rollout([data] * 2, workflow=workflow)
 
-    print("Here is the result" + result)
+    print("Here is the result ", result)
     assert isinstance(result, TensorDict)
     bs = result.batch_size
     assert bs == torch.Size([2 * n_samples])
     engine.destroy()
 
+    time.sleep(30)  # Allow time for the engine to clean up
 
-# @pytest.mark.parametrize("ofp", [1, 2])
+
+# @pytest.mark.parametrize("ofp", [2])
 # @pytest.mark.parametrize("bs", [2])
 # @pytest.mark.parametrize("n_samples", [1])
 # def test_local_sglang_staleness_control(bs, ofp, n_samples):
@@ -132,7 +135,12 @@ def test_local_sglang_rollout(n_samples):
 #     from realhf.base import seeding
 #     seeding.set_random_seed(1, EXPR_NAME)
 
-#     config = InferenceEngineConfig(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
+#     config = InferenceEngineConfig(
+#         experiment_name=EXPR_NAME,
+#         trial_name=TRIAL_NAME,
+#         consumer_batch_size=bs,
+#         max_head_offpolicyness=ofp,
+#     )
 #     engine_args = SGLangConfig.build_args(
 #         sglang_config=SGLangConfig(mem_fraction_static=0.3),
 #         model_path=MODEL_PATH,
@@ -171,3 +179,5 @@ def test_local_sglang_rollout(n_samples):
 #     assert engine.output_queue.qsize() == min(bs * 4, bs * (ofp + 2))
 
 #     engine.destroy()
+
+#     time.sleep(10)  # Allow time for the engine to clean up
