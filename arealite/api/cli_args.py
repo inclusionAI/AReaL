@@ -139,6 +139,11 @@ class TrainEngineConfig:
 
 
 @dataclass
+class TrainControllerConfig:
+    train_engine_config: TrainEngineConfig = field(default_factory=TrainEngineConfig)
+
+
+@dataclass
 class SGLangConfig:
     """Configuration for SGLang runtime. Refer to:
     https://github.com/sgl-project/sglang for detailed documentation.

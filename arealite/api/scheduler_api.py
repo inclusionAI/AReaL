@@ -20,20 +20,15 @@ class EngineSchedulingConfig:
     replicas: int = 0
     specs: List[ContainerSpec] = None
 
-@dataclass
-class InstanceSchedulingConfig:
-    replicas: int = 0
-    config: EngineSchedulingConfig = None
-
 class SchedulerClient(ABC):
     def __init__(self, expr_name: str, trial_name: str):
         self.expr_name = expr_name
         self.trial_name = trial_name
         self.run_name = f"{self.expr_name}_{self.trial_name}"
 
-    def submit(self, instance_scheduling_config, **kwargs):
+    def submit(self, engine_scheduling_config, **kwargs):
         """
-        提交作业， 异步等待作业
+        提交作业， 异步等待作业, 返回作业id
         """
         raise NotImplementedError()
 
@@ -44,18 +39,18 @@ class SchedulerClient(ABC):
         """
         raise NotImplementedError()
 
-    def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
-        raise NotImplementedError()
-
-    def call(self, method: str, **kwargs):
-        """ call engine's method
-        """
-        raise NotImplementedError()
-
     def stop(self, name):
         """Stops a running job.
 
         Raises exception if there is no such job, but passes if the job
         has stopped either successfully or not.
+        """
+        raise NotImplementedError()
+
+    def initialize_engine(self, engine_id: str | None, ft_spec: FinetuneSpec | None):
+        raise NotImplementedError()
+
+    def call_engine(self, engine_id: str, method: str, *args, **kwargs):
+        """ call engine's method
         """
         raise NotImplementedError()
