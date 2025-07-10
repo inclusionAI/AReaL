@@ -56,12 +56,13 @@ class VL_SpmdGRPOTrainer(SpmdGRPOTrainer):
                 tmp_images.append(image_list)
             images = tmp_images
 
-        assert all(type(image) == ImageObject for image_list in images for image in image_list), (
+        assert all(isinstance(image, ImageObject) for image_list in images for image in image_list),(
             "All images should be PIL.Image objects, but got: "
             f"{[type(image) for image_list in images for image in image_list]}"
         )
         processed_inputs = self.actor_processor(
             images=images,
+
             return_tensors="pt",
             padding=False,
             truncation=False,
