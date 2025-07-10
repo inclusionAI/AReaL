@@ -1,5 +1,18 @@
 # AReaL v1.0.0 Design Doc
 
+---
+
+Update 20250710
+
+SFT example:
+
+```bash
+torchrun --nnodes 1 --nproc-per-node 8 examples/arealite/gsm8k_sft.py --config examples/arealite/configs/gsm8k_sft.yaml
+```
+
+---
+
+
 We will provide both single-controller and SPMD user interfaces. The SPMD interface will be delivered with AReaLite, which is the paradigm most users are familiar with, just like using `torchrun` or `deepspeed`. However, this paradigm may lack some flexibility over global scheduling and control. To unlock the full potential with customized distributed execution, we will also provide a single-controller mode just like using Ray --- but our scheduler backend will not be restricted to Ray. Our code will be able to run with any scheduler in the cluster, such as native SLURM and K8S.
 
 However, we want the user code to stay the same for both modes. The following is a simple usage example:
