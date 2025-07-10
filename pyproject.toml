@@ -53,6 +53,10 @@ dependencies = [
     "hydra-core==1.4.0.dev1",
     "packaging",
     "tabulate",
+    "torchdata",
+    "autoflake",
+    "gymnasium",
+    "tensordict",
     
     # Monitoring and logging
     "wandb",

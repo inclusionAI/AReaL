@@ -70,3 +70,7 @@ Pebble
 timeout-decorator
 prettytable
 swanlab[dashboard]
+torchdata
+autoflake
+gymnasium
+tensordict
