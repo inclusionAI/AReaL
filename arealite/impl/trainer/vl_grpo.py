@@ -65,10 +65,15 @@ class VL_SpmdGRPOTrainer(SpmdGRPOTrainer):
             "All images should be PIL.Image objects, but got: "
             f"{[type(image) for image_list in images for image in image_list]}"
         )
-        processed_inputs = self.actor_processor.image_processor(
-            images=images,
-            return_tensors="pt",
-        )
+        processed_inputs = self.actor_processor(
+                    images=images,
+                    text=rollout["input_ids"],
+                    return_tensors="pt",
+                    padding=False,
+                    truncation=False,
+                    tokenized=True,
+                )
+        breakpoint()
         pixel_values = processed_inputs["pixel_values"]
         image_grid_thw = processed_inputs["image_grid_thw"]
         pixel_values = pixel_values.to(batch_tokens.device)

@@ -224,6 +224,7 @@ def split_dict_tensor_with_cu_seqlens(
     '''
     Split a dictionary of tensors into micro-batches based on cumulative sequence lengths.
     '''
+    breakpoint()
     assert "cu_seqlens" in data
     cu_seqlens = data["cu_seqlens"]
     bs = cu_seqlens.shape[0] - 1
