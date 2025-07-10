@@ -69,13 +69,12 @@ class VL_SpmdGRPOTrainer(SpmdGRPOTrainer):
                     images=images,
                     return_tensors="pt",
                 )
-        breakpoint()
         pixel_values = processed_inputs["pixel_values"]
         image_grid_thw = processed_inputs["image_grid_thw"]
         batch_sizes=image_grid_thw.shape[0]
-        assert all(image_grid_thw.shape[1][0] == 1 for image_grid_thw in image_grid_thw), (
+        assert all(image_grid_thw_[0] == 1 for image_grid_thw_ in image_grid_thw), (
             "All data should have 1 image, but got: "
-            f"{[image_grid_thw.shape[1][0] for image_grid_thw in image_grid_thw]}"
+            f"{[image_grid_thw_[0] for image_grid_thw_ in image_grid_thw]}"
         )
         pixel_values = pixel_values.reshape(
             batch_sizes, -1, *pixel_values.shape[1:]
@@ -97,8 +96,8 @@ class VL_SpmdGRPOTrainer(SpmdGRPOTrainer):
         # Transformer forward input data
         model_inputs = dict(
             input_ids=input_ids.unsqueeze(0),
-            pixel_values=pixel_values.unsqueeze(0),
-            image_grid_thw=image_grid_thw.unsqueeze(0),
+            pixel_values=pixel_values.unsqueeze(1),
+            image_grid_thw=image_grid_thw.unsqueeze(1),
             attention_mask=None,
             position_ids=position_ids.unsqueeze(0),
             cu_seqlens=cu_seqlens,
