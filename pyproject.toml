@@ -55,7 +55,6 @@ dependencies = [
     "tabulate",
     "gymnasium>=1.1.1",
     "torchdata",
-    "torchdata",
     "autoflake",
     "tensordict",
     
