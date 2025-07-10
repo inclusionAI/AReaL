@@ -105,6 +105,7 @@ def test_train_step(args, kl_ctl, bs, n_samples, recompute, use_decoupled_loss):
     stats_list = trainer._train_step(rollout_output)
 
     # Verify the output
+    breakpoint()
     assert isinstance(stats_list, list)
     assert len(stats_list) == args.trainer.grpo.ppo_n_minibatches
     for stats in stats_list:

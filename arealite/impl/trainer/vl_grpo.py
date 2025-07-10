@@ -34,7 +34,7 @@ class VL_SpmdGRPOTrainer(SpmdGRPOTrainer):
         rollout_controller: Optional[RolloutController] = None,
     ):
         super().__init__(args, trainer_config, train_dataset, valid_dataset, rollout_controller)
-        self.actor_tokenizer, self.actor_processor = load_hf_processor_and_tokenizer(self.config.actor.path)
+        self.actor_processor, self.actor_tokenizer = load_hf_processor_and_tokenizer(self.config.actor.path)
         
     def _train_step(self, trajs: List[Trajectory]):
         breakpoint()
@@ -60,12 +60,9 @@ class VL_SpmdGRPOTrainer(SpmdGRPOTrainer):
             "All images should be PIL.Image objects, but got: "
             f"{[type(image) for image_list in images for image in image_list]}"
         )
-        processed_inputs = self.actor_processor(
+        processed_inputs = self.actor_processor.image_processor(
             images=images,
-
             return_tensors="pt",
-            padding=False,
-            truncation=False,
         )
         pixel_values = processed_inputs["pixel_values"]
         image_grid_thw = processed_inputs["image_grid_thw"]
