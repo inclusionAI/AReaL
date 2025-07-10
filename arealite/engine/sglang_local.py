@@ -226,8 +226,8 @@ class LocalSGLangEngine(InferenceEngine):
         }
 
         completions = ""
-        prompt = req.text
-        input_ids = req.input_ids
+        prompt = req.text if req.text else None
+        input_ids = req.input_ids if req.input_ids else None
 
         # Make request
         start_time = time.perf_counter()
@@ -249,7 +249,10 @@ class LocalSGLangEngine(InferenceEngine):
                 )
 
                 completions += outputs.get("text", "")
-                prompt += outputs.get("text", "")
+                if prompt is None:
+                    prompt = outputs.get("text", "")
+                else:
+                    prompt += outputs.get("text", "")
                 
                 if "meta_info" in outputs:
                     meta_info = outputs["meta_info"]
