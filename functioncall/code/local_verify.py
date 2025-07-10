@@ -95,7 +95,7 @@ def call_verify(problem, generation, debug, timeout=SINGLE_CASE_EXEC_TIMEOUT):
     return result["result"], result["info"]
 
 
-def code_verify(id2info, generateds, query_ids, debug=False):
+def code_verify(id2info, generateds, query_ids, max_workers=None, debug=False):
     assert len(generateds) == len(query_ids)
     problems = [id2info[qid] for qid in query_ids]
 
@@ -106,8 +106,10 @@ def code_verify(id2info, generateds, query_ids, debug=False):
         infer_args.append((problem, generated, debug, SINGLE_CASE_EXEC_TIMEOUT))
 
     run_results = []
-    num_process = max(1, os.cpu_count() // 8)
-    with concurrent.futures.ProcessPoolExecutor(num_process) as executor:
+    if max_workers is None:
+        max_workers = max(1, os.cpu_count() // 8)
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers) as executor:
         run_results = executor.map(call_verify, *zip(*infer_args))
 
     for run_result in run_results:
