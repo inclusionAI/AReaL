@@ -93,14 +93,6 @@ def gen_servers(experiment_name, trial_name):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/gen_servers"
 
 
-def gen_server(experiment_name, trial_name, server_id):
-    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/gen_server/{server_id}"
-
-
-def gen_server_root(experiment_name, trial_name):
-    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/gen_server/"
-
-
 def used_ports(experiment_name, trial_name, host_name):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/{host_name}/"
 
@@ -115,7 +107,3 @@ def training_samples(experiment_name, trial_name):
 
 def experiment_status(experiment_name, trial_name):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/experiment_status"
-
-
-def update_weights_from_disk(experiment_name, trial_name, model_version):
-    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/update_weights_from_disk/{model_version}"

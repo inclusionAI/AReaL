@@ -57,6 +57,7 @@ class MathCodeSingleStepEnv(EnvironmentService):
                 self.id2info,
                 answers,
                 [qid for _ in range(group_size)],
+                max_workers=1,
             )
         elif cur_task == "code":
             answers = [extract_code(x) for x in answers]
@@ -65,6 +66,7 @@ class MathCodeSingleStepEnv(EnvironmentService):
                 self.id2info,
                 answers,
                 [qid for _ in range(group_size)],
+                max_workers=1,
             )
         else:
             raise NotImplementedError()

@@ -1,6 +1,4 @@
-import time
 from collections import defaultdict
-from contextlib import contextmanager
 from enum import Enum, auto
 from typing import Dict
 
@@ -50,17 +48,6 @@ class DistributedStatsTracker:
         if not self.scope_stack:
             return key
         return "/".join(self.scope_stack + [key])
-
-    @contextmanager
-    def record_timing(self, key):
-        start_time = time.perf_counter()
-        try:
-            yield
-        finally:
-            # NOTE: timing records are fixed under the "timeperf" scope
-            full_key = f"timeperf/{key}"
-            self._set_reduce_type(full_key, ReduceType.SCALAR)
-            self.stats[full_key].append(time.perf_counter() - start_time)
 
     def denominator(self, **kwargs):
         for key, value in kwargs.items():
@@ -265,4 +252,3 @@ denominator = DEFAULT_TRACKER.denominator
 export = DEFAULT_TRACKER.export
 scope = DEFAULT_TRACKER.scope
 scalar = DEFAULT_TRACKER.scalar
-record_timing = DEFAULT_TRACKER.record_timing
