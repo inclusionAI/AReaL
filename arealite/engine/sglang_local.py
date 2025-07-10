@@ -67,9 +67,13 @@ class LocalSGLangEngine(InferenceEngine):
     def destroy(self):
         self.exiting.set()
         self.rollout_thread.join()
+
+        if hasattr(self, 'engine') and self.engine is not None:
+            try:
+                self.engine.shutdown()
+            except Exception as e:
+                logger.warning(f"Error shutting down engine: {e}")
         
-        if self.engine:
-            self.engine.shutdown()
 
     def set_version(self, version):
         with self.lock:
@@ -295,29 +299,28 @@ class LocalSGLangEngine(InferenceEngine):
 
     def _update_weights(self, meta: WeightUpdateMeta):
         if meta.type == "disk":
-
-            update_name = names.update_weights_from_disk(
-                self.config.experiment_name, self.config.trial_name, meta.model_version
-            )
-            save_timestamp = int(name_resolve.wait(update_name, timeout=120))
-            load_timestamp = time.time_ns()
-            logger.info(
-                f"Begin update weights from {meta.path}, responded in {(load_timestamp - save_timestamp)/1e6:.2f} ms"
-            )
-
-            # Update weights from disk
             try:
+                update_name = names.update_weights_from_disk(
+                    self.config.experiment_name, self.config.trial_name, meta.model_version
+                )
+                save_timestamp = int(name_resolve.wait(update_name, timeout=120))
+                load_timestamp = time.time_ns()
+                logger.info(
+                    f"Begin update weights from {meta.path}, responded in {(load_timestamp - save_timestamp)/1e6:.2f} ms"
+                )
+                # Update weights from disk
                 if hasattr(self.engine, 'update_weights_from_disk'):
                     self.engine.update_weights_from_disk(
                         model_path=meta.path
                     )
+            
+                logger.info(
+                    f"Loading weights done in {(time.time_ns() - load_timestamp)/1e6:.2f} ms"
+                )
+                self.set_version(meta.model_version)
             except Exception as e:
                 logger.error(f"Failed to update weights: {e}")
                 raise
-            logger.info(
-                f"Loading weights done in {(time.time_ns() - load_timestamp)/1e6:.2f} ms"
-            )
-            self.set_version(meta.model_version)
         else:
             raise NotImplementedError(f"Unsupported weight update type: {meta.type}")
 
