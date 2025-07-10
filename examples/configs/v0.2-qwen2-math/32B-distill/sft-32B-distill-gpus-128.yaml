@@ -37,8 +37,10 @@ model:
 allocation:
   mb_spec:
     max_tokens_per_mb: 32768
-external_configs:
-  cluster_config:
-    fileroot: "/storage/ray/experiments"
-  envs:
-    REAL_GPU_MEMORY_KILL_THRESHOLD: "1"
+
+# Cluster configuration
+ray_temp_path: /tmp/ray
+cluster:
+  fileroot: /tmp/ray/experiments
+  n_nodes: 32
+  n_gpus_per_node: 8

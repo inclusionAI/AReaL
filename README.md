@@ -102,9 +102,16 @@ AReaL-boba² allows you to independently customize the [dataset](https://inclusi
 In particular, we show a simple example to develop a multi-turn math agent for RL training. Please see the learning curve below and reference the [step-by-step guide](https://inclusionai.github.io/AReaL/customization/agent.html) if you want to implement your own agentic RL project.
 
 ## Getting Started
+Obtain the training data:
+- [Math](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data) 
+- [Code](https://huggingface.co/datasets/inclusionAI/AReaL-boba-2-RL-Code)
 
-Train Qwen3 1.7B locally:
+For code training data, a simple preprocessing script was provided in `examples/data_preprocess/preprocess_training_data.py`:
+```bash
+python3 preprocess_training_data.py --data_path $original_data_path --output_path $training_data_path
+```
 
+Train Qwen3 1.7B locally (Remember to modify `dataset.path` in the script below):
 ```bash
 bash examples/run_async_ppo.sh
 ```

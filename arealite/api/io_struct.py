@@ -6,26 +6,17 @@ import itertools
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
+
 
 import torch
 from gymnasium.core import ActType, ObsType
 
 from arealite.api.cli_args import GenerationHyperparameters
 from PIL.Image import Image as ImageObject
-# if TYPE_CHECKING:
-#     from arealite.api.llm_client_api import LLMClient
-# from arealite.api.vlm_client_api import VLMClient
 
-@dataclass
-class LLMServerInfo:
-    server_id: str
-    host: str
-    port: int
-    status: str = "healthy"
-    last_heartbeat: float = 0
-    load: float = 0.0
-    version: int = 0
+
+from transformers import PreTrainedTokenizerFast
 
 
 @dataclass
@@ -43,7 +34,7 @@ class LLMRequest:
 @dataclass
 class LLMResponse:
     # outputs
-    completion: Any
+    completions: str
     input_tokens: List[int] = field(default_factory=list)
     output_tokens: List[int] = field(default_factory=list)
     output_logprobs: List[float] = field(default_factory=list)
@@ -144,6 +135,14 @@ class Trajectory:
                 ),
             )
 
+    @property
+    def input_len(self) -> int:
+        return len(self.input_tokens)
+
+    @property
+    def output_len(self) -> int:
+        return len(self.output_tokens)
+
 
 @dataclass
 class FinetuneSpec:
@@ -156,23 +155,9 @@ class FinetuneSpec:
         # assuming drop_last
         return self.total_train_epochs * (self.dataset_size // self.train_batch_size)
 
-
-@dataclass
-class WeightUpdateGroupMeta:
-    master_address: str
-    master_port: int
-    rank_offset: int
-    world_size: int
-    group_name: str = "weight_update_group"
-    backend: str = "nccl"
-
-
-@dataclass
-class WeightMeta:
-    param_name: str
-    shape: List[str]
-    dtype: str
-    group_name: str = "weight_update_group"
+    @property
+    def steps_per_epoch(self):
+        return self.dataset_size // self.train_batch_size
 
 
 class AllocationType(enum.Enum):
@@ -267,3 +252,28 @@ class AllocationMode:
             return
         other_alloc.update({"gen": gen_alloc["*"]})
         return other_alloc
+
+
+@dataclass
+class WeightUpdateMeta:
+    type: str
+    path: str | None
+    alloc_mode: AllocationMode | None
+    comm_backend: str | None
+    model_version: int = 0
+
+
+@dataclass
+class SaveLoadMeta:
+    path: str
+    weight_format: str
+    with_optim: bool
+    tokenizer: PreTrainedTokenizerFast | None
+    base_model_path: str | None
+
+
+@dataclass
+class RolloutStat:
+    submitted: int = 0
+    accepted: int = 0
+    running: int = 0

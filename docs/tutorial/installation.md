@@ -67,6 +67,10 @@ cd AReaL
 bash examples/env/scripts/setup-pip-deps.sh
 ```
 
+::::{note}
+The SGLang patch is applied via `examples/env/scripts/setup-container-deps.sh` or `examples/env/scripts/setup-pip-deps.sh`. To confirm whether it has been applied, run `git status` in the `/sglang` directory (for Docker) or `AReaL/sglang` (for custom setups).
+::::
+
 ## (Optional) Launch Ray Cluster for Distributed Training
 
 On the first node, start the Ray Head:

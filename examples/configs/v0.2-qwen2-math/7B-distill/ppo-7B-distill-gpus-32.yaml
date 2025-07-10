@@ -29,26 +29,11 @@ actor:
     mem_fraction_static: 0.8
     triton_attention_num_kv_splits: 16
     enable_metrics: True
-critic:
-  type:
-    _class: qwen2
-    is_critic: true
-  path: '/storage/models/DeepSeek-R1-Distill-Qwen-7B'
-  init_critic_from_actor: true
 ref:
   type:
     _class: qwen2
   path: '/storage/models/DeepSeek-R1-Distill-Qwen-7B'
 actor_train:
-  mb_spec:
-    max_tokens_per_mb: 30720
-critic_train:
-  mb_spec:
-    max_tokens_per_mb: 30720
-actor_gen:
-  mb_spec:
-    max_tokens_per_mb: 30720
-critic_inf:
   mb_spec:
     max_tokens_per_mb: 30720
 actor_inf:
@@ -68,8 +53,6 @@ ppo:
     top_p: 1.0
     top_k: 1000000
     temperature: 1.0
-    force_no_logits_mask: True
-    use_cuda_graph: True
   ppo_n_minibatches: 4
   kl_ctl: 0.0
   discount: 1.0
@@ -78,11 +61,12 @@ ppo:
   reward_output_scaling: 5
   reward_output_bias: 0.0
   adv_norm: true
-  value_norm: true
 group_size: 16
 group_adv_norm: false
-external_configs:
-  cluster_config:
-    fileroot: "/storage/ray/experiments"
-  envs:
-    REAL_GPU_MEMORY_KILL_THRESHOLD: "1"
+
+# Cluster configuration
+ray_temp_path: /tmp/ray
+cluster:
+  fileroot: /tmp/ray/experiments
+  n_nodes: 32
+  n_gpus_per_node: 8

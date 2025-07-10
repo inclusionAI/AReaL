@@ -115,3 +115,7 @@ def training_samples(experiment_name, trial_name):
 
 def experiment_status(experiment_name, trial_name):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/experiment_status"
+
+
+def update_weights_from_disk(experiment_name, trial_name, model_version):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/update_weights_from_disk/{model_version}"

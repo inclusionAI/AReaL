@@ -1,0 +1,50 @@
+name: Test AReaLite
+
+on:
+  push:
+    paths:
+      - .github/workflows/test-arealite.yml
+      - arealite/**
+      - ci/**
+  workflow_dispatch:
+
+jobs:
+  test-arealite:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: test-arealite
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: appleboy/ssh-action@v1
+        env:
+          GIT_REPO_URL: https://github.bibk.top/${{ github.repository }}
+          GIT_COMMIT_SHA: ${{ github.sha }}
+        with:
+          host: ${{ secrets.CI_NODE_ADDR }}
+          username: ${{ secrets.CI_NODE_USER }}
+          key: ${{ secrets.REMOTE_SSH_KEY }}
+          envs: GIT_REPO_URL,GIT_COMMIT_SHA
+          script_path: ci/clone_repo.sh
+
+      - uses: appleboy/ssh-action@v1
+        env:
+          GIT_COMMIT_SHA: ${{ github.sha }}
+        with:
+          host: ${{ secrets.CI_NODE_ADDR }}
+          username: ${{ secrets.CI_NODE_USER }}
+          key: ${{ secrets.REMOTE_SSH_KEY }}
+          command_timeout: 2h
+          envs: GIT_COMMIT_SHA
+          script_path: ci/build_env_image.sh
+
+      - uses: appleboy/ssh-action@v1
+        env:
+          GIT_COMMIT_SHA: ${{ github.sha }}
+        with:
+          host: ${{ secrets.CI_NODE_ADDR }}
+          username: ${{ secrets.CI_NODE_USER }}
+          key: ${{ secrets.REMOTE_SSH_KEY }}
+          command_timeout: 1h
+          envs: GIT_COMMIT_SHA
+          script_path: ci/test_arealite.sh
