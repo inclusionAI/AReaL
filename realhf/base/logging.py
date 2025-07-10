@@ -154,9 +154,12 @@ def log_swanlab_wandb_tensorboard(data, step=None, summary_writer=None):
         _LATEST_LOG_STEP = max(_LATEST_LOG_STEP, step)
 
     # swanlab
-    import swanlab
+    try:
+        import swanlab
 
-    swanlab.log(data, step=step)
+        swanlab.log(data, step=step)
+    except (ModuleNotFoundError, ImportError):
+        pass
 
     # wandb
     import wandb

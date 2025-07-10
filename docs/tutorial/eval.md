@@ -51,6 +51,8 @@ nohup python eval_and_aggregate.py \
     --max_gen_tokens 32768 \
     --data_names codeforces,lcb_v5 \
     --prompt_type qwen3-think-pure \
+    --temperature 1.0 \
+    --top_p 0.95 \
     --num_sample_nodes 8 \
     --samples_per_node 1 \
     --n_sampling $((num_sample_nodes * samples_per_node)) \

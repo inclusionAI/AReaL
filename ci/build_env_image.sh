@@ -6,14 +6,15 @@ GIT_COMMIT_SHA=${GIT_COMMIT_SHA:?"GIT_COMMIT_SHA is not set"}
 
 echo "GIT_COMMIT_SHA: $GIT_COMMIT_SHA"
 
-# If there is already an image named areal-env, skip.
-if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q 'areal-env:latest'; then
+RUN_ID="areal-$GIT_COMMIT_SHA"
+cd "/tmp/$RUN_ID"
+
+# If there is already an image for the current environment, skip the build.
+ENV_SHA=$(sha256sum pyproject.toml | awk '{print $1}')
+if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "areal-env:$ENV_SHA"; then
     echo "Image areal-env already exists, skipping build."
     exit 0
 fi
-
-RUN_ID="areal-$GIT_COMMIT_SHA"
-cd "/tmp/$RUN_ID"
 
 if docker ps -a --format '{{.Names}}' | grep -q "$RUN_ID"; then
     docker rm -f $RUN_ID
@@ -35,5 +36,5 @@ docker run \
         mv ./sglang /sglang
     " || { docker rm -f $RUN_ID; exit 1; }
 
-docker commit $RUN_ID areal-env:latest
+docker commit $RUN_ID "areal-env:$ENV_SHA"
 docker rm -f $RUN_ID

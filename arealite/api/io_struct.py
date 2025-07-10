@@ -6,26 +6,11 @@ import itertools
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-import torch
-from gymnasium.core import ActType, ObsType
+from transformers import PreTrainedTokenizerFast
 
 from arealite.api.cli_args import GenerationHyperparameters
-
-if TYPE_CHECKING:
-    from arealite.api.llm_client_api import LLMClient
-
-
-@dataclass
-class LLMServerInfo:
-    server_id: str
-    host: str
-    port: int
-    status: str = "healthy"
-    last_heartbeat: float = 0
-    load: float = 0.0
-    version: int = 0
 
 
 @dataclass
@@ -43,7 +28,7 @@ class LLMRequest:
 @dataclass
 class LLMResponse:
     # outputs
-    completion: Any
+    completions: str
     input_tokens: List[int] = field(default_factory=list)
     output_tokens: List[int] = field(default_factory=list)
     output_logprobs: List[float] = field(default_factory=list)
@@ -55,59 +40,13 @@ class LLMResponse:
     ttft: float = float("inf")  # Time to first token
     itl: List[float] = field(default_factory=list)  # List of inter-token latencies
 
+    @property
+    def input_len(self) -> int:
+        return len(self.input_tokens)
 
-@dataclass
-class AgentInferInput:
-    obs: ObsType
-    llm_client: "LLMClient"
-    gconfig: GenerationHyperparameters
-
-
-@dataclass
-class AgentInferOutput:
-    action: ActType
-    llm_req: LLMRequest
-    llm_resp: LLMResponse
-
-
-@dataclass
-class TrajStats:
-    start_time: float = 0.0
-    total_reward: float = 0.0
-    episode_length: int = 0
-    info: Dict = field(default_factory=dict)
-
-
-@dataclass
-class Trajectory:
-    prompt: Dict[str, Any]
-    data: Dict[str, torch.Tensor]
-    stats: TrajStats
-
-    def to_json_compatible(self):
-        return {
-            "prompt": self.prompt,
-            "data": {k: v.cpu().numpy().tolist() for k, v in self.data.items()},
-            "stats": {
-                "start_time": self.stats.start_time,
-                "total_reward": self.stats.total_reward,
-                "episode_length": self.stats.episode_length,
-                "info": self.stats.info,
-            },
-        }
-
-    @classmethod
-    def from_json_compatible(cls, data: Dict[str, Any]) -> "Trajectory":
-        return cls(
-            prompt=data["prompt"],
-            data={k: torch.tensor(v) for k, v in data["data"].items()},
-            stats=TrajStats(
-                start_time=data["stats"]["start_time"],
-                total_reward=data["stats"]["total_reward"],
-                episode_length=data["stats"]["episode_length"],
-                info=data["stats"]["info"],
-            ),
-        )
+    @property
+    def output_len(self) -> int:
+        return len(self.output_tokens)
 
 
 @dataclass
@@ -121,23 +60,9 @@ class FinetuneSpec:
         # assuming drop_last
         return self.total_train_epochs * (self.dataset_size // self.train_batch_size)
 
-
-@dataclass
-class WeightUpdateGroupMeta:
-    master_address: str
-    master_port: int
-    rank_offset: int
-    world_size: int
-    group_name: str = "weight_update_group"
-    backend: str = "nccl"
-
-
-@dataclass
-class WeightMeta:
-    param_name: str
-    shape: List[str]
-    dtype: str
-    group_name: str = "weight_update_group"
+    @property
+    def steps_per_epoch(self):
+        return self.dataset_size // self.train_batch_size
 
 
 class AllocationType(enum.Enum):
@@ -232,3 +157,28 @@ class AllocationMode:
             return
         other_alloc.update({"gen": gen_alloc["*"]})
         return other_alloc
+
+
+@dataclass
+class WeightUpdateMeta:
+    type: str
+    path: str | None
+    alloc_mode: AllocationMode | None
+    comm_backend: str | None
+    model_version: int = 0
+
+
+@dataclass
+class SaveLoadMeta:
+    path: str
+    weight_format: str
+    with_optim: bool
+    tokenizer: PreTrainedTokenizerFast | None
+    base_model_path: str | None
+
+
+@dataclass
+class RolloutStat:
+    submitted: int = 0
+    accepted: int = 0
+    running: int = 0

@@ -1,51 +1,86 @@
-# Copyright 2025 Ant Group Inc.
-# Licensed under the Apache License, Version 2.0
-
 import abc
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from concurrent.futures import Future
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import torch
-import transformers
+from tensordict import TensorDict
 
-from arealite.api.cli_args import EngineConfig, MicroBatchSpec, TrainingArgs
-from arealite.api.io_struct import FinetuneSpec
-from arealite.api.llm_client_api import LLMClient
-from realhf.api.cli_args import ParallelismConfig
+from arealite.api.io_struct import (
+    FinetuneSpec,
+    LLMRequest,
+    LLMResponse,
+    SaveLoadMeta,
+    WeightUpdateMeta,
+)
+
+if TYPE_CHECKING:
+    from arealite.api.workflow_api import RolloutWorkflow
 
 
-class SPMDWrapper(abc.ABC):
-    """A wrapper over the training/inference backends (e.g., FSDP, SGLang).
-    We following the design of existing libraries, such as Megatron-LM and
-    pytorch FSDP, which are mostly SPMD-based.
-    """
+@dataclass
+class Scheduling:
+    cpu: int
+    gpu: int
+    mem: int
+    nodelist: str = None
+    exclude: str = None
+    partition: str = None
+    container_image: str = None
+    env_vars: Dict[str, str] = field(default_factory=dict)
+    # time utils from "https://slurm.schedmd.com/sbatch.html"
+    time_limit: Optional[str] = None  # see  "--time" option for format
+    begin: Optional[str] = None  # see "--begin" option for format
+    deadline: Optional[str] = None  # see "--deadline" option for format
 
-    def __init__(self, args: TrainingArgs, engine_config: EngineConfig):
-        self.args = args
-        self.engine_config = engine_config
 
-    def init_distributed(self, config: ParallelismConfig, ft_spec: FinetuneSpec):
-        """Initialize distributed communication groups and models.
+class TrainEngine(abc.ABC):
 
-        Models may not be loaded during __init__, but when calling this method.
-        """
+    def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
+        """Initialize environments for distributed training and load models."""
         raise NotImplementedError()
 
+    def get_scheduling_config(self) -> Scheduling:
+        """Get the scheduling configuration for the engine, e.g., image, cpu/gpu/memory size."""
+        raise NotImplementedError()
+
+    def destroy(self):
+        """Destroy the engine and release GPU memory."""
+
     def train(self, mode: bool = True):
-        """Set the module in training mode."""
+        """Set the engine to the train mode."""
         raise NotImplementedError()
 
     def eval(self):
-        """Set the module in evaluation mode."""
+        """Set the engine to the eval mode."""
         return self.train(False)
+
+    def upload_weights(self, meta: WeightUpdateMeta):
+        """Upload weights to the inference engine."""
+        raise NotImplementedError()
+
+    def save(self, meta: SaveLoadMeta):
+        """Save model weights (and optimizer states) for later use."""
+        raise NotImplementedError()
+
+    def load(self, meta: SaveLoadMeta):
+        """Load model weights and optimizer states from a file."""
+        raise NotImplementedError()
+
+    def step_lr_scheduler(self):
+        """Step learning rate scheduler.
+
+        Since PPO uses minibatch updates, this method just need to be called once after a few train_batch calls.
+        It is separated from train_batch to allow for more flexible scheduling.
+        """
+        raise NotImplementedError()
 
     def train_batch(
         self,
         input_: Dict,
-        mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[Dict], float],
-    ) -> Dict:
+    ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function."""
         raise NotImplementedError()
 
@@ -53,65 +88,51 @@ class SPMDWrapper(abc.ABC):
     def eval_batch(
         self,
         input_: Dict,
-        mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[Dict], float],
     ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function."""
         raise NotImplementedError()
 
+    @torch.no_grad()
     def forward(
         self,
         input_: Dict,
-        mb_spec: MicroBatchSpec,
-        output_seqlens: List[int] | None = None,
+        output_seqlens: List[List[int]] | None = None,
         post_hook: Callable[[torch.Tensor, Dict], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
-        """Run the forward pass or inference on the model."""
-        raise NotImplementedError()
-
-    def step_lr_scheduler(self):
-        """Step learning rate scheduler."""
-        raise NotImplementedError()
-
-    def save_model_to_hf(
-        self,
-        path: str,
-        tokenizer: Optional[transformers.PreTrainedTokenizerFast] = None,
-        base_model_path: Optional[str] = None,
-    ):
-        raise NotImplementedError()
-
-    def load_model_from_hf(self, path: str):
-        raise NotImplementedError()
-
-    def save_optimizer_state(self, path: str):
-        """Save the optimizer state in a folder."""
-        raise NotImplementedError()
-
-    def load_optimizer_state(self, path: str):
-        """Load the optimizer state in a folder."""
-        raise NotImplementedError()
-
-    def update_weights_to(self, llm_client: LLMClient):
-        """Update the weights to the server by sending requests to the client."""
+        """Run the forward pass or inference on the model. Note that it is gradient-free."""
         raise NotImplementedError()
 
 
-@dataclass
-class EngineFactory:
-    args: TrainingArgs
+class InferenceEngine(abc.ABC):
 
-    def make_engine(self, engine_config: EngineConfig) -> SPMDWrapper:
-        """Create an engine based on the configuration."""
-        if engine_config.backend.type == "fsdp":
-            from arealite.impl.engine.fsdp_wrapper import FSDPEngine
+    def initialize(self, addr: str | None, ft_spec):
+        """Initialize environments for distributed inference and load models."""
+        raise NotImplementedError()
 
-            return FSDPEngine(self.args, engine_config)
-        elif engine_config.backend.type == "hf":
-            from arealite.impl.engine.hf_wrapper import HFEngine
+    def destroy(self):
+        """Destroy the engine and release GPU memory."""
 
-            return HFEngine(self.args, engine_config)
-        else:
-            raise ValueError(f"Unsupported engine type: {engine_config.backend.type}")
+    def update_weights(self, meta: WeightUpdateMeta) -> Future:
+        """Update weights in the inference engine."""
+        raise NotImplementedError()
+
+    async def agenerate(self, req: LLMRequest) -> LLMResponse:
+        """Asynchronously generate a response for the given request."""
+        raise NotImplementedError()
+
+    def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:
+        """Asynchronously submit a request to the inference engine. Exits immediately."""
+        raise NotImplementedError()
+
+    def wait(self, count: int, timeout: float) -> TensorDict:
+        """Wait for a specified number of requests to complete, with a timeout."""
+        raise NotImplementedError()
+
+    def rollout(
+        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+    ) -> TensorDict:
+        """Submit a batch of requests to the inference engine and wait for the results."""
+        raise NotImplementedError()

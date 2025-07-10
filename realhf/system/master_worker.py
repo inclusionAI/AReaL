@@ -12,7 +12,6 @@ from typing import Dict
 import colorama
 import networkx as nx
 import numpy as np
-import swanlab
 import wandb
 from tensorboardX import SummaryWriter
 
@@ -37,6 +36,11 @@ from realhf.base import (
 from realhf.system.buffer import AsyncIOSequenceBuffer
 from realhf.system.function_executor import FunctionExecutor
 from realhf.system.model_function_call import RPCCorountineControl
+
+try:
+    import swanlab
+except (ModuleNotFoundError, ImportError):
+    swanlab = None
 
 logger = logging.getLogger("master worker", "system")
 blogger = logging.getLogger("benchmark")
@@ -307,15 +311,18 @@ class MasterWorker(worker_base.AsyncWorker):
 
         # swanlab init, connect to remote or local swanlab host
         if self.swanlab_config.mode != "disabled" and self.swanlab_config.api_key:
-            swanlab.login(self.swanlab_config.api_key)
+            if swanlab is not None:
+                swanlab.login(self.swanlab_config.api_key)
+            else:
+                logger.warning(
+                    "swanlab not installed but enabled. Ignore swanlab logging."
+                )
         if self.swanlab_config.config is None:
             import yaml
 
             with open(
                 os.path.join(
-                    constants.LOG_ROOT,
-                    constants.experiment_name(),
-                    constants.trial_name(),
+                    constants.get_log_path(self.args),
                     "config.yaml",
                 ),
                 "r",
@@ -324,20 +331,19 @@ class MasterWorker(worker_base.AsyncWorker):
         else:
             __config = self.swanlab_config.config
         __config["FRAMEWORK"] = "AReaL"
-        swanlab.init(
-            project=self.swanlab_config.project or constants.experiment_name(),
-            experiment_name=self.swanlab_config.name
-            or f"{constants.trial_name()}_train",
-            config=__config,
-            logdir=self.swanlab_config.logdir
-            or os.path.join(
-                constants.LOG_ROOT,
-                constants.experiment_name(),
-                constants.trial_name(),
-                "swanlab",
-            ),
-            mode=self.swanlab_config.mode,
-        )
+        if swanlab is not None:
+            swanlab.init(
+                project=self.swanlab_config.project or constants.experiment_name(),
+                experiment_name=self.swanlab_config.name
+                or f"{constants.trial_name()}_train",
+                config=__config,
+                logdir=self.swanlab_config.logdir
+                or os.path.join(
+                    constants.get_log_path(self.args),
+                    "swanlab",
+                ),
+                mode=self.swanlab_config.mode,
+            )
         # tensorboard logging
         self.__summary_writer = None
         if self.tensorboard_config.path is not None:
@@ -567,7 +573,8 @@ class MasterWorker(worker_base.AsyncWorker):
         )
 
         wandb.finish()
-        swanlab.finish()
+        if swanlab is not None:
+            swanlab.finish()
         if self.__summary_writer is not None:
             self.__summary_writer.close()
         gc.collect()
