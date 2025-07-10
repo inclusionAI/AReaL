@@ -21,7 +21,6 @@ from transformers import (
 from arealite.api.cli_args import TrainEngineConfig
 from arealite.api.engine_api import (
     FinetuneSpec,
-    MicroBatchSpec,
     SaveLoadMeta,
     TrainEngine,
     WeightUpdateMeta,
@@ -319,15 +318,15 @@ class FSDPEngine(TrainEngine):
         assert self.lr_scheduler is not None
         self.lr_scheduler.step()
 
-    def _prepare_mb_list(
-        self, input_: TensorDict, mb_spec: MicroBatchSpec
-    ) -> MicroBatchList:
+    def _prepare_mb_list(self, input_: TensorDict) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
+        if isinstance(input_, dict):
+            input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
         input_ = amend_position_ids(input_)
         packed_input = pack_tensor_dict(input_)
         mb_list = split_packed_tensor_dict_into_mb_list(
             packed_input,
-            mb_spec,
+            self.config.mb_spec,
         )
         mb_list = pad_mb_list(mb_list, pad_value=0.0)
         # NOTE: We unsqueeze here because huggingface transformer models requires
@@ -338,7 +337,6 @@ class FSDPEngine(TrainEngine):
     def train_batch(
         self,
         input_: TensorDict,
-        mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[Dict], float],
     ) -> Dict[str, float]:
@@ -349,7 +347,7 @@ class FSDPEngine(TrainEngine):
         assert self.lr_scheduler is not None
 
         self.optimizer.zero_grad()
-        mb_list = self._prepare_mb_list(input_, mb_spec)
+        mb_list = self._prepare_mb_list(input_)
 
         total_loss_weight = torch.tensor(
             sum([loss_weight_fn(mb) for mb in mb_list.mbs]), dtype=torch.float32
@@ -398,12 +396,12 @@ class FSDPEngine(TrainEngine):
     def eval_batch(
         self,
         input_: TensorDict,
-        mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[Dict], float],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
-        mb_list = self._prepare_mb_list(input_, mb_spec)
+        input_ = input_.to(self.device)
+        mb_list = self._prepare_mb_list(input_)
         total_loss_weight = torch.tensor(
             sum([loss_weight_fn(mb) for mb in mb_list.mbs]), dtype=torch.float32
         )
@@ -431,14 +429,14 @@ class FSDPEngine(TrainEngine):
     def forward(
         self,
         input_: TensorDict,
-        mb_spec: MicroBatchSpec,
         output_seqlens: List[int] | None = None,
         post_hook: Callable[[torch.Tensor, Dict], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""
+        input_ = input_.to(self.device)
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
-        mb_list = self._prepare_mb_list(input_, mb_spec)
+        mb_list = self._prepare_mb_list(input_)
 
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()

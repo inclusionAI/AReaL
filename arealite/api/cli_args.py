@@ -1,14 +1,17 @@
 import argparse
-import getpass
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import uvloop
+
+uvloop.install()
 from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
 from omegaconf import MISSING, OmegaConf
 
+from arealite.utils.fs import get_user_tmp
 from realhf.api.cli_args import OptimizerConfig
 
 
@@ -103,8 +106,8 @@ class FSDPEngineConfig:
 
 @dataclass
 class TrainEngineConfig:
-    experiment_name: str
-    trial_name: str
+    experiment_name: str = MISSING
+    trial_name: str = MISSING
     path: str = field(default="", metadata={"help": "Path to HuggingFace checkpoint"})
     attn_impl: str = field(
         default="flash_attention_2",
@@ -120,6 +123,8 @@ class TrainEngineConfig:
         default=False,
         metadata={"help": "Initialize critic/reward model from LM checkpoint"},
     )
+    # Runtime microbatch limit
+    mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
 
     # Training Backend Configuration
     gradient_checkpointing: bool = field(
@@ -307,92 +312,38 @@ class SGLangEngineConfig:
 
 
 @dataclass
-class ExperimentSaveEvalControl:
-    """Controls the frequency of model saving and evaluation during training.
+class _Timer:
+    experiment_name: str = MISSING
+    trial_name: str = MISSING
+    fileroot: str = MISSING
+    freq_epochs: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Trigger frequency in epochs. None disables epoch-based saving."
+        },
+    )
+    freq_steps: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Trigger frequency in steps. None disables step-based saving."
+        },
+    )
+    freq_secs: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Trigger frequency in seconds. None disables time-based saving."
+        },
+    )
 
-    Manages independent counters for epochs, steps, and seconds. The model will be saved
-    or evaluated when any specified frequency condition is met.
 
-    Note:
-        - Epoch: Number of full passes through the training dataset
-        - Step: Number of individual training iterations
-        - Seconds: Wall-clock time duration
-    """
+@dataclass
+class EvaluatorConfig(_Timer):
+    pass
 
-    total_train_epochs: int = field(
-        default=1, metadata={"help": "Total number of epochs to train the model."}
-    )
-    # Save control
-    save_freq_epochs: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "Save frequency in epochs. None disables epoch-based saving."
-        },
-    )
-    save_freq_steps: Optional[int] = field(
-        default=None,
-        metadata={"help": "Save frequency in steps. None disables step-based saving."},
-    )
-    save_freq_secs: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "Save frequency in seconds. None disables time-based saving."
-        },
-    )
-    # Checkpointing control
-    ckpt_freq_epochs: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "Checkpoint frequency in epochs. None uses save_freq_epochs. "
-            "Checkpointing is used for recover. Previous checkpoint is overwritten to save space."
-        },
-    )
-    ckpt_freq_steps: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "Checkpoint frequency in steps. None disables step-based checkpointing."
-        },
-    )
-    ckpt_freq_secs: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "Checkpoint frequency in seconds. None disables time-based checkpointing."
-        },
-    )
-    # Evaluation control
-    eval_freq_epochs: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "Evaluation frequency in epochs. None disables epoch-based evaluation."
-        },
-    )
-    eval_freq_steps: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "Evaluation frequency in steps. None disables step-based evaluation."
-        },
-    )
-    eval_freq_secs: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "Evaluation frequency in seconds. None disables time-based evaluation."
-        },
-    )
-    # Benchmark control
-    benchmark_steps: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "Terminate training after this number of steps. "
-            "For benchmarking purposes only. None indicates normal training."
-        },
-    )
-    benchmark_n_seqs: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "Terminate training after consuming this number of samples. "
-            "For benchmarking purposes only. None indicates normal training."
-        },
-    )
+
+@dataclass
+class SaverConfig(_Timer):
+    pass
 
 
 @dataclass
@@ -423,11 +374,23 @@ class TensorBoardConfig:
     path: Optional[str] = None
 
 
-def get_user_tmp():
-    user = getpass.getuser()
-    user_tmp = os.path.join("/home", user, ".cache", "realhf")
-    os.makedirs(user_tmp, exist_ok=True)
-    return user_tmp
+@dataclass
+class StatsLoggerConfig:
+    experiment_name: str = MISSING
+    trial_name: str = MISSING
+    fileroot: str = MISSING
+    wandb: WandBConfig = field(
+        default_factory=WandBConfig,
+        metadata={"help": "Weights & Biases configuration."},
+    )
+    swanlab: SwanlabConfig = field(
+        default_factory=SwanlabConfig,
+        metadata={"help": "SwanLab configuration."},
+    )
+    tensorboard: TensorBoardConfig = field(
+        default_factory=TensorBoardConfig,
+        metadata={"help": "TensorBoard configuration. Only 'path' field required."},
+    )
 
 
 @dataclass
@@ -498,7 +461,9 @@ class ClusterSpecConfig:
 
 @dataclass
 class DatasetConfig:
-    type: str = field(default="", metadata={"help": "Type of implemented dataset"})
+    type: Optional[str] = field(
+        default=None, metadata={"help": "Type of implemented dataset"}
+    )
     batch_size: int = field(
         default=1, metadata={"help": "Batch size of the dataloader"}
     )
@@ -515,51 +480,6 @@ class DatasetConfig:
         default=0, metadata={"help": "Number of worker processes for data loading"}
     )
     drop_last: bool = field(default=True)
-
-
-@dataclass
-class TrainerConfig:
-    experiment_name: str = field(
-        default=MISSING,
-        metadata={"help": "Name of the experiment (no '_' or '/'). Required."},
-    )
-    trial_name: str = field(
-        default=MISSING,
-        metadata={"help": "Name of the trial (no '-' or '/'). Required."},
-    )
-    fileroot: str = field(
-        default=get_user_tmp(),
-        metadata={
-            "help": "Root for logs and checkpoints. Should be available to all nodes."
-        },
-    )
-    wandb: WandBConfig = field(
-        default_factory=WandBConfig,
-        metadata={"help": "Weights & Biases configuration."},
-    )
-    swanlab: SwanlabConfig = field(
-        default_factory=SwanlabConfig,
-        metadata={"help": "SwanLab configuration."},
-    )
-    tensorboard: TensorBoardConfig = field(
-        default_factory=TensorBoardConfig,
-        metadata={"help": "TensorBoard configuration. Only 'path' field required."},
-    )
-    allocation_mode: str = field(
-        default="",
-        metadata={
-            "help": "GPU parallel strategy allocation mode. "
-            "Options: manual/heuristic or pattern-based."
-        },
-    )
-    seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
-    exp_ctrl: ExperimentSaveEvalControl = field(
-        default_factory=ExperimentSaveEvalControl,
-        metadata={"help": "Experiment save/evaluation control configuration."},
-    )
-
-    tokenizer_path: str = field(default="")
-    mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
 
 
 @dataclass
@@ -585,14 +505,45 @@ class BaseExperimentConfig:
     n_gpus_per_node: int = field(
         default=8, metadata={"help": "Number of GPUs per node for this experiment."}
     )
+    allocation_mode: str = field(
+        default="",
+        metadata={
+            "help": "GPU parallel strategy allocation mode. "
+            "Options: manual/heuristic or pattern-based."
+        },
+    )
+    seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
+    total_train_epochs: int = field(
+        default=1, metadata={"help": "Total number of epochs to train the model."}
+    )
+    total_train_steps: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Terminate training after this number of steps. "
+            "For benchmarking purposes only. None indicates normal training."
+        },
+    )
+    total_train_n_seqs: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Terminate training after consuming this number of samples. "
+            "For benchmarking purposes only. None indicates normal training."
+        },
+    )
+    tokenizer_path: str = field(default="")
+
     train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
     valid_dataset: DatasetConfig = field(default_factory=DatasetConfig)
+
+    saver: SaverConfig = field(default_factory=SaverConfig)
+    checkpointer: SaverConfig = field(default_factory=SaverConfig)
+    evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
+    stats_logger: StatsLoggerConfig = field(default_factory=StatsLoggerConfig)
 
 
 @dataclass
 class SFTConfig(BaseExperimentConfig):
     model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
-    trainer: TrainerConfig = field(default_factory=TrainerConfig)
 
 
 def load_expr_config(argv: List[str], config_cls) -> Tuple[BaseExperimentConfig, str]:

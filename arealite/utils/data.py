@@ -277,7 +277,7 @@ def pad_and_stack_tensors_along_first_dim(tensor_list: List[torch.Tensor]):
 
 @dataclass
 class MicroBatchList:
-    data: Dict[str, Any]
+    data: TensorDict
     mb_spec: MicroBatchSpec
     mbs: List[TensorDict]
     forward_indices: List[int]
@@ -379,7 +379,7 @@ def pad_packed_tensor_dict(
     data: TensorDict,
     pad_to_length: int,
     pad_value: float = 0.0,
-) -> Tuple[Dict[str, Any], int]:
+) -> Tuple[TensorDict, int]:
     """Pad a packed tensor dict to a specified length.
     This function assumes that the input data contains "cu_seqlens" and "max_seqlen" key,
     and all other tensors of shape [total_length, ] will be padded to `pad_to_length`.
@@ -391,7 +391,7 @@ def pad_packed_tensor_dict(
         pad_to_length (int): The length to pad the tensors to. All tensors
 
     Returns:
-        Dict[str, torch.Tensor]: Dictionary with padded tensors and modified "cu_seqlens" and
+        TensorDict: Dictionary with padded tensors and modified "cu_seqlens" and
             "max_seqlen".
         int: The pad length.
     """
@@ -420,7 +420,7 @@ def pad_packed_tensor_dict(
             padded_data[key] = padded_tensor
         else:
             padded_data[key] = value
-    return padded_data, pad_length
+    return TensorDict(padded_data, batch_size=data.batch_size), pad_length
 
 
 def pad_mb_list(
@@ -453,13 +453,17 @@ def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
     assert "max_seqlen" in data, "Input data must contain 'max_seqlen' key."
 
     total_length = data["cu_seqlens"][-1].item()
+    new_data = {}
     for key, value in data.items():
-        if key == "cu_seqlens" or key == "max_seqlen":
-            continue
+        if (
+            key not in ["cu_seqlens", "max_seqlen"]
+            and torch.is_tensor(value)
+            and value.numel() == total_length
+        ):
+            new_data[key] = value.unsqueeze(dim=0)
         else:
-            if torch.is_tensor(value) and value.numel() == total_length:
-                data[key] = value.unsqueeze(dim=0)
-    return data
+            new_data[key] = value
+    return TensorDict(new_data, batch_size=data.batch_size)
 
 
 def unsqueeze_mb_list(
@@ -472,7 +476,6 @@ def unsqueeze_mb_list(
         new_mbs.append(unsqueeze_packed_tensor_dict(mb))
         if mb_list.padded_mbs is not None:
             new_padded_mbs.append(unsqueeze_packed_tensor_dict(mb_list.padded_mbs[i]))
-    mb_list.mbs = new_mbs
     mb_list.padded_mbs = new_padded_mbs if mb_list.padded_mbs is not None else None
     return mb_list
 

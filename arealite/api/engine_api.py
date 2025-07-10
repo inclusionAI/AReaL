@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 import torch
 from tensordict import TensorDict
 
-from arealite.api.cli_args import MicroBatchSpec
 from arealite.api.io_struct import (
     FinetuneSpec,
     LLMRequest,
@@ -79,7 +78,6 @@ class TrainEngine(abc.ABC):
     def train_batch(
         self,
         input_: Dict,
-        mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[Dict], float],
     ) -> Dict[str, float]:
@@ -90,7 +88,6 @@ class TrainEngine(abc.ABC):
     def eval_batch(
         self,
         input_: Dict,
-        mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[Dict], float],
     ) -> torch.Tensor | None:
@@ -101,7 +98,6 @@ class TrainEngine(abc.ABC):
     def forward(
         self,
         input_: Dict,
-        mb_spec: MicroBatchSpec,
         output_seqlens: List[List[int]] | None = None,
         post_hook: Callable[[torch.Tensor, Dict], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,

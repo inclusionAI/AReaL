@@ -1,18 +1,19 @@
 import os
 import sys
 
-import torch
 from datasets import Dataset, load_dataset
 from datasets.distributed import split_dataset_by_node
 from torchdata.stateful_dataloader import StatefulDataLoader
-from transformers import DataCollatorWithPadding
 
 from arealite.api.cli_args import SFTConfig, load_expr_config
 from arealite.api.io_struct import FinetuneSpec
-from arealite.engine.fsdp_engine import FSDPEngine
-from arealite.trainer.sft import SFTTrainer
+from arealite.engine.sft.lm_engine import FSDPLMEngine
 from arealite.utils.data import pad_sequences_to_tensors
+from arealite.utils.evaluator import Evaluator
+from arealite.utils.saver import Saver
+from arealite.utils.stats_logger import StatsLogger
 from realhf.api.core.data_api import load_hf_tokenizer
+from realhf.base import stats_tracker
 
 
 def process_gsm8k_sft_dataset(dataset: Dataset, tokenizer):
@@ -42,10 +43,9 @@ def main_sft():
 
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
-    tokenizer = load_hf_tokenizer(config.trainer.tokenizer_path)
+    tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     # Create dataset and dataloaders
-    assert config.train_dataset == "gsm8k-sft"
     train_dataloader = StatefulDataLoader(
         get_gsm8k_dataset("train", tokenizer, rank, world_size),
         batch_size=config.train_dataset.batch_size // world_size,
@@ -54,7 +54,6 @@ def main_sft():
         collate_fn=pad_sequences_to_tensors,
         drop_last=config.train_dataset.drop_last,
     )
-    assert config.valid_dataset == "gsm8k-sft"
     valid_dataloader = StatefulDataLoader(
         get_gsm8k_dataset("test", tokenizer, rank, world_size),
         batch_size=config.valid_dataset.batch_size // world_size,
@@ -66,22 +65,52 @@ def main_sft():
 
     # Initialize engine
     ft_spec = FinetuneSpec(
-        total_train_epochs=config.trainer.exp_ctrl.total_train_epochs,
-        dataset_size=len(train_dataloader),
+        total_train_epochs=config.total_train_epochs,
+        dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
         train_batch_size=config.train_dataset.batch_size,
     )
-    engine = FSDPEngine(config=config.model)
+    engine = FSDPLMEngine(config=config.model)
     engine.initialize(None, ft_spec)
 
     # Run training.
-    trainer = SFTTrainer(
-        config=config.trainer,
-        train_dataloader=train_dataloader,
-        valid_dataloader=valid_dataloader,
-        engine=engine,
-        inf_engine=None,
-    )
-    trainer.train()
+    saver = Saver(config.saver, ft_spec, for_recover=False)
+    logger = StatsLogger(config.stats_logger, ft_spec)
+    evaluator = Evaluator(config.evaluator, ft_spec)
+
+    total_epochs = config.total_train_epochs
+    steps_per_epoch = len(train_dataloader)
+
+    logger.info(f"total_epochs={total_epochs} step_per_epoch={steps_per_epoch}")
+    global_step = 0
+    for epoch in range(total_epochs):
+        for step, data in enumerate(train_dataloader):
+            with (
+                stats_tracker.record_timing("train_step"),
+                stats_tracker.scope("sft"),
+            ):
+                stats = engine.train_lm(data)
+                engine.step_lr_scheduler()
+                stats_tracker.scalar(**stats)
+
+            with stats_tracker.record_timing("save"):
+                saver.save(engine, epoch, step, global_step)
+
+            with stats_tracker.record_timing("eval"), stats_tracker.scope("sft-eval"):
+                # No need to log anything. Logging will be handled outside
+                # via stats_tracker.export().
+                evaluator.evaluate(
+                    valid_dataloader,
+                    engine.evaluate_lm,
+                    epoch,
+                    step,
+                    global_step,
+                )
+
+            logger.commit(epoch, step, global_step, stats_tracker.export())
+            global_step += 1
+
+    engine.destroy()
+    logger.close()
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ from typing import List, Union
 
 import regex
 from latex2sympy2 import latex2sympy
-from pebble import ProcessPool
+from pebble import ProcessExpired, ProcessPool
 from sympy import N, simplify
 from sympy.parsing.latex import parse_latex
 from sympy.parsing.sympy_parser import parse_expr
@@ -289,6 +289,7 @@ def strip_string(string, skip_unit=False):
 
     # remove percentage
     string = string.replace("\\%", "")
+    string = string.replace("\%", "")
     string = string.replace("%", "")
 
     # " 0." equivalent to " ." and "{0." equivalent to "{." Alternatively, add "0" if "." is the start of the string
@@ -398,7 +399,7 @@ def extract_answer(pred_str, data_name, use_last_number=True):
         pred = pred_str.split("答案是")[1].strip().split("\n\n")[0].strip()
     else:  # use the last number
         if use_last_number:
-            pattern = r"-?\d*\.?\d+"
+            pattern = "-?\d*\.?\d+"
             pred = re.findall(pattern, pred_str.replace(",", ""))
             if len(pred) >= 1:
                 pred = pred[-1]
@@ -836,6 +837,12 @@ def parse_lines_in_parallel(
                 # print("[debug: timeout]")
                 logger.warning(f"Timeout occurred while justifying the math answer.")
                 x = (0, "timeout", "timeout")
+            except ProcessExpired as e:
+                logger.warning(f"Process terminated abnormally: {e}")
+                x = (0, "error", "error")
+            except Exception as e:
+                logger.warning(f"Other error occurred: {e.__class__.__name__}, {e}")
+                x = (0, "error", "error")
             label = label or x[0]
         labels.append(label)
     return labels

@@ -1,5 +1,18 @@
 # AReaL v1.0.0 Design Doc
 
+---
+
+Update 20250710
+
+SFT example:
+
+```bash
+torchrun --nnodes 1 --nproc-per-node 8 examples/arealite/gsm8k_sft.py --config examples/arealite/configs/gsm8k_sft.yaml
+```
+
+---
+
+
 We will provide both single-controller and SPMD user interfaces. The SPMD interface will be delivered with AReaLite, which is the paradigm most users are familiar with, just like using `torchrun` or `deepspeed`. However, this paradigm may lack some flexibility over global scheduling and control. To unlock the full potential with customized distributed execution, we will also provide a single-controller mode just like using Ray --- but our scheduler backend will not be restricted to Ray. Our code will be able to run with any scheduler in the cluster, such as native SLURM and K8S.
 
 However, we want the user code to stay the same for both modes. The following is a simple usage example:
@@ -187,7 +200,6 @@ class TrainEngine(abc.ABC):
     def train_batch(
         self,
         input_: Dict,
-        mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[Dict], float],
     ) -> Dict[str, float]:
@@ -197,7 +209,6 @@ class TrainEngine(abc.ABC):
     def eval_batch(
         self,
         input_: Dict,
-        mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[Dict], float],
     ) -> torch.Tensor | None:
@@ -207,7 +218,6 @@ class TrainEngine(abc.ABC):
     def forward(
         self,
         input_: Dict,
-        mb_spec: MicroBatchSpec,
         output_seqlens: List[List[int]] | None = None,
         post_hook: Callable[[torch.Tensor, Dict], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
@@ -323,7 +333,7 @@ Extended engines (such as Actor in PPO) provide convenient organization and call
 class Actor(Engine):
     
     @torch.no_grad()
-    def compute_logps(self, input_: Dict[str, Tensor], mb_spec: MicroBatchSpec) -> torch.Tensor:
+    def compute_logps(self, input_: Dict[str, Tensor]) -> torch.Tensor:
         ... # unpad
         logps = self.forward(xxx)
         ... # pad back
@@ -332,8 +342,7 @@ class Actor(Engine):
     def compute_advantages_and_returns(self, input_: Dict) -> Dict:
         pass
 
-    def ppo_update(self, input_: Dict, 
-                   mb_spec: MicroBatchSpec) -> List[Dict[str, float]]:
+    def ppo_update(self, input_: Dict) -> List[Dict[str, float]]:
         ...
         all_stats = []
         for _ in range(self.ppo_n_minibatches):
@@ -344,11 +353,10 @@ class Actor(Engine):
 class Critic(Engine):
     
     @torch.no_grad()
-    def compute_values(self, input_: Dict, mb_spec: MicroBatchSpec) -> torch.Tensor:
+    def compute_values(self, input_: Dict) -> torch.Tensor:
         pass
 
-    def ppo_update(self, input_: Dict, 
-                   mb_spec: MicroBatchSpec) -> List[Dict[str, float]]:
+    def ppo_update(self, input_: Dict) -> List[Dict[str, float]]:
         ...
         all_stats = []
         for _ in range(self.ppo_n_minibatches):

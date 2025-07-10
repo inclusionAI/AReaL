@@ -6,13 +6,19 @@ cluster:
   name_resolve:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
+seed: 1
+total_train_epochs: 1
+tokenizer_path: ${model.path}
 
 model:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
   path: /storage/openpsi/models/Qwen__Qwen3-1.7B/
   init_from_scratch: false
-  pad_mbs_to_max_tokens: true
   gradient_checkpointing: false
   bf16: true
+  mb_spec:
+    max_tokens_per_mb: 4096
   optimizer:
     type: adam
     lr: 2e-5
@@ -24,30 +30,46 @@ model:
     gradient_clipping: 1.0
   backend: fsdp
 
-trainer:
-  experiment_name: ${experiment_name}
-  trial_name: ${trial_name}
-  fileroot: ${cluster.fileroot}
-  wandb:
-    mode: disabled
-  seed: 1
-  exp_ctrl:
-    total_train_epochs: 1
-    eval_freq_steps: 1
-  tokenizer_path: ${model.path}
-  mb_spec:
-    max_tokens_per_mb: 4096
-
 train_dataset:
-  type: gsm8k-sft
   batch_size: 128
   shuffle: true
   pin_memory: true
   num_workers: 4
 
 valid_dataset: 
-  type: gsm8k-sft
   batch_size: 128
   shuffle: true
   pin_memory: true
   num_workers: 4
+
+# Utilities
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+checkpointer:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: 3600
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: 1
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: disabled
