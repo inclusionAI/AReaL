@@ -8,7 +8,6 @@ from datasets import load_dataset, Image
 from arealite.api.cli_args import (
     DatasetConfig,
     EngineBackendConfig,
-    DatasetPreprocessor,
     EngineConfig,
     OptimizerConfig,
     SFTTrainerConfig,
