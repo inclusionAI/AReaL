@@ -43,7 +43,6 @@ class VL_SpmdGRPOTrainer(SpmdGRPOTrainer):
         self.actor_processor, self.actor_tokenizer = load_hf_processor_and_tokenizer(self.config.actor.path)
         
     def _train_step(self, trajs: List[Trajectory]):
-        breakpoint()
         rollout = concat_padded_tensors([traj.data for traj in trajs])
         rollout = to_device(rollout, torch.cuda.current_device())
 
