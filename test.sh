@@ -1,0 +1,1 @@
+PYTHONPATH=. pytest -s /home/kenny/changyi_dev/AReaL/arealite/tests/test_sglang_local_engine.py
