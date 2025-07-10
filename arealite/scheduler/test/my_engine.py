@@ -1,5 +1,5 @@
 import logging
-from areallite.scheduler.local import LocalScheduler
+from arealite.scheduler.local import LocalScheduler
 
 
 class MyEngine:

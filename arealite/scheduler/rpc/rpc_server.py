@@ -3,7 +3,7 @@ import pickle
 import threading
 import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from areallite.scheduler.utils import deserialize_with_metadata
+from arealite.scheduler.utils import deserialize_with_metadata
 
 
 class EngineRPCServer(BaseHTTPRequestHandler):

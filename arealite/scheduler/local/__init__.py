@@ -4,9 +4,9 @@ import logging
 import os
 import inspect
 import concurrent.futures
-from areallite.scheduler.base import Scheduler
-from areallite.scheduler.rpc.rpc_client import RPCClient
-from areallite.scheduler.utils import find_free_port, wait_for_port
+from arealite.scheduler.base import Scheduler
+from arealite.scheduler.rpc.rpc_client import RPCClient
+from arealite.scheduler.utils import find_free_port, wait_for_port
 
 
 class LocalScheduler(Scheduler):
@@ -43,7 +43,7 @@ class LocalScheduler(Scheduler):
             [
                 sys.executable,
                 "-m",
-                "areallite.scheduler.rpc.rpc_server",
+                "arealite.scheduler.rpc.rpc_server",
                 "--port",
                 str(rpc_port),
             ]

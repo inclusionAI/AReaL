@@ -4,7 +4,7 @@ import pickle
 import logging
 import inspect
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from areallite.scheduler.utils import serialize_with_metadata
+from arealite.scheduler.utils import serialize_with_metadata
 
 
 class RPCClient:
