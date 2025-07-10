@@ -55,11 +55,8 @@ dependencies = [
     "tabulate",
     "gymnasium>=1.1.1",
     "torchdata",
-<<<<<<< HEAD
-=======
     "autoflake",
     "tensordict",
->>>>>>> origin/lite
     
     # Monitoring and logging
     "wandb",
