@@ -1,7 +1,7 @@
 # Copyright 2025 Ant Group Inc.
 # Licensed under the Apache License, Version 2.0
 
-"""Test script for HF Engine implementation."""
+"""Test script for Engine implementation."""
 
 import os
 from typing import Dict
@@ -13,7 +13,7 @@ from transformers import AutoTokenizer
 
 from arealite.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
 from arealite.api.io_struct import FinetuneSpec, SaveLoadMeta
-from arealite.engine.hf_engine import HFEngine
+from arealite.engine.fsdp_engine import FSDPEngine
 
 VOCAB_SIZE = 100
 MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
@@ -52,51 +52,57 @@ def mock_input(
     )
 
 
+def get_engine(engine_type: str, model_path: str):
+    from arealite.engine.fsdp_engine import FSDPEngine
+    from arealite.engine.hf_engine import HFEngine
+
+    engine_cls = {"hf": HFEngine, "fsdp": FSDPEngine}[engine_type]
+
+    engine_config = TrainEngineConfig(
+        experiment_name=f"test-{engine_type}-engine",
+        trial_name="test0",
+        path=model_path,
+        optimizer=OptimizerConfig(),
+    )
+    engine = engine_cls(engine_config)
+    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
+    engine.initialize(None, ft_spec)
+    return engine
+
+
 def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
     """Mock loss function for testing."""
     return torch.mean(logits)
 
 
-@pytest.fixture(scope="module")
-def engine():
-    os.environ["WORLD_SIZE"] = "1"
-    os.environ["RANK"] = "0"
-    os.environ["LOCAL_RANK"] = "0"
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "7777"
-
-    engine_config = TrainEngineConfig(
-        experiment_name="test-hf-engine",
-        trial_name="test0",
-        path=MODEL_PATH,
-        optimizer=OptimizerConfig(),
+@pytest.fixture(scope="module", params=["fsdp", "hf"])
+def engine(request):
+    os.environ.update(
+        {
+            "WORLD_SIZE": "1",
+            "RANK": "0",
+            "LOCAL_RANK": "0",
+            "MASTER_ADDR": "localhost",
+            "MASTER_PORT": "7777",
+        }
     )
-    engine = HFEngine(engine_config)
-    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
-    engine.initialize(None, ft_spec)
-    print("✓ Engine created successfully")
+
+    model_path = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2-0.5B"
+
+    engine = get_engine(request.param, model_path)
+    print(f"✓ {request.param.upper()} Engine created successfully")
     yield engine
 
 
 @torch.no_grad()
 def test_forward_microbatch(engine, mock_input):
     engine.eval()
-    x2 = (
-        engine.forward(
-            input_=mock_input,
-            mb_spec=MicroBatchSpec(n_mbs=2, max_tokens_per_mb=100),
-        )
-        .squeeze(0)
-        .mean(-1)
-    )
-    x1 = (
-        engine.forward(
-            input_=mock_input,
-            mb_spec=MicroBatchSpec(n_mbs=1, max_tokens_per_mb=100),
-        )
-        .squeeze(0)
-        .mean(-1)
-    )
+    engine.config.mb_spec = MicroBatchSpec(n_mbs=2, max_tokens_per_mb=100)
+    x2 = engine.forward(input_=mock_input).squeeze(0).mean(-1)
+    engine.config.mb_spec = MicroBatchSpec(n_mbs=1, max_tokens_per_mb=100)
+    x1 = engine.forward(input_=mock_input).squeeze(0).mean(-1)
     input_ids = mock_input["input_ids"]
     assert x1.shape[:1] == input_ids.shape[:1]
     assert x2.shape[:1] == input_ids.shape[:1]
@@ -106,9 +112,9 @@ def test_forward_microbatch(engine, mock_input):
 @torch.no_grad()
 def test_eval_batch(engine, mock_input):
     engine.eval()
+    engine.config.mb_spec = MicroBatchSpec(n_mbs=2, max_tokens_per_mb=100)
     eval_result = engine.eval_batch(
         input_=mock_input,
-        mb_spec=MicroBatchSpec(n_mbs=2, max_tokens_per_mb=100),
         loss_fn=mock_loss_fn,
         loss_weight_fn=lambda x: x["cu_seqlens"][-1],
     )
@@ -120,9 +126,9 @@ def test_eval_batch(engine, mock_input):
 
 def test_train_batch(engine, mock_input):
     engine.train()
+    engine.config.mb_spec = MicroBatchSpec(n_mbs=2, max_tokens_per_mb=100)
     train_result = engine.train_batch(
         input_=mock_input,
-        mb_spec=MicroBatchSpec(n_mbs=2, max_tokens_per_mb=100),
         loss_fn=mock_loss_fn,
         loss_weight_fn=lambda x: x["cu_seqlens"][-1],
     )
@@ -144,18 +150,13 @@ def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
         base_model_path=None,
     )
 
-    old = engine.forward(
-        input_=mock_input,
-        mb_spec=MicroBatchSpec(n_mbs=1, max_tokens_per_mb=100),
-    )
+    engine.config.mb_spec = MicroBatchSpec(n_mbs=1, max_tokens_per_mb=100)
+    old = engine.forward(input_=mock_input)
     engine.save(save_load_meta)
 
     for name, param in engine.model.named_parameters():
         param.zero_()
 
     engine.load(save_load_meta)
-    new = engine.forward(
-        input_=mock_input,
-        mb_spec=MicroBatchSpec(n_mbs=1, max_tokens_per_mb=100),
-    )
+    new = engine.forward(input_=mock_input)
     assert torch.allclose(old, new)
