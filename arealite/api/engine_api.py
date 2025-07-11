@@ -28,6 +28,7 @@ class Scheduling:
     exclude: str = None
     partition: str = None
     container_image: str = None
+    type: str = None
     env_vars: Dict[str, str] = field(default_factory=dict)
     # time utils from "https://slurm.schedmd.com/sbatch.html"
     time_limit: Optional[str] = None  # see  "--time" option for format
