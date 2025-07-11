@@ -81,6 +81,14 @@ class RemoteMegatronEngine(TrainEngine):
     def initialize(self, cfg: RemoteMegatronInitConfig):
         global_rank = cfg.global_rank
         local_rank = global_rank % 8
+
+        cfg.server_addrs = [
+            "10.10.131.165:50000", "10.10.131.165:50001", "10.10.131.165:50002", "10.10.131.165:50003",
+            "10.10.131.165:50004", "10.10.131.165:50005", "10.10.131.165:50006", "10.10.131.165:50007",
+            "10.10.12.152:50000", "10.10.12.152:50001", "10.10.12.152:50002", "10.10.12.152:50003",
+            "10.10.12.152:50004", "10.10.12.152:50005", "10.10.12.152:50006", "10.10.12.152:50007",
+        ]
+
         self.megatron_addr = cfg.server_addrs[global_rank]
         master_addr = cfg.server_addrs[0]
         master_ip, master_port = master_addr.split(":", 1)  # ip:port

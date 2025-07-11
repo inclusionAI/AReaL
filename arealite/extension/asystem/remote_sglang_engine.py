@@ -2,6 +2,7 @@ import asyncio
 import threading
 import time
 import traceback
+import dataclasses
 from concurrent.futures import ThreadPoolExecutor
 from queue import Empty, Full, Queue
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
@@ -35,8 +36,12 @@ ROLLOUT_POLL_WAIT_TIME = 0.4
 RID_CACHE_SIZE = 128
 
 
-class RemoteSGLangEngine(InferenceEngine):
+@dataclasses.dataclass
+class RemoteSGLangInitConfig:
+    server_addrs: list[str]
+    
 
+class RemoteSGLangEngine(InferenceEngine):
     def __init__(self, config: InferenceEngineConfig):
         config.max_concurrent_rollouts = (
             config.max_concurrent_rollouts or config.consumer_batch_size
@@ -47,7 +52,7 @@ class RemoteSGLangEngine(InferenceEngine):
         # Maintain the addresses for the recent 128 requests
         self.rid_queue = []
 
-        self.addresses = config.server_addrs
+        self.addresses = None
         self.server_idx = 0
 
         qsize = config.queue_size or config.max_concurrent_rollouts * 10
@@ -62,7 +67,9 @@ class RemoteSGLangEngine(InferenceEngine):
 
         self._version = 0
 
-    def initialize(self, addr: str | None, ft_spec: Optional[Dict[str, Any]] = None):
+    def initialize(self, config: RemoteSGLangInitConfig):
+        self.addresses = config.server_addrs
+        self.addresses = ["10.10.131.247:8188"] * 8 + ["10.10.131.73:8188"] * 8
         self.rollout_thread = threading.Thread(target=self._rollout_thread)
         self.rollout_thread.start()
 

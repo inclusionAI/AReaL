@@ -37,7 +37,7 @@ class Scheduling:
 
 class TrainEngine(abc.ABC):
 
-    def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
+    def initialize(self, config: Any):
         """Initialize environments for distributed training and load models."""
         raise NotImplementedError()
 
@@ -119,7 +119,7 @@ class TrainEngine(abc.ABC):
 
 class InferenceEngine(abc.ABC):
 
-    def initialize(self, addr: str | None, config: Any):
+    def initialize(self, config: Any):
         """Initialize environments for distributed inference and load models."""
         raise NotImplementedError()
 
