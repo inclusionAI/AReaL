@@ -1,7 +1,8 @@
 import abc
 import logging
-from typing import Any, List
+from typing import Any, List, Dict
 from dataclasses import dataclass, field
+
 
 
 @dataclass
@@ -10,6 +11,20 @@ class Worker:
     ip: str
     ports: List[str] = field(default_factory=list)
 
+@dataclass
+class ContainerSpec:
+    cpu: int
+    gpu: int
+    mem: int
+    container_image: str = None
+    cmd: str = None
+    env_vars: Dict[str, str] = field(default_factory=dict)
+    port: int = 50000
+
+@dataclass
+class SchedulingConfig:
+    replicas: int = 0
+    specs: List[ContainerSpec] = field(default_factory=list)
 
 class Scheduler(abc.ABC):
     def __init__(self, config: dict):

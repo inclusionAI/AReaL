@@ -69,7 +69,7 @@ class DistributedTrainController(TrainController):
 
         # todo: 不能写死remote megatron, 让engine抽象出接口
         tasks = [
-            self.scheduler.initialize_engine(worker.id, self.train_engine, RemoteMegatronInitConfig(addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.train_world_size))
+            self.scheduler.initialize_engine(worker.id, self.train_engine, RemoteMegatronInitConfig(server_addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.train_world_size))
             for index, worker in enumerate(self.workers)
         ]
 

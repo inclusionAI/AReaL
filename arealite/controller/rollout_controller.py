@@ -1,17 +1,17 @@
 import asyncio
 
-from arealite.api.cli_args import RolloutControllerConfig
 from arealite.api.engine_api import InferenceEngine
 from arealite.api.io_struct import (
     WeightUpdateMeta,
     AllocationMode
 )
-from arealite.extension.asystem.remote_megatron_engine import RemoteInferenceInitConfig
 
+from arealite.api.cli_args import RolloutControllerConfig
 from arealite.api.workflow_api import RolloutWorkflow
 from arealite.api.controller_api import RolloutController
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec
+from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangInitConfig
 import logging
 
 class DistributedRolloutController(RolloutController):
@@ -61,7 +61,7 @@ class DistributedRolloutController(RolloutController):
         server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
 
         tasks = [
-            self.scheduler.initialize_engine(worker.id, self.inf_engine, RemoteInferenceInitConfig(addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.gen_world_size))
+            self.scheduler.initialize_engine(worker.id, self.inf_engine, RemoteSGLangInitConfig(server_addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.gen_world_size))
             for index, worker in enumerate(self.workers)
         ]
 
