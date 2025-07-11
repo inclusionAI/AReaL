@@ -55,27 +55,28 @@ class RemoteMegatronEngine(TrainEngine):
         self.initialized = False
         self.weight_update_group_initialized = False
 
-        if self.config.adaptive_kl_ctl:
-            assert self.config.adaptive_kl_target is not None
-            assert self.config.adaptive_kl_horizon is not None
+        if self.config.wrap_policy.adaptive_kl_ctl:
+            assert self.config.wrap_policy.adaptive_kl_target is not None
+            assert self.config.wrap_policy.adaptive_kl_horizon is not None
             self.kl_adapter = ppo_functional.AdaptiveKLController(
-                self.config.kl_ctl, self.config.adaptive_kl_target, self.config.adaptive_kl_horizon
+                self.config.wrap_policy.kl_ctl, self.config.wrap_policy.adaptive_kl_target,
+                self.config.wrap_policy.adaptive_kl_horizon
             )
         else:
-            self.kl_adapter = ppo_functional.FixedKLController(self.config.kl_ctl)
-        if self.config.value_norm:
+            self.kl_adapter = ppo_functional.FixedKLController(self.config.wrap_policy.kl_ctl)
+        if self.config.wrap_policy.value_norm:
             from realhf.impl.model.modules import (
                 ExponentialRunningMeanStd,
                 MovingAverageRunningMeanStd,
             )
-            if self.config.value_norm_type == "exp":
+            if self.config.wrap_policy.value_norm_type == "exp":
                 self.rms = ExponentialRunningMeanStd(
-                    beta=self.config.value_norm_beta, epsilon=self.config.value_norm_eps
+                    beta=self.config.wrap_policy.value_norm_beta, epsilon=self.config.wrap_policy.value_norm_eps
                 )
-            elif self.config.value_norm_type == "ma":
+            elif self.config.wrap_policy.value_norm_type == "ma":
                 self.rms = MovingAverageRunningMeanStd()
             else:
-                raise ValueError(f"Unknown value_norm_type {self.config.value_norm_type}")
+                raise ValueError(f"Unknown value_norm_type {self.config.wrap_policy.value_norm_type}")
         self.kl_ctl = None
 
     def initialize(self, cfg: RemoteMegatronInitConfig):
@@ -368,7 +369,7 @@ class RemoteMegatronEngine(TrainEngine):
 
         if "dense_rewards" in input_.data:
             dense_reward_score = input_.data["dense_rewards"].float()
-        if not self.config.disable_value:
+        if not self.config.wrap_policy.disable_value:
             values = input_.data["values"].float()
         else:
             values = torch.zeros_like(
@@ -383,8 +384,8 @@ class RemoteMegatronEngine(TrainEngine):
             ref_logp: torch.FloatTensor = input_.data["packed_ref_logprobs"].float()
         old_logp: torch.FloatTensor = input_.data["packed_logprobs"].float()
 
-        if not self.config.disable_value:
-            if self.config.value_norm:
+        if not self.config.wrap_policy.disable_value:
+            if self.config.wrap_policy.value_norm:
                 denormalized_values = self.rms.denormalize(values)
             else:
                 denormalized_values = values
@@ -402,7 +403,7 @@ class RemoteMegatronEngine(TrainEngine):
         short1cu_seqlens[1:] -= torch.ones_like(cu_seqlens[1:]).cumsum(0)
         loss_mask = prompt_mask.logical_not()
 
-        if self.config.mask_too_long:
+        if self.config.wrap_policy.mask_too_long:
             for i in range(seq_no_eos_mask.shape[0]):
                 if seq_no_eos_mask[i]:
                     loss_mask[cu_seqlens[i]: cu_seqlens[i + 1]] = False
@@ -426,7 +427,7 @@ class RemoteMegatronEngine(TrainEngine):
 
         new_reward_score = reward_score
 
-        if not self.config.adv_norm and self.config.group_adv_norm:
+        if not self.config.wrap_policy.adv_norm and self.config.wrap_policy.group_adv_norm:
             n_seqs = len(input_lens)
             reward_score_grpo = reward_score.clone().detach()
             new_reward_score = reward_score_grpo
@@ -437,34 +438,34 @@ class RemoteMegatronEngine(TrainEngine):
                 reward_score_grpo[i * self.config.group_size: (i + 1) * self.config.group_size] = normed_rewards
 
         # Compute rewards and GAEs.
-        if self.config.use_dense_reward:
+        if self.config.wrap_policy.use_dense_reward:
             kl_rewards, rewards = ppo_functional.get_packed_reward_dense(
                 kl_ctl=self.kl_adapter.value,
-                clip_reward_value=self.config.max_reward_clip,
+                clip_reward_value=self.config.wrap_policy.max_reward_clip,
                 log_probs=old_logp,
                 ref_log_probs=ref_logp,
                 dense_reward_score=dense_reward_score,
                 short1cu_seqlens=short1cu_seqlens,
                 seq_no_eos_mask=seq_no_eos_mask,
-                reward_delta=self.config.reward_delta,
+                reward_delta=self.config.wrap_policy.reward_delta,
             )
         else:
             kl_rewards, rewards = ppo_functional.get_packed_rewards(
                 kl_ctl=self.kl_adapter.value,
-                clip_reward_value=self.config.max_reward_clip,
+                clip_reward_value=self.config.wrap_policy.max_reward_clip,
                 log_probs=old_logp,
                 ref_log_probs=ref_logp,
                 reward_score=(new_reward_score),
                 short1cu_seqlens=short1cu_seqlens,
                 seq_no_eos_mask=seq_no_eos_mask,
-                mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
+                mask_no_eos_with_zero=self.config.wrap_policy.mask_no_eos_with_zero,
             )
         advantages, returns = ppo_functional.get_packed_advantages_and_returns(
-            gamma=self.config.discount,
-            lam=self.config.gae_lambda,
+            gamma=self.config.wrap_policy.discount,
+            lam=self.config.wrap_policy.gae_lambda,
             values=(
                 denormalized_values
-                if not self.config.disable_value
+                if not self.config.wrap_policy.disable_value
                 else denormalized_values.new_zeros(denormalized_values.shape)
             ),
             rewards=rewards,
@@ -473,10 +474,10 @@ class RemoteMegatronEngine(TrainEngine):
         )
 
         # Optionally perform normalization.
-        if self.config.value_norm:
+        if self.config.wrap_policy.value_norm:
             self.rms.update(returns, mask=loss_mask)
-        if self.config.adv_norm:
-            if self.config.group_adv_norm == False:
+        if self.config.wrap_policy.adv_norm:
+            if self.config.wrap_policy.group_adv_norm == False:
                 advantages = masked_normalization(advantages, loss_mask)
             else:
                 logger.info(f"adv_shape: {advantages.shape}")
@@ -522,7 +523,7 @@ class RemoteMegatronEngine(TrainEngine):
         if use_prox_logp:
             flat_data["prox_logp"] = input_.data["proximal_logprobs"].float()
 
-        if self.config.use_dense_reward:
+        if self.config.wrap_policy.use_dense_reward:
             dense_reward_score = dense_reward_score[shift_one_indices]
 
         ### Logging code starts. ###
@@ -554,7 +555,7 @@ class RemoteMegatronEngine(TrainEngine):
                 kl_rewards=kl_rewards,
                 final_reward=rewards,
             )
-            if self.config.use_dense_reward:
+            if self.config.wrap_policy.use_dense_reward:
                 stats["dense_reward"] = dense_reward_score
             stats_tracker.stat(**stats, denominator="n_valid_tokens")
 
@@ -577,13 +578,13 @@ class RemoteMegatronEngine(TrainEngine):
                 denominator="n_seqs",
             )
             scalars = dict(
-                disable_value=self.config.disable_value,
-                mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
-                eps_clip=self.config.eps_clip,
+                disable_value=self.config.wrap_policy.disable_value,
+                mask_no_eos_with_zero=self.config.wrap_policy.mask_no_eos_with_zero,
+                eps_clip=self.config.wrap_policy.eps_clip,
                 use_prox_logp=use_prox_logp,
             )
-            if self.config.c_clip is not None:
-                scalars["c_clip"] = self.config.c_clip
+            if self.config.wrap_policy.c_clip is not None:
+                scalars["c_clip"] = self.config.wrap_policy.c_clip
                 scalars["use_dual_clip"] = 1
             else:
                 scalars["use_dual_clip"] = 0
