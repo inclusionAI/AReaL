@@ -63,12 +63,18 @@ def pad_sequences_to_tensors(
 ) -> TensorDict:
     if not sequence_list:
         return TensorDict()
-    max_length = max(len(seq) for item in sequence_list for seq in item.values())
+    skip_keys = {"pixel_values", "image_grid_thw"}
+    max_length = max(
+        len(seq) for item in sequence_list 
+        for key, seq in item.items() 
+        if key not in skip_keys
+    )
     result = {}
     for key in sequence_list[0].keys():
         padded = []
-        if key=="pixel_values" or key=="image_grid_thw":
-            result[key] = [sequence_list[i][key] for i in range(len(sequence_list))]
+        if key in skip_keys:
+            result[key] = torch.stack([item[key] for item in sequence_list])
+            continue
         for item in sequence_list:
             x = item[key]
             if not torch.is_tensor(x):
@@ -80,8 +86,8 @@ def pad_sequences_to_tensors(
             )
         result[key] = torch.stack(padded)
     attention_mask = [
-        [1] * len(next(iter(item.values())))
-        + [0] * (max_length - len(next(iter(item.values()))))
+        [1] * len(next(iter(item[key] for key in item.keys() if key not in skip_keys)))
+        + [0] * (max_length - len(next(iter(item[key] for key in item.keys() if key not in skip_keys))))
         for item in sequence_list
     ]
     result["attention_mask"] = torch.tensor(attention_mask, dtype=torch.bool)
