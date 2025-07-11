@@ -1,6 +1,7 @@
 import os
 import sys
-
+os.environ["RANK"]='0'
+os.environ["WORLD_SIZE"]='1'
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import SFTConfig, load_expr_config
