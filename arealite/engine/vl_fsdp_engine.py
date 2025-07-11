@@ -107,17 +107,17 @@ class VL_FSDPEngine(FSDPEngine):
         apply_fsdp2(model, fsdp_kwargs, self.config.fsdp.wrap_policy)
         self.model = model
 
-        if not self.config.init_from_scratch:
-            # Load model from a initial checkpoint path,
-            # which should only be a huggingface checkpoint.
-            load_meta = SaveLoadMeta(
-                path=self.config.path,
-                weight_format="hf",
-                with_optim=False,
-                tokenizer=None,
-                base_model_path=self.config.path,
-            )
-            self.load(load_meta)
+        # if not self.config.init_from_scratch:
+        #     # Load model from a initial checkpoint path,
+        #     # which should only be a huggingface checkpoint.
+        #     load_meta = SaveLoadMeta(
+        #         path=self.config.path,
+        #         weight_format="hf",
+        #         with_optim=False,
+        #         tokenizer=None,
+        #         base_model_path=self.config.path,
+        #     )
+        #     self.load(load_meta)
 
         # Set up optimizer
         if self.optimizer_config is not None:
