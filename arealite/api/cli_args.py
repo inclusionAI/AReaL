@@ -461,6 +461,12 @@ class ClusterSpecConfig:
 
 @dataclass
 class DatasetConfig:
+    path: str =field(
+        default=MISSING,
+        metadata={
+            "help": "Path to the dataset. Can be a local path or a HuggingFace dataset name."
+        },
+    )
     type: Optional[str] = field(
         default=None, metadata={"help": "Type of implemented dataset"}
     )
