@@ -1,75 +1,102 @@
-import dataclasses
-import gc
-import os
 import gzip
-import json
-from typing import Any, Callable, Dict, List
+from typing import Any
 
-import torch
 import requests
 import cloudpickle
 
 from arealite.api.cli_args import RemoteMegatronEngineConfig
 from arealite.api.engine_api import (
-    FinetuneSpec,
     SaveLoadMeta,
     TrainEngine,
     WeightUpdateMeta,
+    Scheduling,
 )
+
+import dataclasses
+import json
+from typing import Dict, List, Callable
+
+import torch
+
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 
-from realhf.base import logging
-from realhf.api.core.data_api import MicroBatchSpec, SequenceSample
+import realhf.impl.model.utils.ppo_functional as ppo_functional
+from realhf.api.core.data_api import (
+    RL_TASKS,
+    MicroBatchSpec,
+    SequenceSample,
+)
+from realhf.base import logging, stats_tracker
+from realhf.base.datapack import flat2d
+from realhf.impl.model.utils.functional import (
+    gather_packed_shifted_log_probs,
+    masked_normalization,
+)
 
 logger = logging.getLogger("RemoteMegatronEngine")
 
 
 @dataclasses.dataclass
 class RemoteMegatronInitConfig:
-    addrs: list[str]
+    server_addrs: list[str]
     global_rank: int
-    local_rank: int
     world_size: int
     recover_dir: str
-    # ft_spec: FinetuneSpec = dataclasses.field(default_factory=FinetuneSpec)
-    # megatron_config: Dict[str, Any] = dataclasses.field(default_factory=dict)
-    # loss_configs: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
-@dataclasses.dataclass
-class RemoteInferenceInitConfig:
-    addrs: list[str]
-    global_rank: int
-    local_rank: int
-    world_size: int
 
 class RemoteMegatronEngine(TrainEngine):
-    def __init__(self, config: RemoteMegatronEngineConfig | None):
+    def __init__(self, config: RemoteMegatronEngineConfig):
         self.config = config
+
         self.megatron_addr = None
-        self.rendevzous_ip = None
+        self.global_step = 0
 
         # initialization
         self.initialized = False
         self.weight_update_group_initialized = False
 
-    def initialize(self, init_config: RemoteMegatronInitConfig):
-        global_rank = init_config.global_rank
-        self.megatron_addr = init_config.magatron_addrs[global_rank]
-        master_addr = init_config.magatron_addrs[0]
-        master_ip, master_port = master_addr.split(":", 1)  # ip:port
-        logger.info(f"[RemoteMegatronEngine] _initialize init_config: {init_config}")
+        if self.config.adaptive_kl_ctl:
+            assert self.config.adaptive_kl_target is not None
+            assert self.config.adaptive_kl_horizon is not None
+            self.kl_adapter = ppo_functional.AdaptiveKLController(
+                self.config.kl_ctl, self.config.adaptive_kl_target, self.config.adaptive_kl_horizon
+            )
+        else:
+            self.kl_adapter = ppo_functional.FixedKLController(self.config.kl_ctl)
+        if self.config.value_norm:
+            from realhf.impl.model.modules import (
+                ExponentialRunningMeanStd,
+                MovingAverageRunningMeanStd,
+            )
+            if self.config.value_norm_type == "exp":
+                self.rms = ExponentialRunningMeanStd(
+                    beta=self.config.value_norm_beta, epsilon=self.config.value_norm_eps
+                )
+            elif self.config.value_norm_type == "ma":
+                self.rms = MovingAverageRunningMeanStd()
+            else:
+                raise ValueError(f"Unknown value_norm_type {self.config.value_norm_type}")
+        self.kl_ctl = None
 
-        megatron_config = init_config.megatron_config
-        megatron_config["total_train_steps"] = init_config.ft_spec.total_train_steps
+    def initialize(self, cfg: RemoteMegatronInitConfig):
+        global_rank = cfg.global_rank
+        local_rank = global_rank % 8
+        self.megatron_addr = cfg.server_addrs[global_rank]
+        master_addr = cfg.server_addrs[0]
+        master_ip, master_port = master_addr.split(":", 1)  # ip:port
+        logger.info(f"[RemoteMegatronEngine] _initialize init_config: {cfg}")
+
+        megatron_config = self.config.remote_megatron_config
+        # megatron_config["total_train_steps"] = cfg.ft_spec.total_train_steps
         payload = {
-            "rank": str(init_config.global_rank),
-            "local_rank": str(init_config.local_rank),
+            "rank": str(cfg.global_rank),
+            "local_rank": str(local_rank),
             "master_port": str(master_port),
             "master_addr": str(master_addr),
-            "world_size": str(init_config.world_size),
-            "megatron_config": init_config.megatron_config,
-            "loss_configs": init_config.loss_configs,
-            "recover_dir": init_config.recover_dir,
+            "world_size": str(cfg.world_size),
+            "megatron_config": megatron_config,
+            "loss_configs": self.config.loss_configs,
+            "recover_dir": cfg.recover_dir,
         }
 
         try:
@@ -102,12 +129,15 @@ class RemoteMegatronEngine(TrainEngine):
             raise ValueError(f"[Rank {global_rank}] Unexpected error: {e}")
 
         logger.info(f"[RemoteMegatronEngine] rank: {global_rank} megatron server initialize success")
-        self.rendevzous_ip = master_addr  # for update_weights
         self.initialized = True
 
     def get_scheduling_config(self):
-        # 获取调度器调度engine所需的资源配置信息
-        pass
+        return Scheduling(
+            cpu=4,
+            gpu=1,
+            mem=8,
+            type="engine",
+        )
 
     def destroy(self):
         self.initialized = False
@@ -121,7 +151,7 @@ class RemoteMegatronEngine(TrainEngine):
             save_load_meta = SaveLoadMeta(
                 path=meta.path,
                 weight_format="huggingface",
-                global_step=meta.global_step,
+                global_step=self.global_step,
             )
             self.save(save_load_meta)
         else:
@@ -166,7 +196,6 @@ class RemoteMegatronEngine(TrainEngine):
         pass
 
     def step_lr_scheduler(self):
-        # 和shaoshang、kuangzhi沟通，offpolicy时不需要控制lr.step(global_step),所以不需要暴露lr sched
         pass
 
     def init_distributed_weight_update(self, meta: WeightUpdateMeta):
@@ -182,39 +211,82 @@ class RemoteMegatronEngine(TrainEngine):
     def train_distributed_batch(
         self,
         input_: DistributedBatchMemory,
-        mb_spec: MicroBatchSpec,
-        loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
-        loss_weight_fn: Callable[[Dict], float],
+        loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor] | None,
+        loss_weight_fn: Callable[[Dict], float] | None,
     ) -> Dict[str, float]:
-        # 1. 获取所有属性名
+        # 0.接受rollout和reward之后的数据
+        # - input_ids, prompt_mask, logprobs, versions, seqlen, rewards, task_ids, seq_no_eos_mask
         if not input_.dataset or len(input_.dataset) == 0:
             raise ValueError("input_.dataset is empty")
         first_item = input_.dataset[0]
         attrs = list(first_item.keys())
 
-        # 2. 构造 attr -> stacked tensor
+        # 1. 获取所有属性名。input_的key：input_ids, prompt_mask, logprobs, versions, seqlen, rewards, task_ids, seq_no_eos_mask
+        # 构造 attr -> tensor
         batch_data = {}
         for attr in attrs:
-            tensor_list = input_[attr]  # list[tensor]
-            # 转为大tensor
-            batch_tensor = torch.stack(tensor_list)
-            batch_data[attr] = batch_tensor
+            batch_data[attr] = input_[attr]
 
-        return self.train_batch(batch_data, mb_spec, loss_fn, loss_weight_fn)
+        # 2. input_的数据转换：prompt_mask, packed_input_ids, seqlens.packed_input_ids, rewards, task_ids, seq_no_eos_mask, packed_logprobs
+        # input_ids => packed_input_ids
+        # seqlens => seqlens.packed_input_ids
+        # logprobs => packed_logprobs
+        # input_ids => packed_input_ids
+        if "input_ids" in batch_data and "seqlen" in batch_data:
+            batch_data["packed_input_ids"] = pack_input_ids(batch_data["input_ids"], batch_data["seqlen"])
+
+        # logprobs => packed_logprobs
+        if "logprobs" in batch_data and "seqlen" in batch_data:
+            batch_data["packed_logprobs"] = pack_logprobs(batch_data["logprobs"], batch_data["seqlen"])
+
+        # 3.获取{advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards, global_stats}
+        train_datas = self.process_training_data(batch_data)
+        batch = {"advantages": train_datas["advantages"],
+                 "old_logp": train_datas["old_logp"],
+                 "ppo_loss_mask": train_datas["ppo_loss_mask"],
+                 "packed_input_ids": train_datas["packed_input_ids"],
+                 "kl_rewards": train_datas["kl_rewards"],
+                 "seqlen": batch_data["seqlen"]}
+
+        train_stats = self.train_batch(batch, loss_fn, loss_weight_fn)
+        logger.info(f"[RemoteMegatronEngine] Train batch exec success, global_step: {self.global_step}.")
+
+        # 3、保存模型
+        self.save(SaveLoadMeta(
+            # TODO: hardcode
+            path=f"/storage/openpsi/checkpoints/{self.config.experiment_name}/{self.config.trial_name}",
+            weight_format="huggingface",
+            global_step=self.global_step,
+        ))
+        logger.info(f"[RemoteMegatronEngine] Train save hf exec success, global_step: {self.global_step}.")
+
+        # 4. 更新global_step
+        self.global_step += 1
+        return train_stats
 
     def train_batch(
         self,
         input_: Dict,  # key: str, value: tensor
-        mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[Dict], float],
     ) -> Dict[str, float]:
-        logger.info(f"[RemoteMegatronEngine] mb_spec: {mb_spec}")
+        # 输入： advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards
+        # Dict[str, tensor] to SequenceSample
+        group_size = self.config.group_size
+        batch_size = self.config.train_bs_n_seqs
+        flat_input = SequenceSample.from_default(
+            ids=list(range(batch_size * group_size)),
+            data=input_,
+            seqlens=[int(x) for x in input_["seqlen"].cpu().numpy().tolist()],
+        )
+
+        mb_spec = MicroBatchSpec(n_mbs=self.config.n_mbs,
+                                 max_tokens_per_mb=self.config.max_tokens_per_mb)
         try:
             target_url = f"http://{self.megatron_addr}/train_batch"
             headers = {"Content-Type": "application/octet-stream"}
             payload = {
-                "sequence_sample": input_,
+                "sequence_sample": flat_input,
                 "micro_batch_spec": mb_spec,
             }
             data = serialize_and_compress(payload)
@@ -243,25 +315,321 @@ class RemoteMegatronEngine(TrainEngine):
     def eval_batch(
         self,
         input_: Dict,
-        mb_spec: MicroBatchSpec,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
         loss_weight_fn: Callable[[Dict], float],
     ) -> torch.Tensor | None:
-        pass
+        raise NotImplementedError(
+            "Eval batch is not implemented for RemoteMegatronEngine yet. "
+        )
 
     @torch.no_grad()
     def forward(
         self,
         input_: Dict,
-        mb_spec: MicroBatchSpec,
         output_seqlens: List[List[int]] | None = None,
         post_hook: Callable[[torch.Tensor, Dict], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
-        pass
+        raise NotImplementedError(
+            "Forward is not implemented for RemoteMegatronEngine yet. "
+        )
+
+    def process_training_data(
+        self,
+        input_: Dict[str, torch.Tensor],
+    ) -> Dict:
+
+        '''
+        inputs:
+            - prompt_mask, packed_input_ids, seqlens.packed_input_ids, rewards, task_ids, seq_no_eos_mask, packed_logprobs
+        outputs:
+            - {advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards, global_stats}
+        '''
+        prompt_mask = input_.data["prompt_mask"]
+        input_lens = torch.tensor(
+            flat2d(input_.seqlens["packed_input_ids"]), device="cuda"
+        )
+        cu_seqlens = torch.nn.functional.pad(input_lens.cumsum(0), (1, 0)).int()
+        prompt_lens = []
+        for s, e in zip(cu_seqlens[:-1], cu_seqlens[1:]):
+            prompt_lens.append(prompt_mask[s:e].sum())
+        prompt_lens = torch.tensor(prompt_lens, device="cuda")
+        reward_score = input_.data["rewards"].float()
+        task_ids = input_.data["task_ids"]
+        # task_ids = task_ids.repeat(self.config.group_size, 1).transpose(0, 1).reshape(-1)
+
+        if "dense_rewards" in input_.data:
+            dense_reward_score = input_.data["dense_rewards"].float()
+        if not self.config.disable_value:
+            values = input_.data["values"].float()
+        else:
+            values = torch.zeros_like(
+                input_.data["packed_input_ids"], dtype=torch.float32
+            )
+        seq_no_eos_mask = input_.data["seq_no_eos_mask"]
+        if self.kl_adapter.value == 0:
+            ref_logp: torch.FloatTensor = reward_score.new_zeros(
+                int(input_lens.sum()) - len(input_lens)
+            )
+        else:
+            ref_logp: torch.FloatTensor = input_.data["packed_ref_logprobs"].float()
+        old_logp: torch.FloatTensor = input_.data["packed_logprobs"].float()
+
+        if not self.config.disable_value:
+            if self.config.value_norm:
+                denormalized_values = self.rms.denormalize(values)
+            else:
+                denormalized_values = values
+        else:
+            denormalized_values = values
+
+        for i in range(seq_no_eos_mask.shape[0]):
+            if not seq_no_eos_mask[i]:
+                # Set value at the EOS token to be zero.
+                denormalized_values[cu_seqlens[i + 1] - 1] = 0.0
+                values[cu_seqlens[i + 1] - 1] = 0.0
+
+        # Shift the loss mask by one token for each packed sequences.
+        short1cu_seqlens = cu_seqlens.clone()
+        short1cu_seqlens[1:] -= torch.ones_like(cu_seqlens[1:]).cumsum(0)
+        loss_mask = prompt_mask.logical_not()
+
+        if self.config.mask_too_long:
+            for i in range(seq_no_eos_mask.shape[0]):
+                if seq_no_eos_mask[i]:
+                    loss_mask[cu_seqlens[i]: cu_seqlens[i + 1]] = False
+
+        shift_one_indices = torch.cat(
+            [
+                torch.arange(
+                    cu_seqlens[i] + 1,
+                    cu_seqlens[i + 1],
+                    dtype=torch.long,
+                    device=cu_seqlens.device,
+                )
+                for i in range(cu_seqlens.shape[0] - 1)
+            ]
+        )
+        loss_mask = loss_mask[shift_one_indices]
+
+        # Apply the mask to log probabilities.
+        ref_logp *= loss_mask
+        old_logp *= loss_mask
+
+        new_reward_score = reward_score
+
+        if not self.config.adv_norm and self.config.group_adv_norm:
+            n_seqs = len(input_lens)
+            reward_score_grpo = reward_score.clone().detach()
+            new_reward_score = reward_score_grpo
+            for i in range(n_seqs // self.config.group_size):
+                group_rewards = reward_score[i * self.config.group_size: (i + 1) * self.config.group_size]
+                grouped_std = group_rewards.std(dim=-1)
+                normed_rewards = (group_rewards - group_rewards.mean(-1, keepdim=True)) / (grouped_std + 1e-9)
+                reward_score_grpo[i * self.config.group_size: (i + 1) * self.config.group_size] = normed_rewards
+
+        # Compute rewards and GAEs.
+        if self.config.use_dense_reward:
+            kl_rewards, rewards = ppo_functional.get_packed_reward_dense(
+                kl_ctl=self.kl_adapter.value,
+                clip_reward_value=self.config.max_reward_clip,
+                log_probs=old_logp,
+                ref_log_probs=ref_logp,
+                dense_reward_score=dense_reward_score,
+                short1cu_seqlens=short1cu_seqlens,
+                seq_no_eos_mask=seq_no_eos_mask,
+                reward_delta=self.config.reward_delta,
+            )
+        else:
+            kl_rewards, rewards = ppo_functional.get_packed_rewards(
+                kl_ctl=self.kl_adapter.value,
+                clip_reward_value=self.config.max_reward_clip,
+                log_probs=old_logp,
+                ref_log_probs=ref_logp,
+                reward_score=(new_reward_score),
+                short1cu_seqlens=short1cu_seqlens,
+                seq_no_eos_mask=seq_no_eos_mask,
+                mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
+            )
+        advantages, returns = ppo_functional.get_packed_advantages_and_returns(
+            gamma=self.config.discount,
+            lam=self.config.gae_lambda,
+            values=(
+                denormalized_values
+                if not self.config.disable_value
+                else denormalized_values.new_zeros(denormalized_values.shape)
+            ),
+            rewards=rewards,
+            short1cu_seqlens=short1cu_seqlens,
+            seq_no_eos_mask=seq_no_eos_mask,
+        )
+
+        # Optionally perform normalization.
+        if self.config.value_norm:
+            self.rms.update(returns, mask=loss_mask)
+        if self.config.adv_norm:
+            if self.config.group_adv_norm == False:
+                advantages = masked_normalization(advantages, loss_mask)
+            else:
+                logger.info(f"adv_shape: {advantages.shape}")
+                logger.info(f"prompt_mask_shape: {prompt_mask.shape}")
+                n_samples = len(cu_seqlens) - 1
+                assert n_samples % self.config.group_size == 0
+                adv_list = []
+                for i in range(0, n_samples, self.config.group_size):
+                    for j in range(1, self.config.group_size):
+                        assert (
+                            prompt_mask[cu_seqlens[i]: cu_seqlens[i + 1]].sum()
+                            == prompt_mask[
+                               cu_seqlens[i + j]: cu_seqlens[i + j + 1]
+                               ].sum()
+                        )
+                    adv_list.append(
+                        masked_normalization(
+                            advantages[
+                            short1cu_seqlens[i]: short1cu_seqlens[
+                                i + self.config.group_size
+                                ]
+                            ],
+                            loss_mask[
+                            short1cu_seqlens[i]: short1cu_seqlens[
+                                i + self.config.group_size
+                                ]
+                            ],
+                            all_reduce=False,
+                        )
+                    )
+
+                advantages = torch.cat(adv_list, 0)
+
+        # Prepare data to be splitted into mini-batches.
+        flat_data = dict(
+            advantages=advantages,
+            old_logp=old_logp,
+            ppo_loss_mask=loss_mask,
+            packed_input_ids=input_.data["packed_input_ids"],
+            kl_rewards=kl_rewards,
+        )
+        use_prox_logp = "proximal_logprobs" in input_.data
+        if use_prox_logp:
+            flat_data["prox_logp"] = input_.data["proximal_logprobs"].float()
+
+        if self.config.use_dense_reward:
+            dense_reward_score = dense_reward_score[shift_one_indices]
+
+        ### Logging code starts. ###
+        with stats_tracker.scope("grpo_actor"):
+            assert (
+                task_ids.shape == reward_score.shape
+            ), f"task_ids ({task_ids.shape}) and reward_score ({reward_score.shape}) must have the same shape"
+
+            task_denominators = {
+                f"{task}_n_seqs": (task_ids == idx).bool()
+                for idx, task in enumerate(RL_TASKS)
+            }
+
+            global_denominators = dict(
+                n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
+                n_tokens=torch.ones_like(prompt_mask, dtype=torch.bool),
+                n_valid_tokens=loss_mask.bool(),
+                **task_denominators,
+            )
+            stats_tracker.denominator(**global_denominators)
+
+            for task in RL_TASKS:
+                stats_tracker.stat(
+                    **{f"{task}_reward": reward_score}, denominator=f"{task}_n_seqs"
+                )
+
+            stats = dict(
+                advantages=advantages,
+                kl_rewards=kl_rewards,
+                final_reward=rewards,
+            )
+            if self.config.use_dense_reward:
+                stats["dense_reward"] = dense_reward_score
+            stats_tracker.stat(**stats, denominator="n_valid_tokens")
+
+            seq_stats = dict(
+                no_eos_ratios=seq_no_eos_mask.float(),
+                task_reward=reward_score,
+                prompt_len=prompt_lens.float(),
+                seq_len=input_lens.float(),
+            )
+            if "version_start" in input_.data:
+                seq_stats["head_offpolicyness"] = (
+                    self.global_step - input_.data["version_start"]
+                ).float()
+            if "version_end" in input_.data:
+                seq_stats["tail_offpolicyness"] = (
+                    self.global_step - input_.data["version_end"]
+                ).float()
+            stats_tracker.stat(
+                **seq_stats,
+                denominator="n_seqs",
+            )
+            scalars = dict(
+                disable_value=self.config.disable_value,
+                mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
+                eps_clip=self.config.eps_clip,
+                use_prox_logp=use_prox_logp,
+            )
+            if self.config.c_clip is not None:
+                scalars["c_clip"] = self.config.c_clip
+                scalars["use_dual_clip"] = 1
+            else:
+                scalars["use_dual_clip"] = 0
+            stats_tracker.scalar(**scalars)
+
+            global_stats = stats_tracker.export()
+            for k in global_denominators:
+                global_stats.pop(f"ppo_actor/{k}")
+
+        return dict(
+            advantages=advantages,
+            old_logp=old_logp,
+            ppo_loss_mask=loss_mask,
+            packed_input_ids=input_.data["packed_input_ids"],
+            kl_rewards=kl_rewards,
+            global_stats=global_stats,
+        )
 
 
 def serialize_and_compress(data):
     serialized_data = cloudpickle.dumps(data)
     compressed_data = gzip.compress(serialized_data)
     return compressed_data
+
+
+def pack_input_ids(input_ids: torch.Tensor, seqlen: torch.Tensor) -> torch.Tensor:
+    """
+    将input_ids按seqlen拼接成packed_input_ids。
+    Args:
+        input_ids: shape [batch, seq_len]
+        seqlen: shape [batch], 每个样本的有效长度
+    Returns:
+        packed_input_ids: shape [sum(seqlen)]
+    """
+    packed = []
+    for i in range(input_ids.shape[0]):
+        valid_len = seqlen[i].item()
+        packed.append(input_ids[i, :valid_len])
+    return torch.cat(packed, dim=0)
+
+
+def pack_logprobs(logprobs: torch.Tensor, seqlen: torch.Tensor) -> torch.Tensor:
+    """
+    将logprobs按seqlen拼接成packed_logprobs。
+    每个样本的有效logprobs长度为seqlen[i]-1。
+    Args:
+        logprobs: shape [batch, seq_len]
+        seqlen: shape [batch], 每个样本的有效长度
+    Returns:
+        packed_logprobs: shape [sum(seqlen-1)]
+    """
+    packed = []
+    for i in range(logprobs.shape[0]):
+        valid_len = seqlen[i].item() - 1
+        packed.append(logprobs[i, :valid_len])
+
+    return torch.cat(packed, dim=0)

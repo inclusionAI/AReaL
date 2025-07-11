@@ -40,6 +40,7 @@ class RLVRWorkflow(RolloutWorkflow):
             logprobs = [0] * resp.input_len + resp.output_logprobs
             prompt_mask = [1] * resp.input_len + [0] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
+            seq_no_eos_mask = resp.stop_reason == "stop"
 
             reward = self.reward_fn(
                 prompt=req.text,
@@ -50,14 +51,20 @@ class RLVRWorkflow(RolloutWorkflow):
             )
             res = dict(
                 # unsqueeze to add an additional batch dimension
-                input_ids=torch.tensor(seq).unsqueeze(0),
+                input_ids=torch.tensor(seq).unsqueeze(0),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
                 prompt_mask=torch.tensor(prompt_mask).unsqueeze(0),
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
                 versions=torch.tensor(versions).unsqueeze(0),
                 attention_mask=torch.ones(len(seq)).unsqueeze(0),
-                # reward
                 rewards=torch.tensor([reward]),
+                seqlen=torch.tensor([len(seq)]),
+                task_ids=torch.tensor([0]),  # TODO: hardcode
+                seq_no_eos_mask=torch.tensor([seq_no_eos_mask])
             )
             results.append(TensorDict(res, batch_size=[1]))
 
         return concat_padded_tensors(results)
+    #  'prompt_mask': tensor([
+    #         [1, 1, 0, 0, 0],
+    #         [1, 1, 1, 0, 0],
+    #     ]),  # Shape (2, 5)

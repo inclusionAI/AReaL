@@ -12,6 +12,7 @@ from tensordict import TensorDict
 
 from arealite.api.cli_args import InferenceEngineConfig
 from arealite.api.engine_api import InferenceEngine
+from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.api.io_struct import (
     LLMRequest,
     LLMResponse,
@@ -64,10 +65,6 @@ class RemoteSGLangEngine(InferenceEngine):
     def initialize(self, addr: str | None, ft_spec: Optional[Dict[str, Any]] = None):
         self.rollout_thread = threading.Thread(target=self._rollout_thread)
         self.rollout_thread.start()
-
-    def get_scheduling_config(self):
-        # 获取调度器调度engine所需的资源配置信息
-        pass
 
     def destroy(self):
         self.exiting.set()
@@ -467,3 +464,15 @@ class RemoteSGLangEngine(InferenceEngine):
             timeout=self.config.request_timeout,
             should_accept=lambda x: True,
         )
+
+    def rollout_distributed_batch(
+        self, batch: DistributedBatchMemory, workflow: "RolloutWorkflow"
+    ) -> DistributedBatchMemory:
+        # batch => list[Dict]
+        data = []
+        for i in range(len(batch)):
+            data.append(batch[i])
+        res = self.rollout(data, workflow)  # TensorDict
+        # TensorDict=>DistributedBatchMemory
+        return DistributedBatchMemory(res.to_dict())
+        
