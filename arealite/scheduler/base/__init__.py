@@ -79,14 +79,14 @@ class Scheduler(ABC):
         """
         raise NotImplementedError()
 
-    def get_workers(self, timeout=None) -> List[Worker]:
+    async def get_workers(self, timeout=None) -> List[Worker]:
         """
         返回engine id, 以及对应的server addr, 将调度结果记录在内存中
         (engine id, server infos<ip, port>})
         """
         raise NotImplementedError()
 
-    def delete_workers(self, name):
+    async def delete_workers(self, name):
         """Stops a running job.
 
         Raises exception if there is no such job, but passes if the job

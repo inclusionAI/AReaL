@@ -1,27 +1,14 @@
-from abc import ABC, abstractmethod
-from typing import Any, Dict
-from concurrent.futures import Future
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
-
-import torch
-from tensordict import TensorDict
 import asyncio
 
 from arealite.api.cli_args import RolloutControllerConfig
 from arealite.api.engine_api import InferenceEngine
 from arealite.api.io_struct import (
-    FinetuneSpec,
-    LLMRequest,
-    LLMResponse,
-    SaveLoadMeta,
     WeightUpdateMeta,
-AllocationMode
+    AllocationMode
 )
 from arealite.extension.asystem.remote_megatron_engine import RemoteInferenceInitConfig
 
-if TYPE_CHECKING:
-    from arealite.api.workflow_api import RolloutWorkflow
+from arealite.api.workflow_api import RolloutWorkflow
 from arealite.api.controller_api import RolloutController
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec
@@ -100,9 +87,10 @@ class DistributedRolloutController(RolloutController):
         workflow: RolloutWorkflow
     ) -> DistributedBatchMemory:
         """Submit a batch of requests to the inference engine and wait for the results."""
-        batches = data.split(self.dp_world_size)
+        batches = data.split(self.allocate_mode.gen_dp_size)
         assert len(self.workers) % self.dp_world_size == 0
         tasks = []
+
         for index, worker in enumerate(self.workers):
             batch_index = index//self.dp_world_size
             batch_data = batches[batch_index]

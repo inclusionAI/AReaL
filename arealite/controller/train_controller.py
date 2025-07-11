@@ -8,19 +8,15 @@ import torch
 from tensordict import TensorDict
 import asyncio
 
-from arealite.api.cli_args import MicroBatchSpec, TrainEngineConfig, TrainControllerConfig
+from arealite.api.cli_args import TrainControllerConfig
 from arealite.api.controller_api import TrainController
 from arealite.api.engine_api import TrainEngine
 from arealite.api.io_struct import (
-    FinetuneSpec,
-    LLMRequest,
-    LLMResponse,
     SaveLoadMeta,
     WeightUpdateMeta, AllocationMode,
 )
 from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec
 from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronInitConfig
-from realhf.base.names import worker
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 import logging
 
@@ -125,8 +121,8 @@ class DistributedTrainController(TrainController):
         input_: DistributedBatchMemory
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function."""
-        # self._rpc_call("train_batch". input_, )
-        batches = input_.split(self.dp_world_size)
+        batches = input_.split(self.allocate_mode.train_dp_size)
+
         assert len(self.workers) % self.dp_world_size == 0
         tasks = []
         for index, worker in enumerate(self.workers):
