@@ -42,7 +42,6 @@ def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
     tokenizer = processor.tokenizer 
     def process_example(example, idx):
         # Add query_id column
-        example["query_id"] = str(idx)
         images = example["images"]
         image_token = processor.image_token if processor is not None else "<image>"
         example["problem"] = example["problem"].replace("<image>", image_token)
@@ -78,9 +77,10 @@ def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
         prompt_mask = [1] * len(prompt_token) + [0] * (
             len(example["input_ids"]) - len(prompt_token)
         )
+        example["prompt_mask"]=prompt_mask
         return example
 
-    dataset = dataset.map(lambda x: _process(x),remove_columns=["images"],num_proc=os.cpu_count())
+    dataset = dataset.map(lambda x: _process(x),remove_columns=["images","seq","problem"],num_proc=os.cpu_count())
     return dataset
 
 # def get_clevr_count_70k_rl_dataset(dataset: Dataset, processor):
