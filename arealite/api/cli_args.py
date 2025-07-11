@@ -539,7 +539,7 @@ class BaseExperimentConfig:
     tokenizer_path: str = field(default="")
 
     train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
-    valid_dataset: DatasetConfig = field(default_factory=DatasetConfig)
+    valid_dataset: Optional[DatasetConfig] = field(default_factory=DatasetConfig)
 
     saver: SaverConfig = field(default_factory=SaverConfig)
     checkpointer: SaverConfig = field(default_factory=SaverConfig)
