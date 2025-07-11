@@ -105,6 +105,14 @@ class FSDPEngineConfig:
 
 
 @dataclass
+class HFEngineConfig:
+    autotp_size: Optional[int] = field(
+        default=1,
+        metadata={"help": "DeepSpeed AutoTP size"},
+    )
+
+
+@dataclass
 class TrainEngineConfig:
     experiment_name: str = MISSING
     trial_name: str = MISSING
@@ -136,6 +144,7 @@ class TrainEngineConfig:
     )
     backend: str = ""
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
+    hf: HFEngineConfig = field(default_factory=HFEngineConfig)
 
 
 @dataclass

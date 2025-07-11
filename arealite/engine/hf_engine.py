@@ -3,9 +3,11 @@ import os
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+import deepspeed
 import torch
 import torch.distributed as dist
 import transformers
+from safetensors.torch import save_file
 from tensordict import TensorDict
 from transformers import (
     AutoConfig,
@@ -14,10 +16,9 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-from arealite.api.cli_args import TrainEngineConfig
+from arealite.api.cli_args import MicroBatchSpec, TrainEngineConfig
 from arealite.api.engine_api import (
     FinetuneSpec,
-    MicroBatchSpec,
     SaveLoadMeta,
     TrainEngine,
     WeightUpdateMeta,
@@ -34,7 +35,10 @@ from arealite.utils.data import (
     unsqueeze_mb_list,
 )
 from arealite.utils.fsdp import get_cosine_schedule_with_warmup
-from arealite.utils.save_load import get_state_dict_from_repo_id_or_path
+from arealite.utils.save_load import (
+    get_state_dict_from_repo_id_or_path,
+    is_existing_local_path,
+)
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import logging, name_resolve, names
 
@@ -54,6 +58,7 @@ class HFEngine(TrainEngine):
         # initialization
         self.initialized = False
         self.weight_update_group_initialized = False
+        self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
         self.world_size = int(os.environ.get("WORLD_SIZE", 1))
 
     def train(self, mode: bool = True):
@@ -67,15 +72,10 @@ class HFEngine(TrainEngine):
 
         """Initialize distributed communication and model."""
         if not dist.is_initialized():
-            dist.init_process_group(backend="nccl")
-        if dist.get_world_size() > 1:
-            raise RuntimeError(
-                "Distributed training is not supported in this engine. "
-                "Please use FSDP for distributed training."
-            )
+            deepspeed.init_distributed(dist_backend="nccl", world_size=self.world_size)
 
-        torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
-        self.device = torch.device(int(os.environ.get("LOCAL_RANK", 0)))
+        torch.cuda.set_device(self.local_rank)
+        self.device = torch.device(f"cuda:{self.local_rank}")
 
         dtype = torch.bfloat16 if self.config.bf16 else torch.float16
         self.model_config = AutoConfig.from_pretrained(
@@ -83,15 +83,13 @@ class HFEngine(TrainEngine):
             trust_remote_code=True,
         )
         self.tokenizer = load_hf_tokenizer(self.config.path)
-        with torch.device("cuda"):
-            # initialize scratch model from config
-            model = AutoModelForCausalLM.from_config(
-                self.model_config,
-                torch_dtype=dtype,
-                attn_implementation=self.config.attn_impl,
-            )
+        model = AutoModelForCausalLM.from_config(
+            self.model_config,
+            torch_dtype=dtype,
+            attn_implementation=self.config.attn_impl,
+        )
 
-        self.model = model.to("cuda")
+        self.model = model
 
         if not self.config.init_from_scratch:
             # Load model from a initial checkpoint path,
@@ -102,8 +100,19 @@ class HFEngine(TrainEngine):
                 with_optim=False,
                 tokenizer=None,
                 base_model_path=self.config.path,
+                distribute=False,
             )
             self.load(load_meta)
+
+        if self.world_size > 1:
+            if self._check_autotp():
+                self.model = deepspeed.tp_model_init(
+                    self.model, tp_size=self.config.hf.autotp_size, dtype=dtype
+                )
+            else:
+                raise RuntimeError("DeepSpeed AutoTP configuration error in HFEngine. ")
+
+        self.model = self.model.to(device=self.device, non_blocking=True)
 
         # Set up optimizer
         if self.optimizer_config is not None:
@@ -153,6 +162,21 @@ class HFEngine(TrainEngine):
 
         self.initialized = True
 
+    def _check_autotp(self):
+        tp_size = self.config.hf.autotp_size
+        config = self.model_config
+        num_attention_heads = config.num_attention_heads
+        num_key_value_heads = config.num_key_value_heads
+        hidden_size = config.hidden_size
+        intermediate_size = config.intermediate_size
+
+        return (
+            num_attention_heads % tp_size == 0
+            and num_key_value_heads % tp_size == 0
+            and hidden_size % tp_size == 0
+            and intermediate_size % tp_size == 0
+        )
+
     def destroy(self):
         """Destroy the engine and release GPU memory."""
         self.model = None
@@ -164,7 +188,7 @@ class HFEngine(TrainEngine):
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
-            self._save_model_to_hf(meta.path, meta.tokenizer)
+            self._save_model_to_hf(meta.path, meta.tokenizer, meta.distribute)
         elif meta.weight_format == "dcp":
             # TODO: implement DCP save/load for HF
             raise NotImplementedError("DCP format saving is not implemented yet. ")
@@ -176,7 +200,7 @@ class HFEngine(TrainEngine):
 
     def load(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
-            self._load_model_from_hf(meta.path)
+            self._load_model_from_hf(meta.path, meta.distribute)
         elif meta.weight_format == "dcp":
             # TODO: implement DCP save/load for HF
             raise NotImplementedError("DCP format loading is not implemented yet. ")
@@ -198,27 +222,47 @@ class HFEngine(TrainEngine):
         self.optimizer.load_state_dict(optimizer_state_dict)
 
     def _save_model_to_hf(
-        self, path: str, tokenizer: Optional[transformers.PreTrainedTokenizerFast]
+        self,
+        path: str,
+        tokenizer: Optional[transformers.PreTrainedTokenizerFast],
+        distribute: bool = False,
     ):
         """Save model in HuggingFace format."""
         if self.model is None:
             raise RuntimeError("Model not initialized")
-        os.makedirs(path, exist_ok=True)
+
+        if self.local_rank == 0:
+            os.makedirs(path, exist_ok=True)
+
+        if self.world_size > 1:
+            dist.barrier()
 
         state_dict = {k: v.cpu() for k, v in self.model.state_dict().items()}
-        self.model.save_pretrained(path, state_dict=state_dict)
-        self.model_config.save_pretrained(path)
-        if tokenizer is not None:
-            tokenizer.save_pretrained(path)
 
-    def _load_model_from_hf(self, path: str):
+        if distribute:
+            save_file(
+                state_dict, f"{path}/tp_rank_{self.local_rank:02d}_model.safetensors"
+            )
+        else:
+            self.model.save_pretrained(path, state_dict=state_dict)
+
+        if self.local_rank == 0:
+            self.model_config.save_pretrained(path)
+            if self.tokenizer is not None:
+                self.tokenizer.save_pretrained(path)
+
+    def _load_model_from_hf(self, path: str, distribute: bool = False):
         """Load model from HuggingFace format."""
-        full_state = get_state_dict_from_repo_id_or_path(path)
-        self.model.load_state_dict(
-            full_state, strict=not self.model_config.tie_word_embeddings
-        )
-        if self.model_config.tie_word_embeddings:
-            self.model.tie_weights()
+        if self.local_rank == 0 or is_existing_local_path(path):
+            if distribute:
+                path = f"{path}/tp_rank_{self.local_rank:02d}_model.safetensors"
+            full_state = get_state_dict_from_repo_id_or_path(path)
+            self.model.load_state_dict(
+                full_state, strict=not self.model_config.tie_word_embeddings
+            )
+
+            if self.model_config.tie_word_embeddings:
+                self.model.tie_weights()
 
     def upload_weights(self, meta: WeightUpdateMeta):
         if meta.type == "nccl":
