@@ -28,7 +28,7 @@ class Scheduler(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def call(self, worker_id, method, arg):
+    def call(self, worker_id, method, *args, **kwargs):
         """
         数据面调用
         """

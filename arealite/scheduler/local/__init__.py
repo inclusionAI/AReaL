@@ -129,9 +129,11 @@ class LocalScheduler(Scheduler):
         logging.info(f"Creating engine on worker {worker_id}")
         return self.rpc_client.create_engine(worker_id, engine_class, init_args)
 
-    def call(self, worker_id, action, arg):
-        logging.info(f"Calling '{action}' on worker {worker_id} with arg: {arg}")
-        return self.rpc_client.call(worker_id, action, arg)
+    def call(self, worker_id, method, *args, **kwargs):
+        logging.info(
+            f"Calling '{method}' on worker {worker_id} with arg: {args} {kwargs}"
+        )
+        return self.rpc_client.call(worker_id, method, *args, **kwargs)
 
     def shutdown(self):
         """Properly terminate all worker subprocesses."""

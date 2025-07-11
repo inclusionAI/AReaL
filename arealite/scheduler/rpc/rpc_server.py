@@ -4,6 +4,7 @@ import threading
 import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from arealite.scheduler.utils import deserialize_with_metadata
+import cloudpickle
 
 
 class EngineRPCServer(BaseHTTPRequestHandler):
@@ -14,7 +15,8 @@ class EngineRPCServer(BaseHTTPRequestHandler):
             length = int(self.headers["Content-Length"])
             data = self.rfile.read(length)
             if self.path == "/create_engine":
-                EngineRPCServer.engine, init_args = deserialize_with_metadata(data)
+                engine_obj, init_args = cloudpickle.loads(data)
+                EngineRPCServer.engine = engine_obj
                 EngineRPCServer.engine.initialize(init_args)
                 logging.info("Engine created and initialized on RPC server.")
                 self.send_response(200)
@@ -27,16 +29,15 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                     self.wfile.write(b"Engine not initialized")
                     logging.error("Call received but engine not initialized.")
                     return
-                req = pickle.loads(data)
-                action = req["method"]
+                action, args, kwargs = cloudpickle.loads(data)
                 method = getattr(EngineRPCServer.engine, action)
-                arg, _ = deserialize_with_metadata(req["arg"])
-
-                logging.info(f"RPC server calling engine method: {action}({arg})")
-                result = method(arg)
+                logging.info(
+                    f"RPC server calling engine method: {action} - {args} - {kwargs}"
+                )
+                result = method(*args, **kwargs)
                 self.send_response(200)
                 self.end_headers()
-                self.wfile.write(pickle.dumps(result))
+                self.wfile.write(cloudpickle.dumps(result))
             else:
                 self.send_response(404)
                 self.end_headers()

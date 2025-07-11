@@ -5,6 +5,7 @@ import logging
 import inspect
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from arealite.scheduler.utils import serialize_with_metadata
+import cloudpickle
 
 
 class RPCClient:
@@ -19,23 +20,26 @@ class RPCClient:
         ip, port = self._addrs[worker_id]
         url = f"http://{ip}:{port}/create_engine"
 
-        serialized_obj = serialize_with_metadata(engine_obj, init_config)
+        # 用 cloudpickle 序列化对象和参数
+        payload = (engine_obj, init_config)
+        serialized_obj = cloudpickle.dumps(payload)
         resp = requests.post(url, data=serialized_obj)
         logging.info(
             f"Sent create_engine to {worker_id} ({ip}:{port}), status={resp.status_code}"
         )
         return resp.status_code == 200
 
-    def call(self, worker_id, method, arg):
+    def call(self, worker_id, method, *args, **kwargs):
         ip, port = self._addrs[worker_id]
         url = f"http://{ip}:{port}/call"
-        serialized_obj = serialize_with_metadata(arg)
-        req = {"method": method, "arg": serialized_obj}
-        resp = requests.post(url, data=pickle.dumps(req))
+        # 支持变长参数
+        req = (method, args, kwargs)
+        serialized_req = cloudpickle.dumps(req)
+        resp = requests.post(url, data=serialized_req)
         logging.info(
             f"Sent call '{method}' to {worker_id} ({ip}:{port}), status={resp.status_code}"
         )
         if resp.status_code == 200:
-            return pickle.loads(resp.content)
+            return cloudpickle.loads(resp.content)
         else:
             raise RuntimeError(f"RPC call failed: {resp.content}")
