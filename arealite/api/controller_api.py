@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 import torch
 from tensordict import TensorDict
 
-from arealite.api.cli_args import MicroBatchSpec, TrainControllerConfig
-from arealite.api.engine_api import TrainEngine
+from arealite.api.cli_args import MicroBatchSpec, TrainControllerConfig, InferenceEngineConfig, RolloutControllerConfig
+from arealite.api.engine_api import TrainEngine, InferenceEngine
 from arealite.api.io_struct import (
     FinetuneSpec,
     LLMRequest,
@@ -16,7 +16,7 @@ from arealite.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
-from arealite.api.scheduler_api import SchedulerClient
+from arealite.scheduler.base import Scheduler
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 
 if TYPE_CHECKING:
@@ -29,7 +29,7 @@ class TrainController(ABC):
     # 虽然方法相同，但是传数据集的参数类型不同:
     #   Engine data: List[Dict[str, Any]]
     #   Controller data: DistributedBatch
-    def __init__(self, train_engine: TrainEngine, config: TrainControllerConfig, scheduler: SchedulerClient):
+    def __init__(self, train_engine: TrainEngine, config: TrainControllerConfig, scheduler: Scheduler):
         self.train_engine = train_engine
         self.config = config
         self.scheduler = scheduler
@@ -102,7 +102,7 @@ class RolloutController(ABC):
     # 虽然方法相同，但是传数据集的参数类型不同:
     #   Engine data: List[Dict[str, Any]]
     #   Controller data: DistributedBatch
-    def __init__(self, inf_engine, config, scheduler):
+    def __init__(self, inf_engine: InferenceEngine, config: RolloutControllerConfig, scheduler: Scheduler):
         self.inf_engine = inf_engine
         self.config = config
         self.scheduler = scheduler
@@ -126,5 +126,13 @@ class RolloutController(ABC):
     def rollout(
         self, data: List[Dict[str, Any]], workflow: RolloutWorkflow
     ) -> TensorDict:
+        """Submit a batch of requests to the inference engine and wait for the results."""
+        raise NotImplementedError()
+
+    def rollout_distributed_batch(
+            self,
+            input_: DistributedBatchMemory,
+            workflow: RolloutWorkflow
+    ) -> DistributedBatchMemory:
         """Submit a batch of requests to the inference engine and wait for the results."""
         raise NotImplementedError()

@@ -67,8 +67,7 @@ class DistributedTrainController(TrainController):
         ))
         self.scheduler.create_workers(scheduling_config)
 
-
-        self.workers = self.scheduler.get_workers(timeout=60)
+        self.workers = self.scheduler.get_workers(timeout=60*6)
 
         server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
 

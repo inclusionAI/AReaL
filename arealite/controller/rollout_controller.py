@@ -8,6 +8,8 @@ import torch
 from tensordict import TensorDict
 import asyncio
 
+from arealite.api.cli_args import RolloutControllerConfig
+from arealite.api.engine_api import InferenceEngine
 from arealite.api.io_struct import (
     FinetuneSpec,
     LLMRequest,
@@ -31,7 +33,7 @@ class DistributedRolloutController(RolloutController):
     # 虽然方法相同，但是传数据集的参数类型不同:
     #   Engine data: List[Dict[str, Any]]
     #   Controller data: DistributedBatch
-    def __init__(self, inf_engine, config, scheduler):
+    def __init__(self, inf_engine: InferenceEngine, config: RolloutControllerConfig, scheduler: Scheduler):
         super().__init__(inf_engine, config, scheduler)
         self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
         self.dp_world_size = self.allocate_mode.gen_world_size // self.allocate_mode.gen_dp_size
@@ -65,11 +67,11 @@ class DistributedRolloutController(RolloutController):
             cmd=self.config.cmd,
             env_vars=scheduling.env_vars,
         ))
-        self.scheduler.create_workers(worker_scheduling_config)
+        self.scheduler.create_workers(scheduling_config)
 
         self.workers = self.scheduler.get_workers(timeout=5*60)
 
-        server_addrs = [f"{worker.ip}:{worker.port[0]}" for worker in self.workers if worker.ports]
+        server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
 
         tasks = [
             self.scheduler.initialize_engine(worker.id, self.inf_engine, RemoteInferenceInitConfig(addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.gen_world_size))
