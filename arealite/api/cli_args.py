@@ -149,7 +149,7 @@ class TrainEngineConfig:
 class TrainControllerConfig:
     train_engine_config: TrainEngineConfig = field(default_factory=TrainEngineConfig)
     allocation_mode: str = field(
-        default="",
+        default="sglang.d2p1m8+d2p1m8",
         metadata={
             "help": "GPU parallel strategy allocation mode. "
                     "Options: manual/heuristic or pattern-based."
@@ -334,7 +334,7 @@ class SGLangEngineConfig:
 class RolloutControllerConfig:
     inference_engine_config: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     allocation_mode: str = field(
-        default="",
+        default="sglang.d2p1m8+d2p1m8",
         metadata={
             "help": "GPU parallel strategy allocation mode. "
                     "Options: manual/heuristic or pattern-based."
