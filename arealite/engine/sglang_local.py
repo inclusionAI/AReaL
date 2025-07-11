@@ -73,7 +73,7 @@ class LocalSGLangEngine(InferenceEngine):
                 self.engine.shutdown()
             except Exception as e:
                 logger.warning(f"Error shutting down engine: {e}")
-        
+
 
     def set_version(self, version):
         with self.lock:
@@ -212,6 +212,9 @@ class LocalSGLangEngine(InferenceEngine):
 
     async def agenerate(self, req: LLMRequest) -> LLMResponse:
         """Async version of generate using local sglang engine."""
+        if not hasattr(self, "engine") or self.engine is None:
+            raise RuntimeError("Local SGLang engine is not initialized, cannot generate.")
+            
         # Prepare request payload
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
@@ -298,6 +301,8 @@ class LocalSGLangEngine(InferenceEngine):
         return executor.submit(self._update_weights, meta)
 
     def _update_weights(self, meta: WeightUpdateMeta):
+        if not hasattr(self, "engine") or self.engine is None:
+            raise RuntimeError("Local SGLang engine is not initialized, cannot update weights.")
         if meta.type == "disk":
             try:
                 update_name = names.update_weights_from_disk(
