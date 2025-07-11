@@ -87,11 +87,7 @@ def engine(request):
         }
     )
 
-    model_path = "/storage/testing/models/Qwen__Qwen3-1.7B/"
-    if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen2-0.5B"
-
-    engine = get_engine(request.param, model_path)
+    engine = get_engine(request.param, MODEL_PATH)
     print(f"✓ {request.param.upper()} Engine created successfully")
     yield engine
 
