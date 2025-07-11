@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 import torch
 from tensordict import TensorDict
 
-from arealite.api.cli_args import MicroBatchSpec
+from arealite.api.cli_args import MicroBatchSpec, TrainControllerConfig
+from arealite.api.engine_api import TrainEngine
 from arealite.api.io_struct import (
     FinetuneSpec,
     LLMRequest,
@@ -15,6 +16,7 @@ from arealite.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
+from arealite.api.scheduler_api import SchedulerClient
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 
 if TYPE_CHECKING:
@@ -27,7 +29,7 @@ class TrainController(ABC):
     # 虽然方法相同，但是传数据集的参数类型不同:
     #   Engine data: List[Dict[str, Any]]
     #   Controller data: DistributedBatch
-    def __init__(self, train_engine, config, scheduler):
+    def __init__(self, train_engine: TrainEngine, config: TrainControllerConfig, scheduler: SchedulerClient):
         self.train_engine = train_engine
         self.config = config
         self.scheduler = scheduler
@@ -87,6 +89,13 @@ class TrainController(ABC):
         """Run the forward pass or inference on the model. Note that it is gradient-free."""
         raise NotImplementedError()
 
+    def train_distributed_batch(
+            self,
+            input_: DistributedBatchMemory
+    ) -> Dict[str, float]:
+        """Update the model with a batch of data."""
+        raise NotImplementedError()
+
 class RolloutController(ABC):
     # RolloutController可以通过同名接口调用所有InferenceEngine的方法
     # 除此之外没有别的方法了
@@ -106,7 +115,7 @@ class RolloutController(ABC):
         """Update weights in the inference engine."""
         raise NotImplementedError()
 
-    def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:
+    def submit(self, data: Dict[str, Any], workflow: RolloutWorkflow) -> None:
         """Asynchronously submit a request to the inference engine. Exits immediately."""
         raise NotImplementedError()
 
@@ -115,7 +124,7 @@ class RolloutController(ABC):
         raise NotImplementedError()
 
     def rollout(
-        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+        self, data: List[Dict[str, Any]], workflow: RolloutWorkflow
     ) -> TensorDict:
         """Submit a batch of requests to the inference engine and wait for the results."""
         raise NotImplementedError()

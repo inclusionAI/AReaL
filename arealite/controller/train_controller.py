@@ -65,16 +65,14 @@ class DistributedTrainController(TrainController):
             cmd=self.config.cmd,
             env_vars=scheduling.env_vars,
         ))
-        self.scheduler.submit(engine_scheduling_config)
+        self.scheduler.create_workers(engine_scheduling_config)
 
-        # todo: 等待调度完成，job状态为running
-        self.scheduler.wait(5*60, )
 
-        engines = self.scheduler.get_engines()
+        workers = self.scheduler.get_workers(timeout=60)
         # engine info
-        self.engines = engines
+        self.workers = workers
 
-        server_addrs = [f"{engine.ip}:{engine.port[0]}" for engine in engines if engine.port]
+        server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in workers if worker.port]
 
         # todo: 不能写死remote megatron, 让engine抽象出接口
         tasks = [
