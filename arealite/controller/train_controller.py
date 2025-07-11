@@ -18,7 +18,7 @@ from arealite.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta, AllocationMode,
 )
-from arealite.api.scheduler_api import SchedulerClient, EngineSchedulingConfig, ContainerSpec
+from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec
 from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronInitConfig
 from realhf.base.names import worker
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
@@ -30,7 +30,7 @@ class DistributedTrainController(TrainController):
     # 虽然方法相同，但是传数据集的参数类型不同:
     #   Engine data: List[Dict[str, Any]]
     #   Controller data: DistributedBatch
-    def __init__(self, train_engine: TrainEngine, config: TrainControllerConfig, scheduler: SchedulerClient):
+    def __init__(self, train_engine: TrainEngine, config: TrainControllerConfig, scheduler: Scheduler):
         super().__init__(train_engine, config, scheduler)
         self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
         self.dp_world_size = self.allocate_mode.train_world_size // self.allocate_mode.train_dp_size
@@ -56,8 +56,8 @@ class DistributedTrainController(TrainController):
         """Initialize environments for distributed training and load models."""
         scheduling = self.train_engine.get_scheduling_config()
         # todo：支持多容器
-        engine_scheduling_config = EngineSchedulingConfig(replicas=self.allocate_mode.train_world_size)
-        engine_scheduling_config.specs.append(ContainerSpec(
+        scheduling_config = SchedulingConfig(replicas=self.allocate_mode.train_world_size)
+        scheduling_config.specs.append(ContainerSpec(
             cpu=scheduling.cpu,
             mem=scheduling.mem,
             gpu=scheduling.gpu,
@@ -65,19 +65,17 @@ class DistributedTrainController(TrainController):
             cmd=self.config.cmd,
             env_vars=scheduling.env_vars,
         ))
-        self.scheduler.create_workers(engine_scheduling_config)
+        self.scheduler.create_workers(scheduling_config)
 
 
-        workers = self.scheduler.get_workers(timeout=60)
-        # engine info
-        self.workers = workers
+        self.workers = self.scheduler.get_workers(timeout=60)
 
-        server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in workers if worker.port]
+        server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
 
         # todo: 不能写死remote megatron, 让engine抽象出接口
         tasks = [
-            self.scheduler.initialize_engine(engine.engine_id, self.train_engine, RemoteMegatronInitConfig(addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.train_world_size))
-            for index, engine in enumerate(self.engines)
+            self.scheduler.initialize_engine(worker.id, self.train_engine, RemoteMegatronInitConfig(addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.train_world_size))
+            for index, worker in enumerate(self.workers)
         ]
 
         loop = asyncio.get_running_loop()
@@ -91,8 +89,8 @@ class DistributedTrainController(TrainController):
         logging.info(f"[train controller] start to rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
 
         tasks = [
-            self.scheduler.call_engine(engine.engine_id, method, args, kwargs)
-            for engine in self.engines
+            self.scheduler.call_engine(worker.work_id, method, args, kwargs)
+            for worker in self.workers
         ]
         results = await asyncio.gather(*tasks)
 
@@ -130,13 +128,13 @@ class DistributedTrainController(TrainController):
         """Update the model with a batch of data and a loss function."""
         # self._rpc_call("train_batch". input_, )
         batches = input_.split(self.dp_world_size)
-        assert len(self.engines) % self.dp_world_size == 0
+        assert len(self.workers) % self.dp_world_size == 0
         tasks = []
-        for index, engine in enumerate(self.engines):
+        for index, worker in enumerate(self.workers):
             batch_index = index // self.dp_world_size
             batch_data = batches[batch_index]
             tasks.append(
-                self.scheduler.call_engine(engine.engine_id, "train_distributed_batch", batch_data)
+                self.scheduler.call_engine(worker.id, "train_distributed_batch", batch_data)
             )
 
         results = asyncio.run(self._rpc_call_tasks(*tasks))

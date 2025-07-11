@@ -8,8 +8,6 @@ import torch
 from tensordict import TensorDict
 import asyncio
 
-from arealite.api.cli_args import MicroBatchSpec, TrainEngineConfig, TrainControllerConfig
-from arealite.api.engine_api import TrainEngine
 from arealite.api.io_struct import (
     FinetuneSpec,
     LLMRequest,
@@ -18,15 +16,13 @@ from arealite.api.io_struct import (
     WeightUpdateMeta,
 AllocationMode
 )
-from arealite.api.scheduler_api import SchedulerClient
 from arealite.extension.asystem.remote_megatron_engine import RemoteInferenceInitConfig
-from realhf.base.names import worker
 
 if TYPE_CHECKING:
     from arealite.api.workflow_api import RolloutWorkflow
 from arealite.api.controller_api import RolloutController
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
-from arealite.api.scheduler_api import SchedulerClient, EngineSchedulingConfig, ContainerSpec
+from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec
 import logging
 
 class DistributedRolloutController(RolloutController):
@@ -44,8 +40,8 @@ class DistributedRolloutController(RolloutController):
         logging.info(f"[rollout controller] start to  rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
 
         tasks = [
-            self.scheduler.call_engine(engine.engine_id, method, args, kwargs)
-            for engine in self.engines
+            self.scheduler.call_engine(worker.id, method, args, kwargs)
+            for worker in self.workers
         ]
         results = await asyncio.gather(*tasks)
 
@@ -60,8 +56,8 @@ class DistributedRolloutController(RolloutController):
         """Initialize environments for distributed inference and load models."""
         scheduling = self.inf_engine.get_scheduling_config()
         # todo：支持多容器
-        engine_scheduling_config = EngineSchedulingConfig(replicas=self.allocate_mode.gen_world_size)
-        engine_scheduling_config.specs.append(ContainerSpec(
+        scheduling_config = SchedulingConfig(replicas=self.allocate_mode.gen_world_size)
+        scheduling_config.specs.append(ContainerSpec(
             cpu=scheduling.cpu,
             mem=scheduling.mem,
             gpu=scheduling.gpu,
@@ -69,20 +65,15 @@ class DistributedRolloutController(RolloutController):
             cmd=self.config.cmd,
             env_vars=scheduling.env_vars,
         ))
-        self.scheduler.submit(engine_scheduling_config)
+        self.scheduler.create_workers(worker_scheduling_config)
 
-        # todo: 等待调度完成，job状态为running
-        self.scheduler.wait(5 * 60, )
+        self.workers = self.scheduler.get_workers(timeout=5*60)
 
-        engines = self.scheduler.get_engines()
-        # engine info
-        self.engines = engines
-
-        server_addrs = [f"{engine.ip}:{engine.port[0]}" for engine in engines if engine.port]
+        server_addrs = [f"{worker.ip}:{worker.port[0]}" for worker in self.workers if worker.ports]
 
         tasks = [
-            self.scheduler.initialize_engine(engine.engine_id, self.inf_engine, RemoteInferenceInitConfig(addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.gen_world_size))
-            for index, engine in enumerate(self.engines)
+            self.scheduler.initialize_engine(worker.id, self.inf_engine, RemoteInferenceInitConfig(addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.gen_world_size))
+            for index, worker in enumerate(self.workers)
         ]
 
         loop = asyncio.get_running_loop()
@@ -108,13 +99,13 @@ class DistributedRolloutController(RolloutController):
     ) -> DistributedBatchMemory:
         """Submit a batch of requests to the inference engine and wait for the results."""
         batches = data.split(self.dp_world_size)
-        assert len(self.engines) % self.dp_world_size == 0
+        assert len(self.workers) % self.dp_world_size == 0
         tasks = []
-        for index, engine in enumerate(self.engines):
+        for index, worker in enumerate(self.workers):
             batch_index = index//self.dp_world_size
             batch_data = batches[batch_index]
             tasks.append(
-                self.scheduler.call_engine(engine.engine_id, "rollout", batch_data, workflow)
+                self.scheduler.call_engine(worker.id, "rollout", batch_data, workflow)
             )
 
         datasets = asyncio.run(self._rpc_call_tasks(*tasks))
