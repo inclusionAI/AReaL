@@ -67,6 +67,8 @@ def pad_sequences_to_tensors(
     result = {}
     for key in sequence_list[0].keys():
         padded = []
+        if key=="pixel_values" or key=="image_grid_thw":
+            result[key] = [sequence_list[i][key] for i in range(len(sequence_list))]
         for item in sequence_list:
             x = item[key]
             if not torch.is_tensor(x):
