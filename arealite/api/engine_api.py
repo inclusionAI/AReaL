@@ -13,6 +13,7 @@ from arealite.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
+from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 
 if TYPE_CHECKING:
     from arealite.api.workflow_api import RolloutWorkflow
@@ -84,6 +85,16 @@ class TrainEngine(abc.ABC):
         """Update the model with a batch of data and a loss function."""
         raise NotImplementedError()
 
+    def train_distributed_batch(
+        self,
+        input_: DistributedBatchMemory,
+        loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
+        loss_weight_fn: Callable[[Dict], float],
+    ) -> Dict[str, float]:
+        """Update the model with a batch of data and a loss function."""
+        raise NotImplementedError()
+
+
     @torch.no_grad()
     def eval_batch(
         self,
@@ -108,7 +119,7 @@ class TrainEngine(abc.ABC):
 
 class InferenceEngine(abc.ABC):
 
-    def initialize(self, addr: str | None, ft_spec):
+    def initialize(self, addr: str | None, config: Any):
         """Initialize environments for distributed inference and load models."""
         raise NotImplementedError()
 
@@ -134,5 +145,11 @@ class InferenceEngine(abc.ABC):
     def rollout(
         self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
     ) -> TensorDict:
+        """Submit a batch of requests to the inference engine and wait for the results."""
+        raise NotImplementedError()
+
+    def rollout_distributed_batch(
+        self, data: DistributedBatchMemory, workflow: "RolloutWorkflow"
+    ) -> DistributedBatchMemory:
         """Submit a batch of requests to the inference engine and wait for the results."""
         raise NotImplementedError()

@@ -19,7 +19,7 @@ from arealite.api.io_struct import (
 AllocationMode
 )
 from arealite.api.scheduler_api import SchedulerClient
-from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronInitConfig
+from arealite.extension.asystem.remote_megatron_engine import RemoteInferenceInitConfig
 from realhf.base.names import worker
 
 if TYPE_CHECKING:
@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 from arealite.api.controller_api import RolloutController
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.api.scheduler_api import SchedulerClient, EngineSchedulingConfig, ContainerSpec
+import logging
 
 class DistributedRolloutController(RolloutController):
     # RolloutController可以通过同名接口调用所有InferenceEngine的方法
@@ -40,11 +41,15 @@ class DistributedRolloutController(RolloutController):
         self.dp_world_size = self.allocate_mode.gen_world_size // self.allocate_mode.gen_dp_size
 
     async def _rpc_call(self, method, *args, **kwargs):
+        logging.info(f"[rollout controller] start to  rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
+
         tasks = [
             self.scheduler.call_engine(engine.engine_id, method, args, kwargs)
             for engine in self.engines
         ]
         results = await asyncio.gather(*tasks)
+
+        logging.info(f"[rollout controller] end to rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
         return results
 
     async def _rpc_call_tasks(self, tasks):
@@ -53,7 +58,6 @@ class DistributedRolloutController(RolloutController):
 
     def initialize(self):
         """Initialize environments for distributed inference and load models."""
-        """Initialize environments for distributed training and load models."""
         scheduling = self.inf_engine.get_scheduling_config()
         # todo：支持多容器
         engine_scheduling_config = EngineSchedulingConfig(replicas=self.allocate_mode.gen_world_size)
@@ -76,9 +80,8 @@ class DistributedRolloutController(RolloutController):
 
         server_addrs = [f"{engine.ip}:{engine.port[0]}" for engine in engines if engine.port]
 
-        # todo: 不能写死remote megatron, 让engine抽象出接口
         tasks = [
-            self.scheduler.initialize_engine(engine.engine_id, self.inf_engine,)
+            self.scheduler.initialize_engine(engine.engine_id, self.inf_engine, RemoteInferenceInitConfig(addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.gen_world_size))
             for index, engine in enumerate(self.engines)
         ]
 
@@ -98,7 +101,7 @@ class DistributedRolloutController(RolloutController):
         """Wait for a specified number of requests to complete, with a timeout."""
         raise NotImplementedError()
 
-    def rollout(
+    def rollout_distributed_batch(
         self,
         data: DistributedBatchMemory,
         workflow: RolloutWorkflow
@@ -114,10 +117,10 @@ class DistributedRolloutController(RolloutController):
                 self.scheduler.call_engine(engine.engine_id, "rollout", batch_data, workflow)
             )
 
-        dbds = asyncio.run(self._rpc_call_tasks(*tasks))
+        datasets = asyncio.run(self._rpc_call_tasks(*tasks))
 
         result = DistributedBatchMemory(None)
-        for dbd in dbds:
-            result = result.merge(dbd)
+        for dataset in datasets:
+            result = result.merge(dataset)
 
         return result

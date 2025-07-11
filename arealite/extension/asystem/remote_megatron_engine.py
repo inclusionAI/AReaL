@@ -26,15 +26,21 @@ logger = logging.getLogger("RemoteMegatronEngine")
 
 @dataclasses.dataclass
 class RemoteMegatronInitConfig:
-    magatron_addrs: list[str]
+    addrs: list[str]
     global_rank: int
     local_rank: int
     world_size: int
     recover_dir: str
-    ft_spec: FinetuneSpec = dataclasses.field(default_factory=FinetuneSpec)
-    megatron_config: Dict[str, Any] = dataclasses.field(default_factory=dict)
-    loss_configs: Dict[str, Any] = dataclasses.field(default_factory=dict)
-   
+    # ft_spec: FinetuneSpec = dataclasses.field(default_factory=FinetuneSpec)
+    # megatron_config: Dict[str, Any] = dataclasses.field(default_factory=dict)
+    # loss_configs: Dict[str, Any] = dataclasses.field(default_factory=dict)
+
+@dataclasses.dataclass
+class RemoteInferenceInitConfig:
+    addrs: list[str]
+    global_rank: int
+    local_rank: int
+    world_size: int
 
 class RemoteMegatronEngine(TrainEngine):
     def __init__(self, config: RemoteMegatronEngineConfig | None):

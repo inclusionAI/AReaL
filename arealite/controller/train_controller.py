@@ -22,10 +22,7 @@ from arealite.api.scheduler_api import SchedulerClient, EngineSchedulingConfig, 
 from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronInitConfig
 from realhf.base.names import worker
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
-
-if TYPE_CHECKING:
-    from arealite.api.workflow_api import RolloutWorkflow
-
+import logging
 
 class DistributedTrainController(TrainController):
     # TrainController可以通过同名接口调用所有TrainEngine/actor/critic的方法
@@ -81,7 +78,7 @@ class DistributedTrainController(TrainController):
 
         # todo: 不能写死remote megatron, 让engine抽象出接口
         tasks = [
-            self.scheduler.initialize_engine(engine.engine_id, self.train_engine, RemoteMegatronInitConfig(magatron_addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.train_world_size))
+            self.scheduler.initialize_engine(engine.engine_id, self.train_engine, RemoteMegatronInitConfig(addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.train_world_size))
             for index, engine in enumerate(self.engines)
         ]
 
@@ -93,11 +90,15 @@ class DistributedTrainController(TrainController):
         pass
 
     async def _rpc_call(self, method, *args, **kwargs):
+        logging.info(f"[train controller] start to rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
+
         tasks = [
             self.scheduler.call_engine(engine.engine_id, method, args, kwargs)
             for engine in self.engines
         ]
         results = await asyncio.gather(*tasks)
+
+        logging.info(f"[train controller] end to rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
         return results
 
     async def _rpc_call_tasks(self, tasks):
