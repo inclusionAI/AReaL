@@ -1,24 +1,8 @@
 import traceback
 from typing import List, Union
-from math_verify import parse, verify
+from arealite.extension.asystem.functioncall.math.verify import math_verify
 
 # math-verify==0.5.2
-
-
-def process_results(answer, solution):
-    try:
-        extracted_answer = parse(answer)
-        extracted_solution = parse(solution)
-        if len(extracted_answer) == 0 or len(extracted_solution) == 0:
-            return 0, (extracted_answer, extracted_solution)
-        ret = verify(extracted_solution, extracted_answer)
-    except Exception as e:
-        traceback.print_exc()
-        print(
-            f"failed to caculate the math result , answer:{answer}, solution: {solution}, error: {str(e)}, "
-        )
-        return 0, ("None", "None")
-    return int(ret), ("", "")
 
 
 def reward_fn(
@@ -36,19 +20,16 @@ def reward_fn(
     #         for example, solutions, input_outputs, etc.
 
     solutions = kwargs.get("solutions")
-
-    label = 0
-    for sol in solutions:
-        label, meta = label or process_results(completion, sol)
-
-        print(f"ret:{label}, meta: {meta}")
-    return label
+    query_id = kwargs.get("query_id", "0")
+    labels = math_verify([solutions], [completion], [query_id])
+    print(f"ret:{labels}")
+    return labels[0]
 
 
 if __name__ == "__main__":
     answer = "<answer>\n28\n</answer>"
     solutions = [
-        "<answer>\n28.0\n</answer>",
+        "<answer>\n28\n</answer>",
     ]
 
     print(
