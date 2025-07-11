@@ -10,15 +10,21 @@ class ContainerSpec:
     cpu: int
     gpu: int
     mem: int
-    port: int
     container_image: str = None
     cmd: str = None
     env_vars: Dict[str, str] = field(default_factory=dict)
+    port: int = 1
 
 @dataclass
 class EngineSchedulingConfig:
     replicas: int = 0
-    specs: List[ContainerSpec] = None
+    specs: List[ContainerSpec] = field(default_factory=list)
+
+@dataclass
+class EngineInfo:
+    engine_id: str
+    ip: str
+    port: List[str] = field(default_factory=list)
 
 class SchedulerClient(ABC):
     def __init__(self, expr_name: str, trial_name: str):
@@ -34,8 +40,14 @@ class SchedulerClient(ABC):
 
     def wait(self, timeout=None, **kwargs):
         """
-        返回instance id, 以及对应的server addr, 将调度结果记录在内存中
-        Dict(instance id, server infos<ip, port>})
+        等待调度完成
+        """
+        raise NotImplementedError()
+
+    def get_engines(self) -> List[EngineInfo]:
+        """
+        返回engine id, 以及对应的server addr, 将调度结果记录在内存中
+        (engine id, server infos<ip, port>})
         """
         raise NotImplementedError()
 
@@ -47,10 +59,11 @@ class SchedulerClient(ABC):
         """
         raise NotImplementedError()
 
-    def initialize_engine(self, engine_id: str | None, ft_spec: FinetuneSpec | None):
+    async def initialize_engine(self, engine_id: str, obj: Any, init_config: Any | None):
         raise NotImplementedError()
 
-    def call_engine(self, engine_id: str, method: str, *args, **kwargs):
-        """ call engine's method
+    async def call_engine(self, engine_id: str, method: str, *args, **kwargs):
+        """
+        call engine's method
         """
         raise NotImplementedError()

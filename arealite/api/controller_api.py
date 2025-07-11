@@ -15,6 +15,7 @@ from arealite.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
+from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 
 if TYPE_CHECKING:
     from arealite.api.workflow_api import RolloutWorkflow
@@ -62,9 +63,6 @@ class TrainController(ABC):
     def train_batch(
         self,
         input_: Dict,
-        mb_spec: MicroBatchSpec,
-        loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
-        loss_weight_fn: Callable[[Dict], float],
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function."""
         raise NotImplementedError()
@@ -73,9 +71,6 @@ class TrainController(ABC):
     def eval_batch(
         self,
         input_: Dict,
-        mb_spec: MicroBatchSpec,
-        loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
-        loss_weight_fn: Callable[[Dict], float],
     ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function."""
         raise NotImplementedError()
@@ -111,15 +106,11 @@ class RolloutController(ABC):
         """Update weights in the inference engine."""
         raise NotImplementedError()
 
-    async def agenerate(self, req: LLMRequest) -> LLMResponse:
-        """Asynchronously generate a response for the given request."""
-        raise NotImplementedError()
-
     def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:
         """Asynchronously submit a request to the inference engine. Exits immediately."""
         raise NotImplementedError()
 
-    def wait(self, count: int, timeout: int) -> TensorDict:
+    def wait(self, count: int, timeout: int) -> DistributedBatchMemory:
         """Wait for a specified number of requests to complete, with a timeout."""
         raise NotImplementedError()
 

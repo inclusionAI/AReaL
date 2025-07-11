@@ -141,6 +141,13 @@ class TrainEngineConfig:
 @dataclass
 class TrainControllerConfig:
     train_engine_config: TrainEngineConfig = field(default_factory=TrainEngineConfig)
+    allocation_mode: str = field(
+        default="",
+        metadata={
+            "help": "GPU parallel strategy allocation mode. "
+                    "Options: manual/heuristic or pattern-based."
+        },
+    )
 
 
 @dataclass
@@ -315,6 +322,16 @@ class InferenceEngineConfig:
 class SGLangEngineConfig:
     pass
 
+@dataclass
+class RolloutControllerConfig:
+    inference_engine_config: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
+    allocation_mode: str = field(
+        default="",
+        metadata={
+            "help": "GPU parallel strategy allocation mode. "
+                    "Options: manual/heuristic or pattern-based."
+        },
+    )
 
 @dataclass
 class _Timer:

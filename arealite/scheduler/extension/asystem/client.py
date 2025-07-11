@@ -24,3 +24,8 @@ class AsystemClient(SchedulerClient):
         super().__init__(expr_name, trial_name)
 
         self.endpoint = endpoint
+
+    def wait(self):
+        # before wait, commit all remaining pending jobs
+        # self.__allocate_and_commit_pending_jobs()
+        return
