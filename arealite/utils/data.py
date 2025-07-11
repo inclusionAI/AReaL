@@ -73,17 +73,16 @@ def pad_sequences_to_tensors(
     for key in sequence_list[0].keys():
         padded = []
         if key in skip_keys:
-            result[key] = torch.stack([item[key] for item in sequence_list])
+            result[key] = [sequence_list[i][key] for i in range(len(sequence_list))]
             continue
         for item in sequence_list:
             x = item[key]
             if not torch.is_tensor(x):
                 x = torch.tensor(x)
-            padded.append(
-                torch.nn.functional.pad(
+            padded_x=torch.nn.functional.pad(
                     x, (0, max_length - len(item[key])), value=pad_value
                 )
-            )
+            padded.append(padded_x)
         result[key] = torch.stack(padded)
     attention_mask = [
         [1] * len(next(iter(item[key] for key in item.keys() if key not in skip_keys)))

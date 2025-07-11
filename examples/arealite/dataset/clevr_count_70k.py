@@ -70,7 +70,7 @@ def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
             return_attention_mask=False,
         )
 
-        example["input_ids"] =processed_input["input_ids"]
+        example["input_ids"] =processed_input["input_ids"].squeeze(0)
         example["pixel_values"] = processed_input["pixel_values"]
         example["image_grid_thw"] = processed_input["image_grid_thw"]
         prompt_token = tokenizer.encode(example["problem"])

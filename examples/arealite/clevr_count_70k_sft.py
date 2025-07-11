@@ -1,6 +1,6 @@
 import os
 import sys
-os.environ["WORLD_SIZE"] = "1"
+os.environ["WORLD_SIZE"] = "8"
 os.environ["RANK"] = "0"
 os.environ["LOCAL_RANK"] = "0"
 os.environ["MASTER_ADDR"] = "localhost"
@@ -66,6 +66,7 @@ def main_sft():
     global_step = 0
     for epoch in range(total_epochs):
         for step, data in enumerate(train_dataloader):
+
             with (
                 stats_tracker.record_timing("train_step"),
                 stats_tracker.scope("sft"),

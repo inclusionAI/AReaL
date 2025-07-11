@@ -1,6 +1,10 @@
 import os
 import sys
-
+os.environ["WORLD_SIZE"] = "1"
+os.environ["RANK"] = "0"
+os.environ["LOCAL_RANK"] = "0"
+os.environ["MASTER_ADDR"] = "localhost"
+os.environ["MASTER_PORT"] = "7777"
 from datasets import Dataset, load_dataset
 from datasets.distributed import split_dataset_by_node
 from torchdata.stateful_dataloader import StatefulDataLoader
