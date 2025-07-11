@@ -10,8 +10,8 @@ def scheduler_and_worker():
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     sched = LocalScheduler({"type": "local"})
-    workers = sched.create_workers({"num_workers": 2})
-    sched.wait_workers()
+    sched.create_workers({"num_workers": 2})
+    workers = sched.get_workers()
     return sched, workers
 
 
@@ -22,7 +22,7 @@ def test_create_engine_and_infer(scheduler_and_worker):
     # 测试 create_engine
     assert sched.create_engine(worker_id, engine_obj, {"init": 1})
     # 测试 infer 方法
-    result = sched.call(worker_id, "infer", 100, 10)
+    result = sched.call_engine(worker_id, "infer", 100, 10)
     assert result == 100 * 10 + 24
 
 
@@ -31,5 +31,5 @@ def test_multiple_workers(scheduler_and_worker):
     for idx, (worker_id, ip, port) in enumerate(workers):
         engine_obj = MyEngine({"value": idx})
         assert sched.create_engine(worker_id, engine_obj, {"init": 1})
-        result = sched.call(worker_id, "infer", 2, 3)
+        result = sched.call_engine(worker_id, "infer", 2, 3)
         assert result == 2 * 3 + idx

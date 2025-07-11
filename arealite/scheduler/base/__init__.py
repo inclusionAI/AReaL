@@ -1,5 +1,14 @@
 import abc
 import logging
+from typing import Any, List
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Worker:
+    id: str
+    ip: str
+    ports: List[str] = field(default_factory=list)
 
 
 class Scheduler(abc.ABC):
@@ -14,79 +23,22 @@ class Scheduler(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def create_workers(self, scheduler_config: dict) -> list:
+    def create_workers(self, scheduler_config, *args, **kwargs):
         """
         启动worker，返回 [(id, ip, port), ...]
         """
         pass
 
     @abc.abstractmethod
-    def create_engine(self, worker_id, engine_obj):
+    def get_workers(self, timeout=None) -> List[Worker]:
         """
-        远程创建engine实例
+        等待并返回worker 列表, 包含调度结果, 比如ip和engine ports
+        (worker id, ip, ports)
         """
-        pass
+        raise NotImplementedError()
 
     @abc.abstractmethod
-    def call(self, worker_id, method, *args, **kwargs):
-        """
-        数据面调用
-        """
-        pass
-
-
-
-
-## ----------------------------------------- ##
-
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, List
-from dataclasses import field, dataclass
-from arealite.api.io_struct import (
-    FinetuneSpec,
-)
-
-@dataclass
-class ContainerSpec:
-    cpu: int
-    gpu: int
-    mem: int
-    container_image: str = None
-    cmd: str = None
-    env_vars: Dict[str, str] = field(default_factory=dict)
-    port: int = 50000
-
-@dataclass
-class SchedulingConfig:
-    replicas: int = 0
-    specs: List[ContainerSpec] = field(default_factory=list)
-
-@dataclass
-class Worker:
-    id: str
-    ip: str
-    ports: List[str] = field(default_factory=list)
-
-class Scheduler(ABC):
-    def __init__(self, expr_name: str, trial_name: str):
-        self.expr_name = expr_name
-        self.trial_name = trial_name
-        self.run_name = f"{self.expr_name}_{self.trial_name}"
-
-    def create_workers(self, scheduling_config, **kwargs):
-        """
-        提交作业， 异步等待作业, 返回作业id
-        """
-        raise NotImplementedError()
-
-    async def get_workers(self, timeout=None) -> List[Worker]:
-        """
-        返回engine id, 以及对应的server addr, 将调度结果记录在内存中
-        (engine id, server infos<ip, port>})
-        """
-        raise NotImplementedError()
-
-    async def delete_workers(self, name):
+    def delete_workers(self, name):
         """Stops a running job.
 
         Raises exception if there is no such job, but passes if the job
@@ -94,11 +46,16 @@ class Scheduler(ABC):
         """
         raise NotImplementedError()
 
-    async def initialize_engine(self, worker_id: str, engine_obj: Any, init_config: Any | None):
-        raise NotImplementedError()
+    @abc.abstractmethod
+    def create_engine(self, worker_id, engine_obj, *args, **kwargs):
+        """
+        远程创建engine实例
+        """
+        pass
 
-    async def call_engine(self, worker_id: str, method: str, *args, **kwargs):
+    @abc.abstractmethod
+    def call_engine(self, worker_id, method, *args, **kwargs):
         """
-        call engine's method
+        数据面调用
         """
-        raise NotImplementedError()
+        pass

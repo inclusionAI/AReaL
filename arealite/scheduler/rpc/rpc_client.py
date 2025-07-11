@@ -29,7 +29,7 @@ class RPCClient:
         )
         return resp.status_code == 200
 
-    def call(self, worker_id, method, *args, **kwargs):
+    def call_engine(self, worker_id, method, *args, **kwargs):
         ip, port = self._addrs[worker_id]
         url = f"http://{ip}:{port}/call"
         # 支持变长参数
