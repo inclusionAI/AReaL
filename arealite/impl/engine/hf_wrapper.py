@@ -8,7 +8,7 @@ import torch
 import torch.distributed as dist
 import transformers
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText
-from arealite.impl.engine.constant import VALID_VISION_MODELS 
+from AReaL.arealite.engine.constant import VALID_VISION_MODELS 
 from arealite.api.cli_args import (
     EngineConfig,
     MicroBatchSpec,

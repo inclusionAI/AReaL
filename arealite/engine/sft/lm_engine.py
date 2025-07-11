@@ -7,6 +7,7 @@ from tensordict import TensorDict
 from arealite.api.cli_args import TrainEngineConfig
 from arealite.api.engine_api import TrainEngine
 from arealite.engine.fsdp_engine import FSDPEngine
+from arealite.engine.vl_fsdp_engine import VL_FSDPEngine
 from arealite.utils.functional import gather_logprobs
 from realhf.base import stats_tracker
 
@@ -43,6 +44,16 @@ class FSDPLMEngine(FSDPEngine):
     def evaluate_lm(self, data):
         return self.lm_engine.evaluate_lm(data)
 
+class VL_FSDPLMEngine(VL_FSDPEngine):
+    def __init__(self, config: TrainEngineConfig):
+        super().__init__(config)
+        self.lm_engine = LMEngine(self)
+
+    def train_lm(self, data: TensorDict):
+        return self.lm_engine.train_lm(data)
+
+    def evaluate_lm(self, data: TensorDict):
+        return self.lm_engine.evaluate_lm(data)
 
 def compute_packed_sft_loss(
     logits: torch.Tensor, input_: Dict[str, torch.Tensor]

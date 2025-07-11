@@ -1,18 +1,16 @@
 import os
 import sys
 
-from datasets import Dataset, load_dataset
-from datasets.distributed import split_dataset_by_node
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import SFTConfig, load_expr_config
 from arealite.api.io_struct import FinetuneSpec
-from arealite.engine.sft.lm_engine import FSDPLMEngine
+from arealite.engine.sft.lm_engine import VL_FSDPLMEngine
 from arealite.utils.data import pad_sequences_to_tensors
 from arealite.utils.evaluator import Evaluator
 from arealite.utils.saver import Saver
 from arealite.utils.stats_logger import StatsLogger
-from realhf.api.core.data_api import load_hf_tokenizer
+from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import stats_tracker
 from arealite.dataset.__init__ import get_custom_dataset
 
@@ -23,7 +21,7 @@ def main_sft():
 
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
-    tokenizer = load_hf_tokenizer(config.tokenizer_path)
+    processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
     train_dataset=get_custom_dataset(
                     path=config.train_dataset.path,
                     rank=rank,
@@ -31,14 +29,7 @@ def main_sft():
                     split="train",
                     training_type="sft",
                     tokenizer=tokenizer,
-                    )
-    valid_dataset=get_custom_dataset(
-                    path=config.valid_dataset.path,
-                    rank=rank,
-                    world_size=world_size,
-                    split="test",
-                    training_type="sft",
-                    tokenizer=tokenizer,
+                    processor=processor,
                     )
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
@@ -49,14 +40,6 @@ def main_sft():
         collate_fn=pad_sequences_to_tensors,
         drop_last=config.train_dataset.drop_last,
     )
-    valid_dataloader = StatefulDataLoader(
-        valid_dataset,
-        batch_size=config.valid_dataset.batch_size // world_size,
-        shuffle=config.valid_dataset.shuffle,
-        num_workers=config.valid_dataset.num_workers,
-        collate_fn=pad_sequences_to_tensors,
-        drop_last=config.valid_dataset.drop_last,
-    )
 
     # Initialize engine
     ft_spec = FinetuneSpec(
@@ -64,7 +47,7 @@ def main_sft():
         dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
         train_batch_size=config.train_dataset.batch_size,
     )
-    engine = FSDPLMEngine(config=config.model)
+    engine = VL_FSDPLMEngine(config=config.model)
     engine.initialize(None, ft_spec)
 
     # Run training.
@@ -90,16 +73,16 @@ def main_sft():
             with stats_tracker.record_timing("save"):
                 saver.save(engine, epoch, step, global_step)
 
-            with stats_tracker.record_timing("eval"), stats_tracker.scope("sft-eval"):
-                # No need to log anything. Logging will be handled outside
-                # via stats_tracker.export().
-                evaluator.evaluate(
-                    valid_dataloader,
-                    engine.evaluate_lm,
-                    epoch,
-                    step,
-                    global_step,
-                )
+            # with stats_tracker.record_timing("eval"), stats_tracker.scope("sft-eval"):
+            #     # No need to log anything. Logging will be handled outside
+            #     # via stats_tracker.export().
+            #     evaluator.evaluate(
+            #         valid_dataloader,
+            #         engine.evaluate_lm,
+            #         epoch,
+            #         step,
+            #         global_step,
+            #     )
 
             logger.commit(epoch, step, global_step, stats_tracker.export())
             global_step += 1

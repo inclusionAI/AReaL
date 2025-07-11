@@ -7,6 +7,9 @@ from io import BytesIO
 import base64
 from jinja2 import Template
 import os
+from datasets import Dataset, load_dataset
+from datasets.distributed import split_dataset_by_node
+
 def process_image(
     image: Union[Dict[str, Any], ImageObject, str], min_pixels: Optional[int], max_pixels: Optional[int]
 ) -> ImageObject:
@@ -25,7 +28,7 @@ def process_image(
 
     return image
 
-def process_clevr_count_70k_sft_dataset(dataset: Dataset, processor):
+def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
     '''
     "clevr_count_70k": {
         "image_key": "images",
@@ -33,14 +36,17 @@ def process_clevr_count_70k_sft_dataset(dataset: Dataset, processor):
         "answer_key": "answer"
     },
     '''
+    dataset = load_dataset(path=path, split=split)
+    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+    
     tokenizer = processor.tokenizer 
     def process_example(example, idx):
         # Add query_id column
         example["query_id"] = str(idx)
-        images=example["images"]
+        images = example["images"]
         image_token = processor.image_token if processor is not None else "<image>"
         example["problem"] = example["problem"].replace("<image>", image_token)
-        processed_images=[]
+        processed_images = []
         for image in images:
             processed_images.append(process_image(image,113*113,336*336))
         example["images"] = processed_images
@@ -65,33 +71,36 @@ def process_clevr_count_70k_sft_dataset(dataset: Dataset, processor):
             return_attention_mask=False,
         )
 
-        example["seq"] =processed_input["input_ids"]
+        example["input_ids"] =processed_input["input_ids"]
         example["pixel_values"] = processed_input["pixel_values"]
         example["image_grid_thw"] = processed_input["image_grid_thw"]
-        example["prompt"] = tokenizer(example["problem"],return_tensors="pt",return_length=True,padding=False,return_attention_mask=False,)["input_ids"]
+        prompt_token = tokenizer.encode(example["problem"])
+        prompt_mask = [1] * len(prompt_token) + [0] * (
+            len(example["input_ids"]) - len(prompt_token)
+        )
         return example
 
     dataset = dataset.map(lambda x: _process(x),remove_columns=["images"],num_proc=os.cpu_count())
     return dataset
 
-def process_clevr_count_70k_rl_dataset(dataset: Dataset, processor):
-    tokenizer = processor.tokenizer 
-    def process_example(example, idx):
-        # Add query_id column
-        example["query_id"] = str(idx)
-        images=example["images"]
-        image_token = processor.image_token if processor is not None else "<image>"
-        example["problem"] = example["problem"].replace("<image>", image_token)
-        processed_images=[]
-        for image in images:
-            processed_images.append(process_image(image,113*113,336*336))
-        example["images"] = processed_images
-        example["seq"] = example["problem"] + example["answer"] + tokenizer.eos_token
-        return example
+# def get_clevr_count_70k_rl_dataset(dataset: Dataset, processor):
+#     tokenizer = processor.tokenizer 
+#     def process_example(example, idx):
+#         # Add query_id column
+#         example["query_id"] = str(idx)
+#         images=example["images"]
+#         image_token = processor.image_token if processor is not None else "<image>"
+#         example["problem"] = example["problem"].replace("<image>", image_token)
+#         processed_images=[]
+#         for image in images:
+#             processed_images.append(process_image(image,113*113,336*336))
+#         example["images"] = processed_images
+#         example["seq"] = example["problem"] + example["answer"] + tokenizer.eos_token
+#         return example
 
-    dataset = dataset.map(
-        lambda example, idx: process_example(example, idx),
-        with_indices=True,
-        num_proc=os.cpu_count()
-    )
-    return dataset
+#     dataset = dataset.map(
+#         lambda example, idx: process_example(example, idx),
+#         with_indices=True,
+#         num_proc=os.cpu_count()
+#     )
+#     return dataset

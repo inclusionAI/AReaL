@@ -22,7 +22,7 @@ from arealite.utils import (
 from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats, load_hf_processor_and_tokenizer
 from realhf.api.core.model_api import FinetuneSpec
 from realhf.base import logging, stats_tracker, timeutil
-from arealite.impl.engine.constant import VALID_VISION_MODELS 
+from AReaL.arealite.engine.constant import VALID_VISION_MODELS 
 from PIL import Image
 
 from io import BytesIO
