@@ -9,7 +9,7 @@ echo "GIT_REPO_URL: $GIT_REPO_URL"
 echo "GIT_COMMIT_SHA: $GIT_COMMIT_SHA"
 
 RUN_ID="areal-$GIT_COMMIT_SHA"
-sudo -E rm -rf "/tmp/$RUN_ID"
+echo ${CI_NODE_SUDO_PW} | sudo -S rm -rf "/tmp/$RUN_ID"
 mkdir -p "/tmp/$RUN_ID"
 cd "/tmp/$RUN_ID"
 
