@@ -2,10 +2,7 @@ name: Test AReaLite
 
 on:
   pull_request:
-    types:
-      - opened
-    branches:
-      - lite
+    branches: [ lite ]
     paths:
       - .github/workflows/test-arealite.yml
       - arealite/**
