@@ -262,7 +262,6 @@ class SGLangConfig:
         flags = " ".join(flags)
         return f"python3 -m sglang.launch_server {flags}"
 
-
     @staticmethod
     def build_args(
         sglang_config: "SGLangConfig",
@@ -306,6 +305,7 @@ class SGLangConfig:
         )
 
         return args
+
 
 @dataclass
 class InferenceEngineConfig:
