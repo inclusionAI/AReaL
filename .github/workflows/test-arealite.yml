@@ -8,49 +8,22 @@ on:
       - arealite/**
       - ci/**
   workflow_dispatch:
-  # 新增：监听PR评论事件
-  issue_comment:
-    types: [created]
+  # 新增：监听PR review事件
+  pull_request_review:
+    types: [submitted]
 
 jobs:
-  debug:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check if should run
-        id: check
-        run: |
-          echo event_name "${{ github.event_name }}"
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "pr_number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-            echo "pr_sha=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "pr_number=" >> $GITHUB_OUTPUT
-            echo "pr_sha=${{ github.sha }}" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.event_name }}" == "issue_comment" ]]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "pr_number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
-            # 获取PR的HEAD SHA
-            pr_sha=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}" | \
-              jq -r '.head.sha')
-            echo "pr_sha=$pr_sha" >> $GITHUB_OUTPUT
-          else
-            echo "should_run=false" >> $GITHUB_OUTPUT
-          fi
-  
+  # 新增：检查是否应该运行测试的job
   check-trigger:
     runs-on: ubuntu-latest
     if: |
       (github.event_name == 'pull_request') ||
       (github.event_name == 'workflow_dispatch') ||
-      (github.event_name == 'issue_comment' && 
-       github.event.issue.pull_request &&
-       contains(github.event.comment.body, '/test') &&
-       (github.event.comment.author_association == 'OWNER' || 
-        github.event.comment.author_association == 'MEMBER' || 
-        github.event.comment.author_association == 'COLLABORATOR'))
+      (github.event_name == 'pull_request_review' && 
+       contains(github.event.review.body, '/test') &&
+       (github.event.review.author_association == 'OWNER' || 
+        github.event.review.author_association == 'MEMBER' || 
+        github.event.review.author_association == 'COLLABORATOR'))
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
       pr_number: ${{ steps.check.outputs.pr_number }}
@@ -67,31 +40,29 @@ jobs:
             echo "should_run=true" >> $GITHUB_OUTPUT
             echo "pr_number=" >> $GITHUB_OUTPUT
             echo "pr_sha=${{ github.sha }}" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.event_name }}" == "issue_comment" ]]; then
+          elif [[ "${{ github.event_name }}" == "pull_request_review" ]]; then
             echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "pr_number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
-            # 获取PR的HEAD SHA
-            pr_sha=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}" | \
-              jq -r '.head.sha')
-            echo "pr_sha=$pr_sha" >> $GITHUB_OUTPUT
+            echo "pr_number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "pr_sha=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
           else
             echo "should_run=false" >> $GITHUB_OUTPUT
           fi
 
+  # 新增：为review触发的测试添加反应
   add-reaction:
     runs-on: ubuntu-latest
     needs: check-trigger
-    if: github.event_name == 'issue_comment' && needs.check-trigger.outputs.should_run == 'true'
+    if: github.event_name == 'pull_request_review' && needs.check-trigger.outputs.should_run == 'true'
     steps:
-      - name: Add reaction to comment
+      - name: Add reaction to review
         uses: actions/github-script@v7
         with:
           script: |
-            github.rest.reactions.createForIssueComment({
+            github.rest.reactions.createForPullRequestReview({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              comment_id: context.payload.comment.id,
+              pull_number: context.payload.pull_request.number,
+              review_id: context.payload.review.id,
               content: '+1'
             })
 
@@ -104,25 +75,18 @@ jobs:
     steps:
       - name: Get PR details
         id: pr-details
-        if: github.event_name == 'issue_comment'
+        if: github.event_name == 'pull_request_review'
         run: |
-          pr_info=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ needs.check-trigger.outputs.pr_number }}")
-          echo "repo_url=$(echo "$pr_info" | jq -r '.head.repo.clone_url')" >> $GITHUB_OUTPUT
-          echo "branch=$(echo "$pr_info" | jq -r '.head.ref')" >> $GITHUB_OUTPUT
+          # PR review事件中已经包含了PR信息
+          echo "repo_url=${{ github.event.pull_request.head.repo.clone_url }}" >> $GITHUB_OUTPUT
+          echo "branch=${{ github.event.pull_request.head.ref }}" >> $GITHUB_OUTPUT
 
       - uses: actions/checkout@v4
-        if: github.event_name != 'issue_comment'
-        
-      - name: Checkout PR branch
-        if: github.event_name == 'issue_comment'
-        run: |
-          git clone ${{ steps.pr-details.outputs.repo_url }} .
-          git checkout ${{ steps.pr-details.outputs.branch }}
+        if: github.event_name != 'pull_request_review'
 
       - uses: appleboy/ssh-action@v1
         env:
-          GIT_REPO_URL: ${{ github.event_name == 'issue_comment' && steps.pr-details.outputs.repo_url || format('https://github.com/{0}', github.repository) }}
+          GIT_REPO_URL: ${{ github.event_name == 'pull_request_review' && steps.pr-details.outputs.repo_url || format('https://github.bibk.top/{0}', github.repository) }}
           GIT_COMMIT_SHA: ${{ needs.check-trigger.outputs.pr_sha }}
           CI_NODE_SUDO_PW: ${{ secrets.CI_NODE_SUDO_PW }}
         with:
@@ -154,10 +118,11 @@ jobs:
           envs: GIT_COMMIT_SHA
           script_path: ci/test_arealite.sh
 
+  # 新增：测试完成后更新PR状态
   update-pr-status:
     runs-on: ubuntu-latest
     needs: [check-trigger, test-arealite]
-    if: always() && needs.check-trigger.outputs.should_run == 'true' && github.event_name == 'issue_comment'
+    if: always() && needs.check-trigger.outputs.should_run == 'true' && github.event_name == 'pull_request_review'
     steps:
       - name: Update PR with test results
         uses: actions/github-script@v7
