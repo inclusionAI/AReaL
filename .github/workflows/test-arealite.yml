@@ -10,11 +10,6 @@ on:
   issue_comment:
     types: [created]
   workflow_dispatch:
-    inputs:
-      pr_number:
-        description: 'PR number to test'
-        required: false
-        default: ''
 
 jobs:
   check-comment:
@@ -44,7 +39,6 @@ jobs:
     needs: check-comment
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name == 'issue_comment' && needs.check-comment.outputs.should-run == 'true')
     concurrency:
