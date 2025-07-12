@@ -11,6 +11,8 @@ on:
 
 jobs:
   test-arealite:
+    environment:
+      name: AReaLite-unittests
     runs-on: ubuntu-latest
     concurrency:
       group: test-arealite
