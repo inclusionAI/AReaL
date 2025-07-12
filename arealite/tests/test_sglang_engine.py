@@ -26,6 +26,8 @@ if not os.path.exists(MODEL_PATH):
 PORT = 13887
 DIST_PORT = 15887
 HOST = network.gethostip()
+# set a large timeout since we may need to download the model from hub
+RUN_SERVER_TIMEOUT = 180
 
 
 def check_server_health(base_url):
@@ -65,11 +67,11 @@ def sglang_server():
     )
     base_url = f"http://{HOST}:{PORT}"
     tik = time.time()
-    while time.time() - tik < 90:
+    while time.time() - tik < RUN_SERVER_TIMEOUT:
         if check_server_health(base_url):
             break
         time.sleep(1)
-    if time.time() - tik > 90:
+    if time.time() - tik > RUN_SERVER_TIMEOUT:
         raise RuntimeError("server launch failed")
     yield
     process.terminate()
