@@ -1,6 +1,16 @@
 name: Test AReaLite
 
 on:
+  on:
+  pull_request:
+    types:
+      - opened
+    branches:
+      - lite
+    paths:
+      - .github/workflows/test-arealite.yml
+      - arealite/**
+      - ci/**
   push:
     paths:
       - .github/workflows/test-arealite.yml
