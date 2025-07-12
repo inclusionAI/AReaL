@@ -67,8 +67,8 @@ jobs:
 
       - uses: appleboy/ssh-action@v1
         env:
-          GIT_REPO_URL: ${{ steps.pr-details.outputs.repo_url }}
           GIT_COMMIT_SHA: ${{ steps.pr-details.outputs.sha }}
+          GIT_REPO_URL: https://github.bibk.top/${{ github.repository }}
           CI_NODE_SUDO_PW: ${{ secrets.CI_NODE_SUDO_PW }}
         with:
           host: ${{ secrets.CI_NODE_ADDR }}
