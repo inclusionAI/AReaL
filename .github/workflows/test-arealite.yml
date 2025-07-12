@@ -13,7 +13,33 @@ on:
     types: [created]
 
 jobs:
-  # 新增：检查是否应该运行测试的job
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if should run
+        id: check
+        run: |
+          echo event_name "${{ github.event_name }}"
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "pr_number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "pr_sha=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "pr_number=" >> $GITHUB_OUTPUT
+            echo "pr_sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "issue_comment" ]]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "pr_number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+            # 获取PR的HEAD SHA
+            pr_sha=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}" | \
+              jq -r '.head.sha')
+            echo "pr_sha=$pr_sha" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
+  
   check-trigger:
     runs-on: ubuntu-latest
     if: |
