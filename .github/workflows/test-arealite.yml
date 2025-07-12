@@ -1,7 +1,6 @@
 name: Test AReaLite
 
 on:
-  on:
   pull_request:
     types:
       - opened
