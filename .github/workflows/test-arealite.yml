@@ -7,20 +7,68 @@ on:
       - .github/workflows/test-arealite.yml
       - arealite/**
       - ci/**
+  pull_request_target:
+    types: [labeled]
+    branches: [ lite ]
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to test'
+        required: false
+        default: ''
 
 jobs:
   test-arealite:
     runs-on: ubuntu-latest
+    # Run conditions:
+    # 1. Not a fork PR (trusted contributor)
+    # 2. Fork PR with "safe-to-test" label added by maintainer
+    # 3. Manual workflow dispatch
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'pull_request_target' && github.event.label.name == 'safe-to-test')
     concurrency:
-      group: test-arealite
+      group: test-arealite-${{ github.event.number || github.event.inputs.pr_number || github.run_id }}
     steps:
+      - name: Get PR details
+        id: pr-details
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.pr_number }}" ]; then
+            # Manual trigger with specific PR
+            PR_NUMBER="${{ github.event.inputs.pr_number }}"
+            PR_INFO=$(gh pr view $PR_NUMBER --json headRefName,headRepository,headRepositoryOwner,headRefOid --repo ${{ github.repository }})
+            
+            echo "ref=$(echo $PR_INFO | jq -r '.headRefName')" >> $GITHUB_OUTPUT
+            echo "repository=$(echo $PR_INFO | jq -r '.headRepository.nameWithOwner')" >> $GITHUB_OUTPUT
+            echo "sha=$(echo $PR_INFO | jq -r '.headRefOid')" >> $GITHUB_OUTPUT
+            echo "repo_url=https://github.bibk.top/$(echo $PR_INFO | jq -r '.headRepository.nameWithOwner')" >> $GITHUB_OUTPUT
+          else
+            # PR triggered (both pull_request and pull_request_target)
+            echo "ref=${{ github.head_ref }}" >> $GITHUB_OUTPUT
+            echo "repository=${{ github.event.pull_request.head.repo.full_name }}" >> $GITHUB_OUTPUT
+            echo "sha=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
+            echo "repo_url=https://github.bibk.top/${{ github.event.pull_request.head.repo.full_name }}" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr-details.outputs.sha }}
+          repository: ${{ steps.pr-details.outputs.repository }}
+
+      - name: Remove test label
+        if: github.event_name == 'pull_request_target' && github.event.label.name == 'safe-to-test'
+        run: |
+          gh pr edit ${{ github.event.number }} --remove-label "safe-to-test" --repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: appleboy/ssh-action@v1
         env:
-          GIT_REPO_URL: https://github.bibk.top/${{ github.repository }}
-          GIT_COMMIT_SHA: ${{ github.sha }}
+          GIT_REPO_URL: ${{ steps.pr-details.outputs.repo_url }}
+          GIT_COMMIT_SHA: ${{ steps.pr-details.outputs.sha }}
           CI_NODE_SUDO_PW: ${{ secrets.CI_NODE_SUDO_PW }}
         with:
           host: ${{ secrets.CI_NODE_ADDR }}
@@ -31,7 +79,7 @@ jobs:
 
       - uses: appleboy/ssh-action@v1
         env:
-          GIT_COMMIT_SHA: ${{ github.sha }}
+          GIT_COMMIT_SHA: ${{ steps.pr-details.outputs.sha }}
         with:
           host: ${{ secrets.CI_NODE_ADDR }}
           username: ${{ secrets.CI_NODE_USER }}
@@ -42,7 +90,7 @@ jobs:
 
       - uses: appleboy/ssh-action@v1
         env:
-          GIT_COMMIT_SHA: ${{ github.sha }}
+          GIT_COMMIT_SHA: ${{ steps.pr-details.outputs.sha }}
         with:
           host: ${{ secrets.CI_NODE_ADDR }}
           username: ${{ secrets.CI_NODE_USER }}
