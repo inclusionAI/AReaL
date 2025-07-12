@@ -7,79 +7,20 @@ on:
       - .github/workflows/test-arealite.yml
       - arealite/**
       - ci/**
-  issue_comment:
-    types: [created]
   workflow_dispatch:
 
 jobs:
-  check-comment:
-    if: github.event_name == 'issue_comment' && github.event.issue.pull_request
-    runs-on: ubuntu-latest
-    outputs:
-      should-run: ${{ steps.check.outputs.should-run }}
-      pr-number: ${{ steps.check.outputs.pr-number }}
-    steps:
-      - name: Check comment and permissions
-        id: check
-        run: |
-          PERMISSION=$(gh api repos/${{ github.repository }}/collaborators/${{ github.event.comment.user.login }}/permission --jq '.permission')
-          
-          COMMENT_BODY="${{ github.event.comment.body }}"
-          
-          if [[ "$PERMISSION" == "admin" || "$PERMISSION" == "write" ]] && [[ "$COMMENT_BODY" =~ ^/test$ ]]; then
-            echo "should-run=true" >> $GITHUB_OUTPUT
-            echo "pr-number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
-          else
-            echo "should-run=false" >> $GITHUB_OUTPUT
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   test-arealite:
-    needs: check-comment
     runs-on: ubuntu-latest
-    if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'issue_comment' && needs.check-comment.outputs.should-run == 'true')
     concurrency:
-      group: test-arealite-${{ github.event.number || needs.check-comment.outputs.pr-number || github.event.inputs.pr_number || github.run_id }}
+      group: test-arealite
     steps:
-      - name: Get PR details
-        id: pr-details
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.pr_number }}" ]; then
-            PR_NUMBER="${{ github.event.inputs.pr_number }}"
-          elif [ "${{ github.event_name }}" == "issue_comment" ]; then
-            PR_NUMBER="${{ needs.check-comment.outputs.pr-number }}"
-          else
-            PR_NUMBER="${{ github.event.number }}"
-          fi
-          
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "ref=${{ github.head_ref }}" >> $GITHUB_OUTPUT
-            echo "repository=${{ github.repository }}" >> $GITHUB_OUTPUT
-            echo "sha=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
-            echo "repo_url=https://github.bibk.top/${{ github.repository }}" >> $GITHUB_OUTPUT
-          else
-            PR_INFO=$(gh pr view $PR_NUMBER --json headRefName,headRepository,headRepositoryOwner,headRefOid --repo ${{ github.repository }})
-            
-            echo "ref=$(echo $PR_INFO | jq -r '.headRefName')" >> $GITHUB_OUTPUT
-            echo "repository=$(echo $PR_INFO | jq -r '.headRepository.nameWithOwner')" >> $GITHUB_OUTPUT
-            echo "sha=$(echo $PR_INFO | jq -r '.headRefOid')" >> $GITHUB_OUTPUT
-            echo "repo_url=https://github.bibk.top/$(echo $PR_INFO | jq -r '.headRepository.nameWithOwner')" >> $GITHUB_OUTPUT
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.pr-details.outputs.sha }}
-          repository: ${{ steps.pr-details.outputs.repository }}
 
       - uses: appleboy/ssh-action@v1
         env:
-          GIT_COMMIT_SHA: ${{ steps.pr-details.outputs.sha }}
           GIT_REPO_URL: https://github.bibk.top/${{ github.repository }}
+          GIT_COMMIT_SHA: ${{ github.sha }}
           CI_NODE_SUDO_PW: ${{ secrets.CI_NODE_SUDO_PW }}
         with:
           host: ${{ secrets.CI_NODE_ADDR }}
@@ -90,7 +31,7 @@ jobs:
 
       - uses: appleboy/ssh-action@v1
         env:
-          GIT_COMMIT_SHA: ${{ steps.pr-details.outputs.sha }}
+          GIT_COMMIT_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.CI_NODE_ADDR }}
           username: ${{ secrets.CI_NODE_USER }}
@@ -101,7 +42,7 @@ jobs:
 
       - uses: appleboy/ssh-action@v1
         env:
-          GIT_COMMIT_SHA: ${{ steps.pr-details.outputs.sha }}
+          GIT_COMMIT_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.CI_NODE_ADDR }}
           username: ${{ secrets.CI_NODE_USER }}
