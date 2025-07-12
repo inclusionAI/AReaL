@@ -8,23 +8,11 @@ on:
       - arealite/**
       - ci/**
   workflow_dispatch:
-  issue_comment:
-    types: [created]
 
 jobs:
-  debug:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Debug event information
-        run: |
-          echo "Event name: ${{ github.event_name }}"
-          echo "Comment user: ${{ github.event.comment.user.login }}"
-          echo "Comment body: ${{ github.event.comment.body }}"
-          echo "Repository: ${{ github.repository }}"
-          echo "Issue number: ${{ github.event.issue.number }}"
-          echo "Is pull request: ${{ github.event.issue.pull_request != null }}"
-
   test-arealite:
+    environment:
+      name: AReaLite-unittests
     runs-on: ubuntu-latest
     concurrency:
       group: test-arealite
