@@ -10,11 +10,6 @@ on:
       - .github/workflows/test-arealite.yml
       - arealite/**
       - ci/**
-  push:
-    paths:
-      - .github/workflows/test-arealite.yml
-      - arealite/**
-      - ci/**
   workflow_dispatch:
 
 jobs:
