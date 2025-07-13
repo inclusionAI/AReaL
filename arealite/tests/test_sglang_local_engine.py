@@ -1,6 +1,7 @@
 import os
-import uuid
 import time
+import uuid
+
 import pytest
 import torch
 from tensordict import TensorDict
@@ -11,10 +12,10 @@ from arealite.api.cli_args import (
     SGLangConfig,
 )
 from arealite.api.io_struct import LLMRequest, LLMResponse
-from arealite.workflow.rlvr import RLVRWorkflow
-from realhf.base import seeding
-from realhf.api.core.data_api import load_hf_tokenizer
 from arealite.engine.sglang_local import LocalSGLangEngine
+from arealite.workflow.rlvr import RLVRWorkflow
+from realhf.api.core.data_api import load_hf_tokenizer
+from realhf.base import seeding
 
 EXPR_NAME = "test_sglang_local_engine"
 TRIAL_NAME = "trial_0"
@@ -22,12 +23,14 @@ MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
 if not os.path.exists(MODEL_PATH):
     MODEL_PATH = "Qwen/Qwen2-0.5B"
 
+
 def build_engine_config(**kwargs):
     return InferenceEngineConfig(
         experiment_name=EXPR_NAME,
         trial_name=TRIAL_NAME,
         **kwargs,
     )
+
 
 def build_engine_args():
     return SGLangConfig.build_args(
@@ -38,6 +41,7 @@ def build_engine_args():
         served_model_name=MODEL_PATH,
         skip_tokenizer_init=False,
     )
+
 
 @pytest.mark.asyncio
 async def test_local_sglang_generate():
@@ -56,11 +60,16 @@ async def test_local_sglang_generate():
 
     assert isinstance(resp, LLMResponse)
     assert resp.input_tokens == req.input_ids
-    assert len(resp.output_logprobs) == len(resp.output_tokens) == len(resp.output_versions)
+    assert (
+        len(resp.output_logprobs)
+        == len(resp.output_tokens)
+        == len(resp.output_versions)
+    )
     assert isinstance(resp.completions, str)
 
     time.sleep(5)
     engine.destroy()
+
 
 @pytest.mark.parametrize("n_samples", [1, 2, 4])
 def test_local_sglang_rollout(n_samples):
@@ -69,7 +78,9 @@ def test_local_sglang_rollout(n_samples):
     engine = LocalSGLangEngine(config, engine_args=build_engine_args())
     engine.initialize(None, None)
 
-    gconfig = GenerationHyperparameters(max_new_tokens=16, greedy=False, n_samples=n_samples)
+    gconfig = GenerationHyperparameters(
+        max_new_tokens=16, greedy=False, n_samples=n_samples
+    )
     tokenizer = load_hf_tokenizer(MODEL_PATH)
 
     workflow = RLVRWorkflow(
@@ -86,6 +97,7 @@ def test_local_sglang_rollout(n_samples):
     assert result.batch_size == torch.Size([2 * n_samples])
     engine.destroy()
 
+
 @pytest.mark.parametrize("ofp", [1, 2, 4, 8, 16])
 @pytest.mark.parametrize("bs", [2, 4])
 @pytest.mark.parametrize("n_samples", [2, 1])
@@ -95,7 +107,9 @@ def test_local_sglang_staleness_control(bs, ofp, n_samples):
     engine = LocalSGLangEngine(config, engine_args=build_engine_args())
     engine.initialize(None, None)
 
-    gconfig = GenerationHyperparameters(max_new_tokens=16, greedy=False, n_samples=n_samples)
+    gconfig = GenerationHyperparameters(
+        max_new_tokens=16, greedy=False, n_samples=n_samples
+    )
     tokenizer = load_hf_tokenizer(MODEL_PATH)
 
     workflow = RLVRWorkflow(

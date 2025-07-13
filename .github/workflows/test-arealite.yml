@@ -1,7 +1,8 @@
 name: Test AReaLite
 
 on:
-  push:
+  pull_request:
+    branches: [ lite ]
     paths:
       - .github/workflows/test-arealite.yml
       - arealite/**
@@ -20,11 +21,12 @@ jobs:
         env:
           GIT_REPO_URL: https://github.bibk.top/${{ github.repository }}
           GIT_COMMIT_SHA: ${{ github.sha }}
+          CI_NODE_SUDO_PW: ${{ secrets.CI_NODE_SUDO_PW }}
         with:
           host: ${{ secrets.CI_NODE_ADDR }}
           username: ${{ secrets.CI_NODE_USER }}
           key: ${{ secrets.REMOTE_SSH_KEY }}
-          envs: GIT_REPO_URL,GIT_COMMIT_SHA
+          envs: GIT_REPO_URL,GIT_COMMIT_SHA,CI_NODE_SUDO_PW
           script_path: ci/clone_repo.sh
 
       - uses: appleboy/ssh-action@v1
