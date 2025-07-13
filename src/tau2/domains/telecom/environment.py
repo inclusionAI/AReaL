@@ -13,8 +13,6 @@ from tau2.domains.telecom.utils import (
     TELECOM_MAIN_POLICY_PATH,
     TELECOM_MAIN_POLICY_SOLO_PATH,
     TELECOM_TASK_SET_PATH,
-    TELECOM_TASK_SET_PATH_FULL,
-    TELECOM_TASK_SET_PATH_SMALL,
     TELECOM_TECH_SUPPORT_POLICY_MANUAL_PATH,
     TELECOM_TECH_SUPPORT_POLICY_MANUAL_SOLO_PATH,
     TELECOM_TECH_SUPPORT_POLICY_WORKFLOW_PATH,
@@ -169,24 +167,8 @@ def load_tasks_split(path: str) -> Optional[dict[str, list[str]]]:
     return None
 
 
-def get_tasks_full() -> list[Task]:
-    return load_tasks(TELECOM_TASK_SET_PATH_FULL)
-
-
-def get_tasks_small() -> list[Task]:
-    return load_tasks(TELECOM_TASK_SET_PATH_SMALL)
-
-
 def get_tasks() -> list[Task]:
     return load_tasks(TELECOM_TASK_SET_PATH)
-
-
-def get_tasks_full_split() -> dict[str, list[str]]:
-    return load_tasks_split(TELECOM_TASK_SET_PATH_FULL)
-
-
-def get_tasks_small_split() -> dict[str, list[str]]:
-    return load_tasks_split(TELECOM_TASK_SET_PATH_SMALL)
 
 
 def get_tasks_split() -> dict[str, list[str]]:
