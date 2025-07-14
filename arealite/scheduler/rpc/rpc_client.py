@@ -34,9 +34,10 @@ class RPCClient:
         # 支持变长参数
         req = (method, args, kwargs)
         serialized_req = cloudpickle.dumps(req)
+
         resp = requests.post(url, data=serialized_req, timeout=7200)
-        logging.info(
-            f"Sent call '{method}' to {worker_id} ({ip}:{port}), status={resp.status_code}"
+        logging.error(
+           f"Sent call '{method}' to {worker_id} ({ip}:{port}), status={resp.status_code}"
         )
         if resp.status_code == 200:
             return cloudpickle.loads(resp.content)

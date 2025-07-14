@@ -1,6 +1,7 @@
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
@@ -35,22 +36,56 @@ class DistributedTrainController(TrainController):
         scheduler: Scheduler,
     ):
         super().__init__(train_engine, config, scheduler)
-        # self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
-        self.dp_world_size = 1  # 一个dp组里面有多少卡，比如16卡，dp=8,那么 dp_world_size=2
-        self.dp_parallel_size = 8
+        self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
+        self.dp_world_size = self.allocate_mode.train_world_size // self.allocate_mode.train_dp_size
 
     def initialize(self):
         """Initialize environments for distributed training and load models."""
         scheduling = self.train_engine.get_scheduling_config()
-        # todo：支持多容器
-        scheduling_config = {"num_workers": 8}
-        self.scheduler.create_workers("train", scheduling_config)
 
-        self.workers = self.scheduler.get_workers("train", timeout=60 * 6)
-        server_addrs = [
-            f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports
-        ]
-        print(f"[TrainController] initialize workers len: {len(self.workers)}, details: {self.workers}.")
+        scheduling_config = SchedulingConfig(replicas=self.allocate_mode.train_world_size)
+        # scheduling_config = {
+        #     "num_workers": self.allocate_mode.train_world_size,
+        # }
+        engineSpec = ContainerSpec(
+            cpu=0,
+            mem=0,
+            gpu=scheduling.gpu,
+            cmd="bash /storage/openpsi/codes/dh183333/arealite-test/AReaL/arealite/scheduler/scripts/launch-engine.sh",
+            env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
+            portCount=1
+        )
+        engineSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test/AReaL"
+        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
+        engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
+            experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
+        engineSpec.env_vars["WORKER_TYPE"] = "model-worker"
+
+        mainServerSpec = ContainerSpec(
+            cpu=0,
+            mem=0,
+            gpu=0,
+            cmd="bash /storage/openpsi/codes/dh183333/v0.1.2/AReaL/realhf/scheduler/asystem/scripts/megatron.sh",
+            env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
+            portCount=1
+        )
+        mainServerSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/v0.1.2/AReaL"
+        mainServerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/megatron-server-12510151-20250621103525.sif"
+        mainServerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
+            experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
+        mainServerSpec.env_vars["WORKER_TYPE"] = "model-worker"
+
+        scheduling_config.specs.append(engineSpec)
+        scheduling_config.specs.append(mainServerSpec)
+        self.scheduler.create_workers("train",scheduling_config)
+
+        self.workers = self.scheduler.get_workers("train", timeout=60*5)
+
+        server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
+
+        print(f"self.workers: {len(self.workers)}")
+        # todo: 等待megatron server启动完成
+        time.sleep(100)
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             futures = [
                 executor.submit(
@@ -58,7 +93,7 @@ class DistributedTrainController(TrainController):
                     worker.id,
                     self.train_engine,
                     RemoteMegatronInitConfig(
-                        server_addrs=server_addrs, global_rank=index, world_size=8
+                        server_addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.train_world_size
                     ),
                 )
                 for index, worker in enumerate(self.workers)
@@ -78,7 +113,6 @@ class DistributedTrainController(TrainController):
 
     def _rpc_call(self, method, *args, **kwargs):
         logging.info(f"[train controller] start to  rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
-
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             futures = [
                 executor.submit(
@@ -102,6 +136,7 @@ class DistributedTrainController(TrainController):
                 for f in futures:
                     f.cancel()
                 raise  # 重新抛出异常，主程序能感知
+
 
     def upload_weights(self, meta: WeightUpdateMeta):
         """Upload weights to the inference engine."""
@@ -127,7 +162,7 @@ class DistributedTrainController(TrainController):
         self, input_: DistributedBatchMemory
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function."""
-        batches = input_.split(1)
+        batches = input_.split(self.allocate_mode.train_dp_size)
 
         assert len(self.workers) % self.dp_world_size == 0
 

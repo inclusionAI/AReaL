@@ -13,13 +13,13 @@ class Worker:
 
 @dataclass
 class ContainerSpec:
-    cpu: int
-    gpu: int
-    mem: int
-    container_image: str = None
-    cmd: str = None
+    cpu: int = 0
+    gpu: int = 0
+    mem: int = 0
+    container_image: str = ""
+    cmd: str = ""
     env_vars: Dict[str, str] = field(default_factory=dict)
-    port: int = 50000
+    portCount: int = 2
 
 
 @dataclass
@@ -64,7 +64,7 @@ class Scheduler(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def create_engine(self, worker_id, engine_obj, *args, **kwargs):
+    async def create_engine(self, worker_id, engine_obj, *args, **kwargs):
         """
         远程创建engine实例
         """

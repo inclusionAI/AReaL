@@ -1,6 +1,7 @@
 import asyncio
 import os
 import random
+import json
 import threading
 import time
 import traceback
@@ -45,8 +46,11 @@ RID_CACHE_SIZE = 128
 
 @dataclasses.dataclass
 class RemoteSGLangInitConfig:
-    server_addrs: list[str]
-
+    main_server_addrs: list[str]
+    # [[10.0.0.1:8188, 10.0.0.1:9120], [10.0.0.2:8188, 10.0.0.2:9120]]
+    # /opt/conda/bin/python -m sglang.launch_server --model-path /storage/to/path --host 10.0.0.1 --port 8188 --dist-init-addr 10.0.0.1:9120 --nnodes 2 --node-rank 0 --tp 8 --pp 2
+    # /opt/conda/bin/python -m sglang.launch_server --model-path /storage/to/path --host 10.0.0.2 --port 8188 --dist-init-addr 10.0.0.1:9120 --nnodes 2 --node-rank 1 --tp 8 --pp 2
+    sglang_addrs_list: list[list[str]]
 
 class RemoteSGLangEngine(InferenceEngine):
     def __init__(self, config: InferenceEngineConfig):
@@ -63,13 +67,44 @@ class RemoteSGLangEngine(InferenceEngine):
         self.result_cache = []
         self.rollout_stat = RolloutStat()
 
-        self._version = 100000
+        self._version = 0
 
     def initialize(self, config: RemoteSGLangInitConfig):
-        logger.info("[RemoteSGLangEngine] begin exec initialize.")
-        self.addresses = config.server_addrs
-        self.addresses = ["10.10.131.247:8188"] + ["10.10.131.73:8188"]
-        self.server_idx = random.randint(0, len(self.addresses) - 1)
+        logger.info(f"SGLangEngine begin exec initialize, config: {config}")
+        # todo: init command from sglang config
+        command_template = ("/opt/conda/bin/python -m sglang.launch_server --model-path /storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/hf_ckpts/8604 "
+                            "--host {server_ip} --port {server_port} --tp 8 --dist-init-addr {dist_init_addr} --nnodes {node_num} --node-rank {node_rank} --tp 4 --pp 2 --skip-tokenizer-init --trust-remote-code --disable-radix-cache --mem-fraction-static 0.7 "
+                            "--max-running-requests 128 --chunked-prefill-size 16384 --cuda-graph-bs 1 2 4 8 16 32 64 128 256 384 512 640 768 896 1024 --attention-backend triton")
+
+        # self.addresses = config.server_addrs
+        dist_init_addr = config.sglang_addrs_list[0][1]
+        node_num = len(config.sglang_addrs_list)
+        for index, sglang_addrs in enumerate(config.sglang_addrs_list):
+            node_rank = index
+            server_ip_port = config.sglang_addrs_list[index][0].split(":")
+            server_ip = server_ip_port[0]
+            server_port = server_ip_port[1]
+            if index == 0:
+                self.addresses = [server_ip+":"+server_port]
+            command = command_template.format(server_ip=server_ip, server_port=server_port, dist_init_addr=dist_init_addr, node_num=node_num, node_rank=node_rank)
+            data = {"command": command}
+            url = "http://" + config.main_server_addrs[index] + "/initialize"
+
+            logger.info(f"url: {url}, send sglang launch command: {data}")
+            response = requests.post(
+                url,
+                headers={"Content-Type": "application/json"},
+                data=json.dumps(data),
+                timeout=60  # 增加超时控制
+            )
+
+            response.raise_for_status()  # 自动处理 4xx/5xx 状态码
+
+            result = response.json()
+            logger.info(result)
+
+
+        # self.addresses = ["10.10.131.247:8188"] * 8 + ["10.10.131.73:8188"] * 8
         self.exiting = threading.Event()
         self.paused = threading.Event()
         self.lock = threading.Lock()
@@ -119,6 +154,13 @@ class RemoteSGLangEngine(InferenceEngine):
 
         try:
             while not self.exiting.is_set():
+                # Load next data from controller
+                if data is None:
+                    try:
+                        data, workflow = self.input_queue.get_nowait()
+                        logger.info(f"[RemoteSGLangEngine] Get data from puller")
+                    except Empty:
+                        logger.debug(f"[RemoteSGLangEngine] No data from puller stream.")
                 # Check capacity
                 capacity = self.get_capacity()
                 # Create new rollout task
@@ -322,6 +364,7 @@ class RemoteSGLangEngine(InferenceEngine):
         # executor = ThreadPoolExecutor(max_workers=1)
         # return executor.submit(self._update_weights, meta)
         self._update_weights(meta)
+        self._version = self._version + 1
         return True
 
     def _update_weights(self, meta: WeightUpdateMeta):
@@ -448,11 +491,17 @@ class RemoteSGLangEngine(InferenceEngine):
         # TensorDict=>DistributedBatchMemory
         return DistributedBatchMemory(res.to_dict())
 
+    def submit_distributed_batch(
+        self, batch: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+    ):
+        for i in range(len(batch)):
+            self.submit(batch[i], workflow)
+    
     def get_scheduling_config(self):
         # one dp total resources
         return Scheduling(
-            cpu=4,
-            gpu=1,
-            mem=8,
+            cpu=0,
+            gpu=8,
+            mem=0,
             type="engine",
         )

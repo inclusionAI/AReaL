@@ -149,13 +149,14 @@ class TrainEngineConfig:
 class TrainControllerConfig:
     # train_engine_config: TrainEngineConfig = field(default_factory=TrainEngineConfig)
     allocation_mode: str = field(
-        default="gen.d2p1m8+d2p1m8",
+        default="sglang.d1t8p1+d1t8p1",
         metadata={
             "help": "GPU parallel strategy allocation mode. "
                     "Options: manual/heuristic or pattern-based."
         },
     )
-
+    experiment_name: str = MISSING
+    trial_name: str = MISSING
 
 @dataclass
 class SGLangConfig:
@@ -293,7 +294,7 @@ class InferenceEngineConfig:
         },
     )
     queue_size: None | int = field(
-        default=2048,
+        default=8192*10,
         metadata={"help": "Input/Output queue size for async rollout."},
     )
     consumer_batch_size: int = field(
@@ -334,12 +335,14 @@ class SGLangEngineConfig:
 class RolloutControllerConfig:
     #inference_engine_config: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     allocation_mode: str = field(
-        default="gen.d2p1m8+d2p1m8",
+        default="sglang.d1t8p1+d1t8p1",
         metadata={
             "help": "GPU parallel strategy allocation mode. "
                     "Options: manual/heuristic or pattern-based."
         },
     )
+    experiment_name: str = MISSING
+    trial_name: str = MISSING
 
 
 @dataclass
@@ -621,7 +624,7 @@ class RemoteMegatronWrapPolicy:
     value_norm_type: str = field(metadata={"choices": ["exp", "ma"]}, default="exp")
     value_norm_beta: float = 0.99995
     value_norm_eps: float = 1e-5
-    group_size: int = 8
+    group_size: int = 16
     generation_size: Optional[int] = None
     mask_no_eos_with_zero: bool = False
     group_adv_norm: bool = True
@@ -650,7 +653,7 @@ class RemoteMegatronEngineConfig(TrainEngineConfig):
         metadata={"help": "Name of the trial (no '-' or '/'). Required."},
     )
     group_size: int = field(
-        default=8,
+        default=16,
         metadata={"help": "Number of answers retained per prompt (best-of-n)."},
     )
     train_bs_n_seqs: int = field(

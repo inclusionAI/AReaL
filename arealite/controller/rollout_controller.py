@@ -1,4 +1,3 @@
-import asyncio
 from typing import List, Dict, Any
 from tensordict import TensorDict, stack
 
@@ -13,6 +12,7 @@ from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangInitConfig
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 
 class DistributedRolloutController(RolloutController):
@@ -28,58 +28,138 @@ class DistributedRolloutController(RolloutController):
         scheduler: Scheduler,
     ):
         super().__init__(inf_engine, config, scheduler)
-        self.dp_world_size = 1
+        self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
+        self.dp_world_size = self.allocate_mode.gen_world_size // self.allocate_mode.gen_dp_size
 
-    def _rpc_call(self, method, *args, **kwargs):
-        logging.info(f"[rollout controller] start to  rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
+    def _rpc_call(self, method, batches=None, *args, **kwargs):
+        """
+        执行 RPC 调用，支持每个 worker 的参数不同，或使用通用参数。
+
+        :param method: 要调用的方法名
+        :param batches: 包含每个 worker 特定参数的列表（可选）
+        :param args: 通用参数
+        :param kwargs: 通用关键字参数
+        :return: 所有调用的结果列表
+        """
+        logging.info(f"[rollout controller] start to rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
+        futures = []
+        results = []
 
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
-            futures = [
-                executor.submit(
-                    self.scheduler.call_engine,
-                    worker.id,
-                    method,
-                    *args,
-                    **kwargs
-                )
-                for worker in self.workers
-            ]
+            for i in range(self.allocate_mode.gen_dp_size):
+                # 获取当前 master worker 的地址
+                master_worker = self.workers[self.server_group_size * i]
 
-            results = []
+                # 如果 batches 为空，使用通用参数；否则使用 batch 中的特定参数
+                if batches and i < len(batches):
+                    batch = batches[i]
+                    print(f"batch: {batch}")
+                    futures.append(executor.submit(
+                        self.scheduler.call_engine,
+                        master_worker.id,
+                        method,
+                        batch,  # 使用 batch 中的参数
+                        *args,
+                        **kwargs
+                    ))
+                else:
+                    futures.append(executor.submit(
+                        self.scheduler.call_engine,
+                        master_worker.id,
+                        method,
+                        *args,  # 使用通用参数
+                        **kwargs
+                    ))
+
+            print(f"submit workers: {len(futures)}")
             try:
                 for future in as_completed(futures):
                     result = future.result()  # 可加异常处理
                     results.append(result)
             except KeyboardInterrupt:
                 print("收到Ctrl+C，正在终止所有初始化任务...")
+                # 取消所有未完成的 future
                 for f in futures:
                     f.cancel()
                 raise  # 重新抛出异常，主程序能感知
 
+        return results
+
+
     def initialize(self):
         """Initialize environments for distributed inference and load models."""
+
+        # 1个engine代表一组sglang实例，存在以下部署场景
+        # 一、一组sglang实例跨机部署，如tp8pp2 跨2台机器（每台机器8卡）
+        # 二、多组sglang实例在同一台机器部署，如tp4pp1 2个实例可以部署在1台机器上（每台机器8卡）
+
         scheduling = self.inf_engine.get_scheduling_config()
-        # todo：支持多容器
-        scheduling_config = SchedulingConfig(replicas=1)
-        scheduling_config = {"num_workers": 1}
+        assert scheduling.gpu == self.dp_world_size
+
+        # replicas = self.allocate_mode.gen_world_size * node_count if scheduling.gpu >= n_gpu_per_node else self.allocate_mode.gen_world_size
+        scheduling_config = SchedulingConfig(replicas=self.allocate_mode.gen_dp_size)
+
+        engineSpec = ContainerSpec(
+            cpu=0,
+            mem=0,
+            gpu=scheduling.gpu,
+            cmd="bash /storage/openpsi/codes/dh183333/arealite-test/AReaL/arealite/scheduler/scripts/launch-engine.sh",
+            env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
+            portCount=1
+        )
+        engineSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test/AReaL"
+        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
+        engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
+        engineSpec.env_vars["WORKER_TYPE"] = "inference-engine"
+
+        mainServerSpec = ContainerSpec(
+            cpu=0,
+            mem=0,
+            gpu=0,
+            cmd="bash /storage/openpsi/codes/dh183333/arealite-test/AReaL/arealite/scheduler/scripts/launch-inference-server.sh",
+            env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
+            portCount=3
+        )
+        mainServerSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test/AReaL"
+        mainServerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/sglang-13080189-20250716175343.sif"
+        mainServerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
+        mainServerSpec.env_vars["WORKER_TYPE"] = "inference-main-worker"
+
+        scheduling_config.specs.append(engineSpec)
+        scheduling_config.specs.append(mainServerSpec)
+
+
         self.scheduler.create_workers("rollout", scheduling_config)
 
         self.workers = self.scheduler.get_workers("rollout", timeout=5 * 60)
-        print(f"[RolloutController] initialize workers len:{len(self.workers)}, details: {self.workers}")
+        # 如果1个实例跨机部署，返回的server_addrs是engine实例数的整数倍;e.g. dp2tp8pp2, 需要2个engine，返回了4个server_addrs， 只有index==0|2的才是真正的服务地址
+        # 如果多个实例同机部署，返回的server_addrs和engine实例数等长
         server_addrs = [
             f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports
         ]
+        assert len(server_addrs) % self.allocate_mode.gen_dp_size == 0
 
+        self.server_group_size = len(server_addrs) // self.allocate_mode.gen_dp_size
+
+        futures = []
+
+        time.sleep(100)
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
-            futures = [
-                executor.submit(
+            for i in range(self.allocate_mode.gen_dp_size):
+                master_worker = self.workers[self.server_group_size * i]
+                server_addrs = [
+                    f"{worker.ip}:{worker.ports[0]}" for worker in self.workers[self.server_group_size * i:self.server_group_size * i+1] if worker.ports
+                ]
+                sglang_addrs_list = [
+                    [f"{worker.ip}:{port}" for worker in
+                     self.workers[self.server_group_size * i:self.server_group_size * (i + 1)] for port in worker.ports[1:]]
+                ]
+                futures.append(executor.submit(
                     self.scheduler.create_engine,
-                    worker.id,
+                    master_worker.id,
                     self.inf_engine,
-                    RemoteSGLangInitConfig(server_addrs=server_addrs),
-                )
-                for worker in self.workers
-            ]
+                    RemoteSGLangInitConfig(main_server_addrs=server_addrs, sglang_addrs_list=sglang_addrs_list),
+                ))
             print(f"submit workers: {len(futures)}")
             try:
                 for future in as_completed(futures):
@@ -93,50 +173,66 @@ class DistributedRolloutController(RolloutController):
 
     def update_weights(self, meta: WeightUpdateMeta) -> None:
         """Update weights in the inference engine."""
-        self._rpc_call("update_weights", meta)
+        self._rpc_call("update_weights", None,  meta)
         return
 
-    def submit(self, data: DistributedBatchMemory, workflow: RolloutWorkflow) -> None:
+    def submit(self, data: List[Dict[str, Any]], workflow: RolloutWorkflow) -> None:
         """Asynchronously submit a request to the inference engine. Exits immediately."""
-        raise NotImplementedError()
+        batches = self.split_list(data, self.allocate_mode.gen_dp_size)
 
-    def wait(self, count: int, timeout: int) -> DistributedBatchMemory:
+        for index in range(self.allocate_mode.gen_dp_size):
+            master_worker = self.workers[self.server_group_size * index]
+
+            self.scheduler.call_engine(master_worker.id, "submit_distributed_batch", batches[index], workflow)
+
+    def wait(self, count: int, timeout: int)  -> TensorDict:
         """Wait for a specified number of requests to complete, with a timeout."""
-        raise NotImplementedError()
+        batch_count = count // len(self.workers)
+        assert count % self.allocate_mode.gen_dp_size == 0
+        results = []
+        for index in range(self.allocate_mode.gen_dp_size):
+            master_worker = self.workers[self.server_group_size * index]
+            result = self.scheduler.call_engine(master_worker.id, "wait", batch_count, timeout)
+            results.append(result)
+        res = stack(results, dim=0)
+        return res
+
 
     def rollout_distributed_batch(
         self, data: DistributedBatchMemory, workflow: RolloutWorkflow
     ) -> DistributedBatchMemory:  # batcsize=16
         """Submit a batch of requests to the inference engine and wait for the results."""
-        batches = data.split(2)
+        batches = data.split(self.allocate_mode.gen_dp_size)
         assert len(self.workers) % self.dp_world_size == 0
         futures = []
+        results = []
+        results = self._rpc_call("rollout_distributed_batch", batches, workflow)
 
-        with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
-            for index, worker in enumerate(self.workers):
-                batch_index = index // self.dp_world_size
-                batch_data = batches[batch_index]
-                futures.append(
-                    executor.submit(
-                        self.scheduler.call_engine,
-                        worker.id,
-                        "rollout",
-                        batch_data,
-                        workflow,
-                    )
-                )
-
-            results = []
-            try:
-                for future in as_completed(futures):
-                    result = future.result()  # 可加异常处理
-                    results.append(result)
-            except KeyboardInterrupt:
-                print("收到Ctrl+C，正在终止所有初始化任务...")
-                # 取消所有未完成的future
-                for f in futures:
-                    f.cancel()
-                raise  # 重新抛出异常，主程序能感知
+        # with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
+        #     for i in range(self.allocate_mode.gen_dp_size):
+        #         master_worker = server_addrs[self.server_group_size * i]
+        #         server_addrs = [
+        #             f"{worker.ip}:{worker.ports[0]}" for worker in self.workers[self.server_group_size * i:self.server_group_size * i+1] if worker.ports
+        #         ]
+        #         batch_data = batches[i]
+        #         futures.append(executor.submit(
+        #             self.scheduler.call_engine,
+        #             master_worker.id,
+        #             "rollout_distributed_batch",
+        #             batch_data,
+        #             workflow,
+        #         ))
+        #     print(f"submit workers: {len(futures)}")
+        #     try:
+        #         for future in as_completed(futures):
+        #             result = future.result()  # 可加异常处理
+        #             results.append(result)
+        #     except KeyboardInterrupt:
+        #         print("收到Ctrl+C，正在终止所有初始化任务...")
+        #         # 取消所有未完成的future
+        #         for f in futures:
+        #             f.cancel()
+        #         raise  # 重新抛出异常，主程序能感知
 
         batchdata = DistributedBatchMemory(None)
         for dataset in results:
@@ -148,24 +244,49 @@ class DistributedRolloutController(RolloutController):
         self, data: List[Dict[str, Any]], workflow: RolloutWorkflow
     ) -> TensorDict:
         futures = []
+        results = []
+        batches = self.split_list(data, self.allocate_mode.gen_dp_size)
 
-        with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
-            for index, worker in enumerate(self.workers):
-                futures.append(
-                    executor.submit(
-                        self.scheduler.call_engine, worker.id, "rollout", data, workflow
-                    )
-                )
 
-            results = []
-            try:
-                for future in as_completed(futures):
-                    result = future.result()
-                    results.append(result)
-            except KeyboardInterrupt:
-                for f in futures:
-                    f.cancel()
-                raise
+        results = self._rpc_call("rollout", batches,workflow)
 
-        res = stack(results, dim=0)
-        return res
+        # with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
+        #     for i in range(self.allocate_mode.gen_dp_size):
+        #         master_worker = server_addrs[self.server_group_size * i]
+        #         server_addrs = [
+        #             f"{worker.ip}:{worker.ports[0]}" for worker in
+        #             self.workers[self.server_group_size * i:self.server_group_size * i + 1] if worker.ports
+        #         ]
+        #         batch_data = batches[i]
+        #         futures.append(executor.submit(
+        #             self.scheduler.call_engine,
+        #             master_worker.id,
+        #             "rollout",
+        #             batch_data,
+        #             workflow,
+        #         ))
+        #     print(f"submit workers: {len(futures)}")
+        #     try:
+        #         for future in as_completed(futures):
+        #             result = future.result()  # 可加异常处理
+        #             results.append(result)
+        #     except KeyboardInterrupt:
+        #         print("收到Ctrl+C，正在终止所有初始化任务...")
+        #         # 取消所有未完成的future
+        #         for f in futures:
+        #             f.cancel()
+        #         raise  # 重新抛出异常，主程序能感知
+
+        return stack(results, dim=0)
+
+    def split_list(self, lst, n):
+        if n <= 0:
+            raise ValueError("n 必须大于 0")
+        chunk_size, rem = divmod(len(lst), n)
+        result = []
+        index = 0
+        for i in range(n):
+            current_size = chunk_size + 1 if i < rem else chunk_size
+            result.append(lst[index:index + current_size])
+            index += current_size
+        return result

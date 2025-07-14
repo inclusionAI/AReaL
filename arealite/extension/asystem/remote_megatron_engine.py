@@ -85,12 +85,7 @@ class RemoteMegatronEngine(TrainEngine):
         self.global_rank = cfg.global_rank
         local_rank = global_rank % 8
 
-        cfg.server_addrs = [
-            "10.10.131.165:50000", "10.10.131.165:50001", "10.10.131.165:50002", "10.10.131.165:50003",
-            "10.10.131.165:50004", "10.10.131.165:50005", "10.10.131.165:50006", "10.10.131.165:50007",
-            # "10.10.12.152:50000", "10.10.12.152:50001", "10.10.12.152:50002", "10.10.12.152:50003",
-            # "10.10.12.152:50004", "10.10.12.152:50005", "10.10.12.152:50006", "10.10.12.152:50007",
-        ]
+        print(f"[megatron] dzq_debug global_rank: {global_rank}, serveraddr len:{len(cfg.server_addrs)}")
         self.megatron_addr = cfg.server_addrs[global_rank]
         master_addr = cfg.server_addrs[0]
         master_ip, master_port = master_addr.split(":", 1)  # ip:port
@@ -726,7 +721,7 @@ remote_megatron_config = {
     "moe_router_load_balancing_type": "aux_loss",
     "seq_length": 16384,
     "micro_batch_size": 1,
-    "global_batch_size": 8,
+    "global_batch_size": 16,
     "lr": 2.0e-6,
     "lr_decay_style": "constant",
     "lr_warmup_iters": 35,

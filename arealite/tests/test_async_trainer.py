@@ -1,4 +1,5 @@
 import sys
+from arealite.scheduler.asystem import AsystemScheduler
 import torch
 from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -16,7 +17,7 @@ from arealite.api.cli_args import GenerationHyperparameters
 from realhf.api.core.data_api import load_hf_tokenizer
 from arealite.api.engine_api import WeightUpdateMeta
 from arealite.extension.asystem.math_reward import reward_fn
-from arealite.scheduler.asystem import AsystemScheduler
+
 import os
 import shutil
 
@@ -32,6 +33,7 @@ def clear_dir(path):
 
 def main_grpo():
     # init controller
+
     scheduler = AsystemScheduler({
         "endpoint": "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081",
         "expr_name": "arealite-test",
@@ -51,93 +53,96 @@ def main_grpo():
         },
     })
 
+    rollout_config = InferenceEngineConfig(experiment_name="arealite", trial_name="async")
+
     rollout = DistributedRolloutController(
-        RemoteSGLangEngine(InferenceEngineConfig(experiment_name="arealite", trial_name="sync")),
-        RolloutControllerConfig(experiment_name="arealite", trial_name="sync", allocation_mode="sglang.d4t8p1+d32t1p1"),
+        RemoteSGLangEngine(rollout_config),
+        RolloutControllerConfig(
+            experiment_name="arealite", trial_name="async", allocation_mode="sglang.d1t8p1+d1t8p1"
+        ),
         scheduler,
     )
     actor = DistributedTrainController(
-        RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="arealite", trial_name="sync")),
-        TrainControllerConfig(experiment_name="arealite", trial_name="sync", allocation_mode="sglang.d4t8p1+d32t1p1"),
+        RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="arealite", trial_name="async")),
+        TrainControllerConfig(
+            experiment_name="arealite", trial_name="async", allocation_mode="sglang.d1t8p1+d1t8p1"
+        ),
         scheduler,
     )
     # engine initialize
     rollout.initialize()
     actor.initialize()
 
+    gconfig = GenerationHyperparameters(
+        max_new_tokens=15360, greedy=False, n_samples=16
+    )
+    MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf"
+    tokenizer = load_hf_tokenizer(MODEL_PATH)
+    workflow = RLVRWorkflow(
+        reward_fn=reward_fn,
+        gconfig=gconfig,
+        tokenizer=tokenizer,
+    )
+
     dataset = load_dataset("json",
                            data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train.jsonl")
     train_dataset = dataset['train']
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
-    batch_size = 16
+    batch_size = 512
     batch_data = []
     step_num = 100
     epoch_num = 10
     for epoch in range(epoch_num):
         data_generator = iter(dataloader)
-        for step in range(step_num):
+
+        # Submit batches
+        if rollout_config.max_head_offpolicyness > 0:
             batch_data = []
-            for _ in range(batch_size):
+            for i in range(rollout_config.max_head_offpolicyness*batch_size):
                 batch = next(data_generator)
                 batch_data.append(batch)
+            rollout.submit(batch_data, workflow=workflow)
 
-
+        for step in range(step_num):
             # Update inference engine weights
-            exp_name = "arealite"
-            trial_name = "sync"
-            # actor_cfg = WeightUpdateMeta(
-            #     type="disk",
-            #     path=f"/storage/openpsi/checkpoints/{exp_name}/{trial_name}/",
-            #     alloc_mode=None,
-            #     comm_backend=None,
-            # )
+            exp_name = "ff"
+            trial_name = "ff"
+            actor_cfg = WeightUpdateMeta(
+                type="disk",
+                path=f"/storage/openpsi/checkpoints/{exp_name}/{trial_name}/",
+                alloc_mode=None,
+                comm_backend=None,
+            )
             rollout_cfg = WeightUpdateMeta(
                 type="disk",
                 path=f"/storage/openpsi/checkpoints/{exp_name}/{trial_name}/{step}",
                 alloc_mode=None,
                 comm_backend=None,
             )
+            actor.upload_weights(actor_cfg)
+            rollout.update_weights(rollout_cfg)
 
-            # actor.upload_weights(actor_cfg)
-            # print("[Trainer] actor upload_weights success.")
-            # rollout.update_weights(rollout_cfg)
-            # print("[Trainer] rollout update_weights success.")
-            # clear_dir(rollout_cfg.path)
-            # print(f"[Trainer] clear update weights dir success: {rollout_cfg.path}")
+            # Submit new batch
+            batch_data = []
+            for _ in range(batch_size):
+                batch = next(data_generator)
+                batch_data.append(batch)
+            rollout.submit(batch_data, workflow=workflow)
 
-            # synchronous rollout
-            gconfig = GenerationHyperparameters(
-                max_new_tokens=15360, greedy=False, n_samples=16
-            )
-            MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf"
-            tokenizer = load_hf_tokenizer(MODEL_PATH)
-            workflow = RLVRWorkflow(
-                reward_fn=reward_fn,
-                gconfig=gconfig,
-                tokenizer=tokenizer,
-            )
+            # rollout
+            rollout_res = rollout.wait(batch_size, timeout=7200)
 
-            # input_: List[Dict[str, tensor]]
-            rollout_res = rollout.rollout(batch_data, workflow=workflow)
-            print(f"[Trainer] rollout exec success, rollout_res: {rollout_res}")
             rollout_res = rollout_res.to("cpu").clone()
 
-            # torch.save(rollout_res, "rollout_res.pt")
             rollout_res_dict = rollout_res.to_dict()
             for k, v in rollout_res_dict.items():
                 if isinstance(v, torch.Tensor) and v.ndim > 1 and v.shape[0] == 1:
                     rollout_res_dict[k] = v.squeeze(0)
-                    # print(f"[Trainer] dzq_debug rollout squeeze: key: {k}, shape: {rollout_res_dict[k].shape}")
-            torch.set_printoptions(threshold=float('inf'))
-            print(f"[Trainer] after rollout rewards: {rollout_res_dict["rewards"]}")
+                    print(f"[Trainer] dzq_debug rollout squeeze: key: {k}, shape: {rollout_res_dict[k].shape}")
             dis_batch = DistributedBatchMemory(rollout_res_dict)
             stats = actor.train_distributed_batch(dis_batch)
             print(f"[Trainer] train exec success, step: {step}, epoch: {epoch}, stats: {stats}")
 
-            rollout.update_weights(rollout_cfg)
-            print("[Trainer] rollout update_weights success.")
-
 
 if __name__ == "__main__":
     main_grpo()
-
