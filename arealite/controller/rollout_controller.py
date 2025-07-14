@@ -44,25 +44,21 @@ class DistributedRolloutController(RolloutController):
     def initialize(self):
         """Initialize environments for distributed inference and load models."""
         scheduling = self.inf_engine.get_scheduling_config()
+        # todo：支持多容器
         scheduling_config = SchedulingConfig(replicas=16)
+        scheduling_config = {"num_workers": 16}
         self.scheduler.create_workers(scheduling_config)
+
         self.workers = self.scheduler.get_workers(timeout=5*60)
         server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
 
-        # 并发调用 create_engine
-        with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
-            futures = [
-                executor.submit(
-                    self.scheduler.create_engine,
-                    worker.id,
-                    self.inf_engine,
-                    RemoteSGLangInitConfig(server_addrs=server_addrs)
-                )
-                for worker in self.workers
-            ]
-            # 等待所有任务完成
-            for future in as_completed(futures):
-                future.result()  # 可加异常处理
+        tasks = [
+            self.scheduler.create_engine(worker.id, self.inf_engine, RemoteSGLangInitConfig(server_addrs=server_addrs))
+            for index, worker in enumerate(self.workers)
+        ]
+
+        loop = asyncio.get_running_loop()
+        return loop.run_until_complete(asyncio.gather(*tasks))
 
     def update_weights(self, meta: WeightUpdateMeta) -> None:
         """Update weights in the inference engine."""
