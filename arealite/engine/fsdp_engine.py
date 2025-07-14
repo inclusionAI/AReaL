@@ -109,6 +109,11 @@ class FSDPEngine(TrainEngine):
                 attn_implementation=self.config.attn_impl,
             )
 
+        if self.config.gradient_checkpointing:
+            model.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False}
+            )
+
         # Simple auto wrap policy
         self.mixed_precision_policy = MixedPrecisionPolicy(
             param_dtype=torch.bfloat16,
