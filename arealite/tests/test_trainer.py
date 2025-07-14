@@ -11,7 +11,7 @@ from arealite.controller.train_controller import DistributedTrainController
 from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronEngine
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangEngine
 from arealite.scheduler.local import LocalScheduler
-
+from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 
 
 def main_grpo():
@@ -51,26 +51,39 @@ def main_grpo():
 
     # # Synchronous RL
     dataloader = StatefulDataLoader(dataset)
-    # for epoch in range(5):
-    #     data_generator = iter(dataloader)
-    #     for prompt in range(10):
-    #         prompt = next(data_generator)
-    #
-    #         # Update inference engine weights
-    #         wcfg = actor.upload_weights(WeightUpdateMeta)
-    #         future = rollout.update_weights(wcfg)
-    #         actor.upload_weights(wcfg)
-    #         future.result()
-    #
-    #         # synchronous rollout
-    #         rollout_batch = rollout.rollout(batch, workflow=MyRolloutWorkflow(rollout_config.workflow))
-    #         # or asynchronous rollout with filtering and off-policyness control
-    #         # rollout_batch = rollout.prepare_batch(batch,
-    #         #                                       workflow=MyRolloutWorkflow(rollout_config.workflow),
-    #         #                                       should_accept=lambda x: x['rewards'].mean() > 0)
-    #
-    #
-    #         # print(stats)
+    for epoch in range(5):
+        data_generator = iter(dataloader)
+        for prompt in range(10):
+            prompt = next(data_generator)
+            batch = DistributedBatchMemory(prompt)
+            # Update inference engine weights
+            # wcfg = actor.upload_weights(WeightUpdateMeta)
+            # future = rollout.update_weights(wcfg)
+            # actor.upload_weights(wcfg)
+            # future.result()
+
+            # synchronous rollout
+            from arealite.workflow.rlvr import RLVRWorkflow
+            from arealite.api.cli_args import GenerationHyperparameters
+            from realhf.api.core.data_api import load_hf_tokenizer
+            gconfig = GenerationHyperparameters(
+                max_new_tokens=16, greedy=False, n_samples=1
+            )
+            MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf"
+            tokenizer = load_hf_tokenizer(MODEL_PATH)
+            workflow = RLVRWorkflow(
+                reward_fn=lambda **kwargs: 1.0,  # Dummy reward function
+                gconfig=gconfig,
+                tokenizer=tokenizer,
+            )
+            rollout_batch = rollout.rollout_distributed_batch(batch, workflow=workflow)
+            print(f"rollout_distributed_batch exec success, {len(rollout_batch.dataset)}")
+            # or asynchronous rollout with filtering and off-policyness control
+            # rollout_batch = rollout.prepare_batch(batch,
+            #                                       workflow=MyRolloutWorkflow(rollout_config.workflow),
+            #                                       should_accept=lambda x: x['rewards'].mean() > 0)
+
+            # print(stats)
 
 if __name__ == "__main__":
     main_grpo()
