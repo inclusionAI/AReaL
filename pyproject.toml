@@ -49,3 +49,9 @@ ignore = ["E501", "F401", "F541"]
 
 [tool.ruff]
 line-length = 88
+
+
+[dependency-groups]
+dev = [
+    "together>=1.5.17",
+]
