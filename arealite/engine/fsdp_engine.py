@@ -1,6 +1,7 @@
 import gc
 import os
 import time
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 import torch
@@ -32,7 +33,7 @@ from arealite.utils.data import (
     pad_and_stack_tensors_along_first_dim,
     pad_mb_list,
     reorder_list,
-    split_packed_tensor_dict_into_mb_list,
+    split_padded_tensor_dict_into_mb_list,
     unpack_sequence,
     unsqueeze_mb_list,
 )
@@ -45,6 +46,7 @@ from arealite.utils.fsdp import (
     fsdp2_load_full_state_dict,
     get_cosine_schedule_with_warmup,
 )
+from arealite.utils.model import disable_dropout_in_model
 from arealite.utils.save_load import get_state_dict_from_repo_id_or_path
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import logging, name_resolve, names, pkg_version
@@ -95,19 +97,38 @@ class FSDPEngine(TrainEngine):
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
 
-        dtype = torch.bfloat16 if self.config.bf16 else torch.float16
+        dtype = getattr(torch, self.config.dtype)
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.config.path,
             trust_remote_code=True,
         )
         self.tokenizer = load_hf_tokenizer(self.config.path)
+        tik = time.perf_counter()
         with torch.device("cuda"):
-            # initialize scratch model from config
-            model = AutoModelForCausalLM.from_config(
-                self.model_config,
-                torch_dtype=dtype,
-                attn_implementation=self.config.attn_impl,
+            if self.config.init_from_scratch:
+                # initialize scratch model from config
+                # NOTE: VLM cannot directly load state dict using this
+                # random initialized model, so otherwise we call
+                # from_pretrained rather than loading weights into this random model.
+                model = AutoModelForCausalLM.from_config(
+                    self.model_config,
+                    torch_dtype=dtype,
+                    attn_implementation=self.config.attn_impl,
+                )
+            else:
+                model = AutoModelForCausalLM.from_pretrained(
+                    pretrained_model_name_or_path=self.config.path,
+                    trust_remote_code=True,
+                    torch_dtype=dtype,
+                    attn_implementation=self.config.attn_impl,
+                )
+            if self.config.disable_dropout:
+                disable_dropout_in_model(model)
+        if self.config.gradient_checkpointing:
+            model.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False}
             )
+        logger.info(f"Model creation and loading time: {time.perf_counter() - tik}")
 
         if self.config.gradient_checkpointing:
             model.gradient_checkpointing_enable(
@@ -116,7 +137,7 @@ class FSDPEngine(TrainEngine):
 
         # Simple auto wrap policy
         self.mixed_precision_policy = MixedPrecisionPolicy(
-            param_dtype=torch.bfloat16,
+            param_dtype=dtype,
             reduce_dtype=torch.float32,
             cast_forward_inputs=True,
         )
@@ -134,23 +155,14 @@ class FSDPEngine(TrainEngine):
         }
 
         # Wrap with FSDP2
+        tik = time.perf_counter()
         apply_fsdp2(model, fsdp_kwargs, self.config.fsdp.wrap_policy)
+        logger.info(f"Applying FSDP2 time: {time.perf_counter() - tik}")
         self.model = model
-
-        if not self.config.init_from_scratch:
-            # Load model from a initial checkpoint path,
-            # which should only be a huggingface checkpoint.
-            load_meta = SaveLoadMeta(
-                path=self.config.path,
-                weight_format="hf",
-                with_optim=False,
-                tokenizer=None,
-                base_model_path=self.config.path,
-            )
-            self.load(load_meta)
 
         # Set up optimizer
         if self.optimizer_config is not None:
+            tik = time.perf_counter()
             assert (
                 self.optimizer_config.type == "adam"
             ), "Only AdamW optimizer is supported in this engine."
@@ -194,6 +206,7 @@ class FSDPEngine(TrainEngine):
                 raise ValueError(
                     f"Unknown lr scheduler type {self.optimizer_config.lr_scheduler_type}"
                 )
+            logger.info(f"Create optimizer time: {time.perf_counter() - tik}")
 
         self.initialized = True
 
@@ -328,15 +341,19 @@ class FSDPEngine(TrainEngine):
         if isinstance(input_, dict):
             input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
         input_ = amend_position_ids(input_)
-        packed_input = pack_tensor_dict(input_)
-        mb_list = split_packed_tensor_dict_into_mb_list(
-            packed_input,
-            self.config.mb_spec,
+        mb_list = split_padded_tensor_dict_into_mb_list(input_, self.config.mb_spec)
+        logger.info(
+            f"Microbatch #tokens (rank {dist.get_rank()}): {mb_list.group_lens}"
         )
+        mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
         mb_list = pad_mb_list(mb_list, pad_value=0.0)
         # NOTE: We unsqueeze here because huggingface transformer models requires
         # packed input to be of shape [1, total_seqlen].
         mb_list = unsqueeze_mb_list(mb_list)
+        # FIXME: the resulting max_seqlen is a tensor rather than an integer
+        for mb in mb_list.mbs:
+            mb["max_seqlen"] = int(mb["max_seqlen"])
+            mb["use_cache"] = False
         return mb_list
 
     def train_batch(
@@ -361,9 +378,10 @@ class FSDPEngine(TrainEngine):
         dist.all_reduce(total_loss_weight)
 
         # Process microbatches with gradient accumulation
-        for pad_length, padded_mb_input, mb_input in zip(
-            mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
+        for i, (pad_length, padded_mb_input, mb_input) in enumerate(
+            zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
         ):
+            self.model.set_is_last_backward(i == len(mb_list.mbs) - 1)
             outputs = self.model(**padded_mb_input)
 
             logits = outputs.logits.squeeze(0)
