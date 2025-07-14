@@ -1,3 +1,14 @@
+# ================================================================
+# NOTE: This test file is dedicated to LocalSGLangEngine testing.
+#
+# Unlike remote engine setup which is managed via a pytest fixture,
+# the LocalSGLangEngine requires explicit `initialize()` to construct
+# the engine instance at runtime. Therefore, each test must manually
+# create and destroy the engine.
+#
+# Because of this lifecycle difference, tests for local and remote
+# engines cannot be placed in the same test file.
+# ================================================================
 import os
 import time
 import uuid
@@ -12,7 +23,7 @@ from arealite.api.cli_args import (
     SGLangConfig,
 )
 from arealite.api.io_struct import LLMRequest, LLMResponse
-from arealite.engine.sglang_local import LocalSGLangEngine
+from arealite.engine.sglang_engine import SGLangEngine
 from arealite.workflow.rlvr import RLVRWorkflow
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import seeding
@@ -47,7 +58,7 @@ def build_engine_args():
 async def test_local_sglang_generate():
     seeding.set_random_seed(1, EXPR_NAME)
     config = build_engine_config()
-    engine = LocalSGLangEngine(config, engine_args=build_engine_args())
+    engine = SGLangEngine(config, engine_args=build_engine_args())
     engine.initialize(None, None)
 
     req = LLMRequest(
@@ -75,7 +86,7 @@ async def test_local_sglang_generate():
 def test_local_sglang_rollout(n_samples):
     seeding.set_random_seed(1, EXPR_NAME)
     config = build_engine_config(max_concurrent_rollouts=2, consumer_batch_size=2)
-    engine = LocalSGLangEngine(config, engine_args=build_engine_args())
+    engine = SGLangEngine(config, engine_args=build_engine_args())
     engine.initialize(None, None)
 
     gconfig = GenerationHyperparameters(
@@ -104,7 +115,7 @@ def test_local_sglang_rollout(n_samples):
 def test_local_sglang_staleness_control(bs, ofp, n_samples):
     seeding.set_random_seed(1, EXPR_NAME)
     config = build_engine_config(consumer_batch_size=bs, max_head_offpolicyness=ofp)
-    engine = LocalSGLangEngine(config, engine_args=build_engine_args())
+    engine = SGLangEngine(config, engine_args=build_engine_args())
     engine.initialize(None, None)
 
     gconfig = GenerationHyperparameters(
