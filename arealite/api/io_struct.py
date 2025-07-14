@@ -13,7 +13,7 @@ from arealite.api.cli_args import GenerationHyperparameters
 from PIL.Image import Image as ImageObject
 
 
-from transformers import PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast,AutoProcessor
 
 
 @dataclass
@@ -266,6 +266,7 @@ class SaveLoadMeta:
     weight_format: str
     with_optim: bool
     tokenizer: PreTrainedTokenizerFast | None
+    processor: AutoProcessor | None
     base_model_path: str | None
 
 
