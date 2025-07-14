@@ -49,8 +49,6 @@ class DistributedRolloutController(RolloutController):
         self.scheduler.create_workers(scheduling_config)
 
         self.workers = self.scheduler.get_workers(timeout=5*60)
-        for worker in self.workers:
-            print(f"dzq——debug: worker type: {type(worker)}")
         server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
 
         tasks = [

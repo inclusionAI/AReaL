@@ -47,7 +47,7 @@ class RemoteSGLangEngine(InferenceEngine):
             config.max_concurrent_rollouts or config.consumer_batch_size
         )
         self.config = config
-
+        self.qsize = config.queue_size or config.max_concurrent_rollouts * 10
         self.rid_to_address = {}
         # Maintain the addresses for the recent 128 requests
         self.rid_queue = []
@@ -55,7 +55,6 @@ class RemoteSGLangEngine(InferenceEngine):
         self.addresses = None
         self.server_idx = 0
 
-        qsize = config.queue_size or config.max_concurrent_rollouts * 10
         # self.input_queue = Queue(maxsize=qsize)
         # self.output_queue = Queue(maxsize=qsize)
         self.result_cache = []
@@ -65,16 +64,20 @@ class RemoteSGLangEngine(InferenceEngine):
         self.rollout_stat = RolloutStat()
 
         self._version = 0
+        logger.info("SGLangEngine __init__ success...")
 
     def initialize(self, config: RemoteSGLangInitConfig):
+        logger.info("SGLangEngine begin exec initialize...")
         self.addresses = config.server_addrs
         self.addresses = ["10.10.131.247:8188"] * 8 + ["10.10.131.73:8188"] * 8
         self.exiting = threading.Event()
         self.lock = threading.Lock()
-        self.input_queue = Queue(maxsize=qsize)
-        self.output_queue = Queue(maxsize=qsize)
+
+        self.input_queue = Queue(maxsize=self.qsize)
+        self.output_queue = Queue(maxsize=self.qsize)
         self.rollout_thread = threading.Thread(target=self._rollout_thread)
         self.rollout_thread.start()
+        logger.info("SGLangEngine exec initialize success...")
 
     def destroy(self):
         self.exiting.set()
