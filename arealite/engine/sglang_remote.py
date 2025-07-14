@@ -353,6 +353,10 @@ class RemoteSGLangEngine(InferenceEngine):
             stop_reason = finish_reason["type"]
 
             payload["input_ids"] += result[SGLANG_TOKEN_OUTPUT_IDENTIFIER]
+            sample_params["max_new_tokens"] = min(
+                sample_params["max_new_tokens"],
+                gconfig.max_new_tokens - len(output_tokens),
+            )
 
         latency = time.perf_counter() - start_time
 

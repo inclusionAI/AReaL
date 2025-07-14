@@ -70,6 +70,8 @@ class FSDPEngine(TrainEngine):
         self.cpu_offload = None
         # initialization
         self.initialized = False
+        self.own_global_group = False
+        self._parallelism_group = None
         self.weight_update_group_initialized = False
 
         # TODO: Handle the case when WORLD_SIZE is not set in launcher
@@ -79,6 +81,11 @@ class FSDPEngine(TrainEngine):
         assert self.model is not None
         self.model.train(mode=mode)
         return self
+
+    @property
+    def parallelism_group(self) -> dist.ProcessGroup:
+        assert self.initialized
+        return self._parallelism_group
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
         # Initialize distributed enviroments and load model.
@@ -92,6 +99,8 @@ class FSDPEngine(TrainEngine):
         if not dist.is_initialized():
             # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
             dist.init_process_group(backend="nccl")
+            self.own_global_group = True
+        self._parallelism_group = dist.new_group()
 
         # TODO: Handle the condition when LOCAL_RANK is not set in launcher
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
@@ -212,6 +221,9 @@ class FSDPEngine(TrainEngine):
         gc.collect()
         torch.cuda.empty_cache()
         gc.collect()
+        dist.destroy_process_group(self.parallelism_group)
+        if self.own_global_group:
+            dist.destroy_process_group()
         self.initialized = False
 
     def save(self, meta: SaveLoadMeta):

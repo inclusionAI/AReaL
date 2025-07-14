@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import torch
+import torch.distributed as dist
 from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -39,6 +40,11 @@ class TrainEngine(abc.ABC):
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
         """Initialize environments for distributed training and load models."""
+        raise NotImplementedError()
+
+    @property
+    def parallelism_group(self) -> dist.ProcessGroup:
+        """The global communication group of this engine."""
         raise NotImplementedError()
 
     def get_scheduling_config(self) -> Scheduling:

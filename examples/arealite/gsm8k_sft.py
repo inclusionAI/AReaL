@@ -1,6 +1,7 @@
 import os
 import sys
 
+import torch.distributed as dist
 from datasets import Dataset, load_dataset
 from datasets.distributed import split_dataset_by_node
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -95,22 +96,31 @@ def main_sft():
             with stats_tracker.record_timing("save"):
                 saver.save(engine, epoch, step, global_step)
 
-            with stats_tracker.record_timing("eval"), stats_tracker.scope("sft-eval"):
+            with stats_tracker.record_timing("eval"):
                 # No need to log anything. Logging will be handled outside
                 # via stats_tracker.export().
+                def evaluate_fn():
+                    with stats_tracker.scope("sft-eval"):
+                        for data in valid_dataloader:
+                            engine.evaluate_lm(data)
+
                 evaluator.evaluate(
-                    valid_dataloader,
-                    engine.evaluate_lm,
+                    evaluate_fn,
                     epoch,
                     step,
                     global_step,
                 )
 
-            logger.commit(epoch, step, global_step, stats_tracker.export())
+            logger.commit(
+                epoch,
+                step,
+                global_step,
+                stats_tracker.export(reduce_group=engine.parallelism_group),
+            )
             global_step += 1
 
-    engine.destroy()
     logger.close()
+    engine.destroy()
 
 
 if __name__ == "__main__":
