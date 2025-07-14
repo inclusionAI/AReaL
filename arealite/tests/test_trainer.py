@@ -1,5 +1,5 @@
 import sys
-
+import torch
 from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -50,12 +50,13 @@ def main_grpo():
     # ref.initialize()
 
     # # Synchronous RL
-    dataloader = StatefulDataLoader(train_dataset)
+    dataloader = StatefulDataLoader(train_dataset, batch_size=4)
     for epoch in range(1):
         data_generator = iter(dataloader)
-        for prompt in range(2):
-            prompt = next(data_generator)
-            batch = DistributedBatchMemory(prompt)
+        for _ in range(2):
+            batch = next(data_generator)
+            tensor_batch = {k: torch.tensor(v) for k, v in batch.items()}
+            batch = DistributedBatchMemory(tensor_batch)
             # Update inference engine weights
             # wcfg = actor.upload_weights(WeightUpdateMeta)
             # future = rollout.update_weights(wcfg)
