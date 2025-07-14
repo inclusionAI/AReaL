@@ -154,3 +154,7 @@ class InferenceEngine(abc.ABC):
     ) -> DistributedBatchMemory:
         """Submit a batch of requests to the inference engine and wait for the results."""
         raise NotImplementedError()
+
+    def get_scheduling_config(self) -> Scheduling:
+        """Get the scheduling configuration for the engine, e.g., image, cpu/gpu/memory size."""
+        raise NotImplementedError()

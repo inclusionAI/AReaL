@@ -61,7 +61,7 @@ class LocalScheduler(Scheduler):
         logging.info(
             f"Launched worker {worker_id} on rpc_port {rpc_port}, engine_port {engine_port}"
         )
-        return (worker_id, "127.0.0.1", engine_port)
+        return Worker(id=worker_id, ip="127.0.0.1", ports=[engine_port])
 
     def get_workers(self, timeout: float = 60.0) -> List[Worker]:
         """Waits for all workers to be ready in parallel."""

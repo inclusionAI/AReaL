@@ -28,8 +28,8 @@ class DistributedTrainController(TrainController):
     #   Controller data: DistributedBatch
     def __init__(self, train_engine: TrainEngine, config: TrainControllerConfig, scheduler: Scheduler):
         super().__init__(train_engine, config, scheduler)
-        self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
-        self.dp_world_size = self.allocate_mode.train_world_size // self.allocate_mode.train_dp_size
+        # self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
+        self.dp_world_size = 16 // 2
 
         # todo
         # @dataclass
@@ -52,7 +52,7 @@ class DistributedTrainController(TrainController):
         """Initialize environments for distributed training and load models."""
         scheduling = self.train_engine.get_scheduling_config()
         # todo：支持多容器
-        scheduling_config = SchedulingConfig(replicas=self.allocate_mode.train_world_size)
+        scheduling_config = SchedulingConfig(replicas=16)
         scheduling_config.specs.append(ContainerSpec(
             cpu=scheduling.cpu,
             mem=scheduling.mem,
@@ -69,7 +69,7 @@ class DistributedTrainController(TrainController):
 
         # todo: 不能写死remote megatron, 让engine抽象出接口
         tasks = [
-            self.scheduler.initialize_engine(worker.id, self.train_engine, RemoteMegatronInitConfig(server_addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.train_world_size))
+            self.scheduler.initialize_engine(worker.id, self.train_engine, RemoteMegatronInitConfig(server_addrs=server_addrs, global_rank=index, world_size=16))
             for index, worker in enumerate(self.workers)
         ]
 
@@ -121,7 +121,7 @@ class DistributedTrainController(TrainController):
         input_: DistributedBatchMemory
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function."""
-        batches = input_.split(self.allocate_mode.train_dp_size)
+        batches = input_.split(2)
 
         assert len(self.workers) % self.dp_world_size == 0
         tasks = []

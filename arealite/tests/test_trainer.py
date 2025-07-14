@@ -4,7 +4,7 @@ from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import load_expr_config, BaseExperimentConfig, InferenceEngineConfig, TrainEngineConfig, \
-    RolloutControllerConfig, TrainControllerConfig
+    RolloutControllerConfig, TrainControllerConfig, RemoteMegatronEngineConfig
 from arealite.api.engine_api import InferenceEngine
 from arealite.controller.rollout_controller import DistributedRolloutController
 from arealite.controller.train_controller import DistributedTrainController
@@ -15,7 +15,7 @@ from arealite.scheduler.local import LocalScheduler
 
 
 def main_grpo():
-    dataset = load_dataset("/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train.jsonl", split="train")
+    dataset = load_dataset("json",data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train_32.jsonl")
 
     # rollout_config, training_config = load_expr_config(sys.argv[1:])
 
@@ -26,12 +26,12 @@ def main_grpo():
 
 
     rollout = DistributedRolloutController(
-        RemoteSGLangEngine(InferenceEngineConfig()),
+        RemoteSGLangEngine(InferenceEngineConfig(experiment_name="ff", trial_name="ff")),
         RolloutControllerConfig(),
         scheduler,
     )
     actor = DistributedTrainController(
-        RemoteMegatronEngine(TrainEngineConfig()),
+        RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="ff", trial_name="ff")),
         TrainControllerConfig(),
         scheduler,
     )

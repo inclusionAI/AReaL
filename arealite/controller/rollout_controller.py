@@ -22,8 +22,7 @@ class DistributedRolloutController(RolloutController):
     #   Controller data: DistributedBatch
     def __init__(self, inf_engine: InferenceEngine, config: RolloutControllerConfig, scheduler: Scheduler):
         super().__init__(inf_engine, config, scheduler)
-        self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
-        self.dp_world_size = self.allocate_mode.gen_world_size // self.allocate_mode.gen_dp_size
+        self.dp_world_size = 16 // 2
 
     async def _rpc_call(self, method, *args, **kwargs):
         logging.info(f"[rollout controller] start to  rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
@@ -45,23 +44,17 @@ class DistributedRolloutController(RolloutController):
         """Initialize environments for distributed inference and load models."""
         scheduling = self.inf_engine.get_scheduling_config()
         # todo：支持多容器
-        scheduling_config = SchedulingConfig(replicas=self.allocate_mode.gen_world_size)
-        scheduling_config.specs.append(ContainerSpec(
-            cpu=scheduling.cpu,
-            mem=scheduling.mem,
-            gpu=scheduling.gpu,
-            container_image=self.config.container_image,
-            cmd=self.config.cmd,
-            env_vars=scheduling.env_vars,
-        ))
+        scheduling_config = SchedulingConfig(replicas=16)
+        scheduling_config = {"num_workers": 16}
         self.scheduler.create_workers(scheduling_config)
 
         self.workers = self.scheduler.get_workers(timeout=5*60)
-
+        for worker in self.workers:
+            print(f"dzq——debug: worker type: {type(worker)}")
         server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
 
         tasks = [
-            self.scheduler.initialize_engine(worker.id, self.inf_engine, RemoteSGLangInitConfig(server_addrs=server_addrs, global_rank=index, world_size=self.allocate_mode.gen_world_size))
+            self.scheduler.create_engine(worker.id, self.inf_engine, RemoteSGLangInitConfig(server_addrs=server_addrs))
             for index, worker in enumerate(self.workers)
         ]
 
@@ -87,7 +80,7 @@ class DistributedRolloutController(RolloutController):
         workflow: RolloutWorkflow
     ) -> DistributedBatchMemory:
         """Submit a batch of requests to the inference engine and wait for the results."""
-        batches = data.split(self.allocate_mode.gen_dp_size)
+        batches = data.split(2)
         assert len(self.workers) % self.dp_world_size == 0
         tasks = []
 
@@ -105,3 +98,4 @@ class DistributedRolloutController(RolloutController):
             result = result.merge(dataset)
 
         return result
+

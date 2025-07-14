@@ -18,9 +18,7 @@ from arealite.api.io_struct import (
 )
 from arealite.scheduler.base import Scheduler
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
-
-if TYPE_CHECKING:
-    from arealite.api.workflow_api import RolloutWorkflow
+from arealite.api.workflow_api import RolloutWorkflow
 
 
 class TrainController(ABC):

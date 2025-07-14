@@ -12,7 +12,7 @@ import torch.distributed as dist
 from tensordict import TensorDict
 
 from arealite.api.cli_args import InferenceEngineConfig
-from arealite.api.engine_api import InferenceEngine
+from arealite.api.engine_api import InferenceEngine, Scheduling
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.api.io_struct import (
     LLMRequest,
@@ -56,13 +56,12 @@ class RemoteSGLangEngine(InferenceEngine):
         self.server_idx = 0
 
         qsize = config.queue_size or config.max_concurrent_rollouts * 10
-        self.input_queue = Queue(maxsize=qsize)
-        self.output_queue = Queue(maxsize=qsize)
+        # self.input_queue = Queue(maxsize=qsize)
+        # self.output_queue = Queue(maxsize=qsize)
         self.result_cache = []
 
-        self.exiting = threading.Event()
-        self.lock = threading.Lock()
-
+        # self.exiting = threading.Event()
+        # self.lock = threading.Lock()
         self.rollout_stat = RolloutStat()
 
         self._version = 0
@@ -70,6 +69,10 @@ class RemoteSGLangEngine(InferenceEngine):
     def initialize(self, config: RemoteSGLangInitConfig):
         self.addresses = config.server_addrs
         self.addresses = ["10.10.131.247:8188"] * 8 + ["10.10.131.73:8188"] * 8
+        self.exiting = threading.Event()
+        self.lock = threading.Lock()
+        self.input_queue = Queue(maxsize=qsize)
+        self.output_queue = Queue(maxsize=qsize)
         self.rollout_thread = threading.Thread(target=self._rollout_thread)
         self.rollout_thread.start()
 
@@ -482,4 +485,11 @@ class RemoteSGLangEngine(InferenceEngine):
         res = self.rollout(data, workflow)  # TensorDict
         # TensorDict=>DistributedBatchMemory
         return DistributedBatchMemory(res.to_dict())
-        
+    
+    def get_scheduling_config(self):
+        return Scheduling(
+            cpu=4,
+            gpu=1,
+            mem=8,
+            type="engine",
+        )
