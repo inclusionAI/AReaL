@@ -337,7 +337,11 @@ class AgentGymEnv(gym.Env):
         """
         if self._orchestrator is None:
             raise ValueError("Orchestrator not initialized. Call reset() first.")
-        return self._orchestrator.environment.get_tools()
+        tools = self._orchestrator.environment.get_tools()
+        if self.solo_mode:
+            # extend user tools to the tools list in solo mode
+            tools.extend(self._orchestrator.environment.get_user_tools())
+        return tools
 
     def _get_policy(self) -> str:
         """
