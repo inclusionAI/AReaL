@@ -16,7 +16,7 @@ from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 
 def main_grpo():
     dataset = load_dataset("json",data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train_32.jsonl")
-
+    train_dataset = dataset['train']  # 取出train split
     # rollout_config, training_config = load_expr_config(sys.argv[1:])
 
     # Single-controller mode initialization
@@ -50,10 +50,10 @@ def main_grpo():
     # ref.initialize()
 
     # # Synchronous RL
-    dataloader = StatefulDataLoader(dataset)
-    for epoch in range(5):
+    dataloader = StatefulDataLoader(train_dataset)
+    for epoch in range(1):
         data_generator = iter(dataloader)
-        for prompt in range(10):
+        for prompt in range(2):
             prompt = next(data_generator)
             batch = DistributedBatchMemory(prompt)
             # Update inference engine weights
