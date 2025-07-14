@@ -1,7 +1,6 @@
-import gc
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -16,7 +15,6 @@ from arealite.api.cli_args import TrainEngineConfig
 from arealite.api.engine_api import (
     FinetuneSpec,
     SaveLoadMeta,
-    TrainEngine,
     WeightUpdateMeta,
 )
 from arealite.utils.data import (

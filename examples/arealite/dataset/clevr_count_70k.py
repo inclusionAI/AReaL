@@ -1,13 +1,8 @@
-from datasets import Dataset
-from typing import Any, Dict, List, Optional, Tuple, Union,Literal
+from typing import Any, Dict,  Optional, Union
 import math
-from PIL import Image
 from PIL.Image import Image as ImageObject
-from io import BytesIO
-import base64
-from jinja2 import Template
 import os
-from datasets import Dataset, load_dataset
+from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 
 def process_image(
