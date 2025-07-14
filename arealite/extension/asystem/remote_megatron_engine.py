@@ -41,7 +41,7 @@ class RemoteMegatronInitConfig:
     server_addrs: list[str]
     global_rank: int
     world_size: int
-    recover_dir: str
+    recover_dir: str = ""
 
 
 class RemoteMegatronEngine(TrainEngine):
@@ -89,7 +89,7 @@ class RemoteMegatronEngine(TrainEngine):
             "10.10.12.152:50000", "10.10.12.152:50001", "10.10.12.152:50002", "10.10.12.152:50003",
             "10.10.12.152:50004", "10.10.12.152:50005", "10.10.12.152:50006", "10.10.12.152:50007",
         ]
-
+        print(f"[megatron] dzq_debug global_rank: {global_rank}, serveraddr len:{len(cfg.server_addrs)}")
         self.megatron_addr = cfg.server_addrs[global_rank]
         master_addr = cfg.server_addrs[0]
         master_ip, master_port = master_addr.split(":", 1)  # ip:port
@@ -100,16 +100,16 @@ class RemoteMegatronEngine(TrainEngine):
         payload = {
             "rank": str(cfg.global_rank),
             "local_rank": str(local_rank),
-            "master_port": str(master_port),
-            "master_addr": str(master_addr),
+            "master_port": "57937",
+            "master_addr": str(master_ip),
             "world_size": str(cfg.world_size),
-            "megatron_config": megatron_config,
-            "loss_configs": self.config.loss_configs,
+            "megatron_config": remote_megatron_config,
+            "loss_configs": loss_configs,
             "recover_dir": cfg.recover_dir,
         }
 
         try:
-            target_url = f"http://{self.magatron_addr}/initialize"
+            target_url = f"http://{self.megatron_addr}/initialize"
             headers = {"Content-Type": "application/json"}
             logger.info(
                 f"[RemoteMegatronEngine] initialize begin send request to megatron server, "
@@ -642,3 +642,106 @@ def pack_logprobs(logprobs: torch.Tensor, seqlen: torch.Tensor) -> torch.Tensor:
         packed.append(logprobs[i, :valid_len])
 
     return torch.cat(packed, dim=0)
+
+remote_megatron_config = {
+    "moe_router_dtype": "fp32",
+    "moe_shared_expert_overlap": True,
+    "seed": 42,
+    "auto_detect_ckpt_format": True,
+    "no_load_rng": True,
+    "no_load_optim": True,
+    "no_save_optim": True,
+    "resume_dataloader": False,
+    "cp_comm_type": "p2p",
+    "distributed_backend": "nccl",
+    "distributed_timeout_minutes": 600,
+    "use_distributed_optimizer": True,
+    "overlap_grad_reduce": True,
+    "overlap_param_gather": False,
+    "overlap_p2p_comm": True,
+    "tensor_model_parallel_size": 1,
+    "pipeline_model_parallel_size": 1,
+    "context_parallel_size": 1,
+    "sequence_parallel": True,
+    "use_mcore_models": True,
+    "use_legacy_models": False,
+    "bf16": True,
+    "num_layers": 28,
+    "hidden_size": 2048,
+    "ffn_hidden_size": 1408,
+    "num_attention_heads": 16,
+    "group_query_attention": True,
+    "num_query_groups": 4,
+    "swiglu": True,
+    "untie_embeddings_and_output_weights": True,
+    "qk_layernorm": False,
+    "add_bias_linear": False,
+    "attention_dropout": 0.0,
+    "hidden_dropout": 0.0,
+    "norm_epsilon": 1.0e-6,
+    "normalization": "RMSNorm",
+    "init_method_std": 0.006,
+    "optim_normhead_fwd_alltoall": True,
+    "optim_normhead_bwd_alltoall": False,
+    "position_embedding_type": "rope",
+    "rotary_base": 600000,
+    "add_position_embedding": True,
+    "max_position_embeddings": 16384,
+    "make_vocab_size_divisible_by": 128,
+    "vocab_size": 126464,
+    "use_flash_attn": True,
+    "router_warmup_step": 0,
+    "num_experts": 64,
+    "moe_router_topk": 6,
+    "moe_shared_expert_intermediate_size": 2816,
+    "moe_router_load_balancing_type": "aux_loss",
+    "seq_length": 16384,
+    "micro_batch_size": 1,
+    "global_batch_size": 8,
+    "lr": 2.0e-6,
+    "lr_decay_style": "constant",
+    "lr_warmup_iters": 40,
+    "weight_decay": 0,
+    "clip_grad": 1.0,
+    "optimizer": "adam",
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.999,
+    "adam_eps": 1.0e-8,
+    "moe_grouped_gemm": True,
+    "attention_softmax_in_fp32": True,
+    "gradient_accumulation_fusion": True,
+    "cross_entropy_loss_fusion": False,
+    "masked_softmax_fusion": True,
+    "apply_rope_fusion": True,
+    "recompute_granularity": "full",
+    "recompute_method": "uniform",
+    "recompute_num_layers": 1,
+    "moe_token_dispatcher_type": "alltoall",
+    "tensorboard_log_interval": 1,
+    "enable_one_logger": False,
+    "log_timers_to_tensorboard": True,
+    "log_validation_ppl_to_tensorboard": True,
+    "log_params_norm": True,
+    "log_num_zeros_in_grad": True,
+    "log_throughput": True,
+    "log_loss_scale_to_tensorboard": False,
+    "async_save": False,
+    "train_iters": 100000,
+    "num_workers": 16,
+    "tokenizer_type": "HuggingFaceTokenizer",
+    "tokenizer_model": "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf",
+    "load": "/storage/george.zr/openpsi/models/moe_lite_0428_base_32k_dcp/",
+    "save": "/storage/xukuan.xk/repos/antnlp/personal/llm/dumps/rl/mcore_test2",
+    "no_save_rng": True,
+    "save_interval": 1,
+    "expert_model_parallel_size": 8,
+}
+
+loss_configs = {
+    "kl_ctl": 0.0,
+    "adaptive_kl_target": 6,
+    "adaptive_kl_horizon": 10000,
+    "eps_clip": 0.2,
+    "temperature": 1,
+    "token_normalize_scope": "global"
+}

@@ -18,7 +18,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 engine_obj, init_args = cloudpickle.loads(data)
                 EngineRPCServer.engine = engine_obj
                 EngineRPCServer.engine.initialize(init_args)
-                logging.info("Engine created and initialized on RPC server.")
+                print("Engine created and initialized on RPC server.")
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"OK")
@@ -61,10 +61,11 @@ if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
+    file_handler = logging.FileHandler("/tmp/output.log", mode="a")  # mode="w" 会覆盖文件
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--port", type=int, required=True)
     args = parser.parse_args()
     print(f"About to start RPC server on {args.port}")
     start_rpc_server(args.port)
-    logging.info(f"RPC server running on port {args.port}")
+    print(f"RPC server running on port {args.port}")

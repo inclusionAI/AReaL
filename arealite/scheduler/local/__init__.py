@@ -139,7 +139,7 @@ class LocalScheduler(Scheduler):
 
     # Other methods remain the same
     def create_engine(self, worker_id, engine_class, init_args):
-        logging.info(f"Creating engine on worker {worker_id}")
+        print(f"Creating engine on worker {worker_id}")
         return self.rpc_client.create_engine(worker_id, engine_class, init_args)
 
     def call_engine(self, worker_id, method, *args, **kwargs):

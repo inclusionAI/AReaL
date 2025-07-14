@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 import torch
 from tensordict import TensorDict
 import asyncio
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from arealite.api.cli_args import TrainControllerConfig
 from arealite.api.controller_api import TrainController
 from arealite.api.engine_api import TrainEngine
@@ -52,29 +52,34 @@ class DistributedTrainController(TrainController):
         """Initialize environments for distributed training and load models."""
         scheduling = self.train_engine.get_scheduling_config()
         # todo：支持多容器
-        scheduling_config = SchedulingConfig(replicas=16)
-        scheduling_config.specs.append(ContainerSpec(
-            cpu=scheduling.cpu,
-            mem=scheduling.mem,
-            gpu=scheduling.gpu,
-            container_image=self.config.container_image,
-            cmd=self.config.cmd,
-            env_vars=scheduling.env_vars,
-        ))
+        scheduling_config = {"num_workers": 16}
         self.scheduler.create_workers(scheduling_config)
 
         self.workers = self.scheduler.get_workers(timeout=60*6)
 
+        self.workers = self.workers[16:]
         server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
-
+        print(f"self.workers: {len(self.workers)}")
+        with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
+            futures = [
+                executor.submit(
+                    self.scheduler.create_engine,
+                    worker.id,
+                    self.train_engine,
+                    RemoteMegatronInitConfig(server_addrs=server_addrs, global_rank=index, world_size=16)
+                )
+                for index, worker in enumerate(self.workers)
+            ]
+            try:
+                for future in as_completed(futures):
+                    future.result()  # 可加异常处理
+            except KeyboardInterrupt:
+                print("收到Ctrl+C，正在终止所有初始化任务...")
+                # 取消所有未完成的future
+                for f in futures:
+                    f.cancel()
+                raise  # 重新抛出异常，主程序能感知
         # todo: 不能写死remote megatron, 让engine抽象出接口
-        tasks = [
-            self.scheduler.initialize_engine(worker.id, self.train_engine, RemoteMegatronInitConfig(server_addrs=server_addrs, global_rank=index, world_size=16))
-            for index, worker in enumerate(self.workers)
-        ]
-
-        loop = asyncio.get_running_loop()
-        return loop.run_until_complete(asyncio.gather(*tasks))
 
     def destroy(self):
         """Destroy the engine and release GPU memory."""

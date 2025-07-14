@@ -37,7 +37,7 @@ class DistributedRolloutController(RolloutController):
         logging.info(f"[rollout controller] end to rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
         return results
 
-    async def _rpc_call_tasks(self, tasks):
+    async def _rpc_call_tasks(self, *tasks):
         results = await asyncio.gather(*tasks)
         return results
 
@@ -52,13 +52,27 @@ class DistributedRolloutController(RolloutController):
         self.workers = self.scheduler.get_workers(timeout=5*60)
         server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
 
-        tasks = [
-            self.scheduler.create_engine(worker.id, self.inf_engine, RemoteSGLangInitConfig(server_addrs=server_addrs))
-            for index, worker in enumerate(self.workers)
-        ]
+        with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
+            futures = [
+                executor.submit(
+                    self.scheduler.create_engine,
+                    worker.id,
+                    self.inf_engine,
+                    RemoteSGLangInitConfig(server_addrs=server_addrs)
+                )
+                for worker in self.workers
+            ]
+            print(f"submit workers: {len(futures)}")
+            try:
+                for future in as_completed(futures):
+                    future.result()  # 可加异常处理
+            except KeyboardInterrupt:
+                print("收到Ctrl+C，正在终止所有初始化任务...")
+                # 取消所有未完成的future
+                for f in futures:
+                    f.cancel()
+                raise  # 重新抛出异常，主程序能感知
 
-        loop = asyncio.get_running_loop()
-        return loop.run_until_complete(asyncio.gather(*tasks))
 
     def update_weights(self, meta: WeightUpdateMeta) -> None:
         """Update weights in the inference engine."""
