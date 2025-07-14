@@ -199,6 +199,9 @@ class SGLangConfig:
     https://github.com/sgl-project/sglang for detailed documentation.
     """
 
+    model_path: str = ""
+    random_seed: int = 1
+    skip_tokenizer_init: bool = False
     disable_cuda_graph: bool = False
     disable_radix_cache: bool = False
     disable_cuda_graph_padding: bool = False
@@ -234,10 +237,8 @@ class SGLangConfig:
     schedule_policy: str = "lpm"
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
-
     dtype: str = "float16"
     kv_cache_dtype: str = "auto"
-
     # logging
     log_level: str = "warning"
     log_level_http: Optional[str] = "warning"
@@ -253,55 +254,60 @@ class SGLangConfig:
     @staticmethod
     def build_cmd(
         sglang_config: "SGLangConfig",
-        model_path,
         tp_size,
         base_gpu_id,
+        host,
+        port,
         dist_init_addr: Optional[str] = None,
-        served_model_name: Optional[str] = None,
-        skip_tokenizer_init: bool = True,
+        sglang_version: Optional[str] = None,
     ):
-        from realhf.base import network, pkg_version, seeding
+        from realhf.base import pkg_version
         from realhf.experiments.common.utils import asdict as conf_as_dict
 
         args: Dict = conf_as_dict(sglang_config)
-        args["random_seed"] = seeding.get_seed()
-
-        if served_model_name is None:
-            served_model_name = model_path
-        host_ip = network.gethostip()
-        host = "localhost" if not sglang_config.enable_metrics else host_ip
         args = dict(
             host=host,
-            model_path=model_path,
+            port=port,
             # Model and tokenizer
-            tokenizer_path=model_path,
+            tokenizer_path=sglang_config.model_path,
             tokenizer_mode="auto",
             load_format="auto",
             trust_remote_code=True,
             device="cuda",
-            served_model_name=served_model_name,
             is_embedding=False,
-            skip_tokenizer_init=skip_tokenizer_init,
             # Other runtime options
             tp_size=tp_size,
             # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
             base_gpu_id=base_gpu_id,
             nnodes=1,
             node_rank=0,
+            # initialization addresses and ports
             dist_init_addr=dist_init_addr,
             **args,
         )
-
-        if pkg_version.is_version_less("sglang", "0.4.4"):
+        if sglang_version:
+            version_less_than_0_4_4 = (
+                pkg_version.compare_versions(sglang_version, "0.4.4") < 0
+            )
+            version_less_than_0_4_3 = (
+                pkg_version.compare_versions(sglang_version, "0.4.3") < 0
+            )
+        elif pkg_version.is_available("sglang"):
+            version_less_than_0_4_4 = pkg_version.is_version_less("sglang", "0.4.4")
+            version_less_than_0_4_3 = pkg_version.is_version_less("sglang", "0.4.3")
+        else:
+            raise ValueError(
+                "A installed SGLang package or a specific SGLang version should be provided to build SGLang server cmd."
+            )
+        if version_less_than_0_4_4:
             args.pop("log_requests_level")
-        if pkg_version.is_version_less("sglang", "0.4.3"):
+        if version_less_than_0_4_3:
             args.pop("enable_nccl_nvls")
             args.pop("triton_attention_num_kv_splits")
             args.pop("cuda_graph_bs")
             args.pop("enable_memory_saver")
             args.pop("allow_auto_truncate")
             args.pop("file_storage_path")
-
         flags = []
         for k, v in args.items():
             if v is None or v is False or v == "":
@@ -320,8 +326,8 @@ class SGLangConfig:
 
 @dataclass
 class InferenceEngineConfig:
-    experiment_name: str
-    trial_name: str
+    experiment_name: str = MISSING
+    trial_name: str = MISSING
     max_concurrent_rollouts: None | int = field(
         default=None,
         metadata={
@@ -345,25 +351,18 @@ class InferenceEngineConfig:
         },
     )
     # Used by remote inference engines.
-    server_addrs: List[str] = field(
-        default_factory=list,
-        metadata={"help": "List of server addresses for inference."},
-    )
+    enable_rollout_tracing: bool = field(default=False)
     schedule_policy: str = field(
         default="round_robin",
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
     )
+    setup_timeout: float = field(default=90.0)
     request_timeout: float = field(
-        default=30.0, metadata={"help": "Timeout for HTTP requests."}
+        default=3600, metadata={"help": "Timeout for HTTP requests."}
     )
     request_retries: int = field(
         default=3, metadata={"help": "Number of retries for failed requests."}
     )
-
-
-@dataclass
-class SGLangEngineConfig:
-    pass
 
 
 @dataclass
@@ -595,42 +594,53 @@ class BaseExperimentConfig:
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
     stats_logger: StatsLoggerConfig = field(default_factory=StatsLoggerConfig)
 
+    server_only: bool = False
+    sglang: SGLangConfig = field(default_factory=SGLangConfig)
+
 
 @dataclass
 class SFTConfig(BaseExperimentConfig):
     model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
 
-def load_expr_config(argv: List[str], config_cls) -> Tuple[BaseExperimentConfig, str]:
+def parse_cli_args(argv: List[str]):
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config", help="The path of the main configuration file", required=True
     )
     args, overrides = parser.parse_known_args(argv)
-
     # Initialize hydra config
     config_file = Path(args.config).absolute()
     assert config_file.exists()
     # hydra only recognize relative paths
-    relpath = Path(
-        os.path.relpath(str(config_file), (Path(__file__).parent).absolute())
-    )
+    relpath = Path(os.path.relpath(str(config_file), Path(__file__).parent.absolute()))
     hydra_init(config_path=str(relpath.parent), job_name="app", version_base=None)
     cfg = hydra_compose(
-        config_name=str(relpath.name).rstrip(".yaml"),
+        config_name=str(relpath.name).split(".yaml")[0],
         overrides=overrides,
     )
+    return cfg, config_file
 
+
+def to_structured_cfg(cfg, config_cls):
     # Merge with the default configuration.
     # The yaml and commandline can omit some default values defined in python dataclasses.
     default_cfg = OmegaConf.structured(config_cls)
     cfg = OmegaConf.merge(default_cfg, cfg)
+    return cfg
+
+
+def load_expr_config(argv: List[str], config_cls):
+    cfg, config_file = parse_cli_args(argv)
+    cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)
     assert isinstance(cfg, BaseExperimentConfig)
-
     # Setup environment
-    from realhf.base import constants, name_resolve
+    from realhf.base import constants, name_resolve, names
 
     constants.set_experiment_trial_names(cfg.experiment_name, cfg.trial_name)
     name_resolve.reconfigure(cfg.cluster.name_resolve)
+    name_resolve.clear_subtree(
+        names.trial_root(experiment_name=cfg.experiment_name, trial_name=cfg.trial_name)
+    )
     return cfg, str(config_file)

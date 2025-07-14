@@ -17,19 +17,24 @@ class RLVRWorkflow(RolloutWorkflow):
         reward_fn,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
+        enable_thinking: bool,
     ):
         self.reward_fn = reward_fn
         self.gconfig = gconfig
         self.tokenizer = tokenizer
+        self.enable_thinking = enable_thinking
 
     async def arun_episode(self, engine, data):
-        text = self.tokenizer.apply_chat_template(
-            data["messages"], tokenize=False, add_generation_prompt=True
+        input_ids = self.tokenizer.apply_chat_template(
+            data["messages"],
+            tokenize=True,
+            add_generation_prompt=True,
+            enable_thinking=self.enable_thinking,
         )
         n_samples = self.gconfig.n_samples
         req = LLMRequest(
             rid=uuid.uuid4().hex,
-            text=text,
+            input_ids=input_ids,
             gconfig=self.gconfig.new(n_samples=1),
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
@@ -42,8 +47,8 @@ class RLVRWorkflow(RolloutWorkflow):
             versions = [-1] * resp.input_len + resp.output_versions
 
             reward = self.reward_fn(
-                prompt=req.text,
-                completions=resp.completions,
+                prompt=self.tokenizer.decode(input_ids),
+                completions=self.tokenizer.decode(resp.output_tokens),
                 prompt_ids=resp.input_tokens,
                 completion_ids=resp.output_tokens,
                 **data,

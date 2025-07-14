@@ -92,7 +92,7 @@ def main_grpo():
             future.result()
 
             # synchronous rollout
-            rollout_batch = rollout.rollout(batch, workflow=MyRolloutWorkflow(rollout_config.workflow))
+            rollout_batch = rollout.rollout_batch(batch, workflow=MyRolloutWorkflow(rollout_config.workflow))
             # or asynchronous rollout with filtering and off-policyness control
             # rollout_batch = rollout.prepare_batch(batch, 
             #                                       workflow=MyRolloutWorkflow(rollout_config.workflow),
@@ -697,7 +697,7 @@ reward = TrainController(Critic())
 rollout_controller = RolloutController(...)
 for _ in range(epochs):
     for _ in range(steps_per_epoch):
-        data = rollout_controller.rollout(prompt)
+        data = rollout_controller.rollout_batch(prompt)
         data['reward'] = reward.compute_values(data)
         ...
 ```

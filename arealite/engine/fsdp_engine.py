@@ -130,11 +130,6 @@ class FSDPEngine(TrainEngine):
             )
         logger.info(f"Model creation and loading time: {time.perf_counter() - tik}")
 
-        if self.config.gradient_checkpointing:
-            model.gradient_checkpointing_enable(
-                gradient_checkpointing_kwargs={"use_reentrant": False}
-            )
-
         # Simple auto wrap policy
         self.mixed_precision_policy = MixedPrecisionPolicy(
             param_dtype=dtype,
@@ -318,7 +313,9 @@ class FSDPEngine(TrainEngine):
                     self.config.trial_name,
                     meta.model_version,
                 )
-                name_resolve.add(update_name, str(time.time_ns()), keepalive_ttl=120)
+                name_resolve.add(
+                    update_name, str(datetime.now().timestamp()), keepalive_ttl=120
+                )
         else:
             raise ValueError(f"Unknown weight update type {meta.type}")
 
