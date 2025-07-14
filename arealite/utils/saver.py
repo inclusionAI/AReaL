@@ -1,7 +1,7 @@
 import getpass
 import os
 
-from transformers import PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast, AutoProcessor
 
 from arealite.api.cli_args import SaverConfig
 from arealite.api.engine_api import TrainEngine
@@ -45,6 +45,7 @@ class Saver:
         global_step: int,
         name: str = "default",
         tokenizer: PreTrainedTokenizerFast | None = None,
+        processor: AutoProcessor | None = None,
         base_model_path: str | None = None,
     ):
         if not self.freq_ctl.check(
@@ -63,6 +64,7 @@ class Saver:
             weight_format=weight_format,
             with_optim=with_optim,
             tokenizer=tokenizer,
+            processor=processor,
             base_model_path=base_model_path,
         )
         engine.save(meta)
