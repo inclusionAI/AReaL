@@ -51,7 +51,7 @@ class Saver:
             epochs=int(step == self.ft_sepc.steps_per_epoch - 1), steps=1
         ):
             return
-        path = self.get_save_checkpoint_path(epoch, step, global_step, name)
+        path = self.get_save_checkpoint_path(self.config,epoch, step, global_step, name)
         weight_format = "hf"
         with_optim = False
         if self.for_recover:

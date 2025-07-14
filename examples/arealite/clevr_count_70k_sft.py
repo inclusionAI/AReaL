@@ -1,10 +1,10 @@
 import os
 import sys
-os.environ["WORLD_SIZE"] = "1"
-os.environ["RANK"] = "0"
-os.environ["LOCAL_RANK"] = "0"
-os.environ["MASTER_ADDR"] = "localhost"
-os.environ["MASTER_PORT"] = "7779"
+# os.environ["WORLD_SIZE"] = "1"
+# os.environ["RANK"] = "0"
+# os.environ["LOCAL_RANK"] = "0"
+# os.environ["MASTER_ADDR"] = "localhost"
+# os.environ["MASTER_PORT"] = "7779"
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import SFTConfig, load_expr_config

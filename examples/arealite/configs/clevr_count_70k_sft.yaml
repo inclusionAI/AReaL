@@ -31,7 +31,7 @@ model:
   backend: fsdp
 
 train_dataset:
-  batch_size: 8
+  batch_size: 128
   shuffle: true
   pin_memory: true
   num_workers: 4
