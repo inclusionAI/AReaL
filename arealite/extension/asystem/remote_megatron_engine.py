@@ -247,7 +247,7 @@ class RemoteMegatronEngine(TrainEngine):
         # logprobs => packed_logprobs
         if "logprobs" in batch_data and "seqlen" in batch_data:
             batch_data["packed_logprobs"] = pack_logprobs(batch_data["logprobs"], batch_data["seqlen"])
-
+        print(f"train_distributed_batch, batch_data: {batch_data}")
         # 3.获取{advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards, global_stats}
         train_datas = self.process_training_data(batch_data)
         batch = {"advantages": train_datas["advantages"],
@@ -520,12 +520,12 @@ class RemoteMegatronEngine(TrainEngine):
             advantages=advantages,
             old_logp=old_logp,
             ppo_loss_mask=loss_mask,
-            packed_input_ids=input_.data["packed_input_ids"],
+            packed_input_ids=input_["packed_input_ids"],
             kl_rewards=kl_rewards,
         )
-        use_prox_logp = "proximal_logprobs" in input_.data
+        use_prox_logp = "proximal_logprobs" in input_.keys()
         if use_prox_logp:
-            flat_data["prox_logp"] = input_.data["proximal_logprobs"].float()
+            flat_data["prox_logp"] = input_["proximal_logprobs"].float()
 
         if self.config.wrap_policy.use_dense_reward:
             dense_reward_score = dense_reward_score[shift_one_indices]
@@ -569,13 +569,13 @@ class RemoteMegatronEngine(TrainEngine):
                 prompt_len=prompt_lens.float(),
                 seq_len=input_lens.float(),
             )
-            if "version_start" in input_.data:
+            if "version_start" in input_.keys():
                 seq_stats["head_offpolicyness"] = (
-                    self.global_step - input_.data["version_start"]
+                    self.global_step - input_["version_start"]
                 ).float()
-            if "version_end" in input_.data:
+            if "version_end" in input_.keys():
                 seq_stats["tail_offpolicyness"] = (
-                    self.global_step - input_.data["version_end"]
+                    self.global_step - input_["version_end"]
                 ).float()
             stats_tracker.stat(
                 **seq_stats,
@@ -602,7 +602,7 @@ class RemoteMegatronEngine(TrainEngine):
             advantages=advantages,
             old_logp=old_logp,
             ppo_loss_mask=loss_mask,
-            packed_input_ids=input_.data["packed_input_ids"],
+            packed_input_ids=input_["packed_input_ids"],
             kl_rewards=kl_rewards,
             global_stats=global_stats,
         )
