@@ -5,6 +5,7 @@ from arealite.scheduler.local import LocalScheduler
 class MyEngine:
     def __init__(self, config) -> None:
         self.config = config
+        self.value = 0
 
     def initialize(self, config):
         logging.info(f"MyEngine initialized with {config}")

@@ -1,8 +1,7 @@
 import subprocess
 import sys
 import logging
-import os
-import inspect
+from collections import defaultdict
 import concurrent.futures
 from arealite.scheduler.base import Scheduler, Worker
 from arealite.scheduler.rpc.rpc_client import RPCClient
@@ -18,26 +17,26 @@ class LocalScheduler(Scheduler):
     def __init__(self, config):
         super().__init__(config)
         self.procs = []  # Store subprocess objects
-        self.worker_infos = []
+        self.engine_workers = defaultdict(list)
 
     def _build_rpc_client(self, config):
         return RPCClient()
 
-    def create_workers(self, scheduler_config, *args, **kwargs):
+    def create_workers(self, worker_key, scheduler_config, *args, **kwargs):
         num_workers = scheduler_config.get("num_workers", 1)
 
         # Use a thread pool to launch and register workers in parallel
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
             # Prepare future tasks for each worker
             futures = [
-                executor.submit(self._start_single_worker, i)
+                executor.submit(self._start_single_worker, worker_key, i)
                 for i in range(num_workers)
             ]
 
             for future in concurrent.futures.as_completed(futures):
-                self.worker_infos.append(future.result())
+                self.engine_workers[worker_key].append(future.result())
 
-    def _start_single_worker(self, worker_index):
+    def _start_single_worker(self, worker_key, worker_index):
         """Helper function to start and register one worker."""
         rpc_port, engine_port = find_free_port(), find_free_port()
 
@@ -63,22 +62,28 @@ class LocalScheduler(Scheduler):
         )
         return Worker(id=worker_id, ip="127.0.0.1", ports=[engine_port])
 
-    def get_workers(self, timeout: float = 60.0) -> List[Worker]:
+    def get_workers(self, worker_key, timeout: float = 60.0) -> List[Worker]:
         """Waits for all workers to be ready in parallel."""
-        if not self.worker_map:
+        engine_list = self.engine_workers[worker_key]
+        if not engine_list:
             logging.info("No workers to wait for.")
-            return True
+            return []
 
         logging.info(
-            f"Waiting for all {len(self.worker_map)} workers to be ready (total timeout: {timeout}s)..."
+            f"Waiting for all {len(engine_list)}  {worker_key} workers to be ready (total timeout: {timeout}s)..."
         )
 
         with concurrent.futures.ThreadPoolExecutor(
-            max_workers=len(self.worker_map)
+            max_workers=len(engine_list)
         ) as executor:
             future_to_worker = {
-                executor.submit(wait_for_port, ip, port, timeout=timeout): worker_id
-                for worker_id, (ip, port) in self.worker_map.items()
+                executor.submit(
+                    wait_for_port,
+                    engine.ip,
+                    self.worker_map[engine.id][1],  # rpc port
+                    timeout=timeout,
+                ): engine.id
+                for engine in engine_list
             }
 
             done, not_done = concurrent.futures.wait(
@@ -95,7 +100,9 @@ class LocalScheduler(Scheduler):
                 ip, port = self.worker_map[worker_id]
                 try:
                     if future.result():
-                        logging.info(f"✅ Worker {worker_id} is ready on port {port}.")
+                        logging.info(
+                            f"✅ Worker {worker_id} is ready on rpc port {port}."
+                        )
                     else:
                         logging.warning(
                             f"⚠️ Worker {worker_id} on port {port} failed to become ready within its individual timeout."
@@ -119,10 +126,10 @@ class LocalScheduler(Scheduler):
                 all_ready = False
 
             if all_ready:
-                logging.info("All workers are ready.")
-                return self.worker_infos
+                logging.info(f"All {worker_key} workers are ready.")
+                return self.engine_workers[worker_key]
             else:
-                logging.error("Not all workers became ready in time.")
+                logging.error("Not all {worker_key} workers became ready in time.")
                 return []
 
     def delete_workers(self):

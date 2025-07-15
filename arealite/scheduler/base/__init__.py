@@ -4,12 +4,12 @@ from typing import Any, List, Dict
 from dataclasses import dataclass, field
 
 
-
 @dataclass
 class Worker:
     id: str
     ip: str
     ports: List[str] = field(default_factory=list)
+
 
 @dataclass
 class ContainerSpec:
@@ -21,10 +21,12 @@ class ContainerSpec:
     env_vars: Dict[str, str] = field(default_factory=dict)
     port: int = 50000
 
+
 @dataclass
 class SchedulingConfig:
     replicas: int = 0
     specs: List[ContainerSpec] = field(default_factory=list)
+
 
 class Scheduler(abc.ABC):
     def __init__(self, config: dict):
@@ -38,14 +40,14 @@ class Scheduler(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def create_workers(self, scheduler_config, *args, **kwargs):
+    def create_workers(self, worker_key, scheduler_config, *args, **kwargs):
         """
         启动worker，返回 [(id, ip, port), ...]
         """
         pass
 
     @abc.abstractmethod
-    def get_workers(self, timeout=None) -> List[Worker]:
+    def get_workers(self, worker_key, timeout=None) -> List[Worker]:
         """
         等待并返回worker 列表, 包含调度结果, 比如ip和engine ports
         (worker id, ip, ports)
@@ -53,8 +55,8 @@ class Scheduler(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def delete_workers(self, name):
-        """Stops a running job.
+    def delete_workers(self):
+        """stop all workers
 
         Raises exception if there is no such job, but passes if the job
         has stopped either successfully or not.

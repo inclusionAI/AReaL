@@ -8,12 +8,12 @@ def main():
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     sched = LocalScheduler({"type": "local"})
-    workers = sched.create_workers({"num_workers": 3})
-    worker_id, ip, port = workers[0]
-    sched.get_workers()
+    sched.create_workers("infer", {"num_workers": 1})
+
+    workers = sched.get_workers("infer")
     engine_obj = MyEngine({"value": 24})
-    assert sched.create_engine(worker_id, engine_obj, {"init": 1})
-    result = sched.call_engine(worker_id, "infer", 100, 10)
+    assert sched.create_engine(workers[0].id, engine_obj, {"init": 1})
+    result = sched.call_engine(workers[0].id, "infer", 100, 10)
     print("Result:", result)
     assert result == 1024
 
