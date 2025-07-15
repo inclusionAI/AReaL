@@ -40,6 +40,14 @@ class LLMResponse:
     latency: float = float("inf")
     ttft: float = float("inf")  # Time to first token
     itl: List[float] = field(default_factory=list)  # List of inter-token latencies
+
+    @property
+    def input_len(self) -> int:
+        return len(self.input_tokens)
+
+    @property
+    def output_len(self) -> int:
+        return len(self.output_tokens)
     
 @dataclass
 class VLMRequest(LLMRequest):

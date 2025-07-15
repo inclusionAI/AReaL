@@ -327,7 +327,7 @@ def split_padded_tensor_dict_into_mb_list(
     for key, value in data.items():
         if key=="image_grid_thw" or key=="pixel_values":
             continue
-        if not torch.is_tensor(value) or value.numel() != total_lens:
+        if not torch.is_tensor(value) or value.numel() != bs * max_seqlen:
             not_to_split[key] = value
         else:
             to_split[key] = value
