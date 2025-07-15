@@ -4,8 +4,6 @@ import sys
 
 import torch
 import torch.distributed as dist
-from datasets import Dataset, load_dataset
-from datasets.distributed import split_dataset_by_node
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import GRPOConfig, load_expr_config
@@ -19,7 +17,7 @@ from arealite.utils.stats_logger import StatsLogger
 from arealite.workflow.rlvr import RLVRWorkflow
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import stats_tracker
-
+from arealite.dataset.__init__ import get_custom_dataset
 
 
 
@@ -51,7 +49,6 @@ def extract_solution(solution_str, method="strict") -> str | None:
                     break
     return final_answer
 
-
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
     from realhf.impl.dataset.math_parser import extract_answer
 
@@ -71,10 +68,23 @@ def main_grpo():
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
-
+    train_dataset=get_custom_dataset(
+                    path=config.train_dataset.path,
+                    rank=rank,
+                    world_size=world_size,
+                    split="train",
+                    training_type="rl",
+                    )
+    valid_dataset=get_custom_dataset(
+                    path=config.valid_dataset.path,
+                    rank=rank,
+                    world_size=world_size,
+                    split="test",
+                    training_type="rl",
+                    )
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
-        get_gsm8k_dataset("train", rank, world_size),
+        train_dataset,
         batch_size=config.train_dataset.batch_size // world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
@@ -82,7 +92,7 @@ def main_grpo():
         drop_last=config.train_dataset.drop_last,
     )
     valid_dataloader = StatefulDataLoader(
-        get_gsm8k_dataset("test", rank, world_size),
+        valid_dataset,
         batch_size=config.valid_dataset.batch_size // world_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,

@@ -15,6 +15,9 @@ def get_custom_dataset(
     if "gsm8k" in path and training_type == "sft":
         from examples.arealite.dataset.gsm8k import get_gsm8k_sft_dataset
         return get_gsm8k_sft_dataset(path, split, tokenizer, rank, world_size)
+    elif "gsm8k" in path and training_type == "rl":
+        from examples.arealite.dataset.gsm8k import get_gsm8k_rl_dataset
+        return get_gsm8k_rl_dataset(path, split, rank, world_size)
     elif "clevr_count_70k" in path and training_type == "sft":
         from examples.arealite.dataset.clevr_count_70k import get_clevr_count_70k_sft_dataset
         return get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size)
