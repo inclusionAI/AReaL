@@ -629,7 +629,7 @@ def pack_input_ids(input_ids: torch.Tensor, seqlen: torch.Tensor) -> torch.Tenso
     packed = []
     for i in range(input_ids.shape[0]):
         valid_len = seqlen[i].item()
-        packed.extend(input_ids[i, :valid_len])
+        packed.append(input_ids[i, :valid_len])
     return torch.cat(packed, dim=0)
 
 
@@ -646,7 +646,7 @@ def pack_logprobs(logprobs: torch.Tensor, seqlen: torch.Tensor) -> torch.Tensor:
     packed = []
     for i in range(logprobs.shape[0]):
         valid_len = seqlen[i].item() - 1
-        packed.extend(logprobs[i, :valid_len])
+        packed.append(logprobs[i, :valid_len])
 
     return torch.cat(packed, dim=0)
 
