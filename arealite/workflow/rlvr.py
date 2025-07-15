@@ -51,8 +51,10 @@ class RLVRWorkflow(RolloutWorkflow):
             versions = [-1] * resp.input_len + resp.output_versions
             seq_no_eos_mask = resp.stop_reason == "stop"
 
+            if "prompt" in data.keys():
+                del data["prompt"]
             reward = self.reward_fn(
-                prompt=req.text,
+                prompt=text,
                 completions=resp.completions,
                 prompt_ids=resp.input_tokens,
                 completion_ids=resp.output_tokens,

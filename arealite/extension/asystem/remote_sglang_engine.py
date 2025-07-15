@@ -319,7 +319,7 @@ class RemoteSGLangEngine(InferenceEngine):
         accumulated_versions = []
 
         # Deal with rollout interruption
-        completions = ""
+        completions = []
         stop_reason = "length"
 
         if req.rid in self.rid_to_address:
@@ -370,8 +370,7 @@ class RemoteSGLangEngine(InferenceEngine):
             if req.text:
                 payload["text"] += result["text"]
             else:
-                payload["output_ids"] += result["output_ids"]
-            payload["text"] += result["text"]
+                payload["input_ids"] += result["output_ids"]
 
         latency = time.perf_counter() - start_time
 
