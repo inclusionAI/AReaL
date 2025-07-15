@@ -371,10 +371,11 @@ class RemoteSGLangEngine(InferenceEngine):
         return executor.submit(self._update_weights, meta)
 
     def _update_weights(self, meta: WeightUpdateMeta):
-        if meta.type == "distributed":
+        print("_update_weights in sglang remote called with meta")
+        if meta.type == "nccl":
             if not self.distributed_weight_update_initialized:
                 self._init_distributed_weight_update(meta)
-            logger.info(f"Begin update weights from {meta}")
+            print(f"Begin update weights from {meta}")
             try:
                 # Update weights from distributed
                 for parameter_name in meta.parameter_names:
@@ -439,16 +440,18 @@ class RemoteSGLangEngine(InferenceEngine):
 
     async def ainit_weights_update_group(self, addr: str, meta: WeightUpdateMeta):
         rank_offset = 1 + self.addresses.index(addr) * meta.tp_size
+        payload={
+            "master_address": meta.master_address,
+            "master_port": meta.master_port,
+            "rank_offset": rank_offset,
+            "world_size": meta.world_size,
+            "group_name": meta.group_name,
+            "backend": "nccl",
+        }
+        print(payload)
         response = await self.arequest_with_retry(
             endpoint="/init_weights_update_group",
-            payload={
-                "master_address": meta.master_address,
-                "master_port": meta.master_port,
-                "rank_offset": rank_offset,
-                "world_size": meta.world_size,
-                "group_name": meta.group_name,
-                "backend": "nccl",
-            },
+            payload=payload,
             method="POST",
             max_retries=3,
             timeout=self.config.request_timeout,

@@ -1,6 +1,7 @@
 import dis
 import gc
 import os
+import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -292,9 +293,15 @@ class FSDPEngine(TrainEngine):
 
     def upload_weights(self, meta: WeightUpdateMeta):
         if meta.type == "nccl":
-            if not self.weight_update_group_initialized:
-                self._init_distributed_weight_update(meta)
-            self._update_weights_from_distributed()
+            def run_update():
+                if not self.weight_update_group_initialized:
+                    self._init_distributed_weight_update(meta)
+                print("Initialized distributed weight update group in training engine", flush=True)
+                self._update_weights_from_distributed()
+
+            # 新建线程跑 broadcast，避免阻塞当前线程（Remote 端也有时间准备）
+            update_thread = threading.Thread(target=run_update)
+            update_thread.start()
         elif meta.type == "disk":
             self._save_model_to_hf(meta.path, self.tokenizer)
             # dist.barrier() are called when _save_model_to_hf finished
@@ -310,6 +317,7 @@ class FSDPEngine(TrainEngine):
 
     def _init_distributed_weight_update(self, meta: WeightUpdateMeta):
         if dist.get_rank() == 0:
+            print(f"[FSDP Engine]World size: {meta.world_size}, Master address: {meta.master_address}, Master port: {meta.master_port}", flush=True)
             self.weight_update_group = init_custom_process_group(
                 backend="nccl",
                 world_size=meta.world_size,
@@ -317,7 +325,7 @@ class FSDPEngine(TrainEngine):
                 rank=0,
                 group_name=meta.group_name,
             )
-        dist.barrier(group=self.weight_update_group)
+            self.weight_update_group_initialized = True
 
     def _update_weights_from_distributed(self):
         """Broadcast parameters from rank 0 (FSDP2 compatible)."""
@@ -327,10 +335,11 @@ class FSDPEngine(TrainEngine):
                     tensor = param.data.full_tensor()
                 else:
                     tensor = param.data
+                print(f"Broadcasting {param.name} with shape {tensor.shape}", flush=True)
                 dist.broadcast(tensor, src=0, group=self.weight_update_group)
                 del tensor  # optional, for memory hygiene
             torch.cuda.empty_cache()
-            dist.barrier(group=self.weight_update_group)
+            # dist.barrier(group=self.weight_update_group)
 
     def get_param_meta_for_distributed_update(self) -> Dict[str, Tuple[int]]:
         """Return a dict mapping param name to its shape (expanded if DTensor)."""
