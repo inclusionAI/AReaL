@@ -48,7 +48,7 @@ def main_grpo():
     # ref = MegatronGRPOActor(training_config.ref)
 
     rollout.initialize()
-    actor.initialize()
+    # actor.initialize()
     # ref.initialize()
 
     # # Synchronous RL
@@ -86,7 +86,7 @@ def main_grpo():
 
             # input_: List[Dict[str, tensor]]
             rollout_res = rollout.rollout(batch_data, workflow=workflow)
-            
+
             print(f"rollout_ exec success, {len(rollout_res)}")
             # or asynchronous rollout with filtering and off-policyness control
             # rollout_batch = rollout.prepare_batch(batch,
