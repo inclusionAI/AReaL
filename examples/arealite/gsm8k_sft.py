@@ -1,7 +1,6 @@
 import os
 import sys
 
-import torch.distributed as dist
 from datasets import Dataset, load_dataset
 from datasets.distributed import split_dataset_by_node
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -23,10 +22,8 @@ def process_gsm8k_sft_dataset(dataset: Dataset, tokenizer):
             sample["question"] + sample["answer"] + tokenizer.eos_token
         )
         prompt_token = tokenizer.encode(sample["question"])
-        prompt_mask = [1] * len(prompt_token) + [0] * (
-            len(seq_token) - len(prompt_token)
-        )
-        return {"input_ids": seq_token, "prompt_mask": prompt_mask}
+        loss_mask = [0] * len(prompt_token) + [1] * (len(seq_token) - len(prompt_token))
+        return {"input_ids": seq_token, "loss_mask": loss_mask}
 
     dataset = dataset.map(process).remove_columns(["question", "answer"])
     return dataset

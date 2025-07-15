@@ -150,7 +150,7 @@ def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
         engine.submit(data, workflow=workflow)
 
     # wait for some time
-    time.sleep(15)
+    time.sleep(5)
     assert engine.output_queue.qsize() == min(bs * 2, bs * (ofp + 1))
 
     # Update model version
@@ -161,7 +161,7 @@ def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
     for _ in range(bs * 2):
         engine.submit(data, workflow=workflow)
     # wait for some time
-    time.sleep(15)
+    time.sleep(5)
     assert engine.output_queue.qsize() == min(bs * 4, bs * (ofp + 2))
 
     # exit
@@ -204,6 +204,7 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
     config = InferenceEngineConfig(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
     os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
     inf_engine = RemoteSGLangEngine(config)
+    inf_engine.initialize(None, None)
     # test update weights
     path = tmp_path_factory.mktemp("upload_weights_from_disk")
     update_weight_meta = WeightUpdateMeta(
@@ -213,3 +214,4 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
     engine.upload_weights(update_weight_meta)
     future.result()
     assert inf_engine.get_version() == 100
+    inf_engine.destroy()

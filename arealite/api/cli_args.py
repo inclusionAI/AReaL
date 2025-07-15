@@ -83,6 +83,8 @@ class GenerationHyperparameters:
 
 
 # Train Engine Configs
+
+
 @dataclass
 class OptimizerConfig:
     """Configuration for model optimization during training.
@@ -191,6 +193,85 @@ class TrainEngineConfig:
     )
     backend: str = ""
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
+
+
+@dataclass
+class PPOActorConfig(TrainEngineConfig):
+    # Core PPO/GRPO Parameters
+    group_size: int = field(
+        default=1, metadata={"help": "Number of sequences in each group"}
+    )
+    group_adv_norm: bool = field(
+        default=False,
+        metadata={
+            "help": "Normalize advantages within each prompt group rather than globally"
+        },
+    )
+    ppo_n_minibatches: int = field(
+        default=4, metadata={"help": "Number of minibatches for each PPO update"}
+    )
+    eps_clip: float = field(
+        default=0.2, metadata={"help": "Clipping factor for policy ratio"}
+    )
+    c_clip: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "Dual clipping factor for policy ratio, must > 1.0. None disables dual clipping."
+        },
+    )
+    temperature: float = field(
+        default=1.0, metadata={"help": "Temperature during generation."}
+    )
+    # Reward
+    group_reward_norm: bool = field(
+        default=False,
+        metadata={
+            "help": "Normalize final reward of each sequence (GRPO-style) to reduce length bias"
+        },
+    )
+    reward_scaling: float = field(
+        default=1.0, metadata={"help": "Reward scaling factor"}
+    )
+    reward_bias: float = field(default=0.0, metadata={"help": "Reward bias"})
+    reward_clip: float = field(
+        default=20.0, metadata={"help": "Maximum absolute value for reward clipping"}
+    )
+    mask_no_eos_with_zero: bool = field(
+        default=False,
+        metadata={
+            "help": "Mask truncated generations (no EOS token) and exclude from training"
+        },
+    )
+
+    # Advantage Estimation
+    discount: float = field(
+        default=1.0, metadata={"help": "Discount factor for future rewards"}
+    )
+    gae_lambda: float = field(
+        default=1.0, metadata={"help": "Lambda parameter for GAE"}
+    )
+    adv_norm: bool = field(
+        default=True, metadata={"help": "Enable advantage normalization"}
+    )
+
+    # KL Control
+    kl_ctl: float = field(default=0.1, metadata={"help": "KL divergence coefficient"})
+
+    # Asynchronous RL
+    recompute_logprob: bool = field(
+        default=False,
+        metadata={"help": "Recompute logp and replace the logp returned by inference."},
+    )
+    use_decoupled_loss: bool = field(
+        default=False,
+        metadata={"help": "Use the decoupled loss. recompute_logprob must be True."},
+    )
+    behav_imp_weight_cap: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "We filter out the tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing the loss, must be > 1.0, use_decoupled_loss must be true"
+        },
+    )
 
 
 @dataclass
@@ -350,7 +431,6 @@ class InferenceEngineConfig:
             "the request will not be accepted.",
         },
     )
-    # Used by remote inference engines.
     enable_rollout_tracing: bool = field(default=False)
     schedule_policy: str = field(
         default="round_robin",
@@ -603,6 +683,17 @@ class SFTConfig(BaseExperimentConfig):
     model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
 
+@dataclass
+class GRPOConfig(BaseExperimentConfig):
+    async_training: bool = field(default=True)
+    gconfig: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
+    rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
+    actor: PPOActorConfig = field(default_factory=PPOActorConfig)
+    ref: PPOActorConfig = field(default_factory=PPOActorConfig)
+
+
 def parse_cli_args(argv: List[str]):
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -636,11 +727,8 @@ def load_expr_config(argv: List[str], config_cls):
     cfg = OmegaConf.to_object(cfg)
     assert isinstance(cfg, BaseExperimentConfig)
     # Setup environment
-    from realhf.base import constants, name_resolve, names
+    from realhf.base import constants, name_resolve
 
     constants.set_experiment_trial_names(cfg.experiment_name, cfg.trial_name)
     name_resolve.reconfigure(cfg.cluster.name_resolve)
-    name_resolve.clear_subtree(
-        names.trial_root(experiment_name=cfg.experiment_name, trial_name=cfg.trial_name)
-    )
     return cfg, str(config_file)

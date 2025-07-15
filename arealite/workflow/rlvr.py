@@ -42,8 +42,8 @@ class RLVRWorkflow(RolloutWorkflow):
         results = []
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
-            logprobs = [0] * resp.input_len + resp.output_logprobs
-            prompt_mask = [1] * resp.input_len + [0] * resp.output_len
+            logprobs = [0.0] * resp.input_len + resp.output_logprobs
+            loss_mask = [0] * resp.input_len + [1] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
 
             reward = self.reward_fn(
@@ -56,10 +56,10 @@ class RLVRWorkflow(RolloutWorkflow):
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),
-                prompt_mask=torch.tensor(prompt_mask).unsqueeze(0),
+                loss_mask=torch.tensor(loss_mask).unsqueeze(0),
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
                 versions=torch.tensor(versions).unsqueeze(0),
-                attention_mask=torch.ones(len(seq)).unsqueeze(0),
+                attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
                 # reward
                 rewards=torch.tensor([reward]),
             )

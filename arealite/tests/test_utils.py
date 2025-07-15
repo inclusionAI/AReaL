@@ -28,7 +28,7 @@ def mock_padded_data():
         ans_len = int(ans_len)
         seq = dict(
             input_ids=torch.randint(0, VOCAB_SIZE, size=(prompt_len + ans_len,)),
-            prompt_mask=torch.tensor([1] * prompt_len + [0] * ans_len),
+            loss_mask=torch.tensor([0] * prompt_len + [1] * ans_len),
             logprobs=torch.randn(prompt_len + ans_len),
             position_ids=torch.arange(prompt_len + ans_len),
         )

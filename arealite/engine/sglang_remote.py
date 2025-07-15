@@ -4,12 +4,11 @@ import random
 import threading
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from queue import Empty, Full, Queue
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List
 
-import aiohttp
 import requests
 import torch.distributed as dist
 from tensordict import TensorDict
@@ -24,6 +23,7 @@ from arealite.api.io_struct import (
     RolloutStat,
     WeightUpdateMeta,
 )
+from arealite.utils.http import arequest_with_retry
 from arealite.utils.padding import concat_padded_tensors
 from realhf.base import logging, name_resolve, names, pkg_version
 
@@ -98,10 +98,12 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec = None):
         self.rollout_tasks: Dict[str, asyncio.Task] = {}
+        self.executor = ProcessPoolExecutor(max_workers=1)
         self.rollout_thread = threading.Thread(target=self._rollout_thread)
         self.rollout_thread.start()
 
     def destroy(self):
+        self.executor.shutdown()
         self.exiting.set()
         self.rollout_thread.join()
 
@@ -217,64 +219,6 @@ class RemoteSGLangEngine(InferenceEngine):
             return server
         raise NotImplementedError("Only round-robin scheduling is implemented.")
 
-    async def arequest_with_retry(
-        self,
-        endpoint: str,
-        payload: Optional[Dict[str, Any]] = None,
-        method: str = "POST",
-        max_retries: Optional[int] = None,
-        timeout: Optional[float] = None,
-        retry_delay: float = 1.0,
-        target_addr: Optional[str] = None,
-    ) -> aiohttp.ClientResponse:
-        timeout = timeout or self.config.request_timeout
-        last_exception = None
-        max_retries = max_retries or self.config.request_retries
-
-        # Try with retries
-        for _ in range(max_retries):
-            if target_addr:
-                addr = target_addr
-            else:
-                addr = self.choose_server()
-            base_url = f"http://{addr}"
-            url = f"{base_url}{endpoint}"
-
-            for attempt in range(max_retries):
-                try:
-                    async with aiohttp.ClientSession(
-                        timeout=aiohttp.ClientTimeout(
-                            total=timeout,
-                            sock_connect=timeout,
-                        )
-                    ) as session:
-                        if method.upper() == "GET":
-                            response = await session.get(url)
-                        elif method.upper() == "POST":
-                            response = await session.post(url, json=payload)
-                        elif method.upper() == "PUT":
-                            response = await session.put(url, json=payload)
-                        elif method.upper() == "DELETE":
-                            response = await session.delete(url)
-                        else:
-                            raise ValueError(f"Unsupported HTTP method: {method}")
-
-                        response.raise_for_status()
-                        return await response.json()
-
-                except (
-                    aiohttp.ClientError,
-                    aiohttp.ClientResponseError,
-                    asyncio.TimeoutError,
-                ) as e:
-                    last_exception = e
-                    if attempt < max_retries - 1:
-                        await asyncio.sleep(retry_delay)
-                    continue
-        raise RuntimeError(
-            f"Failed after {max_retries} retries each. " f"Last error: {last_exception}"
-        )
-
     async def agenerate(self, req: LLMRequest) -> LLMResponse:
         """Async version of generate using aiohttp."""
         # Prepare request payload
@@ -328,13 +272,13 @@ class RemoteSGLangEngine(InferenceEngine):
             and len(accumulated_output_tokens) < gconfig.max_new_tokens
         ):
             # loop until the generation is complete
-            result = await self.arequest_with_retry(
+            result = await arequest_with_retry(
+                addr=self.choose_server(),
                 endpoint="/generate",
                 payload=payload,
                 method="POST",
                 max_retries=3,
                 timeout=self.config.request_timeout,
-                target_addr=server_addr,
             )
 
             # Parse response
@@ -370,55 +314,28 @@ class RemoteSGLangEngine(InferenceEngine):
             ttft=latency,  # Simplified for non-streaming
         )
 
-    def update_weights(self, meta):
-        executor = ThreadPoolExecutor(max_workers=1)
-        return executor.submit(self._update_weights, meta)
-
-    def _update_weights(self, meta: WeightUpdateMeta):
+    def update_weights(self, meta: WeightUpdateMeta):
         if meta.type == "disk":
             # Update weights from disk
-            # Wait for model checkpoints of meta.version
-            update_name = names.update_weights_from_disk(
-                self.config.experiment_name, self.config.trial_name, meta.model_version
+            # Use ProcessPool to bypass python GIL for running async coroutines
+            fut = self.executor.submit(
+                update_weights_from_disk,
+                self.config.experiment_name,
+                self.config.trial_name,
+                meta.model_version,
+                self.addresses,
+                meta.path,
+                self.config.request_retries,
+                self.config.request_timeout,
             )
-            save_timestamp = float(name_resolve.wait(update_name, timeout=120))
-            load_timestamp = datetime.now().timestamp()
-            logger.info(
-                f"Begin update weights from {meta.path}, responded in {(load_timestamp - save_timestamp):.2f}s"
-            )
-            try:
-                jobs = [
-                    self.aupdate_weights_from_disk(addr, meta.path)
-                    for addr in self.addresses
-                ]
-                loop = asyncio.new_event_loop()
-                # asyncio event loop should be manually set when running asyncio stuff in another thread
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(asyncio.gather(*jobs))
-            finally:
-                loop.close()
-            logger.info(
-                f"Loading weights done in {(datetime.now().timestamp() - load_timestamp):.2f}s"
-            )
-            self.set_version(meta.model_version)
+
+            def callback(fut):
+                self.set_version(meta.model_version)
+
+            fut.add_done_callback(callback)
+            return fut
         else:
             raise NotImplementedError(f"Unsupported weight update type: {meta.type}")
-
-    async def aupdate_weights_from_disk(self, addr, path: str):
-        res = await self.arequest_with_retry(
-            endpoint="/update_weights_from_disk",
-            payload=dict(model_path=str(path), allow_interrupt=True),
-            method="POST",
-            max_retries=3,
-            timeout=self.config.request_timeout,
-            target_addr=addr,
-        )
-        assert res["success"]
-        if "num_paused_requests" in res:
-            logger.info(
-                f"{res['num_paused_requests']} requests are interrupted "
-                f"during updating weights for server {addr}"
-            )
 
     def get_capacity(self):
         if dist.is_initialized():
@@ -515,3 +432,58 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def resume(self):
         self.paused.clear()
+
+
+async def aupdate_weights_from_disk(
+    addr, path: str, request_retries: int, request_timeout: float
+):
+    res = await arequest_with_retry(
+        addr=addr,
+        endpoint="/update_weights_from_disk",
+        payload=dict(model_path=str(path), allow_interrupt=True),
+        method="POST",
+        max_retries=request_retries,
+        timeout=request_timeout,
+    )
+    assert res["success"]
+    if "num_paused_requests" in res:
+        logger.info(
+            f"{res['num_paused_requests']} requests are interrupted "
+            f"during updating weights for server {addr}"
+        )
+
+
+def update_weights_from_disk(
+    experiment_name,
+    trial_name,
+    model_version,
+    addresses,
+    path,
+    request_retries,
+    request_timeout,
+):
+    async def _fn():
+        # Wait for model checkpoints of meta.version
+        update_name = names.update_weights_from_disk(
+            experiment_name, trial_name, model_version
+        )
+        save_timestamp = float(name_resolve.wait(update_name, timeout=120))
+        load_timestamp = datetime.now().timestamp()
+        logger.info(
+            f"Begin update weights from {path}, responded in {(load_timestamp - save_timestamp):.2f}s"
+        )
+        jobs = [
+            aupdate_weights_from_disk(
+                addr,
+                path=path,
+                request_retries=request_retries,
+                request_timeout=request_timeout,
+            )
+            for addr in addresses
+        ]
+        await asyncio.gather(*jobs)
+        logger.info(
+            f"Loading weights done in {(datetime.now().timestamp() - load_timestamp):.2f}s"
+        )
+
+    return asyncio.run(_fn())
