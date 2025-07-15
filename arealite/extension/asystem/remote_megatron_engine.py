@@ -399,6 +399,7 @@ class RemoteMegatronEngine(TrainEngine):
         for i in range(seq_no_eos_mask.shape[0]):
             if not seq_no_eos_mask[i]:
                 # Set value at the EOS token to be zero.
+                # denormalized_values shape: torch.Size([8, 207]), cu_seqlens shape: torch.Size([9])
                 denormalized_values[cu_seqlens[i + 1] - 1] = 0.0
                 values[cu_seqlens[i + 1] - 1] = 0.0
 
@@ -626,7 +627,7 @@ def pack_input_ids(input_ids: torch.Tensor, seqlen: torch.Tensor) -> torch.Tenso
     packed = []
     for i in range(input_ids.shape[0]):
         valid_len = seqlen[i].item()
-        packed.append(input_ids[i, :valid_len])
+        packed.extend(input_ids[i, :valid_len])
     return torch.cat(packed, dim=0)
 
 
@@ -643,7 +644,7 @@ def pack_logprobs(logprobs: torch.Tensor, seqlen: torch.Tensor) -> torch.Tensor:
     packed = []
     for i in range(logprobs.shape[0]):
         valid_len = seqlen[i].item() - 1
-        packed.append(logprobs[i, :valid_len])
+        packed.extend(logprobs[i, :valid_len])
 
     return torch.cat(packed, dim=0)
 
