@@ -68,7 +68,6 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def initialize(self, config: RemoteSGLangInitConfig):
         logger.info("SGLangEngine begin exec initialize...")
-        return
         self.addresses = config.server_addrs
         self.addresses = ["10.10.131.247:8188"] * 8 + ["10.10.131.73:8188"] * 8
         self.exiting = threading.Event()
