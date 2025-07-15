@@ -1,16 +1,28 @@
+import dis
+import gc
 import os
+import threading
 import time
 from datetime import datetime
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
+from sglang.srt.utils import init_custom_process_group
 from tensordict import TensorDict
+from torch.distributed._tensor import DTensor
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
 )
-from transformers import PreTrainedTokenizerFast
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    PreTrainedTokenizerFast,
+    get_constant_schedule_with_warmup,
+    get_linear_schedule_with_warmup,
+)
 
 from arealite.api.cli_args import TrainEngineConfig
 from arealite.api.engine_api import FinetuneSpec, SaveLoadMeta, WeightUpdateMeta
@@ -137,6 +149,10 @@ class FSDPEngine(BaseHFEngine):
         if meta.type == "nccl":
             if not self.weight_update_group_initialized:
                 self._init_distributed_weight_update(meta)
+            print(
+                "Initialized distributed weight update group in training engine",
+                flush=True,
+            )
             self._update_weights_from_distributed()
         elif meta.type == "disk":
             self._save_model_to_hf(meta.path, self.tokenizer)
@@ -154,14 +170,53 @@ class FSDPEngine(BaseHFEngine):
             raise ValueError(f"Unknown weight update type {meta.type}")
 
     def _init_distributed_weight_update(self, meta: WeightUpdateMeta):
-        raise NotImplementedError(
-            "Distributed weight update is not implemented for FSDPEngine yet. "
-        )
+        if dist.get_rank() == 0:
+            print(
+                f"[FSDP Engine]World size: {meta.world_size}, Master address: {meta.master_address}, Master port: {meta.master_port}",
+                flush=True,
+            )
+            self.weight_update_group = init_custom_process_group(
+                backend="nccl",
+                world_size=meta.world_size,
+                init_method=f"tcp://{meta.master_address}:{meta.master_port}",
+                rank=0,
+                group_name=meta.group_name,
+            )
+            self.weight_update_group_initialized = True
+            dist.barrier(group=self.weight_update_group, device_ids=[0])
 
     def _update_weights_from_distributed(self):
-        raise NotImplementedError(
-            "Distributed weight update is not implemented for FSDPEngine yet. "
-        )
+        """Broadcast parameters from rank 0 (FSDP2 compatible)."""
+        if dist.get_rank() == 0:
+            for name, param in self.model.named_parameters():
+                if isinstance(param.data, DTensor):
+                    tensor = param.data.full_tensor()
+                else:
+                    tensor = param.data
+                print(f"Broadcasting {name} with shape {tensor.shape}", flush=True)
+                dist.broadcast(tensor, src=0, group=self.weight_update_group)
+                del tensor  # optional, for memory hygiene
+            torch.cuda.empty_cache()
+
+            # dist.barrier(group=self.weight_update_group)
+
+    def get_param_meta_for_distributed_update(self) -> Dict[str, Tuple[int]]:
+        """Return a dict mapping param name to its shape (expanded if DTensor)."""
+        param_shapes = {}
+
+        for name, param in self.model.named_parameters():
+            try:
+                if isinstance(param.data, DTensor):
+                    tensor = param.data.full_tensor()
+                else:
+                    tensor = param.data
+
+                param_shapes[name] = tuple(tensor.shape)
+                del tensor  # free memory if full_tensor was created
+            except Exception as e:
+                logger.warning(f"Failed to get shape for param {name}: {e}")
+
+        return param_shapes
 
     def train_batch(
         self,
