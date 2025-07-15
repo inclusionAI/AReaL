@@ -1,12 +1,11 @@
 # Copyright 2025 Ant Group Inc.
 # Licensed under the Apache License, Version 2.0
-
 import enum
 import itertools
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from transformers import PreTrainedTokenizerFast
 
@@ -172,7 +171,7 @@ class WeightUpdateMeta:
     world_size: int = 1
     group_name: str = "aupdate_weights_from_distributed"
     parameter_names: List[str] = field(default_factory=list)
-    state_dict_key_to_shape: Dict[str, List[int]] = field(default_factory=dict)
+    state_dict_key_to_shape: Dict[str, Tuple[int]] = field(default_factory=dict)
 
 
 @dataclass

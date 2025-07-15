@@ -1,16 +1,19 @@
+import dis
 import gc
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
 import transformers
 from tensordict import TensorDict
+from torch.distributed._tensor import DTensor
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
 )
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -48,6 +51,7 @@ from arealite.utils.fsdp import (
 from arealite.utils.save_load import get_state_dict_from_repo_id_or_path
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import logging, name_resolve, names, pkg_version
+from sglang.srt.utils import init_custom_process_group
 
 logger = logging.getLogger("FSDPEngine")
 
@@ -305,14 +309,46 @@ class FSDPEngine(TrainEngine):
             raise ValueError(f"Unknown weight update type {meta.type}")
 
     def _init_distributed_weight_update(self, meta: WeightUpdateMeta):
-        raise NotImplementedError(
-            "Distributed weight update is not implemented for FSDPEngine yet. "
-        )
+        if dist.get_rank() == 0:
+            self.weight_update_group = init_custom_process_group(
+                backend="nccl",
+                world_size=meta.world_size,
+                init_method=f"tcp://{meta.master_address}:{meta.master_port}",
+                rank=0,
+                group_name=meta.group_name,
+            )
+        dist.barrier(group=self.weight_update_group)
 
     def _update_weights_from_distributed(self):
-        raise NotImplementedError(
-            "Distributed weight update is not implemented for FSDPEngine yet. "
-        )
+        """Broadcast parameters from rank 0 (FSDP2 compatible)."""
+        if dist.get_rank() == 0:
+            for param in self.model.parameters():
+                if isinstance(param.data, DTensor):
+                    tensor = param.data.full_tensor()
+                else:
+                    tensor = param.data
+                dist.broadcast(tensor, src=0, group=self.weight_update_group)
+                del tensor  # optional, for memory hygiene
+            torch.cuda.empty_cache()
+            dist.barrier(group=self.weight_update_group)
+
+    def get_param_meta_for_distributed_update(self) -> Dict[str, Tuple[int]]:
+        """Return a dict mapping param name to its shape (expanded if DTensor)."""
+        param_shapes = {}
+
+        for name, param in self.model.named_parameters():
+            try:
+                if isinstance(param.data, DTensor):
+                    tensor = param.data.full_tensor()
+                else:
+                    tensor = param.data
+
+                param_shapes[name] = tuple(tensor.shape)
+                del tensor  # free memory if full_tensor was created
+            except Exception as e:
+                logger.warning(f"Failed to get shape for param {name}: {e}")
+
+        return param_shapes
 
     def step_lr_scheduler(self):
         assert self.lr_scheduler is not None
