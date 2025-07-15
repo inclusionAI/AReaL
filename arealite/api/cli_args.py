@@ -601,30 +601,30 @@ class FSDPEngineConfig(TrainEngineConfig):
 # remote megatron
 @dataclass
 class RemoteMegatronWrapPolicy:
-    n_minibatches: int = 4
-    kl_ctl: float = 0.1
-    adv_norm: bool = True
+    n_minibatches: int = 1
+    kl_ctl: float = 0.0
+    adv_norm: bool = False
     discount: float = 1.0
     gae_lambda: float = 1.0
     eps_clip: float = 0.2
     c_clip: Optional[float] = None
     value_eps_clip: float = 0.2
     max_reward_clip: float = 5.0
-    disable_value: bool = False
+    disable_value: bool = True
     early_stop_kl: Optional[float] = None
     early_stop_imp_ratio: Optional[float] = None
     adaptive_kl_ctl: bool = False
     adaptive_kl_target: Optional[float] = 6
     adaptive_kl_horizon: Optional[float] = 10000
     enable_save: bool = True
-    value_norm: bool = False
+    value_norm: bool = True
     value_norm_type: str = field(metadata={"choices": ["exp", "ma"]}, default="exp")
     value_norm_beta: float = 0.99995
     value_norm_eps: float = 1e-5
-    group_size: int = 1
+    group_size: int = 8
     generation_size: Optional[int] = None
     mask_no_eos_with_zero: bool = False
-    group_adv_norm: bool = False
+    group_adv_norm: bool = True
     mask_too_long: bool = False
     use_dense_reward: bool = False
     reward_delta: bool = True

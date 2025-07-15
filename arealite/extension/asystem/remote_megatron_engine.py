@@ -376,12 +376,16 @@ class RemoteMegatronEngine(TrainEngine):
                 input_["packed_input_ids"], dtype=torch.float32
             )
         seq_no_eos_mask = input_["seq_no_eos_mask"]
-        if self.kl_adapter.value == 0:
-            ref_logp: torch.FloatTensor = reward_score.new_zeros(
-                int(input_lens.sum()) - len(input_lens)
-            )
-        else:
-            ref_logp: torch.FloatTensor = input_["packed_ref_logprobs"].float()
+        # if self.kl_adapter.value == 0:
+        #     ref_logp: torch.FloatTensor = reward_score.new_zeros(
+        #         int(input_lens.sum()) - len(input_lens)
+        #     )
+        # else:
+        #     ref_logp: torch.FloatTensor = input_["packed_ref_logprobs"].float()
+        # TODO: fix me
+        ref_logp: torch.FloatTensor = reward_score.new_zeros(
+            int(input_lens.sum()) - len(input_lens)
+        )
         old_logp: torch.FloatTensor = input_["packed_logprobs"].float()
 
         if not self.config.wrap_policy.disable_value:
