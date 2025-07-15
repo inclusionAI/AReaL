@@ -11,7 +11,7 @@ from arealite.controller.train_controller import DistributedTrainController
 from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronEngine
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangEngine
 from arealite.scheduler.local import LocalScheduler
-from arealite.dataset.gsm8k import process_gsm8k_rl_dataset
+from arealite.dataset.utils import process_rl_dataset
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.workflow.rlvr import RLVRWorkflow
 from arealite.api.cli_args import GenerationHyperparameters
@@ -54,7 +54,7 @@ def main_grpo():
     dataset = load_dataset("json",
                            data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train_32.jsonl")
     train_dataset = dataset['train']  # 取出train split
-    train_dataset = process_gsm8k_rl_dataset(train_dataset)
+    train_dataset = process_rl_dataset(train_dataset)
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
     batch_size = 4
     batch_data = []
