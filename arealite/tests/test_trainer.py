@@ -25,14 +25,14 @@ def main_grpo():
         RolloutControllerConfig(),
         scheduler,
     )
-    # actor = DistributedTrainController(
-    #     RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="ff", trial_name="ff")),
-    #     TrainControllerConfig(),
-    #     scheduler,
-    # )
+    actor = DistributedTrainController(
+        RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="ff", trial_name="ff")),
+        TrainControllerConfig(),
+        scheduler,
+    )
 
     rollout.initialize()
-    #actor.initialize()
+    actor.initialize()
 
     # # Synchronous RL
     dataset = load_dataset("json",
