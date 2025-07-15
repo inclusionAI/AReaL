@@ -1,4 +1,5 @@
 import asyncio
+from typing import List, Dict
 
 from arealite.api.engine_api import InferenceEngine
 from arealite.api.io_struct import (
@@ -112,3 +113,28 @@ class DistributedRolloutController(RolloutController):
 
         return result
 
+
+def rollout(
+    self,
+    data: List[Dict[str,]],
+    workflow: RolloutWorkflow
+) -> DistributedBatchMemory:
+    """Submit a batch of requests to the inference engine and wait for the results."""
+    batches = data.split(2)
+    assert len(self.workers) % self.dp_world_size == 0
+    tasks = []
+
+    for index, worker in enumerate(self.workers):
+        batch_index = index // self.dp_world_size
+        batch_data = batches[batch_index]
+        tasks.append(
+            self.scheduler.call_engine(worker.id, "rollout", batch_data, workflow)
+        )
+
+    datasets = asyncio.run(self._rpc_call_tasks(*tasks))
+
+    result = DistributedBatchMemory(None)
+    for dataset in datasets:
+        result = result.merge(dataset)
+
+    return result

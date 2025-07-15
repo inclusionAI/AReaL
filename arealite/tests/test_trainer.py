@@ -12,7 +12,9 @@ from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronEngi
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangEngine
 from arealite.scheduler.local import LocalScheduler
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
-
+from arealite.workflow.rlvr import RLVRWorkflow
+from arealite.api.cli_args import GenerationHyperparameters
+from realhf.api.core.data_api import load_hf_tokenizer
 
 def main_grpo():
     dataset = load_dataset("json",data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train_32.jsonl")
@@ -50,13 +52,20 @@ def main_grpo():
     # ref.initialize()
 
     # # Synchronous RL
-    dataloader = StatefulDataLoader(train_dataset, batch_size=4)
-    for epoch in range(1):
+    dataloader = StatefulDataLoader(train_dataset, batch_size=1)
+    batch_size = 4
+    batch_data = []
+    step_num = 2
+    epoch_num = 1
+    for epoch in range(epoch_num):
         data_generator = iter(dataloader)
-        for _ in range(2):
-            batch = next(data_generator)
-            tensor_batch = {k: torch.tensor(v) for k, v in batch.items()}
-            batch = DistributedBatchMemory(tensor_batch)
+        for step in range(step_num):
+            # get batch data
+            batch_data = []
+            for _ in range(batch_size):
+                batch = next(data_generator)
+                batch_data.append(batch)
+
             # Update inference engine weights
             # wcfg = actor.upload_weights(WeightUpdateMeta)
             # future = rollout.update_weights(wcfg)
@@ -64,21 +73,21 @@ def main_grpo():
             # future.result()
 
             # synchronous rollout
-            from arealite.workflow.rlvr import RLVRWorkflow
-            from arealite.api.cli_args import GenerationHyperparameters
-            from realhf.api.core.data_api import load_hf_tokenizer
             gconfig = GenerationHyperparameters(
                 max_new_tokens=16, greedy=False, n_samples=1
             )
             MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf"
             tokenizer = load_hf_tokenizer(MODEL_PATH)
             workflow = RLVRWorkflow(
-                reward_fn=lambda **kwargs: 1.0,  # Dummy reward function
+                reward_fn=lambda **kwargs: 1.0,
                 gconfig=gconfig,
                 tokenizer=tokenizer,
             )
-            rollout_batch = rollout.rollout_distributed_batch(batch, workflow=workflow)
-            print(f"rollout_distributed_batch exec success, {len(rollout_batch.dataset)}")
+
+            # input_: List[Dict[str, tensor]]
+            rollout_res = rollout.rollout(batch_data, workflow=workflow)
+            
+            print(f"rollout_ exec success, {len(rollout_res)}")
             # or asynchronous rollout with filtering and off-policyness control
             # rollout_batch = rollout.prepare_batch(batch,
             #                                       workflow=MyRolloutWorkflow(rollout_config.workflow),
