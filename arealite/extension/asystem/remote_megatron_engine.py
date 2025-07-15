@@ -400,6 +400,8 @@ class RemoteMegatronEngine(TrainEngine):
             if not seq_no_eos_mask[i]:
                 # Set value at the EOS token to be zero.
                 # denormalized_values shape: torch.Size([8, 207]), cu_seqlens shape: torch.Size([9])
+                print(
+                    f"dzq_debug denormalized_values shape: {denormalized_values.shape}, cu_seqlens shape: {cu_seqlens.shape}")
                 denormalized_values[cu_seqlens[i + 1] - 1] = 0.0
                 values[cu_seqlens[i + 1] - 1] = 0.0
 
