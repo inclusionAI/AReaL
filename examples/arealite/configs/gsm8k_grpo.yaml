@@ -90,11 +90,15 @@ train_dataset:
   batch_size: 256
   shuffle: true
   pin_memory: true
+  num_workers: 4
+  path: openai/gsm8k
 
 valid_dataset: 
   batch_size: 256
   shuffle: true
   pin_memory: true
+  num_workers: 4
+  path: openai/gsm8k
 
 # Utilities
 saver:

@@ -21,19 +21,7 @@ from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import stats_tracker
 
 
-def process_gsm8k_rl_dataset(dataset: Dataset):
-    def process(sample):
-        messages = [{"role": "user", "content": sample["question"]}]
-        return {"messages": messages}
 
-    dataset = dataset.map(process).remove_columns(["question"])
-    return dataset
-
-
-def get_gsm8k_dataset(split, rank, world_size):
-    dataset = load_dataset(path="openai/gsm8k", name="main", split=split)
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
-    return process_gsm8k_rl_dataset(dataset)
 
 
 # Adapted from verl.
