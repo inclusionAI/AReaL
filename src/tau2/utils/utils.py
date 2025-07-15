@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -12,8 +13,26 @@ res = load_dotenv()
 if not res:
     logger.warning("No .env file found")
 
-SOURCE_DIR = Path(__file__).parents[3]
-DATA_DIR = SOURCE_DIR / "data"
+# Try to get data directory from environment variable first
+DATA_DIR_ENV = os.getenv("TAU2_DATA_DIR")
+
+if DATA_DIR_ENV:
+    # Use environment variable if set
+    DATA_DIR = Path(DATA_DIR_ENV)
+    logger.info(f"Using data directory from environment: {DATA_DIR}")
+else:
+    # Fallback to source directory (for development)
+    SOURCE_DIR = Path(__file__).parents[3]
+    DATA_DIR = SOURCE_DIR / "data"
+    logger.info(f"Using data directory from source: {DATA_DIR}")
+
+# Check if data directory exists and is accessible
+if not DATA_DIR.exists():
+    logger.warning(f"Data directory does not exist: {DATA_DIR}")
+    logger.warning(
+        "Set TAU2_DATA_DIR environment variable to point to your data directory"
+    )
+    logger.warning("Or ensure the data directory exists in the expected location")
 
 
 def get_dict_hash(obj: dict) -> str:

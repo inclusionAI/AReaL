@@ -56,10 +56,26 @@ source .venv/bin/activate
 3. Install tau2
 
 ```bash
-pip install .
+pip install -e .
 ```
 
 This will enable you to run the `tau2` command.
+
+**Note:** If you use `pip install .` (without `-e`), you'll need to set the `TAU2_DATA_DIR` environment variable to point to your data directory:
+
+```bash
+export TAU2_DATA_DIR=/path/to/your/tau2-bench/data
+```
+
+**Check your data directory setup:**
+
+After installation, you can verify that your data directory is correctly configured by running:
+
+```bash
+tau2 check-data
+```
+
+This command will check if the data directory exists and print instructions if it is missing.
 
 To remove all the generated files and the virtual environment, run:
 ```bash
@@ -122,6 +138,12 @@ tau2 domain <domain>
 Visit http://127.0.0.1:8004/redoc to see the domain policy and API documentation.
 
 ![domain_viewer1](figs/domain_viewer.png)
+
+### Check data configuration
+```bash
+tau2 check-data
+```
+This command checks if your data directory is properly configured and all required files are present.
 
 ## Experiments
 

@@ -8,14 +8,8 @@ from typing import Optional
 from loguru import logger
 
 from tau2.agent.llm_agent import LLMAgent, LLMGTAgent, LLMSoloAgent
-from tau2.data_model.simulation import (
-    AgentInfo,
-    Info,
-    Results,
-    RunConfig,
-    SimulationRun,
-    UserInfo,
-)
+from tau2.data_model.simulation import (AgentInfo, Info, Results, RunConfig,
+                                        SimulationRun, UserInfo)
 from tau2.data_model.tasks import Task
 from tau2.environment.environment import Environment, EnvironmentInfo
 from tau2.evaluator.evaluator import EvaluationType, evaluate_simulation
@@ -23,7 +17,7 @@ from tau2.metrics.agent_metrics import compute_metrics
 from tau2.orchestrator.orchestrator import Orchestrator
 from tau2.registry import RegistryInfo, registry
 from tau2.user.user_simulator import DummyUser, get_global_user_sim_guidelines
-from tau2.utils.display import ConsoleDisplay
+from tau2.utils.display import ConsoleDisplay, Text
 from tau2.utils.pydantic_utils import get_pydantic_hash
 from tau2.utils.utils import DATA_DIR, get_commit_hash, get_now, show_dict_diff
 
@@ -63,11 +57,12 @@ def get_tasks(
     Loads the tasks for the given domain.
     """
     if task_ids is None:
-        return load_tasks(task_set_name=task_set_name)
-    tasks = [
-        task for task in load_tasks(task_set_name=task_set_name) if task.id in task_ids
-    ]
-    if len(tasks) != len(task_ids):
+        tasks = load_tasks(task_set_name=task_set_name)
+    else:
+        tasks = [
+            task for task in load_tasks(task_set_name=task_set_name) if task.id in task_ids
+        ]
+    if task_ids is not None and len(tasks) != len(task_ids):
         missing_tasks = set(task_ids) - set([task.id for task in tasks])
         raise ValueError(
             f"Not all tasks were found for task set {task_set_name}: {missing_tasks}"
@@ -105,16 +100,14 @@ def run_domain(config: RunConfig) -> Results:
         total_num_tasks = len(tasks)
         tasks = [task for task in tasks if LLMGTAgent.check_valid_task(task)]
         num_tasks = len(tasks)
-        ConsoleDisplay.console.print(
-            f"[bold green]Running {num_tasks} out of {total_num_tasks} tasks for GT agent.[/bold green]"
-        )
+        console_text = Text(text=f"Running {num_tasks} out of {total_num_tasks} tasks for GT agent.", style="bold green")
+        ConsoleDisplay.console.print(console_text)
     if "solo" in config.agent:
         total_num_tasks = len(tasks)
         tasks = [task for task in tasks if LLMSoloAgent.check_valid_task(task)]
         num_tasks = len(tasks)
-        ConsoleDisplay.console.print(
-            f"[bold green]Running {num_tasks} out of {total_num_tasks} tasks for solo agent.[/bold green]"
-        )
+        console_text = Text(text=f"Running {num_tasks} out of {total_num_tasks} tasks for solo agent.", style="bold green")
+        ConsoleDisplay.console.print(console_text)
 
     num_trials = config.num_trials
     save_to = config.save_to
@@ -293,9 +286,8 @@ def run_tasks(
                     ]
                 )
                 simulation_results = prev_simulation_results
-                ConsoleDisplay.console.print(
-                    f"[bold yellow]Resuming run from {len(done_runs)} runs. {len(tasks) * num_trials - len(done_runs)} runs remaining.[/bold yellow]"
-                )
+                console_text = Text(text=f"Resuming run from {len(done_runs)} runs. {len(tasks) * num_trials - len(done_runs)} runs remaining.", style="bold yellow")
+                ConsoleDisplay.console.print(console_text)
         # Create new save file
         else:
             # Check if save_to exists and create parent directories if needed
@@ -316,9 +308,8 @@ def run_tasks(
                 json.dump(ckpt, fp, indent=2)
 
     def _run(task: Task, trial: int, seed: int, progress_str: str) -> SimulationRun:
-        ConsoleDisplay.console.print(
-            f"[bold green]{progress_str} Running task {task.id}, trial {trial + 1}[/bold green]"
-        )
+        console_text = Text(text=f"{progress_str}. Running task {task.id}, trial {trial + 1}", style="bold green")
+        ConsoleDisplay.console.print(console_text)
         try:
             simulation = run_task(
                 domain=domain,
@@ -347,9 +338,8 @@ def run_tasks(
     for trial in range(num_trials):
         for i, task in enumerate(tasks):
             if (trial, task.id, seeds[trial]) in done_runs:
-                ConsoleDisplay.console.print(
-                    f"[bold yellow]Skipping task {task.id}, trial {trial} because it has already been run.[/bold yellow]"
-                )
+                console_text = Text(text=f"Skipping task {task.id}, trial {trial} because it has already been run.", style="bold yellow")
+                ConsoleDisplay.console.print(console_text)
                 continue
             progress_str = f"{i}/{len(tasks)} (trial {trial + 1}/{num_trials})"
             args.append((task, trial, seeds[trial], progress_str))

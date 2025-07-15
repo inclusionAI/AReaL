@@ -192,6 +192,12 @@ def main():
     start_parser = subparsers.add_parser("start", help="Start all servers")
     start_parser.set_defaults(func=lambda args: run_start_servers())
 
+    # Check data command
+    check_data_parser = subparsers.add_parser(
+        "check-data", help="Check if data directory is properly configured"
+    )
+    check_data_parser.set_defaults(func=lambda args: run_check_data())
+
     args = parser.parse_args()
     if not hasattr(args, "func"):
         parser.print_help()
@@ -220,6 +226,12 @@ def run_start_servers():
     from tau2.scripts.start_servers import main as start_main
 
     start_main()
+
+
+def run_check_data():
+    from tau2.scripts.check_data import main as check_data_main
+
+    check_data_main()
 
 
 if __name__ == "__main__":
