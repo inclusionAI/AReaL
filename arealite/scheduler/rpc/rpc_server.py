@@ -44,7 +44,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
         except Exception as e:
             import traceback
 
-            logging.error(f"Exception in do_POST: {e}\n{traceback.format_exc()}")
+            print(f"Exception in do_POST: {e}\n{traceback.format_exc()}")
             self.send_response(500)
             self.end_headers()
             self.wfile.write(

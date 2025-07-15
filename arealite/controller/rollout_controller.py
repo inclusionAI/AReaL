@@ -1,6 +1,6 @@
 import asyncio
 from typing import List, Dict, Any
-from tensordict import TensorDict
+from tensordict import TensorDict, stack
 
 from arealite.api.engine_api import InferenceEngine
 from arealite.api.io_struct import (
@@ -52,6 +52,7 @@ class DistributedRolloutController(RolloutController):
         self.scheduler.create_workers(scheduling_config)
 
         self.workers = self.scheduler.get_workers(timeout=5*60)
+        self.workers = self.workers[0:16]
         server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
 
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
@@ -97,30 +98,65 @@ class DistributedRolloutController(RolloutController):
         """Submit a batch of requests to the inference engine and wait for the results."""
         batches = data.split(2)
         assert len(self.workers) % self.dp_world_size == 0
-        tasks = []
+        futures = []
 
-        for index, worker in enumerate(self.workers):
-            batch_index = index//self.dp_world_size
-            batch_data = batches[batch_index]
-            tasks.append(
-                self.scheduler.call_engine(worker.id, "rollout", batch_data, workflow)
-            )
+        with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
+            for index, worker in enumerate(self.workers):
+                batch_index = index//self.dp_world_size
+                batch_data = batches[batch_index]
+                futures.append(executor.submit(
+                    self.scheduler.call_engine,
+                    worker.id,
+                    "rollout",
+                    batch_data,
+                    workflow
+                ))
 
-        datasets = asyncio.run(self._rpc_call_tasks(*tasks))
+            results = []
+            try:
+                for future in as_completed(futures):
+                    result = future.result()  # 可加异常处理
+                    results.append(result)
+            except KeyboardInterrupt:
+                print("收到Ctrl+C，正在终止所有初始化任务...")
+                # 取消所有未完成的future
+                for f in futures:
+                    f.cancel()
+                raise  # 重新抛出异常，主程序能感知
 
-        result = DistributedBatchMemory(None)
-        for dataset in datasets:
-            result = result.merge(dataset)
 
-        return result
+        batchdata = DistributedBatchMemory(None)
+        for dataset in results:
+            batchdata = batchdata.merge(dataset)
+
+        return batchdata
 
     def rollout(
         self, data: List[Dict[str, Any]], workflow: RolloutWorkflow
     ) -> TensorDict:
-        tasks = []
-        for index, worker in enumerate(self.workers):
-            tasks.append(
-                self.scheduler.call_engine(worker.id, "rollout", data, workflow)
-            )
-        result = asyncio.run(self._rpc_call_tasks(*tasks))
-        return result
+        futures = []
+
+        with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
+            for index, worker in enumerate(self.workers):
+                futures.append(executor.submit(
+                    self.scheduler.call_engine,
+                    worker.id,
+                    "rollout",
+                    data,
+                    workflow
+                ))
+
+            results = []
+            try:
+                for future in as_completed(futures):
+                    result = future.result()  # 可加异常处理
+                    results.append(result)
+            except KeyboardInterrupt:
+                print("收到Ctrl+C，正在终止所有初始化任务...")
+                # 取消所有未完成的future
+                for f in futures:
+                    f.cancel()
+                raise  # 重新抛出异常，主程序能感知
+
+        return stack(results, dim=0)
+

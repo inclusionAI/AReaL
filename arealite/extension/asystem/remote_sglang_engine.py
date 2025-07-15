@@ -373,7 +373,8 @@ class RemoteSGLangEngine(InferenceEngine):
                 payload["input_ids"] += result["output_ids"]
 
         latency = time.perf_counter() - start_time
-
+        
+        print(f"result: {result}")
         return LLMResponse(
             completions=completions,
             input_tokens=req.input_ids,

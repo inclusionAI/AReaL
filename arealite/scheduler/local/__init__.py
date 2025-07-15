@@ -143,7 +143,7 @@ class LocalScheduler(Scheduler):
         return self.rpc_client.create_engine(worker_id, engine_class, init_args)
 
     def call_engine(self, worker_id, method, *args, **kwargs):
-        logging.info(
+        print(
             f"Calling '{method}' on worker {worker_id} with arg: {args} {kwargs}"
         )
         return self.rpc_client.call_engine(worker_id, method, *args, **kwargs)

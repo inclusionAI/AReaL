@@ -47,7 +47,10 @@ def main_grpo():
     # ref = MegatronGRPOActor(training_config.ref)
 
     rollout.initialize()
-    # actor.initialize()
+    print(f"rollout workers len: {len(rollout.workers)}")
+    actor.initialize()
+    print(f"actor workers len: {len(actor.workers)}")
+
     # ref.initialize()
 
     # # Synchronous RL
@@ -56,9 +59,9 @@ def main_grpo():
     train_dataset = dataset['train']  # 取出train split
     # train_dataset = process_rl_dataset(train_dataset)
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
-    batch_size = 4
+    batch_size = 1
     batch_data = []
-    step_num = 2
+    step_num = 1
     epoch_num = 1
     for epoch in range(epoch_num):
         data_generator = iter(dataloader)
@@ -91,6 +94,7 @@ def main_grpo():
             rollout_res = rollout.rollout(batch_data, workflow=workflow)
 
             print(f"rollout_ exec success, {len(rollout_res)}")
+            print(f"rollout_res: {rollout_res}")
             # or asynchronous rollout with filtering and off-policyness control
             # rollout_batch = rollout.prepare_batch(batch,
             #                                       workflow=MyRolloutWorkflow(rollout_config.workflow),
