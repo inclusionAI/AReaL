@@ -58,6 +58,7 @@ class RemoteSGLangEngine(InferenceEngine):
         self.lock = threading.Lock()
 
         self.rollout_stat = RolloutStat()
+        self.distributed_weight_update_initialized = False
 
         self._version = 0
 
@@ -370,7 +371,28 @@ class RemoteSGLangEngine(InferenceEngine):
         return executor.submit(self._update_weights, meta)
 
     def _update_weights(self, meta: WeightUpdateMeta):
-        if meta.type == "disk":
+        if meta.type == "distributed":
+            if not self.distributed_weight_update_initialized:
+                self._init_distributed_weight_update(meta)
+            logger.info(f"Begin update weights from {meta}")
+            try:
+                # Update weights from distributed
+                for parameter_name in meta.parameter_names:
+                    jobs = [
+                        self.aupdate_weights_from_distributed(
+                            addr, meta, parameter_name
+                        )
+                        for addr in self.addresses
+                    ]
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(asyncio.gather(*jobs))
+            finally:
+                loop.close()
+            logger.info(f"Distributed update weights done")
+            self.set_version(meta.model_version)
+
+        elif meta.type == "disk":
             # Update weights from disk
             # Wait for model checkpoints of meta.version
             update_name = names.update_weights_from_disk(
@@ -398,6 +420,68 @@ class RemoteSGLangEngine(InferenceEngine):
             self.set_version(meta.model_version)
         else:
             raise NotImplementedError(f"Unsupported weight update type: {meta.type}")
+
+    def _init_distributed_weight_update(self, meta: WeightUpdateMeta):
+        logger.info(f"Begin init distributed weight update")
+        try:
+            # Initialize weights update group
+            jobs = [
+                self.ainit_weights_update_group(addr, meta) for addr in self.addresses
+            ]
+            loop = asyncio.new_event_loop()
+            # asyncio event loop should be manually set when running asyncio stuff in another thread
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(asyncio.gather(*jobs))
+            self.distributed_weight_update_initialized = True
+            logger.info(f"Distributed update weights initialized")
+        finally:
+            loop.close()
+
+    async def ainit_weights_update_group(self, addr: str, meta: WeightUpdateMeta):
+        rank_offset = 1 + self.addresses.index(addr) * meta.tp_size
+        response = await self.arequest_with_retry(
+            endpoint="/init_weights_update_group",
+            payload={
+                "master_address": meta.master_address,
+                "master_port": meta.master_port,
+                "rank_offset": rank_offset,
+                "world_size": meta.world_size,
+                "group_name": meta.group_name,
+                "backend": "nccl",
+            },
+            method="POST",
+            max_retries=3,
+            timeout=self.config.request_timeout,
+        )
+        res = await response.json()
+        assert res["success"]
+        if "num_paused_requests" in res:
+            logger.info(
+                f"{res['num_paused_requests']} requests are interrupted "
+                f"during updating weights for server {addr}"
+            )
+
+    async def aupdate_weights_from_distributed(
+        self, addr: str, meta: WeightUpdateMeta, parameter_name: str
+    ):
+        response = await self.arequest_with_retry(
+            endpoint="/update_weights_from_distributed",
+            payload={
+                "name": parameter_name,
+                "dtype": "bfloat16",
+                "shape": meta.state_dict_key_to_shape[parameter_name],
+            },
+            method="POST",
+            max_retries=3,
+            timeout=self.config.request_timeout,
+        )
+        res = await response.json()
+        assert res["success"]
+        if "num_paused_requests" in res:
+            logger.info(
+                f"{res['num_paused_requests']} requests are interrupted "
+                f"during updating weights for server {addr}"
+            )
 
     async def aupdate_weights_from_disk(self, addr, path: str):
         response = await self.arequest_with_retry(
