@@ -38,7 +38,7 @@ class RLVRWorkflow(RolloutWorkflow):
         n_samples = self.gconfig.n_samples
         req = LLMRequest(
             rid=uuid.uuid4().hex,
-            text=prompt_encodings["input_ids"],
+            input_ids=prompt_encodings["input_ids"],
             gconfig=self.gconfig.new(n_samples=1),
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])

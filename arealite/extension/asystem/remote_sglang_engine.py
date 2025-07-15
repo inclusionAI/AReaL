@@ -302,7 +302,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
         # NOTE: rid should NOT be passed in payload
         payload = {
-            "text": req.text,
+            "input_ids": req.input_ids,
             "sampling_params": sample_params,
             "return_logprob": True,
             "stream": False,
