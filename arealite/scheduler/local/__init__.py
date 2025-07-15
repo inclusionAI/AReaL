@@ -2,6 +2,7 @@ import subprocess
 import sys
 import logging
 from collections import defaultdict
+from datetime import datetime
 import concurrent.futures
 from arealite.scheduler.base import Scheduler, Worker
 from arealite.scheduler.rpc.rpc_client import RPCClient
@@ -53,7 +54,8 @@ class LocalScheduler(Scheduler):
         self.procs.append(proc)  # Store the process object to manage it later
 
         # Register the worker with the RPC client
-        worker_id = f"local-{worker_index}"
+        current_time = datetime.now().strftime("%H%M%S%f")  # 格式化为 时分秒毫秒
+        worker_id = f"{worker_key}-{worker_index}-{current_time}"
         self.worker_map[worker_id] = ("127.0.0.1", rpc_port)
         self.rpc_client.register(worker_id, "127.0.0.1", rpc_port)
 
@@ -150,7 +152,5 @@ class LocalScheduler(Scheduler):
         return self.rpc_client.create_engine(worker_id, engine_class, init_args)
 
     def call_engine(self, worker_id, method, *args, **kwargs):
-        print(
-            f"Calling '{method}' on worker {worker_id} with arg: {args} {kwargs}"
-        )
+        print(f"Calling '{method}' on worker {worker_id} with arg: {args} {kwargs}")
         return self.rpc_client.call_engine(worker_id, method, *args, **kwargs)
