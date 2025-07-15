@@ -27,12 +27,13 @@ def main_grpo():
         scheduler,
     )
 
-    # actor.initialize()
-    rollout_res = torch.load("rollout_res.pt")
+    actor.initialize()
+    rollout_res = torch.load("rollout_res.pt", weights_only=False)
     print(f"rollout_res from file: {rollout_res}")
-    rollout_res_dict = rollout_res.to_dict()
+    rollout_res_dict = rollout_res.to_dict() 
     dis_batch = DistributedBatchMemory(rollout_res_dict)
-    # actor.train_distributed_batch()
+    stats = actor.train_distributed_batch(dis_batch)
+    print(f"train exec success, stats: {stats}")
 
 
 if __name__ == "__main__":
