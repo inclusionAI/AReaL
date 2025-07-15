@@ -354,7 +354,7 @@ class RemoteMegatronEngine(TrainEngine):
         outputs:
             - {advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards, global_stats}
         '''
-        prompt_mask = input_.data["prompt_mask"]
+        prompt_mask = input_["prompt_mask"]
         input_lens = torch.tensor(
             flat2d(input_.seqlens["packed_input_ids"]), device="cuda"
         )
@@ -363,26 +363,26 @@ class RemoteMegatronEngine(TrainEngine):
         for s, e in zip(cu_seqlens[:-1], cu_seqlens[1:]):
             prompt_lens.append(prompt_mask[s:e].sum())
         prompt_lens = torch.tensor(prompt_lens, device="cuda")
-        reward_score = input_.data["rewards"].float()
-        task_ids = input_.data["task_ids"]
+        reward_score = input_["rewards"].float()
+        task_ids = input_["task_ids"]
         # task_ids = task_ids.repeat(self.config.group_size, 1).transpose(0, 1).reshape(-1)
 
-        if "dense_rewards" in input_.data:
-            dense_reward_score = input_.data["dense_rewards"].float()
+        if "dense_rewards" in input_.keys():
+            dense_reward_score = input_["dense_rewards"].float()
         if not self.config.wrap_policy.disable_value:
-            values = input_.data["values"].float()
+            values = input_["values"].float()
         else:
             values = torch.zeros_like(
-                input_.data["packed_input_ids"], dtype=torch.float32
+                input_["packed_input_ids"], dtype=torch.float32
             )
-        seq_no_eos_mask = input_.data["seq_no_eos_mask"]
+        seq_no_eos_mask = input_["seq_no_eos_mask"]
         if self.kl_adapter.value == 0:
             ref_logp: torch.FloatTensor = reward_score.new_zeros(
                 int(input_lens.sum()) - len(input_lens)
             )
         else:
-            ref_logp: torch.FloatTensor = input_.data["packed_ref_logprobs"].float()
-        old_logp: torch.FloatTensor = input_.data["packed_logprobs"].float()
+            ref_logp: torch.FloatTensor = input_["packed_ref_logprobs"].float()
+        old_logp: torch.FloatTensor = input_["packed_logprobs"].float()
 
         if not self.config.wrap_policy.disable_value:
             if self.config.wrap_policy.value_norm:
