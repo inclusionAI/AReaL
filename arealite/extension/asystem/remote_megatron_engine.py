@@ -247,6 +247,10 @@ class RemoteMegatronEngine(TrainEngine):
         # logprobs => packed_logprobs
         if "logprobs" in batch_data and "seqlen" in batch_data:
             batch_data["packed_logprobs"] = pack_logprobs(batch_data["logprobs"], batch_data["seqlen"])
+
+        if "prompt_mask" in batch_data and "seqlen" in batch_data:
+            batch_data["prompt_mask"] = pack_prompt_mask(batch_data["prompt_mask"], batch_data["seqlen"])
+
         print(f"train_distributed_batch, batch_data: {batch_data}")
         # 3.获取{advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards, global_stats}
         train_datas = self.process_training_data(batch_data)
@@ -356,7 +360,7 @@ class RemoteMegatronEngine(TrainEngine):
         '''
         prompt_mask = input_["prompt_mask"]
         input_lens = torch.tensor(
-            flat2d(input_["seqlen"]), device="cpu"
+            input_["seqlen"], device="cpu"
         )
         cu_seqlens = torch.nn.functional.pad(input_lens.cumsum(0), (1, 0)).int()
         prompt_lens = []
@@ -649,6 +653,15 @@ def pack_logprobs(logprobs: torch.Tensor, seqlen: torch.Tensor) -> torch.Tensor:
         packed.append(logprobs[i, :valid_len])
 
     return torch.cat(packed, dim=0)
+
+
+def pack_prompt_mask(prompt_mask: torch.Tensor, seqlen: torch.Tensor) -> torch.Tensor:
+    packed = []
+    for i in range(prompt_mask.shape[0]):
+        valid_len = seqlen[i].item()
+        packed.append(prompt_mask[i, :valid_len])
+    return torch.cat(packed, dim=0)
+
 
 remote_megatron_config = {
     "moe_router_dtype": "fp32",
