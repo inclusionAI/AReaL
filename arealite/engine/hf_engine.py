@@ -2,6 +2,7 @@ import gc
 import os
 import time
 from typing import Any, Callable, Dict, List, Optional
+
 import torch
 import torch.distributed as dist
 import transformers
@@ -71,7 +72,9 @@ class HFEngine(TrainEngine):
             try:
                 import deepspeed
             except ImportError:
-                print("Warning: deepspeed is not installed. Some functionality may be disabled.")
+                print(
+                    "Warning: deepspeed is not installed. Some functionality may be disabled."
+                )
             deepspeed.init_distributed(dist_backend="nccl", world_size=world_size)
 
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -100,7 +103,7 @@ class HFEngine(TrainEngine):
                 with_optim=False,
                 tokenizer=None,
                 base_model_path=self.config.path,
-                naive_distributed=False
+                naive_distributed=False,
             )
 
             self.load(load_meta)
@@ -108,7 +111,7 @@ class HFEngine(TrainEngine):
         if world_size > 1:
             if self._check_autotp():
                 self.model = deepspeed.tp_model_init(
-                        self.model, tp_size=self.config.hf.autotp_size, dtype=dtype
+                    self.model, tp_size=self.config.hf.autotp_size, dtype=dtype
                 )
             else:
                 raise RuntimeError("DeepSpeed AutoTP configuration error in HFEngine. ")
@@ -224,7 +227,7 @@ class HFEngine(TrainEngine):
         self,
         path: str,
         tokenizer: Optional[transformers.PreTrainedTokenizerFast],
-        naive_distributed: bool
+        naive_distributed: bool,
     ):
         """Save model in HuggingFace format."""
         if self.model is None:
@@ -258,17 +261,12 @@ class HFEngine(TrainEngine):
                 gathered_state_dicts = [None for _ in range(world_size)]
 
             dist.gather_object(
-                obj=state_dict,
-                object_gather_list=gathered_state_dicts,
-                dst=0
+                obj=state_dict, object_gather_list=gathered_state_dicts, dst=0
             )
 
             if rank == 0:
                 for i, state_dict in enumerate(gathered_state_dicts):
-                    save_file(
-                        state_dict,
-                        f"{path}/rank_{i:02d}_model.safetensors"
-                    )
+                    save_file(state_dict, f"{path}/rank_{i:02d}_model.safetensors")
         else:
             self.model.save_pretrained(path, state_dict=state_dict)
 
@@ -280,14 +278,17 @@ class HFEngine(TrainEngine):
 
         rank = dist.get_rank()
         # Only support load full model parameters from huggingface
-        # and load model partition locally 
+        # and load model partition locally
         if rank == 0 or is_existing_local_path(path):
             if naive_distributed:
                 path = f"{path}/rank_{rank:02d}_model.safetensors"
             full_state = get_state_dict_from_repo_id_or_path(path)
 
             if hasattr(self.model, "module") and not hasattr(full_state):
-                full_state = {f"module.{k}" if not k.startswith("module.") else k: v for k, v in full_state.items()}
+                full_state = {
+                    f"module.{k}" if not k.startswith("module.") else k: v
+                    for k, v in full_state.items()
+                }
             self.model.load_state_dict(
                 full_state, strict=not self.model_config.tie_word_embeddings
             )
