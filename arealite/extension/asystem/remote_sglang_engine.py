@@ -349,7 +349,10 @@ class RemoteSGLangEngine(InferenceEngine):
             result = await response.json()
 
             # Parse response
-            completions += result["text"]
+            if req.text:
+                completions += result["text"]
+            else:
+                completions += result["output_ids"]
             meta_info = result["meta_info"]
             output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
             output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
@@ -364,6 +367,10 @@ class RemoteSGLangEngine(InferenceEngine):
             finish_reason = meta_info["finish_reason"]
             stop_reason = finish_reason["type"]
 
+            if req.text:
+                payload["text"] += result["text"]
+            else:
+                payload["output_ids"] += result["output_ids"]
             payload["text"] += result["text"]
 
         latency = time.perf_counter() - start_time
