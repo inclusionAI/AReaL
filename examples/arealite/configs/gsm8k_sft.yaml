@@ -16,7 +16,7 @@ model:
   path: /storage/openpsi/models/Qwen__Qwen3-1.7B/
   init_from_scratch: false
   gradient_checkpointing: false
-  bf16: true
+  dtype: bfloat16
   mb_spec:
     max_tokens_per_mb: 4096
   optimizer:

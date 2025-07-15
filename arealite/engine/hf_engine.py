@@ -90,7 +90,7 @@ class HFEngine(TrainEngine):
             )
         torch.cuda.set_device("cuda:0")
 
-        dtype = torch.bfloat16 if self.engine_config.bf16 else torch.float16
+        dtype = getattr(torch, self.config.dtype)
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.engine_config.path,
             trust_remote_code=True,

@@ -22,6 +22,18 @@ class Saver:
         )
 
     @staticmethod
+    def get_save_checkpoint_root(
+        config: SaverConfig,
+        name: str = "default",
+    ):
+        path = os.path.join(
+            f"{config.fileroot}/checkpoints/{getpass.getuser()}/{config.experiment_name}/{config.trial_name}",
+            name,
+        )
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    @staticmethod
     def get_save_checkpoint_path(
         config: SaverConfig,
         epoch: int,
@@ -30,8 +42,7 @@ class Saver:
         name: str = "default",
     ):
         path = os.path.join(
-            f"{config.fileroot}/checkpoints/{getpass.getuser()}/{config.experiment_name}/{config.trial_name}",
-            name,
+            Saver.get_save_checkpoint_root(config, name),
             f"epoch{epoch}epochstep{step}globalstep{globalstep}",
         )
         os.makedirs(path, exist_ok=True)
@@ -52,7 +63,9 @@ class Saver:
             epochs=int(step == self.ft_sepc.steps_per_epoch - 1), steps=1
         ):
             return
-        path = self.get_save_checkpoint_path(self.config,epoch, step, global_step, name)
+        path = Saver.get_save_checkpoint_path(
+            self.config, epoch, step, global_step, name
+        )
         weight_format = "hf"
         with_optim = False
         if self.for_recover:

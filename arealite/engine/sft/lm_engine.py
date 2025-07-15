@@ -21,7 +21,7 @@ class LMEngine:
         return self.engine.train_batch(
             input_=data,
             loss_fn=compute_packed_sft_loss,
-            loss_weight_fn=lambda x: x["prompt_mask"].logical_not().count_nonzero(),
+            loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
         )
 
     def evaluate_lm(self, data):
@@ -29,7 +29,7 @@ class LMEngine:
         self.engine.eval_batch(
             input_=data,
             loss_fn=compute_packed_sft_loss,
-            loss_weight_fn=lambda x: x["prompt_mask"].logical_not().count_nonzero(),
+            loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
         )
 
 
@@ -60,26 +60,26 @@ def compute_packed_sft_loss(
 ) -> torch.Tensor:
     packed_input_ids: torch.Tensor = input_["input_ids"]
     cu_seqlens: torch.Tensor = input_["cu_seqlens"]
-    prompt_mask = input_["prompt_mask"].bool()
+    loss_mask = input_["loss_mask"].bool()
 
     logprobs = gather_logprobs(logits, torch.roll(packed_input_ids, shifts=-1, dims=-1))
-    prompt_mask = torch.roll(prompt_mask, shifts=-1, dims=-1)
-    logprobs = torch.where(prompt_mask, 0, logprobs)
+    loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
+    logprobs = torch.where(loss_mask, logprobs, 0)
 
-    loss = -logprobs.sum() / prompt_mask.logical_not().count_nonzero()
+    loss = -logprobs.sum() / loss_mask.count_nonzero()
 
     with torch.no_grad():
         seqlogp = torch.zeros(
             cu_seqlens.shape[0] - 1, device=logits.device, dtype=torch.float64
         )
         for i in range(cu_seqlens.shape[0] - 1):
-            m = prompt_mask[cu_seqlens[i] - i : cu_seqlens[i + 1] - i - 1]
+            m = loss_mask[cu_seqlens[i] - i : cu_seqlens[i + 1] - i - 1]
             logp = logprobs[cu_seqlens[i] - i : cu_seqlens[i + 1] - i - 1]
             assert cu_seqlens[i + 1] - i - 1 <= logprobs.shape[0], (
                 cu_seqlens,
                 logprobs.shape,
             )
-            seqlogp[i] = torch.where(m, 0.0, logp.detach()).sum() / (
+            seqlogp[i] = torch.where(m, logp.detach(), 0.0).sum() / (
                 m.numel() - m.count_nonzero()
             )
 
@@ -89,8 +89,8 @@ def compute_packed_sft_loss(
             cu_seqlens.shape[0] - 1, dtype=torch.bool, device=logprobs.device
         ),
         n_tokens=torch.ones(logits.shape[0], dtype=torch.bool, device=logits.device),
-        n_valid_tokens=prompt_mask.logical_not(),
-        prompt_tokens=prompt_mask,
+        n_valid_tokens=loss_mask,
+        prompt_tokens=loss_mask.logical_not(),
     )
     stats_tracker.stat(ppl=(-seqlogp).exp().float(), denominator="n_seqs")
     stats_tracker.stat(loss=-logprobs.detach(), denominator="n_valid_tokens")

@@ -49,7 +49,7 @@ from arealite.utils.fsdp import (
 from arealite.utils.model import disable_dropout_in_model
 from arealite.utils.save_load import get_state_dict_from_repo_id_or_path
 from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import logging, name_resolve, names, pkg_version
+from realhf.base import constants, logging, name_resolve, names, pkg_version
 
 logger = logging.getLogger("FSDPEngine")
 
@@ -70,6 +70,8 @@ class FSDPEngine(TrainEngine):
         self.cpu_offload = None
         # initialization
         self.initialized = False
+        self.own_global_group = False
+        self._parallelism_group = None
         self.weight_update_group_initialized = False
 
         # TODO: Handle the case when WORLD_SIZE is not set in launcher
@@ -79,6 +81,11 @@ class FSDPEngine(TrainEngine):
         assert self.model is not None
         self.model.train(mode=mode)
         return self
+
+    @property
+    def parallelism_group(self) -> dist.ProcessGroup:
+        assert self.initialized
+        return self._parallelism_group
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
         # Initialize distributed enviroments and load model.
@@ -91,7 +98,13 @@ class FSDPEngine(TrainEngine):
         """Initialize distributed communication and model."""
         if not dist.is_initialized():
             # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
-            dist.init_process_group(backend="nccl")
+            dist.init_process_group(
+                backend="nccl",
+                timeout=constants.NCCL_DEFAULT_TIMEOUT,
+                device_id=torch.device(int(os.environ["LOCAL_RANK"])),
+            )
+            self.own_global_group = True
+        self._parallelism_group = dist.new_group()
 
         # TODO: Handle the condition when LOCAL_RANK is not set in launcher
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
@@ -129,11 +142,6 @@ class FSDPEngine(TrainEngine):
                 gradient_checkpointing_kwargs={"use_reentrant": False}
             )
         logger.info(f"Model creation and loading time: {time.perf_counter() - tik}")
-
-        if self.config.gradient_checkpointing:
-            model.gradient_checkpointing_enable(
-                gradient_checkpointing_kwargs={"use_reentrant": False}
-            )
 
         # Simple auto wrap policy
         self.mixed_precision_policy = MixedPrecisionPolicy(
@@ -217,6 +225,9 @@ class FSDPEngine(TrainEngine):
         gc.collect()
         torch.cuda.empty_cache()
         gc.collect()
+        dist.destroy_process_group(self.parallelism_group)
+        if self.own_global_group:
+            dist.destroy_process_group()
         self.initialized = False
 
     def save(self, meta: SaveLoadMeta):
@@ -318,7 +329,9 @@ class FSDPEngine(TrainEngine):
                     self.config.trial_name,
                     meta.model_version,
                 )
-                name_resolve.add(update_name, str(time.time_ns()), keepalive_ttl=120)
+                name_resolve.add(
+                    update_name, str(datetime.now().timestamp()), keepalive_ttl=120
+                )
         else:
             raise ValueError(f"Unknown weight update type {meta.type}")
 

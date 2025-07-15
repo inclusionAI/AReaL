@@ -1,7 +1,7 @@
 import getpass
 import os
 import time
-from typing import Dict
+from typing import Dict, List
 
 import torch.distributed as dist
 import wandb
@@ -20,6 +20,8 @@ class StatsLogger:
         self.config = config
         self.ft_spec = ft_spec
         self.init()
+
+        self._last_commit_step = 0
 
     def init(self):
         if dist.is_initialized() and dist.get_rank() != 0:
@@ -61,7 +63,7 @@ class StatsLogger:
         if self.summary_writer is not None:
             self.summary_writer.close()
 
-    def commit(self, epoch: int, step: int, global_step: int, data: Dict):
+    def commit(self, epoch: int, step: int, global_step: int, data: Dict | List[Dict]):
         if dist.is_initialized() and dist.get_rank() != 0:
             return
         self.info(
@@ -69,12 +71,17 @@ class StatsLogger:
             f"Step {step+1}/{self.ft_spec.steps_per_epoch} "
             f"Train step {global_step + 1}/{self.ft_spec.total_train_steps} done."
         )
-        self.info("Stats:")
-        self.print_stats(data)
-        wandb.log(data, step=global_step)
-        if self.summary_writer is not None:
-            for key, val in data.items():
-                self.summary_writer.add_scalar(f"{key}", val, global_step)
+        if isinstance(data, Dict):
+            data = [data]
+        log_step = max(global_step, self._last_commit_step)
+        for i, item in enumerate(data):
+            self.info(f"Stats ({i+1}/{len(data)}):")
+            self.print_stats(item)
+            wandb.log(item, step=log_step + i)
+            if self.summary_writer is not None:
+                for key, val in item.items():
+                    self.summary_writer.add_scalar(f"{key}", val, log_step + i)
+        self._last_commit_step = log_step + len(data) - 1
 
     def print_stats(self, stats: Dict[str, float]):
         self.info("\n" + tabulate_stats(stats))

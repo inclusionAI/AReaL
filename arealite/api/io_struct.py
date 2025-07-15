@@ -19,7 +19,6 @@ from transformers import PreTrainedTokenizerFast,AutoProcessor
 @dataclass
 class LLMRequest:
     rid: str = field(default_factory=lambda: str(uuid.uuid4()))
-    text: Optional[str] = None
     input_ids: List[int] = field(default_factory=list)
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
@@ -31,7 +30,6 @@ class LLMRequest:
 @dataclass
 class LLMResponse:
     # outputs
-    completions: str
     input_tokens: List[int] = field(default_factory=list)
     output_tokens: List[int] = field(default_factory=list)
     output_logprobs: List[float] = field(default_factory=list)
