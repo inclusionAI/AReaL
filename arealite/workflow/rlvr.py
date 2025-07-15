@@ -27,10 +27,18 @@ class RLVRWorkflow(RolloutWorkflow):
         #     data["messages"], tokenize=False, add_generation_prompt=True
         # )
         text = data["prompt"][0]
+        prompt_encodings = self.tokenizer(
+            text,
+            truncation=True,
+            max_length=None,
+            padding=False,
+            return_length=True,
+            return_attention_mask=False)
+        print(f"debug prompt_encodings: {prompt_encodings}")
         n_samples = self.gconfig.n_samples
         req = LLMRequest(
             rid=uuid.uuid4().hex,
-            text=text,
+            text=prompt_encodings["input_ids"],
             gconfig=self.gconfig.new(n_samples=1),
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
