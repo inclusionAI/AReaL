@@ -1,5 +1,5 @@
 import asyncio
-from typing import List, Dict
+from typing import List, Dict, Any
 from tensordict import TensorDict
 
 from arealite.api.engine_api import InferenceEngine
@@ -114,16 +114,13 @@ class DistributedRolloutController(RolloutController):
 
         return result
 
-
-def rollout(
-    self,
-    data: List[Dict],  # key:str, value:str
-    workflow: RolloutWorkflow
-) -> TensorDict:
-    tasks = []
-    for index, worker in enumerate(self.workers):
-        tasks.append(
-            self.scheduler.call_engine(worker.id, "rollout", data, workflow)
-        )
-    result = asyncio.run(self._rpc_call_tasks(*tasks))
-    return result
+    def rollout(
+        self, data: List[Dict[str, Any]], workflow: RolloutWorkflow
+    ) -> TensorDict:
+        tasks = []
+        for index, worker in enumerate(self.workers):
+            tasks.append(
+                self.scheduler.call_engine(worker.id, "rollout", data, workflow)
+            )
+        result = asyncio.run(self._rpc_call_tasks(*tasks))
+        return result
