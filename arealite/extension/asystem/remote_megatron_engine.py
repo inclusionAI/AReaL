@@ -356,13 +356,13 @@ class RemoteMegatronEngine(TrainEngine):
         '''
         prompt_mask = input_["prompt_mask"]
         input_lens = torch.tensor(
-            flat2d(input_["seqlen"]), device="cuda"
+            flat2d(input_["seqlen"]), device="cpu"
         )
         cu_seqlens = torch.nn.functional.pad(input_lens.cumsum(0), (1, 0)).int()
         prompt_lens = []
         for s, e in zip(cu_seqlens[:-1], cu_seqlens[1:]):
             prompt_lens.append(prompt_mask[s:e].sum())
-        prompt_lens = torch.tensor(prompt_lens, device="cuda")
+        prompt_lens = torch.tensor(prompt_lens, device="cpu")
         reward_score = input_["rewards"].float()
         task_ids = input_["task_ids"]
         # task_ids = task_ids.repeat(self.config.group_size, 1).transpose(0, 1).reshape(-1)
