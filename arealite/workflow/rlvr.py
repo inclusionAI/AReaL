@@ -23,9 +23,10 @@ class RLVRWorkflow(RolloutWorkflow):
         self.tokenizer = tokenizer
 
     async def arun_episode(self, engine, data):
-        text = self.tokenizer.apply_chat_template(
-            data["messages"], tokenize=False, add_generation_prompt=True
-        )
+        # text = self.tokenizer.apply_chat_template(
+        #     data["messages"], tokenize=False, add_generation_prompt=True
+        # )
+        text = data["prompt"][0]
         n_samples = self.gconfig.n_samples
         req = LLMRequest(
             rid=uuid.uuid4().hex,

@@ -54,7 +54,7 @@ def main_grpo():
     dataset = load_dataset("json",
                            data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train_32.jsonl")
     train_dataset = dataset['train']  # 取出train split
-    train_dataset = process_rl_dataset(train_dataset)
+    # train_dataset = process_rl_dataset(train_dataset)
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
     batch_size = 4
     batch_data = []
