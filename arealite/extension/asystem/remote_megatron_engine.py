@@ -356,7 +356,7 @@ class RemoteMegatronEngine(TrainEngine):
         '''
         prompt_mask = input_["prompt_mask"]
         input_lens = torch.tensor(
-            flat2d(input_.seqlens["packed_input_ids"]), device="cuda"
+            flat2d(input_["seqlen"]), device="cuda"
         )
         cu_seqlens = torch.nn.functional.pad(input_lens.cumsum(0), (1, 0)).int()
         prompt_lens = []
