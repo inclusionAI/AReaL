@@ -2,8 +2,6 @@ import gc
 import os
 import time
 from typing import Any, Callable, Dict, List, Optional
-
-import deepspeed
 import torch
 import torch.distributed as dist
 import transformers
@@ -58,8 +56,6 @@ class HFEngine(TrainEngine):
         # initialization
         self.initialized = False
         self.weight_update_group_initialized = False
-        self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
-        self.world_size = int(os.environ.get("WORLD_SIZE", 1))
 
     def train(self, mode: bool = True):
         assert self.model is not None
@@ -67,15 +63,20 @@ class HFEngine(TrainEngine):
         return self
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
-        # Initialize distributed enviroments and load model.
+        """Initialize distributed communication and model."""
         assert addr is None, "HFEngine does not support remote initialization."
 
-        """Initialize distributed communication and model."""
-        if not dist.is_initialized():
-            deepspeed.init_distributed(dist_backend="nccl", world_size=self.world_size)
+        world_size = int(os.environ.get("WORLD_SIZE", 0))
+        if not dist.is_initialized() and world_size > 1:
+            try:
+                import deepspeed
+            except ImportError:
+                print("Warning: deepspeed is not installed. Some functionality may be disabled.")
+            deepspeed.init_distributed(dist_backend="nccl", world_size=world_size)
 
-        torch.cuda.set_device(self.local_rank)
-        self.device = torch.device(f"cuda:{self.local_rank}")
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        torch.cuda.set_device(local_rank)
+        self.device = torch.device(f"cuda:{local_rank}")
 
         dtype = torch.bfloat16 if self.config.bf16 else torch.float16
         self.model_config = AutoConfig.from_pretrained(
@@ -83,13 +84,12 @@ class HFEngine(TrainEngine):
             trust_remote_code=True,
         )
         self.tokenizer = load_hf_tokenizer(self.config.path)
-        model = AutoModelForCausalLM.from_config(
+
+        self.model = AutoModelForCausalLM.from_config(
             self.model_config,
             torch_dtype=dtype,
             attn_implementation=self.config.attn_impl,
-        )
-
-        self.model = model
+        ).to(f"cuda:{local_rank}")
 
         if not self.config.init_from_scratch:
             # Load model from a initial checkpoint path,
@@ -100,19 +100,18 @@ class HFEngine(TrainEngine):
                 with_optim=False,
                 tokenizer=None,
                 base_model_path=self.config.path,
-                distribute=False,
+                naive_distributed=False
             )
+
             self.load(load_meta)
 
-        if self.world_size > 1:
+        if world_size > 1:
             if self._check_autotp():
                 self.model = deepspeed.tp_model_init(
-                    self.model, tp_size=self.config.hf.autotp_size, dtype=dtype
+                        self.model, tp_size=self.config.hf.autotp_size, dtype=dtype
                 )
             else:
                 raise RuntimeError("DeepSpeed AutoTP configuration error in HFEngine. ")
-
-        self.model = self.model.to(device=self.device, non_blocking=True)
 
         # Set up optimizer
         if self.optimizer_config is not None:
@@ -188,7 +187,7 @@ class HFEngine(TrainEngine):
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
-            self._save_model_to_hf(meta.path, meta.tokenizer, meta.distribute)
+            self._save_model_to_hf(meta.path, meta.tokenizer, meta.naive_distributed)
         elif meta.weight_format == "dcp":
             # TODO: implement DCP save/load for HF
             raise NotImplementedError("DCP format saving is not implemented yet. ")
@@ -200,7 +199,7 @@ class HFEngine(TrainEngine):
 
     def load(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
-            self._load_model_from_hf(meta.path, meta.distribute)
+            self._load_model_from_hf(meta.path, meta.naive_distributed)
         elif meta.weight_format == "dcp":
             # TODO: implement DCP save/load for HF
             raise NotImplementedError("DCP format loading is not implemented yet. ")
@@ -225,38 +224,70 @@ class HFEngine(TrainEngine):
         self,
         path: str,
         tokenizer: Optional[transformers.PreTrainedTokenizerFast],
-        distribute: bool = False,
+        naive_distributed: bool
     ):
         """Save model in HuggingFace format."""
         if self.model is None:
             raise RuntimeError("Model not initialized")
 
-        if self.local_rank == 0:
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+        if rank == 0:
             os.makedirs(path, exist_ok=True)
+            self.model_config.save_pretrained(path)
+            if tokenizer is not None:
+                tokenizer.save_pretrained(path)
 
-        if self.world_size > 1:
+        if world_size > 1:
             dist.barrier()
 
-        state_dict = {k: v.cpu() for k, v in self.model.state_dict().items()}
+        state_dict = self.model.state_dict()
 
-        if distribute:
-            save_file(
-                state_dict, f"{path}/tp_rank_{self.local_rank:02d}_model.safetensors"
+        if hasattr(self.model, "module"):
+            state_dict = {
+                k.replace("module.", "", 1) if k.startswith("module.") else k: v.cpu()
+                for k, v in state_dict.items()
+            }
+        else:
+            state_dict = {k: v.cpu() for k, v in state_dict.items()}
+
+        if world_size > 1 and naive_distributed:
+            # Only support store parameters from model partitions respectively
+            gathered_state_dicts = None
+            if rank == 0:
+                gathered_state_dicts = [None for _ in range(world_size)]
+
+            dist.gather_object(
+                obj=state_dict,
+                object_gather_list=gathered_state_dicts,
+                dst=0
             )
+
+            if rank == 0:
+                for i, state_dict in enumerate(gathered_state_dicts):
+                    save_file(
+                        state_dict,
+                        f"{path}/rank_{i:02d}_model.safetensors"
+                    )
         else:
             self.model.save_pretrained(path, state_dict=state_dict)
 
-        if self.local_rank == 0:
-            self.model_config.save_pretrained(path)
-            if self.tokenizer is not None:
-                self.tokenizer.save_pretrained(path)
+        if world_size > 1:
+            dist.barrier()
 
-    def _load_model_from_hf(self, path: str, distribute: bool = False):
+    def _load_model_from_hf(self, path: str, naive_distributed: bool):
         """Load model from HuggingFace format."""
-        if self.local_rank == 0 or is_existing_local_path(path):
-            if distribute:
-                path = f"{path}/tp_rank_{self.local_rank:02d}_model.safetensors"
+
+        rank = dist.get_rank()
+        # Only support load full model parameters from huggingface
+        # and load model partition locally 
+        if rank == 0 or is_existing_local_path(path):
+            if naive_distributed:
+                path = f"{path}/rank_{rank:02d}_model.safetensors"
             full_state = get_state_dict_from_repo_id_or_path(path)
+
+            if hasattr(self.model, "module") and not hasattr(full_state):
+                full_state = {f"module.{k}" if not k.startswith("module.") else k: v for k, v in full_state.items()}
             self.model.load_state_dict(
                 full_state, strict=not self.model_config.tie_word_embeddings
             )
@@ -270,7 +301,7 @@ class HFEngine(TrainEngine):
                 self._init_distributed_weight_update(meta)
             self._update_weights_from_distributed()
         elif meta.type == "disk":
-            self._save_model_to_hf(meta.path, self.tokenizer)
+            self._save_model_to_hf(meta.path, self.tokenizer, meta.naive_distributed)
             update_name = names.update_weights_from_disk(
                 self.config.experiment_name,
                 self.config.trial_name,
