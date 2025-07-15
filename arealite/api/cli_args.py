@@ -214,6 +214,39 @@ class SGLangConfig:
         served_model_name: Optional[str] = None,
         skip_tokenizer_init: bool = True,
     ):
+        args = SGLangConfig.build_args(
+            sglang_config=sglang_config,
+            model_path=model_path,
+            tp_size=tp_size,
+            base_gpu_id=base_gpu_id,
+            dist_init_addr=dist_init_addr,
+            served_model_name=served_model_name,
+            skip_tokenizer_init=skip_tokenizer_init,
+        )
+
+        # convert to flags
+        flags = []
+        for k, v in args.items():
+            if v is None or v is False or v == "":
+                continue
+            if v is True:
+                flags.append(f"--{k.replace('_','-')}")
+            elif isinstance(v, list):
+                flags.append(f"--{k.replace('_','-')} {' '.join(map(str, v))}")
+            else:
+                flags.append(f"--{k.replace('_','-')} {v}")
+        return f"python3 -m sglang.launch_server {' '.join(flags)}"
+
+    @staticmethod
+    def build_args(
+        sglang_config: "SGLangConfig",
+        model_path,
+        tp_size,
+        base_gpu_id,
+        dist_init_addr: Optional[str] = None,
+        served_model_name: Optional[str] = None,
+        skip_tokenizer_init: bool = True,
+    ):
         from realhf.base import network, pkg_version, seeding
         from realhf.experiments.common.utils import asdict as conf_as_dict
 
@@ -256,20 +289,7 @@ class SGLangConfig:
             args.pop("allow_auto_truncate")
             args.pop("file_storage_path")
 
-        flags = []
-        for k, v in args.items():
-            if v is None or v is False or v == "":
-                continue
-            if v is True:
-                flags.append(f"--{k.replace('_','-')} ")
-                continue
-            if isinstance(v, list):
-                values = " ".join(map(str, v))
-                flags.append(f"--{k.replace('_','-')} {values}")
-                continue
-            flags.append(f"--{k.replace('_','-')} {v}")
-        flags = " ".join(flags)
-        return f"python3 -m sglang.launch_server {flags}"
+        return args
 
 
 @dataclass
