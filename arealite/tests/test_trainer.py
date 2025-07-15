@@ -25,16 +25,14 @@ def main_grpo():
         RolloutControllerConfig(),
         scheduler,
     )
-    actor = DistributedTrainController(
-        RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="ff", trial_name="ff")),
-        TrainControllerConfig(),
-        scheduler,
-    )
+    # actor = DistributedTrainController(
+    #     RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="ff", trial_name="ff")),
+    #     TrainControllerConfig(),
+    #     scheduler,
+    # )
 
     rollout.initialize()
-    print(f"rollout workers len: {len(rollout.workers)}")
-    actor.initialize()
-    print(f"actor workers len: {len(actor.workers)}")
+    #actor.initialize()
 
     # # Synchronous RL
     dataset = load_dataset("json",
@@ -77,6 +75,7 @@ def main_grpo():
             rollout_res = rollout.rollout(batch_data, workflow=workflow)
             print(f"rollout_ exec success, {len(rollout_res)}")
             print(f"rollout_res: {rollout_res}")
+            torch.save(rollout_res, "rollout_res.pt")
 
 if __name__ == "__main__":
     main_grpo()
