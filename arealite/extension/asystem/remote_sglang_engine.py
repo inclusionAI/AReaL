@@ -387,8 +387,10 @@ class RemoteSGLangEngine(InferenceEngine):
         )
 
     def update_weights(self, meta):
-        executor = ThreadPoolExecutor(max_workers=1)
-        return executor.submit(self._update_weights, meta)
+        #executor = ThreadPoolExecutor(max_workers=1)
+        #return executor.submit(self._update_weights, meta)
+        self._update_weights(meta)
+        return True
 
     def _update_weights(self, meta: WeightUpdateMeta):
         if meta.type == "disk":

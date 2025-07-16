@@ -30,25 +30,32 @@ class DistributedRolloutController(RolloutController):
         super().__init__(inf_engine, config, scheduler)
         self.dp_world_size = 16 // 2
 
-    async def _rpc_call(self, method, *args, **kwargs):
-        logging.info(
-            f"[rollout controller] start to  rpc call, method: {method}, args: {args}, kwargs: {kwargs}"
-        )
+    def _rpc_call(self, method, *args, **kwargs):
+        logging.info(f"[rollout controller] start to  rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
 
-        tasks = [
-            self.scheduler.call_engine(worker.id, method, args, kwargs)
-            for worker in self.workers
-        ]
-        results = await asyncio.gather(*tasks)
+        with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
+            futures = [
+                executor.submit(
+                    self.scheduler.call_engine,
+                    worker.id,
+                    method,
+                    *args,
+                    **kwargs
+                )
+                for worker in self.workers
+            ]
 
-        logging.info(
-            f"[rollout controller] end to rpc call, method: {method}, args: {args}, kwargs: {kwargs}"
-        )
-        return results
-
-    async def _rpc_call_tasks(self, *tasks):
-        results = await asyncio.gather(*tasks)
-        return results
+            results = []
+            try:
+                for future in as_completed(futures):
+                    result = future.result()  # 可加异常处理
+                    results.append(result)
+            except KeyboardInterrupt:
+                print("收到Ctrl+C，正在终止所有初始化任务...")
+                # 取消所有未完成的future
+                for f in futures:
+                    f.cancel()
+                raise  # 重新抛出异常，主程序能感知
 
     def initialize(self):
         """Initialize environments for distributed inference and load models."""
