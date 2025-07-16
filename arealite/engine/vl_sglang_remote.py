@@ -1,13 +1,14 @@
-# Copyright 2025 Ant Group Inc.
-# Licensed under the Apache License, Version 2.0
-
 import time
 
-from arealite.api.io_struct import LLMServerInfo,VLMRequest,VLMResponse
+from arealite.api.cli_args import InferenceEngineConfig
+from arealite.engine.sglang_remote import RemoteSGLangEngine
+from arealite.api.io_struct import (
+    VLMRequest,
+    VLMResponse
+)
+from arealite.utils.http import arequest_with_retry
 from realhf.base import logging, pkg_version
-from arealite.api.vlm_client_api import VLMClient
-from arealite.api.cli_args import LLMClientConfig, TrainingArgs
-from arealite.system.sglang_client import SGLangClient
+
 logger = logging.getLogger(__name__)
 
 if pkg_version.is_available("sglang"):
@@ -16,34 +17,26 @@ if pkg_version.is_available("sglang"):
     else:
         SGLANG_TOKEN_OUTPUT_IDENTIFIER = "token_ids"
 
+ROLLOUT_POLL_WAIT_TIME = 0.1
+RID_CACHE_SIZE = 128
 
 
-class VL_SGLangClient(VLMClient, SGLangClient):
-    """A client for interacting with both VLM and SGLang servers."""
+class VL_RemoteSGLangEngine(RemoteSGLangEngine):
 
-    def __init__(self, args: TrainingArgs, client_config: LLMClientConfig):
-        # Initialize the parent classes
-        VLMClient.__init__(self, args, client_config)
-        SGLangClient.__init__(self, args, client_config)
+    def __init__(self, config: InferenceEngineConfig):
+        super().__init__(config)
 
     async def agenerate(self, req: VLMRequest) -> VLMResponse:
-        """Override the agenerate method to support both VLM and SGLang generation."""
-        if not req.images:
-            # If no images are provided, use SGLang generation
-            return await SGLangClient.agenerate(self, req)
-        if not req.text:
-            assert req.input_ids is not None
-            req.text = self.tokenizer.decode(req.input_ids)
-            
-         # Prepare request payload
+        """Async version of generate using aiohttp."""
+        # Prepare request payload
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
-        if self.tokenizer.eos_token_id not in stop_token_ids:
-            stop_token_ids.append(self.tokenizer.eos_token_id)
-        if self.tokenizer.pad_token_id not in stop_token_ids:
-            stop_token_ids.append(self.tokenizer.pad_token_id)
 
-        assert gconfig.n_samples == 1
+        if gconfig.n_samples != 1:
+            raise ValueError(
+                "RemoteSGLangEngine does not support n_samples > 1. "
+                "Please call generate for multiple times with n_samples = 1."
+            )
         sample_params = {
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
@@ -52,10 +45,10 @@ class VL_SGLangClient(VLMClient, SGLangClient):
             "stop_token_ids": stop_token_ids,
         }
 
+        # NOTE: rid should NOT be passed in payload
         payload = {
-            "rid": req.rid,
-            "text": req.text,
-            "images": req.images, #  ImageObject or str
+            "input_ids": req.input_ids.copy(),
+            "images": req.images,  # ImageObject or str
             "sampling_params": sample_params,
             "return_logprob": True,
             "stream": False,
@@ -68,25 +61,35 @@ class VL_SGLangClient(VLMClient, SGLangClient):
         accumulated_versions = []
 
         # Deal with rollout interruption
-        completion = ""
+        completions = ""
         stop_reason = "length"
+
+        if req.rid in self.rid_to_address:
+            server_addr = self.rid_to_address[req.rid]
+        else:
+            server_addr = self.choose_server()
+            if len(self.rid_queue) >= RID_CACHE_SIZE:
+                # Remove the oldest entry if cache is full
+                oldest_rid = self.rid_queue.pop(0)
+                self.rid_to_address.pop(oldest_rid, None)
+            self.rid_to_address[req.rid] = server_addr
+            self.rid_queue.append(req.rid)
 
         while (
             stop_reason != "stop"
             and len(accumulated_output_tokens) < gconfig.max_new_tokens
         ):
             # loop until the generation is complete
-            response, server_info = await self.arequest_with_retry(
+            result = await arequest_with_retry(
+                addr=self.choose_server(),
                 endpoint="/generate",
                 payload=payload,
                 method="POST",
                 max_retries=3,
-                timeout=self.client_config.request_timeout,
+                timeout=self.config.request_timeout,
             )
-            result = await response.json()
 
             # Parse response
-            completion += result["text"]
             meta_info = result["meta_info"]
             output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
             output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
@@ -94,18 +97,22 @@ class VL_SGLangClient(VLMClient, SGLangClient):
             # Update accumulated outputs
             accumulated_output_tokens.extend(output_tokens)
             accumulated_output_logprobs.extend(output_logprobs)
-            accumulated_versions.extend([server_info.version] * len(output_tokens))
+            # FIXME: Update with actual server versions
+            accumulated_versions.extend([-1] * len(output_tokens))
 
             # Check if generation is complete
             finish_reason = meta_info["finish_reason"]
             stop_reason = finish_reason["type"]
 
-            payload["text"] += completion
+            payload["input_ids"] += result[SGLANG_TOKEN_OUTPUT_IDENTIFIER]
+            sample_params["max_new_tokens"] = min(
+                sample_params["max_new_tokens"],
+                gconfig.max_new_tokens - len(output_tokens),
+            )
 
         latency = time.perf_counter() - start_time
 
         return VLMResponse(
-            completion=completion,
             input_tokens=req.input_ids,
             input_images=req.images,
             output_tokens=accumulated_output_tokens,
@@ -116,14 +123,3 @@ class VL_SGLangClient(VLMClient, SGLangClient):
             ttft=latency,  # Simplified for non-streaming
         )
 
-    async def aupdate_weights_from_disk(self, server_info: LLMServerInfo, path: str):
-        
-        await SGLangClient.aupdate_weights_from_disk(self, server_info, path)
-
-    async def ainit_weight_update_group(self, server_info, group_meta):
-
-        await SGLangClient.ainit_weight_update_group(self, server_info, group_meta)
-
-    async def aupdate_weights_from_distributed(self, server_info, weight_meta):
-
-        await SGLangClient.aupdate_weights_from_distributed(self, server_info, weight_meta)

@@ -55,7 +55,7 @@ class VLMRequest(LLMRequest):
 
 @dataclass
 class VLMResponse(LLMResponse):
-    input_images: List[ImageObject|str] = field(default_factory=list)
+    input_images: Optional[List[ImageObject|str]] = field(default_factory=list)
 
 
 @dataclass

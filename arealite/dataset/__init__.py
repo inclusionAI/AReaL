@@ -21,6 +21,9 @@ def get_custom_dataset(
     elif "clevr_count_70k" in path and training_type == "sft":
         from examples.arealite.dataset.clevr_count_70k import get_clevr_count_70k_sft_dataset
         return get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size)
+    elif "clevr_count_70k" in path and training_type == "rl":
+        from examples.arealite.dataset.clevr_count_70k import get_clevr_count_70k_rl_dataset
+        return get_clevr_count_70k_rl_dataset(path, split, rank, world_size)
     else:
         raise ValueError(
             f"Dataset {path} with split {split} and training type {training_type} is not supported. "
