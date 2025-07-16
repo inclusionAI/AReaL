@@ -293,15 +293,10 @@ class FSDPEngine(TrainEngine):
 
     def upload_weights(self, meta: WeightUpdateMeta):
         if meta.type == "nccl":
-            def run_update():
-                if not self.weight_update_group_initialized:
-                    self._init_distributed_weight_update(meta)
-                print("Initialized distributed weight update group in training engine", flush=True)
-                self._update_weights_from_distributed()
-
-            # 新建线程跑 broadcast，避免阻塞当前线程（Remote 端也有时间准备）
-            update_thread = threading.Thread(target=run_update)
-            update_thread.start()
+            if not self.weight_update_group_initialized:
+                self._init_distributed_weight_update(meta)
+            print("Initialized distributed weight update group in training engine", flush=True)
+            self._update_weights_from_distributed()
         elif meta.type == "disk":
             self._save_model_to_hf(meta.path, self.tokenizer)
             # dist.barrier() are called when _save_model_to_hf finished

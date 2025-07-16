@@ -107,9 +107,9 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
         state_dict_key_to_shape=param_meta,
     )
     # 本地engine广播参数
+    future = remote_engine.update_weights(meta)
     engine.upload_weights(meta)
     # 远端engine拉取参数
-    future = remote_engine.update_weights(meta)
     future.result(timeout=120)
     # 检查远端参数版本
     assert remote_engine.get_version() == 123
