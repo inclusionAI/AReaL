@@ -175,6 +175,7 @@ class SaveLoadMeta:
     with_optim: bool
     tokenizer: PreTrainedTokenizerFast | None
     base_model_path: str | None
+    naive_distributed: bool = False
 
 
 @dataclass

@@ -86,6 +86,7 @@ dependencies = [
     # Distributed computing
     "ray",
     "redis",
+    "deepspeed>=0.17.2",
     
     # Web frameworks
     "fastapi>=0.115.12",
