@@ -1,8 +1,6 @@
 # AReaL v1.0.0 Design Doc
 
----
-
-Update 20250710
+______________________________________________________________________
 
 SFT example:
 
@@ -10,12 +8,24 @@ SFT example:
 torchrun --nnodes 1 --nproc-per-node 8 examples/arealite/gsm8k_sft.py --config examples/arealite/configs/gsm8k_sft.yaml
 ```
 
----
+GRPO example:
 
+```bash
+python3 -m arealite.launcher.local examples/arealite/gsm8k_grpo.py --config examples/arealite/configs/gsm8k_grpo.yaml
+```
 
-We will provide both single-controller and SPMD user interfaces. The SPMD interface will be delivered with AReaLite, which is the paradigm most users are familiar with, just like using `torchrun` or `deepspeed`. However, this paradigm may lack some flexibility over global scheduling and control. To unlock the full potential with customized distributed execution, we will also provide a single-controller mode just like using Ray --- but our scheduler backend will not be restricted to Ray. Our code will be able to run with any scheduler in the cluster, such as native SLURM and K8S.
+______________________________________________________________________
 
-However, we want the user code to stay the same for both modes. The following is a simple usage example:
+We will provide both single-controller and SPMD user interfaces. The SPMD interface will
+be delivered with AReaLite, which is the paradigm most users are familiar with, just
+like using `torchrun` or `deepspeed`. However, this paradigm may lack some flexibility
+over global scheduling and control. To unlock the full potential with customized
+distributed execution, we will also provide a single-controller mode just like using Ray
+--- but our scheduler backend will not be restricted to Ray. Our code will be able to
+run with any scheduler in the cluster, such as native SLURM and K8S.
+
+However, we want the user code to stay the same for both modes. The following is a
+simple usage example:
 
 ```python
 def get_current_time():
@@ -30,7 +40,7 @@ class MyRolloutWorkflow:
         self.env = LocalToolingEnv()
         self.env.register_tool(get_current_time)
 
-    async def arun_episode(self, engine: InferenceEngine, 
+    async def arun_episode(self, engine: InferenceEngine,
                            data: Dict[str, Any]) -> Dict[str, Tensor]:
         ...
         message = [
@@ -94,7 +104,7 @@ def main_grpo():
             # synchronous rollout
             rollout_batch = rollout.rollout_batch(batch, workflow=MyRolloutWorkflow(rollout_config.workflow))
             # or asynchronous rollout with filtering and off-policyness control
-            # rollout_batch = rollout.prepare_batch(batch, 
+            # rollout_batch = rollout.prepare_batch(batch,
             #                                       workflow=MyRolloutWorkflow(rollout_config.workflow),
             #                                       should_accept=lambda x: x['rewards'].mean() > 0)
 
@@ -137,12 +147,14 @@ CUDA_VISIBLE_DEVICES=3,4 \
 
 ## Core API
 
-+ A specific algorithm must use these core components.
-+ Concrete implementations must follow the API definition.
+- A specific algorithm must use these core components.
+- Concrete implementations must follow the API definition.
 
 ### TrainEngine
 
-TrainEngine is a thin wrapper around existing training frameworks (FSDP, Megatron), providing a unified interface for RL algorithms for computation, parameter saving and loading, and providing a unified weight update interface for inference engines.
+TrainEngine is a thin wrapper around existing training frameworks (FSDP, Megatron),
+providing a unified interface for RL algorithms for computation, parameter saving and
+loading, and providing a unified weight update interface for inference engines.
 
 ```python
 #############################################
@@ -165,7 +177,7 @@ class TrainEngine(abc.ABC):
     # control api
     def __init__(self, para_config)
         self.para_config = para_config
-    
+
     def initialize(self, addr: str|None, ft_spec|None):
         # Initialize distributed environment, initialize and load model
         # addr is the corresponding service address when deploying sglang or fsdp/megatron remotely
@@ -196,7 +208,7 @@ class TrainEngine(abc.ABC):
         # Due to PPO minibatch updates, multiple train batches may need to be called
         # before calling step_lr_scheduler once, so this api needs to be separated
         raise NotImplementedError()
-    
+
     def train_batch(
         self,
         input_: Dict,
@@ -240,7 +252,7 @@ class FSDPEngine(TrainEngine):
 
     def destroy(self):
         del self.optimizer
-        del self.model 
+        del self.model
         gc.collect()
         torch.cuda.empty_cache()
         gc.collect()
@@ -265,8 +277,8 @@ class FSDPEngine(TrainEngine):
 
     def load(self, meta):
         ...
-    
-    
+
+
     ############# Helper methods start #############
 
     def load_from_hf(self, path):
@@ -287,7 +299,7 @@ class FSDPEngine(TrainEngine):
         if base_model_path is not None:
             copy_hf_configs(base_model_path, path)
         dist.barrier()
-        
+
     def save_for_recover(self, path: str):
         self.save_model_to_dcp(path)
         self.save_optimizer_state(path)
@@ -295,7 +307,7 @@ class FSDPEngine(TrainEngine):
     def load_from_recover(self, path):
         self.load_model_from_dcp(path)
         self.load_optimizer_state(path)
-        
+
     async def init_distributed_weight_update(self, meta: WeightUpdateMeta):
         # Initialize NCCL communication group for weight updates
         ...
@@ -327,11 +339,14 @@ class FSDPEngine(TrainEngine):
 
 ### Algorithm-Specific TrainEngine API
 
-Extended engines (such as Actor in PPO) provide convenient organization and calling of computational interfaces specific to algorithms. These computational interfaces maintain single-process computational logic, but can be called by controllers in top-level training scripts to complete distributed semantic computational orchestration.
+Extended engines (such as Actor in PPO) provide convenient organization and calling of
+computational interfaces specific to algorithms. These computational interfaces maintain
+single-process computational logic, but can be called by controllers in top-level
+training scripts to complete distributed semantic computational orchestration.
 
 ```python
 class Actor(Engine):
-    
+
     @torch.no_grad()
     def compute_logps(self, input_: Dict[str, Tensor]) -> torch.Tensor:
         ... # unpad
@@ -351,7 +366,7 @@ class Actor(Engine):
         return all_stats
 
 class Critic(Engine):
-    
+
     @torch.no_grad()
     def compute_values(self, input_: Dict) -> torch.Tensor:
         pass
@@ -379,15 +394,18 @@ class MegatronCritic(MegatronEngine, Critic):
 
 ### Inference Engine API
 
-Define the InferenceEngine API in a local-like mode, rather than a client-server separated form, mainly for user-centered convenience in using the InferenceEngine as a tool.
+Define the InferenceEngine API in a local-like mode, rather than a client-server
+separated form, mainly for user-centered convenience in using the InferenceEngine as a
+tool.
 
-InferenceEngine can internally start a SGLang subprocess (SGLangEngine), or call a remotely deployed service (RemoteSGLangEngine).
+InferenceEngine can internally start a SGLang subprocess (SGLangEngine), or call a
+remotely deployed service (RemoteSGLangEngine).
 
 ```python
 class InferenceEngine(ABC):
     def __init__(self, config)
         self.config = config
-        
+
     @abstractmethod
     def initialize(self, addr: str|None, ft_spec):
         """Start SGLang Engine, starting the engine will call model loading by default
@@ -439,7 +457,7 @@ class InferenceEngine(ABC):
 class SGLangEngine(InferenceEngine):
 
     def __init__(self, config: InfEngineConfig):
-        self.config = config 
+        self.config = config
         self.weight_update_group_initialized = False
 
     async def update_weights(self, meta) -> None:
@@ -454,7 +472,7 @@ class SGLangEngine(InferenceEngine):
     async def agenerate(self, req: LLMRequest) -> LLMResponse:
         # Given a prompt, generate a response with LLM
         return await self.llm.generate_async(xxx)
-        
+
     # Weight update
     @abstractmethod
     def update_weights_from_disk(self, path) -> None:
@@ -483,7 +501,7 @@ class SGLangEngine(InferenceEngine):
     @abstractmethod
     def check_health(self) -> bool:
         """Check server health status
-        
+
         Returns:
             bool: Whether the server is healthy
         """
@@ -492,7 +510,8 @@ class SGLangEngine(InferenceEngine):
 
 ### RolloutWorkflow
 
-RolloutWorkflow is a class that provides the arun_episode method. This method has a fixed signature, used to collect one agent trajectory.
+RolloutWorkflow is a class that provides the arun_episode method. This method has a
+fixed signature, used to collect one agent trajectory.
 
 ```python
 class MyRolloutWorkflow:
@@ -501,7 +520,7 @@ class MyRolloutWorkflow:
         self.tool_executor = ToolExecutor()
         self.tool_executor.register_tool(get_current_time)
 
-    async def arun_episode(self, engine: InferenceEngine, 
+    async def arun_episode(self, engine: InferenceEngine,
                            data: Dict[str, Any]) -> Dict[str, Tensor]:
         ...
         req = LLMRequest(input_ids=data['input_ids'], ...)
@@ -520,14 +539,20 @@ They have the same API as `InferenceEngine` and `TrainEngine`, respectively.
 
 ## Other Components
 
-1. Algorithm workflows don't necessarily use these components; other replaceable components such as implementations in rllm or verl-agent can also be used
-2. Mainly for internal implementation and division of labor, as a thin wrapper to facilitate adaptation of external packages
+1. Algorithm workflows don't necessarily use these components; other replaceable
+   components such as implementations in rllm or verl-agent can also be used
+1. Mainly for internal implementation and division of labor, as a thin wrapper to
+   facilitate adaptation of external packages
 
 ### Environment
 
 1. Support multi-tool management and unified execution interface
-2. Support local calling and mcp service calling
-3. "Tools" belong to an instance rather than a class, register_tool is defined as a method rather than a static method, this is (1) to prevent tools from subclasses being registered to the base class, causing potential naming or calling conflicts; (2) to support multiple tasks for the same service (e.g., browser), with each task having a different toolset
+1. Support local calling and mcp service calling
+1. "Tools" belong to an instance rather than a class, register_tool is defined as a
+   method rather than a static method, this is (1) to prevent tools from subclasses
+   being registered to the base class, causing potential naming or calling conflicts;
+   (2) to support multiple tasks for the same service (e.g., browser), with each task
+   having a different toolset
 
 ```python
 from abc import ABC, abstractmethod
@@ -536,14 +561,14 @@ from typing import Any, Dict, List
 class ToolingEnv:
      def __init__(self):
         self.is_initialized = False
-        
+
         self.tool_registry: Dict[str, Callable] = {}
         self.tool_schemas: List[Dict[str, Any]] = []
-         
+
     async def ainitialize(self):
         """
         Performs the initialization logic for the environment.
-        For stateful environments, this is where resources are created and 
+        For stateful environments, this is where resources are created and
         prepared (e.g., launching a browser).
         """
         pass
@@ -575,7 +600,7 @@ class MCPToolingEnv(ToolingEnv):
     def aexecute(self, tool_name: str, tool_args: Dict[str, Any]):
         pass
 
-    
+
 class LocalToolingEnv(ToolingEnv):
 
     @staticmethod
@@ -591,7 +616,7 @@ class LocalToolingEnv(ToolingEnv):
             "properties": {},
             "required": [],
         }
-        
+
         # Mapping from Python types to JSON Schema types
         type_mapping = {
             str: "string",
@@ -602,13 +627,13 @@ class LocalToolingEnv(ToolingEnv):
 
         for name, param in sig.parameters.items():
             # Default to string type if type hint is missing or complex
-            param_type = type_mapping.get(param.annotation, "string") 
+            param_type = type_mapping.get(param.annotation, "string")
             parameters["properties"][name] = {"type": param_type}
-            
+
             # If a parameter has no default value, it is considered required.
             if param.default is inspect.Parameter.empty:
                 parameters["required"].append(name)
-        
+
         return {
             "type": "function",
             "function": {
@@ -624,11 +649,11 @@ class LocalToolingEnv(ToolingEnv):
         """
         if not callable(func):
             raise TypeError("The provided object must be a callable function.")
-            
+
         tool_name = func.__name__
         if tool_name in self.tool_registry:
             raise ValueError(f"Tool with name '{tool_name}' is already registered.")
-            
+
         # Add the function to the registry and its schema to the schema list.
         self.tool_registry[tool_name] = func
         self.tool_schemas.append(self.generate_schema(func))
@@ -636,7 +661,7 @@ class LocalToolingEnv(ToolingEnv):
     def list_tools(self) -> List[Dict[str, Any]]:
         """
         Lists all available tools provided by this environment and their descriptions.
-        
+
         Returns:
             A list of dictionaries, where each dictionary describes a tool.
         """
@@ -651,14 +676,14 @@ class LocalToolingEnv(ToolingEnv):
             tool_args (Dict[str, Any]): The arguments required to call the tool.
 
         Returns:
-            Any: The result of the tool's execution, typically a string or 
+            Any: The result of the tool's execution, typically a string or
                  structured JSON.
         """
         if tool_name not in self._tool_registry:
             return f"Error: Tool '{tool_name}' is not registered."
-            
+
         tool_func = self._tool_registry[tool_name]
-        
+
         try:
             result = tool_func(**tool_args)
             return result
@@ -667,14 +692,19 @@ class LocalToolingEnv(ToolingEnv):
             return f"Error executing '{tool_name}': Invalid arguments. Details: {e}"
         except Exception as e:
             return f"Error executing '{tool_name}': An unexpected error occurred. Details: {e}"
-    
+
 ```
 
 ### Reward
 
-1. Workflows for computing rewards using models and computing rewards based on rules should be separated
-2. Rule-based reward computation is defined as a function with a predefined signature, which can be local or remote, and is generally wrapped in the rollout workflow; user-written reward functions can also not use this signature as long as they provide a workflow
-3. Computing rewards using models requires users to initialize a controller/engine themselves and explicitly call it in the algorithm workflow
+1. Workflows for computing rewards using models and computing rewards based on rules
+   should be separated
+1. Rule-based reward computation is defined as a function with a predefined signature,
+   which can be local or remote, and is generally wrapped in the rollout workflow;
+   user-written reward functions can also not use this signature as long as they provide
+   a workflow
+1. Computing rewards using models requires users to initialize a controller/engine
+   themselves and explicitly call it in the algorithm workflow
 
 ```python
 
@@ -704,7 +734,8 @@ for _ in range(epochs):
 
 ### Dataset
 
-Use huggingface datasets and pytorch torchdata. In Single-Controller mode, only one process per experiment is responsible for data loading.
+Use huggingface datasets and pytorch torchdata. In Single-Controller mode, only one
+process per experiment is responsible for data loading.
 
 ```python
 from datasets import Dataset, load_dataset
