@@ -173,6 +173,7 @@ class SaveLoadMeta:
     path: str
     weight_format: str
     with_optim: bool
+    global_step: int
     tokenizer: PreTrainedTokenizerFast | None
     base_model_path: str | None
 
