@@ -23,6 +23,9 @@ def concat_padded_tensors(
         tensors_to_concat = []
         for tensor_dict in tensor_dicts:
             tensor = tensor_dict[key]
+            if key == "images":
+                tensors_to_concat.append(tensor)
+                continue
             # Skip 1D tensors like rewards
             if len(tensor.shape) == 1:
                 tensors_to_concat.append(tensor)

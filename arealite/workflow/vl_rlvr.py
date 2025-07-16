@@ -33,10 +33,16 @@ class VL_RLVRWorkflow(RLVRWorkflow):
             return_tensors="pt",
         )["input_ids"].tolist()[0]
         n_samples = self.gconfig.n_samples
-        byte_images = [
-            base64.b64encode(BytesIO(image_file.tobytes()).read()).decode("utf-8")
-            for image_file in data["images"]
-        ]
+        byte_images = []
+        for image_file in data["images"]:
+            with BytesIO() as buffer:
+                # 将图像保存到字节流中
+                image_file.save(buffer, format="PNG")
+                buffer.seek(0)  # 重置字节流的位置
+
+                # 对字节流进行 base64 编码
+                byte_image = base64.b64encode(buffer.read()).decode('utf-8')
+                byte_images.append(byte_image)
 
         req = VLMRequest(
             rid=uuid.uuid4().hex,

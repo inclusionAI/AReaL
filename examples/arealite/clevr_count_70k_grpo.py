@@ -51,14 +51,14 @@ def extract_solution(solution_str, method="strict") -> str | None:
 
 def clevr_count_70k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
     from realhf.impl.dataset.math_parser import extract_answer
-    print(f"completions: {completions}, answer: {answer}")
+    # print(f"completions: {completions}, answer: {answer}")
     sol = extract_answer(completions, data_name="") # str number
     ans = extract_solution(solution_str=answer, method="strict")
     if sol is None:
         return 0
     if ans is None:
         return 0
-    print(f"sol: {sol}, ans: {ans}")
+    # print(f"sol: {sol}, ans: {ans}")
     return int(sol.strip() == ans.strip())
 
 
@@ -171,7 +171,7 @@ def main_grpo():
         # Create barrier to synchronize all rollout processes.
         dist.barrier()
         torch.cuda.synchronize()
-
+        
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
                 logp = actor.compute_logp(batch)

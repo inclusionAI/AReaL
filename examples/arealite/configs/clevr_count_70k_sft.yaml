@@ -13,7 +13,7 @@ tokenizer_path: ${model.path}
 model:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen2-VL-7B
+  path: /storage/openpsi/models/Qwen2.5-VL-7B-Instruct
   init_from_scratch: false
   gradient_checkpointing: false
   bf16: true
