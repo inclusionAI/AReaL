@@ -108,34 +108,34 @@ class RemoteMegatronEngine(TrainEngine):
             "recover_dir": cfg.recover_dir,
         }
 
-        # try:
-        #     target_url = f"http://{self.megatron_addr}/initialize"
-        #     headers = {"Content-Type": "application/json"}
-        #     logger.info(
-        #         f"[RemoteMegatronEngine] initialize begin send request to megatron server, "
-        #         f"target_url: {target_url}, rank: {global_rank}, target_url: {target_url}"
-        #     )
-        #     response = requests.post(
-        #         target_url, data=json.dumps(payload), headers=headers, timeout=7200
-        #     )
-        #     logger.info(
-        #         f"[RemoteMegatronEngine] initialize finished send request to megatron server"
-        #     )
-        #     if response.status_code == 200:
-        #         logger.info(
-        #             f"[RemoteMegatronEngine] rank: {global_rank} Payload sent successfully to {target_url}"
-        #         )
-        #     else:
-        #         raise ValueError(
-        #             f"[Rank {global_rank}] Failed to send payload. Status code: {response.status_code}, "
-        #             f"Response: {response.text}"
-        #         )
-        # except ValueError as ve:
-        #     raise ValueError(f"[Rank {global_rank}] Error parsing target address: {ve}")
-        # except requests.exceptions.RequestException as re:
-        #     raise ValueError(f"[Rank {global_rank}] Error sending HTTP request: {re}")
-        # except Exception as e:
-        #     raise ValueError(f"[Rank {global_rank}] Unexpected error: {e}")
+        try:
+            target_url = f"http://{self.megatron_addr}/initialize"
+            headers = {"Content-Type": "application/json"}
+            logger.info(
+                f"[RemoteMegatronEngine] initialize begin send request to megatron server, "
+                f"target_url: {target_url}, rank: {global_rank}, target_url: {target_url}"
+            )
+            response = requests.post(
+                target_url, data=json.dumps(payload), headers=headers, timeout=7200
+            )
+            logger.info(
+                f"[RemoteMegatronEngine] initialize finished send request to megatron server"
+            )
+            if response.status_code == 200:
+                logger.info(
+                    f"[RemoteMegatronEngine] rank: {global_rank} Payload sent successfully to {target_url}"
+                )
+            else:
+                raise ValueError(
+                    f"[Rank {global_rank}] Failed to send payload. Status code: {response.status_code}, "
+                    f"Response: {response.text}"
+                )
+        except ValueError as ve:
+            raise ValueError(f"[Rank {global_rank}] Error parsing target address: {ve}")
+        except requests.exceptions.RequestException as re:
+            raise ValueError(f"[Rank {global_rank}] Error sending HTTP request: {re}")
+        except Exception as e:
+            raise ValueError(f"[Rank {global_rank}] Unexpected error: {e}")
 
         logger.info(f"[RemoteMegatronEngine] rank: {global_rank} megatron server initialize success")
         self.initialized = True
@@ -285,12 +285,11 @@ class RemoteMegatronEngine(TrainEngine):
     ) -> Dict[str, float]:
         # 输入： advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards
         # Dict[str, tensor] to SequenceSample
-        group_size = self.config.group_size
-        batch_size = self.config.train_bs_n_seqs
-
+        batch_size = int(input_["seqlen"].shape[0])
+        print(f"[RemoteMegatronEngine] input keys: {input_.keys()}, ids len: {input_["seqlen"].shape[0]}")
         flat_input = SequenceSample.from_default(
-            ids=list(range(batch_size * group_size)),
-            data=input_,
+            ids=list(range(batch_size)),
+            data={k: v for k, v in input_.items() if k != "seqlen"},
             seqlens=[int(x) for x in input_["seqlen"].cpu().numpy().tolist()],
         )
 

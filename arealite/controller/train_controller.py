@@ -140,17 +140,30 @@ class DistributedTrainController(TrainController):
         batches = input_.split(2)
 
         assert len(self.workers) % self.dp_world_size == 0
-        tasks = []
-        for index, worker in enumerate(self.workers):
-            batch_index = index // self.dp_world_size
-            batch_data = batches[batch_index]
-            tasks.append(
-                self.scheduler.call_engine(
-                    worker.id, "train_distributed_batch", batch_data
-                )
-            )
 
-        results = asyncio.run(self._rpc_call_tasks(*tasks))
+        futures = []
+        with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
+            for index, worker in enumerate(self.workers):
+                batch_index = index // self.dp_world_size
+                batch_data = batches[batch_index]
+                futures.append(executor.submit(
+                    self.scheduler.call_engine,
+                    worker.id,
+                    "train_distributed_batch",
+                    batch_data
+                ))
+
+            results = []
+            try:
+                for future in as_completed(futures):
+                    result = future.result()  # 可加异常处理
+                    results.append(result)
+            except KeyboardInterrupt:
+                print("收到Ctrl+C，正在终止所有初始化任务...")
+                # 取消所有未完成的future
+                for f in futures:
+                    f.cancel()
+                raise  # 重新抛出异常，主程序能感知
 
     @torch.no_grad()
     def eval_batch(
