@@ -51,7 +51,7 @@ def extract_solution(solution_str, method="strict") -> str | None:
 
 def clevr_count_70k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
     from realhf.impl.dataset.math_parser import extract_answer
-    # print(f"completions: {completions}, answer: {answer}")
+    print(f"completions: {completions}, answer: {answer}")
     sol = extract_answer(completions, data_name="") # str number
     ans = extract_solution(solution_str=answer, method="strict")
     if sol is None:
@@ -129,6 +129,7 @@ def main_grpo():
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
+    config.gconfig.max_new_tokens=10
     workflow = VL_RLVRWorkflow(
         reward_fn=clevr_count_70k_reward_fn,
         gconfig=config.gconfig,
@@ -171,7 +172,7 @@ def main_grpo():
         # Create barrier to synchronize all rollout processes.
         dist.barrier()
         torch.cuda.synchronize()
-        
+        breakpoint()
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
                 logp = actor.compute_logp(batch)

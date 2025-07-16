@@ -3,7 +3,7 @@
 # huggingface-cli login --token $HUGGINGFACE_TOKEN
 # export CURL_CA_BUNDLE=""
 # export REQUESTS_CA_BUNDLE=""
-HF_ENDPOINT=http://hf-mirror.com huggingface-cli download --repo-type model --resume-download Qwen/Qwen2.5-VL-7B-Instruct --local-dir /storage/openpsi/models/Qwen2.5-VL-7B-Instruct 
+HF_ENDPOINT=http://hf-mirror.com huggingface-cli download --repo-type model --resume-download Qwen/Qwen2.5-VL-32B-Instruct --local-dir /storage/openpsi/models/Qwen2.5-VL-32B-Instruct 
 # huggingface-cli download htlou/obelics_obelics_100k_tokenized_2048 --local-dir ./obelics_obelics_100k_tokenized_2048 --repo-type dataset
 # huggingface-cli download htlou/obelics_obelics_10k_tokenized_2048 --local-dir ./obelics_obelics_10k_tokenized_2048 --repo-type dataset
 # huggingface-cli download htlou/obelics_obelics_100k --local-dir ./obelics_obelics_100k --repo-type dataset

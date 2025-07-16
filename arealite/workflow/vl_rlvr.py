@@ -31,6 +31,7 @@ class VL_RLVRWorkflow(RLVRWorkflow):
             images=data["images"],
             padding=False,
             return_tensors="pt",
+            add_generation_prompt=True,
         )["input_ids"].tolist()[0]
         n_samples = self.gconfig.n_samples
         byte_images = []
