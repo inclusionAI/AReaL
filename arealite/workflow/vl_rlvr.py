@@ -5,6 +5,7 @@ import torch
 from tensordict import TensorDict
 from transformers import PreTrainedTokenizerFast,AutoProcessor
 import base64
+from io import BytesIO
 from arealite.api.cli_args import GenerationHyperparameters
 from arealite.api.io_struct import VLMRequest
 from arealite.workflow.rlvr import RLVRWorkflow
@@ -32,11 +33,15 @@ class VL_RLVRWorkflow(RLVRWorkflow):
             return_tensors="pt",
         )["input_ids"].tolist()[0]
         n_samples = self.gconfig.n_samples
-        # byte_images=[base64.b64encode(image_file).decode("utf-8") for image_file in data["images"]]
+        byte_images = [
+            base64.b64encode(BytesIO(image_file.tobytes()).read()).decode("utf-8")
+            for image_file in data["images"]
+        ]
+
         req = VLMRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
-            image_data=data["images"],
+            image_data=byte_images,
             gconfig=self.gconfig.new(n_samples=1),
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])

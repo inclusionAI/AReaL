@@ -34,13 +34,14 @@ async def arequest_with_retry(
                 if method.upper() == "GET":
                     response = await session.get(url)
                 elif method.upper() == "POST":
-                    response = await session.post(url, data=payload)
+                    response = await session.post(url, json=payload)
                 elif method.upper() == "PUT":
-                    response = await session.put(url, data=payload)
+                    response = await session.put(url, json=payload)
                 elif method.upper() == "DELETE":
                     response = await session.delete(url)
                 else:
                     raise ValueError(f"Unsupported HTTP method: {method}")
+                
                 response.raise_for_status()
                 return await response.json()
         except (

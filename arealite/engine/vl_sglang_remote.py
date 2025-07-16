@@ -114,7 +114,7 @@ class VL_RemoteSGLangEngine(RemoteSGLangEngine):
 
         return VLMResponse(
             input_tokens=req.input_ids,
-            input_images=req.images,
+            input_images=req.image_data,
             output_tokens=accumulated_output_tokens,
             output_logprobs=accumulated_output_logprobs,
             output_versions=accumulated_versions,
