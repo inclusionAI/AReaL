@@ -287,6 +287,7 @@ class RemoteMegatronEngine(TrainEngine):
         # Dict[str, tensor] to SequenceSample
         group_size = self.config.group_size
         batch_size = self.config.train_bs_n_seqs
+
         flat_input = SequenceSample.from_default(
             ids=list(range(batch_size * group_size)),
             data=input_,
@@ -602,8 +603,8 @@ class RemoteMegatronEngine(TrainEngine):
             stats_tracker.scalar(**scalars)
 
             global_stats = stats_tracker.export()
-            for k in global_denominators:
-                global_stats.pop(f"ppo_actor/{k}")
+            # for k in global_denominators:
+            #     global_stats.pop(f"ppo_actor/{k}")
 
         return dict(
             advantages=advantages,

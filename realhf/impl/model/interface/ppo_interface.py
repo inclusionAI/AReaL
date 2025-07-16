@@ -781,8 +781,9 @@ class PPOActorInterface(model_api.ModelInterface):
             stats_tracker.scalar(**scalars)
 
             global_stats = stats_tracker.export()
-            for k in global_denominators:
-                global_stats.pop(f"ppo_actor/{k}")
+
+            # for k in global_denominators:
+            #     global_stats.pop(f"ppo_actor/{k}")
 
             # Run mini-batched PPO training!
             def _loss_fn(logits, input_):
