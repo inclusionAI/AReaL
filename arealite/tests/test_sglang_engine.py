@@ -5,6 +5,7 @@ import time
 import uuid
 
 import pytest
+import requests
 import torch
 from tensordict import TensorDict
 
@@ -26,6 +27,17 @@ PORT, DIST_PORT = network.find_free_ports(2)
 HOST = network.gethostip()
 # set a large timeout since we may need to download the model from hub
 RUN_SERVER_TIMEOUT = 180
+
+
+def check_server_health(base_url):
+    try:
+        response = requests.get(
+            f"{base_url}/metrics",
+            timeout=30,
+        )
+        return response.status_code == 200
+    except requests.exceptions.RequestException as e:
+        return False
 
 
 @pytest.fixture(scope="module")
