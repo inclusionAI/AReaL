@@ -51,11 +51,11 @@ class LLMResponse:
     
 @dataclass
 class VLMRequest(LLMRequest):
-    images: Optional[List[ImageObject|str]] = field(default_factory=list)
+    image_data: Optional[List[ImageObject|str]] = field(default_factory=list)
 
 @dataclass
 class VLMResponse(LLMResponse):
-    input_images: Optional[List[ImageObject|str]] = field(default_factory=list)
+    input_images: List[ImageObject|str] = field(default_factory=list)
 
 
 @dataclass

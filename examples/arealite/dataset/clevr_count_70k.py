@@ -12,11 +12,12 @@ def input_text(text:str):
 def input_image(base64_image: str):
     return {"type": "input_image", "image_url":  f"data:image/jpeg;base64,{base64_image}"}
 def build_raw_message(sample: Dict[str, Any], base64_images: list[str]) -> list[Dict[str, Any]]:
+    
     raw_message = []
     problem_parts = [part.strip() for part in sample["problem"].split("<image>") if part.strip()]
     insert_list = []
     for i, part in enumerate(problem_parts):
-        if i > 0:  
+        if i > 0 or sample["problem"].startswith("<image>"):  
             insert_list.append("image")
         part = part.strip()  
         if part:  
@@ -35,9 +36,8 @@ def build_raw_message(sample: Dict[str, Any], base64_images: list[str]) -> list[
     return messages
 
 
-def encode_image(image_path):
-    with open(image_path, "rb") as image_file:
-        return base64.b64encode(image_file.read()).decode("utf-8")
+def encode_image(image_file):
+    return base64.b64encode(image_file).decode("utf-8")
 def process_image(
     image: Union[Dict[str, Any], ImageObject, str], min_pixels: Optional[int], max_pixels: Optional[int]
 ) -> ImageObject:
@@ -115,23 +115,25 @@ def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
 # def get_clevr_count_70k_rl_dataset(path, split,  rank, world_size):
 #     dataset = load_dataset(path=path, split=split)
 #     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
-
 #     def process(sample):
 #         processed_images = [process_image(image, 113*113, 336*336) for image in sample["images"]]
 #         base64_images = [encode_image(image) for image in processed_images]
 #         messages = build_raw_message(sample, base64_images)
-#         return {"messages": messages}
 
-#     dataset = dataset.map(process).remove_columns(["problem","images"])
+#         return {"messages": messages,"images":processed_images}
+    
+#     dataset = dataset.map(process).remove_columns(["problem"])
+#     breakpoint()
 #     return dataset
 
-def get_clevr_count_70k_rl_dataset(path, split,  rank, world_size):
+def get_clevr_count_70k_rl_dataset(path, split,processor,  rank, world_size):
     dataset = load_dataset(path=path, split=split)
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
 
     def process(sample):
         processed_images = [process_image(image, 113*113, 336*336) for image in sample["images"]]
-        messages = [{"role": "user", "content": sample["problem"]}]
+        image_token = processor.image_token if processor is not None else "<image>"
+        messages = sample["problem"].replace("<image>", image_token)
         return {"messages": messages, "images": processed_images}
 
     dataset = dataset.map(process).remove_columns(["problem"])

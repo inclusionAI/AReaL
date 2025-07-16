@@ -48,7 +48,7 @@ class VL_RemoteSGLangEngine(RemoteSGLangEngine):
         # NOTE: rid should NOT be passed in payload
         payload = {
             "input_ids": req.input_ids.copy(),
-            "images": req.images,  # ImageObject or str
+            "image_data": req.image_data,  # ImageObject or str
             "sampling_params": sample_params,
             "return_logprob": True,
             "stream": False,

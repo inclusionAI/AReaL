@@ -68,13 +68,14 @@ def main_grpo():
 
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
-    processor, tokenizer = load_hf_processor_and_tokenizer(config.processor_path, config.tokenizer_path)
+    processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
     train_dataset=get_custom_dataset(
                     path=config.train_dataset.path,
                     rank=rank,
                     world_size=world_size,
                     split="train",
                     training_type="rl",
+                    processor=processor
                     )
     valid_dataset=get_custom_dataset(
                     path=config.valid_dataset.path,
@@ -82,6 +83,7 @@ def main_grpo():
                     world_size=world_size,
                     split="test",
                     training_type="rl",
+                    processor=processor
                     )
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(

@@ -420,6 +420,7 @@ class RemoteSGLangEngine(InferenceEngine):
                 except StopIteration:
                     data_generator = iter(dataloader)
                     data = next(data_generator)
+                
                 for item in data:
                     self.submit(item, workflow=workflow)
             try:

@@ -22,7 +22,7 @@ from arealite.utils.data import (
     amend_position_ids,
     pack_tensor_dict,
     pad_mb_list,
-    split_packed_tensor_dict_into_mb_list,
+    split_padded_tensor_dict_into_mb_list,
     unsqueeze_mb_list,
 )
 from arealite.utils.fsdp import (
@@ -71,7 +71,7 @@ class VL_FSDPEngine(FSDPEngine):
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
 
-        dtype = torch.bfloat16 if self.config.bf16 else torch.float16
+        dtype = torch.bfloat16 
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(self.config.path)
         with torch.device("cuda"):
             # initialize scratch model from config
@@ -225,7 +225,7 @@ class VL_FSDPEngine(FSDPEngine):
             input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
         input_ = amend_position_ids(input_)
         packed_input = pack_tensor_dict(input_)
-        mb_list = split_packed_tensor_dict_into_mb_list(
+        mb_list = split_padded_tensor_dict_into_mb_list(
             packed_input,
             self.config.mb_spec,
         )

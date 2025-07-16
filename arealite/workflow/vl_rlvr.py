@@ -4,7 +4,7 @@ import uuid
 import torch
 from tensordict import TensorDict
 from transformers import PreTrainedTokenizerFast,AutoProcessor
-
+import base64
 from arealite.api.cli_args import GenerationHyperparameters
 from arealite.api.io_struct import VLMRequest
 from arealite.workflow.rlvr import RLVRWorkflow
@@ -24,18 +24,19 @@ class VL_RLVRWorkflow(RLVRWorkflow):
         self.processor = processor
 
     async def arun_episode(self, engine, data):
-        input_ids = self.processor.apply_chat_template(
-            data["messages"],
-            data["images"],
-            tokenize=True,
-            add_generation_prompt=True,
-            enable_thinking=self.enable_thinking,
-        )['input_ids']
+        
+        input_ids = self.processor(
+            text=data["messages"],
+            images=data["images"],
+            padding=False,
+            return_tensors="pt",
+        )["input_ids"].tolist()[0]
         n_samples = self.gconfig.n_samples
+        # byte_images=[base64.b64encode(image_file).decode("utf-8") for image_file in data["images"]]
         req = VLMRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
-            images=data["images"],
+            image_data=data["images"],
             gconfig=self.gconfig.new(n_samples=1),
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])

@@ -1,6 +1,6 @@
 import asyncio
 from typing import Any, Dict, Optional
-
+from PIL import Image
 import aiohttp
 
 DEFAULT_RETRIES = 1
@@ -23,6 +23,7 @@ async def arequest_with_retry(
     url = f"{base_url}{endpoint}"
 
     for attempt in range(max_retries):
+
         try:
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(
@@ -33,9 +34,9 @@ async def arequest_with_retry(
                 if method.upper() == "GET":
                     response = await session.get(url)
                 elif method.upper() == "POST":
-                    response = await session.post(url, json=payload)
+                    response = await session.post(url, data=payload)
                 elif method.upper() == "PUT":
-                    response = await session.put(url, json=payload)
+                    response = await session.put(url, data=payload)
                 elif method.upper() == "DELETE":
                     response = await session.delete(url)
                 else:

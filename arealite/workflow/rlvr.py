@@ -31,6 +31,7 @@ class RLVRWorkflow(RolloutWorkflow):
             add_generation_prompt=True,
             enable_thinking=self.enable_thinking,
         )
+
         n_samples = self.gconfig.n_samples
         req = LLMRequest(
             rid=uuid.uuid4().hex,
