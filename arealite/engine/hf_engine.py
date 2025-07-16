@@ -15,7 +15,7 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-from arealite.api.cli_args import MicroBatchSpec, TrainEngineConfig
+from arealite.api.cli_args import TrainEngineConfig
 from arealite.api.engine_api import (
     FinetuneSpec,
     SaveLoadMeta,
@@ -81,7 +81,7 @@ class HFEngine(TrainEngine):
         torch.cuda.set_device(local_rank)
         self.device = torch.device(f"cuda:{local_rank}")
 
-        dtype = torch.bfloat16 if self.config.bf16 else torch.float16
+        dtype = getattr(torch, self.config.dtype)
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.config.path,
             trust_remote_code=True,

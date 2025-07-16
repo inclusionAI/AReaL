@@ -1,12 +1,8 @@
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Callable
 
 from arealite.api.cli_args import EvaluatorConfig
 from arealite.api.io_struct import FinetuneSpec
 from realhf.base import timeutil
-
-if TYPE_CHECKING:
-    from tensordict import TensorDict
-    from torchdata.stateful_dataloader import StatefulDataLoader
 
 
 class Evaluator:
@@ -22,8 +18,7 @@ class Evaluator:
 
     def evaluate(
         self,
-        valid_dataloader: "StatefulDataLoader",
-        evaluate_fn: Callable[["TensorDict"], Any],
+        evaluate_fn: Callable,
         epoch: int,
         step: int,
         global_step: int,
@@ -32,5 +27,4 @@ class Evaluator:
             epochs=int(step == self.ft_sepc.steps_per_epoch - 1), steps=1
         ):
             return
-        for data in valid_dataloader:
-            evaluate_fn(data)
+        evaluate_fn()

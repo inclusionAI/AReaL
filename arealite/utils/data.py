@@ -110,11 +110,11 @@ def pad_input(hidden_states, indices, batch, seqlen):
 
 
 def concat_padded_tensors(
-    tensor_dicts: List[Dict[str, torch.Tensor]], pad_value: float = 0.0
-) -> Dict[str, torch.Tensor]:
+    tensor_dicts: List[TensorDict], pad_value: float = 0.0
+) -> TensorDict:
     """Concatenate and pad tensors from multiple padded tensor dictionaries."""
     if not tensor_dicts:
-        return {}
+        return TensorDict()
 
     # Find max sequence length across all dictionaries
     lens = []
@@ -156,7 +156,7 @@ def concat_padded_tensors(
         result[key] = torch.cat(tensors_to_concat, dim=0)
     if "attention_mask" not in result:
         result["attention_mask"] = attn_mask
-    return result
+    return TensorDict(result, batch_size=[len(lens)])
 
 
 def to_device(data: Dict[str, torch.Tensor | Any], device) -> Dict[str, torch.Tensor]:
@@ -290,13 +290,13 @@ class MicroBatchList:
 DEFAULT_MAX_TOKENS_PER_MB = int(1e12)
 
 
-def split_packed_tensor_dict_into_mb_list(
+def split_padded_tensor_dict_into_mb_list(
     data: TensorDict, mb_spec: MicroBatchSpec, group: Optional[dist.ProcessGroup] = None
 ) -> MicroBatchList:
-    """Split a packed tensordict into micro-batches based on the cumulative sequence lengths.
+    """Split a padded tensordict into micro-batches based on the attention mask.
 
     Args:
-        data (TensorDict): Dictionary containing packed tensors with "cu_seqlens" key.
+        data (TensorDict): Dictionary containing padded tensors.
         mb_spec (MicroBatchSpec): Specification for micro-batch splitting.
         group (Optional[dist.ProcessGroup]): Process group for distributed synchronization.
 
@@ -304,24 +304,21 @@ def split_packed_tensor_dict_into_mb_list(
         MicroBatchList: A structure containing the split micro-batches and metadata.
     """
     assert (
-        "cu_seqlens" in data
-    ), "Input data must be packed and contain 'cu_seqlens' key."
+        "attention_mask" in data
+    ), "Input data must be padded and contain 'attention_mask' key."
     if mb_spec.max_tokens_per_mb is None:
         mb_spec = MicroBatchSpec.new(
             mb_spec, max_tokens_per_mb=DEFAULT_MAX_TOKENS_PER_MB
         )
-    cu_seqlens = data["cu_seqlens"]
-    bs = cu_seqlens.shape[0] - 1
-    total_lens = int(cu_seqlens[-1])
-    input_lens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy()
+    bs = data["attention_mask"].shape[0]
+    max_seqlen = data["attention_mask"].shape[1]
+    input_lens = data["attention_mask"].sum(1).long().cpu().numpy()
 
     # check tensor shape, split only 1d tensors with length "total_lens"
     to_split = {}
     not_to_split = {}
     for key, value in data.items():
-        if key == "cu_seqlens" or key == "max_seqlen":
-            continue
-        if not torch.is_tensor(value) or value.numel() != total_lens:
+        if not torch.is_tensor(value) or value.numel() != bs * max_seqlen:
             not_to_split[key] = value
         else:
             to_split[key] = value
@@ -331,6 +328,7 @@ def split_packed_tensor_dict_into_mb_list(
     splitted_lens = [
         [input_lens[i] for i in group_index] for group_index in group_indices
     ]
+    group_n_seqs = [len(x) for x in splitted_lens]
     group_lens = [sum(x) for x in splitted_lens]
 
     forward_indices = datapack.flat2d(group_indices)
@@ -340,12 +338,16 @@ def split_packed_tensor_dict_into_mb_list(
     def _split(tensor):
         """Split and pad a tensor based on forward indices and lens."""
         # Unpack the sequence
-        unpacked = unpack_sequence(tensor, cu_seqlens=cu_seqlens)
+        unpacked = [tensor[i] for i in range(bs)]
         # Reorder according to forward indices
         reordered = reorder_list(unpacked, forward_indices)
-        reordered = torch.cat(reordered)
+        reordered = torch.stack(reordered)
         # Unpack again according to split lens
-        splitted = unpack_sequence(reordered, lens=group_lens)
+        splitted = []
+        offset = 0
+        for _n_seqs in group_n_seqs:
+            splitted.append(reordered[offset : offset + _n_seqs])
+            offset += _n_seqs
         return splitted
 
     to_split = dict_map(to_split, lambda x: _split(x))
@@ -355,16 +357,7 @@ def split_packed_tensor_dict_into_mb_list(
     # organize splitted micro batches
     assert len(mbs) == len(splitted_lens), (len(mbs), len(splitted_lens))
     for i, (mb, lens) in enumerate(zip(mbs, splitted_lens)):
-        max_seqlen = max(lens)
-        lens = torch.tensor(lens, device="cuda")
-        batch_cu_seqlens = torch.nn.functional.pad(
-            lens.cumsum(0, dtype=torch.int), (1, 0)
-        )
-        results.append(
-            TensorDict(
-                **mb, **not_to_split, max_seqlen=max_seqlen, cu_seqlens=batch_cu_seqlens
-            )
-        )
+        results.append(TensorDict(**mb, **not_to_split))
     return MicroBatchList(
         data=data,
         mbs=results,
@@ -433,7 +426,7 @@ def pad_mb_list(
         # NOTE: GPU page size is 2MB
         # Take hidden size 4096 with bf16 dtype as an example,
         # the batch size of a page is 256
-        pad_to_length = (l + 255) // 256 * 256
+        pad_to_length = (int(l) + 255) // 256 * 256
         padded_mb, pad_len = pad_packed_tensor_dict(
             mb, pad_to_length, pad_value=pad_value
         )

@@ -22,10 +22,8 @@ def process_gsm8k_sft_dataset(dataset: Dataset, tokenizer):
             sample["question"] + sample["answer"] + tokenizer.eos_token
         )
         prompt_token = tokenizer.encode(sample["question"])
-        prompt_mask = [1] * len(prompt_token) + [0] * (
-            len(seq_token) - len(prompt_token)
-        )
-        return {"input_ids": seq_token, "prompt_mask": prompt_mask}
+        loss_mask = [0] * len(prompt_token) + [1] * (len(seq_token) - len(prompt_token))
+        return {"input_ids": seq_token, "loss_mask": loss_mask}
 
     dataset = dataset.map(process).remove_columns(["question", "answer"])
     return dataset
@@ -95,22 +93,31 @@ def main_sft():
             with stats_tracker.record_timing("save"):
                 saver.save(engine, epoch, step, global_step)
 
-            with stats_tracker.record_timing("eval"), stats_tracker.scope("sft-eval"):
+            with stats_tracker.record_timing("eval"):
                 # No need to log anything. Logging will be handled outside
                 # via stats_tracker.export().
+                def evaluate_fn():
+                    with stats_tracker.scope("sft-eval"):
+                        for data in valid_dataloader:
+                            engine.evaluate_lm(data)
+
                 evaluator.evaluate(
-                    valid_dataloader,
-                    engine.evaluate_lm,
+                    evaluate_fn,
                     epoch,
                     step,
                     global_step,
                 )
 
-            logger.commit(epoch, step, global_step, stats_tracker.export())
+            logger.commit(
+                epoch,
+                step,
+                global_step,
+                stats_tracker.export(reduce_group=engine.parallelism_group),
+            )
             global_step += 1
 
-    engine.destroy()
     logger.close()
+    engine.destroy()
 
 
 if __name__ == "__main__":
