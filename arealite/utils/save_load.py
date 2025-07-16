@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Dict
 
 import torch
@@ -41,18 +42,21 @@ def get_state_dict_from_repo_id_or_path(repo_id_or_path: str) -> Dict:
     else:
         # Assume it's a local path
         local_path = repo_id_or_path
-        if not os.path.isdir(local_path):
-            raise ValueError(
-                f"Local path {local_path} does not exist or is not a directory, "
-                f"or {local_path} is a huggingface repo id but huggingface_hub is not installed."
-            )
 
     # Step 3: Load all .safetensors and .bin files
     file_paths_to_load = []
-    for filename in os.listdir(local_path):
-        filepath = os.path.join(local_path, filename)
-        if filename.endswith(".safetensors") or filename.endswith(".bin"):
-            file_paths_to_load.append(filepath)
+    if os.path.isdir(local_path):
+        for filename in os.listdir(local_path):
+            filepath = os.path.join(local_path, filename)
+            if filename.endswith(".safetensors") or filename.endswith(".bin"):
+                file_paths_to_load.append(filepath)
+    elif os.path.isfile(local_path):
+        file_paths_to_load.append(local_path)
+    else:
+        raise ValueError(
+            f"Local path {local_path} does not exist or is not a valid path, "
+            f"or {local_path} is a huggingface repo id but huggingface_hub is not installed."
+        )
 
     def _load(filepath: str):
         if filepath.endswith(".safetensors"):
@@ -82,3 +86,11 @@ def get_state_dict_from_repo_id_or_path(repo_id_or_path: str) -> Dict:
             except Exception as e:
                 raise RuntimeError(f"Error loading checkpoint from {path}: {e}")
     return state_dict
+
+
+def is_existing_local_path(path: str) -> bool:
+    try:
+        path_obj = Path(path)
+        return path_obj.exists() and (path_obj.is_file() or path_obj.is_dir())
+    except (ValueError, OSError):
+        return False
