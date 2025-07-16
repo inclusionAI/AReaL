@@ -152,11 +152,7 @@ def main_grpo():
 
         with stats_tracker.record_timing("rollout"):
             if config.async_training:
-                batch = rollout.prepare_batch(
-                    data_generator,
-                    train_dataloader,
-                    workflow=workflow,
-                )
+                batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
             else:
                 try:
                     data = next(data_generator)
@@ -210,8 +206,9 @@ def main_grpo():
             actor.upload_weights(meta)
             if dist.get_rank() == 0:
                 future.result()
-            rollout.set_version(global_step + 1)
             dist.barrier()
+            torch.cuda.synchronize()
+            rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step)

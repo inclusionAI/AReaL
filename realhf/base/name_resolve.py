@@ -1360,7 +1360,9 @@ class RayNameResolveRepository:
 
 def make_repository(args: "NameResolveConfig"):
     if args.type == "nfs":
-        return NfsNameRecordRepository(args.nfs_record_root)
+        repo = NfsNameRecordRepository(args.nfs_record_root)
+        os.makedirs(repo.record_root, exist_ok=True)
+        return repo
     elif args.type == "etcd3":
         host, port = args.etcd3_addr.split(":")
         return Etcd3NameRecordRepository(host=host, port=int(port))
