@@ -122,15 +122,15 @@ class DistributedTrainController(TrainController):
 
     def upload_weights(self, meta: WeightUpdateMeta):
         """Upload weights to the inference engine."""
-        return asyncio.run(self._rpc_call("upload_weights", meta))
+        return self._rpc_call("upload_weights", meta)
 
     def save(self, meta: SaveLoadMeta):
         """Save model weights (and optimizer states) for later use."""
-        return asyncio.run(self._rpc_call("save", meta))
+        return self._rpc_call("save", meta)
 
     def load(self, meta: SaveLoadMeta):
         """Load model weights and optimizer states from a file."""
-        return asyncio.run(self._rpc_call("load", meta))
+        return self._rpc_call("load", meta)
 
     def step_lr_scheduler(self):
         """Step learning rate scheduler.
@@ -138,7 +138,7 @@ class DistributedTrainController(TrainController):
         Since PPO uses minibatch updates, this method just need to be called once after a few train_batch calls.
         It is separated from train_batch to allow for more flexible scheduling.
         """
-        return asyncio.run(self._rpc_call("step_lr_scheduler"))
+        return self._rpc_call("step_lr_scheduler")
 
     def train_distributed_batch(
         self, input_: DistributedBatchMemory

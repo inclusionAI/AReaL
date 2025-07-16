@@ -396,14 +396,12 @@ class RemoteSGLangEngine(InferenceEngine):
         if meta.type == "disk":
             # Update weights from disk
             # Wait for model checkpoints of meta.version
-            update_name = names.update_weights_from_disk(
-                self.config.experiment_name, self.config.trial_name, meta.model_version
-            )
-            save_timestamp = int(name_resolve.wait(update_name, timeout=120))
+            # update_name = names.update_weights_from_disk(
+            #     self.config.experiment_name, self.config.trial_name, meta.model_version
+            # )
+            # save_timestamp = int(name_resolve.wait(update_name, timeout=120))
             load_timestamp = time.time_ns()
-            logger.info(
-                f"Begin update weights from {meta.path}, responded in {(load_timestamp - save_timestamp) / 1e6:.2f} ms"
-            )
+            logger.info(f"Begin update weights from {meta.path}")
             try:
                 jobs = [
                     self.aupdate_weights_from_disk(addr, meta.path)
