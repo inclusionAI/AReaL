@@ -172,8 +172,8 @@ class WeightUpdateMeta:
 class SaveLoadMeta:
     path: str
     weight_format: str
-    with_optim: bool
     global_step: int
+    with_optim: bool
     tokenizer: PreTrainedTokenizerFast | None
     base_model_path: str | None
 

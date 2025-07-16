@@ -161,6 +161,9 @@ class RemoteMegatronEngine(TrainEngine):
                 path=meta.path,
                 weight_format="huggingface",
                 global_step=self.global_step,
+                with_optim=True,
+                tokenizer=None,
+                base_model_path=None,
             )
             self.save(save_load_meta)
         else:
@@ -270,6 +273,9 @@ class RemoteMegatronEngine(TrainEngine):
             path=f"/storage/openpsi/checkpoints/{self.config.experiment_name}/{self.config.trial_name}",
             weight_format="huggingface",
             global_step=self.global_step,
+            with_optim=True,
+            tokenizer=None,
+            base_model_path=None,
         ))
         logger.info(f"[RemoteMegatronEngine] Train save hf exec success, global_step: {self.global_step}.")
 
