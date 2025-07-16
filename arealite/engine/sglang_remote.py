@@ -370,6 +370,10 @@ class RemoteSGLangEngine(InferenceEngine):
         executor = ThreadPoolExecutor(max_workers=1)
         return executor.submit(self._update_weights, meta)
 
+    async def update_all_params_for_addr(self,addr,meta):
+        for param in meta.parameter_names:
+            await self.aupdate_weights_from_distributed(addr, meta, param)
+
     def _update_weights(self, meta: WeightUpdateMeta):
         print("_update_weights in sglang remote called with meta")
         if meta.type == "nccl":
@@ -378,16 +382,10 @@ class RemoteSGLangEngine(InferenceEngine):
             print(f"Begin update weights from {meta}")
             try:
                 # Update weights from distributed
-                for parameter_name in meta.parameter_names:
-                    jobs = [
-                        self.aupdate_weights_from_distributed(
-                            addr, meta, parameter_name
-                        )
-                        for addr in self.addresses
-                    ]
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(asyncio.gather(*jobs))
+                jobs = [self.update_all_params_for_addr(addr,meta) for addr in self.addresses]
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(asyncio.gather(*jobs))
             finally:
                 loop.close()
             logger.info(f"Distributed update weights done")
