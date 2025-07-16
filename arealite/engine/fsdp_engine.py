@@ -325,12 +325,12 @@ class FSDPEngine(TrainEngine):
     def _update_weights_from_distributed(self):
         """Broadcast parameters from rank 0 (FSDP2 compatible)."""
         if dist.get_rank() == 0:
-            for param in self.model.parameters():
+            for name, param in self.model.named_parameters():
                 if isinstance(param.data, DTensor):
                     tensor = param.data.full_tensor()
                 else:
                     tensor = param.data
-                print(f"Broadcasting {param.name} with shape {tensor.shape}", flush=True)
+                print(f"Broadcasting {name} with shape {tensor.shape}", flush=True)
                 dist.broadcast(tensor, src=0, group=self.weight_update_group)
                 del tensor  # optional, for memory hygiene
             torch.cuda.empty_cache()
