@@ -381,7 +381,6 @@ class RemoteSGLangEngine(InferenceEngine):
                 self._init_distributed_weight_update(meta)
             print(f"Begin update weights from {meta}")
             try:
-                # Update weights from distributed
                 jobs = [self.update_all_params_for_addr(addr,meta) for addr in self.addresses]
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
@@ -421,7 +420,7 @@ class RemoteSGLangEngine(InferenceEngine):
             raise NotImplementedError(f"Unsupported weight update type: {meta.type}")
 
     def _init_distributed_weight_update(self, meta: WeightUpdateMeta):
-        logger.info(f"Begin init distributed weight update")
+        print(f"[SGLang Remote] Begin init distributed weight update", flush=True)
         try:
             # Initialize weights update group
             jobs = [
@@ -433,6 +432,7 @@ class RemoteSGLangEngine(InferenceEngine):
             loop.run_until_complete(asyncio.gather(*jobs))
             self.distributed_weight_update_initialized = True
             logger.info(f"Distributed update weights initialized")
+            print("[SGLang Remote] Distributed update weights initialized", flush=True)
         finally:
             loop.close()
 
@@ -446,7 +446,7 @@ class RemoteSGLangEngine(InferenceEngine):
             "group_name": meta.group_name,
             "backend": "nccl",
         }
-        print(payload)
+        print(f"[SGLang Remote] Init distributed weight update payload: {payload}", flush=True)
         response = await self.arequest_with_retry(
             endpoint="/init_weights_update_group",
             payload=payload,
@@ -455,6 +455,7 @@ class RemoteSGLangEngine(InferenceEngine):
             timeout=self.config.request_timeout,
         )
         res = await response.json()
+        print(f"[SGLang Remote] Init distributed weight update response: {res}", flush=True)
         assert res["success"]
         if "num_paused_requests" in res:
             logger.info(

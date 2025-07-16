@@ -18,8 +18,9 @@ TRIAL_NAME = "trial_nccl"
 MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
 if not os.path.exists(MODEL_PATH):
     MODEL_PATH = "Qwen/Qwen2-0.5B"
-PORT = 13987
-DIST_PORT = 15987
+PORT = 13998
+DIST_PORT = 15998
+GROUP_NAME = "test_nccl_group21"
 MASTER_PORT = DIST_PORT + 1
 HOST = network.gethostip()
 RUN_SERVER_TIMEOUT = 180
@@ -47,7 +48,7 @@ def sglang_server_nccl():
     full_command = f"{cmd} --port {PORT}"
     full_command = full_command.replace("\\\n", " ").replace("\\", " ")
 
-    print(full_command, flush=True)
+    print(f"full_command to start sglang server: {full_command}", flush=True)
     process = subprocess.Popen(
         full_command.split(),
         text=True,
@@ -73,6 +74,8 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     os.environ["LOCAL_RANK"] = "0"
     os.environ["MASTER_ADDR"] = HOST
     os.environ["MASTER_PORT"] = str(MASTER_PORT)
+    os.environ["NCCL_P2P_DISABLE"] = "1"
+    os.environ["NCCL_IB_DISABLE"] = "1"
 
     # 启动本地FSDPEngine
     engine_config = TrainEngineConfig(
@@ -102,15 +105,20 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
         master_address=HOST,
         master_port=MASTER_PORT,
         world_size=2,
-        group_name="test_nccl_group",
+        group_name="test_nccl_group12",
         parameter_names=list(param_meta.keys()),
         state_dict_key_to_shape=param_meta,
     )
     # 本地engine广播参数
+    remote_engine.initialize(None, None)
+
     future = remote_engine.update_weights(meta)
+    print("got future", flush=True)
     engine.upload_weights(meta)
+    print("uploaded wexights to remote engine", flush=True)
     # 远端engine拉取参数
     future.result(timeout=120)
+    print("got result", flush=True)
     # 检查远端参数版本
     assert remote_engine.get_version() == 123
     remote_engine.destroy()

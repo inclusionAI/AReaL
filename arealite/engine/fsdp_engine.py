@@ -321,6 +321,7 @@ class FSDPEngine(TrainEngine):
                 group_name=meta.group_name,
             )
             self.weight_update_group_initialized = True
+            dist.barrier(group=self.weight_update_group,device_ids=[0])
 
     def _update_weights_from_distributed(self):
         """Broadcast parameters from rank 0 (FSDP2 compatible)."""
