@@ -18,7 +18,7 @@ from arealite.utils.fs import get_user_tmp
 class MicroBatchSpec:
     """Specification for splitting micro-batches during training."""
 
-    n_mbs: int = field(
+    n_mbs: Optional[int] = field(
         default=1,
         metadata={
             "help": "Number of micro-batches (or minimum number if max_tokens_per_mb is set). Used when max_tokens_per_mb is None or as minimum count",
@@ -161,7 +161,7 @@ class FSDPEngineConfig:
 
 
 @dataclass
-class HFEngineConfig:
+class DeepSpeedAutoTPEngineConfig:
     autotp_size: Optional[int] = field(
         default=1,
         metadata={"help": "DeepSpeed AutoTP size"},
@@ -201,7 +201,9 @@ class TrainEngineConfig:
     )
     backend: str = ""
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
-    hf: HFEngineConfig = field(default_factory=HFEngineConfig)
+    ds_auto_tp: DeepSpeedAutoTPEngineConfig = field(
+        default_factory=DeepSpeedAutoTPEngineConfig
+    )
 
 
 @dataclass

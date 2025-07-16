@@ -67,7 +67,6 @@ async def test_local_sglang_generate():
         gconfig=GenerationHyperparameters(max_new_tokens=16),
     )
     resp = await engine.agenerate(req)
-    print(resp.completions)
 
     assert isinstance(resp, LLMResponse)
     assert resp.input_tokens == req.input_ids
@@ -76,9 +75,6 @@ async def test_local_sglang_generate():
         == len(resp.output_tokens)
         == len(resp.output_versions)
     )
-    assert isinstance(resp.completions, str)
-
-    time.sleep(5)
     engine.destroy()
 
 
