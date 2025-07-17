@@ -171,6 +171,7 @@ class FSDPEngine(BaseHFEngine):
 
     def _init_distributed_weight_update(self, meta: WeightUpdateMeta):
         if dist.get_rank() == 0:
+            os.environ["NCCL_CUMEM_ENABLE"] = "0"
             print(
                 f"[FSDP Engine]World size: {meta.world_size}, Master address: {meta.master_address}, Master port: {meta.master_port}",
                 flush=True,
@@ -182,8 +183,8 @@ class FSDPEngine(BaseHFEngine):
                 rank=0,
                 group_name=meta.group_name,
             )
+            dist.barrier(group=self.weight_update_group, device_ids=[self.device.index])
             self.weight_update_group_initialized = True
-            dist.barrier(group=self.weight_update_group, device_ids=[0])
 
     def _update_weights_from_distributed(self):
         """Broadcast parameters from rank 0 (FSDP2 compatible)."""
@@ -198,7 +199,7 @@ class FSDPEngine(BaseHFEngine):
                 del tensor  # optional, for memory hygiene
             torch.cuda.empty_cache()
 
-            # dist.barrier(group=self.weight_update_group)
+            dist.barrier(group=self.weight_update_group, device_ids=[self.device.index])
 
     def get_param_meta_for_distributed_update(self) -> Dict[str, Tuple[int]]:
         """Return a dict mapping param name to its shape (expanded if DTensor)."""

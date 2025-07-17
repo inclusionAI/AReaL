@@ -4,7 +4,7 @@ import random
 import threading
 import time
 import traceback
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import datetime
 from queue import Empty, Full, Queue
 from typing import TYPE_CHECKING, Any, Callable, Dict, List
@@ -390,7 +390,9 @@ class RemoteSGLangEngine(InferenceEngine):
             "group_name": meta.group_name,
             "backend": "nccl",
         }
-        response = await self.arequest_with_retry(
+        print(payload)
+        response = await arequest_with_retry(
+            addr=addr,
             endpoint="/init_weights_update_group",
             payload=payload,
             method="POST",
@@ -398,6 +400,7 @@ class RemoteSGLangEngine(InferenceEngine):
             timeout=self.config.request_timeout,
         )
         res = await response.json()
+        print(f"[SGLang Remote]Init weights update group for {addr}")
         assert res["success"]
         if "num_paused_requests" in res:
             logger.info(
@@ -408,7 +411,9 @@ class RemoteSGLangEngine(InferenceEngine):
     async def aupdate_weights_from_distributed(
         self, addr: str, meta: WeightUpdateMeta, parameter_name: str
     ):
-        response = await self.arequest_with_retry(
+        print(f"Update weights for {parameter_name} on {addr}")
+        response = await arequest_with_retry(
+            addr=addr,
             endpoint="/update_weights_from_distributed",
             payload={
                 "name": parameter_name,
@@ -419,6 +424,8 @@ class RemoteSGLangEngine(InferenceEngine):
             max_retries=3,
             timeout=self.config.request_timeout,
         )
+
+
         res = await response.json()
         assert res["success"]
         if "num_paused_requests" in res:

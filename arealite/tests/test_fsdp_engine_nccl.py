@@ -47,16 +47,19 @@ def sglang_server_nccl():
 
     seeding.set_random_seed(1, EXPR_NAME)
     cmd = SGLangConfig.build_cmd(
-        sglang_config=SGLangConfig(mem_fraction_static=0.2),
-        model_path=MODEL_PATH,
+        sglang_config=SGLangConfig(mem_fraction_static=0.2,
+                                   model_path=MODEL_PATH,
+                                    skip_tokenizer_init=False,
+        ),
         tp_size=1,
         base_gpu_id=1,
+        host=HOST,
+        port=PORT,
         dist_init_addr=f"{HOST}:{DIST_PORT}",
-        served_model_name=MODEL_PATH,
-        skip_tokenizer_init=False,
     )
     full_command = f"{cmd} --port {PORT}"
     full_command = full_command.replace("\\\n", " ").replace("\\", " ")
+    os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
 
     print(f"full_command to start sglang server: {full_command}", flush=True)
     process = subprocess.Popen(
@@ -85,8 +88,6 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     os.environ["LOCAL_RANK"] = "0"
     os.environ["MASTER_ADDR"] = HOST
     os.environ["MASTER_PORT"] = str(MASTER_PORT)
-    os.environ["NCCL_P2P_DISABLE"] = "1"
-    os.environ["NCCL_IB_DISABLE"] = "1"
 
     # 启动本地FSDPEngine
     engine_config = TrainEngineConfig(
