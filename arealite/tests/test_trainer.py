@@ -51,9 +51,9 @@ def main_grpo():
                            data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train_32.jsonl")
     train_dataset = dataset['train']
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
-    batch_size = 8
+    batch_size = 2
     batch_data = []
-    step_num = 2
+    step_num = 1
     epoch_num = 1
     for epoch in range(epoch_num):
         data_generator = iter(dataloader)
