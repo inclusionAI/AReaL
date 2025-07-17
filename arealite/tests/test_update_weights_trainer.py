@@ -29,6 +29,7 @@ def clear_dir(path):
             elif os.path.isdir(file_path):
                 shutil.rmtree(file_path)
 
+
 def main_grpo():
     # init controller
     scheduler = LocalScheduler({})
@@ -80,37 +81,7 @@ def main_grpo():
             )
 
             actor.upload_weights(actor_cfg)
-            print("[Trainer] actor upload_weights success.")
-            rollout.update_weights(rollout_cfg)
-            print("[Trainer] rollout update_weights success.")
-            # clear_dir(rollout_cfg.path)
-            # print(f"[Trainer] clear update weights dir success: {rollout_cfg.path}")
-
-            # synchronous rollout
-            gconfig = GenerationHyperparameters(
-                max_new_tokens=16, greedy=False, n_samples=1
-            )
-            MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf"
-            tokenizer = load_hf_tokenizer(MODEL_PATH)
-            workflow = RLVRWorkflow(
-                reward_fn=lambda **kwargs: 1.0,
-                gconfig=gconfig,
-                tokenizer=tokenizer,
-            )
-
-            # input_: List[Dict[str, tensor]]
-            rollout_res = rollout.rollout(batch_data, workflow=workflow)
-            print(f"[Trainer] rollout exec success, rollout_res: {rollout_res}")
-            # torch.save(rollout_res, "rollout_res.pt")
-
-            rollout_res = rollout_res.to("cpu").clone()
-            rollout_res_dict = rollout_res.to_dict()
-            for k, v in rollout_res_dict.items():
-                if isinstance(v, torch.Tensor) and v.ndim > 1 and v.shape[0] == 1:
-                    rollout_res_dict[k] = v.squeeze(0)
-            dis_batch = DistributedBatchMemory(rollout_res_dict)
-            stats = actor.train_distributed_batch(dis_batch)
-            print(f"[Trainer] train exec success, step: {step}, epoch: {epoch}, stats: {stats}")
+            print(f"[Trainer] actor upload_weights success.")
 
 
 if __name__ == "__main__":

@@ -728,7 +728,7 @@ remote_megatron_config = {
     "seq_length": 16384,
     "micro_batch_size": 1,
     "global_batch_size": 8,
-    "lr": 2.0e-6,
+    "lr": 0,
     "lr_decay_style": "constant",
     "lr_warmup_iters": 40,
     "weight_decay": 0,
