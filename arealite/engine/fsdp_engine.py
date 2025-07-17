@@ -183,7 +183,8 @@ class FSDPEngine(BaseHFEngine):
                 rank=0,
                 group_name=meta.group_name,
             )
-            dist.barrier(group=self.weight_update_group, device_ids=[self.device.index])
+            # TODO, shoun't use zero
+            dist.barrier(group=self.weight_update_group, device_ids=[0])
             self.weight_update_group_initialized = True
 
     def _update_weights_from_distributed(self):
