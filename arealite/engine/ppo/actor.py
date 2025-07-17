@@ -7,7 +7,6 @@ from tensordict import TensorDict
 from arealite.api.cli_args import MicroBatchSpec, PPOActorConfig
 from arealite.api.engine_api import TrainEngine
 from arealite.engine.fsdp_engine import FSDPEngine
-from arealite.engine.vl_fsdp_engine import VL_FSDPEngine
 from arealite.utils.data import split_padded_tensor_dict_into_mb_list
 from arealite.utils.functional import (
     gather_logprobs,
@@ -258,21 +257,7 @@ class FSDPPPOActor(FSDPEngine):
     def ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
         return self.actor.ppo_update(*args, **kwargs)
 
-class VL_FSDPPPOActor(VL_FSDPEngine):
-    def __init__(self, config: PPOActorConfig):
-        super().__init__(config)
-        self.actor = PPOActor(config, self)
 
-    @torch.no_grad()
-    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
-        return self.actor.compute_logp(*args, **kwargs)
-
-    @torch.no_grad()
-    def compute_advantages(self, *args, **kwargs) -> None:
-        self.actor.compute_advantages(*args, **kwargs)
-
-    def ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
-        return self.actor.ppo_update(*args, **kwargs)
 
 
 def grpo_loss_fn(

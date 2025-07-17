@@ -4,13 +4,11 @@ import uuid
 import torch
 from tensordict import TensorDict
 from transformers import PreTrainedTokenizerFast,AutoProcessor
-import base64
-from io import BytesIO
 from arealite.api.cli_args import GenerationHyperparameters
 from arealite.api.io_struct import VLMRequest
 from arealite.workflow.rlvr import RLVRWorkflow
 from arealite.utils.padding import concat_padded_tensors
-
+from arealite.utils.image import image2base64
 
 class VL_RLVRWorkflow(RLVRWorkflow):
     def __init__(
@@ -34,16 +32,7 @@ class VL_RLVRWorkflow(RLVRWorkflow):
         )["input_ids"].tolist()[0]
         n_samples = self.gconfig.n_samples
 
-        byte_images = []
-        for image_file in data["images"]:
-            with BytesIO() as buffer:
-                # 将图像保存到字节流中
-                image_file.save(buffer, format="PNG")
-                buffer.seek(0)  # 重置字节流的位置
-
-                # 对字节流进行 base64 编码
-                byte_image = base64.b64encode(buffer.read()).decode('utf-8')
-                byte_images.append(byte_image)
+        byte_images = image2base64(data["images"])
 
         req = VLMRequest(
             rid=uuid.uuid4().hex,

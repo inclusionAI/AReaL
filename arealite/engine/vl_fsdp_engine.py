@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -9,6 +9,11 @@ from tensordict import TensorDict
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
+)
+from transformers import (
+    AutoModelForImageTextToText,
+    get_constant_schedule_with_warmup,
+    get_linear_schedule_with_warmup,
 )
 
 from arealite.api.cli_args import TrainEngineConfig
@@ -21,8 +26,11 @@ from arealite.utils.data import (
     MicroBatchList,
     amend_position_ids,
     pack_tensor_dict,
+    pad_and_stack_tensors_along_first_dim,
     pad_mb_list,
+    reorder_list,
     split_padded_tensor_dict_into_mb_list,
+    unpack_sequence,
     unsqueeze_mb_list,
 )
 from arealite.utils.fsdp import (
@@ -32,16 +40,10 @@ from arealite.utils.fsdp import (
     create_fsdp_device_mesh,
     get_cosine_schedule_with_warmup,
 )
+from realhf.base import  logging, name_resolve, names, pkg_version
+from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from arealite.engine.fsdp_engine import FSDPEngine
 
-from realhf.api.core.data_api import load_hf_processor_and_tokenizer
-from realhf.base import logging, name_resolve, names, pkg_version
-
-from transformers import (
-    AutoModelForImageTextToText,
-    get_constant_schedule_with_warmup,
-    get_linear_schedule_with_warmup,
-)
 
 logger = logging.getLogger("FSDPEngine")
 
@@ -104,19 +106,7 @@ class VL_FSDPEngine(FSDPEngine):
         # Wrap with FSDP2
         apply_fsdp2(model, fsdp_kwargs, self.config.fsdp.wrap_policy)
         self.model = model
-
-        # if not self.config.init_from_scratch:
-        #     # Load model from a initial checkpoint path,
-        #     # which should only be a huggingface checkpoint.
-        #     load_meta = SaveLoadMeta(
-        #         path=self.config.path,
-        #         weight_format="hf",
-        #         with_optim=False,
-        #         tokenizer=None,
-        #         base_model_path=self.config.path,
-        #     )
-        #     self.load(load_meta)
-
+        
         # Set up optimizer
         if self.optimizer_config is not None:
             assert (
@@ -235,3 +225,4 @@ class VL_FSDPEngine(FSDPEngine):
         mb_list = unsqueeze_mb_list(mb_list)
         return mb_list
 
+        
