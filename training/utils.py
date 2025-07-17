@@ -172,15 +172,13 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
     all_available_resources = ray.available_resources()
     all_available_nodes = [
         k
-        for k in available_resources
+        for k in all_available_resources
         if re.match(r"node:(\b(?:\d{1,3}\.){3}\d{1,3}\b)", k)
     ]
-    n_gpus_per_node = int(
-        all_available_resources["GPU"] // len(all_available_nodes)
-    )
-    assert all_available_resources["GPU"] % len(all_available_nodes) == 0, (
-        "AReaL assumes all nodes has the same number of GPUs."
-    )
+    n_gpus_per_node = int(all_available_resources["GPU"] // len(all_available_nodes))
+    assert (
+        all_available_resources["GPU"] % len(all_available_nodes) == 0
+    ), "AReaL assumes all nodes has the same number of GPUs."
 
     for worker_type in WORKER_TYPES:
         sch = getattr(scheduling, worker_type)
@@ -202,11 +200,12 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
                 f"Please launch more Ray nodes otherwise the experiment will get stuck."
             )
 
+        workers = []
         if sch.scheduling.gpu > 0:
             # For GPU workers, schedule them in granularity of nodes.
-            assert n_gpus_per_node % sch.scheduling.gpu == 0, (
-                f"Each node should be allocated with identical numbers of {worker_type}."
-            )
+            assert (
+                n_gpus_per_node % sch.scheduling.gpu == 0
+            ), f"Each node should be allocated with identical numbers of {worker_type}."
             n_worker_per_node = int(n_gpus_per_node / sch.scheduling.gpu)
             assert sch.count % n_worker_per_node == 0, (
                 f"Total {worker_type} count ({sch.count}) should be divisible by "
@@ -218,9 +217,12 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
                     {
                         "CPU": sch.scheduling.cpu * n_worker_per_node,
                         "GPU": sch.scheduling.gpu * n_worker_per_node,
-                        "memory": sch.scheduling.mem * 1024**2 * n_worker_per_node,  # in bytes
+                        "memory": sch.scheduling.mem
+                        * 1024**2
+                        * n_worker_per_node,  # in bytes
                     }
-                ] * n_nodes,
+                ]
+                * n_nodes,
             )
             try:
                 ray.get(placement_group.ready(), timeout=30)
