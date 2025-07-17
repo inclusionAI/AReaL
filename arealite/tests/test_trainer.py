@@ -5,13 +5,11 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import load_expr_config, BaseExperimentConfig, InferenceEngineConfig, TrainEngineConfig, \
     RolloutControllerConfig, TrainControllerConfig, RemoteMegatronEngineConfig
-from arealite.api.engine_api import InferenceEngine
 from arealite.controller.rollout_controller import DistributedRolloutController
 from arealite.controller.train_controller import DistributedTrainController
 from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronEngine
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangEngine
 from arealite.scheduler.local import LocalScheduler
-from arealite.dataset.utils import process_rl_dataset
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.workflow.rlvr import RLVRWorkflow
 from arealite.api.cli_args import GenerationHyperparameters
@@ -55,7 +53,7 @@ def main_grpo():
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
     batch_size = 8
     batch_data = []
-    step_num = 1
+    step_num = 2
     epoch_num = 1
     for epoch in range(epoch_num):
         data_generator = iter(dataloader)
@@ -83,8 +81,8 @@ def main_grpo():
 
             # actor.upload_weights(actor_cfg)
             # print("[Trainer] actor upload_weights success.")
-            # rollout.update_weights(rollout_cfg)
-            # print("[Trainer] rollout update_weights success.")
+            rollout.update_weights(rollout_cfg)
+            print("[Trainer] rollout update_weights success.")
             # clear_dir(rollout_cfg.path)
             # print(f"[Trainer] clear update weights dir success: {rollout_cfg.path}")
 
@@ -113,6 +111,7 @@ def main_grpo():
             dis_batch = DistributedBatchMemory(rollout_res_dict)
             stats = actor.train_distributed_batch(dis_batch)
             print(f"[Trainer] train exec success, step: {step}, epoch: {epoch}, stats: {stats}")
+
 
 if __name__ == "__main__":
     main_grpo()
