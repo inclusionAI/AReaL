@@ -151,12 +151,14 @@ class RemoteMegatronEngine(TrainEngine):
     def destroy(self):
         self.initialized = False
 
-    async def upload_weights(self, meta: WeightUpdateMeta):
+    def upload_weights(self, meta: WeightUpdateMeta):
         if meta.type == "nccl":
             if not self.weight_update_group_initialized:
                 self.init_distributed_weight_update(meta)
             self.update_weights_from_distributed()
         elif meta.type == "disk":
+            logger.info(
+                f"[RemoteMegatronEngine] upload_weights save hf model to disk, path: {meta.path}, step: {self.global_step}.")
             save_load_meta = SaveLoadMeta(
                 path=meta.path,
                 weight_format="huggingface",
@@ -166,6 +168,8 @@ class RemoteMegatronEngine(TrainEngine):
                 base_model_path=None,
             )
             self.save(save_load_meta)
+            logger.info(
+                f"[RemoteMegatronEngine] upload_weights success.")
         else:
             raise ValueError(f"Unknown weight update type {meta.type}")
 
@@ -190,7 +194,7 @@ class RemoteMegatronEngine(TrainEngine):
             )
             if response.status_code == 200:
                 logger.info(
-                    f"[RemoteMegatron] save hf request exec success, save_dir: {meta.path}"
+                    f"[RemoteMegatronEngine] save hf request exec success, save_dir: {meta.path}"
                 )
             else:
                 raise ValueError(
@@ -202,7 +206,7 @@ class RemoteMegatronEngine(TrainEngine):
         except requests.exceptions.RequestException as e:
             raise ValueError(
                 f"[RemoteMegatronEngine] Send save {meta.weight_format} request, an error occurred: {e}")
-        return
+        return response
 
     def load(self, meta: SaveLoadMeta):
         pass

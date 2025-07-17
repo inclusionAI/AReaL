@@ -19,13 +19,12 @@ class RPCClient:
     def create_engine(self, worker_id, engine_obj, init_config):
         ip, port = self._addrs[worker_id]
         url = f"http://{ip}:{port}/create_engine"
-        print(f"before: Sent create_engine to {worker_id} ({ip}:{port})")
-        # 用 cloudpickle 序列化对象和参数
+        print(f"[RPCClient] Sent create_engine to {worker_id} ({ip}:{port})")
         payload = (engine_obj, init_config)
         serialized_obj = cloudpickle.dumps(payload)
         resp = requests.post(url, data=serialized_obj)
         print(
-            f"Sent create_engine to {worker_id} ({ip}:{port}), status={resp.status_code}"
+            f"[RPCClient] Sent create_engine to {worker_id} ({ip}:{port}), status={resp.status_code}"
         )
         return resp.status_code == 200
 
