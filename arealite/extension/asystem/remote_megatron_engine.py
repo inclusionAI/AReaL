@@ -258,7 +258,7 @@ class RemoteMegatronEngine(TrainEngine):
         if "prompt_mask" in batch_data and "seqlen" in batch_data:
             batch_data["prompt_mask"] = pack_prompt_mask(batch_data["prompt_mask"], batch_data["seqlen"])
 
-        print(f"train_distributed_batch, batch_data: {batch_data}")
+        # print(f"train_distributed_batch, batch_data: {batch_data}")
         # 3.获取{advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards, global_stats}
         train_datas = self.process_training_data(batch_data)
         batch = {"advantages": train_datas["advantages"],
