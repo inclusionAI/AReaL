@@ -50,6 +50,7 @@ class RemoteMegatronEngine(TrainEngine):
 
         self.megatron_addr = None
         self.global_step = 0
+        self.global_rank = 0
 
         # initialization
         self.initialized = False
@@ -81,6 +82,7 @@ class RemoteMegatronEngine(TrainEngine):
 
     def initialize(self, cfg: RemoteMegatronInitConfig):
         global_rank = cfg.global_rank
+        self.global_rank = cfg.global_rank
         local_rank = global_rank % 8
 
         cfg.server_addrs = [
@@ -267,6 +269,7 @@ class RemoteMegatronEngine(TrainEngine):
                  "kl_rewards": train_datas["kl_rewards"],
                  "seqlen": batch_data["seqlen"]}
         print(f"[RemoteMegatronEngine] dzq_debug train_distributed_batch batch data, "
+              f"global_rank: {self.global_rank},"
               f"advantages shape: {batch["advantages"].shape},"
               f"old_logp shape: {batch["old_logp"].shape},"
               f"ppo_loss_mask shape: {batch["ppo_loss_mask"].shape},"
@@ -692,8 +695,8 @@ remote_megatron_config = {
     "overlap_grad_reduce": True,
     "overlap_param_gather": False,
     "overlap_p2p_comm": True,
-    "tensor_model_parallel_size": 1,
-    "pipeline_model_parallel_size": 1,
+    "tensor_model_parallel_size": 8,
+    "pipeline_model_parallel_size": 2,
     "context_parallel_size": 1,
     "sequence_parallel": True,
     "use_mcore_models": True,
@@ -767,7 +770,7 @@ remote_megatron_config = {
     "save": "/storage/xukuan.xk/repos/antnlp/personal/llm/dumps/rl/mcore_test2",
     "no_save_rng": True,
     "save_interval": 1,
-    "expert_model_parallel_size": 8,
+    "expert_model_parallel_size": 1,
 }
 
 loss_configs = {
