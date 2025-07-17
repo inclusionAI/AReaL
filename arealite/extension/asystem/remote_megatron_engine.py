@@ -89,7 +89,6 @@ class RemoteMegatronEngine(TrainEngine):
             "10.10.12.152:50000", "10.10.12.152:50001", "10.10.12.152:50002", "10.10.12.152:50003",
             "10.10.12.152:50004", "10.10.12.152:50005", "10.10.12.152:50006", "10.10.12.152:50007",
         ]
-        print(f"[megatron] dzq_debug global_rank: {global_rank}, serveraddr len:{len(cfg.server_addrs)}")
         self.megatron_addr = cfg.server_addrs[global_rank]
         master_addr = cfg.server_addrs[0]
         master_ip, master_port = master_addr.split(":", 1)  # ip:port
@@ -267,7 +266,13 @@ class RemoteMegatronEngine(TrainEngine):
                  "packed_input_ids": train_datas["packed_input_ids"],
                  "kl_rewards": train_datas["kl_rewards"],
                  "seqlen": batch_data["seqlen"]}
-
+        print(f"[RemoteMegatronEngine] dzq_debug train_distributed_batch batch data, "
+              f"advantages shape: {batch["advantages"].shape},"
+              f"old_logp shape: {batch["old_logp"].shape},"
+              f"ppo_loss_mask shape: {batch["ppo_loss_mask"].shape},"
+              f"packed_input_ids shape: {batch["packed_input_ids"].shape},"
+              f"kl_rewards shape: {batch["kl_rewards"].shape},"
+              f"seqlen shape: {batch["seqlen"].shape}")
         train_stats = self.train_batch(batch, loss_fn, loss_weight_fn)
         logger.info(f"[RemoteMegatronEngine] Train batch exec success, global_step: {self.global_step}.")
 
@@ -414,8 +419,6 @@ class RemoteMegatronEngine(TrainEngine):
             if not seq_no_eos_mask[i]:
                 # Set value at the EOS token to be zero.
                 # denormalized_values shape: torch.Size([8, 207]), cu_seqlens shape: torch.Size([9])
-                print(
-                    f"dzq_debug denormalized_values shape: {denormalized_values.shape}, cu_seqlens shape: {cu_seqlens.shape}")
                 denormalized_values[cu_seqlens[i + 1] - 1] = 0.0
                 values[cu_seqlens[i + 1] - 1] = 0.0
 
