@@ -57,7 +57,7 @@ class RemoteSGLangEngine(InferenceEngine):
         self.result_cache = []
         self.rollout_stat = RolloutStat()
 
-        self._version = 0
+        self._version = 100000
 
     def initialize(self, config: RemoteSGLangInitConfig):
         logger.info("[RemoteSGLangEngine] begin exec initialize.")
