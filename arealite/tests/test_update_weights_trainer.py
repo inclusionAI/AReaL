@@ -54,7 +54,7 @@ def main_grpo():
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
     batch_size = 8
     batch_data = []
-    step_num = 2
+    step_num = 1
     epoch_num = 1
     for epoch in range(epoch_num):
         data_generator = iter(dataloader)
