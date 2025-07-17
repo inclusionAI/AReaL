@@ -2,12 +2,23 @@ import litellm
 from litellm import completion as litellm_completion
 import ollama
 import os
-from openai import OpenAI
+# from openai import OpenAI
+import dotenv
+## requires openai==1.85.0
+
+from langfuse.openai import OpenAI
+
+dotenv.load_dotenv()
+
+litellm.success_callback = ["langfuse"]
+litellm.failure_callback = ["langfuse"]
+litellm._turn_on_debug()
 
 
 BASE_URL = "http://localhost:11434"
-model = "qwen2.5:1.5b"
+# model = "qwen2.5:1.5b"
 # model = "llama2:latest"
+model="qwen2.5:latest"
 
 client = OpenAI(api_key="ollama", base_url='http://localhost:11434/v1')
 openai_completion = client.chat.completions.create
@@ -47,7 +58,7 @@ test_tool = {
 
 # Test 1: Basic completion without tools
 print("\n=== Test 1: Basic completion ===")
-messages_1 = [{"role": "user", "content": "Explain quantum computing"}]
+messages_1 = [{"role": "user", "content": "What is the capital of France?"}]
 print(f"Prompt sent: {messages_1}")
 response = litellm_completion(
     model=f"ollama/{model}",
@@ -143,7 +154,7 @@ else:
 
 # Test 5: Context where tool is not needed
 print("\n=== Test 5: Context where tool is not needed ===")
-messages_5 = [{"role": "user", "content": "What's 2 + 2?"}]
+messages_5 = [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "What's 2 + 2?"}]
 print(f"Prompt sent: {messages_5}")
 no_tool_response = litellm_completion(
     model=f"ollama/{model}",
@@ -168,8 +179,8 @@ else:
 response = openai_completion(
     model=model,
     messages=messages_5,
-    tools=[test_tool],
     tool_choice="auto",
+    tools=[test_tool],
 )
 print("OpenAI client response:")
 print(response.choices[0].message.content)
