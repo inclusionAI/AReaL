@@ -61,8 +61,8 @@ class DistributedRolloutController(RolloutController):
         """Initialize environments for distributed inference and load models."""
         scheduling = self.inf_engine.get_scheduling_config()
         # todo：支持多容器
-        scheduling_config = SchedulingConfig(replicas=16)
-        scheduling_config = {"num_workers": 16}
+        scheduling_config = SchedulingConfig(replicas=1)
+        scheduling_config = {"num_workers": 1}
         self.scheduler.create_workers("rollout", scheduling_config)
 
         self.workers = self.scheduler.get_workers("rollout", timeout=5 * 60)

@@ -70,24 +70,23 @@ def main_grpo():
             trial_name = "ff"
             actor_cfg = WeightUpdateMeta(
                 type="disk",
-                path=f"/storage/openpsi/checkpoint/{exp_name}/{trial_name}/",
+                path=f"/storage/openpsi/checkpoints/{exp_name}/{trial_name}/",
                 alloc_mode=None,
                 comm_backend=None,
             )
             rollout_cfg = WeightUpdateMeta(
                 type="disk",
-                path=f"/storage/openpsi/checkpoint/{exp_name}/{trial_name}/{step}",
+                path=f"/storage/openpsi/checkpoints/{exp_name}/{trial_name}/{step}",
                 alloc_mode=None,
                 comm_backend=None,
             )
-            '''
+
             actor.upload_weights(actor_cfg)
             print("[Trainer] actor upload_weights success.")
             rollout.update_weights(rollout_cfg)
             print("[Trainer] rollout update_weights success.")
             clear_dir(rollout_cfg.path)
             print(f"[Trainer] clear update weights dir success: {rollout_cfg.path}")
-            '''
 
             # synchronous rollout
             gconfig = GenerationHyperparameters(
@@ -103,8 +102,7 @@ def main_grpo():
 
             # input_: List[Dict[str, tensor]]
             rollout_res = rollout.rollout(batch_data, workflow=workflow)
-            print(f"[Trainer] rollout exec success, {len(rollout_res)}")
-            print(f"[Trainer] rollout_res: {rollout_res}")
+            print(f"[Trainer] rollout exec success, rollout_res: {rollout_res}")
             # torch.save(rollout_res, "rollout_res.pt")
 
             rollout_res = rollout_res.to("cpu").clone()

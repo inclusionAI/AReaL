@@ -21,7 +21,7 @@ def main_grpo():
     # Update inference engine weights
     rollout_cfg = WeightUpdateMeta(
         type="disk",
-        path=f"/storage/openpsi/checkpoint/ff/ff/0",
+        path=f"/storage/openpsi/checkpoints/ff/ff/0",
         alloc_mode=None,
         comm_backend=None,
     )

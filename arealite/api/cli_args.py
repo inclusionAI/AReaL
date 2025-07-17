@@ -318,7 +318,7 @@ class InferenceEngineConfig:
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
     )
     request_timeout: float = field(
-        default=30.0, metadata={"help": "Timeout for HTTP requests."}
+        default=7200.0, metadata={"help": "Timeout for HTTP requests."}
     )
     request_retries: int = field(
         default=3, metadata={"help": "Number of retries for failed requests."}

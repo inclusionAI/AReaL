@@ -51,25 +51,17 @@ class RemoteSGLangEngine(InferenceEngine):
         self.rid_to_address = {}
         # Maintain the addresses for the recent 128 requests
         self.rid_queue = []
-
         self.addresses = None
         self.server_idx = 0
-
-        # self.input_queue = Queue(maxsize=qsize)
-        # self.output_queue = Queue(maxsize=qsize)
         self.result_cache = []
-
-        # self.exiting = threading.Event()
-        # self.lock = threading.Lock()
         self.rollout_stat = RolloutStat()
 
         self._version = 0
-        logger.info("SGLangEngine __init__ success...")
 
     def initialize(self, config: RemoteSGLangInitConfig):
-        logger.info("SGLangEngine begin exec initialize...")
+        logger.info("[RemoteSGLangEngine] begin exec initialize.")
         self.addresses = config.server_addrs
-        self.addresses = ["10.10.131.247:8188"] * 8 + ["10.10.131.73:8188"] * 8
+        self.addresses = ["10.10.131.247:8188"] + ["10.10.131.73:8188"]
         self.exiting = threading.Event()
         self.lock = threading.Lock()
 
@@ -77,7 +69,7 @@ class RemoteSGLangEngine(InferenceEngine):
         self.output_queue = Queue(maxsize=self.qsize)
         self.rollout_thread = threading.Thread(target=self._rollout_thread)
         self.rollout_thread.start()
-        logger.info("SGLangEngine exec initialize success...")
+        logger.info("[RemoteSGLangEngine] initialize exec success...")
 
     def destroy(self):
         self.exiting.set()
@@ -110,9 +102,9 @@ class RemoteSGLangEngine(InferenceEngine):
                 if data is None:
                     try:
                         data, workflow = self.input_queue.get_nowait()
-                        logger.info(f"Get data from puller: {data}")
+                        logger.info(f"[RemoteSGLangEngine] Get data from puller: {data}")
                     except Empty:
-                        logger.debug(f"No data from puller stream.")
+                        logger.debug(f"[RemoteSGLangEngine] No data from puller stream.")
 
                 # Check capacity
                 if dist.is_initialized():
@@ -146,7 +138,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
                 if not can_rollout:
                     logger.debug(
-                        f"Cannot submit new rollouts. "
+                        f"[RemoteSGLangEngine] Cannot submit new rollouts. "
                         + "\n".join(cannot_rollout_reason)
                     )
 
@@ -161,7 +153,7 @@ class RemoteSGLangEngine(InferenceEngine):
                         self.rollout_stat.submitted += 1
                         self.rollout_stat.running += 1
                         logger.info(
-                            f"Submit rollout rid {rid}. "
+                            f"[RemoteSGLangEngine] Submit rollout rid {rid}. "
                             f"Submit: {self.rollout_stat.submitted}, "
                             f"running: {self.rollout_stat.running}, "
                             f"accepted: {self.rollout_stat.accepted}."
@@ -200,7 +192,7 @@ class RemoteSGLangEngine(InferenceEngine):
                     with self.lock:
                         self.rollout_stat.running -= 1
                         logger.info(
-                            f"Finish rollout {task_rid}. "
+                            f"[RemoteSGLangEngine] Finish rollout {task_rid}. "
                             f"Submit: {self.rollout_stat.submitted}, "
                             f"running: {self.rollout_stat.running}, "
                             f"accepted: {self.rollout_stat.accepted}."
@@ -373,8 +365,7 @@ class RemoteSGLangEngine(InferenceEngine):
                 payload["input_ids"] += result["output_ids"]
 
         latency = time.perf_counter() - start_time
-        
-        print(f"result: {result}")
+
         return LLMResponse(
             completions=completions,
             input_tokens=req.input_ids,
@@ -401,7 +392,7 @@ class RemoteSGLangEngine(InferenceEngine):
             # )
             # save_timestamp = int(name_resolve.wait(update_name, timeout=120))
             load_timestamp = time.time_ns()
-            logger.info(f"Begin update weights from {meta.path}")
+            logger.info(f"[RemoteSGLangEngine] Begin update weights from {meta.path}")
             try:
                 jobs = [
                     self.aupdate_weights_from_disk(addr, meta.path)
@@ -414,7 +405,7 @@ class RemoteSGLangEngine(InferenceEngine):
             finally:
                 loop.close()
             logger.info(
-                f"Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms"
+                f"[RemoteSGLangEngine] Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms"
             )
             self.set_version(meta.model_version)
         else:
@@ -433,7 +424,7 @@ class RemoteSGLangEngine(InferenceEngine):
         assert res["success"]
         if "num_paused_requests" in res:
             logger.info(
-                f"{res['num_paused_requests']} requests are interrupted "
+                f"[RemoteSGLangEngine] {res['num_paused_requests']} requests are interrupted "
                 f"during updating weights for server {addr}"
             )
 
@@ -473,7 +464,7 @@ class RemoteSGLangEngine(InferenceEngine):
         )
         return TensorDict.cat(results, dim=0)
 
-    def rollout(
+    def rollout(  # only dp head accept this request
         self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
     ) -> TensorDict:
         """Submit a batch of requests to the inference engine and wait for the results."""
@@ -497,6 +488,7 @@ class RemoteSGLangEngine(InferenceEngine):
         return DistributedBatchMemory(res.to_dict())
     
     def get_scheduling_config(self):
+        # one dp total resources
         return Scheduling(
             cpu=4,
             gpu=1,
