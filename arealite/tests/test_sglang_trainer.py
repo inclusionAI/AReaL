@@ -75,7 +75,7 @@ def main_grpo():
 
             # input_: List[Dict[str, tensor]]
             rollout_res = rollout.rollout(batch_data, workflow=workflow)
-            print(f"[Trainer] rollout exec success, rollout_res: {rollout_res}")
+            print(f"[Trainer] rollout exec success, type: {rollout_res}, rollout_res: {rollout_res}")
 
 
 if __name__ == "__main__":

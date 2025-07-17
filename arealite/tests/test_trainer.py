@@ -81,12 +81,12 @@ def main_grpo():
                 comm_backend=None,
             )
 
-            actor.upload_weights(actor_cfg)
-            print("[Trainer] actor upload_weights success.")
-            rollout.update_weights(rollout_cfg)
-            print("[Trainer] rollout update_weights success.")
-            clear_dir(rollout_cfg.path)
-            print(f"[Trainer] clear update weights dir success: {rollout_cfg.path}")
+            # actor.upload_weights(actor_cfg)
+            # print("[Trainer] actor upload_weights success.")
+            # rollout.update_weights(rollout_cfg)
+            # print("[Trainer] rollout update_weights success.")
+            # clear_dir(rollout_cfg.path)
+            # print(f"[Trainer] clear update weights dir success: {rollout_cfg.path}")
 
             # synchronous rollout
             gconfig = GenerationHyperparameters(

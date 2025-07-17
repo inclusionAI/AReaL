@@ -469,6 +469,7 @@ class RemoteSGLangEngine(InferenceEngine):
         # 如果padded是dict，则转为TensorDict
         if isinstance(padded, dict):
             padded = TensorDict(padded, batch_size=[len(results)])
+        print(f"[RemoteSGLangEngine] wait, padded type: {type(padded)}")
         return padded
 
     def rollout(  # only dp head accept this request
