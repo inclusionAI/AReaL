@@ -1,7 +1,7 @@
 from typing import Dict, Optional, List
 import torch
 
-from torch.utils.data import TensorDict
+from tensordict import TensorDict
 from arealite.engine.ppo.actor import PPOActor, PPOActorConfig
 from arealite.api.engine_api import TrainEngine
 from arealite.engine.vl_fsdp_engine import VL_FSDPEngine
@@ -23,13 +23,7 @@ class VL_PPOActor(PPOActor):
         data: TensorDict,
         temperature: Optional[float] = None,
     ) -> torch.Tensor | None:
-        if "images" in data.keys():
-            processed_images = process_image(
-                images=data["images"],
-                processor=self.engine.processor,
-            )
-            data.pop("images", None)
-            data.update(processed_images)
+       
         
         def calc_logprobs(logits, input_data):
             labels = torch.roll(input_data["input_ids"], shifts=-1, dims=-1)

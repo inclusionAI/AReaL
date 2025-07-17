@@ -18,6 +18,7 @@ from arealite.workflow.vl_rlvr import VL_RLVRWorkflow
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import stats_tracker
 from arealite.dataset.__init__ import get_custom_dataset
+from arealite.utils.image import process_image
 
 
 
@@ -170,6 +171,13 @@ def main_grpo():
                 batch = rollout.rollout_batch(data, workflow=workflow)
 
         batch = batch.to(actor.device)
+        if "images" in data.keys():
+            processed_images = process_image(
+                images=data["images"],
+                processor=processor,
+            )
+            data.pop("images", None)
+            data.update(processed_images)
         # Create barrier to synchronize all rollout processes.
         dist.barrier()
         torch.cuda.synchronize()

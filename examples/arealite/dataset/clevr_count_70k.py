@@ -20,6 +20,8 @@ def convert_image(
 
     if image.mode != "RGB":
         image = image.convert("RGB")
+        
+    
     return image
 
 def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
