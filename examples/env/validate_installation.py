@@ -79,6 +79,7 @@ class InstallationValidator:
         """Test SGLang basic functionality."""
         # Basic import test is sufficient for CI
         import sgl_kernel
+
         from sglang import launch_server
         assert Version(get_version("sglang")) == Version("0.4.6.post4")
         print("  - SGLang imported successfully")

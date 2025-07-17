@@ -6,10 +6,10 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Empty, Full, Queue
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-import sglang as sgl
 import torch.distributed as dist
 from tensordict import TensorDict
 
+import sglang as sgl
 from arealite.api.cli_args import InferenceEngineConfig
 from arealite.api.engine_api import InferenceEngine
 from arealite.api.io_struct import (
