@@ -46,7 +46,7 @@ def main_grpo():
     )
     # engine initialize
     rollout.initialize()
-    actor.initialize()
+    # actor.initialize()
 
     dataset = load_dataset("json",
                            data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train_32.jsonl")
@@ -80,8 +80,25 @@ def main_grpo():
                 comm_backend=None,
             )
 
-            actor.upload_weights(actor_cfg)
-            print(f"[Trainer] actor upload_weights success.")
+            # actor.upload_weights(actor_cfg)
+            # print(f"[Trainer] actor upload_weights success.")
+            rollout.update_weights(rollout_cfg)
+            print("[Trainer] rollout update_weights success.")
+
+            gconfig = GenerationHyperparameters(
+                max_new_tokens=16, greedy=False, n_samples=1
+            )
+            MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf"
+            tokenizer = load_hf_tokenizer(MODEL_PATH)
+            workflow = RLVRWorkflow(
+                reward_fn=lambda **kwargs: 1.0,
+                gconfig=gconfig,
+                tokenizer=tokenizer,
+            )
+
+            # input_: List[Dict[str, tensor]]
+            rollout_res = rollout.rollout(batch_data, workflow=workflow)
+            print(f"[Trainer] rollout exec success, rollout_res: {rollout_res}")
 
 
 if __name__ == "__main__":
