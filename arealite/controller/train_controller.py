@@ -65,7 +65,7 @@ class DistributedTrainController(TrainController):
         server_addrs = [
             f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports
         ]
-        print(f"self.workers: {len(self.workers)}")
+        print(f"[TrainController] initialize workers len: {len(self.workers)}, details: {self.workers}.")
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             futures = [
                 executor.submit(
@@ -80,13 +80,11 @@ class DistributedTrainController(TrainController):
             ]
             try:
                 for future in as_completed(futures):
-                    future.result()  # 可加异常处理
+                    future.result()
             except KeyboardInterrupt:
-                print("收到Ctrl+C，正在终止所有初始化任务...")
-                # 取消所有未完成的future
                 for f in futures:
                     f.cancel()
-                raise  # 重新抛出异常，主程序能感知
+                raise
         # todo: 不能写死remote megatron, 让engine抽象出接口
 
     def destroy(self):

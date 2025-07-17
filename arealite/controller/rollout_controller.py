@@ -28,7 +28,7 @@ class DistributedRolloutController(RolloutController):
         scheduler: Scheduler,
     ):
         super().__init__(inf_engine, config, scheduler)
-        self.dp_world_size = 16 // 2
+        self.dp_world_size = 1
 
     def _rpc_call(self, method, *args, **kwargs):
         logging.info(f"[rollout controller] start to  rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
@@ -52,7 +52,6 @@ class DistributedRolloutController(RolloutController):
                     results.append(result)
             except KeyboardInterrupt:
                 print("收到Ctrl+C，正在终止所有初始化任务...")
-                # 取消所有未完成的future
                 for f in futures:
                     f.cancel()
                 raise  # 重新抛出异常，主程序能感知
@@ -66,6 +65,7 @@ class DistributedRolloutController(RolloutController):
         self.scheduler.create_workers("rollout", scheduling_config)
 
         self.workers = self.scheduler.get_workers("rollout", timeout=5 * 60)
+        print(f"[RolloutController] initialize workers len:{len(self.workers)}, details: {self.workers}")
         server_addrs = [
             f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports
         ]
