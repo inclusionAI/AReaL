@@ -224,15 +224,6 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
                 ]
                 * n_nodes,
             )
-            bundles = [
-                {
-                    "CPU": sch.scheduling.cpu * n_worker_per_node,
-                    "GPU": sch.scheduling.gpu * n_worker_per_node,
-                    "memory": sch.scheduling.mem
-                    * 1024**2
-                    * n_worker_per_node,  # in bytes
-                }
-            ] * n_nodes
             try:
                 ray.get(placement_group.ready(), timeout=30)
             except ray.exceptions.GetTimeoutError:
