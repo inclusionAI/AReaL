@@ -76,6 +76,12 @@ def main_grpo():
             # input_: List[Dict[str, tensor]]
             rollout_res = rollout.rollout(batch_data, workflow=workflow)
             print(f"[Trainer] rollout exec success, type: {rollout_res}, rollout_res: {rollout_res}")
+            rollout_res = rollout_res.to("cpu").clone()
+            rollout_res_dict = rollout_res.to_dict()
+            for k, v in rollout_res_dict.items():
+                if isinstance(v, torch.Tensor) and v.ndim > 1 and v.shape[0] == 1:
+                    rollout_res_dict[k] = v.squeeze(0)
+                    print(f"[Trainer] after squeeze {k} {rollout_res_dict[k].shape}")
 
 
 if __name__ == "__main__":

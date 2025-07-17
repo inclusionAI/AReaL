@@ -108,8 +108,8 @@ def main_grpo():
             rollout_res = rollout_res.to("cpu").clone()
             rollout_res_dict = rollout_res.to_dict()
             for k, v in rollout_res_dict.items():
-                if isinstance(v, torch.Tensor) and v.ndim > 1 and v.shape[1] == 1:
-                    rollout_res_dict[k] = v.squeeze(1)
+                if isinstance(v, torch.Tensor) and v.ndim > 1 and v.shape[0] == 1:
+                    rollout_res_dict[k] = v.squeeze(0)
             dis_batch = DistributedBatchMemory(rollout_res_dict)
             stats = actor.train_distributed_batch(dis_batch)
             print(f"[Trainer] train exec success, step: {step}, epoch: {epoch}, stats: {stats}")

@@ -170,4 +170,4 @@ class DistributedRolloutController(RolloutController):
                 raise  # 重新抛出异常，主程序能感知
 
         res = stack(results, dim=0)
-        print(f"[RolloutController] after rollout res type: {res}")
+        return res
