@@ -465,7 +465,11 @@ class RemoteSGLangEngine(InferenceEngine):
         )
 
         logger.info(f"[RemoteSGLangEngine] wait, get all results len: {len(results)}, details: {results}")
-        return concat_padded_tensors(results)
+        padded = concat_padded_tensors(results)
+        # 如果padded是dict，则转为TensorDict
+        if isinstance(padded, dict):
+            padded = TensorDict(padded, batch_size=[len(results)])
+        return padded
 
     def rollout(  # only dp head accept this request
         self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
