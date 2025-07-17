@@ -25,15 +25,17 @@ class VL_RLVRWorkflow(RLVRWorkflow):
         self.processor = processor
 
     async def arun_episode(self, engine, data):
-        
+        # self.processor.tokenizer.add_generation_prompt=True
+
         input_ids = self.processor(
             text=data["messages"],
             images=data["images"],
             padding=False,
             return_tensors="pt",
-            add_generation_prompt=True,
         )["input_ids"].tolist()[0]
         n_samples = self.gconfig.n_samples
+
+
         byte_images = []
         for image_file in data["images"]:
             with BytesIO() as buffer:

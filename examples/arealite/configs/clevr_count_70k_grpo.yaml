@@ -32,7 +32,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen2.5-VL-7B-Instruct
+  path: /storage/openpsi/models/Qwen2.5-VL-32B-Instruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: false

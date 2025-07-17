@@ -133,7 +133,8 @@ def get_clevr_count_70k_rl_dataset(path, split,processor,  rank, world_size):
     def process(sample):
         processed_images = [process_image(image, 113*113, 336*336) for image in sample["images"]]
         image_token = processor.image_token if processor is not None else "<image>"
-        messages = sample["problem"].replace("<image>", image_token)
+        messages =[{"role": "user", "content": sample["problem"].replace("<image>", image_token)}] 
+        messages=processor.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
         return {"messages": messages, "images": processed_images}
 
     dataset = dataset.map(process).remove_columns(["problem"])
