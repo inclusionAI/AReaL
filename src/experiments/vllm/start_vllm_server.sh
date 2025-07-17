@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Default model if not specified
-DEFAULT_MODEL="qwen2.5-1.5b"
+DEFAULT_MODEL="Qwen/Qwen-7B"
 MODEL=${1:-$DEFAULT_MODEL}
 
 # Check if VLLM is already running
