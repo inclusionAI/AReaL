@@ -72,7 +72,10 @@ def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
     def process_example(example, idx):
         # Add query_id column
         images = example["images"]
-        image_token = processor.image_token if processor is not None else "<image>"
+        if 'qwen' in processor.image_processor.image_processor_type.lower():
+            image_token="<|vision_start|><|image_pad|><|vision_end|>"
+        else:
+            image_token = processor.image_token if processor is not None else "<image>"
         example["problem"] = example["problem"].replace("<image>", image_token)
         processed_images = []
         for image in images:
@@ -132,7 +135,10 @@ def get_clevr_count_70k_rl_dataset(path, split,processor,  rank, world_size):
 
     def process(sample):
         processed_images = [process_image(image, 113*113, 336*336) for image in sample["images"]]
-        image_token = processor.image_token if processor is not None else "<image>"
+        if 'qwen' in processor.image_processor.image_processor_type.lower():
+            image_token="<|vision_start|><|image_pad|><|vision_end|>"
+        else:
+            image_token = processor.image_token if processor is not None else "<image>"
         messages =[{"role": "user", "content": sample["problem"].replace("<image>", image_token)}] 
         messages=processor.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
         return {"messages": messages, "images": processed_images}

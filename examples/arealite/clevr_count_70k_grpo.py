@@ -129,7 +129,8 @@ def main_grpo():
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-    config.gconfig.max_new_tokens=10
+    config.gconfig.max_new_tokens=50
+    config.gconfig.top_k=50
     workflow = VL_RLVRWorkflow(
         reward_fn=clevr_count_70k_reward_fn,
         gconfig=config.gconfig,

@@ -21,9 +21,7 @@ async def arequest_with_retry(
     max_retries = max_retries or DEFAULT_RETRIES
     base_url = f"http://{addr}"
     url = f"{base_url}{endpoint}"
-
     for attempt in range(max_retries):
-        breakpoint()
         try:
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(
