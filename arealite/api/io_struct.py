@@ -165,7 +165,7 @@ class WeightUpdateMeta:
     path: str | None
     alloc_mode: AllocationMode | None
     comm_backend: str | None
-    model_version: int = 0
+    model_version: int = 10000  # sync mode must set max, async mode set min
 
 
 @dataclass

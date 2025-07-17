@@ -20,6 +20,7 @@ from arealite.api.io_struct import (
     RolloutStat,
     WeightUpdateMeta,
 )
+from arealite.utils.data import concat_padded_tensors
 from realhf.base import logging, name_resolve, names, pkg_version
 
 if TYPE_CHECKING:
@@ -462,7 +463,7 @@ class RemoteSGLangEngine(InferenceEngine):
             self.result_cache[:count],
             self.result_cache[count:],
         )
-        return TensorDict.cat(results, dim=0)
+        return concat_padded_tensors(results)
 
     def rollout(  # only dp head accept this request
         self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
