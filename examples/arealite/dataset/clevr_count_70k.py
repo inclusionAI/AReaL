@@ -1,7 +1,26 @@
 import os
+import math
+from typing import Any, Dict, List, Optional, Union
+from PIL.Image import Image as ImageObject
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
-from arealite.utils.image import convert_image
+
+def convert_image(
+    image: Union[Dict[str, Any], ImageObject, str], min_pixels: Optional[int], max_pixels: Optional[int]
+) -> ImageObject:
+    if max_pixels is not None and (image.width * image.height) > max_pixels:
+        resize_factor = math.sqrt(max_pixels / (image.width * image.height))
+        width, height = int(image.width * resize_factor), int(image.height * resize_factor)
+        image = image.resize((width, height))
+
+    if min_pixels is not None and (image.width * image.height) < min_pixels:
+        resize_factor = math.sqrt(min_pixels / (image.width * image.height))
+        width, height = int(image.width * resize_factor), int(image.height * resize_factor)
+        image = image.resize((width, height))
+
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    return image
 
 def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
     '''

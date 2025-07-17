@@ -21,22 +21,7 @@ def image2base64(images: List[ImageObject]|ImageObject)-> List[str]|str:
     
     return byte_images
 
-def convert_image(
-    image: Union[Dict[str, Any], ImageObject, str], min_pixels: Optional[int], max_pixels: Optional[int]
-) -> ImageObject:
-    if max_pixels is not None and (image.width * image.height) > max_pixels:
-        resize_factor = math.sqrt(max_pixels / (image.width * image.height))
-        width, height = int(image.width * resize_factor), int(image.height * resize_factor)
-        image = image.resize((width, height))
 
-    if min_pixels is not None and (image.width * image.height) < min_pixels:
-        resize_factor = math.sqrt(min_pixels / (image.width * image.height))
-        width, height = int(image.width * resize_factor), int(image.height * resize_factor)
-        image = image.resize((width, height))
-
-    if image.mode != "RGB":
-        image = image.convert("RGB")
-    return image
 
 def process_image(
     images: List[Union[ImageObject, Tensor]],

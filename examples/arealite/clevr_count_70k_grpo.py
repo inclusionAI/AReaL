@@ -8,7 +8,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import GRPOConfig, load_expr_config
 from arealite.api.io_struct import FinetuneSpec, WeightUpdateMeta
-from arealite.engine.ppo.actor import VL_FSDPPPOActor
+from arealite.engine.ppo.vl_actor import VL_FSDPPPOActor
 from arealite.engine.vl_sglang_remote import VL_RemoteSGLangEngine
 from arealite.utils.device import log_gpu_stats
 from arealite.utils.evaluator import Evaluator
