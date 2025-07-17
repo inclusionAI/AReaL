@@ -169,4 +169,5 @@ class DistributedRolloutController(RolloutController):
                     f.cancel()
                 raise  # 重新抛出异常，主程序能感知
 
-        return stack(results, dim=0)
+        # return stack(results, dim=0)
+        return results[0]
