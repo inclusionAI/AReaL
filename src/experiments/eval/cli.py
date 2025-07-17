@@ -5,7 +5,9 @@ from loguru import logger
 
 from experiments.eval.analyze_results import analyze_results
 from experiments.eval.run_eval import RunMode, make_configs, run_evals
-from tau2.config import DATA_DIR
+from tau2.utils.utils import DATA_DIR
+
+DATA_EXP_DIR = DATA_DIR / "exp"
 
 DEFAULT_LLM_SUPERVISOR = None
 DEFAULT_LLM_USER = "gpt-4.1-2025-04-14"
@@ -41,7 +43,7 @@ def get_cli_parser() -> argparse.ArgumentParser:
         "--exp-dir",
         type=str,
         required=True,
-        help="Path to the experiment directory relative to DATA_DIR. This will be created if it doesn't exist.",
+        help=f"Path to the experiment directory relative to {DATA_EXP_DIR}. This will be created if it doesn't exist.",
     )
     run_parser.add_argument(
         "--num-tasks",
@@ -148,8 +150,8 @@ def main():
     args = parser.parse_args()
 
     if args.command == "run-evals":
-        # Convert relative path to absolute path using DATA_DIR
-        exp_dir = DATA_DIR / args.exp_dir
+        # Convert relative path to absolute path using DATA_EXP_DIR
+        exp_dir = DATA_EXP_DIR / args.exp_dir
 
         # Parse hyperparameters
         hyperparams = {
@@ -188,7 +190,7 @@ def main():
         analyze_results(exp_dir)
     elif args.command == "analyze-results":
         # Convert relative path to absolute path using DATA_DIR
-        exp_dir = DATA_DIR / args.exp_dir
+        exp_dir = DATA_EXP_DIR / args.exp_dir
         analyze_results(exp_dir)
 
     else:

@@ -12,7 +12,7 @@ from tau2.data_model.simulation import Results
 from tau2.run import RunConfig, run_domain
 
 
-class RunMode(Enum, str):
+class RunMode(str, Enum):
     DEFAULT = "default"
     NO_USER = "no-user"
     ORACLE_PLAN = "oracle-plan"
@@ -100,7 +100,7 @@ def make_config(
             f"Temperature: {tmp} removed for reasoning LLM: {llm}. Only default temp supported."
         )
 
-    save_to = f"{exp_dir}/{llm}_{domain}_{mode}_{llm_user}_{num_trials}trials"
+    save_to = f"{exp_dir}/{llm}_{domain}_{mode.value}_{llm_user}_{num_trials}trials"
     if num_tasks is not None:
         save_to += f"_{num_tasks}tasks"
     config = RunConfig(
