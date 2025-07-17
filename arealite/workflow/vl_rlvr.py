@@ -25,11 +25,13 @@ class VL_RLVRWorkflow(RLVRWorkflow):
     async def arun_episode(self, engine, data):
         # self.processor.tokenizer.add_generation_prompt=True
 
-        input_ids = self.processor.tokenizer(
+        processed_input = self.processor(
+            images=data["images"],
             text=data["messages"],
             padding=False,
             return_tensors="pt",
-        )["input_ids"].tolist()[0]
+        )
+        input_ids=processed_input["input_ids"].tolist()[0]
         n_samples = self.gconfig.n_samples
 
         byte_images = image2base64(data["images"])
@@ -60,7 +62,8 @@ class VL_RLVRWorkflow(RLVRWorkflow):
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),
                 loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                images=data["images"],
+                pixel_values=torch.tensor(processed_input["pixel_values"]).unsqueeze(0),
+                image_grid_thw=torch.tensor(processed_input["image_grid_thw"]).unsqueeze(0),
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
                 versions=torch.tensor(versions).unsqueeze(0),
                 attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),

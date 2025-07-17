@@ -8,7 +8,6 @@ from arealite.engine.vl_fsdp_engine import VL_FSDPEngine
 from arealite.utils.functional import (
     gather_logprobs,
 )
-from arealite.utils.image import process_image
 
 
 class VL_PPOActor(PPOActor):

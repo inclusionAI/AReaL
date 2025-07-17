@@ -23,7 +23,7 @@ def concat_padded_tensors(
         tensors_to_concat = []
         for tensor_dict in tensor_dicts:
             tensor = tensor_dict[key]
-            if key == "images":
+            if key == "pixle_values" or key == "image_grid_thw":
                 tensors_to_concat.append(tensor)
                 continue
             # Skip 1D tensors like rewards

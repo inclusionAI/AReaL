@@ -4,7 +4,7 @@ import math
 from torch import Tensor
 from typing import Any, Dict, List, Optional, Union
 from PIL.Image import Image as ImageObject
-
+from dataclasses import MISSING
 
 def image2base64(images: List[ImageObject]|ImageObject)-> List[str]|str:
 
@@ -23,15 +23,3 @@ def image2base64(images: List[ImageObject]|ImageObject)-> List[str]|str:
 
 
 
-def process_image(
-    images: List[Union[ImageObject, Tensor]],
-    processor: Any,
-) -> Dict[str, Tensor]:
-
-    if isinstance(images, Tensor):
-        images = [images]
-
-    images=processor.image_processor(images=images, return_tensors="pt")
-    pixel_values = images["pixel_values"]
-    image_grid_thw = images["image_grid_thw"]
-    return {"pixel_values": pixel_values, "image_grid_thw": image_grid_thw}

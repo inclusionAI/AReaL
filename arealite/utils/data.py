@@ -310,6 +310,7 @@ def split_padded_tensor_dict_into_mb_list(
     Returns:
         MicroBatchList: A structure containing the split micro-batches and metadata.
     """
+    breakpoint()
     assert (
         "attention_mask" in data
     ), "Input data must be padded and contain 'attention_mask' key."
