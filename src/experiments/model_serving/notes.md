@@ -83,7 +83,15 @@ curl http://localhost:8000/v1/completions \
     }'
 ```
 
-Issues running vLLM:
+## vLLM & LiteLLM
+
+LiteLLM mentions that prefix is either:
+"hosted_vllm" or "vllm"
+Not completely clear what the difference is.
+- "vllm" is the one that works but I feel this is spinning up a vllm server at each call.
+- "hosted_vllm" doesn't work.
+
+Issues running vLLM with litellm:
 - Using litellm:
     - Reloading the weights at each call.
     - Even curl call doesn't work at time.
