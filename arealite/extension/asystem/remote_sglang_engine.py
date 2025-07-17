@@ -463,6 +463,8 @@ class RemoteSGLangEngine(InferenceEngine):
             self.result_cache[:count],
             self.result_cache[count:],
         )
+
+        logger.info(f"[RemoteSGLangEngine] wait, get all results len: {len(results)}, details: {results}")
         return concat_padded_tensors(results)
 
     def rollout(  # only dp head accept this request

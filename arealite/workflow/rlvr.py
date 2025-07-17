@@ -34,7 +34,7 @@ class RLVRWorkflow(RolloutWorkflow):
             padding=False,
             return_length=True,
             return_attention_mask=False)
-        print(f"debug prompt_encodings: {prompt_encodings}")
+
         n_samples = self.gconfig.n_samples
         req = LLMRequest(
             rid=uuid.uuid4().hex,
