@@ -234,9 +234,10 @@ class Orchestrator:
                 self.trajectory = [first_message]
                 self.message = first_message
                 if not first_message.is_tool_call():
-                    self.done = True
                     self.from_role = Role.AGENT
                     self.to_role = Role.USER
+                    self.done = True
+                    self.termination_reason = TerminationReason.AGENT_ERROR
                 else:
                     self.from_role = Role.AGENT
                     self.to_role = Role.ENV

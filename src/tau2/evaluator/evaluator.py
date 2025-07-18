@@ -27,15 +27,14 @@ def evaluate_simulation(
     """
     Evaluate the simulation based on the evaluation type.
     """
-    if simulation.termination_reason in {
-        TerminationReason.TOO_MANY_ERRORS,
-        TerminationReason.MAX_STEPS,
-        TerminationReason.AGENT_ERROR,
+    if simulation.termination_reason not in {
+        TerminationReason.AGENT_STOP,
+        TerminationReason.USER_STOP,
     }:
         return RewardInfo(
             reward=0.0,
             info={
-                "note": f"Simulation terminated prematurely. Termination reason: {simulation.termination_reason}"
+                "note": f"Simulation terminated prematurely. Termination reason: {simulation.termination_reason.value}"
             },
         )
     if task.evaluation_criteria is None:
