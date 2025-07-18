@@ -15,6 +15,7 @@ from tau2.user.base import (
     OUT_OF_SCOPE,
     STOP,
     TRANSFER,
+    USER_NOT_AVAILABLE,
     BaseUser,
     UserState,
     ValidUserInputMessage,
@@ -200,7 +201,7 @@ class DummyUser(UserSimulator):
         return UserState(messages=[], system_messages=[])
 
     def is_stop(cls, message: UserMessage) -> bool:
-        raise NotImplementedError("DummyUser does not support stop messages")
+        return False
 
     def set_seed(self, seed: int):
         pass
@@ -208,4 +209,5 @@ class DummyUser(UserSimulator):
     def generate_next_message(
         self, message: ValidUserInputMessage, state: UserState
     ) -> tuple[UserMessage, UserState]:
-        raise NotImplementedError("DummyUser does not support generate_next_message")
+        message = UserMessage(role="user", content=USER_NOT_AVAILABLE)
+        return message, state

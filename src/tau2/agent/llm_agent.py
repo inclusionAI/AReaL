@@ -328,6 +328,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         task: Task,
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
+        allow_user_message_attempt: bool = True,
     ):
         """
         Initialize the LLMAgent.
@@ -339,6 +340,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         self.task = task
         self.llm = llm
         self.llm_args = llm_args if llm_args is not None else {}
+        self.allow_user_message_attempt = allow_user_message_attempt
         self.add_stop_tool()
         self.validate_tools()
 
@@ -401,6 +403,8 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         """Check if the message is a stop message.
         If the message contains a tool call with the name STOP_FUNCTION_NAME, then the message is a stop message.
         """
+        if message.tool_calls is None:
+            return message
         is_stop = False
         for tool_call in message.tool_calls:
             if tool_call.name == self.STOP_FUNCTION_NAME:
@@ -461,8 +465,8 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
             tool_choice="required",
             **self.llm_args,
         )
-        if not assistant_message.is_tool_call():
-            raise AgentError("User is not available!")
+        if not assistant_message.is_tool_call() and not self.allow_user_message_attempt:
+            raise AgentError("Only tool calls are allowed.")
         message = self._check_if_stop_toolcall(assistant_message)
         state.messages.append(assistant_message)
         return assistant_message, state

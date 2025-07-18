@@ -233,11 +233,16 @@ class Orchestrator:
                 )
                 self.trajectory = [first_message]
                 self.message = first_message
-                self.from_role = Role.AGENT
-                self.to_role = Role.ENV
-                self.done = self.agent.is_stop(first_message)
-                if self.done:
-                    self.termination_reason = TerminationReason.AGENT_STOP
+                if not first_message.is_tool_call():
+                    self.done = True
+                    self.from_role = Role.AGENT
+                    self.to_role = Role.USER
+                else:
+                    self.from_role = Role.AGENT
+                    self.to_role = Role.ENV
+                    self.done = self.agent.is_stop(first_message)
+                    if self.done:
+                        self.termination_reason = TerminationReason.AGENT_STOP
 
         self.environment.sync_tools()
 
@@ -250,18 +255,9 @@ class Orchestrator:
         """
         start_time = get_now()
         start = time.perf_counter()
-        try:
-            self.initialize()
-        except AgentError:
-            self.done = True
-            self.termination_reason = TerminationReason.AGENT_ERROR
+        self.initialize()
         while not self.done:
-            try:
-                self.step()
-            except AgentError:
-                self.done = True
-                self.termination_reason = TerminationReason.AGENT_ERROR
-
+            self.step()
             if self.step_count >= self.max_steps:
                 self.done = True
                 self.termination_reason = TerminationReason.MAX_STEPS

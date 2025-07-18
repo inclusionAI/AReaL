@@ -30,6 +30,7 @@ def is_valid_user_history_message(message: Message) -> bool:
 STOP = "###STOP###"
 TRANSFER = "###TRANSFER###"
 OUT_OF_SCOPE = "###OUT-OF-SCOPE###"
+USER_NOT_AVAILABLE = "###USER-NOT-AVAILABLE###"
 
 
 class UserState(BaseModel):
