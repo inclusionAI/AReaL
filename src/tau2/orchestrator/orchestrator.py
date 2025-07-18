@@ -250,7 +250,12 @@ class Orchestrator:
         """
         start_time = get_now()
         start = time.perf_counter()
-        self.initialize()
+        try:
+            self.initialize()
+        except AgentError as e:
+            self.done = True
+            self.termination_reason = TerminationReason.AGENT_ERROR
+            self.message = e.message
         while not self.done:
             try:
                 self.step()
