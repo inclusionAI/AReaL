@@ -93,6 +93,14 @@ def gen_servers(experiment_name, trial_name):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/gen_servers"
 
 
+def gen_server(experiment_name, trial_name, server_id):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/gen_server/{server_id}"
+
+
+def gen_server_root(experiment_name, trial_name):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/gen_server/"
+
+
 def used_ports(experiment_name, trial_name, host_name):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/{host_name}/"
 

@@ -27,15 +27,16 @@ def gpu_count():
 
     Ad-hoc to frl cluster.
     """
+    try:
+        import torch
+
+        torch_cnt = torch.cuda.device_count()
+    except ImportError:
+        torch_cnt = 0
     if platform.system() == "Darwin":
         return 0
     elif platform.system() == "Windows":
-        try:
-            import torch
-
-            return torch.cuda.device_count()
-        except ImportError:
-            return 0
+        return torch_cnt
     else:
         dev_directories = list(os.listdir("/dev/"))
         for cnt in itertools.count():
@@ -43,7 +44,7 @@ def gpu_count():
                 continue
             else:
                 break
-        return cnt
+        return cnt or torch_cnt
 
 
 def set_cuda_device(device):
