@@ -489,6 +489,23 @@ class RemoteMegatronEngine(TrainEngine):
                 seq_no_eos_mask=seq_no_eos_mask,
                 mask_no_eos_with_zero=self.config.wrap_policy.mask_no_eos_with_zero,
             )
+        # 保存 get_packed_advantages_and_returns 的所有输入参数
+        packed_adv_inputs = {
+            "gamma": self.config.wrap_policy.discount,
+            "lam": self.config.wrap_policy.gae_lambda,
+            "values": (
+                denormalized_values
+                if not self.config.wrap_policy.disable_value
+                else denormalized_values.new_zeros(denormalized_values.shape)
+            ),
+            "denormalized_values": denormalized_values,
+            "rewards": rewards,
+            "short1cu_seqlens": short1cu_seqlens,
+            "seq_no_eos_mask": seq_no_eos_mask,
+        }
+        import cloudpickle
+        with open("/storage/openpsi/codes/dh183333/AReaL/packed_adv_inputs.bin", "wb") as f:
+            cloudpickle.dump(packed_adv_inputs, f)
         advantages, returns = ppo_functional.get_packed_advantages_and_returns(
             gamma=self.config.wrap_policy.discount,
             lam=self.config.wrap_policy.gae_lambda,
