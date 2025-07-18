@@ -51,9 +51,9 @@ def main_grpo():
                            data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train_32.jsonl")
     train_dataset = dataset['train']
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
-    batch_size = 2
+    batch_size = 8
     batch_data = []
-    step_num = 1
+    step_num = 2
     epoch_num = 1
     for epoch in range(epoch_num):
         data_generator = iter(dataloader)
@@ -81,8 +81,8 @@ def main_grpo():
 
             # actor.upload_weights(actor_cfg)
             # print("[Trainer] actor upload_weights success.")
-            # rollout.update_weights(rollout_cfg)
-            # print("[Trainer] rollout update_weights success.")
+            rollout.update_weights(rollout_cfg)
+            print("[Trainer] rollout update_weights success.")
             # clear_dir(rollout_cfg.path)
             # print(f"[Trainer] clear update weights dir success: {rollout_cfg.path}")
 

@@ -106,7 +106,7 @@ class DistributedRolloutController(RolloutController):
 
     def rollout_distributed_batch(
         self, data: DistributedBatchMemory, workflow: RolloutWorkflow
-    ) -> DistributedBatchMemory:
+    ) -> DistributedBatchMemory:  # batcsize=16
         """Submit a batch of requests to the inference engine and wait for the results."""
         batches = data.split(2)
         assert len(self.workers) % self.dp_world_size == 0
@@ -160,14 +160,12 @@ class DistributedRolloutController(RolloutController):
             results = []
             try:
                 for future in as_completed(futures):
-                    result = future.result()  # 可加异常处理
+                    result = future.result()
                     results.append(result)
             except KeyboardInterrupt:
-                print("收到Ctrl+C，正在终止所有初始化任务...")
-                # 取消所有未完成的future
                 for f in futures:
                     f.cancel()
-                raise  # 重新抛出异常，主程序能感知
+                raise
 
         res = stack(results, dim=0)
         return res

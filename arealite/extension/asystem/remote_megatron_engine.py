@@ -88,8 +88,8 @@ class RemoteMegatronEngine(TrainEngine):
         cfg.server_addrs = [
             "10.10.131.165:50000", "10.10.131.165:50001", "10.10.131.165:50002", "10.10.131.165:50003",
             "10.10.131.165:50004", "10.10.131.165:50005", "10.10.131.165:50006", "10.10.131.165:50007",
-            "10.10.12.152:50000", "10.10.12.152:50001", "10.10.12.152:50002", "10.10.12.152:50003",
-            "10.10.12.152:50004", "10.10.12.152:50005", "10.10.12.152:50006", "10.10.12.152:50007",
+            # "10.10.12.152:50000", "10.10.12.152:50001", "10.10.12.152:50002", "10.10.12.152:50003",
+            # "10.10.12.152:50004", "10.10.12.152:50005", "10.10.12.152:50006", "10.10.12.152:50007",
         ]
         self.megatron_addr = cfg.server_addrs[global_rank]
         master_addr = cfg.server_addrs[0]
@@ -684,9 +684,6 @@ remote_megatron_config = {
     "moe_shared_expert_overlap": True,
     "seed": 42,
     "auto_detect_ckpt_format": True,
-    "no_load_rng": True,
-    "no_load_optim": True,
-    "no_save_optim": True,
     "resume_dataloader": False,
     "cp_comm_type": "p2p",
     "distributed_backend": "nccl",
@@ -695,8 +692,8 @@ remote_megatron_config = {
     "overlap_grad_reduce": True,
     "overlap_param_gather": False,
     "overlap_p2p_comm": True,
-    "tensor_model_parallel_size": 8,
-    "pipeline_model_parallel_size": 2,
+    "tensor_model_parallel_size": 1,
+    "pipeline_model_parallel_size": 1,
     "context_parallel_size": 1,
     "sequence_parallel": True,
     "use_mcore_models": True,
@@ -734,14 +731,14 @@ remote_megatron_config = {
     "seq_length": 16384,
     "micro_batch_size": 1,
     "global_batch_size": 8,
-    "lr": 2e-05,
+    "lr": 2.0e-6,
     "lr_decay_style": "constant",
-    "lr_warmup_iters": 40,
+    "lr_warmup_iters": 35,
     "weight_decay": 0,
     "clip_grad": 1.0,
     "optimizer": "adam",
     "adam_beta1": 0.9,
-    "adam_beta2": 0.999,
+    "adam_beta2": 0.95,
     "adam_eps": 1.0e-8,
     "moe_grouped_gemm": True,
     "attention_softmax_in_fp32": True,
@@ -768,9 +765,8 @@ remote_megatron_config = {
     "tokenizer_model": "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf",
     "load": "/storage/george.zr/openpsi/models/moe_lite_0428_base_32k_dcp/",
     "save": "/storage/xukuan.xk/repos/antnlp/personal/llm/dumps/rl/mcore_test2",
-    "no_save_rng": True,
     "save_interval": 1,
-    "expert_model_parallel_size": 1,
+    "expert_model_parallel_size": 8,
 }
 
 loss_configs = {

@@ -36,29 +36,14 @@ class DistributedTrainController(TrainController):
     ):
         super().__init__(train_engine, config, scheduler)
         # self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
-        self.dp_world_size = 16 // 2
-
-        # todo
-        # @dataclass
-        # class Scheduling:
-        #     cpu: int
-        #     gpu: int
-        #     mem: int
-        #     nodelist: str = None
-        #     exclude: str = None
-        #     partition: str = None
-        #     container_image: str = None
-        #     env_vars: Dict[str, str] = field(default_factory=dict)
-        #     # time utils from "https://slurm.schedmd.com/sbatch.html"
-        #     time_limit: Optional[str] = None  # see  "--time" option for format
-        #     begin: Optional[str] = None  # see "--begin" option for format
-        #     deadline: Optional[str] = None  # see "--deadline" option for format
+        self.dp_world_size = 1  # 一个dp组里面有多少卡，比如16卡，dp=8,那么 dp_world_size=2
+        self.dp_parallel_size = 8
 
     def initialize(self):
         """Initialize environments for distributed training and load models."""
         scheduling = self.train_engine.get_scheduling_config()
         # todo：支持多容器
-        scheduling_config = {"num_workers": 16}
+        scheduling_config = {"num_workers": 8}
         self.scheduler.create_workers("train", scheduling_config)
 
         self.workers = self.scheduler.get_workers("train", timeout=60 * 6)
@@ -73,7 +58,7 @@ class DistributedTrainController(TrainController):
                     worker.id,
                     self.train_engine,
                     RemoteMegatronInitConfig(
-                        server_addrs=server_addrs, global_rank=index, world_size=16
+                        server_addrs=server_addrs, global_rank=index, world_size=8
                     ),
                 )
                 for index, worker in enumerate(self.workers)
@@ -142,7 +127,7 @@ class DistributedTrainController(TrainController):
         self, input_: DistributedBatchMemory
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function."""
-        batches = input_.split(2)
+        batches = input_.split(1)
 
         assert len(self.workers) % self.dp_world_size == 0
 
