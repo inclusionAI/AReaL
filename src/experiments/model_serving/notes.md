@@ -7,9 +7,14 @@ Very easy to use.
 `ollama pull <model>` download model
 `ollama list` check what models are available
 `ollama ps` check what models are running
+`ollama show <model>` show model info
 
 Default port is 11434.
 Base URL: `http://localhost:11434/v1`
+
+
+To set the context length:
+`OLLAMA_CONTEXT_LENGHT=... ollama serve`
 
 
 No clear option to kill the process once it's running.
