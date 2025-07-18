@@ -479,6 +479,20 @@ class RemoteMegatronEngine(TrainEngine):
                 reward_delta=self.config.wrap_policy.reward_delta,
             )
         else:
+            # 保存 get_packed_rewards 的所有输入参数
+            packed_rewards_inputs = {
+                "kl_ctl": self.kl_adapter.value,
+                "clip_reward_value": self.config.wrap_policy.max_reward_clip,
+                "log_probs": old_logp,
+                "ref_log_probs": ref_logp,
+                "reward_score": (new_reward_score),
+                "short1cu_seqlens": short1cu_seqlens,
+                "seq_no_eos_mask": seq_no_eos_mask,
+                "mask_no_eos_with_zero": self.config.wrap_policy.mask_no_eos_with_zero,
+            }
+            import cloudpickle
+            with open("/storage/openpsi/codes/dh183333/AReaL/packed_rewards_inputs.bin", "wb") as f:
+                cloudpickle.dump(packed_rewards_inputs, f)
             kl_rewards, rewards = ppo_functional.get_packed_rewards(
                 kl_ctl=self.kl_adapter.value,
                 clip_reward_value=self.config.wrap_policy.max_reward_clip,
