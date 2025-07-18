@@ -56,7 +56,7 @@ class RLVRWorkflow(RolloutWorkflow):
                 del data["prompt"]
             reward = self.reward_fn(
                 prompt=text,
-                completions=resp.completions,
+                completion=resp.completions,
                 prompt_ids=resp.input_tokens,
                 completion_ids=resp.output_tokens,
                 **data,

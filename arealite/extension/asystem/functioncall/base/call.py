@@ -228,9 +228,22 @@ def batch_function_call(payload_list, task_type, timeout):
     logger.info(
         f"Batch function call start, task type: {task_type}, request count: {len(payload_list)}, time: {time.ctime(start_time)} ms, concurrency: {concurrency}"
     )
-    result = asyncio.run(
-        batch_function_call_async(payload_list, url, timeout, concurrency=concurrency)
-    )
+
+    async def _main():
+        return await batch_function_call_async(payload_list, url, timeout, concurrency=concurrency)
+
+    try:
+        loop = asyncio.get_running_loop()
+        # 如果已经在事件循环中，直接创建任务并await
+        result = loop.run_until_complete(_main())  # 这种写法在协程里也会报错
+    except RuntimeError:
+        # 没有事件循环，直接用asyncio.run
+        result = asyncio.run(_main())
+    except Exception:
+        # 如果已经在事件循环中，直接用await
+        result = asyncio.ensure_future(_main())
+        # 你可以在调用方 await 这个 future
+
     execution_time = time.time() - start_time
     logger.info(
         f"Batch function call done, task type: {task_type}, batch size: {len(payload_list)}, cost: {execution_time * 1000:.0f} ms"
