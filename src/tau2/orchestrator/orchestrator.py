@@ -336,6 +336,9 @@ class Orchestrator:
                 self.to_role = Role.ENV
             else:
                 self.to_role = Role.USER
+                if self.solo_mode:
+                    self.done = True
+                    self.termination_reason = TerminationReason.AGENT_ERROR
         # AGENT/USER -> ENV
         elif self.from_role in [Role.AGENT, Role.USER] and self.to_role == Role.ENV:
             if not self.message.is_tool_call():
