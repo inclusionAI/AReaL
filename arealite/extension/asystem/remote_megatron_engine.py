@@ -388,6 +388,8 @@ class RemoteMegatronEngine(TrainEngine):
             prompt_lens.append(prompt_mask[s:e].sum())
         prompt_lens = torch.tensor(prompt_lens, device="cpu")
         reward_score = input_["rewards"].float()
+        torch.set_printoptions(threshold=float('inf'))
+        print(f"[RemoteMegatronEngine] dzq_debug process_training_data reward_score: {reward_score}")
         task_ids = input_["task_ids"]
         # task_ids = task_ids.repeat(self.config.group_size, 1).transpose(0, 1).reshape(-1)
 
