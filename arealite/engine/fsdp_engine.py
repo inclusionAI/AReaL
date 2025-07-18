@@ -168,9 +168,6 @@ class FSDPEngine(BaseHFEngine):
             raise ValueError(f"Unknown weight update type {meta.type}")
 
     def _init_distributed_weight_update(self, meta: WeightUpdateMeta):
-        # NOTE: required by SGLang
-        os.environ["NCCL_CUMEM_ENABLE"] = "0"
-        os.environ["NCCL_NVLS_ENABLE"] = "0"
         if dist.get_rank() == 0:
             self.weight_update_group = init_custom_process_group(
                 backend="nccl",
