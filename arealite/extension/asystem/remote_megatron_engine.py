@@ -243,7 +243,8 @@ class RemoteMegatronEngine(TrainEngine):
         batch_data = {}
         for attr in attrs:
             batch_data[attr] = input_[attr]
-
+        torch.set_printoptions(threshold=float('inf'))
+        print(f"[RemoteMegatronEngine] train_distributed_batch rewards: {batch_data["rewards"]}")
         # 2. input_的数据转换：prompt_mask, packed_input_ids, seqlens.packed_input_ids, rewards, task_ids, seq_no_eos_mask, packed_logprobs
         # input_ids => packed_input_ids
         # seqlens => seqlens.packed_input_ids
@@ -467,9 +468,14 @@ class RemoteMegatronEngine(TrainEngine):
                 grouped_std = group_rewards.std(dim=-1)
                 normed_rewards = (group_rewards - group_rewards.mean(-1, keepdim=True)) / (grouped_std + 1e-9)
                 reward_score_grpo[i * self.config.group_size: (i + 1) * self.config.group_size] = normed_rewards
+                print(
+                    f"group_rewards: {group_rewards}, grouped_std: {grouped_std}, "
+                    f"normed_rewards: {normed_rewards}, n_seqs: {n_seqs}, "
+                    f"group_size: {self.config.group_size}")
 
         # Compute rewards and GAEs.
         if self.config.wrap_policy.use_dense_reward:
+            print("[RemoteMegatronEngine] packed_rewards_inputs use_dense_reward")
             kl_rewards, rewards = ppo_functional.get_packed_reward_dense(
                 kl_ctl=self.kl_adapter.value,
                 clip_reward_value=self.config.wrap_policy.max_reward_clip,
@@ -495,6 +501,7 @@ class RemoteMegatronEngine(TrainEngine):
             import cloudpickle
             with open("/storage/openpsi/codes/dh183333/AReaL/packed_rewards_inputs.bin", "wb") as f:
                 cloudpickle.dump(packed_rewards_inputs, f)
+                print("[RemoteMegatronEngine] packed_rewards_inputs write success, 499line")
             kl_rewards, rewards = ppo_functional.get_packed_rewards(
                 kl_ctl=self.kl_adapter.value,
                 clip_reward_value=self.config.wrap_policy.max_reward_clip,

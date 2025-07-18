@@ -48,7 +48,7 @@ class GenerationHyperparameters:
     """Controls text generation behavior for RL training."""
 
     n_samples: int = field(
-        default=1, metadata={"help": "Number of sequences to generate per prompt."}
+        default=8, metadata={"help": "Number of sequences to generate per prompt."}
     )
     max_new_tokens: int = field(
         default=16384, metadata={"help": "Maximum number of tokens to generate."}
@@ -650,7 +650,7 @@ class RemoteMegatronEngineConfig(TrainEngineConfig):
         metadata={"help": "Name of the trial (no '-' or '/'). Required."},
     )
     group_size: int = field(
-        default=1,
+        default=8,
         metadata={"help": "Number of answers retained per prompt (best-of-n)."},
     )
     train_bs_n_seqs: int = field(
