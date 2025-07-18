@@ -321,6 +321,8 @@ class RemoteMegatronEngine(TrainEngine):
                 "micro_batch_spec": mb_spec,
             }
             data = serialize_and_compress(payload)
+            with open("/storage/openpsi/codes/dh183333/AReaL/serialized_payload.bin", "wb") as f:
+                f.write(data)
             logger.info("[RemoteMegatronEngine] send train_batch request to megatron worker....")
             response = requests.post(
                 target_url, data=data, headers=headers, timeout=7200
