@@ -232,17 +232,9 @@ def batch_function_call(payload_list, task_type, timeout):
     async def _main():
         return await batch_function_call_async(payload_list, url, timeout, concurrency=concurrency)
 
-    try:
-        loop = asyncio.get_running_loop()
-        # 如果已经在事件循环中，直接创建任务并await
-        result = loop.run_until_complete(_main())  # 这种写法在协程里也会报错
-    except RuntimeError:
-        # 没有事件循环，直接用asyncio.run
-        result = asyncio.run(_main())
-    except Exception:
-        # 如果已经在事件循环中，直接用await
-        result = asyncio.ensure_future(_main())
-        # 你可以在调用方 await 这个 future
+    loop = asyncio.get_running_loop()
+    future = asyncio.run_coroutine_threadsafe(_main(), loop)
+    result = future.result()  # 阻塞等待结果
 
     execution_time = time.time() - start_time
     logger.info(
