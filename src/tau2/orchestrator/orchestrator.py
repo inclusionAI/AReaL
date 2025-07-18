@@ -252,17 +252,16 @@ class Orchestrator:
         start = time.perf_counter()
         try:
             self.initialize()
-        except AgentError as e:
+        except AgentError:
             self.done = True
             self.termination_reason = TerminationReason.AGENT_ERROR
-            self.message = e.message
         while not self.done:
             try:
                 self.step()
-            except AgentError as e:
+            except AgentError:
                 self.done = True
                 self.termination_reason = TerminationReason.AGENT_ERROR
-                self.message = e.message
+
             if self.step_count >= self.max_steps:
                 self.done = True
                 self.termination_reason = TerminationReason.MAX_STEPS

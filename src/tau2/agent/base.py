@@ -21,6 +21,7 @@ class AgentError(Exception):
     """
     Generic exception for agent errors.
     """
+
     pass
 
 
