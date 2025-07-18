@@ -15,6 +15,7 @@ from arealite.workflow.rlvr import RLVRWorkflow
 from arealite.api.cli_args import GenerationHyperparameters
 from realhf.api.core.data_api import load_hf_tokenizer
 from arealite.api.engine_api import WeightUpdateMeta
+from arealite.extension.asystem.math_reward import reward_fn
 
 import os
 import shutil
@@ -51,7 +52,7 @@ def main_grpo():
                            data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train_32.jsonl")
     train_dataset = dataset['train']
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
-    batch_size = 8
+    batch_size = 128
     batch_data = []
     step_num = 2
     epoch_num = 1
@@ -66,12 +67,12 @@ def main_grpo():
             # Update inference engine weights
             exp_name = "ff"
             trial_name = "ff"
-            actor_cfg = WeightUpdateMeta(
-                type="disk",
-                path=f"/storage/openpsi/checkpoints/{exp_name}/{trial_name}/",
-                alloc_mode=None,
-                comm_backend=None,
-            )
+            # actor_cfg = WeightUpdateMeta(
+            #     type="disk",
+            #     path=f"/storage/openpsi/checkpoints/{exp_name}/{trial_name}/",
+            #     alloc_mode=None,
+            #     comm_backend=None,
+            # )
             rollout_cfg = WeightUpdateMeta(
                 type="disk",
                 path=f"/storage/openpsi/checkpoints/{exp_name}/{trial_name}/{step}",
@@ -93,22 +94,22 @@ def main_grpo():
             MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf"
             tokenizer = load_hf_tokenizer(MODEL_PATH)
             workflow = RLVRWorkflow(
-                reward_fn=lambda **kwargs: 1.0,
+                reward_fn=reward_fn,
                 gconfig=gconfig,
                 tokenizer=tokenizer,
             )
 
             # input_: List[Dict[str, tensor]]
             rollout_res = rollout.rollout(batch_data, workflow=workflow)
-            print(f"[Trainer] dzq_debug rollout exec success, rollout_res: {rollout_res}")
+            print(f"[Trainer] rollout exec success, rollout_res: {rollout_res}")
             rollout_res = rollout_res.to("cpu").clone()
 
-            torch.save(rollout_res, "rollout_res.pt")
+            # torch.save(rollout_res, "rollout_res.pt")
             rollout_res_dict = rollout_res.to_dict()
             for k, v in rollout_res_dict.items():
                 if isinstance(v, torch.Tensor) and v.ndim > 1 and v.shape[0] == 1:
                     rollout_res_dict[k] = v.squeeze(0)
-                    print(f"[Trainer] dzq_debug rollout squeeze: key: {k}, shape: {rollout_res_dict[k].shape}")
+                    # print(f"[Trainer] dzq_debug rollout squeeze: key: {k}, shape: {rollout_res_dict[k].shape}")
             torch.set_printoptions(threshold=float('inf'))
             print(f"[Trainer] after rollout rewards: {rollout_res_dict["rewards"]}")
             dis_batch = DistributedBatchMemory(rollout_res_dict)

@@ -269,14 +269,6 @@ class RemoteMegatronEngine(TrainEngine):
                  "packed_input_ids": train_datas["packed_input_ids"],
                  "kl_rewards": train_datas["kl_rewards"],
                  "seqlen": batch_data["seqlen"]}
-        print(f"[RemoteMegatronEngine] dzq_debug train_distributed_batch batch data, "
-              f"global_rank: {self.global_rank},"
-              f"advantages shape: {batch["advantages"].shape},"
-              f"old_logp shape: {batch["old_logp"].shape},"
-              f"ppo_loss_mask shape: {batch["ppo_loss_mask"].shape},"
-              f"packed_input_ids shape: {batch["packed_input_ids"].shape},"
-              f"kl_rewards shape: {batch["kl_rewards"].shape},"
-              f"seqlen shape: {batch["seqlen"].shape}")
         train_stats = self.train_batch(batch, loss_fn, loss_weight_fn)
         logger.info(f"[RemoteMegatronEngine] Train batch exec success, global_step: {self.global_step}.")
 
@@ -305,7 +297,6 @@ class RemoteMegatronEngine(TrainEngine):
         # 输入： advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards
         # Dict[str, tensor] to SequenceSample
         batch_size = int(input_["seqlen"].shape[0])
-        print(f"[RemoteMegatronEngine] input keys: {input_.keys()}, ids len: {input_["seqlen"].shape[0]}")
         flat_input = SequenceSample.from_default(
             ids=list(range(batch_size)),
             data={k: v for k, v in input_.items() if k != "seqlen"},
@@ -322,8 +313,6 @@ class RemoteMegatronEngine(TrainEngine):
                 "micro_batch_spec": mb_spec,
             }
             data = serialize_and_compress(payload)
-            with open("/storage/openpsi/codes/dh183333/AReaL/serialized_payload.bin", "wb") as f:
-                f.write(data)
             logger.info("[RemoteMegatronEngine] send train_batch request to megatron worker....")
             response = requests.post(
                 target_url, data=data, headers=headers, timeout=7200
@@ -389,8 +378,7 @@ class RemoteMegatronEngine(TrainEngine):
             prompt_lens.append(prompt_mask[s:e].sum())
         prompt_lens = torch.tensor(prompt_lens, device="cpu")
         reward_score = input_["rewards"].float()
-        torch.set_printoptions(threshold=float('inf'))
-        print(f"[RemoteMegatronEngine] dzq_debug process_training_data reward_score: {reward_score}")
+        logger.info(f"[RemoteMegatronEngine] process_training_data reward_score: {reward_score}")
         task_ids = input_["task_ids"]
         # task_ids = task_ids.repeat(self.config.group_size, 1).transpose(0, 1).reshape(-1)
 
@@ -468,14 +456,11 @@ class RemoteMegatronEngine(TrainEngine):
                 grouped_std = group_rewards.std(dim=-1)
                 normed_rewards = (group_rewards - group_rewards.mean(-1, keepdim=True)) / (grouped_std + 1e-9)
                 reward_score_grpo[i * self.config.group_size: (i + 1) * self.config.group_size] = normed_rewards
-                print(
-                    f"group_rewards: {group_rewards}, grouped_std: {grouped_std}, "
-                    f"normed_rewards: {normed_rewards}, n_seqs: {n_seqs}, "
-                    f"group_size: {self.config.group_size}")
+
+            logger.info(f"[RemoteMegatronEngine] process_training_data new_reward_score: {new_reward_score}")
 
         # Compute rewards and GAEs.
         if self.config.wrap_policy.use_dense_reward:
-            print("[RemoteMegatronEngine] packed_rewards_inputs use_dense_reward")
             kl_rewards, rewards = ppo_functional.get_packed_reward_dense(
                 kl_ctl=self.kl_adapter.value,
                 clip_reward_value=self.config.wrap_policy.max_reward_clip,
@@ -487,21 +472,6 @@ class RemoteMegatronEngine(TrainEngine):
                 reward_delta=self.config.wrap_policy.reward_delta,
             )
         else:
-            # 保存 get_packed_rewards 的所有输入参数
-            packed_rewards_inputs = {
-                "kl_ctl": self.kl_adapter.value,
-                "clip_reward_value": self.config.wrap_policy.max_reward_clip,
-                "log_probs": old_logp,
-                "ref_log_probs": ref_logp,
-                "reward_score": (new_reward_score),
-                "short1cu_seqlens": short1cu_seqlens,
-                "seq_no_eos_mask": seq_no_eos_mask,
-                "mask_no_eos_with_zero": self.config.wrap_policy.mask_no_eos_with_zero,
-            }
-            import cloudpickle
-            with open("/storage/openpsi/codes/dh183333/AReaL/packed_rewards_inputs.bin", "wb") as f:
-                cloudpickle.dump(packed_rewards_inputs, f)
-                print("[RemoteMegatronEngine] packed_rewards_inputs write success, 499line")
             kl_rewards, rewards = ppo_functional.get_packed_rewards(
                 kl_ctl=self.kl_adapter.value,
                 clip_reward_value=self.config.wrap_policy.max_reward_clip,
@@ -512,23 +482,7 @@ class RemoteMegatronEngine(TrainEngine):
                 seq_no_eos_mask=seq_no_eos_mask,
                 mask_no_eos_with_zero=self.config.wrap_policy.mask_no_eos_with_zero,
             )
-        # 保存 get_packed_advantages_and_returns 的所有输入参数
-        packed_adv_inputs = {
-            "gamma": self.config.wrap_policy.discount,
-            "lam": self.config.wrap_policy.gae_lambda,
-            "values": (
-                denormalized_values
-                if not self.config.wrap_policy.disable_value
-                else denormalized_values.new_zeros(denormalized_values.shape)
-            ),
-            "denormalized_values": denormalized_values,
-            "rewards": rewards,
-            "short1cu_seqlens": short1cu_seqlens,
-            "seq_no_eos_mask": seq_no_eos_mask,
-        }
-        import cloudpickle
-        with open("/storage/openpsi/codes/dh183333/AReaL/packed_adv_inputs.bin", "wb") as f:
-            cloudpickle.dump(packed_adv_inputs, f)
+
         advantages, returns = ppo_functional.get_packed_advantages_and_returns(
             gamma=self.config.wrap_policy.discount,
             lam=self.config.wrap_policy.gae_lambda,

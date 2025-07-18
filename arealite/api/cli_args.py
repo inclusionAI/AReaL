@@ -293,7 +293,7 @@ class InferenceEngineConfig:
         },
     )
     queue_size: None | int = field(
-        default=None,
+        default=128,
         metadata={"help": "Input/Output queue size for async rollout."},
     )
     consumer_batch_size: int = field(

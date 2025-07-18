@@ -9,6 +9,7 @@ from arealite.api.cli_args import GenerationHyperparameters
 from arealite.api.io_struct import LLMRequest
 from arealite.api.workflow_api import RolloutWorkflow
 from arealite.utils.padding import concat_padded_tensors
+from realhf.api.core.data_api import RL_TASKS
 
 
 class RLVRWorkflow(RolloutWorkflow):
@@ -60,7 +61,7 @@ class RLVRWorkflow(RolloutWorkflow):
                 completion_ids=resp.output_tokens,
                 **data,
             )
-            reward = 1
+
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
