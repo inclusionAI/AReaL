@@ -337,6 +337,8 @@ class Orchestrator:
             tool_msgs = []
             for tool_call in self.message.tool_calls:
                 tool_msg = self.environment.get_response(tool_call)
+                if tool_msg.error:
+                    self.num_errors += 1
                 tool_msgs.append(tool_msg)
             assert len(self.message.tool_calls) == len(tool_msgs), (
                 "Number of tool calls and tool messages should be the same"
