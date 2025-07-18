@@ -8,7 +8,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
-from sglang.srt.utils import init_custom_process_group
 from tensordict import TensorDict
 from torch.distributed._tensor import DTensor
 from torch.distributed.checkpoint.state_dict import (
@@ -27,6 +26,7 @@ from transformers import (
 from arealite.api.cli_args import TrainEngineConfig
 from arealite.api.engine_api import FinetuneSpec, SaveLoadMeta, WeightUpdateMeta
 from arealite.engine.base_hf_engine import BaseHFEngine
+from arealite.utils.distributed import init_custom_process_group
 from arealite.utils.fsdp import (
     CPUOffloadPolicy,
     MixedPrecisionPolicy,
@@ -149,11 +149,9 @@ class FSDPEngine(BaseHFEngine):
         if meta.type == "nccl":
             if not self.weight_update_group_initialized:
                 self._init_distributed_weight_update(meta)
-            print(
-                "Initialized distributed weight update group in training engine",
-                flush=True,
-            )
             self._update_weights_from_distributed()
+            dist.barrier()
+            torch.cuda.synchronize()
         elif meta.type == "disk":
             self._save_model_to_hf(meta.path, self.tokenizer)
             # dist.barrier() are called when _save_model_to_hf finished
@@ -170,12 +168,10 @@ class FSDPEngine(BaseHFEngine):
             raise ValueError(f"Unknown weight update type {meta.type}")
 
     def _init_distributed_weight_update(self, meta: WeightUpdateMeta):
+        # NOTE: required by SGLang
+        os.environ["NCCL_CUMEM_ENABLE"] = "0"
+        os.environ["NCCL_NVLS_ENABLE"] = "0"
         if dist.get_rank() == 0:
-            os.environ["NCCL_CUMEM_ENABLE"] = "0"
-            print(
-                f"[FSDP Engine]World size: {meta.world_size}, Master address: {meta.master_address}, Master port: {meta.master_port}",
-                flush=True,
-            )
             self.weight_update_group = init_custom_process_group(
                 backend="nccl",
                 world_size=meta.world_size,
@@ -183,9 +179,9 @@ class FSDPEngine(BaseHFEngine):
                 rank=0,
                 group_name=meta.group_name,
             )
-            # TODO, shoun't use zero
-            dist.barrier(group=self.weight_update_group, device_ids=[0])
-            self.weight_update_group_initialized = True
+            # NOTE: synchronizing with sglang's barrier
+            dist.barrier(group=self.weight_update_group, device_ids=[self.device.index])
+        self.weight_update_group_initialized = True
 
     def _update_weights_from_distributed(self):
         """Broadcast parameters from rank 0 (FSDP2 compatible)."""
@@ -200,24 +196,16 @@ class FSDPEngine(BaseHFEngine):
                 del tensor  # optional, for memory hygiene
             torch.cuda.empty_cache()
 
-            dist.barrier(group=self.weight_update_group, device_ids=[self.device.index])
-
     def get_param_meta_for_distributed_update(self) -> Dict[str, Tuple[int]]:
         """Return a dict mapping param name to its shape (expanded if DTensor)."""
         param_shapes = {}
-
         for name, param in self.model.named_parameters():
-            try:
-                if isinstance(param.data, DTensor):
-                    tensor = param.data.full_tensor()
-                else:
-                    tensor = param.data
-
-                param_shapes[name] = tuple(tensor.shape)
-                del tensor  # free memory if full_tensor was created
-            except Exception as e:
-                logger.warning(f"Failed to get shape for param {name}: {e}")
-
+            if isinstance(param.data, DTensor):
+                tensor = param.data.full_tensor()
+            else:
+                tensor = param.data
+            param_shapes[name] = tuple(tensor.shape)
+            del tensor  # free memory if full_tensor was created
         return param_shapes
 
     def train_batch(

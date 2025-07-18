@@ -17,6 +17,7 @@ from arealite.api.cli_args import (
 from arealite.api.io_struct import FinetuneSpec, WeightUpdateMeta
 from arealite.engine.fsdp_engine import FSDPEngine
 from arealite.engine.sglang_remote import RemoteSGLangEngine
+from arealite.utils.network import find_free_ports
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import network
 
@@ -27,7 +28,7 @@ if not os.path.exists(MODEL_PATH):
     MODEL_PATH = "Qwen/Qwen2-0.5B"
 PORT = 13998
 DIST_PORT = 15998
-GROUP_NAME = "test_nccl_group21"
+GROUP_NAME = "test_nccl_group"
 MASTER_PORT = DIST_PORT + 1
 HOST = network.gethostip()
 RUN_SERVER_TIMEOUT = 180
@@ -51,6 +52,7 @@ def sglang_server_nccl():
             mem_fraction_static=0.2,
             model_path=MODEL_PATH,
             skip_tokenizer_init=False,
+            log_level="info",
         ),
         tp_size=1,
         base_gpu_id=1,
@@ -105,6 +107,7 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     config = InferenceEngineConfig(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
     config.server_addrs = [f"{HOST}:{PORT}"]
     remote_engine = RemoteSGLangEngine(config)
+    remote_engine.initialize(None, None)
 
     # 构造WeightUpdateMeta（type=nccl）
     param_meta = engine.get_param_meta_for_distributed_update()
@@ -115,16 +118,15 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
         comm_backend="nccl",
         model_version=123,
         tp_size=1,
-        master_address=HOST,
-        master_port=MASTER_PORT,
+        master_address="localhost",
+        master_port=find_free_ports(1)[0],
         world_size=2,
-        group_name="test_nccl_group12",
+        group_name=GROUP_NAME,
         parameter_names=list(param_meta.keys()),
         state_dict_key_to_shape=param_meta,
     )
-    # 本地engine广播参数
-    remote_engine.initialize(None, None)
 
+    # 本地engine广播参数
     future = remote_engine.update_weights(meta)
     print("got future", flush=True)
     engine.upload_weights(meta)
@@ -135,3 +137,4 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     # 检查远端参数版本
     assert remote_engine.get_version() == 123
     remote_engine.destroy()
+    engine.destroy()
