@@ -425,7 +425,6 @@ class RemoteSGLangEngine(InferenceEngine):
             timeout=self.config.request_timeout,
         )
 
-
         res = await response.json()
         assert res["success"]
         if "num_paused_requests" in res:

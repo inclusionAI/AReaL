@@ -47,9 +47,10 @@ def sglang_server_nccl():
 
     seeding.set_random_seed(1, EXPR_NAME)
     cmd = SGLangConfig.build_cmd(
-        sglang_config=SGLangConfig(mem_fraction_static=0.2,
-                                   model_path=MODEL_PATH,
-                                    skip_tokenizer_init=False,
+        sglang_config=SGLangConfig(
+            mem_fraction_static=0.2,
+            model_path=MODEL_PATH,
+            skip_tokenizer_init=False,
         ),
         tp_size=1,
         base_gpu_id=1,
