@@ -41,12 +41,12 @@ class JobException(Exception):
 class JobInfo:
     name: str
     state: JobState
-    host: str = (
+    host: Optional[str] = (
         None  # The host on which the job is/was running. None if the job had not run.
     )
-    submit_time: str = None
-    start_time: str = None
-    slurm_id: str = None  # Slurm only. The Slurm id of the job.
+    submit_time: Optional[str] = None
+    start_time: Optional[str] = None
+    slurm_id: Optional[int] = None  # Slurm only. The Slurm id of the job.
 
 
 class SchedulerClient:
