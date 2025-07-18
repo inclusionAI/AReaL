@@ -8,7 +8,7 @@ from transformers import PreTrainedTokenizerFast
 from arealite.api.cli_args import GenerationHyperparameters
 from arealite.api.io_struct import LLMRequest
 from arealite.api.workflow_api import RolloutWorkflow
-from arealite.utils.padding import concat_padded_tensors
+from arealite.utils.data import concat_padded_tensors
 
 
 class RLVRWorkflow(RolloutWorkflow):
@@ -62,7 +62,7 @@ class RLVRWorkflow(RolloutWorkflow):
                 versions=torch.tensor(versions).unsqueeze(0),
                 attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
                 # reward
-                rewards=torch.tensor([reward]),
+                rewards=torch.tensor([float(reward)]),
             )
             results.append(TensorDict(res, batch_size=[1]))
 

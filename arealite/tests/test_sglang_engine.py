@@ -5,6 +5,7 @@ import time
 import uuid
 
 import pytest
+import requests
 import torch
 from tensordict import TensorDict
 
@@ -24,6 +25,19 @@ if not os.path.exists(MODEL_PATH):
     MODEL_PATH = "Qwen/Qwen2-0.5B"
 PORT, DIST_PORT = network.find_free_ports(2)
 HOST = network.gethostip()
+# set a large timeout since we may need to download the model from hub
+RUN_SERVER_TIMEOUT = 180
+
+
+def check_server_health(base_url):
+    try:
+        response = requests.get(
+            f"{base_url}/metrics",
+            timeout=30,
+        )
+        return response.status_code == 200
+    except requests.exceptions.RequestException as e:
+        return False
 
 
 @pytest.fixture(scope="module")
@@ -51,6 +65,14 @@ def sglang_server():
         stdout=sys.stdout,
         stderr=sys.stdout,
     )
+    base_url = f"http://{HOST}:{PORT}"
+    tik = time.time()
+    while time.time() - tik < RUN_SERVER_TIMEOUT:
+        if check_server_health(base_url):
+            break
+        time.sleep(1)
+    if time.time() - tik > RUN_SERVER_TIMEOUT:
+        raise RuntimeError("server launch failed")
     yield
     process.terminate()
 

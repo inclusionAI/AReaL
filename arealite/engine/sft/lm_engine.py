@@ -1,5 +1,3 @@
-from typing import Dict
-
 import torch
 import torch.utils.data
 from tensordict import TensorDict
@@ -55,9 +53,7 @@ class VL_FSDPLMEngine(VL_FSDPEngine):
     def evaluate_lm(self, data: TensorDict):
         return self.lm_engine.evaluate_lm(data)
 
-def compute_packed_sft_loss(
-    logits: torch.Tensor, input_: Dict[str, torch.Tensor]
-) -> torch.Tensor:
+def compute_packed_sft_loss(logits: torch.Tensor, input_: TensorDict) -> torch.Tensor:
     packed_input_ids: torch.Tensor = input_["input_ids"]
     cu_seqlens: torch.Tensor = input_["cu_seqlens"]
     loss_mask = input_["loss_mask"].bool()

@@ -25,10 +25,10 @@ class Scheduling:
     cpu: int
     gpu: int
     mem: int
-    nodelist: str = None
-    exclude: str = None
-    partition: str = None
-    container_image: str = None
+    nodelist: Optional[str] = None
+    exclude: Optional[str] = None
+    partition: Optional[str] = None
+    container_image: Optional[str] = None
     env_vars: Dict[str, str] = field(default_factory=dict)
     # time utils from "https://slurm.schedmd.com/sbatch.html"
     time_limit: Optional[str] = None  # see  "--time" option for format
@@ -105,7 +105,7 @@ class TrainEngine(abc.ABC):
     def forward(
         self,
         input_: TensorDict,
-        output_seqlens: List[List[int]] | None = None,
+        output_seqlens: List[int] | None = None,
         post_hook: Callable[[torch.Tensor, TensorDict], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:

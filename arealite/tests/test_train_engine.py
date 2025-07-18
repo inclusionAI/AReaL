@@ -1,7 +1,7 @@
 # Copyright 2025 Ant Group Inc.
 # Licensed under the Apache License, Version 2.0
 
-"""Test script for HF Engine implementation."""
+"""Test script for Engine implementation."""
 
 import os
 from typing import Dict
@@ -13,7 +13,6 @@ from transformers import AutoTokenizer
 
 from arealite.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
 from arealite.api.io_struct import FinetuneSpec, SaveLoadMeta
-from arealite.engine.fsdp_engine import FSDPEngine
 
 VOCAB_SIZE = 100
 MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
@@ -52,29 +51,43 @@ def mock_input(
     )
 
 
+def get_engine(engine_type: str, model_path: str):
+    from arealite.engine.autotp_engine import DeepSpeedAutoTPEngine
+    from arealite.engine.fsdp_engine import FSDPEngine
+
+    engine_cls = {"auto_tp": DeepSpeedAutoTPEngine, "fsdp": FSDPEngine}[engine_type]
+
+    engine_config = TrainEngineConfig(
+        experiment_name=f"test-{engine_type}-engine",
+        trial_name="test0",
+        path=model_path,
+        optimizer=OptimizerConfig(),
+    )
+    engine = engine_cls(engine_config)
+    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
+    engine.initialize(None, ft_spec)
+    return engine
+
+
 def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
     """Mock loss function for testing."""
     return torch.mean(logits)
 
 
-@pytest.fixture(scope="module")
-def engine():
-    os.environ["WORLD_SIZE"] = "1"
-    os.environ["RANK"] = "0"
-    os.environ["LOCAL_RANK"] = "0"
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "7777"
-
-    engine_config = TrainEngineConfig(
-        experiment_name="test-fsdp-engine",
-        trial_name="test0",
-        path=MODEL_PATH,
-        optimizer=OptimizerConfig(),
+@pytest.fixture(scope="module", params=["fsdp", "auto_tp"])
+def engine(request):
+    os.environ.update(
+        {
+            "WORLD_SIZE": "1",
+            "RANK": "0",
+            "LOCAL_RANK": "0",
+            "MASTER_ADDR": "localhost",
+            "MASTER_PORT": "7777",
+        }
     )
-    engine = FSDPEngine(engine_config)
-    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
-    engine.initialize(None, ft_spec)
-    print("✓ Engine created successfully")
+
+    engine = get_engine(request.param, MODEL_PATH)
+    print(f"✓ {request.param.upper()} Engine created successfully")
     yield engine
 
 
@@ -122,6 +135,12 @@ def test_train_batch(engine, mock_input):
 
 @torch.no_grad()
 def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
+    from arealite.engine.autotp_engine import DeepSpeedAutoTPEngine
+
+    if isinstance(engine, DeepSpeedAutoTPEngine):
+        print("AutoTP engine does not support HF save/load for now.")
+        return
+
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
     path = tmp_path_factory.mktemp("hf_engine_test")
     save_load_meta = SaveLoadMeta(

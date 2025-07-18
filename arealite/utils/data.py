@@ -99,9 +99,7 @@ def unpad_input(
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
     max_seqlen_in_batch = seqlens_in_batch.max().item()
-    cu_seqlens = F.pad(
-        torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.torch.int32), (1, 0)
-    )
+    cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
     return (
         rearrange(hidden_states, "b s ... -> (b s) ...")[indices],
         indices,
@@ -123,16 +121,12 @@ def concat_padded_tensors(
     if not tensor_dicts:
         return TensorDict()
 
-    # Find max sequence length across all dictionaries
-    lens = []
-    for tensor_dict in tensor_dicts:
-        for key, tensor in tensor_dict.items():
-            if key != "attention_mask" and len(tensor.shape) == 2:
-                lens.append(tensor.shape[1])
-                break
-    max_length = max(lens)
-    attn_mask = torch.arange(max_length).unsqueeze(0) < torch.tensor(lens).unsqueeze(1)
+    batch_sizes = [tuple(d.batch_size) for d in tensor_dicts]
+    new_batch_size = [sum(x[0] for x in batch_sizes), *batch_sizes[0][1:]]
 
+    # Find max sequence length across all dictionaries
+    assert all("attention_mask" in td for td in tensor_dicts)
+    max_length = max([x["attention_mask"].shape[1] for x in tensor_dicts])
     result = {}
     # Process each key
     for key in tensor_dicts[0].keys():
@@ -161,9 +155,7 @@ def concat_padded_tensors(
             tensors_to_concat.append(tensor)
 
         result[key] = torch.cat(tensors_to_concat, dim=0)
-    if "attention_mask" not in result:
-        result["attention_mask"] = attn_mask
-    return TensorDict(result, batch_size=[len(lens)])
+    return TensorDict(result, batch_size=new_batch_size)
 
 
 def to_device(data: Dict[str, torch.Tensor | Any], device) -> Dict[str, torch.Tensor]:
@@ -238,7 +230,7 @@ def pack_tensor_dict(data: TensorDict):
     cu_seqlens = torch.cumsum(lens, dim=0)
     cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
 
-    total_length = cu_seqlens[-1].item()
+    total_length = int(cu_seqlens[-1].item())
     # Pack tensors
     packed_data = {}
     for key, value in data.items():
@@ -253,7 +245,7 @@ def pack_tensor_dict(data: TensorDict):
             and value.shape[1] == seq_len
         ):
             packed_tensor = torch.empty(
-                total_length, *value.shape[2:], dtype=value.dtype, device=value.device
+                (total_length, *value.shape[2:]), dtype=value.dtype, device=value.device
             )
             # Fill the packed tensor with values from the original tensor
             for i in range(bs):
@@ -392,7 +384,7 @@ def split_padded_tensor_dict_into_mb_list(
         mbs=results,
         mb_spec=mb_spec,
         forward_indices=forward_indices,
-        backward_indices=backward_indices,
+        backward_indices=backward_indices.tolist(),
         group_lens=group_lens,
     )
 

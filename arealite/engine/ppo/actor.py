@@ -114,7 +114,9 @@ class PPOActor:
             values = torch.zeros_like(rewards)
         else:
             values = data["values"]
-        advantages_reversed = []
+        advantages_reversed = [
+            torch.zeros(bs, dtype=torch.float32, device=values.device)
+        ]
         lastgaelam = 0
         for t in reversed(range(max_seqlen - 1)):
             nextvalues = values[:, t + 1]
@@ -123,9 +125,6 @@ class PPOActor:
             delta = rewards[:, t] + self.discount * nextvalues - values[:, t]
             lastgaelam = delta + self.discount * self.gae_lambda * lastgaelam
             advantages_reversed.append(lastgaelam)
-        advantages_reversed.append(
-            torch.zeros(bs, dtype=torch.float32, device=values.device)
-        )
         advantages = torch.stack(advantages_reversed[::-1], dim=1)
 
         # Optionally perform advantage normalization.

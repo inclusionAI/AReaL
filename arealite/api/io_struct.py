@@ -171,7 +171,7 @@ class AllocationType(enum.Enum):
 @dataclass
 class AllocationMode:
     type_: AllocationType
-    parallel_strat: None | Dict[str, Dict[str, int]]
+    parallel_strat: Dict[str, Dict[str, int]]
 
     @property
     def gen_tp_size(self) -> int:
@@ -215,7 +215,7 @@ class AllocationMode:
         raise NotImplementedError(f"Failed to parse allocation: {allocation_mode}")
 
     @staticmethod
-    def extract_3d_alloc(allocation_mode: str) -> Dict | None:
+    def extract_parallelism_strategy(allocation_mode: str) -> Dict:
         for x, y, z in itertools.permutations(["d", "t", "p"]):
             pattern = rf"{x}(\d+){y}(\d+){z}(\d+)"
             m = re.match(pattern, allocation_mode)
@@ -230,29 +230,28 @@ class AllocationMode:
                     z: c,
                 }
             }
+        raise ValueError(
+            f"Unknown how to resolve parallelism strategy: {allocation_mode}"
+        )
 
     @staticmethod
-    def extract_decoupled_alloc(allocation_mode: str) -> Dict | None:
+    def extract_decoupled_alloc(allocation_mode: str) -> Dict:
         pattern = re.compile(
             r"(?:(?:vllm|sglang)\.(.+?)\+(.+))|(?:(.+?)\+(?:vllm|sglang)\.(.+))"
         )
         m = pattern.match(allocation_mode)
         if not m:
-            return
+            raise ValueError(
+                f"Unknown how to resolve decoupled allocation: {allocation_mode}"
+            )
         if m.group(1):
             gen_alloc = m.group(1)
             other_alloc = m.group(2)
         else:
             gen_alloc = m.group(4)
             other_alloc = m.group(3)
-        gen_alloc = AllocationMode.extract_3d_alloc(gen_alloc)
-        if not gen_alloc:
-            return
-        other_alloc = AllocationMode.extract_3d_alloc(
-            other_alloc
-        ) or AllocationMode.extract_key_value_alloc(other_alloc)
-        if not other_alloc:
-            return
+        gen_alloc = AllocationMode.extract_parallelism_strategy(gen_alloc)
+        other_alloc = AllocationMode.extract_parallelism_strategy(other_alloc)
         other_alloc.update({"gen": gen_alloc["*"]})
         return other_alloc
 
@@ -274,6 +273,7 @@ class SaveLoadMeta:
     tokenizer: PreTrainedTokenizerFast | None
     processor: AutoProcessor | None
     base_model_path: str | None
+    naive_distributed: bool = False
 
 
 @dataclass

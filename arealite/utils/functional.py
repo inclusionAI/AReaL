@@ -121,19 +121,24 @@ def masked_normalization(
 
 def ppo_actor_loss_fn(
     logprobs: torch.Tensor,
+    proximal_logprobs: torch.Tensor,
     old_logprobs: torch.Tensor,
     advantages: torch.Tensor,
     eps_clip: float,
     loss_mask: torch.Tensor,
     c_clip: Optional[float] = None,
-    proximal_logprobs: Optional[torch.Tensor] = None,
     behav_imp_weight_cap: Optional[float] = None,
 ) -> Tuple[torch.Tensor, Dict]:
-    denorm_logprobs = (
-        proximal_logprobs if proximal_logprobs is not None else old_logprobs
-    )
+    """
+    When decoupled loss is disabled:
+    1. if recompute logp, both old_logprobs and proximal_logprobs are recomputed logp;
+    2. if no recomputation, both old_logp and proximal_logprobs are produced by the inference backend.
+
+    When decoupled loss is enabled, proximal_logprobs is the recomputed logp,
+    old_logprobs is produced by the inference engine.
+    """
     loss_mask_count = loss_mask.count_nonzero() or 1
-    ratio = torch.where(loss_mask, torch.exp(logprobs - denorm_logprobs), 0)
+    ratio = torch.where(loss_mask, torch.exp(logprobs - proximal_logprobs), 0)
     clipped_ratio = torch.clamp(ratio, 1.0 - eps_clip, 1.0 + eps_clip)
     pg_loss1 = -advantages * ratio
     pg_loss2 = -advantages * clipped_ratio
@@ -146,17 +151,16 @@ def ppo_actor_loss_fn(
         pg_loss = torch.min(pg_loss, pg_loss3)
     else:
         dual_clip_mask = torch.zeros_like(clip_mask)
-    if proximal_logprobs is not None:
-        behav_kl = proximal_logprobs - old_logprobs
-        behav_imp_weight = behav_kl.exp()
-        behav_mask = (
-            (behav_imp_weight <= behav_imp_weight_cap).logical_and(loss_mask)
-            if behav_imp_weight_cap is not None
-            else loss_mask
-        )
-        behav_kl = torch.where(behav_mask, behav_kl, 0.0)
-        behav_imp_weight = torch.where(behav_mask, behav_imp_weight, 0.0)
-        pg_loss = pg_loss * behav_imp_weight
+    behav_kl = proximal_logprobs - old_logprobs
+    behav_imp_weight = behav_kl.exp()
+    behav_mask = (
+        (behav_imp_weight <= behav_imp_weight_cap).logical_and(loss_mask)
+        if behav_imp_weight_cap is not None
+        else loss_mask
+    )
+    behav_kl = torch.where(behav_mask, behav_kl, 0.0)
+    behav_imp_weight = torch.where(behav_mask, behav_imp_weight, 0.0)
+    pg_loss = pg_loss * behav_imp_weight
     logging_loss = pg_loss.detach()
     pg_loss = torch.where(loss_mask, pg_loss, 0).sum() / loss_mask_count
     clip_mask.logical_and_(loss_mask)
@@ -164,7 +168,7 @@ def ppo_actor_loss_fn(
     stat = dict(
         loss=logging_loss,
         importance_weight=ratio.detach(),
-        approx_kl=(logprobs - denorm_logprobs).detach(),
+        approx_kl=(logprobs - proximal_logprobs).detach(),
         clip_mask=clip_mask,
         dual_clip_mask=dual_clip_mask,
     )
