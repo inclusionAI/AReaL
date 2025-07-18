@@ -156,11 +156,7 @@ def main_grpo():
 
         with stats_tracker.record_timing("rollout"):
             if config.async_training:
-                batch = rollout.prepare_batch(
-                    data_generator,
-                    train_dataloader,
-                    workflow=workflow,
-                )
+                batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
             else:
                 try:
                     data = next(data_generator)
@@ -173,9 +169,8 @@ def main_grpo():
         # Create barrier to synchronize all rollout processes.
         dist.barrier()
         torch.cuda.synchronize()
-        
-        if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
 
+        if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
                 logp = actor.compute_logp(batch)
                 batch["prox_logp"] = logp
@@ -215,8 +210,9 @@ def main_grpo():
             actor.upload_weights(meta)
             if dist.get_rank() == 0:
                 future.result()
-            rollout.set_version(global_step + 1)
             dist.barrier()
+            torch.cuda.synchronize()
+            rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step)

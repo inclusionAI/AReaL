@@ -131,6 +131,7 @@ def concat_padded_tensors(
     # Process each key
     for key in tensor_dicts[0].keys():
         tensors_to_concat = []
+
         for tensor_dict in tensor_dicts:
             tensor = tensor_dict[key]
             # Skip 1D tensors like rewards
@@ -138,6 +139,9 @@ def concat_padded_tensors(
                 tensors_to_concat.append(tensor)
                 continue
             current_length = tensor.shape[1]
+            if key == "pixel_values" or key== "image_grid_thw":
+                tensors_to_concat.append(tensor)
+                continue
             if current_length < max_length:
                 # Pad tensor to max_length
                 pad_width = max_length - current_length
@@ -146,6 +150,7 @@ def concat_padded_tensors(
                     padding = torch.zeros(
                         (tensor.shape[0], pad_width), dtype=tensor.dtype
                     )
+               
                 else:
                     # Pad feature tensors with pad_value
                     padding = torch.full(
@@ -302,7 +307,6 @@ def split_padded_tensor_dict_into_mb_list(
     Returns:
         MicroBatchList: A structure containing the split micro-batches and metadata.
     """
-    breakpoint()
     assert (
         "attention_mask" in data
     ), "Input data must be padded and contain 'attention_mask' key."

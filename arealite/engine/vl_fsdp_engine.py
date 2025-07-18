@@ -33,6 +33,7 @@ from arealite.utils.data import (
     unpack_sequence,
     unsqueeze_mb_list,
 )
+from arealite.utils.model import disable_dropout_in_model
 from arealite.utils.fsdp import (
     CPUOffloadPolicy,
     MixedPrecisionPolicy,
@@ -59,15 +60,11 @@ class VL_FSDPEngine(FSDPEngine):
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
         # Initialize distributed enviroments and load model.
         assert addr is None, "FSDPEngine does not support remote initialization."
-
         assert pkg_version.is_version_greater_or_equal(
             "torch", "2.4.0"
         ), f"arealite only supports FSDP2, which requires torch>=2.4.0"
 
-        """Initialize distributed communication and model."""
-        if not dist.is_initialized():
-            # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
-            dist.init_process_group(backend="nccl")
+        self.create_process_group()
 
         # TODO: Handle the condition when LOCAL_RANK is not set in launcher
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
@@ -75,6 +72,7 @@ class VL_FSDPEngine(FSDPEngine):
 
         dtype = torch.bfloat16 
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(self.config.path)
+        tik = time.perf_counter()
         with torch.device("cuda"):
             # initialize scratch model from config
             model = AutoModelForImageTextToText.from_pretrained(
@@ -83,10 +81,19 @@ class VL_FSDPEngine(FSDPEngine):
                 torch_dtype=dtype,
                 attn_implementation=self.config.attn_impl,
             )
+            if self.config.disable_dropout:
+                disable_dropout_in_model(model)
+        if self.config.gradient_checkpointing:
+            model.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False}
+            )
+        logger.info(f"Model creation and loading time: {time.perf_counter() - tik}")
+        self.model = model
 
+        # Wrap with FSDP2
         # Simple auto wrap policy
         self.mixed_precision_policy = MixedPrecisionPolicy(
-            param_dtype=torch.bfloat16,
+            param_dtype=getattr(torch, self.config.dtype),
             reduce_dtype=torch.float32,
             cast_forward_inputs=True,
         )
@@ -95,64 +102,17 @@ class VL_FSDPEngine(FSDPEngine):
         self.cpu_offload = (
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
-
         fsdp_kwargs = {
             "mesh": self.device_mesh,
             "mp_policy": self.mixed_precision_policy,
             "offload_policy": self.cpu_offload,
             "reshard_after_forward": True,
         }
+        tik = time.perf_counter()
+        apply_fsdp2(self.model, fsdp_kwargs, self.config.fsdp.wrap_policy)
+        logger.info(f"Applying FSDP2 time: {time.perf_counter() - tik}")
 
-        # Wrap with FSDP2
-        apply_fsdp2(model, fsdp_kwargs, self.config.fsdp.wrap_policy)
-        self.model = model
-        
-        # Set up optimizer
-        if self.optimizer_config is not None:
-            assert (
-                self.optimizer_config.type == "adam"
-            ), "Only AdamW optimizer is supported in this engine."
-            lr = self.optimizer_config.lr
-            weight_decay = self.optimizer_config.weight_decay
-            beta1 = self.optimizer_config.beta1
-            beta2 = self.optimizer_config.beta2
-            eps = self.optimizer_config.eps
-
-            self.optimizer = torch.optim.AdamW(
-                self.model.parameters(),
-                lr=lr,
-                weight_decay=weight_decay,
-                betas=(beta1, beta2),
-                eps=eps,
-            )
-            total_train_steps = ft_spec.total_train_steps
-            num_warmup_steps = int(
-                self.optimizer_config.warmup_steps_proportion * total_train_steps
-            )
-
-            if self.optimizer_config.lr_scheduler_type == "cosine":
-                self.lr_scheduler = get_cosine_schedule_with_warmup(
-                    self.optimizer,
-                    num_warmup_steps,
-                    total_train_steps,
-                    min_lr_ratio=self.optimizer_config.min_lr_ratio,
-                )
-            elif self.optimizer_config.lr_scheduler_type == "linear":
-                self.lr_scheduler = get_linear_schedule_with_warmup(
-                    self.optimizer,
-                    num_warmup_steps,
-                    total_train_steps,
-                )
-            elif self.optimizer_config.lr_scheduler_type == "constant":
-                self.lr_scheduler = get_constant_schedule_with_warmup(
-                    self.optimizer,
-                    num_warmup_steps,
-                )
-            else:
-                raise ValueError(
-                    f"Unknown lr scheduler type {self.optimizer_config.lr_scheduler_type}"
-                )
-
+        self.create_optimizer(ft_spec)
         self.initialized = True
     
     def save(self, meta: SaveLoadMeta):
