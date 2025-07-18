@@ -1,4 +1,6 @@
-# AReaL v0.3
+<h1 align="center">
+<em>AReaL</em> v0.3: SOTA Coding Models with 2.77x Faster Asynchronous RL Training
+</h1>
 
 ## Introduction
 
