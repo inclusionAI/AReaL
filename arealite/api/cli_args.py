@@ -51,7 +51,7 @@ class GenerationHyperparameters:
         default=8, metadata={"help": "Number of sequences to generate per prompt."}
     )
     max_new_tokens: int = field(
-        default=16384, metadata={"help": "Maximum number of tokens to generate."}
+        default=512, metadata={"help": "Maximum number of tokens to generate."}
     )
     min_new_tokens: int = field(
         default=0, metadata={"help": "Minimum number of tokens to generate."}
@@ -293,7 +293,7 @@ class InferenceEngineConfig:
         },
     )
     queue_size: None | int = field(
-        default=128,
+        default=2048,
         metadata={"help": "Input/Output queue size for async rollout."},
     )
     consumer_batch_size: int = field(
