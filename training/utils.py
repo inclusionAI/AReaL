@@ -175,9 +175,10 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
         for k in all_available_resources
         if re.match(r"node:(\b(?:\d{1,3}\.){3}\d{1,3}\b)", k)
     ]
-    n_gpus_per_node = int(all_available_resources["GPU"] // len(all_available_nodes))
+    n_nodes = len(all_available_nodes)
+    n_gpus_per_node = int(all_available_resources["GPU"] // n_nodes)
     assert (
-        all_available_resources["GPU"] % len(all_available_nodes) == 0
+        all_available_resources["GPU"] % n_nodes == 0
     ), "AReaL assumes all nodes has the same number of GPUs."
 
     for worker_type in WORKER_TYPES:
@@ -201,8 +202,8 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
             )
 
         workers = []
-        if sch.scheduling.gpu > 0:
-            # For GPU workers, schedule them in granularity of nodes.
+        if sch.scheduling.gpu > 0 and n_nodes > 1:
+            # When # nodes > 1, for GPU workers, schedule them in granularity of nodes.
             assert (
                 n_gpus_per_node % sch.scheduling.gpu == 0
             ), f"Each node should be allocated with identical numbers of {worker_type}."
@@ -256,8 +257,10 @@ def _run_experiment(exp_cfg, expr_name, trial_name):
                     )
                     workers.append(worker)
         else:
-            # For CPU workers, schedule them with SPREAD strategy
-            # to save as much resource as poosible on nodes for GPU workers.
+            # Schedule them with SPREAD strategy when
+            # 1. CPU workers when n_nodes > 1,
+            # to save as much resource as possible on nodes for GPU workers.
+            # 2. all workers when n_nodes = 1
             for _idx in range(sch.count):
                 worker = RayWorker.options(
                     name=f"{worker_type}/{_idx}",
