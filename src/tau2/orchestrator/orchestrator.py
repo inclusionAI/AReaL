@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from loguru import logger
 
-from tau2.agent.base import BaseAgent, is_valid_agent_history_message
+from tau2.agent.base import AgentError, BaseAgent, is_valid_agent_history_message
 from tau2.agent.llm_agent import LLMSoloAgent
 from tau2.data_model.message import (
     AssistantMessage,
@@ -252,7 +252,12 @@ class Orchestrator:
         start = time.perf_counter()
         self.initialize()
         while not self.done:
-            self.step()
+            try:
+                self.step()
+            except AgentError as e:
+                self.done = True
+                self.termination_reason = TerminationReason.AGENT_ERROR
+                self.message = e.message
             if self.step_count >= self.max_steps:
                 self.done = True
                 self.termination_reason = TerminationReason.MAX_STEPS

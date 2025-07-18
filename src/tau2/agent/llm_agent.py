@@ -5,6 +5,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from tau2.agent.base import (
+    AgentError,
     LocalAgent,
     ValidAgentInputMessage,
     is_valid_agent_history_message,
@@ -461,7 +462,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
             **self.llm_args,
         )
         if not assistant_message.is_tool_call():
-            raise ValueError("LLMSoloAgent only supports tool calls.")
+            raise AgentError("User is not available!")
         message = self._check_if_stop_toolcall(assistant_message)
         state.messages.append(assistant_message)
         return assistant_message, state

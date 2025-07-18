@@ -30,6 +30,7 @@ def evaluate_simulation(
     if simulation.termination_reason in {
         TerminationReason.TOO_MANY_ERRORS,
         TerminationReason.MAX_STEPS,
+        TerminationReason.AGENT_ERROR,
     }:
         return RewardInfo(
             reward=0.0,

@@ -17,6 +17,13 @@ AgentState = TypeVar("AgentState")
 ValidAgentInputMessage = UserMessage | ToolMessage | MultiToolMessage
 
 
+class AgentError(Exception):
+    """
+    Generic exception for agent errors.
+    """
+    pass
+
+
 def is_valid_agent_history_message(message: Message) -> bool:
     """Check if the message is a valid agent history message."""
     return (

@@ -305,6 +305,7 @@ class TerminationReason(str, Enum):
     AGENT_STOP = "agent_stop"
     MAX_STEPS = "max_steps"
     TOO_MANY_ERRORS = "too_many_errors"
+    AGENT_ERROR = "agent_error"
 
 
 class SimulationRun(BaseModel):
