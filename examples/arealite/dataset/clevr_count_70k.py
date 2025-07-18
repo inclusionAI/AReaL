@@ -82,13 +82,13 @@ def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
             processed_images.append(convert_image(image,113*113,336*336))
         example["images"] = processed_images
         example["seq"] = example["problem"] + example["answer"] + tokenizer.eos_token
+        
         return example
 
     dataset = dataset.map(
         lambda example, idx: process_example(example, idx),
         with_indices=True,
-        remove_columns=["answer"],
-        num_proc=os.cpu_count()
+        remove_columns=["answer"]
     )
 
     def _process(example):
@@ -106,13 +106,11 @@ def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
         example["pixel_values"] = processed_input["pixel_values"]
         example["image_grid_thw"] = processed_input["image_grid_thw"]
         prompt_token = tokenizer.encode(example["problem"])
-        prompt_mask = [1] * len(prompt_token) + [0] * (
-            len(example["input_ids"]) - len(prompt_token)
-        )
-        example["prompt_mask"]=prompt_mask
+        loss_mask = [0] * len(prompt_token) + [1] * (len(example["input_ids"]) - len(prompt_token))
+        example["loss_mask"]=loss_mask
         return example
 
-    dataset = dataset.map(lambda x: _process(x),remove_columns=["images","seq","problem"],num_proc=os.cpu_count())
+    dataset = dataset.map(lambda x: _process(x),remove_columns=["images","seq","problem"])
     return dataset
 
 # def get_clevr_count_70k_rl_dataset(path, split,  rank, world_size):
