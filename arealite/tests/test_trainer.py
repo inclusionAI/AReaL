@@ -81,8 +81,8 @@ def main_grpo():
 
             # actor.upload_weights(actor_cfg)
             # print("[Trainer] actor upload_weights success.")
-            rollout.update_weights(rollout_cfg)
-            print("[Trainer] rollout update_weights success.")
+            # rollout.update_weights(rollout_cfg)
+            # print("[Trainer] rollout update_weights success.")
             # clear_dir(rollout_cfg.path)
             # print(f"[Trainer] clear update weights dir success: {rollout_cfg.path}")
 
@@ -112,6 +112,9 @@ def main_grpo():
             dis_batch = DistributedBatchMemory(rollout_res_dict)
             stats = actor.train_distributed_batch(dis_batch)
             print(f"[Trainer] train exec success, step: {step}, epoch: {epoch}, stats: {stats}")
+
+            rollout.update_weights(rollout_cfg)
+            print("[Trainer] rollout update_weights success.")
 
 
 if __name__ == "__main__":
