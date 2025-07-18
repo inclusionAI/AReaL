@@ -135,7 +135,8 @@ class DistributedTrainController(TrainController):
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             for index, worker in enumerate(self.workers):
                 batch_index = index // self.dp_world_size
-                batch_data = batches[batch_index]
+                # batch_data = batches[batch_index]
+                batch_data = batches[0]
                 futures.append(executor.submit(
                     self.scheduler.call_engine,
                     worker.id,
