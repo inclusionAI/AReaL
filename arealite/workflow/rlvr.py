@@ -62,6 +62,8 @@ class RLVRWorkflow(RolloutWorkflow):
                 **data,
             )
 
+            reward = 1
+
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
