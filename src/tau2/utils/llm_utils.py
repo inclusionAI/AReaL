@@ -204,6 +204,7 @@ def generate(
     litellm_messages = to_litellm_messages(messages)
     tools = [tool.openai_schema for tool in tools] if tools else None
     if tools and tool_choice is None:
+        logger.debug("Tool choice is None, setting to auto")
         tool_choice = "auto"
     try:
         response = completion(
