@@ -71,6 +71,7 @@ class RemoteSGLangEngine(InferenceEngine):
         self.addresses = ["10.10.131.247:8188"] + ["10.10.131.73:8188"]
         self.server_idx = random.randint(0, len(self.addresses) - 1)
         self.exiting = threading.Event()
+        self.paused = threading.Event()
         self.lock = threading.Lock()
         self.input_queue = Queue(maxsize=self.qsize)
         self.output_queue = Queue(maxsize=self.qsize)
@@ -350,6 +351,12 @@ class RemoteSGLangEngine(InferenceEngine):
             self.set_version(meta.model_version)
         else:
             raise NotImplementedError(f"Unsupported weight update type: {meta.type}")
+
+    def pause(self):
+        self.paused.set()
+
+    def resume(self):
+        self.paused.clear()
 
     async def aupdate_weights_from_disk(self, addr, path: str):
         response = await self.arequest_with_retry(
