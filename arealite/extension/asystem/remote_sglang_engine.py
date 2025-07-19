@@ -298,6 +298,25 @@ class RemoteSGLangEngine(InferenceEngine):
             ttft=latency,  # Simplified for non-streaming
         )
 
+    def get_capacity(self):
+        if dist.is_initialized():
+            world_size = dist.get_world_size()
+        else:
+            world_size = 1
+
+        max_concurrent_rollouts = max(
+            1, self.config.max_concurrent_rollouts // world_size
+        )
+        capacity = max_concurrent_rollouts - len(self.rollout_tasks)
+        # Staleness control
+        version = self.get_version()
+        ofp = self.config.max_head_offpolicyness
+        with self.lock:
+            sample_cnt = self.rollout_stat.accepted + self.rollout_stat.running
+        consumer_bs = max(1, self.config.consumer_batch_size // world_size)
+        capacity = min(capacity, (ofp + version + 1) * consumer_bs - sample_cnt)
+        return capacity
+
     def update_weights(self, meta):
         # executor = ThreadPoolExecutor(max_workers=1)
         # return executor.submit(self._update_weights, meta)
