@@ -26,7 +26,6 @@ class LLMRequest:
 
 
 @dataclass
-@dataclass
 class LLMResponse:
     # outputs
     completions: str
