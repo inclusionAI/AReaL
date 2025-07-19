@@ -14,14 +14,17 @@ litellm.success_callback = ["langfuse"]
 litellm.failure_callback = ["langfuse"]
 # litellm._turn_on_debug()
 
+# os.environ["LITELLM_LOG"] = "DEBUG" # for debugging litellm requests
+# litellm.set_verbose = True
+
 # litellm_prefix = "ollama"
 litellm_prefix = "ollama_chat"
 
 
 BASE_URL = "http://localhost:11434"
-# model = "qwen2.5:1.5b"
+model = "qwen2.5:1.5b"
 # model = "llama2:latest"
-model="qwen2.5:latest"
+# model="qwen2.5:latest"
 
 client = OpenAI(api_key="ollama", base_url='http://localhost:11434/v1')
 openai_completion = client.chat.completions.create
@@ -190,12 +193,35 @@ if not no_tool_response.choices[0].message.tool_calls:
 else:
     print("❌ Unexpected: Model should not have called weather tool for geography question")
 
+# Test 6: Explicit thinking prompt
+print("\n=== Test 6: Explicit thinking prompt ===")
+messages_6 = [{"role": "user", "content": "If I have 3 apples and I buy 2 more apples, then give away 1 apple, how many apples do I have left? Show your thinking process."}]
+print(f"Prompt sent: {messages_6}")
+thinking_response = litellm_completion(
+    model=f"{litellm_prefix}/{model}",
+    messages=messages_6,
+    tools=[test_tool],
+    tool_choice="auto",
+    api_base=BASE_URL,
+)
+
+print("Thinking response:")
+print(f"Content: {thinking_response.choices[0].message.content}")
+print(f"Tool calls: {thinking_response.choices[0].message.tool_calls}")
+
+# Check if tool was NOT called (should just think, not use weather tool)
+if not thinking_response.choices[0].message.tool_calls:
+    print("✅ Expected: Model correctly avoided using weather tool for math/thinking question")
+else:
+    print("❌ Unexpected: Model should not have called weather tool for math/thinking question")
+
+print("LiteLLM thinking test complete\n")
 
 response = openai_completion(
     model=model,
-    messages=messages_5,
+    messages=messages_6,
     tool_choice="auto",
     tools=[test_tool],
 )
-print("OpenAI client response:")
+print("OpenAI client thinking response:")
 print(response.choices[0].message.content)
