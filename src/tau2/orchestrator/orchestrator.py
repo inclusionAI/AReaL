@@ -19,7 +19,7 @@ from tau2.data_model.message import (
 from tau2.data_model.simulation import SimulationRun, TerminationReason
 from tau2.data_model.tasks import EnvFunctionCall, InitializationData, Task
 from tau2.environment.environment import Environment, EnvironmentInfo
-from tau2.user.base import BaseUser, is_valid_user_history_message
+from tau2.user.base import BaseUser, UserError, is_valid_user_history_message
 from tau2.user.user_simulator import DummyUser, UserSimulator, UserState
 from tau2.utils.llm_utils import get_cost
 from tau2.utils.utils import format_time, get_now
@@ -216,7 +216,6 @@ class Orchestrator:
                     f"Last message should be of type AssistantMessage, UserMessage, or ToolMessage, got {type(last_message)}"
                 )
             self.trajectory = message_history
-
         else:
             self.agent_state = self.agent.get_init_state()
             self.user_state = self.user.get_init_state()
@@ -245,8 +244,56 @@ class Orchestrator:
                     self.done = self.agent.is_stop(first_message)
                     if self.done:
                         self.termination_reason = TerminationReason.AGENT_STOP
-
+        self.check_communication_error()
         self.environment.sync_tools()
+
+    def check_communication_error(self) -> None:
+        """
+        Check the orchestrator state for communication error.
+        Communication error is when agent/user do not abide by the rules that shape the communication task.
+        """
+        try:
+            self._check_communication_error()
+        except AgentError:
+            self.done = True
+            self.termination_reason = TerminationReason.AGENT_ERROR
+        except UserError:
+            self.done = True
+            self.termination_reason = TerminationReason.USER_ERROR
+        except Exception:
+            # Re-raise all other exceptions
+            raise
+
+    def _check_communication_error(self) -> None:
+        """
+        Check the orchstrator state for communication error.
+        Communication error is when agent/user do not abide by the rules that shape the communication task.
+        """
+        if self.from_role == Role.ENV:
+            return
+        if self.from_role == Role.USER:
+            exception_type = UserError
+        elif self.from_role == Role.AGENT:
+            exception_type = AgentError
+        else:
+            raise ValueError(f"Invalid from role: {self.from_role}")
+        # Check if the message is empty
+        if not self.message.is_tool_call() and not self.message.has_text_content():
+            raise exception_type(
+                f"{self.from_role.value} sent an empty message. {self.message}"
+            )
+        # Check if the message has both text content and tool calls
+        if self.message.is_tool_call() and self.message.has_text_content():
+            raise exception_type(
+                f"{self.from_role.value} sent both text content and tool calls. {self.message}"
+            )
+
+        # Check if the agent is allowed to send a message to the user
+        if self.from_role == Role.AGENT and self.solo_mode:
+            if self.message.has_text_content() and not self.agent.is_stop(self.message):
+                raise exception_type(
+                    f"{self.from_role.value} can only send tool calls. {self.message}"
+                )
 
     def run(self) -> SimulationRun:
         """
@@ -370,6 +417,7 @@ class Orchestrator:
             raise ValueError(
                 f"Invalid role combination. From role: {self.from_role}, To role: {self.to_role}"
             )
+        self.check_communication_error()
         self.step_count += 1
         self.environment.sync_tools()
 

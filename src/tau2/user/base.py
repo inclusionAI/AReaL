@@ -18,6 +18,14 @@ from tau2.data_model.message import (
 ValidUserInputMessage = UserMessage | ToolMessage | MultiToolMessage
 
 
+class UserError(Exception):
+    """
+    Generic exception for user errors.
+    """
+
+    pass
+
+
 def is_valid_user_history_message(message: Message) -> bool:
     """Check if the message is a valid user history message."""
     return (
