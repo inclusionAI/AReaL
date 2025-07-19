@@ -249,8 +249,17 @@ class Orchestrator:
 
     def check_communication_error(self) -> None:
         """
-        Check the orchestrator state for communication error.
-        Communication error is when agent/user do not abide by the rules that shape the communication task.
+        Check the orchestrator state for communication errors and handle them appropriately.
+
+        Communication errors occur when agents or users violate the communication protocol rules:
+        - Empty messages (no text content and no tool calls)
+        - Mixed messages (both text content and tool calls in the same message)
+        - Solo mode violations (agents sending text content instead of tool calls)
+
+        When a communication error is detected:
+        - Sets `self.done = True` to terminate the simulation
+        - Sets `self.termination_reason` to either `AGENT_ERROR` or `USER_ERROR`
+        - Re-raises any other exceptions that are not communication-related
         """
         try:
             self._check_communication_error()
@@ -266,8 +275,17 @@ class Orchestrator:
 
     def _check_communication_error(self) -> None:
         """
-        Check the orchstrator state for communication error.
-        Communication error is when agent/user do not abide by the rules that shape the communication task.
+        Check the orchestrator state for communication protocol violations.
+
+        Validates that messages follow the communication rules:
+        1. Messages must have either text content OR tool calls, not both
+        2. Messages cannot be empty (no text content and no tool calls)
+        3. In solo mode, agents can only send tool calls (except for stop messages)
+
+        Raises:
+            AgentError: When the agent violates communication rules
+            UserError: When the user violates communication rules
+            ValueError: When from_role is invalid
         """
         if self.from_role == Role.ENV:
             return

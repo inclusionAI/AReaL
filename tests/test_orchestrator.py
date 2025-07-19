@@ -4,7 +4,7 @@ from typing import Callable
 import pytest
 
 from tau2.agent.llm_agent import LLMAgent, LLMSoloAgent
-from tau2.data_model.message import AssistantMessage, UserMessage
+from tau2.data_model.message import AssistantMessage, ToolCall, UserMessage
 from tau2.data_model.tasks import EnvAssertion, InitialState, Task
 from tau2.environment.environment import Environment
 from tau2.orchestrator.orchestrator import (
@@ -349,6 +349,327 @@ def test_orchestrator_run(
     )
     simulation_run = orchestrator.run()
     assert simulation_run is not None
+
+
+def test_orchestrator_communication_error_empty_messages(
+    domain_name: str,
+    user_simulator: UserSimulator,
+    agent: LLMAgent,
+    get_environment: Callable[[], Environment],
+    base_task: Task,
+):
+    """Test that empty messages (no content, no tool calls) raise appropriate errors."""
+    orchestrator = Orchestrator(
+        domain=domain_name,
+        user=user_simulator,
+        agent=agent,
+        environment=get_environment(),
+        task=base_task,
+    )
+    orchestrator.initialize()
+
+    # Test cases for empty messages
+    empty_message_cases = [
+        # (message, from_role, expected_error_type, description)
+        (
+            AssistantMessage(role="assistant", content=None, tool_calls=None),
+            Role.AGENT,
+            "agent_error",
+            "agent empty message",
+        ),
+        (
+            UserMessage(role="user", content=None, tool_calls=None),
+            Role.USER,
+            "user_error",
+            "user empty message",
+        ),
+        (
+            AssistantMessage(role="assistant", content="   \n\t   ", tool_calls=None),
+            Role.AGENT,
+            "agent_error",
+            "agent whitespace-only message",
+        ),
+        (
+            UserMessage(role="user", content="", tool_calls=None),
+            Role.USER,
+            "user_error",
+            "user empty string message",
+        ),
+    ]
+
+    for message, from_role, expected_error, description in empty_message_cases:
+        orchestrator.message = message
+        orchestrator.from_role = from_role
+        orchestrator.to_role = Role.USER if from_role == Role.AGENT else Role.AGENT
+        orchestrator.done = False
+        orchestrator.termination_reason = None
+
+        # This should raise appropriate error and set termination reason
+        orchestrator.check_communication_error()
+
+        assert orchestrator.done, f"Failed for {description}"
+        assert orchestrator.termination_reason.value == expected_error, (
+            f"Failed for {description}"
+        )
+
+    # Test that ENV role is ignored (should not raise error)
+    empty_message = AssistantMessage(role="assistant", content=None, tool_calls=None)
+    orchestrator.message = empty_message
+    orchestrator.from_role = Role.ENV
+    orchestrator.to_role = Role.AGENT
+    orchestrator.done = False
+    orchestrator.termination_reason = None
+
+    # This should not raise an error because from_role is ENV
+    orchestrator.check_communication_error()
+
+    assert not orchestrator.done
+    assert orchestrator.termination_reason is None
+
+
+def test_orchestrator_communication_error_mixed_content_and_tool_calls(
+    domain_name: str,
+    user_simulator: UserSimulator,
+    agent: LLMAgent,
+    get_environment: Callable[[], Environment],
+    base_task: Task,
+):
+    """Test that messages with both content and tool calls raise appropriate errors."""
+    orchestrator = Orchestrator(
+        domain=domain_name,
+        user=user_simulator,
+        agent=agent,
+        environment=get_environment(),
+        task=base_task,
+    )
+    orchestrator.initialize()
+
+    # Create a tool call for testing
+    tool_call = ToolCall(id="test", name="test_tool", arguments={})
+
+    # Test cases for mixed content messages
+    mixed_message_cases = [
+        # (message, from_role, expected_error_type, description)
+        (
+            AssistantMessage(
+                role="assistant", content="Hello there", tool_calls=[tool_call]
+            ),
+            Role.AGENT,
+            "agent_error",
+            "agent message with both content and tool calls",
+        ),
+        (
+            UserMessage(role="user", content="Hello there", tool_calls=[tool_call]),
+            Role.USER,
+            "user_error",
+            "user message with both content and tool calls",
+        ),
+        # Note: Empty string and whitespace-only content are not considered text content
+        # by has_text_content(), so these should NOT raise errors
+    ]
+
+    for message, from_role, expected_error, description in mixed_message_cases:
+        orchestrator.message = message
+        orchestrator.from_role = from_role
+        orchestrator.to_role = Role.USER if from_role == Role.AGENT else Role.AGENT
+        orchestrator.done = False
+        orchestrator.termination_reason = None
+
+        # This should raise appropriate error and set termination reason
+        orchestrator.check_communication_error()
+
+        assert orchestrator.done, f"Failed for {description}"
+        assert orchestrator.termination_reason.value == expected_error, (
+            f"Failed for {description}"
+        )
+
+
+def test_orchestrator_communication_error_solo_mode(
+    domain_name: str,
+    dummy_user: DummyUser,
+    solo_agent: LLMSoloAgent,
+    base_task: Task,
+    get_environment: Callable[[], Environment],
+):
+    """Test solo mode communication restrictions for agents."""
+    orchestrator = Orchestrator(
+        domain=domain_name,
+        environment=get_environment(solo_mode=True),
+        user=dummy_user,
+        agent=solo_agent,
+        task=base_task,
+        solo_mode=True,
+    )
+    orchestrator.initialize()
+
+    # Create a tool call for testing
+    tool_call = ToolCall(id="test", name="test_tool", arguments={})
+
+    # Test cases for solo mode
+    solo_mode_cases = [
+        # (message, from_role, to_role, should_fail, expected_error, description)
+        (
+            AssistantMessage(role="assistant", content="Hello there", tool_calls=None),
+            Role.AGENT,
+            Role.USER,
+            True,
+            "agent_error",
+            "agent text content in solo mode",
+        ),
+        (
+            AssistantMessage(role="assistant", content="###STOP###", tool_calls=None),
+            Role.AGENT,
+            Role.USER,
+            False,
+            None,
+            "agent stop message in solo mode",
+        ),
+        (
+            AssistantMessage(role="assistant", content=None, tool_calls=[tool_call]),
+            Role.AGENT,
+            Role.ENV,
+            False,
+            None,
+            "agent tool call in solo mode",
+        ),
+        # Note: ###TRANSFER### and ###OUT-OF-SCOPE### are user stop messages, not agent stop messages
+        # so they should fail in solo mode
+        (
+            AssistantMessage(
+                role="assistant", content="###TRANSFER###", tool_calls=None
+            ),
+            Role.AGENT,
+            Role.USER,
+            True,
+            "agent_error",
+            "agent transfer message in solo mode (not a stop message)",
+        ),
+        (
+            AssistantMessage(
+                role="assistant", content="###OUT-OF-SCOPE###", tool_calls=None
+            ),
+            Role.AGENT,
+            Role.USER,
+            True,
+            "agent_error",
+            "agent out-of-scope message in solo mode (not a stop message)",
+        ),
+    ]
+
+    for (
+        message,
+        from_role,
+        to_role,
+        should_fail,
+        expected_error,
+        description,
+    ) in solo_mode_cases:
+        orchestrator.message = message
+        orchestrator.from_role = from_role
+        orchestrator.to_role = to_role
+        orchestrator.done = False
+        orchestrator.termination_reason = None
+
+        # Check communication error
+        orchestrator.check_communication_error()
+
+        if should_fail:
+            assert orchestrator.done, f"Failed for {description}"
+            assert orchestrator.termination_reason.value == expected_error, (
+                f"Failed for {description}"
+            )
+        else:
+            assert not orchestrator.done, f"Failed for {description}"
+            assert orchestrator.termination_reason is None, f"Failed for {description}"
+
+
+def test_orchestrator_communication_error_valid_messages(
+    domain_name: str,
+    user_simulator: UserSimulator,
+    agent: LLMAgent,
+    get_environment: Callable[[], Environment],
+    base_task: Task,
+):
+    """Test that valid messages pass communication error checks."""
+    orchestrator = Orchestrator(
+        domain=domain_name,
+        user=user_simulator,
+        agent=agent,
+        environment=get_environment(),
+        task=base_task,
+    )
+    orchestrator.initialize()
+
+    # Create a tool call for testing
+    tool_call = ToolCall(id="test", name="test_tool", arguments={})
+
+    # Test cases for valid messages
+    valid_message_cases = [
+        # (message, from_role, to_role, description)
+        (
+            AssistantMessage(role="assistant", content="Hello there", tool_calls=None),
+            Role.AGENT,
+            Role.USER,
+            "agent text message",
+        ),
+        (
+            UserMessage(role="user", content="Hello there", tool_calls=None),
+            Role.USER,
+            Role.AGENT,
+            "user text message",
+        ),
+        (
+            AssistantMessage(role="assistant", content=None, tool_calls=[tool_call]),
+            Role.AGENT,
+            Role.ENV,
+            "agent tool call message",
+        ),
+        (
+            UserMessage(role="user", content=None, tool_calls=[tool_call]),
+            Role.USER,
+            Role.ENV,
+            "user tool call message",
+        ),
+    ]
+
+    for message, from_role, to_role, description in valid_message_cases:
+        orchestrator.message = message
+        orchestrator.from_role = from_role
+        orchestrator.to_role = to_role
+        orchestrator.done = False
+        orchestrator.termination_reason = None
+
+        # This should not raise an error
+        orchestrator.check_communication_error()
+
+        assert not orchestrator.done, f"Failed for {description}"
+        assert orchestrator.termination_reason is None, f"Failed for {description}"
+
+
+def test_orchestrator_communication_error_invalid_from_role(
+    domain_name: str,
+    user_simulator: UserSimulator,
+    agent: LLMAgent,
+    get_environment: Callable[[], Environment],
+    base_task: Task,
+):
+    """Test that an invalid from_role raises ValueError."""
+    orchestrator = Orchestrator(
+        domain=domain_name,
+        user=user_simulator,
+        agent=agent,
+        environment=get_environment(),
+        task=base_task,
+    )
+    orchestrator.initialize()
+
+    # Set an invalid from_role
+    orchestrator.from_role = "invalid_role"  # type: ignore
+    orchestrator.message = AssistantMessage(role="assistant", content="test")
+
+    # This should raise ValueError
+    with pytest.raises(ValueError, match="Invalid from role: invalid_role"):
+        orchestrator._check_communication_error()
 
 
 def test_orchestrator_run_with_solo_agent(
