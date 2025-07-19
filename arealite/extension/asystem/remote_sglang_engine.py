@@ -390,6 +390,7 @@ class RemoteSGLangEngine(InferenceEngine):
         tik = time.perf_counter()
         accepted = len(self.result_cache)
         timeout = timeout or float(7 * 24 * 3600)
+
         while (
             accepted < count
             and not self.exiting.is_set()
@@ -418,9 +419,13 @@ class RemoteSGLangEngine(InferenceEngine):
 
         logger.info(f"[RemoteSGLangEngine] wait, get all results len: {len(results)}, details: {results}")
         padded = concat_padded_tensors(results)
+        group_size = 1
+        if len(padded) > 0:
+            group_size = int(padded[0]["input_ids"].shape[0])
         # 如果padded是dict，则转为TensorDict
+        bs = group_size * len(results)
         if isinstance(padded, dict):
-            padded = TensorDict(padded, batch_size=[len(results)])
+            padded = TensorDict(padded, batch_size=[bs])
         print(f"[RemoteSGLangEngine] wait, padded type: {type(padded)}")
         return padded
 
