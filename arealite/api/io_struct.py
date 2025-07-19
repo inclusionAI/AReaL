@@ -28,7 +28,6 @@ class LLMRequest:
 @dataclass
 class LLMResponse:
     # outputs
-    completions: str
     input_tokens: List[int] = field(default_factory=list)
     output_tokens: List[int] = field(default_factory=list)
     output_logprobs: List[float] = field(default_factory=list)
