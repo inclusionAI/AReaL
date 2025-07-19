@@ -1,6 +1,7 @@
 import json
 from typing import Literal, Optional
 
+from loguru import logger
 from pydantic import BaseModel, Field
 
 from tau2.utils.utils import get_now
@@ -113,9 +114,7 @@ class ParticipantMessageBase(BaseModel):
         Validate the message.
         """
         if not (self.has_text_content() or self.is_tool_call()):
-            raise ValueError(
-                f"AssistantMessage must have either content or tool calls. Got {self}"
-            )
+            logger.warning(f"Empty {self.role} message: {self}")
 
     def has_text_content(self) -> bool:
         """

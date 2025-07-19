@@ -233,6 +233,7 @@ class Orchestrator:
                 )
                 self.trajectory = [first_message]
                 self.message = first_message
+                # In solo mode, there is no user, so if the message is not a tool call, then we end and report an agent error
                 if not first_message.is_tool_call():
                     self.from_role = Role.AGENT
                     self.to_role = Role.USER
@@ -336,7 +337,8 @@ class Orchestrator:
                 self.to_role = Role.ENV
             else:
                 self.to_role = Role.USER
-                if self.solo_mode and self.agent.is_stop(agent_msg):
+                # In solo mode, there is no user, so if the message is not a tool call and not a stop, then we end and report an agent error
+                if self.solo_mode and not self.agent.is_stop(agent_msg):
                     self.done = True
                     self.termination_reason = TerminationReason.AGENT_ERROR
         # AGENT/USER -> ENV
