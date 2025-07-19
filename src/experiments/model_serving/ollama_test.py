@@ -81,7 +81,10 @@ print(f"Prompt sent: {messages_1}")
 response = litellm_completion(
     model=f"{litellm_prefix}/{model}",
     messages=messages_1,
-    api_base=BASE_URL,  
+    api_base=BASE_URL,
+    metadata={
+        "session_id": "test-session-id",  # Set your session ID here
+    },  
 )
 print(response.choices[0].message.content)
 if response.choices[0].message.tool_calls:
@@ -105,7 +108,10 @@ tool_response = litellm_completion(
     messages=messages_2,
     tools=[test_tool],
     tool_choice="auto",
-    api_base=BASE_URL
+    api_base=BASE_URL,
+    metadata={
+        "session_id": "test-session-id",  # Set your session ID here
+    },  
 )
 
 print("Tool call response:")
@@ -127,7 +133,10 @@ forced_tool_response = litellm_completion(
     messages=messages_3,
     tools=[test_tool],
     tool_choice={"type": "function", "function": {"name": "get_weather"}},
-    api_base=BASE_URL
+    api_base=BASE_URL,
+    metadata={
+        "session_id": "test-session-id",  # Set your session ID here
+    },  
 )
 
 print("Forced tool response:")
@@ -153,7 +162,10 @@ natural_tool_response = litellm_completion(
     messages=messages_4,
     tools=[test_tool],
     tool_choice="auto",
-    api_base=BASE_URL
+    api_base=BASE_URL,
+    metadata={
+        "session_id": "test-session-id",  # Set your session ID here
+    },  
 )
 
 print("Natural tool selection response:")
@@ -180,6 +192,9 @@ no_tool_response = litellm_completion(
     tools=[test_tool],
     tool_choice="auto",
     api_base=BASE_URL,
+    metadata={
+        "session_id": "test-session-id",  # Set your session ID here
+    },  
 )
 
 print("No tool needed response:")
@@ -203,6 +218,9 @@ thinking_response = litellm_completion(
     tools=[test_tool],
     tool_choice="auto",
     api_base=BASE_URL,
+    metadata={
+        "session_id": "test-session-id",  # Set your session ID here
+    },  
 )
 
 print("Thinking response:")
