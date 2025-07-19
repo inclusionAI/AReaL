@@ -1,14 +1,19 @@
 import asyncio
+import os
+import random
 import threading
 import time
 import traceback
 import dataclasses
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
+from datetime import datetime
 from queue import Empty, Full, Queue
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import aiohttp
+import requests
 import torch.distributed as dist
+import uvloop
 from tensordict import TensorDict
 
 from arealite.api.cli_args import InferenceEngineConfig
@@ -21,6 +26,7 @@ from arealite.api.io_struct import (
     WeightUpdateMeta,
 )
 from arealite.utils.data import concat_padded_tensors
+from arealite.utils.http import arequest_with_retry, get_default_connector
 from realhf.base import logging, name_resolve, names, pkg_version
 
 if TYPE_CHECKING:
@@ -33,14 +39,14 @@ if pkg_version.is_available("sglang"):
     else:
         SGLANG_TOKEN_OUTPUT_IDENTIFIER = "token_ids"
 
-ROLLOUT_POLL_WAIT_TIME = 0.4
+ROLLOUT_POLL_WAIT_TIME = 0.05
 RID_CACHE_SIZE = 128
 
 
 @dataclasses.dataclass
 class RemoteSGLangInitConfig:
     server_addrs: list[str]
-    
+
 
 class RemoteSGLangEngine(InferenceEngine):
     def __init__(self, config: InferenceEngineConfig):
@@ -48,7 +54,7 @@ class RemoteSGLangEngine(InferenceEngine):
             config.max_concurrent_rollouts or config.consumer_batch_size
         )
         self.config = config
-        self.qsize = config.queue_size or config.max_concurrent_rollouts * 10
+        self.qsize = config.queue_size or config.max_concurrent_rollouts * 16
         self.rid_to_address = {}
         # Maintain the addresses for the recent 128 requests
         self.rid_queue = []
@@ -63,16 +69,20 @@ class RemoteSGLangEngine(InferenceEngine):
         logger.info("[RemoteSGLangEngine] begin exec initialize.")
         self.addresses = config.server_addrs
         self.addresses = ["10.10.131.247:8188"] + ["10.10.131.73:8188"]
+        self.server_idx = random.randint(0, len(self.addresses) - 1)
         self.exiting = threading.Event()
         self.lock = threading.Lock()
-
         self.input_queue = Queue(maxsize=self.qsize)
         self.output_queue = Queue(maxsize=self.qsize)
+
+        self.rollout_tasks: Dict[str, asyncio.Task] = {}
+        self.executor = ProcessPoolExecutor(max_workers=1)
         self.rollout_thread = threading.Thread(target=self._rollout_thread)
         self.rollout_thread.start()
         logger.info("[RemoteSGLangEngine] initialize exec success...")
 
     def destroy(self):
+        self.executor.shutdown()
         self.exiting.set()
         self.rollout_thread.join()
 
@@ -87,70 +97,42 @@ class RemoteSGLangEngine(InferenceEngine):
     def _rollout_thread(self):
         """Thread that runs the rollout loop."""
         try:
-            asyncio.run(self._rollout_thread_async())
+            uvloop.run(self._rollout_thread_async())
         except Exception as e:
             traceback.print_exc()
 
     async def _rollout_thread_async(self):
-        data = None
-
-        rollout_tasks: Dict[str, asyncio.Task] = {}
+        rollout_tasks = self.rollout_tasks
         rid = 0
+
+        # NOTE: session is not thread-safe, but we only submit requests in the sub-thread.
+        self.session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(
+                total=self.config.request_timeout,
+                sock_connect=self.config.request_timeout,
+                connect=self.config.request_timeout,
+            ),
+            read_bufsize=1024 * 1024 * 10,
+            connector=get_default_connector(),
+        )
 
         try:
             while not self.exiting.is_set():
-                # Load next data from controller
-                if data is None:
-                    try:
-                        data, workflow = self.input_queue.get_nowait()
-                        logger.info(f"[RemoteSGLangEngine] Get data from puller: {data}")
-                    except Empty:
-                        logger.debug(f"[RemoteSGLangEngine] No data from puller stream.")
-
                 # Check capacity
-                if dist.is_initialized():
-                    world_size = dist.get_world_size()
-                else:
-                    world_size = 1
-
-                cannot_rollout_reason = []
-                capacity = max(1, self.config.max_concurrent_rollouts // world_size)
-                can_rollout = len(rollout_tasks) < capacity
-                if not can_rollout:
-                    cannot_rollout_reason.append(
-                        f"Exceeding capacity: # running tasks {len(rollout_tasks)} >= capacity {capacity}"
-                    )
-
-                # Staleness control
-                version = self.get_version()
-                ofp = self.config.max_head_offpolicyness
-                with self.lock:
-                    sample_cnt = self.rollout_stat.accepted + self.rollout_stat.running
-                expected_version = sample_cnt // self.config.consumer_batch_size
-                not_staled = expected_version <= ofp + version
-                can_rollout &= not_staled
-                if not not_staled:
-                    cannot_rollout_reason.append(
-                        f"Staled: expected version ({expected_version}) = "
-                        f"global sample cnt ({sample_cnt}) // batch size ({self.config.consumer_batch_size}), "
-                        f"current latest version {version}, "
-                        f"offpolicyness {self.config.max_head_offpolicyness}."
-                    )
-
-                if not can_rollout:
-                    logger.debug(
-                        f"[RemoteSGLangEngine] Cannot submit new rollouts. "
-                        + "\n".join(cannot_rollout_reason)
-                    )
-
+                capacity = self.get_capacity()
                 # Create new rollout task
-                if can_rollout and data is not None:
+                while (
+                    capacity > 0
+                    and not self.paused.is_set()
+                    and self.input_queue.qsize() > 0
+                ):
+                    data, workflow = self.input_queue.get_nowait()
+                    logger.debug(f"Get data from puller: {data}")
                     task = asyncio.create_task(
                         workflow.arun_episode(self, data), name=str(rid)
                     )
-                    rollout_tasks[str(rid)] = task
-
                     with self.lock:
+                        rollout_tasks[str(rid)] = task
                         self.rollout_stat.submitted += 1
                         self.rollout_stat.running += 1
                         logger.info(
@@ -159,12 +141,11 @@ class RemoteSGLangEngine(InferenceEngine):
                             f"running: {self.rollout_stat.running}, "
                             f"accepted: {self.rollout_stat.accepted}."
                         )
-
+                    capacity -= 1
                     rid += 1
-                    data = None
-
                 # Wait for rollout completion
-                tasks = list(rollout_tasks.values())
+                with self.lock:
+                    tasks = list(rollout_tasks.values())
                 done = []
                 if tasks:
                     done, _ = await asyncio.wait(
@@ -172,16 +153,14 @@ class RemoteSGLangEngine(InferenceEngine):
                         timeout=ROLLOUT_POLL_WAIT_TIME,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
-                else:
-                    await asyncio.sleep(ROLLOUT_POLL_WAIT_TIME)
-
                 # Collect done results
                 for task in done:
                     traj = await task
                     traj: TensorDict
                     task_rid = task.get_name()
-                    rollout_tasks.pop(task_rid)
-                    self.rollout_stat.accepted += 1
+                    with self.lock:
+                        rollout_tasks.pop(task_rid)
+                        self.rollout_stat.accepted += 1
 
                     try:
                         self.output_queue.put_nowait(traj)
@@ -198,81 +177,27 @@ class RemoteSGLangEngine(InferenceEngine):
                             f"running: {self.rollout_stat.running}, "
                             f"accepted: {self.rollout_stat.accepted}."
                         )
+                await asyncio.sleep(1)
+        except Exception:
+            traceback.print_exc()
         finally:
             # Cancel remaining tasks
-            for task in rollout_tasks.values():
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
+            with self.lock:
+                for task in rollout_tasks.values():
+                    if not task.done():
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
 
     def choose_server(self) -> str:
-        if self.config.schedule_policy == "round_robin":
-            server = self.addresses[self.server_idx]
-            self.server_idx = (self.server_idx + 1) % len(self.addresses)
-            return server
+        with self.lock:
+            if self.config.schedule_policy == "round_robin":
+                server = self.addresses[self.server_idx]
+                self.server_idx = (self.server_idx + 1) % len(self.addresses)
+                return server
         raise NotImplementedError("Only round-robin scheduling is implemented.")
-
-    async def arequest_with_retry(
-        self,
-        endpoint: str,
-        payload: Optional[Dict[str, Any]] = None,
-        method: str = "POST",
-        max_retries: Optional[int] = None,
-        timeout: Optional[float] = None,
-        retry_delay: float = 1.0,
-        target_addr: Optional[str] = None,
-    ) -> aiohttp.ClientResponse:
-        timeout = timeout or self.config.request_timeout
-        last_exception = None
-        max_retries = max_retries or self.config.request_retries
-
-        # Try with retries
-        for _ in range(max_retries):
-            if target_addr:
-                addr = target_addr
-            else:
-                addr = self.choose_server()
-            base_url = f"http://{addr}"
-            url = f"{base_url}{endpoint}"
-
-            for attempt in range(max_retries):
-                try:
-                    async with aiohttp.ClientSession(
-                        timeout=aiohttp.ClientTimeout(
-                            total=timeout,
-                            sock_connect=30,
-                            sock_read=timeout,
-                        )
-                    ) as session:
-                        if method.upper() == "GET":
-                            response = await session.get(url)
-                        elif method.upper() == "POST":
-                            response = await session.post(url, json=payload)
-                        elif method.upper() == "PUT":
-                            response = await session.put(url, json=payload)
-                        elif method.upper() == "DELETE":
-                            response = await session.delete(url)
-                        else:
-                            raise ValueError(f"Unsupported HTTP method: {method}")
-
-                        response.raise_for_status()
-                        return response
-
-                except (
-                    aiohttp.ClientError,
-                    aiohttp.ClientResponseError,
-                    asyncio.TimeoutError,
-                ) as e:
-                    last_exception = e
-                    if attempt < max_retries - 1:
-                        await asyncio.sleep(retry_delay)
-                    continue
-        raise RuntimeError(
-            f"Failed after {max_retries} retries each. " f"Last error: {last_exception}"
-        )
 
     async def agenerate(self, req: LLMRequest) -> LLMResponse:
         """Async version of generate using aiohttp."""
@@ -295,7 +220,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
         # NOTE: rid should NOT be passed in payload
         payload = {
-            "input_ids": req.input_ids,
+            "input_ids": req.input_ids.copy(),
             "sampling_params": sample_params,
             "return_logprob": True,
             "stream": False,
@@ -312,7 +237,6 @@ class RemoteSGLangEngine(InferenceEngine):
         accumulated_versions = []
 
         # Deal with rollout interruption
-        completions = []
         stop_reason = "length"
 
         if req.rid in self.rid_to_address:
@@ -331,21 +255,17 @@ class RemoteSGLangEngine(InferenceEngine):
             and len(accumulated_output_tokens) < gconfig.max_new_tokens
         ):
             # loop until the generation is complete
-            response = await self.arequest_with_retry(
+            result = await arequest_with_retry(
+                session=self.session,
+                addr=server_addr,
                 endpoint="/generate",
                 payload=payload,
                 method="POST",
                 max_retries=3,
                 timeout=self.config.request_timeout,
-                target_addr=server_addr,
             )
-            result = await response.json()
 
             # Parse response
-            if req.text:
-                completions += result["text"]
-            else:
-                completions += result["output_ids"]
             meta_info = result["meta_info"]
             output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
             output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
@@ -364,11 +284,11 @@ class RemoteSGLangEngine(InferenceEngine):
                 payload["text"] += result["text"]
             else:
                 payload["input_ids"] += result["output_ids"]
+            sample_params["max_new_tokens"] -= len(output_tokens)
 
         latency = time.perf_counter() - start_time
 
         return LLMResponse(
-            completions=completions,
             input_tokens=req.input_ids,
             output_tokens=accumulated_output_tokens,
             output_logprobs=accumulated_output_logprobs,
@@ -379,8 +299,8 @@ class RemoteSGLangEngine(InferenceEngine):
         )
 
     def update_weights(self, meta):
-        #executor = ThreadPoolExecutor(max_workers=1)
-        #return executor.submit(self._update_weights, meta)
+        # executor = ThreadPoolExecutor(max_workers=1)
+        # return executor.submit(self._update_weights, meta)
         self._update_weights(meta)
         return True
 
@@ -435,9 +355,15 @@ class RemoteSGLangEngine(InferenceEngine):
         except Full:
             raise RuntimeError("Input queue full. Please increase queue_size.")
 
-    def wait(self, count: int, timeout: float, should_accept: Callable) -> TensorDict:
+    def wait(
+        self,
+        count: int,
+        timeout: float | None = None,
+        should_accept: Callable | None = None,
+    ) -> TensorDict:
         tik = time.perf_counter()
         accepted = len(self.result_cache)
+        timeout = timeout or float(7 * 24 * 3600)
         while (
             accepted < count
             and not self.exiting.is_set()
@@ -445,14 +371,14 @@ class RemoteSGLangEngine(InferenceEngine):
         ):
             try:
                 result = self.output_queue.get(timeout=ROLLOUT_POLL_WAIT_TIME)
-                if should_accept(result):
+                if should_accept is None or should_accept(result):
                     self.result_cache.append(result)
                     accepted += 1
                 else:
                     with self.lock:
                         self.rollout_stat.accepted -= 1
             except Empty:
-                time.sleep(ROLLOUT_POLL_WAIT_TIME)
+                pass
         if self.exiting.is_set():
             raise RuntimeError("Rollout engine is exiting, cannot wait for results.")
         if accepted < count:
@@ -478,11 +404,7 @@ class RemoteSGLangEngine(InferenceEngine):
         """Submit a batch of requests to the inference engine and wait for the results."""
         for item in data:
             self.submit(item, workflow)
-        return self.wait(
-            count=len(data),
-            timeout=self.config.request_timeout,
-            should_accept=lambda x: True,
-        )
+        return self.wait(count=len(data))
 
     def rollout_distributed_batch(
         self, batch: DistributedBatchMemory, workflow: "RolloutWorkflow"
@@ -494,7 +416,7 @@ class RemoteSGLangEngine(InferenceEngine):
         res = self.rollout(data, workflow)  # TensorDict
         # TensorDict=>DistributedBatchMemory
         return DistributedBatchMemory(res.to_dict())
-    
+
     def get_scheduling_config(self):
         # one dp total resources
         return Scheduling(
