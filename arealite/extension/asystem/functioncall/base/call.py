@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from statistics import median
 from typing import Any, Dict
@@ -230,11 +231,18 @@ def batch_function_call(payload_list, task_type, timeout):
     )
 
     async def _main():
-        return await batch_function_call_async(payload_list, url, timeout, concurrency=concurrency)
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
 
-    loop = asyncio.get_running_loop()
-    future = asyncio.run_coroutine_threadsafe(_main(), loop)
-    result = future.result()  # 阻塞等待结果
+        try:
+            return new_loop.run_until_complete(batch_function_call_async(payload_list, url, timeout, concurrency=concurrency))
+        finally:
+            new_loop.close()
+
+
+    with ThreadPoolExecutor() as executor:
+        future = executor.submit(_main)
+        result = future.result()
 
     execution_time = time.time() - start_time
     logger.info(
