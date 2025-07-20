@@ -418,12 +418,12 @@ class RemoteSGLangEngine(InferenceEngine):
         )
 
         logger.info(f"[RemoteSGLangEngine] wait, get all results len: {len(results)}, details: {results}")
-        padded = concat_padded_tensors(results)
         group_size = 1
-        if len(padded) > 0:
-            group_size = int(padded[0]["input_ids"].shape[0])
-        # 如果padded是dict，则转为TensorDict
+        if len(results) > 0:
+            group_size = int(results[0]["input_ids"].shape[0])
         bs = group_size * len(results)
+
+        padded = concat_padded_tensors(results)
         if isinstance(padded, dict):
             padded = TensorDict(padded, batch_size=[bs])
         print(f"[RemoteSGLangEngine] wait, padded type: {type(padded)}")

@@ -46,10 +46,10 @@ def main_grpo():
     rollout.initialize()
 
     dataset = load_dataset("json",
-                           data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train_32.jsonl")
+                           data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train.jsonl")
     train_dataset = dataset['train']
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
-    batch_size = 2
+    batch_size = 16
     batch_data = []
     step_num = 1
     epoch_num = 1
@@ -63,7 +63,7 @@ def main_grpo():
 
             # synchronous rollout
             gconfig = GenerationHyperparameters(
-                max_new_tokens=16, greedy=False, n_samples=1
+                max_new_tokens=1024, greedy=False, n_samples=8
             )
             MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf"
             tokenizer = load_hf_tokenizer(MODEL_PATH)
