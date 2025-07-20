@@ -402,13 +402,14 @@ class RemoteSGLangEngine(InferenceEngine):
         self.paused.clear()
 
     async def aupdate_weights_from_disk(self, addr, path: str):
-        response = await self.arequest_with_retry(
+        response = await arequest_with_retry(
+            session=self.session,
+            addr=addr,
             endpoint="/update_weights_from_disk",
             payload=dict(model_path=str(path), allow_interrupt=True),
             method="POST",
             max_retries=3,
             timeout=self.config.request_timeout,
-            target_addr=addr,
         )
         res = await response.json()
         assert res["success"]
