@@ -17,6 +17,7 @@ from arealite.workflow.rlvr import RLVRWorkflow
 from arealite.api.cli_args import GenerationHyperparameters
 from realhf.api.core.data_api import load_hf_tokenizer
 from arealite.api.engine_api import WeightUpdateMeta
+from arealite.extension.asystem.math_reward import reward_fn
 
 import os
 import shutil

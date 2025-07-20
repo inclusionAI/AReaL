@@ -54,15 +54,15 @@ class RLVRWorkflow(RolloutWorkflow):
 
             if "prompt" in data.keys():
                 del data["prompt"]
-            reward = self.reward_fn(
-                prompt=text,
-                completion=resp.completions,
-                prompt_ids=resp.input_tokens,
-                completion_ids=resp.output_tokens,
-                **data,
-            )
+            # reward = self.reward_fn(
+            #     prompt=text,
+            #     completion=resp.completions,
+            #     prompt_ids=resp.input_tokens,
+            #     completion_ids=resp.output_tokens,
+            #     **data,
+            # )
 
-            # reward = 1
+            reward = 1
 
             res = dict(
                 # unsqueeze to add an additional batch dimension
