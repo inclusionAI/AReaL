@@ -296,7 +296,7 @@ You will be provided with a ticket that contains the user's request.
 You will need to plan and call the appropriate tools to solve the ticket.
 
 You cannot communicate with the user, only make tool calls.
-Only tool calls are allowed, do not output anything else
+IMPORTANT: Only tool calls are allowed, do not output anything else.
 
 Stop when you consider that you have solved the ticket.
 To do so, send a message containing a single tool call to the `{stop_function_name}` tool. Do not include any other tool calls in this last message.
