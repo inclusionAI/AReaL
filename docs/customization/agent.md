@@ -5,7 +5,7 @@ a multi-turn math agent using end-to-end reinforcement learning. We'll walk thro
 creating an agent that keeps trying to solve math problems until it finds the correct
 answer.
 
-## Recommended Approach: AReaLite
+## Option 1: Using AReaLite (Recommended)
 
 You can find the complete implementation in `arealite/workflow/multi_turn.py`.
 
@@ -269,7 +269,7 @@ That's it! Your custom multi-turn math agent is now ready for reinforcement lear
 training. The workflow will automatically handle the multi-turn conversations, reward
 computation, and data collection needed for effective RL training.
 
-## Legacy Approach: Agent-Based System
+### Option 2: Using the Legacy Agent & Environment (NOT Recommended)
 
 While we strongly recommend AReaLite for new projects, you might need to work with
 legacy code that uses the older Agent-based approach. Here's how it works for reference,

@@ -1,6 +1,6 @@
 # Training Algorithm Implementation
 
-## Approach 1: Using AReaLite (Recommended)
+## Option 1: Using AReaLite (Recommended)
 
 AReaLite structures RL algorithms around two core components:
 
@@ -106,6 +106,10 @@ def reinforce_loss_fn(logits, data):
     return loss.sum() / loss_mask.count_nonzero()
 ```
 
+```{note}
+To decrease memory usage, AReaLite automatically packs multiple sequences in an 1D tensor before forward passes. Hence, the loss function should assume handling 1D *packed* tensors instead of *padded* tensors.
+```
+
 Next, we implement the training engine. We use a two-class design to maintain backend
 compatibility:
 
@@ -197,7 +201,7 @@ def main(args):
             ...
 ```
 
-## Approach 2: Using Legacy ModelInterface (Not Recommended)
+## Option 2: Using the Legacy ModelInterface (NOT Recommended)
 
 The legacy approach encapsulates algorithms in a `ModelInterface` with three core
 methods:
