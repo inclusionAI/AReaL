@@ -1,1 +1,0 @@
-PYTHONPATH=. NCCL_DEBUG=INFO pytest -s /home/kenny/changyi_dev/AReaL/arealite/tests/test_fsdp_engine_nccl.py
