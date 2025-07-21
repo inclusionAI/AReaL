@@ -73,7 +73,7 @@ class StatsLogger:
         )
         if isinstance(data, Dict):
             data = [data]
-        log_step = max(global_step, self._last_commit_step)
+        log_step = max(global_step, self._last_commit_step + 1)
         for i, item in enumerate(data):
             self.info(f"Stats ({i+1}/{len(data)}):")
             self.print_stats(item)

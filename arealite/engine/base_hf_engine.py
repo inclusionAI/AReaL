@@ -66,13 +66,21 @@ class BaseHFEngine(TrainEngine):
         return self._parallelism_group
 
     def create_process_group(self):
+        # Required by NCCL weight update group for SGLang
+        os.environ["NCCL_CUMEM_ENABLE"] = "0"
+        os.environ["NCCL_NVLS_ENABLE"] = "0"
         if not dist.is_initialized():
+<<<<<<< HEAD
             # NOTE: environment variables such as WORLD_SIZE, LOCAL_RANK
             # will be always set either by the launcher or torchrun
+=======
+            # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
+            # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
+            # otherwise initializing the NCCL weight update group will be wrong!
+>>>>>>> origin/lite
             dist.init_process_group(
                 backend="nccl",
                 timeout=constants.NCCL_DEFAULT_TIMEOUT,
-                device_id=torch.device(int(os.environ["LOCAL_RANK"])),
             )
             self.own_global_group = True
         self._parallelism_group = dist.new_group()
@@ -263,6 +271,7 @@ class BaseHFEngine(TrainEngine):
 
             # Scale loss for accumulation
             # Revert gradient averaging across dp ranks
+            # FIXME: should be DP size
             loss_scale *= self.world_size
 
             loss *= loss_scale
@@ -283,8 +292,6 @@ class BaseHFEngine(TrainEngine):
             update_successful = True
 
         current_lr = self.lr_scheduler.get_last_lr()[0]
-        # Optimizer step
-        self.optimizer.step()
         return dict(
             update_successful=float(update_successful),
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),

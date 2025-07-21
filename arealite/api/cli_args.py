@@ -800,12 +800,6 @@ class BaseExperimentConfig:
         default_factory=ClusterSpecConfig,
         metadata={"help": "Cluster specification. Mainly used by slurm."},
     )
-    n_nodes: int = field(
-        default=1, metadata={"help": "Number of nodes for experiment."}
-    )
-    n_gpus_per_node: int = field(
-        default=8, metadata={"help": "Number of GPUs per node for this experiment."}
-    )
     allocation_mode: str = field(
         default="",
         metadata={

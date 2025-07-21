@@ -188,7 +188,7 @@ def main(argv):
         config.trial_name,
         config.sglang,
         tp_size,
-        n_gpus_per_node=config.n_gpus_per_node,
+        n_gpus_per_node=config.cluster.n_gpus_per_node,
     )
     sglang_server.run()
 

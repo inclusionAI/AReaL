@@ -315,8 +315,8 @@ def ray_main():
         )
     )
 
-    n_nodes = config.n_nodes
-    n_gpus_per_node = config.n_gpus_per_node
+    n_nodes = config.cluster.n_nodes
+    n_gpus_per_node = config.cluster.n_gpus_per_node
     launcher = RayLauncher(
         experiment_name=config.experiment_name,
         trial_name=config.trial_name,

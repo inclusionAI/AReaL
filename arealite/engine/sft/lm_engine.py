@@ -69,15 +69,9 @@ def compute_packed_sft_loss(logits: torch.Tensor, input_: TensorDict) -> torch.T
             cu_seqlens.shape[0] - 1, device=logits.device, dtype=torch.float64
         )
         for i in range(cu_seqlens.shape[0] - 1):
-            m = loss_mask[cu_seqlens[i] - i : cu_seqlens[i + 1] - i - 1]
-            logp = logprobs[cu_seqlens[i] - i : cu_seqlens[i + 1] - i - 1]
-            assert cu_seqlens[i + 1] - i - 1 <= logprobs.shape[0], (
-                cu_seqlens,
-                logprobs.shape,
-            )
-            seqlogp[i] = torch.where(m, logp.detach(), 0.0).sum() / (
-                m.numel() - m.count_nonzero()
-            )
+            m = loss_mask[cu_seqlens[i] : cu_seqlens[i + 1]]
+            logp = logprobs[cu_seqlens[i] : cu_seqlens[i + 1]]
+            seqlogp[i] = torch.where(m, logp.detach(), 0.0).sum() / (m.count_nonzero())
 
     ## Loggin stats
     stats_tracker.denominator(

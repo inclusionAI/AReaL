@@ -1,12 +1,12 @@
 # Copyright 2025 Ant Group Inc.
 # Licensed under the Apache License, Version 2.0
-
 import enum
 import itertools
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
+
 import torch
 from gymnasium.core import ActType, ObsType
 from arealite.api.cli_args import GenerationHyperparameters
@@ -263,6 +263,13 @@ class WeightUpdateMeta:
     alloc_mode: AllocationMode | None
     comm_backend: str | None
     model_version: int = 0
+    tp_size: int = 1
+    master_address: str = "127.0.0.1"
+    master_port: int = 29500
+    world_size: int = 1
+    group_name: str = "aupdate_weights_from_distributed"
+    parameter_names: List[str] = field(default_factory=list)
+    state_dict_key_to_shape: Dict[str, Tuple[int]] = field(default_factory=dict)
 
 
 @dataclass

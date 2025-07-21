@@ -1,5 +1,5 @@
 import os
-import re
+import shutil
 import sys
 
 import torch
@@ -18,7 +18,9 @@ from arealite.utils.saver import Saver
 from arealite.utils.stats_logger import StatsLogger
 from arealite.workflow.rlvr import RLVRWorkflow
 from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import stats_tracker
+from realhf.base import logging, seeding, stats_tracker
+
+logger = logging.getLogger("GSM8K grpo")
 
 
 def process_gsm8k_rl_dataset(dataset: Dataset):
@@ -36,44 +38,10 @@ def get_gsm8k_dataset(split, rank, world_size):
     return process_gsm8k_rl_dataset(dataset)
 
 
-# Adapted from verl.
-def extract_solution(solution_str, method="strict") -> str | None:
-    assert method in ["strict", "flexible"]
-
-    final_answer = None
-    if method == "strict":
-        # this also tests the formatting of the model
-        solutions = re.findall("#### (\\-?[0-9\\.\\,]+)", solution_str)
-        if len(solutions) == 0:
-            final_answer = None
-        else:
-            # take the last solution
-            final_answer = solutions[-1].replace(",", "").replace("$", "")
-    elif method == "flexible":
-        answer = re.findall("(\\-?[0-9\\.\\,]+)", solution_str)
-        final_answer = None
-        if len(answer) == 0:
-            # no reward is there is no answer
-            pass
-        else:
-            invalid_str = ["", "."]
-            # find the last number that is not '.'
-            for final_answer in reversed(answer):
-                if final_answer not in invalid_str:
-                    break
-    return final_answer
-
-
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    from realhf.impl.dataset.math_parser import extract_answer
+    from realhf.impl.dataset.math_parser import process_results
 
-    sol = extract_answer(completions, data_name="math")
-    ans = extract_solution(solution_str=answer, method="strict")
-    if sol is None:
-        return 0
-    if ans is None:
-        return 0
-    return int(sol.strip() == ans.strip())
+    return int(process_results(completions, answer)[0])
 
 
 def main_grpo():
@@ -83,6 +51,8 @@ def main_grpo():
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
+
+    seeding.set_random_seed(config.seed, key=f"trainer{rank}")
 
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
@@ -133,6 +103,9 @@ def main_grpo():
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         enable_thinking=False,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
     )
 
     # Run training.
@@ -190,13 +163,14 @@ def main_grpo():
             log_gpu_stats("ppo update")
 
         with stats_tracker.record_timing("update_weights"):
+            path = os.path.join(
+                Saver.get_save_checkpoint_root(config.saver),
+                "update_weights",
+                str(global_step + 1),
+            )
             meta = WeightUpdateMeta(
                 type="disk",
-                path=os.path.join(
-                    Saver.get_save_checkpoint_root(config.saver),
-                    "update_weights",
-                    str(global_step),
-                ),
+                path=path,
                 alloc_mode=None,
                 comm_backend=None,
                 model_version=global_step + 1,
@@ -206,6 +180,7 @@ def main_grpo():
             actor.upload_weights(meta)
             if dist.get_rank() == 0:
                 future.result()
+                shutil.rmtree(path, ignore_errors=True)
             dist.barrier()
             torch.cuda.synchronize()
             rollout.set_version(global_step + 1)
