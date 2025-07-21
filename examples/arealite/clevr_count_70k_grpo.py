@@ -51,7 +51,7 @@ def extract_solution(solution_str, method="strict") -> str | None:
 
 def clevr_count_70k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
     from realhf.impl.dataset.math_parser import extract_answer
-    # print(f"completions: {completions}, answer: {answer}")
+
     sol = extract_answer(completions, data_name="") # str number
     ans = extract_solution(solution_str=answer, method="strict")
     if sol is None:
@@ -63,6 +63,7 @@ def clevr_count_70k_reward_fn(prompt, completions, prompt_ids, completion_ids, a
 
 
 def main_grpo():
+    # os.environ["WANDB_BASE_URL"]="https://slurm.alipay.com"
     config, _ = load_expr_config(sys.argv[1:], GRPOConfig)
     config: GRPOConfig
 
@@ -165,7 +166,7 @@ def main_grpo():
                     data = next(data_generator)
                 batch = rollout.rollout_batch(data, workflow=workflow)
 
-        batch = batch.to(actor.device)
+        batch = batch.to(actor.device)    
         # Create barrier to synchronize all rollout processes.
         dist.barrier()
         torch.cuda.synchronize()
