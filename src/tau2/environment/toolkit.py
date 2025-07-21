@@ -65,13 +65,41 @@ def is_tool(tool_type: ToolType = ToolType.READ):
 class ToolKitBase(metaclass=ToolKitType):
     """Base class for ToolKit classes."""
 
-    def __init__(self, db: Optional[T] = None):
+    def __init__(self, db: Optional[T] = None, enable_think_tool: bool = True):
+        """
+        Initialize the ToolKit.
+
+        Args:
+            db: The database to use.
+            enable_think_tool: Whether to enable the think tool.
+        """
         self.db: Optional[T] = db
+        self.enable_think_tool: bool = enable_think_tool
 
     @property
     def tools(self) -> Dict[str, Callable]:
         """Get the tools available in the ToolKit."""
         return {name: getattr(self, name) for name in self._func_tools.keys()}
+
+    @is_tool(ToolType.THINK)
+    def think(self, thought: str) -> str:
+        """
+        Use this tool to record a thought.
+        This will not generate any interaction with the environment, but just append the thought to the conversation log.
+        It is useful when you need to think about something before performing an action.
+
+        IMPORTANT: Always use this tool call to record thoughts. This is the only proper way to record thinking.
+
+        Example:
+        think(thought="I need to check the user's account balance before processing the refund")
+
+        Args:
+            thought: A thought to think about.
+
+        Returns:
+            Empty string
+        """
+        return ""
 
     def use_tool(self, tool_name: str, **kwargs) -> str:
         """Use a tool."""
@@ -89,7 +117,11 @@ class ToolKitBase(metaclass=ToolKitType):
         # NOTE: as_tool needs to get the function (self.foo), not the `foo(self, ...)`
         # Otherwise, the `self` will exists in the arguments.
         # Therefore, it needs to be called with getattr(self, name)
-        return {name: as_tool(tool) for name, tool in self.tools.items()}
+        return {
+            name: as_tool(tool)
+            for name, tool in self.tools.items()
+            if self.enable_think_tool or self.tool_type(name) != ToolType.THINK
+        }
 
     def has_tool(self, tool_name: str) -> bool:
         """Check if a tool exists in the ToolKit."""
@@ -186,6 +218,11 @@ class GenericToolKit(ToolKitBase):
     def think(self, thought: str) -> str:
         """
         Use the tool to think about something. It will not obtain new information or change the database, but just append the thought to the log. Use it when complex reasoning is needed.
+
+        IMPORTANT: Always use this tool call to record thoughts. This is the only proper way to record thinking.
+
+        Example:
+        think(thought="I need to analyze the customer's purchase history to determine the best discount offer")
 
         Args:
             thought: A thought to think about.
