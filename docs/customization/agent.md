@@ -1,16 +1,283 @@
 # Rollout and Agentic RL
 
-This guide provides an example of modifying the rollout behavior for PPO training.
+This guide demonstrates how to customize rollout behavior for PPO training by
+implementing a multi-turn math agent that uses end-to-end reinforcement learning. Our
+example agent will continuously try to solve a math problem until it reaches the correct
+answer.
 
-In particular, we implement a multi-turn math agent using end-to-end RL. The math agent will continuously attempt to think through and solve math problems until it reaches the correct answer.
+## Approach: Using AReaLite (Recommended)
 
-## Define Your Agent
+The complete implementation is placed at `arealite/workflow/multi_turn.py`.
 
-Create a new file under `realhf/impl/agent/`, for example, `math_multi_turn_agent.py`. Your `Agent` must implement the interface defined in `realhf/api/core/agent.py`, which requires implementing a single method: `collect_trajectory`.
+### Step 1: Define Your Workflow
+
+AReaLite takes a flexible approach to agent definition. Rather than using rigid `Agent`
+classes that might limit your agentic capabilities, AReaLite captures all rollout
+behavior in a `RolloutWorkflow` class. This design gives you complete freedom to
+customize your agent's behavior.
+
+```python
+# arealite/api/workflow_api.py
+class RolloutWorkflow:
+    async def arun_episode(
+        self, engine: InferenceEngine, data: Dict[str, Any]
+    ) -> TensorDict:
+        """Run a single episode of the workflow.
+
+        See concrete example implementations under the `arealite/workflow` directory.
+        """
+        raise NotImplementedError()
+```
+
+The workflow exposes a single `arun_episode` method that runs and collects data from a
+single episode. This method takes two key arguments:
+
+1. **InferenceEngine**: Provides the `agenerate` method for generating responses to user
+   inputs
+1. **data**: The prompt data loaded from your RL dataset
+
+Within this method, you have complete control over how your agent and environment
+interact.
+
+#### Setting Up the Multi-Turn Math Workflow
+
+Let's build a multi-turn rollout workflow for solving math problems. First, we'll define
+the `__init__` method to capture the utilities we need during rollout:
+
+> **Note**: You have complete flexibility in defining the `__init__` method. Pass any
+> arguments needed to construct your workflow. If you want to use tools, pass the
+> corresponding environment here so your agent can call it in the `arun_episode` method.
+
+```python
+class MultiTurnWorkflow(RolloutWorkflow):
+    def __init__(
+        self,
+        reward_fn,
+        gconfig: GenerationHyperparameters,  # aka sampling_params
+        tokenizer: PreTrainedTokenizerFast,
+        max_turns: int,
+        turn_discount: float,
+    ):
+        self.reward_fn = reward_fn
+        self.gconfig = gconfig
+        self.tokenizer = tokenizer
+        self.max_turns = max_turns
+        # Discount rewards if the agent takes longer to find the correct answer
+        self.turn_discount = turn_discount
+```
+
+#### Implementing the Episode Logic
+
+Now let's implement the `arun_episode` method. We'll start by tokenizing the prompt data
+and converting it into an `LLMRequest` object for the inference engine:
+
+```python
+class MultiTurnWorkflow(RolloutWorkflow):
+    # ... __init__ method above ...
+
+    async def arun_episode(self, engine: InferenceEngine, data):
+        # Initialize result containers
+        seq, logprobs, loss_mask, versions = [], [], [], []
+        messages = data["messages"]
+        # Run multi-turn rollout until we get the correct answer
+        t = reward = 0
+        discount = 1.0
+        rid = uuid.uuid4().hex
+        while reward == 0 and t < self.max_turns:
+            # Convert the conversation into input tokens
+            input_ids = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+            )
+            # Generate response from the model
+            req = LLMRequest(
+                rid=rid,
+                input_ids=input_ids,
+                gconfig=self.gconfig.new(n_samples=1),
+            )
+            resp = await engine.agenerate(req)
+            # ... continue processing ...
+```
+
+> **Note**: This example accesses the "messages" key from the prompt data to get
+> OpenAI-compatible messages. This isn't mandatory—the key and prompt format depend
+> entirely on your implementation. For instance, if your dataset stores prompt strings
+> in a "prompt" column, you could get input token IDs via
+> `self.tokenizer.encode(data["prompt"])`.
+
+> **Note**: The `rid` field in `LLMRequest` is the request ID. Requests with the same ID
+> will reuse the LLM inference server's KV caches for efficiency.
+
+#### Handling Multi-Turn Conversations
+
+Next, we'll evaluate whether the current answer is correct using our `reward_fn`. This
+function should return 1 for correct answers and 0 otherwise. When the answer is wrong,
+we'll apply a discount, add feedback to the conversation, and let the model try again:
+
+```python
+class MultiTurnWorkflow(RolloutWorkflow):
+    # ... previous methods ...
+
+    async def arun_episode(self, engine: InferenceEngine, data):
+        # ... initialization code ...
+        while reward == 0 and t < self.max_turns:
+            # Add feedback if the previous answer was incorrect
+            if t > 0:
+                messages += [
+                    {"role": "assistant", "content": completions_str},
+                    {
+                        "role": "user",
+                        "content": "Your answer is not correct. Please try to answer it again."
+                    },
+                ]
+            # Generate response (code from above)
+            # ...
+            # Evaluate the response
+            prompt_str = self.tokenizer.decode(input_ids)
+            completions_str = self.tokenizer.decode(resp.output_tokens)
+            reward = self.reward_fn(
+                prompt=prompt_str,
+                completions=completions_str,
+                prompt_ids=resp.input_tokens,
+                completion_ids=resp.output_tokens,
+                **data,
+            )
+            # Update counters
+            t += 1
+            discount *= self.turn_discount
+```
+
+#### Reward Function Signature
+
+For convenience when switching between different reward functions, we recommend
+following this pre-defined signature:
+
+```python
+def reward_fn(
+    prompt: str,
+    completions: str,
+    prompt_ids: List[int],
+    completion_ids: List[int],
+    **kwargs,
+):
+    """Reward function for evaluating agent performance.
+
+    This signature is recommended for compatibility with predefined workflows,
+    but you can modify it freely in custom implementations.
+
+    Args:
+        prompt: The task description string
+        completions: The agent's response string
+        prompt_ids: Tokenized prompt
+        completion_ids: Tokenized response
+        **kwargs: Additional dataset attributes (solutions, input_outputs, etc.)
+
+    Returns:
+        float: Reward value (typically 1.0 for correct, 0.0 for incorrect)
+    """
+```
+
+While this signature is convenient, there are no strict restrictions on reward functions
+in custom workflows—modify them as needed for your specific use case.
+
+#### Collecting Training Data
+
+Finally, let's complete the implementation by collecting trajectories in the
+`TensorDict` format:
+
+```python
+class MultiTurnWorkflow(RolloutWorkflow):
+    # ... previous methods ...
+
+    async def arun_episode(self, engine: InferenceEngine, data):
+        # ... episode logic above ...
+
+        while reward == 0 and t < self.max_turns:
+            # ... generation and evaluation ...
+
+            # Collect trajectory data
+            input_len = len(resp.input_tokens) - len(seq)
+            seq += resp.input_tokens[-input_len:] + resp.output_tokens
+            logprobs += [0.0] * input_len + resp.output_logprobs
+            loss_mask += [0] * input_len + [1] * resp.output_len
+            versions += [-1] * input_len + resp.output_versions
+
+        # Package results
+        res = dict(
+            input_ids=torch.tensor(seq),
+            logprobs=torch.tensor(logprobs),
+            loss_mask=torch.tensor(loss_mask),
+            versions=torch.tensor(versions),
+            rewards=torch.tensor(float(reward * discount)),
+            attention_mask=torch.ones(len(seq), dtype=torch.bool),
+        )
+        res = {k: v.unsqueeze(0) for k, v in res.items()}
+        return concat_padded_tensors([res])
+```
+
+> **Important**: The returned `TensorDict` must follow HuggingFace's padded data format,
+> where each tensor has shape `[batch_size, sequence_length, *]`. This allows AReaLite
+> to automatically batch multiple trajectories for the training engine. Since this
+> example returns a single trajectory, we use `unsqueeze(0)` to create a size-1 batch.
+
+> **Note**: There are no restrictions on the keys in your `TensorDict`—different
+> algorithms require different keys. This example targets the GRPO algorithm, so we
+> include `input_ids`, `loss_mask`, `attention_mask`, and `logprobs` (needed for
+> computing importance ratios).
+
+### Step 2: Training with Your Custom Workflow
+
+Using your custom workflow is straightforward—just construct it in your training script
+and pass it to the `rollout_batch` or `prepare_batch` method:
+
+```python
+def main(args):
+    # ... setup code ...
+
+    # Create your custom workflow
+    workflow = MultiTurnWorkflow(
+        reward_fn=gsm8k_reward_fn,
+        gconfig=config.gconfig,
+        tokenizer=tokenizer,
+        turn_discount=0.9,
+        max_turns=5,
+    )
+
+    # Run training—no other changes needed!
+    data_generator = iter(train_dataloader)
+    for global_step in range(max_steps):
+        with stats_tracker.record_timing("rollout"):
+            if config.async_training:
+                batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
+            else:
+                try:
+                    data = next(data_generator)
+                except StopIteration:
+                    data_generator = iter(train_dataloader)
+                    data = next(data_generator)
+                batch = rollout.rollout_batch(data, workflow=workflow)
+        # ... continue with training loop ...
+```
+
+That's it! Your custom multi-turn math agent is now ready to train with reinforcement
+learning. The workflow will automatically handle the multi-turn conversations, reward
+computation, and data collection needed for effective RL training.
+
+## Alternative Approach: Using the Legacy Version (Not Recommended)
+
+While we strongly recommend using AReaLite for new projects, you might encounter legacy
+code that uses the older Agent-based approach. Here's how it works for reference, though
+we suggest migrating to the workflow-based system when possible.
+
+### Step 1: Define Your Agent Class
+
+Create a new file under `realhf/impl/agent/`, such as `math_multi_turn_agent.py`. Your
+`Agent` must implement the interface defined in `realhf/api/core/agent.py`, which
+requires a single method: `collect_trajectory`.
 
 ```python
 class MathMultiTurnAgent(Agent):
-    
     async def collect_trajectory(
         self,
         prompt: SequenceSample,
@@ -18,65 +285,90 @@ class MathMultiTurnAgent(Agent):
         obs_queue: asyncio.Queue,
         act_queue: asyncio.Queue,
     ):
+        # Implementation goes here
         ...
 ```
 
-## Implement the `collect_trajectory` Logic
+### Step 2: Implement the Trajectory Collection Logic
 
-The `collect_trajectory` function takes a task prompt, an environment, and two queues as input, then produces several trajectories for the RL trainer. Within this function, you can create arbitrary data processing logic to produce the input for the inference engine (i.e., via `obs_queue`) and extract the action (i.e., via `act_queue`) from the generated tokens.
+The `collect_trajectory` method takes a task prompt, an environment, and two
+communication queues. Within this method, you control the data flow between your agent
+and the inference engine using these queues:
 
-In this example, the initial observation is the math problem itself. We put the token IDs and generation config into `obs_queue` and wait for the action produced by the inference engine from `act_queue`. After the inference engine returns, we extract the generated answers and send them to the environment.
+- **obs_queue**: Send observations (token IDs and generation config) to the inference
+  engine
+- **act_queue**: Receive actions (generated responses) from the inference engine
+
+Here's how the multi-turn conversation works:
 
 ```python
 for turn in range(self.num_turns):
+    # Send the current state to the inference engine
     await obs_queue.put((qid, token_ids, self.gconfig))
+
+    # Get the generated response
     act: BundledGenerationOutputs = await act_queue.get()
-    _, success, *_ = await env.step((qid, answers))
-    ...
+
+    # Evaluate the response through the environment
+    success, rewards = await env.step((qid, answers))
+    # ... process results ...
 ```
 
-The environment is similar to a [gym environment](https://github.com/Farama-Foundation/Gymnasium), which defines two methods: `reset` and `step`. However, to maintain efficiency, we use an asynchronous implementation to avoid mutual blocking across different environment instances.
+#### Environment Integration
 
-The math environment is stateless and essentially serves as a wrapper around the reward function:
+The environment follows a
+[Gym-like interface](https://github.com/Farama-Foundation/Gymnasium) with `reset` and
+`step` methods, but uses asynchronous implementations to prevent blocking across
+different environment instances.
+
+For math problems, the environment is typically stateless and acts as a wrapper around
+your reward function:
 
 ```python
 class MathCodeSingleStepEnv(EnvironmentService):
-
     async def step(self, action: Tuple[str, List[str]]):
         qid, answers = action
-        ...
-        # Make `math_verify_call` async
+        # ... setup code ...
+
+        # Run reward computation asynchronously
         format_rewards = await asyncio.to_thread(
             math_verify_call,
             answers,
-            ...
+            # ... other parameters ...
         )
         return None, format_rewards, True, False, {}
 ```
 
-After `env.step` returns the reward for the current step, we can check whether the answer is correct. If not, we can append a user prompt and send it to `obs_queue` again to enter the next round.
+#### Handling Multi-Turn Feedback
+
+After receiving the reward from `env.step`, check if the answer is correct. If not,
+provide feedback and continue to the next turn:
 
 ```python
 for turn in range(self.num_turns):
-    ...
-    feedback = None
+    # ... generation and evaluation code ...
+
+    # Provide feedback based on the result
     if success[0]:
         feedback = "Congratulations! You are correct!"
     else:
         feedback = "Unfortunately your answer is wrong. Let's try again."
-    
+
+    # Format feedback as a user message
     feedback = "\n" + self.tokenizer.apply_chat_template(
-        [dict(content=feedback, role="user")],
+        [{"content": feedback, "role": "user"}],
         add_generation_prompt=True,
         tokenize=False,
     )
-    feedback = self.tokenizer(feedback)["input_ids"]
-    token_ids.extend(feedback)
+
+    # Add feedback tokens to the conversation
+    feedback_tokens = self.tokenizer(feedback)["input_ids"]
+    token_ids.extend(feedback_tokens)
 ```
 
-## Modify the Configuration
+### Step 3: Register and Configure Your Agent
 
-You're now close to running the end-to-end RL loop. The final step is to register and import your implementation, then modify the experiment configuration.
+First, register your agent implementation:
 
 ```python
 # in realhf/impl/agent/math_multi_turn_agent.py
@@ -88,48 +380,58 @@ register_agent("math-multi-turn", MathMultiTurnAgent)
 import realhf.impl.agent.math_multi_turn_agent
 ```
 
-In `realhf/experiments/async_exp/async_math_ppo.py`:
+Then update your experiment configuration in
+`realhf/experiments/async_exp/async_math_ppo.py`:
 
-```diff
+```python
 @dataclasses.dataclass
 class AsyncPPOMATHConfig(AsyncRLExperimentConfig, PPOMATHConfig):
-+   # New CLI arguments are defined here
-+   my_param: float = 1.0
+    # Add any new CLI arguments your agent needs
+    my_param: float = 1.0
 
-    # in realhf/experiments/async_exp/async_ppo_math_exp.py
     @property
     def agent(self) -> AgentAbstraction:
         return AgentAbstraction(
--           "math-single-step",
-+           "math-multi-turn",  # Your registered name
+            "math-multi-turn",  # Your registered agent name
             args=dict(
--                ...
-+                # Any configurations for your __init__ method
-+                my_param=my_param,
+                # Pass any arguments needed for your __init__ method
+                my_param=self.my_param,
+                # ... other configuration ...
             ),
         )
 
     @property
     def env(self) -> EnvServiceAbstraction:
--        return EnvServiceAbstraction(
--            "math-code-single-step", args=dict(dataset_path=self.dataset.path)
--        )
-+        # Change to your customized environment if necessary
-+        return EnvServiceAbstraction(
-+            "my-env", args=dict(...)
-+        )
+        # Update to use your custom environment if needed
+        return EnvServiceAbstraction(
+            "math-code-single-step",
+            args=dict(dataset_path=self.dataset.path)
+        )
 ```
 
-## Run Training
+### Step 4: Run Training
 
-Please follow the guide in [quickstart](../tutorial/quickstart.md). Generally, start your experiments by running:
+Follow the standard training procedure outlined in the
+[quickstart guide](../tutorial/quickstart.md). Launch your experiment with:
 
 ```bash
-python3 training/main_async_ppo.py my_param=5.0  # and any additional CLI arguments
+python3 training/main_async_ppo.py my_param=5.0  # plus any additional CLI arguments
 ```
 
-The training reward of our trial is shown below:
+### Training Results
 
-![](multiturn_reward.png)
+Here's an example of the training reward curve from our multi-turn math agent:
+
+![Multi-turn Training Rewards](multiturn_reward.png)
+
+The agent successfully learns to solve math problems with improved accuracy over time,
+demonstrating the effectiveness of the multi-turn approach.
+
+______________________________________________________________________
+
+**Note**: While this legacy approach works, we strongly recommend using the AReaLite
+workflow system for new projects. It provides better flexibility, cleaner abstractions,
+and easier maintenance. Consider migrating existing legacy agents to the workflow-based
+approach when possible.
 
 Happy coding!
