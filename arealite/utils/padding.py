@@ -48,4 +48,5 @@ def concat_padded_tensors(
             tensors_to_concat.append(tensor)
 
         result[key] = torch.cat(tensors_to_concat, dim=0)
+
     return TensorDict(result, batch_size=new_batch_size)

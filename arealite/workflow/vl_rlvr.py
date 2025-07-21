@@ -31,6 +31,7 @@ class VL_RLVRWorkflow(RLVRWorkflow):
             padding=False,
             return_tensors="pt",
         )
+
         input_ids=processed_input["input_ids"].tolist()[0]
 
         n_samples = self.gconfig.n_samples
@@ -59,6 +60,7 @@ class VL_RLVRWorkflow(RLVRWorkflow):
                 completion_ids=resp.output_tokens,
                 **data,
             )
+            
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),

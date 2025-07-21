@@ -426,6 +426,7 @@ class RemoteSGLangEngine(InferenceEngine):
             ):
                 try:
                     data = next(self.data_generator)
+                    
                 except StopIteration:
                     self.data_generator = iter(dataloader)
                     data = next(self.data_generator)

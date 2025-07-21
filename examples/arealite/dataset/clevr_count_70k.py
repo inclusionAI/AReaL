@@ -137,7 +137,19 @@ def get_clevr_count_70k_rl_dataset(path, split,processor,  rank, world_size):
             image_token="<|vision_start|><|image_pad|><|vision_end|>"
         else:
             image_token = processor.image_token if processor is not None else "<image>"
+        system_prompt = {
+            "role": "system", 
+            "content": (
+                "Solve the following question step by step. Mark your thought process by using the word 'thinking' in your response. "
+                "First, analyze the image and identify the distinct items present in the image. "
+                "Then, count the number of items and provide the final answer in [ ] format, ensuring that only the number is inside the brackets "
+                "without any additional text or explanations. "
+                "Make sure to clearly state the number of items after your thought process."
+            )
+        }
+
         messages =[{"role": "user", "content": sample["problem"].replace("<image>", image_token)}] 
+        messages.insert(0, system_prompt)
         messages=processor.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
         return {"messages": messages, "images": processed_images}
 

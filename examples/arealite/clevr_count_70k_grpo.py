@@ -1,7 +1,7 @@
 import os
 import re
 import sys
-
+import wandb
 import torch
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -20,6 +20,12 @@ from realhf.base import stats_tracker
 from arealite.dataset.__init__ import get_custom_dataset
 
 
+def extract_answer(pred_str, data_name, use_last_number=True):
+    match = re.findall(r"\[([0-9\.]+)\]", pred_str)
+    if match:
+        return match[-1] 
+
+    return ""
 
 
 # Adapted from verl.
@@ -50,20 +56,34 @@ def extract_solution(solution_str, method="strict") -> str | None:
     return final_answer
 
 def clevr_count_70k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    from realhf.impl.dataset.math_parser import extract_answer
+    is_thinking = "thinking" in completions.lower()
 
     sol = extract_answer(completions, data_name="") # str number
-    ans = extract_solution(solution_str=answer, method="strict")
+    ans =answer
+
     if sol is None:
         return 0
     if ans is None:
         return 0
-    # print(f"sol: {sol}, ans: {ans}")
-    return int(sol.strip() == ans.strip())
+    
+    if sol.strip() == ans.strip():
+        print(f"completions: {completions}, answer: {answer}")
+        if is_thinking:
+            return 1 
+        else:
+            return 0.8
+
+    if re.match(r"^\[\d+(\.\d+)?\]$", sol.strip()):
+        return 0.05
+    
+    return 0
 
 
 def main_grpo():
-    # os.environ["WANDB_BASE_URL"]="https://slurm.alipay.com"
+    os.environ["WANDB_BASE_URL"]="http://8.150.1.98:8080"
+    os.environ["WANDB_API_KEY"]="local-19d0958e7ee05589016d2b4e0518bf9f2ee84db9"
+    wandb.init(project="clevr_70k")
+
     config, _ = load_expr_config(sys.argv[1:], GRPOConfig)
     config: GRPOConfig
 
@@ -130,8 +150,7 @@ def main_grpo():
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-    config.gconfig.max_new_tokens=50
-    config.gconfig.top_k=50
+
     workflow = VL_RLVRWorkflow(
         reward_fn=clevr_count_70k_reward_fn,
         gconfig=config.gconfig,
@@ -166,11 +185,12 @@ def main_grpo():
                     data = next(data_generator)
                 batch = rollout.rollout_batch(data, workflow=workflow)
 
-        batch = batch.to(actor.device)    
+        batch = batch.to(actor.device)
+        wandb.log({"reward": batch["rewards"].float().mean().item()})
         # Create barrier to synchronize all rollout processes.
         dist.barrier()
         torch.cuda.synchronize()
-
+        # breakpoint()
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
                 logp = actor.compute_logp(batch)
@@ -180,6 +200,7 @@ def main_grpo():
         if ref is not None:
             with stats_tracker.record_timing("ref_logp"):
                 batch["ref_logp"] = ref.compute_logp(batch)
+                
                 log_gpu_stats("ref logp")
 
         with stats_tracker.record_timing("compute_advantage"):
@@ -191,6 +212,8 @@ def main_grpo():
             stats_tracker.scope("grpo_actor"),
         ):
             stats = actor.ppo_update(batch)
+            wandb.log({"actor_reward": stats[0]['grpo_actor/final_reward/avg']})
+            
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
@@ -229,6 +252,7 @@ def main_grpo():
                         cnt += 1
                 batch = eval_rollout.wait(cnt, timeout=None)
                 rewards = batch["rewards"].float().to(actor.device)
+                wandb.log({"eval_reward": rewards.mean().item(), "epoch": epoch, "step": step, "global_step": global_step})
                 with stats_tracker.scope("grpo-eval"):
                     stats_tracker.denominator(
                         n_seqs=torch.ones(
@@ -255,7 +279,7 @@ def main_grpo():
     if ref is not None:
         ref.destroy()
     actor.destroy()
-
+    wandb.finish()
 
 if __name__ == "__main__":
     main_grpo()

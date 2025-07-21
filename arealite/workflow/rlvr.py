@@ -54,6 +54,7 @@ class RLVRWorkflow(RolloutWorkflow):
                 completion_ids=resp.output_tokens,
                 **data,
             )
+            
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),
