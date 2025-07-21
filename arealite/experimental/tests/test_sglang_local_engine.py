@@ -23,7 +23,7 @@ from arealite.api.cli_args import (
     SGLangConfig,
 )
 from arealite.api.io_struct import LLMRequest, LLMResponse
-from arealite.engine.sglang_engine import SGLangEngine
+from arealite.experimental.sglang_engine import SGLangEngine
 from arealite.workflow.rlvr import RLVRWorkflow
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import seeding
