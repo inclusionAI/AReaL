@@ -2,11 +2,9 @@ import os
 import subprocess
 import sys
 import time
-import uuid
 
 import pytest
 import requests
-import torch
 
 from arealite.api.cli_args import (
     InferenceEngineConfig,
@@ -18,7 +16,6 @@ from arealite.api.io_struct import FinetuneSpec, WeightUpdateMeta
 from arealite.engine.fsdp_engine import FSDPEngine
 from arealite.engine.sglang_remote import RemoteSGLangEngine
 from arealite.utils.network import find_free_ports
-from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import network
 
 EXPR_NAME = "test_fsdp_engine_nccl"
