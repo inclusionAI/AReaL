@@ -197,7 +197,7 @@ def main(args):
                     for item in data:
                         eval_rollout.submit(item, workflow)
                         cnt += 1
-                batch = eval_rollout.wait(cnt, timeout=None)
+                batch = eval_rollout.wait(cnt, timeout=None) 
                 rewards = batch["rewards"].float().to(actor.device)
                 with stats_tracker.scope("grpo-eval"):
                     stats_tracker.denominator(
