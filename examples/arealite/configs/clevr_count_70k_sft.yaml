@@ -36,6 +36,13 @@ train_dataset:
   num_workers: 4
   path: /storage/openpsi/data/clevr_count_70k/
 
+valid_dataset:
+  batch_size: 128
+  shuffle: true
+  pin_memory: true
+  num_workers: 4
+  path: /storage/openpsi/data/clevr_count_70k/
+
 # Utilities
 saver:
   experiment_name: ${experiment_name}

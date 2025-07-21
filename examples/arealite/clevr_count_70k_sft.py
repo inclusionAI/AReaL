@@ -30,6 +30,16 @@ def main_sft():
                     tokenizer=tokenizer,
                     processor=processor,
                     )
+    valid_dataset=get_custom_dataset(
+                    path=config.valid_dataset.path,
+                    rank=rank,
+                    world_size=world_size,
+                    split="test",
+                    training_type="sft",
+                    tokenizer=tokenizer,
+                    processor=processor,
+                    )
+                    
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         train_dataset,
@@ -38,6 +48,15 @@ def main_sft():
         num_workers=config.train_dataset.num_workers,
         collate_fn=pad_sequences_to_tensors,
         drop_last=config.train_dataset.drop_last,
+    )
+
+    valid_dataloader = StatefulDataLoader(
+        valid_dataset,
+        batch_size=config.valid_dataset.batch_size // world_size,
+        shuffle=config.valid_dataset.shuffle,
+        num_workers=config.valid_dataset.num_workers,
+        collate_fn=pad_sequences_to_tensors,
+        drop_last=config.valid_dataset.drop_last,
     )
 
     # Initialize engine
@@ -73,22 +92,31 @@ def main_sft():
             with stats_tracker.record_timing("save"):
                 saver.save(engine, epoch, step, global_step)
 
-            # with stats_tracker.record_timing("eval"), stats_tracker.scope("sft-eval"):
-            #     # No need to log anything. Logging will be handled outside
-            #     # via stats_tracker.export().
-            #     evaluator.evaluate(
-            #         valid_dataloader,
-            #         engine.evaluate_lm,
-            #         epoch,
-            #         step,
-            #         global_step,
-            #     )
+            with stats_tracker.record_timing("eval"):
+                # No need to log anything. Logging will be handled outside
+                # via stats_tracker.export().
+                def evaluate_fn():
+                    with stats_tracker.scope("sft-eval"):
+                        for data in valid_dataloader:
+                            engine.evaluate_lm(data)
 
-            logger.commit(epoch, step, global_step, stats_tracker.export())
+                evaluator.evaluate(
+                    evaluate_fn,
+                    epoch,
+                    step,
+                    global_step,
+                )
+
+            logger.commit(
+                epoch,
+                step,
+                global_step,
+                stats_tracker.export(reduce_group=engine.parallelism_group),
+            )
             global_step += 1
 
-    engine.destroy()
     logger.close()
+    engine.destroy()
 
 
 if __name__ == "__main__":
