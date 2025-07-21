@@ -67,7 +67,8 @@ class BaseHFEngine(TrainEngine):
 
     def create_process_group(self):
         if not dist.is_initialized():
-            # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
+            # NOTE: environment variables such as WORLD_SIZE, LOCAL_RANK
+            # will be always set either by the launcher or torchrun
             dist.init_process_group(
                 backend="nccl",
                 timeout=constants.NCCL_DEFAULT_TIMEOUT,

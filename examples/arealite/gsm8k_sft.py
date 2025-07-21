@@ -15,8 +15,8 @@ from realhf.base import stats_tracker
 from arealite.dataset.__init__ import get_custom_dataset
 
 
-def main_sft():
-    config, _ = load_expr_config(sys.argv[1:], SFTConfig)
+def main(args):
+    config, _ = load_expr_config(args, SFTConfig)
     config: SFTConfig
 
     rank = int(os.getenv("RANK"))
@@ -116,4 +116,4 @@ def main_sft():
 
 
 if __name__ == "__main__":
-    main_sft()
+    main(sys.argv[1:])
