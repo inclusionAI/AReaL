@@ -14,9 +14,11 @@ from tau2.utils.display import ConsoleDisplay
 from tau2.utils.utils import DATA_DIR
 
 
-def get_available_simulations():
+def get_available_simulations(sim_dir: Optional[Path] = None):
     """Get list of available simulation result files."""
-    sim_dir = Path(DATA_DIR) / "simulations"
+    if sim_dir is None:
+        sim_dir = Path(DATA_DIR) / "simulations"
+
     if not sim_dir.exists():
         return []
 
@@ -157,17 +159,18 @@ def main(
     sim_file: Optional[str] = None,
     only_show_failed: bool = False,
     only_show_all_failed: bool = False,
+    sim_dir: Optional[str] = None,
 ):
     # Get available simulation files
     if sim_file is None:
-        sim_files = get_available_simulations()
+        custom_sim_dir = Path(sim_dir) if sim_dir else None
+        sim_files = get_available_simulations(custom_sim_dir)
     else:
         sim_files = [Path(sim_file)]
 
     if not sim_files:
-        ConsoleDisplay.console.print(
-            "[red]No simulation files found in data/simulations/[/]"
-        )
+        dir_path = sim_dir if sim_dir else f"{DATA_DIR}/simulations"
+        ConsoleDisplay.console.print(f"[red]No simulation files found in {dir_path}[/]")
         return
 
     results = None

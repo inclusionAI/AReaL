@@ -5,6 +5,7 @@ from loguru import logger
 
 from experiments.eval.analyze_results import analyze_results
 from experiments.eval.run_eval import RunMode, make_configs, run_evals
+from tau2.scripts.view_simulations import main as view_simulations_main
 from tau2.utils.utils import DATA_DIR
 
 DATA_EXP_DIR = DATA_DIR / "exp"
@@ -139,6 +140,33 @@ def get_cli_parser() -> argparse.ArgumentParser:
         help="Path to the experiment directory containing results to analyze.",
     )
 
+    # View simulations subparser
+    view_parser = subparsers.add_parser(
+        "view", help="View simulation results interactively"
+    )
+    view_parser.add_argument(
+        "--dir",
+        type=str,
+        default=None,
+        help=f"Directory containing simulation files. Defaults to {DATA_DIR}/simulations if not specified.",
+    )
+    view_parser.add_argument(
+        "--file",
+        type=str,
+        default=None,
+        help="Specific simulation file to view (optional).",
+    )
+    view_parser.add_argument(
+        "--only-failed",
+        action="store_true",
+        help="Only show failed simulations.",
+    )
+    view_parser.add_argument(
+        "--only-all-failed",
+        action="store_true",
+        help="Only show tasks where all trials failed.",
+    )
+
     return parser
 
 
@@ -188,10 +216,20 @@ def main():
         run_evals(configs)
         logger.info(f"Experiment in {exp_dir} completed.")
         analyze_results(exp_dir)
+
     elif args.command == "analyze-results":
         # Convert relative path to absolute path using DATA_DIR
         exp_dir = DATA_EXP_DIR / args.exp_dir
         analyze_results(exp_dir)
+
+    elif args.command == "view":
+        # Run the view simulations interactive tool
+        view_simulations_main(
+            sim_file=args.file,
+            only_show_failed=args.only_failed,
+            only_show_all_failed=args.only_all_failed,
+            sim_dir=args.dir,
+        )
 
     else:
         parser.print_help()

@@ -163,6 +163,11 @@ def main():
     # View command
     view_parser = subparsers.add_parser("view", help="View simulation results")
     view_parser.add_argument(
+        "--dir",
+        type=str,
+        help="Directory containing simulation files. Defaults to data/simulations if not specified.",
+    )
+    view_parser.add_argument(
         "--file",
         type=str,
         help="Path to the simulation results file to view",
@@ -213,6 +218,7 @@ def run_view_simulations(args):
         sim_file=args.file,
         only_show_failed=args.only_show_failed,
         only_show_all_failed=args.only_show_all_failed,
+        sim_dir=args.dir,
     )
 
 
