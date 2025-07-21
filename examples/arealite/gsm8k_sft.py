@@ -1,6 +1,8 @@
 import os
 import sys
 
+from datasets import Dataset, load_dataset
+from datasets.distributed import split_dataset_by_node
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import SFTConfig, load_expr_config
@@ -12,35 +14,38 @@ from arealite.utils.saver import Saver
 from arealite.utils.stats_logger import StatsLogger
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import stats_tracker
-from arealite.dataset.__init__ import get_custom_dataset
 
 
-def main(args):
-    config, _ = load_expr_config(args, SFTConfig)
+def process_gsm8k_sft_dataset(dataset: Dataset, tokenizer):
+    def process(sample):
+        seq_token = tokenizer.encode(
+            sample["question"] + sample["answer"] + tokenizer.eos_token
+        )
+        prompt_token = tokenizer.encode(sample["question"])
+        loss_mask = [0] * len(prompt_token) + [1] * (len(seq_token) - len(prompt_token))
+        return {"input_ids": seq_token, "loss_mask": loss_mask}
+
+    dataset = dataset.map(process).remove_columns(["question", "answer"])
+    return dataset
+
+
+def get_gsm8k_dataset(split, tokenizer, rank, world_size):
+    dataset = load_dataset(path="openai/gsm8k", name="main", split=split)
+    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+    return process_gsm8k_sft_dataset(dataset, tokenizer)
+
+
+def main_sft():
+    config, _ = load_expr_config(sys.argv[1:], SFTConfig)
     config: SFTConfig
 
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
-    train_dataset=get_custom_dataset(
-                    path=config.train_dataset.path,
-                    rank=rank,
-                    world_size=world_size,
-                    split="train",
-                    training_type="sft",
-                    tokenizer=tokenizer,
-                    )
-    valid_dataset=get_custom_dataset(
-                    path=config.valid_dataset.path,
-                    rank=rank,
-                    world_size=world_size,
-                    split="test",
-                    training_type="sft",
-                    tokenizer=tokenizer,
-                    )
+
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
-        train_dataset,
+        get_gsm8k_dataset("train", tokenizer, rank, world_size),
         batch_size=config.train_dataset.batch_size // world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
@@ -48,7 +53,7 @@ def main(args):
         drop_last=config.train_dataset.drop_last,
     )
     valid_dataloader = StatefulDataLoader(
-        valid_dataset,
+        get_gsm8k_dataset("test", tokenizer, rank, world_size),
         batch_size=config.valid_dataset.batch_size // world_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
@@ -116,4 +121,4 @@ def main(args):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main_sft()

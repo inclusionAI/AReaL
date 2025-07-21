@@ -4,6 +4,8 @@ import sys
 
 import torch
 import torch.distributed as dist
+from datasets import Dataset, load_dataset
+from datasets.distributed import split_dataset_by_node
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import GRPOConfig, load_expr_config
@@ -17,9 +19,21 @@ from arealite.utils.stats_logger import StatsLogger
 from arealite.workflow.rlvr import RLVRWorkflow
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import stats_tracker
-from arealite.dataset.__init__ import get_custom_dataset
 
 
+def process_gsm8k_rl_dataset(dataset: Dataset):
+    def process(sample):
+        messages = [{"role": "user", "content": sample["question"]}]
+        return {"messages": messages}
+
+    dataset = dataset.map(process).remove_columns(["question"])
+    return dataset
+
+
+def get_gsm8k_dataset(split, rank, world_size):
+    dataset = load_dataset(path="openai/gsm8k", name="main", split=split)
+    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+    return process_gsm8k_rl_dataset(dataset)
 
 
 # Adapted from verl.
@@ -49,6 +63,7 @@ def extract_solution(solution_str, method="strict") -> str | None:
                     break
     return final_answer
 
+
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
     from realhf.impl.dataset.math_parser import extract_answer
 
@@ -61,30 +76,17 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
     return int(sol.strip() == ans.strip())
 
 
-def main(args):
-    config, _ = load_expr_config(args, GRPOConfig)
+def main_grpo():
+    config, _ = load_expr_config(sys.argv[1:], GRPOConfig)
     config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
-    train_dataset=get_custom_dataset(
-                    path=config.train_dataset.path,
-                    rank=rank,
-                    world_size=world_size,
-                    split="train",
-                    training_type="rl",
-                    )
-    valid_dataset=get_custom_dataset(
-                    path=config.valid_dataset.path,
-                    rank=rank,
-                    world_size=world_size,
-                    split="test",
-                    training_type="rl",
-                    )
+
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
-        train_dataset,
+        get_gsm8k_dataset("train", rank, world_size),
         batch_size=config.train_dataset.batch_size // world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
@@ -92,7 +94,7 @@ def main(args):
         drop_last=config.train_dataset.drop_last,
     )
     valid_dataloader = StatefulDataLoader(
-        valid_dataset,
+        get_gsm8k_dataset("test", rank, world_size),
         batch_size=config.valid_dataset.batch_size // world_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
@@ -251,4 +253,4 @@ def main(args):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main_grpo()
