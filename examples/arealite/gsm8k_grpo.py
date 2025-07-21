@@ -44,8 +44,8 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
     return int(process_results(completions, answer)[0])
 
 
-def main_grpo():
-    config, _ = load_expr_config(sys.argv[1:], GRPOConfig)
+def main(args):
+    config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
@@ -228,4 +228,4 @@ def main_grpo():
 
 
 if __name__ == "__main__":
-    main_grpo()
+    main(sys.argv[1:])
