@@ -56,96 +56,6 @@ class VLMRequest(LLMRequest):
 class VLMResponse(LLMResponse):
     input_images: List[ImageObject|str] = field(default_factory=list)
 
-
-@dataclass
-class AgentInferInput:
-    obs: ObsType
-    llm_client: Any
-    gconfig: GenerationHyperparameters
-
-
-@dataclass
-class AgentInferOutput:
-    action: ActType
-    llm_req: LLMRequest|VLMRequest
-    llm_resp: LLMResponse|VLMResponse
-
-
-@dataclass
-class TrajStats:
-    start_time: float = 0.0
-    total_reward: float = 0.0
-    episode_length: int = 0
-    info: Dict = field(default_factory=dict)
-
-
-@dataclass
-class Trajectory:
-    prompt: Dict[str, Any]
-    data: Dict[str, torch.Tensor]
-    stats: TrajStats
-    images: Optional[List[ImageObject|str]] =None
-
-    def to_json_compatible(self):
-        if self.images is not None:
-            return {
-                "prompt": self.prompt,
-                "image": [img if isinstance(img, str) else img.tobytes() for img in self.images],
-                "data": {k: v.cpu().numpy().tolist() for k, v in self.data.items()},
-                "stats": {
-                    "start_time": self.stats.start_time,
-                    "total_reward": self.stats.total_reward,
-                    "episode_length": self.stats.episode_length,
-                    "info": self.stats.info,
-                },
-            }
-        else:
-            return {
-                "prompt": self.prompt,
-                "data": {k: v.cpu().numpy().tolist() for k, v in self.data.items()},
-                "stats": {
-                    "start_time": self.stats.start_time,
-                    "total_reward": self.stats.total_reward,
-                    "episode_length": self.stats.episode_length,
-                    "info": self.stats.info,
-                },
-            }
-
-    @classmethod
-    def from_json_compatible(cls, data: Dict[str, Any]) -> "Trajectory":
-        if "images" in data:
-            return cls(
-                prompt=data["prompt"],
-                images=[img for img in data["images"]],
-                data={k: torch.tensor(v) for k, v in data["data"].items()},
-                stats=TrajStats(
-                    start_time=data["stats"]["start_time"],
-                    total_reward=data["stats"]["total_reward"],
-                    episode_length=data["stats"]["episode_length"],
-                    info=data["stats"]["info"],
-                ),
-            )
-        else:
-            return cls(
-                prompt=data["prompt"],
-                data={k: torch.tensor(v) for k, v in data["data"].items()},
-                stats=TrajStats(
-                    start_time=data["stats"]["start_time"],
-                    total_reward=data["stats"]["total_reward"],
-                    episode_length=data["stats"]["episode_length"],
-                    info=data["stats"]["info"],
-                ),
-            )
-
-    @property
-    def input_len(self) -> int:
-        return len(self.input_tokens)
-
-    @property
-    def output_len(self) -> int:
-        return len(self.output_tokens)
-
-
 @dataclass
 class FinetuneSpec:
     total_train_epochs: int
@@ -170,7 +80,6 @@ class AllocationType(enum.Enum):
 @dataclass
 class AllocationMode:
     type_: AllocationType
-    parallel_strat: Dict[str, Dict[str, int]]
     parallel_strat: Dict[str, Dict[str, int]]
 
     @property
