@@ -172,6 +172,7 @@ class AllocationType(enum.Enum):
 class AllocationMode:
     type_: AllocationType
     parallel_strat: Dict[str, Dict[str, int]]
+    parallel_strat: Dict[str, Dict[str, int]]
 
     @property
     def gen_tp_size(self) -> int:
@@ -216,6 +217,7 @@ class AllocationMode:
 
     @staticmethod
     def extract_parallelism_strategy(allocation_mode: str) -> Dict:
+    def extract_parallelism_strategy(allocation_mode: str) -> Dict:
         for x, y, z in itertools.permutations(["d", "t", "p"]):
             pattern = rf"{x}(\d+){y}(\d+){z}(\d+)"
             m = re.match(pattern, allocation_mode)
@@ -233,8 +235,12 @@ class AllocationMode:
         raise ValueError(
             f"Unknown how to resolve parallelism strategy: {allocation_mode}"
         )
+        raise ValueError(
+            f"Unknown how to resolve parallelism strategy: {allocation_mode}"
+        )
 
     @staticmethod
+    def extract_decoupled_alloc(allocation_mode: str) -> Dict:
     def extract_decoupled_alloc(allocation_mode: str) -> Dict:
         pattern = re.compile(
             r"(?:(?:vllm|sglang)\.(.+?)\+(.+))|(?:(.+?)\+(?:vllm|sglang)\.(.+))"
@@ -244,12 +250,17 @@ class AllocationMode:
             raise ValueError(
                 f"Unknown how to resolve decoupled allocation: {allocation_mode}"
             )
+            raise ValueError(
+                f"Unknown how to resolve decoupled allocation: {allocation_mode}"
+            )
         if m.group(1):
             gen_alloc = m.group(1)
             other_alloc = m.group(2)
         else:
             gen_alloc = m.group(4)
             other_alloc = m.group(3)
+        gen_alloc = AllocationMode.extract_parallelism_strategy(gen_alloc)
+        other_alloc = AllocationMode.extract_parallelism_strategy(other_alloc)
         gen_alloc = AllocationMode.extract_parallelism_strategy(gen_alloc)
         other_alloc = AllocationMode.extract_parallelism_strategy(other_alloc)
         other_alloc.update({"gen": gen_alloc["*"]})

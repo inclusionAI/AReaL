@@ -11,9 +11,7 @@ def get_custom_dataset(
     tokenizer: Optional[transformers.PreTrainedTokenizerFast] = None,
     processor: Optional[transformers.AutoProcessor] = None,
     ):
-    '''
-    
-    '''
+
     
     if "gsm8k" in path and training_type == "sft":
         from examples.arealite.dataset.gsm8k import get_gsm8k_sft_dataset
