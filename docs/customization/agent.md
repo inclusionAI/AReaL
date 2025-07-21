@@ -1,9 +1,8 @@
 # Rollout and Agentic RL
 
-This guide shows you how to create custom rollout behaviors for PPO training by building
-a multi-turn math agent using end-to-end reinforcement learning. We'll walk through
-creating an agent that keeps trying to solve math problems until it finds the correct
-answer.
+This guide shows you how to create custom rollout behaviors for RL training by building
+a multi-turn math agent, which keeps trying to solve math problems until it finds the
+correct answer.
 
 ## Option 1: Using AReaLite (Recommended)
 

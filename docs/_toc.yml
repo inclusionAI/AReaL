@@ -16,9 +16,9 @@ parts:
     - file: references/reproduce
   - caption: Customization
     chapters:
-    - file: customization/dataset
     - file: customization/agent
     - file: customization/algorithm
+    - file: customization/dataset
   - caption: Code Walkthrough
     chapters:
     - file: developer/overview

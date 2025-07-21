@@ -1,4 +1,7 @@
-# Training Algorithm Implementation
+# Training Algorithm
+
+> **Note**: We recommend the user to first read the
+> [agent customization guide](agent.md).
 
 ## Option 1: Using AReaLite (Recommended)
 

@@ -24,19 +24,13 @@ def main(args):
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         get_gsm8k_dataset("train", tokenizer, rank, world_size),
-        batch_size=config.train_dataset.batch_size // world_size,
-        shuffle=config.train_dataset.shuffle,
-        num_workers=config.train_dataset.num_workers,
         collate_fn=pad_sequences_to_tensors,
-        drop_last=config.train_dataset.drop_last,
     )
     ...
     # Run training loop
     for epoch in range(total_epochs):
         for step, data in enumerate(train_dataloader):
             stats = engine.train_lm(data)
-            engine.step_lr_scheduler()
-            stats_tracker.scalar(**stats)
 ```
 
 In this case, the `train_lm` method requires the keys "input_ids", "attention_mask", and
@@ -76,23 +70,13 @@ def main(args):
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         get_gsm8k_dataset("train", rank, world_size),
-        batch_size=config.train_dataset.batch_size // world_size,
-        shuffle=config.train_dataset.shuffle,
-        num_workers=config.train_dataset.num_workers,
         collate_fn=lambda x: x,
-        drop_last=config.train_dataset.drop_last,
     )
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(None, ft_spec)
     workflow = RLVRWorkflow(
         reward_fn=gsm8k_reward_fn,
-        gconfig=config.gconfig,
-        tokenizer=tokenizer,
-        enable_thinking=False,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
+        ...
     )
     # Run training loop
     ...
@@ -102,7 +86,7 @@ def main(args):
 ```
 
 Note that the `collate_fn` here is an identity function, meaning it simply returns the
-list of individual data items as a batch. In the `InferenceEngine`, the data is then
+list of individual data items as a batch. In `rollout_batch`, the data is then
 dispatched to multiple concurrent executions of `workflow.arun_episode`, where each
 dispatched data corresponds to a single episode.
 
@@ -121,13 +105,10 @@ class RLVRWorkflow(RolloutWorkflow):
             add_generation_prompt=True,
             enable_thinking=self.enable_thinking,
         )
-        n_samples = self.gconfig.n_samples
         req = LLMRequest(
-            rid=uuid.uuid4().hex,
             input_ids=input_ids,
-            gconfig=self.gconfig.new(n_samples=1),
+            ...
         )
-        resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
         ...
         reward = self.reward_fn(
             prompt=prompt_str,
