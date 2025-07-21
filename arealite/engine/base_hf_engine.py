@@ -70,14 +70,9 @@ class BaseHFEngine(TrainEngine):
         os.environ["NCCL_CUMEM_ENABLE"] = "0"
         os.environ["NCCL_NVLS_ENABLE"] = "0"
         if not dist.is_initialized():
-<<<<<<< HEAD
-            # NOTE: environment variables such as WORLD_SIZE, LOCAL_RANK
-            # will be always set either by the launcher or torchrun
-=======
             # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
             # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
             # otherwise initializing the NCCL weight update group will be wrong!
->>>>>>> origin/lite
             dist.init_process_group(
                 backend="nccl",
                 timeout=constants.NCCL_DEFAULT_TIMEOUT,
