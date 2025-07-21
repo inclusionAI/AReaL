@@ -81,17 +81,8 @@ def wait_sglang_server_addrs(
 
 
 def validate_config_for_distributed_launcher(config):
-    n_nodes = config.n_nodes
-    n_gpus_per_node = config.n_gpus_per_node
-    if n_gpus_per_node < config.cluster.n_gpus_per_node:
-        raise ValueError(
-            f"Ray/Slurm Launcher requires at least {config.cluster.n_gpus_per_node} (#GPUs per node) GPU. For usecases of less GPUs, use LocalLauncher instead."
-        )
-    elif n_gpus_per_node > config.cluster.n_gpus_per_node:
-        raise ValueError(
-            f"#GPU per node required by experiment ({n_gpus_per_node}) is larger than #GPU per node in the cluster  ({config.cluster.n_gpus_per_node})."
-        )
-
+    n_nodes = config.cluster.n_nodes
+    n_gpus_per_node = config.cluster.n_gpus_per_node
     allocation_mode = config.allocation_mode
     allocation_mode = AllocationMode.from_str(allocation_mode)
     assert (

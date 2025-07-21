@@ -263,6 +263,7 @@ class BaseHFEngine(TrainEngine):
 
             # Scale loss for accumulation
             # Revert gradient averaging across dp ranks
+            # FIXME: should be DP size
             loss_scale *= self.world_size
 
             loss *= loss_scale
@@ -283,8 +284,6 @@ class BaseHFEngine(TrainEngine):
             update_successful = True
 
         current_lr = self.lr_scheduler.get_last_lr()[0]
-        # Optimizer step
-        self.optimizer.step()
         return dict(
             update_successful=float(update_successful),
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),

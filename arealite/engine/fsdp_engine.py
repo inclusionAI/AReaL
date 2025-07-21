@@ -188,6 +188,7 @@ class FSDPEngine(BaseHFEngine):
         for i, (pad_length, padded_mb_input, mb_input) in enumerate(
             zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
         ):
+            self.model.set_requires_gradient_sync(i == len(mb_list.mbs) - 1)
             outputs = self.model(**padded_mb_input)
 
             logits = outputs.logits.squeeze(0)
@@ -214,8 +215,6 @@ class FSDPEngine(BaseHFEngine):
             update_successful = True
 
         current_lr = self.lr_scheduler.get_last_lr()[0]
-        # Optimizer step
-        self.optimizer.step()
         return dict(
             update_successful=float(update_successful),
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),

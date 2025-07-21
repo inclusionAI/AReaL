@@ -399,9 +399,15 @@ def pad_packed_tensor_dict(
             padded_data[key] = new_max_seqlen
         elif torch.is_tensor(value) and value.numel() == total_length:
             # Pad the tensor to the new total length
-            padded_tensor = torch.nn.functional.pad(
-                value, (0, pad_length), value=pad_value
-            )
+            if key == "position_ids":
+                # transformers will compute flash-attn arguments (e.g., cu_seqlens_q)
+                # according to this position ids.
+                pad = torch.arange(pad_length, dtype=torch.long, device=value.device)
+                padded_tensor = torch.cat([value, pad])
+            else:
+                padded_tensor = torch.nn.functional.pad(
+                    value, (0, pad_length), value=pad_value
+                )
             padded_data[key] = padded_tensor
         else:
             padded_data[key] = value
