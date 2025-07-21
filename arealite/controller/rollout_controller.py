@@ -6,6 +6,7 @@ from arealite.api.io_struct import WeightUpdateMeta, AllocationMode
 
 from arealite.api.cli_args import RolloutControllerConfig
 from arealite.api.workflow_api import RolloutWorkflow
+from arealite.utils.data import concat_padded_tensors
 from arealite.api.controller_api import RolloutController
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec
@@ -111,6 +112,7 @@ class DistributedRolloutController(RolloutController):
         engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         engineSpec.env_vars["WORKER_TYPE"] = "inference-engine"
+        engineSpec.env_vars["FUNCTIONCALL_SERVICE_DOMAIN"] = "http://110.75.237.19:8080"
 
         mainServerSpec = ContainerSpec(
             cpu=0,
@@ -276,8 +278,16 @@ class DistributedRolloutController(RolloutController):
         #         for f in futures:
         #             f.cancel()
         #         raise  # 重新抛出异常，主程序能感知
+        print(f"type(results): {type(results)}, results: {results}")
+        group_size = 1
+        if len(results) > 0:
+            group_size = int(results[0]["input_ids"].shape[0])
+        bs = group_size * len(results)
 
-        return stack(results, dim=0)
+        padded = concat_padded_tensors(results)
+        if isinstance(padded, dict):
+            padded = TensorDict(padded, batch_size=[bs])
+        return padded
 
     def split_list(self, lst, n):
         if n <= 0:

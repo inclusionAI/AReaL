@@ -1,4 +1,5 @@
 import sys
+import logging
 import torch
 from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -31,6 +32,10 @@ def clear_dir(path):
                 shutil.rmtree(file_path)
 
 def main_grpo():
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
+        handlers=[logging.StreamHandler()]
+    )
     # init controller
     scheduler = AsystemScheduler({
         "endpoint": "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081",
@@ -107,7 +112,7 @@ def main_grpo():
 
             # synchronous rollout
             gconfig = GenerationHyperparameters(
-                max_new_tokens=15360, greedy=False, n_samples=16
+                max_new_tokens=4096, greedy=False, n_samples=16
             )
             MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf"
             tokenizer = load_hf_tokenizer(MODEL_PATH)
@@ -131,6 +136,7 @@ def main_grpo():
             torch.set_printoptions(threshold=float('inf'))
             print(f"[Trainer] after rollout rewards: {rollout_res_dict["rewards"]}")
             dis_batch = DistributedBatchMemory(rollout_res_dict)
+            print(f"[Trainer] debug1")
             stats = actor.train_distributed_batch(dis_batch)
             print(f"[Trainer] train exec success, step: {step}, epoch: {epoch}, stats: {stats}")
 

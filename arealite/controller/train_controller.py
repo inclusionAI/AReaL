@@ -21,6 +21,7 @@ from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec
 from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronInitConfig
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 import logging
+logger = logging.getLogger("DistributedTrainController")
 
 
 class DistributedTrainController(TrainController):
@@ -162,22 +163,34 @@ class DistributedTrainController(TrainController):
         self, input_: DistributedBatchMemory
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function."""
+        logger.info(f"start to train_distributed_batch")
+        print(f"start to train_distributed_batch")
         batches = input_.split(self.allocate_mode.train_dp_size)
 
         assert len(self.workers) % self.dp_world_size == 0
-
+        logger.info(f"controller debug111")
+        print("start to train_distributed_batch111")
+        print(f"batches: {len(batches)}, workers: {len(self.workers)}")
         futures = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             for index, worker in enumerate(self.workers):
+                logger.info(f"controller debug111: {index}")
+                t1 = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                print(f"start to train_distributed_batch111: {index}, {t1}")
                 batch_index = index // self.dp_world_size
-                # batch_data = batches[batch_index]
-                batch_data = batches[0]
+                t2 = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                print(f"controller debug222: {index}, {t2}", flush=True)
+                batch_data = batches[batch_index]
+                t3 = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                print(f"controller debug333: {index}, {t3}", flush=True)
                 futures.append(executor.submit(
                     self.scheduler.call_engine,
                     worker.id,
                     "train_distributed_batch",
                     batch_data
                 ))
+                t4 = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                print(f"controller debug444: {index}, {t4}", flush=True)
 
             results = []
             try:

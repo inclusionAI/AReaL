@@ -1,3 +1,4 @@
+import gzip
 import os
 import requests
 import pickle
@@ -21,7 +22,8 @@ class RPCClient:
         url = f"http://{ip}:{port}/create_engine"
         print(f"[RPCClient] Sent create_engine to {worker_id} ({ip}:{port})")
         payload = (engine_obj, init_config)
-        serialized_obj = cloudpickle.dumps(payload)
+        serialized_data = cloudpickle.dumps(payload)
+        serialized_obj = gzip.compress(serialized_data)
         resp = requests.post(url, data=serialized_obj)
         print(
             f"[RPCClient] Sent create_engine to {worker_id} ({ip}:{port}), status={resp.status_code}"
@@ -33,7 +35,8 @@ class RPCClient:
         url = f"http://{ip}:{port}/call"
         # 支持变长参数
         req = (method, args, kwargs)
-        serialized_req = cloudpickle.dumps(req)
+        serialized_data = cloudpickle.dumps(req)
+        serialized_req = gzip.compress(serialized_data)
 
         resp = requests.post(url, data=serialized_req, timeout=7200)
         logging.error(
@@ -43,3 +46,4 @@ class RPCClient:
             return cloudpickle.loads(resp.content)
         else:
             raise RuntimeError(f"RPC call failed: {resp.content}")
+

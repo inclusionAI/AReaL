@@ -1,4 +1,5 @@
 import argparse
+import gzip
 import os
 import pickle
 import threading
@@ -16,7 +17,8 @@ class EngineRPCServer(BaseHTTPRequestHandler):
             length = int(self.headers["Content-Length"])
             data = self.rfile.read(length)
             if self.path == "/create_engine":
-                engine_obj, init_args = cloudpickle.loads(data)
+                decompressed_data = gzip.decompress(data)
+                engine_obj, init_args = cloudpickle.loads(decompressed_data)
                 EngineRPCServer.engine = engine_obj
                 EngineRPCServer.engine.initialize(init_args)
                 print("Engine created and initialized on RPC server.")
@@ -30,7 +32,8 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                     self.wfile.write(b"Engine not initialized")
                     logging.error("Call received but engine not initialized.")
                     return
-                action, args, kwargs = cloudpickle.loads(data)
+                decompressed_data = gzip.decompress(data)
+                action, args, kwargs = cloudpickle.loads(decompressed_data)
                 method = getattr(EngineRPCServer.engine, action)
                 logging.info(
                     f"RPC server calling engine method: {action} - {args} - {kwargs}"
@@ -89,3 +92,4 @@ if __name__ == "__main__":
 
     start_rpc_server(port)
     print(f"RPC server running on port {port}")
+

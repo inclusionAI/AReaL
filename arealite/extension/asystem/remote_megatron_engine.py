@@ -226,6 +226,7 @@ class RemoteMegatronEngine(TrainEngine):
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor] = lambda x, y: x.sum(),
         loss_weight_fn: Callable[[Dict], float] = lambda x: 1.0,
     ) -> Dict[str, float]:
+        logger.info(f"debug 2")
         # 0.接受rollout和reward之后的数据
         # - input_ids, prompt_mask, logprobs, versions, seqlen, rewards, task_ids, seq_no_eos_mask
         if not input_.dataset or len(input_.dataset) == 0:
@@ -239,7 +240,7 @@ class RemoteMegatronEngine(TrainEngine):
         for attr in attrs:
             batch_data[attr] = input_[attr]
         torch.set_printoptions(threshold=float('inf'))
-        print(f"[RemoteMegatronEngine] train_distributed_batch rewards: {batch_data["rewards"]}")
+        logger.info(f"[RemoteMegatronEngine] train_distributed_batch rewards: {batch_data["rewards"]}")
         # 2. input_的数据转换：prompt_mask, packed_input_ids, seqlens.packed_input_ids, rewards, task_ids, seq_no_eos_mask, packed_logprobs
         # input_ids => packed_input_ids
         # seqlens => seqlens.packed_input_ids
@@ -264,6 +265,7 @@ class RemoteMegatronEngine(TrainEngine):
                  "packed_input_ids": train_datas["packed_input_ids"],
                  "kl_rewards": train_datas["kl_rewards"],
                  "seqlen": batch_data["seqlen"]}
+        logger.info(f"debug3 : {batch}")
         train_stats = self.train_batch(batch, loss_fn, loss_weight_fn)
         logger.info(f"[RemoteMegatronEngine] Train batch exec success, global_step: {self.global_step}.")
 
@@ -291,6 +293,7 @@ class RemoteMegatronEngine(TrainEngine):
     ) -> Dict[str, float]:
         # 输入： advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards
         # Dict[str, tensor] to SequenceSample
+        logger.info("debug begin train batch")
         batch_size = int(input_["seqlen"].shape[0])
         flat_input = SequenceSample.from_default(
             ids=list(range(batch_size)),

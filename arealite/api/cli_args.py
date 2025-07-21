@@ -298,7 +298,7 @@ class InferenceEngineConfig:
         metadata={"help": "Input/Output queue size for async rollout."},
     )
     consumer_batch_size: int = field(
-        default=1,
+        default=512,
         metadata={"help": "Batch size for consuming rollouts from the queue."},
     )
     max_head_offpolicyness: int = field(
@@ -657,7 +657,7 @@ class RemoteMegatronEngineConfig(TrainEngineConfig):
         metadata={"help": "Number of answers retained per prompt (best-of-n)."},
     )
     train_bs_n_seqs: int = field(
-        default=256, metadata={"help": "Training batch size in number of sequences"}
+        default=32, metadata={"help": "Training batch size in number of sequences"}
     )
     n_mbs: int = field(
         default=1,
@@ -666,7 +666,7 @@ class RemoteMegatronEngineConfig(TrainEngineConfig):
         },
     )
     max_tokens_per_mb: int = field(
-        default=int(1e12),
+        default=int(16384),
         metadata={
             "help": "Maximum tokens per micro-batch. When set, n_mbs becomes the minimum number of micro-batches",
         },

@@ -154,13 +154,6 @@ class RemoteSGLangEngine(InferenceEngine):
 
         try:
             while not self.exiting.is_set():
-                # Load next data from controller
-                if data is None:
-                    try:
-                        data, workflow = self.input_queue.get_nowait()
-                        logger.info(f"[RemoteSGLangEngine] Get data from puller")
-                    except Empty:
-                        logger.debug(f"[RemoteSGLangEngine] No data from puller stream.")
                 # Check capacity
                 capacity = self.get_capacity()
                 # Create new rollout task
@@ -261,6 +254,7 @@ class RemoteSGLangEngine(InferenceEngine):
             "stop_token_ids": stop_token_ids,
         }
 
+        print(f"gconfig.max_new_tokens: {gconfig.max_new_tokens}", flush=True)
         # NOTE: rid should NOT be passed in payload
         payload = {
             "input_ids": req.input_ids.copy(),
@@ -356,8 +350,11 @@ class RemoteSGLangEngine(InferenceEngine):
         ofp = self.config.max_head_offpolicyness
         with self.lock:
             sample_cnt = self.rollout_stat.accepted + self.rollout_stat.running
+
         consumer_bs = max(1, self.config.consumer_batch_size // world_size)
         capacity = min(capacity, (ofp + version + 1) * consumer_bs - sample_cnt)
+        logger.info(f"max_concurrent_rollouts: {max_concurrent_rollouts}, version: {version}, ofp: {ofp}, self.config.consumer_batch_size: {self.config.consumer_batch_size}, sample_cnt: {sample_cnt}")
+
         return capacity
 
     def update_weights(self, meta):
@@ -470,7 +467,7 @@ class RemoteSGLangEngine(InferenceEngine):
         padded = concat_padded_tensors(results)
         if isinstance(padded, dict):
             padded = TensorDict(padded, batch_size=[bs])
-        print(f"[RemoteSGLangEngine] wait, padded type: {type(padded)}")
+        print(f"[RemoteSGLangEngine] wait, padded type: {type(padded)}, padded: {padded}")
         return padded
 
     def rollout(  # only dp head accept this request

@@ -51,19 +51,17 @@ class RLVRWorkflow(RolloutWorkflow):
             prompt_mask = [1] * resp.input_len + [0] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
             seq_no_eos_mask = resp.stop_reason == "stop"
+            print(f"fenghui debug: resp.input_tokens: {len(resp.input_tokens)}, resp.output_tokens: {len(resp.output_tokens)}", flush=True)
 
             if "prompt" in data.keys():
                 del data["prompt"]
-            # reward = self.reward_fn(
-            #     prompt=text,
-            #     completion=resp.completions,
-            #     prompt_ids=resp.input_tokens,
-            #     completion_ids=resp.output_tokens,
-            #     **data,
-            # )
-
-            reward = 1
-
+            reward = self.reward_fn(
+                prompt=text,
+                completion="",
+                prompt_ids=resp.input_tokens,
+                completion_ids=resp.output_tokens,
+                **data,
+            )
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
