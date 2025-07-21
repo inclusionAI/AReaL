@@ -1,11 +1,15 @@
 experiment_name: clevr_count_70k-sft
 trial_name: trial0
-n_nodes: 1
-n_gpus_per_node: 8
+
 cluster:
+  n_nodes: 1
+  n_gpus_per_node: 8
+  cluster_name: na132
+  fileroot: /storage/openpsi/experiments
   name_resolve:
     type: nfs
-    nfs_record_root: /tmp/areal/name_resolve
+    nfs_record_root: /storage/openpsi/experiments/name_resolve/clevr_count_70k-sft
+    etcd3_addr: etcd-client.openpsi-etcd.svc.sigma-na130-lingbo.na130.wl-robby.local:2379
 seed: 1
 total_train_epochs: 1
 tokenizer_path: ${model.path}

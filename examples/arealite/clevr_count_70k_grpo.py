@@ -79,12 +79,12 @@ def clevr_count_70k_reward_fn(prompt, completions, prompt_ids, completion_ids, a
     return 0
 
 
-def main_grpo():
-    os.environ["WANDB_BASE_URL"]="http://8.150.1.98:8080"
+def main(args):
+    os.environ["WANDB_BASE_URL"]=""
     os.environ["WANDB_API_KEY"]=""
     wandb.init(project="clevr_70k")
 
-    config, _ = load_expr_config(sys.argv[1:], GRPOConfig)
+    config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
@@ -282,4 +282,5 @@ def main_grpo():
     wandb.finish()
 
 if __name__ == "__main__":
-    main_grpo()
+    main(sys.argv[1:])
+
