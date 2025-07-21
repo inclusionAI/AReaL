@@ -87,11 +87,8 @@ class ToolKitBase(metaclass=ToolKitType):
         Use this tool to record a thought.
         This will not generate any interaction with the environment, but just append the thought to the conversation log.
         It is useful when you need to think about something before performing an action.
-
         IMPORTANT: Always use this tool call to record thoughts. This is the only proper way to record thinking.
-
-        Example:
-        think(thought="I need to check the user's account balance before processing the refund")
+        Example: think(thought="I need to check the user's account balance before processing the refund")
 
         Args:
             thought: A thought to think about.
