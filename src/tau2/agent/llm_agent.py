@@ -24,7 +24,7 @@ from tau2.utils.llm_utils import generate
 
 AGENT_INSTRUCTION = """
 You are a customer service agent that helps the user according to the <policy> provided below.
-In each turn you can either:
+During each turn you can either:
 - Send a message to the user.
 - Make a tool call.
 IMPORTANT: You cannot do both at the same time!!
@@ -134,10 +134,12 @@ You must behave according to the <policy> provided below.
 To make following the policy easier, we give you the list of resolution steps you are expected to take.
 These steps involve either taking an action or asking the user to take an action.
 
-In each turn you can either:
+During each turn you can either:
 - Send a message to the user.
 - Make a tool call.
-You cannot do both at the same time.
+IMPORTANT: You cannot do both at the same time!!
+If you send text content while making a tool call, the agent will raise an error.
+Text content will be sent to the user. Do not use this field for your own reasoning.
 
 Try to be helpful and always follow the policy. Always make sure you generate valid JSON only.
 """.strip()
@@ -294,6 +296,8 @@ You will be provided with a ticket that contains the user's request.
 You will need to plan and call the appropriate tools to solve the ticket.
 
 You cannot communicate with the user, only make tool calls.
+Only tool calls are allowed, do not output anything else
+
 Stop when you consider that you have solved the ticket.
 To do so, send a message containing a single tool call to the `{stop_function_name}` tool. Do not include any other tool calls in this last message.
 
