@@ -7,9 +7,13 @@ parts:
   - caption: Tutorial
     chapters:
     - file: tutorial/installation
+    - file: tutorial/quickstart_arealite
     - file: tutorial/quickstart
     - file: tutorial/eval
     - file: tutorial/troubleshooting
+  - caption: Getting Started with AReaLite
+    chapters:
+    - file: arealite/gsm8k_grpo
   - caption: References
     chapters:
     - file: references/benchmark
