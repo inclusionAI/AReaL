@@ -3,12 +3,14 @@ import uuid
 
 import torch
 from tensordict import TensorDict
-from transformers import PreTrainedTokenizerFast,AutoProcessor
+from transformers import AutoProcessor, PreTrainedTokenizerFast
+
 from arealite.api.cli_args import GenerationHyperparameters
 from arealite.api.io_struct import VLMRequest
-from arealite.workflow.rlvr import RLVRWorkflow
-from arealite.utils.padding import concat_padded_tensors
+from arealite.utils.data import concat_padded_tensors
 from arealite.utils.image import image2base64
+from arealite.workflow.rlvr import RLVRWorkflow
+
 
 class VL_RLVRWorkflow(RLVRWorkflow):
     def __init__(

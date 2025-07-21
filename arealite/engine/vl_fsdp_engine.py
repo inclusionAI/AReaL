@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -10,30 +10,19 @@ from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
 )
-from transformers import (
-    AutoModelForImageTextToText,
-    get_constant_schedule_with_warmup,
-    get_linear_schedule_with_warmup,
-)
+from transformers import AutoModelForImageTextToText
 
 from arealite.api.cli_args import TrainEngineConfig
-from arealite.api.engine_api import (
-    FinetuneSpec,
-    SaveLoadMeta,
-    WeightUpdateMeta,
-)
+from arealite.api.engine_api import FinetuneSpec, SaveLoadMeta, WeightUpdateMeta
+from arealite.engine.fsdp_engine import FSDPEngine
 from arealite.utils.data import (
     MicroBatchList,
     amend_position_ids,
     pack_tensor_dict,
-    pad_and_stack_tensors_along_first_dim,
     pad_mb_list,
-    reorder_list,
     split_padded_tensor_dict_into_mb_list,
-    unpack_sequence,
     unsqueeze_mb_list,
 )
-from arealite.utils.model import disable_dropout_in_model
 from arealite.utils.fsdp import (
     CPUOffloadPolicy,
     MixedPrecisionPolicy,
@@ -41,10 +30,9 @@ from arealite.utils.fsdp import (
     create_fsdp_device_mesh,
     get_cosine_schedule_with_warmup,
 )
-from realhf.base import  logging, name_resolve, names, pkg_version
+from arealite.utils.model import disable_dropout_in_model
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
-from arealite.engine.fsdp_engine import FSDPEngine
-
+from realhf.base import logging, name_resolve, names, pkg_version
 
 logger = logging.getLogger("FSDPEngine")
 

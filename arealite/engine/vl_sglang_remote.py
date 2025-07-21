@@ -1,11 +1,8 @@
 import time
 
 from arealite.api.cli_args import InferenceEngineConfig
+from arealite.api.io_struct import VLMRequest, VLMResponse
 from arealite.engine.sglang_remote import RemoteSGLangEngine
-from arealite.api.io_struct import (
-    VLMRequest,
-    VLMResponse
-)
 from arealite.utils.http import arequest_with_retry
 from realhf.base import logging, pkg_version
 

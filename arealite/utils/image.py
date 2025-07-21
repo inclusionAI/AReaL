@@ -1,10 +1,11 @@
-from io import BytesIO
 import base64
 import math
-from torch import Tensor
-from typing import Any, Dict, List, Optional, Union
-from PIL.Image import Image as ImageObject
 from dataclasses import MISSING
+from io import BytesIO
+from typing import List
+
+from PIL.Image import Image as ImageObject
+
 
 def image2base64(images: List[ImageObject]|ImageObject)-> List[str]|str:
 

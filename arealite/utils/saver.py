@@ -1,7 +1,7 @@
 import getpass
 import os
 
-from transformers import PreTrainedTokenizerFast, AutoProcessor
+from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from arealite.api.cli_args import SaverConfig
 from arealite.api.engine_api import TrainEngine

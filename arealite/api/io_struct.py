@@ -9,11 +9,10 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import torch
 from gymnasium.core import ActType, ObsType
-from arealite.api.cli_args import GenerationHyperparameters
 from PIL.Image import Image as ImageObject
+from transformers import AutoProcessor, PreTrainedTokenizerFast
 
-
-from transformers import PreTrainedTokenizerFast,AutoProcessor
+from arealite.api.cli_args import GenerationHyperparameters
 
 
 @dataclass

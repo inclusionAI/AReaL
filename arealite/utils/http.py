@@ -1,6 +1,6 @@
 import asyncio
 from typing import Any, Dict, Optional
-from PIL import Image
+
 import aiohttp
 
 from realhf.base import logging
