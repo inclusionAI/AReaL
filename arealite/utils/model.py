@@ -1,5 +1,8 @@
 import torch
 
+VALID_VISION_MODELS = [
+    "qwen2_vl",
+]
 
 # Copied from trl
 def disable_dropout_in_model(model: torch.nn.Module) -> None:
