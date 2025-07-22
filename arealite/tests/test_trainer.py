@@ -5,13 +5,15 @@ from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import load_expr_config, BaseExperimentConfig, InferenceEngineConfig, TrainEngineConfig, \
-    RolloutControllerConfig, TrainControllerConfig, RemoteMegatronEngineConfig
+    RolloutControllerConfig, TrainControllerConfig, RemoteMegatronEngineConfig, StatsLoggerConfig, WandBConfig
+from arealite.api.io_struct import FinetuneSpec
 from arealite.controller.rollout_controller import DistributedRolloutController
 from arealite.controller.train_controller import DistributedTrainController
 from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronEngine
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangEngine
 from arealite.scheduler.local import LocalScheduler
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
+from arealite.utils.stats_logger import StatsLogger
 from arealite.workflow.rlvr import RLVRWorkflow
 from arealite.api.cli_args import GenerationHyperparameters
 from realhf.api.core.data_api import load_hf_tokenizer
@@ -20,6 +22,8 @@ from arealite.extension.asystem.math_reward import reward_fn
 from arealite.scheduler.asystem import AsystemScheduler
 import os
 import shutil
+
+from realhf.base import stats_tracker
 
 
 def clear_dir(path):
@@ -56,6 +60,8 @@ def main_grpo():
         },
     })
 
+
+
     rollout = DistributedRolloutController(
         RemoteSGLangEngine(InferenceEngineConfig(experiment_name="arealite", trial_name="sync")),
         RolloutControllerConfig(experiment_name="arealite", trial_name="sync", allocation_mode="sglang.d4t8p1+d32t1p1"),
@@ -78,6 +84,19 @@ def main_grpo():
     batch_data = []
     step_num = 100
     epoch_num = 10
+    global_step = 0
+    os.environ['WANDB_API_KEY'] = 'local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe'
+    os.environ["WANDB_BASE_URL"] = "http://8.150.1.98:8080"
+
+    logger = StatsLogger(StatsLoggerConfig(
+        experiment_name="arealite", trial_name="sync",fileroot="/storage/openpsi/experiments",
+        wandb=WandBConfig(
+            mode="online",
+        ),
+
+    ), FinetuneSpec(total_train_epochs=epoch_num, dataset_size=step_num * batch_size ,train_batch_size=batch_size))
+    logger.info(f"total_epochs={epoch_num} step_per_epoch={step_num}")
+
     for epoch in range(epoch_num):
         data_generator = iter(dataloader)
         for step in range(step_num):
@@ -137,11 +156,21 @@ def main_grpo():
             print(f"[Trainer] after rollout rewards: {rollout_res_dict["rewards"]}")
             dis_batch = DistributedBatchMemory(rollout_res_dict)
             print(f"[Trainer] debug1")
-            stats = actor.train_distributed_batch(dis_batch)
-            print(f"[Trainer] train exec success, step: {step}, epoch: {epoch}, stats: {stats}")
+            with (
+                stats_tracker.record_timing("train_step"),
+                stats_tracker.scope("grpo_actor"),
+            ):
+                stats = actor.train_distributed_batch(dis_batch)
+                print(f"[Trainer] train exec success, step: {step}, epoch: {epoch}, stats: {stats}")
 
             rollout.update_weights(rollout_cfg)
             print("[Trainer] rollout update_weights success.")
+
+            logger.commit(epoch, step, global_step, stats)
+            global_step += 1
+
+    logger.close()
+
 
 
 if __name__ == "__main__":
