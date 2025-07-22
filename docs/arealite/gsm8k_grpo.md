@@ -245,3 +245,8 @@ In AReaLite, we provide a wide range of utilities for basic functionalities requ
 - `StatsLogger` ([arealite/utils/stats_logger.py](../../arealite/utils/stats_logger.py)): Logs training data to backends like `wandb` and `tensorboard`. Also manages outputs to terminal or log files.
 - `stats_tracker` ([realhf/base/stats_tracker.py](../../realhf/base/stats_tracker.py)): Gathers and manages training statistics.
 
+## Next Steps
+
+- [Customize dataset](../customization/dataset.md)
+- [Customize Agentic/RVLR rollout workflows](../customization/agent.md)
+- [Customize algorithms](../customization/algorithm.md)
