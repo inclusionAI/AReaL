@@ -16,6 +16,7 @@ import requests
 import torch.distributed as dist
 import uvloop
 from tensordict import TensorDict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from arealite.api.cli_args import InferenceEngineConfig
 from arealite.api.engine_api import InferenceEngine, Scheduling
@@ -262,10 +263,6 @@ class RemoteSGLangEngine(InferenceEngine):
             "return_logprob": True,
             "stream": False,
         }
-        if req.text:
-            payload["text"] = req.text
-        else:
-            payload["input_ids"] = req.input_ids
 
         # Make request
         start_time = time.perf_counter()
@@ -317,10 +314,7 @@ class RemoteSGLangEngine(InferenceEngine):
             finish_reason = meta_info["finish_reason"]
             stop_reason = finish_reason["type"]
 
-            if req.text:
-                payload["text"] += result["text"]
-            else:
-                payload["input_ids"] += result["output_ids"]
+            payload["input_ids"] += result["output_ids"].copy()
             sample_params["max_new_tokens"] -= len(output_tokens)
 
         latency = time.perf_counter() - start_time
@@ -366,25 +360,37 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def _update_weights(self, meta: WeightUpdateMeta):
         if meta.type == "disk":
-            # Update weights from disk
-            # Wait for model checkpoints of meta.version
-            # update_name = names.update_weights_from_disk(
-            #     self.config.experiment_name, self.config.trial_name, meta.model_version
-            # )
-            # save_timestamp = int(name_resolve.wait(update_name, timeout=120))
             load_timestamp = time.time_ns()
             logger.info(f"[RemoteSGLangEngine] Begin update weights from {meta.path}")
-            try:
-                jobs = [
-                    self.aupdate_weights_from_disk(addr, meta.path)
-                    for addr in self.addresses
-                ]
-                loop = asyncio.new_event_loop()
-                # asyncio event loop should be manually set when running asyncio stuff in another thread
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(asyncio.gather(*jobs))
-            finally:
-                loop.close()
+
+            def update_single_server(addr):
+                try:
+                    response = requests.post(
+                        f"http://{addr}/update_weights_from_disk",
+                        json={"model_path": str(meta.path), "allow_interrupt": True},
+                        timeout=self.config.request_timeout
+                    )
+                    response.raise_for_status()
+                    res = response.json()
+                    assert res["success"]
+                    if "num_paused_requests" in res:
+                        logger.info(
+                            f"[RemoteSGLangEngine] {res['num_paused_requests']} requests are interrupted "
+                            f"during updating weights for server {addr}"
+                        )
+                except Exception as e:
+                    logger.error(f"Failed to update weights on {addr}: {str(e)}")
+                    raise
+
+            # futures = [self.executor.submit(update_single_server, addr) for addr in self.addresses]
+            # for future in futures:
+            #     future.result()  # Wait for all to complete or raise first exception
+
+            with ThreadPoolExecutor(max_workers=len(self.addresses)) as executor:
+                futures = [executor.submit(update_single_server, addr) for addr in self.addresses]
+                for future in futures:
+                    future.result()  # Wait for all to complete or raise first exception
+
             logger.info(
                 f"[RemoteSGLangEngine] Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms"
             )
@@ -398,17 +404,14 @@ class RemoteSGLangEngine(InferenceEngine):
     def resume(self):
         self.paused.clear()
 
-    async def aupdate_weights_from_disk(self, addr, path: str):
-        response = await arequest_with_retry(
-            session=self.session,
-            addr=addr,
-            endpoint="/update_weights_from_disk",
-            payload=dict(model_path=str(path), allow_interrupt=True),
-            method="POST",
-            max_retries=3,
-            timeout=self.config.request_timeout,
+    def update_weights_from_disk(self, addr, path: str):
+        response = requests.post(
+            f"http://{addr}/update_weights_from_disk",
+            json={"model_path": str(path), "allow_interrupt": True},
+            timeout=self.config.request_timeout
         )
-        res = await response.json()
+        response.raise_for_status()
+        res = response.json()
         assert res["success"]
         if "num_paused_requests" in res:
             logger.info(

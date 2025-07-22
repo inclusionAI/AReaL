@@ -78,14 +78,21 @@ def main_grpo():
     batch_data = []
     step_num = 100
     epoch_num = 10
+    max_prompt_len = 1024
+    MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf"
+    tokenizer = load_hf_tokenizer(MODEL_PATH)
     for epoch in range(epoch_num):
         data_generator = iter(dataloader)
         for step in range(step_num):
             batch_data = []
             for _ in range(batch_size):
                 batch = next(data_generator)
-                batch_data.append(batch)
-
+                prompt = batch["prompt"] if isinstance(batch, dict) else batch[0]["prompt"]
+                tokenized = tokenizer(prompt, truncation=False, return_length=True)
+                if tokenized["length"][0] <= max_prompt_len:
+                    batch_data.append(batch)
+                else:
+                    print(f"Ignored prompt with length {tokenized['length'][0]} > {max_prompt_len}")
 
             # Update inference engine weights
             exp_name = "arealite"
@@ -114,8 +121,7 @@ def main_grpo():
             gconfig = GenerationHyperparameters(
                 max_new_tokens=4096, greedy=False, n_samples=16
             )
-            MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf"
-            tokenizer = load_hf_tokenizer(MODEL_PATH)
+
             workflow = RLVRWorkflow(
                 reward_fn=reward_fn,
                 gconfig=gconfig,
