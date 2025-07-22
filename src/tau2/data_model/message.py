@@ -109,6 +109,10 @@ class ParticipantMessageBase(BaseModel):
     raw_data: Optional[dict] = Field(
         description="The raw data of the message.", default=None
     )
+    errors: Optional[list[str]] = Field(
+        description="The errors that occurred during the generation of the message.",
+        default=None,
+    )
 
     def validate(self):  # NOTE: It would be better to do this in the Pydantic model
         """
