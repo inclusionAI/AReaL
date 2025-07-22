@@ -53,13 +53,11 @@ class LLMAgentState(BaseModel):
     messages: list[APICompatibleMessage]
 
 
-def parse_text_content(
-    text_content: Optional[str],
-) -> tuple[Optional[str], Optional[str]]:
-    """Parse the text content into reasoning steps, user message"""
+def parse_text_content(msg: AssistantMessage) -> None:
+    """Parse the text content into reasoning steps, user message."""
+    text_content = msg.content
     if text_content is None:
-        return None, None
-
+        return
     # Extract reasoning content between <think> and </think> tags
     think_match = re.search(r"<think>(.*?)</think>", text_content, re.DOTALL)
     reasoning = think_match.group(1).strip() if think_match else None
@@ -72,7 +70,8 @@ def parse_text_content(
     logger.debug(
         f"Parsing text content: {text_content}.\nReasoning: {reasoning}.\nUser message: {user_message}."
     )
-    return reasoning, user_message
+    msg.reasoning = reasoning
+    msg.content = user_message
 
 
 class LLMAgent(LocalAgent[LLMAgentState]):
@@ -139,11 +138,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
             **self.llm_args,
         )
         state.messages.append(assistant_message)
-        reasoning, user_message = parse_text_content(assistant_message.content)
-        if reasoning is not None:
-            assistant_message.reasoning = reasoning
-        if user_message is not None:
-            assistant_message.content = user_message
+        parse_text_content(assistant_message)
         return assistant_message, state
 
     def set_seed(self, seed: int):
@@ -274,11 +269,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
             **self.llm_args,
         )
         state.messages.append(assistant_message)
-        reasoning, user_message = parse_text_content(assistant_message.content)
-        if reasoning is not None:
-            assistant_message.reasoning = reasoning
-        if user_message is not None:
-            assistant_message.content = user_message
+        parse_text_content(assistant_message)
         return assistant_message, state
 
     def set_seed(self, seed: int):
@@ -506,11 +497,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
             **self.llm_args,
         )
         state.messages.append(assistant_message)
-        reasoning, user_message = parse_text_content(assistant_message.content)
-        if reasoning is not None:
-            assistant_message.reasoning = reasoning
-        if user_message is not None:
-            assistant_message.content = user_message
+        parse_text_content(assistant_message)
         self._check_if_stop_toolcall(assistant_message)
         return assistant_message, state
 
