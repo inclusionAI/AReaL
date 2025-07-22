@@ -491,7 +491,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
 
     def validate_message(self, message: AssistantMessage) -> tuple[bool, str]:
         """Validate the message."""
-        has_content = message.has_content()
+        has_content = message.has_text_content()
         is_tool_call = message.is_tool_call()
         if not has_content and not is_tool_call:
             return (
