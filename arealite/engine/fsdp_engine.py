@@ -11,7 +11,7 @@ from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
 )
-from transformers import PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast,AutoProcessor
 
 from arealite.api.cli_args import TrainEngineConfig
 from arealite.api.engine_api import FinetuneSpec, SaveLoadMeta, WeightUpdateMeta
@@ -76,7 +76,7 @@ class FSDPEngine(BaseHFEngine):
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
-            self._save_model_to_hf(meta.path, meta.tokenizer)
+            self._save_model_to_hf(meta.path, meta.tokenizer, meta.processor)
         elif meta.weight_format == "dcp":
             # TODO: implement DCP save/load for FSDP
             raise NotImplementedError("DCP format saving is not implemented yet. ")
@@ -99,7 +99,7 @@ class FSDPEngine(BaseHFEngine):
             self.load_optimizer_state(meta.path)
 
     def _save_model_to_hf(
-        self, path: str, tokenizer: Optional[PreTrainedTokenizerFast]
+        self, path: str, tokenizer: Optional[PreTrainedTokenizerFast], processor: Optional[AutoProcessor]
     ):
         """Save model in HuggingFace format."""
         if self.model is None:
@@ -118,6 +118,8 @@ class FSDPEngine(BaseHFEngine):
             self.model_config.save_pretrained(path)
             if tokenizer is not None:
                 tokenizer.save_pretrained(path)
+            if processor is not None:
+                processor.save_pretrained(path)
 
         dist.barrier()
 
@@ -143,7 +145,7 @@ class FSDPEngine(BaseHFEngine):
             dist.barrier()
             torch.cuda.synchronize()
         elif meta.type == "disk":
-            self._save_model_to_hf(meta.path, self.tokenizer)
+            self._save_model_to_hf(meta.path, self.tokenizer,self.processor)
             # dist.barrier() are called when _save_model_to_hf finished
             if dist.get_rank() == 0:
                 update_name = names.update_weights_from_disk(

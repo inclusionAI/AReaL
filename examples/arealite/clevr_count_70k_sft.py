@@ -4,7 +4,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import SFTConfig, load_expr_config
 from arealite.api.io_struct import FinetuneSpec
-from arealite.engine.sft.lm_engine import VL_FSDPLMEngine
+from arealite.engine.sft.lm_engine import FSDPLMEngine
 from arealite.utils.data import pad_sequences_to_tensors
 from arealite.utils.evaluator import Evaluator
 from arealite.utils.saver import Saver
@@ -65,7 +65,7 @@ def main_sft():
         dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
         train_batch_size=config.train_dataset.batch_size,
     )
-    engine = VL_FSDPLMEngine(config=config.model)
+    engine = FSDPLMEngine(config=config.model)
     engine.initialize(None, ft_spec)
 
     # Run training.

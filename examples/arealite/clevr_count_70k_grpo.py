@@ -8,7 +8,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import GRPOConfig, load_expr_config
 from arealite.api.io_struct import FinetuneSpec, WeightUpdateMeta
-from arealite.engine.ppo.vl_actor import VL_FSDPPPOActor
+from arealite.engine.ppo.actor import FSDPPPOActor
 from arealite.engine.vl_sglang_remote import VL_RemoteSGLangEngine
 from arealite.utils.device import log_gpu_stats
 from arealite.utils.evaluator import Evaluator
@@ -138,11 +138,11 @@ def main(args):
     eval_rollout.set_version(int(1e12))
 
     # Initialize train engine
-    actor = VL_FSDPPPOActor(config=config.actor)
+    actor = FSDPPPOActor(config=config.actor)
     actor.initialize(None, ft_spec)
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
-        ref = VL_FSDPPPOActor(config=config.ref)
+        ref =FSDPPPOActor(config=config.ref)
         ref.initialize(None, ft_spec)
 
     # Create rollout workflow

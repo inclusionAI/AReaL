@@ -42,16 +42,16 @@ class FSDPLMEngine(FSDPEngine):
     def evaluate_lm(self, data):
         return self.lm_engine.evaluate_lm(data)
 
-class VL_FSDPLMEngine(VL_FSDPEngine):
-    def __init__(self, config: TrainEngineConfig):
-        super().__init__(config)
-        self.lm_engine = LMEngine(self)
+# class VL_FSDPLMEngine(VL_FSDPEngine):
+#     def __init__(self, config: TrainEngineConfig):
+#         super().__init__(config)
+#         self.lm_engine = LMEngine(self)
 
-    def train_lm(self, data: TensorDict):
-        return self.lm_engine.train_lm(data)
+#     def train_lm(self, data: TensorDict):
+#         return self.lm_engine.train_lm(data)
 
-    def evaluate_lm(self, data: TensorDict):
-        return self.lm_engine.evaluate_lm(data)
+#     def evaluate_lm(self, data: TensorDict):
+#         return self.lm_engine.evaluate_lm(data)
 
 def compute_packed_sft_loss(logits: torch.Tensor, input_: TensorDict) -> torch.Tensor:
     packed_input_ids: torch.Tensor = input_["input_ids"]
