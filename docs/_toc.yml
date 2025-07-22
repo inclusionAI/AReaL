@@ -7,19 +7,23 @@ parts:
   - caption: Tutorial
     chapters:
     - file: tutorial/installation
+    - file: tutorial/quickstart_arealite
     - file: tutorial/quickstart
     - file: tutorial/eval
     - file: tutorial/troubleshooting
+  - caption: Getting Started with AReaLite
+    chapters:
+    - file: arealite/gsm8k_grpo
   - caption: References
     chapters:
     - file: references/benchmark
     - file: references/reproduce
   - caption: Customization
     chapters:
+    - file: customization/dataset
     - file: customization/agent
     - file: customization/algorithm
-    - file: customization/dataset
-  - caption: Code Walkthrough
+  - caption: Code Walkthrough (Legacy)
     chapters:
     - file: developer/overview
     - file: developer/trainer
@@ -37,6 +41,6 @@ parts:
     - file: contrib
   - caption: Customization (Legacy)
     chapters:
+    - file: legacy/customization/dataset
     - file: legacy/customization/agent
     - file: legacy/customization/algorithm
-    - file: legacy/customization/dataset
