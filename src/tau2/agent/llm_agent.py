@@ -292,14 +292,14 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
 
 AGENT_SOLO_INSTRUCTION = """
 You are a customer service agent that helps the user according to the <policy> provided below.
-You will be provided with a ticket that contains the user's request.
+You will be provided with a <ticket> that contains the user's request.
 You will need to plan and call the appropriate tools to solve the ticket.
 
 You cannot communicate with the user, only make tool calls.
-Only tool calls are allowed, do not output anything else
+Only tool calls are allowed, do not output anything else.
 
 Stop when you consider that you have solved the ticket.
-To do so, send a message containing a single tool call to the `{stop_function_name}` tool. Do not include any other tool calls in this last message.
+To do so, send a message containing a single tool call to the `<STOP_FUNCTION_NAME>` tool. Do not include any other tool calls in this last message.
 
 Always follow the policy. Always make sure you generate valid JSON only.
 """.strip()
@@ -334,7 +334,6 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         task: Task,
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
-        allow_user_message_attempt: bool = True,
     ):
         """
         Initialize the LLMAgent.
@@ -346,7 +345,6 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         self.task = task
         self.llm = llm
         self.llm_args = llm_args if llm_args is not None else {}
-        self.allow_user_message_attempt = allow_user_message_attempt
         self.add_stop_tool()
         self.validate_tools()
 
@@ -395,9 +393,8 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
 
     @property
     def system_prompt(self) -> str:
-        agent_instruction = AGENT_SOLO_INSTRUCTION.format(
-            stop_function_name=self.STOP_FUNCTION_NAME,
-            stop_token=self.STOP_TOKEN,
+        agent_instruction = AGENT_SOLO_INSTRUCTION.replace(
+            "<STOP_FUNCTION_NAME>", self.STOP_FUNCTION_NAME
         )
         return SYSTEM_PROMPT_SOLO.format(
             agent_instruction=agent_instruction,
@@ -471,11 +468,42 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
             tool_choice="required",
             **self.llm_args,
         )
-        if not assistant_message.is_tool_call() and not self.allow_user_message_attempt:
-            raise AgentError("Only tool calls are allowed.")
+        valid, error_msg = self.validate_message(assistant_message)
+        if not valid:
+            logger.warning(f"Error: {error_msg}. Retrying...")
+            retry_messages = messages[:]
+            retry_messages.append(assistant_message)
+            retry_messages.append(
+                SystemMessage(role="system", content=f"Error: {error_msg}. Try again.")
+            )
+            assistant_message = generate(
+                model=self.llm,
+                tools=self.tools,
+                messages=retry_messages,
+                tool_choice="required",
+                **self.llm_args,
+            )
+        if not assistant_message.is_tool_call() or assistant_message.has_text_content():
+            raise AgentError(f"Only tool calls are allowed. Got {assistant_message}")
         message = self._check_if_stop_toolcall(assistant_message)
         state.messages.append(assistant_message)
         return assistant_message, state
+
+    def validate_message(self, message: AssistantMessage) -> tuple[bool, str]:
+        """Validate the message."""
+        has_content = message.has_content()
+        is_tool_call = message.is_tool_call()
+        if not has_content and not is_tool_call:
+            return (
+                False,
+                "You sent an empty message. Each message must contain tool calls and no other content.",
+            )
+        if has_content and not is_tool_call:
+            return (
+                False,
+                "You sent a message with content. Each message must contain tool calls and no other content.",
+            )
+        return True, None
 
     def set_seed(self, seed: int):
         """Set the seed for the LLM."""
