@@ -6,7 +6,6 @@ from loguru import logger
 from pydantic import BaseModel
 
 from tau2.agent.base import (
-    AgentError,
     LocalAgent,
     ValidAgentInputMessage,
     is_valid_agent_history_message,
@@ -28,11 +27,11 @@ You are a customer service agent that helps the user according to the <policy> p
 
 You can generate:
 - Reasoning steps: Those should come first and be enclosed in the <think> <think/> tag. E.g. <think>I need to check the user's account balance before processing the refund.</think>
-- Message to the user. Those should come after the reasoning steps and be enclosed in the <user_message> <user_message/> tag. E.g. <user_message>Could you please provide me with your account balance?</user_message>
+- Message to the user. Those should come after the reasoning steps. E.g. Could you please provide me with your account balance?
 - Tool calls.
 
 IMPORTANT: You cannot send a message to the user while making tool calls!
-IMPORTANT: At each turn, you must send either a tool call or a message to the user. Each message must either contain a <user_message> tag or tool calls.
+IMPORTANT: At each turn, you must send either a tool call or a message to the user.
 
 Try to be helpful and always follow the policy. Always make sure you generate valid JSON only.
 """.strip()
@@ -63,11 +62,18 @@ def parse_text_content(msg: AssistantMessage) -> None:
     think_match = re.search(r"<think>(.*?)</think>", text_content, re.DOTALL)
     reasoning = think_match.group(1).strip() if think_match else None
 
-    # Extract user message content between <user_message> and </user_message> tags
-    user_msg_match = re.search(
-        r"<user_message>(.*?)</user_message>", text_content, re.DOTALL
-    )
-    user_message = user_msg_match.group(1).strip() if user_msg_match else None
+    # Extract user message as everything after </think> tag, or entire content if no think tag
+    if think_match:
+        # Find the end of the </think> tag and take everything after it
+        think_end = think_match.end()
+        user_message = (
+            text_content[think_end:].strip() if think_end < len(text_content) else None
+        )
+        user_message = user_message if user_message else None
+    else:
+        # No think tag, so the entire content is the user message
+        user_message = text_content.strip() if text_content.strip() else None
+
     logger.debug(
         f"Parsing text content: {text_content}.\nReasoning: {reasoning}.\nUser message: {user_message}."
     )
@@ -161,11 +167,11 @@ These steps involve either taking an action or asking the user to take an action
 
 You can generate:
 - Reasoning steps: Those should come first and be enclosed in the <think> <think/> tag. E.g. <think>I need to check the user's account balance before processing the refund.</think>
-- Message to the user. Those should come after the reasoning steps and be enclosed in the <user_message> <user_message/> tag. E.g. <user_message>Could you please provide me with your account balance?</user_message>
+- Message to the user. Those should come after the reasoning steps. E.g. Could you please provide me with your account balance?
 - Tool calls.
 
 IMPORTANT: You cannot send a message to the user while making tool calls!
-IMPORTANT: At each turn, you must send either a tool call or a message to the user. Each message must either contain a <user_message> tag or tool calls.
+IMPORTANT: At each turn, you must send either a tool call or a message to the user.
 
 Try to be helpful and always follow the policy. Always make sure you generate valid JSON only.
 """.strip()
