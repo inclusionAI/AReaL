@@ -1,30 +1,35 @@
 # Quickstart
 
-Welcome to AReaLite quickstart guide!
-In this guide, we provide an example that runs an AReaLite experiment that trains an LLM on GSM8K dataset with GRPO algorithm and function-based rewards. 
-Please ensure you have properly [installed dependencies and set up the runtime environment](installation.md) before proceeding.
+Welcome to the **AReaLite** Quickstart Guide!
+This guide demonstrates how to run an AReaLite experiment training an LLM on the GSM8K dataset using the GRPO algorithm with function-based rewards.
+Ensure you've completed [the installation and environment setup](installation.md) before proceeding.
 
-# Running the Experiment (on a single node)
+## Running the Experiment (on a single node)
 
-To run the experiment, you need a training script and a config YAML file.
+To run the experiment, you will need:
 - Training script: [examples/arealite/gsm8k_grpo.py](../../examples/arealite/gsm8k_grpo.py)
 - Config YAML: [examples/arealite/configs/gsm8k_grpo.yaml](../../examples/arealite/configs/gsm8k_grpo.yaml)
 
-Our training scripts will automatically download the dataset (openai/gsm8k) and model (Qwen/Qwen3-1.7B) for you. 
-You do not need to prepare any dataset or model files before running the experiment.
-To run the example with the default configuration, execute following command from the repository directory: 
+Our training scripts will automatically download the dataset (openai/gsm8k) and model (Qwen/Qwen3-1.7B).
+To run the example with default configuration, execute from the repository directory:
 ```
 python3 -m arealite.launcher.local examples/arealite/gsm8k_grpo.py --config examples/arealite/configs/gsm8k_grpo.yaml experiment_name=<your experiment name> trial_name=<your trial name>
 ```
 
-> **Note**: The command above uses `LocalLauncher`, which only works for a single node (`cluster.n_nodes == 1`). For launching distributed experiments, please check out [Distributed Experiments with Ray or Slurm](quickstart.md#distributed-experiments-with-ray-or-slurm).
+> **Note**: The command above uses `LocalLauncher`, which only works for a single node (`cluster.n_nodes == 1`). For  distributed experiments, see [Distributed Experiments with Ray or Slurm](quickstart_arealite.md#distributed-experiments-with-ray-or-slurm).
 
-### Modifying configuration
+## Modifying configuration
 
-All available options for experiment configuration are listed in [arealite/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/arealite/api/cli_args.py). 
-To change the experiment configuration, including models, resource allocation, and algorithm options, you can:
-1. Directly modifying the config YAML file at [examples/arealite/configs/gsm8k_grpo.yaml](../../examples/arealite/configs/gsm8k_grpo.yaml).
-2. Adding command line options. For entries that exist in the config YAML, you could directly add the options after your command. For example: `actor.path=Qwen/Qwen3-1.7B`. For other options in `cli_args.py` but not in YAML, you could add these options with a prefix "+". For example: `+sglang.attention_backend=triton`. 
+All available configuration options are listed in [arealite/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/arealite/api/cli_args.py). 
+To customize the experiment (models, resources, algorithm options), you can:
+1. Edit the YAML file directly at [examples/arealite/configs/gsm8k_grpo.yaml](../../examples/arealite/configs/gsm8k_grpo.yaml).
+2. Add command-line options:
+   - For existing options in the YAML file, directly add the option: `actor.path=Qwen/Qwen3-1.7B`.
+   - For other options in `cli_args.py`, but not in the YAML file, add with a prefix "+": `+sglang.attention_backend=triton`.
+
+<!--
+1. Adding command line options. For entries that exist in the config YAML, you could directly add the options after your command. For example: `actor.path=Qwen/Qwen3-1.7B`. For other options in `cli_args.py` but not in YAML, you could add these options with a prefix "+". For example: `+sglang.attention_backend=triton`. 
+-->
 
 For example, here is the command to launch a customized configuration, based on our GSM8K GRPO example:
 ```
@@ -41,15 +46,15 @@ python3 -m arealite.launcher.local examples/arealite/gsm8k_grpo.py \
 ```
 
 ::::{important}
-Since we are working on a refactor from legacy AReaL to AReaLite, there are some changes that makes available options for AReaLite slightly different from legacy AReaL. We provide a **config converter** to transfer old AReaL config into AReaLite YAML file for users' convenience. [Click here](xxx) for the usage of **config converter**. 
+We're currently refactoring from legacy AReaL to AReaLite, which introduces some configuration differences.  We provide a **config converter** to transfer old AReaL config into AReaLite YAML file for users' convenience. [Click here](xxx) to learn how to use the **config converter**. 
 ::::
 
-### Distributed Experiments with Ray or Slurm
+## Distributed Experiments with Ray or Slurm
 
-AReaLite also provide standalone Ray or Slurm launchers for distributed experiments. Once you have properly setup your Ray or Slurm cluster, you could launch your experiment with `arealite.launcher.ray` and `arealite.launcher.slurm`, similar to the `LocalLauncher`:
+AReaLite provides standalone launchers for distributed experiments. After setting up your Ray or Slurm cluster, launch experiments similarly to `LocalLauncher`:
 
 ```
-# Launch with Ray launcher. 4 nodes with 4 GPUs each node, 3 nodes for generation, 1 node for training.
+# Launch with Ray launcher. 4 nodes (4 GPUs each), 3 nodes for generation, 1 node for training.
 python3 -m arealite.launcher.ray examples/arealite/gsm8k_grpo.py \
     --config examples/arealite/configs/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
@@ -59,7 +64,7 @@ python3 -m arealite.launcher.ray examples/arealite/gsm8k_grpo.py \
     cluster.n_gpus_per_node=4 \
     ...
 
-# Launch with Slurm launcher. 16 nodes with 8 GPUs each node, 12 nodes for generation, 4 nodes for training
+# Launch with Slurm launcher. 16 nodes (8 GPUs each), 12 nodes for generation, 4 nodes for training
 python3 -m arealite.launcher.slurm examples/arealite/gsm8k_grpo.py \
     --config examples/arealite/configs/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
@@ -70,11 +75,20 @@ python3 -m arealite.launcher.slurm examples/arealite/gsm8k_grpo.py \
     ...
 ```
 
-[Click here](installation.md#optional-launch-ray-cluster-for-distributed-training) for a guide on how to set up a ray cluster. For more options for launchers, check `LauncherConfig` in [arealite/cli_args.py](quickstart.md#distributed-experiments-with-ray-or-slurm).
+Additional references:
+- For more options for launchers, check `LauncherConfig` in [arealite/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/arealite/api/cli_args.py).
+- [Ray cluster setup guide](installation.md#optional-launch-ray-cluster-for-distributed-training) for a guide on how to set up a ray cluster. 
 
-> **Note**: Before launching distributed experiments, please check if your `allocation_mode` matches your cluster configuration. Make sure #GPUs allocated by `allocation_mode` equals to `cluster.n_nodes * cluster.n_gpus_per_node`. 
+> **Important Notes**:
+> 1. Ensure `allocation_mode` matches your cluster configuration (`#GPUs == cluster.n_nodes * cluster.n_gpus_per_node`)
+> 2. Ray/Slurm launchers only works for more than 1 node (`cluster.n_nodes > 1`). For single node scenario, please use `LocalLauncher`.
+> 3. In Ray/Slurm launchers, GPUs are allocated at node granularity, which means #GPUs for generation or training must be integer multiples of `cluster.n_gpus_per_node`.
+
+<!--
+> **Notes**: Before launching distributed experiments, please check if your `allocation_mode` matches your cluster configuration. Make sure #GPUs allocated by `allocation_mode` equals to `cluster.n_nodes * cluster.n_gpus_per_node`. 
 > **Note**: Ray and Slurm launchers only work for distributed experiments with more than 1 node (`cluster.n_nodes > 1`). They allocate GPUs for training and generation at the granularity of **nodes**, which means the number of GPUs allocated for generation and training must be integer multiples of `cluster.n_gpus_per_node`.
+-->
 
 ## Next Steps
 
-Check [Getting Started with AReaLite](../arealite/gsm8k_grpo.md) for a complete code walkthrough for the GRPO GSM8K Example.
+Check [Getting Started with AReaLite](../arealite/gsm8k_grpo.md) for a complete code walkthrough on the GRPO GSM8K Example.

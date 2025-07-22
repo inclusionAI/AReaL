@@ -1,10 +1,10 @@
-# Code Walkthrough: Running GRPO on GSM8K Dataset
+# Running GRPO on GSM8K Dataset
 
-In this guide, we will walk you through the detailed code of an example that runs GRPO algorithm on GSM8K dataset, with training script [examples/arealite/gsm8k_grpo.py](../../examples/arealite/gsm8k_grpo.py) and configuration file [examples/arealite/configs/gsm8k_grpo.yaml](../../examples/arealite/configs/gsm8k_grpo.yaml). 
+This guide walks through the code for running the GRPO algorithm on the GSM8K dataset, using the training script [examples/arealite/gsm8k_grpo.py](../../examples/arealite/gsm8k_grpo.py) and configuration file [examples/arealite/configs/gsm8k_grpo.yaml](../../examples/arealite/configs/gsm8k_grpo.yaml). 
 
 ## Launching the Experiment
 
-As shown in [Quickstart Guide](../tutorial/quickstart_arealite.md), an experiment of AReaLite is launched by standalone launchers with command:
+As shown in [Quickstart Guide](../tutorial/quickstart_arealite.md), experiments in AReaLite are launched using standalone launchers with the following commands:
 
 ```
 # Local Launcher
@@ -15,26 +15,23 @@ python -m arealite.launcher.ray <training script> --config <configuration file> 
 python -m arealite.launcher.slurm <training script> --config <configuration file> <cli args>
 ```
 
-In AReaLite, the **training script** is **an SPMD python script** that serves as an entry point to launch the experiment.
-The launcher directly runs the training script with their distributed backend (`subprocess` for `LocalLauncher`, `ray.remote` for `RayLauncher`, `srun` for `SlurmLauncher`).
-Except for the training script, the launcher also is responsible for running inference servers (currently only support `SGLangServer`). 
-For distributed launchers (`RayLauncher` and `SlurmLauncher`), they run inference servers with a wrapper [arealite/launcher/sglang_server.py](../../arealite/launcher/sglang_server.py) for managing addresses and ports in the distributed settings.
+In AReaLite:
+- The **training script** is an SPMD python script that serves as the experiment entry point.
+- The launcher runs the training script with its distributed backend (`subprocess` for `LocalLauncher`, `ray.remote` for `RayLauncher`, `srun` for `SlurmLauncher`).
+- The launcher also manages inference servers (currently only supporting `SGLangServer`).
+- For distributed launchers (`RayLauncher` and `SlurmLauncher`), inference servers run with a wrapper [arealite/launcher/sglang_server.py](../../arealite/launcher/sglang_server.py) to handle addresses and ports in distributed settings.
 
-The **configuration file**, which is a YAML file that sets the options provided in [arealite/api/cli_args.py](../../arealite/api/cli_args.py).
-It could be changed by CLI arguments such as `actor.path=Qwen/Qwen3-1.7B` and `+sglang.attention_backend=triton`.
-The training scripts uses [load_expr_config(args, config_cls)](../../arealite/api/cli_args.py#L886) to parse the config with CLI arguments to the config class defined in [arealite/api/cli_args.py](../../arealite/api/cli_args.py). 
-
-In the example:
+The **configuration file** is a YAML file that sets the options provided in [arealite/api/cli_args.py](../../arealite/api/cli_args.py).
+It could be modified via CLI arguments such as `actor.path=Qwen/Qwen3-1.7B` and `+sglang.attention_backend=triton`.
+The training scripts parse the config with CLI arguments into the config class defined in [arealite/api/cli_args.py](../../arealite/api/cli_args.py). 
 ```
 config, _ = load_expr_config(args, GRPOConfig)
 config: GRPOConfig
 ```
 
-## Loading and Pre-processing Dataset
+## Loading and Preprocessing Dataset
 
-In our example, we directly use tools from package `datasets` and `torchdata` to load and pre-process the dataset into our dataloader.  
-we first download `openai/gsm8k` from huggingface and split them by data parallel ranks, and then map them to the format we want.
-
+We use the `datasets` and `torchdata` packages to load and preprocess the dataset into our dataloader. First, we download `openai/gsm8k` from Huggingface and split it by data parallel ranks, then map it to our desired format:
 ```python
 def process_gsm8k_rl_dataset(dataset: Dataset):
     def process(sample):
@@ -49,7 +46,7 @@ def get_gsm8k_dataset(split, rank, world_size):
     return process_gsm8k_rl_dataset(dataset)
 ```
 
-Then we prepare training and evaluation data loaders with `torchdata.StatefulDataLoader`, which will serve as an input for data rollout.
+We then prepare training and evaluation dataloaders with `torchdata.StatefulDataLoader`:
 
 ```python
 train_dataloader = torchdata.StatefulDataLoader(
@@ -67,7 +64,11 @@ If you wish to use your own huggingface datasets or datasets on your local stora
 
 ## Rollout
 
+The data lifecycle is controlled by an `RLVRWorkflow`, which defines how data progresses from prompt to complete rollout data with fields required for training. Our example shows a single-turn RLVR workflow with a math reward function.
+
+<!-- 
 Next, we prepare for data rollout. The life-cycle of a piece of data is controlled by a `RLVRWorkflow`, which defines how data is processed from a prompt to a complete rollout data with fields required for training. Note that the workflow can involve multiple turns of generation, tool calling and reward calculation. In our example here, we only show a single-turn RLVR workflow with a math reward function.
+-->
 
 First, we define a math reward function for GSM8K.
 
@@ -95,11 +96,17 @@ workflow = RLVRWorkflow(
 )
 ```
 
-As for generation, we assume that the launchers have already launched instances of `SGLangServer`, and passed in the environment variable `AREAL_LLM_SERVER_ADDRS` to tell us the addresses and ports of these inference servers to connect to. 
+For generation, we assume the launchers have started `SGLangServer` instances and set the `AREAL_LLM_SERVER_ADDRS` environment variable with their addresses and ports.
 
-In the next step, we initialize `RemoteSGLangEngine` in the training script. Its APIs could be catagorized into two types:
--  Sending requests such as generation and update weights to remote inference servers and returns the replies. Related APIs include `agenerate` and `update_weights`.
--  Execute the rollout workflow. Manage the streaming data going through the rollout workflow to control parameter version differences between generation and training (data offpolicyness), and collate completed rollout data into a batched training sample. Related APIs include `prepare_batch` and `rollout_batch`.
+We initialize `RemoteSGLangEngine`, whose APIs fall into two categories:
+-  Sending requests to remote inference servers. Related APIs include `agenerate` and `update_weights`.
+-  Executing the rollout workflow, managing streaming data, and collating completed rollout data into batched training samples. Related APIs include `prepare_batch` and `rollout_batch`.
+
+The following code shows how `RemoteSGLangEngine` generates data batches for RL training:
+
+<!--
+Note that whether asynchronous RL training is enabled is solely controlled by the API `RemoteSGLangEngine` use to rollout data batches. In `prepare_batch`, data is processed in a streaming style and only batched in output, while in `rollout_batch`, the engine submits the data in a batch and waits for the results in a synchronous style.
+-->
 
 ```python
 rollout = RemoteSGLangEngine(config.rollout)
@@ -119,14 +126,122 @@ for global_step in range(max_steps):
             data = next(data_generator)
         batch = rollout.rollout_batch(data, workflow=workflow)
 ```
-If you want to customize your own rollout workflow with customized reward functions or agentic tool calling, please refer to [Customization: Rollout Workflows](agent.md).
+
+If you want to use rollout workflows with custom reward functions or agentic tool calling, see [Customization: Rollout Workflows](../customization/agent.md).
 
 ## Training
 
+After obtaining the training batch, we use `FSDPPPOActor` to calculate losses and update weights. Each train engine corresponds to one model, therefore we need an additional engine for reference model. 
+
+```python
+actor = FSDPPPOActor(config=config.actor)
+actor.initialize(None, ft_spec)
+ref = None
+if config.actor.kl_ctl > 0 and config.ref is not None:
+    ref = FSDPPPOActor(config=config.ref)
+    ref.initialize(None, ft_spec)
+```
+
+The following code shows a GRPO training step:
+
+```python
+logp = actor.compute_logp(batch)
+batch["prox_logp"] = logp
+if ref is not None:
+    batch["ref_logp"] = ref.compute_logp(batch)
+    log_gpu_stats("ref logp")
+actor.compute_advantages(batch)
+stats = actor.ppo_update(batch)
+actor.step_lr_scheduler()
+```
+
+`FSDPPPOActor` is a high-level engine with algorithm-specific APIs, such as `compute_logp`,`compute_advantages` and `ppo_update`.
+`FSDPPPOActor` is powered by the lower-level train engine `FSDPEngine`, who only provides basic APIs for the model, such as `train_batch` and `forward`. 
+
+## Transferring Weights to Inference Servers
+
+After training, we transfer updated parameters to remote inference servers through cooperation between `FSDPPPOActor` and `RemoteSGLangEngine`.
+In our example, we show a simple case in which parameters are transfered from disks:
+
+```python
+path = update_weight_path(global_step)
+meta = WeightUpdateMeta(
+    type="disk",
+    path=path,
+    model_version=global_step + 1
+)
+# send requests to remote servers, tell them to update weights
+if dist.get_rank() == 0:
+    future = rollout.update_weights(meta)
+# actor save weights
+actor.upload_weights(meta)
+# remote servers returns after finishing updates
+if dist.get_rank() == 0:
+    future.result()
+    shutil.rmtree(path, ignore_errors=True)
+# synchronize rollout processes for model version update
+dist.barrier()
+torch.cuda.synchronize()
+# update version for rollout engine
+rollout.set_version(global_step + 1)
+```
+
+The core GRPO training logic in AReaLite can be summarized as:
+
+```python
+data_generator = iter(train_dataloader)
+for global_step in range(max_steps):
+    if config.async_training:
+        batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
+    else:
+        try:
+            data = next(data_generator)
+        except StopIteration:
+            data_generator = iter(train_dataloader)
+            data = next(data_generator)
+        batch = rollout.rollout_batch(data, workflow=workflow)
+
+    batch = batch.to(actor.device)
+    # Create barrier to synchronize all rollout processes.
+    dist.barrier()
+    torch.cuda.synchronize()
+    
+    logp = actor.compute_logp(batch)
+    batch["prox_logp"] = logp
+    if ref is not None:
+        batch["ref_logp"] = ref.compute_logp(batch)
+        log_gpu_stats("ref logp")
+    actor.compute_advantages(batch)
+    stats = actor.ppo_update(batch)
+    actor.step_lr_scheduler()
+    
+    path = update_weight_path(global_step)
+    meta = WeightUpdateMeta(
+        type="disk",
+        path=path,
+        model_version=global_step + 1
+    )
+    # send requests to remote servers, tell them to update weights
+    if dist.get_rank() == 0:
+        future = rollout.update_weights(meta)
+    # actor save weights
+    actor.upload_weights(meta)
+    # remote servers returns after finishing updates
+    if dist.get_rank() == 0:
+        future.result()
+        shutil.rmtree(path, ignore_errors=True)
+    # synchronize rollout processes for model version update
+    dist.barrier()
+    torch.cuda.synchronize()
+    # update version for rollout engine
+    rollout.set_version(global_step + 1)
+```
 
 ## Utilities 
 
-
-
-
+In AReaLite, we provide a wide range of utilities for basic functionalities required for observing and tuning your experiments, including:
+- `Saver` ([arealite/utils/saver.py](../../arealite/utils/saver.py)): Saves the checkpoints in a frequency set by config.
+- `Evaluator` ([arealite/utils/evaluator.py](../../arealite/utils/evaluator.py)): Evaluates the model in a frequency set by config.
+- `StatsLogger` ([arealite/utils/stats_logger.py](../../arealite/utils/stats_logger.py)): Logs training data to backends like `wandb` and `tensorboard`. Also manages outputs to terminal or log files.
+- `stats_tracker` ([realhf/base/stats_tracker.py](../../realhf/base/stats_tracker.py)): Gathers and manages training statistics.
 
