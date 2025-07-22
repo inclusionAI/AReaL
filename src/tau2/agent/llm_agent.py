@@ -46,12 +46,20 @@ def parse_message(msg: AssistantMessage) -> None:
     To User:
     The message to the user.
     ```
-    In both cases the "Thought:" section is optional.
+
+    Option 3 (fallback):
+    ```
+    Plain text message to the user (without Thought: or To User: prefixes)
+    ```
+
+    In the first two cases the "Thought:" section is optional.
 
     If the message is in the first format, the tool call will be parsed into the following fields:
     - msg.reasoning: The reasoning steps.
     - msg.content: The message to the user.
     - msg.tool_calls: The json parsed tool call.
+
+    If the message is in the second or third format, it will be parsed as a user message.
     """
     text_content = msg.content
     if text_content is None:
@@ -102,10 +110,11 @@ def parse_message(msg: AssistantMessage) -> None:
         else:
             raise AgentError("To User section found but no content could be extracted")
     else:
-        # Neither Action nor To User section found
-        raise AgentError(
-            f"Invalid message format. Expected 'Action:' or 'To User:' section after thought, but found: {remaining_content[:100]}..."
-        )
+        # If no Action or To User section is found, treat the entire content as a user message
+        # This handles cases where the LLM sends plain text without the expected format
+        user_message = remaining_content.strip()
+        if not user_message:
+            raise AgentError("No content found in message")
 
     # Update the message object
     msg.reasoning = reasoning
@@ -123,9 +132,9 @@ AGENT_INSTRUCTION = """
 You are a customer service agent that helps the user according to the <policy> provided below.
 You are also provided with a list of <tools> that you can use to solve the ticket.
 
-CRITICAL: You must format your responses in exactly one of these two formats:
+CRITICAL: You must format your responses in one of these three formats:
 
-FORMAT 1 - Send a message to the user:
+FORMAT 1 - Send a message to the user (recommended):
 ```
 Thought:
 [Your reasoning in a single line]
@@ -143,18 +152,24 @@ Action:
 {"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}
 ```
 
+FORMAT 3 - Simple message to user (fallback):
+```
+[Your message to the user]
+```
+
 IMPORTANT RULES:
-1. The "Thought:" section is OPTIONAL but recommended
+1. The "Thought:" section is OPTIONAL but recommended for complex reasoning
 2. You must choose either "To User:" OR "Action:" - never both
 3. The Action JSON must be valid JSON with double quotes around keys and string values
 4. Do not use placeholder values - use actual data from the context
 5. Each section must be on its own line with proper spacing
 6. The Thought section should be a single line of reasoning
 7. Tool names and arguments must match exactly what's available in the tools list
+8. For simple responses, you can use Format 3 (plain text) without Thought or To User prefixes
 
 VALID EXAMPLES:
 
-Example 1 - Message to user:
+Example 1 - Message to user (recommended format):
 ```
 Thought:
 I need the user's username to reset their password.
@@ -163,7 +178,12 @@ To User:
 Could you please provide me with your username?
 ```
 
-Example 2 - Tool call:
+Example 2 - Simple message to user (fallback format):
+```
+Could you please provide me with your username?
+```
+
+Example 3 - Tool call:
 ```
 Thought:
 I will reset the password for user "john_doe" using the reset_password tool.
@@ -172,7 +192,7 @@ Action:
 {"name": "reset_password", "arguments": {"username": "john_doe"}}
 ```
 
-Example 3 - Tool call with multiple arguments:
+Example 4 - Tool call with multiple arguments:
 ```
 Thought:
 I need to update the user's account with their new email and phone number.
@@ -300,9 +320,9 @@ To make following the policy easier, we give you the list of resolution steps yo
 These steps involve either taking an action or asking the user to take an action.
 You are also provided with a list of <tools> that you can use to solve the ticket.
 
-CRITICAL: You must format your responses in exactly one of these two formats:
+CRITICAL: You must format your responses in one of these three formats:
 
-FORMAT 1 - Send a message to the user:
+FORMAT 1 - Send a message to the user (recommended):
 ```
 Thought:
 [Your reasoning in a single line]
@@ -320,8 +340,13 @@ Action:
 {"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}
 ```
 
+FORMAT 3 - Simple message to user (fallback):
+```
+[Your message to the user]
+```
+
 IMPORTANT RULES:
-1. The "Thought:" section is OPTIONAL but recommended
+1. The "Thought:" section is OPTIONAL but recommended for complex reasoning
 2. You must choose either "To User:" OR "Action:" - never both
 3. The Action JSON must be valid JSON with double quotes around keys and string values
 4. Do not use placeholder values - use actual data from the context
@@ -329,10 +354,11 @@ IMPORTANT RULES:
 6. The Thought section should be a single line of reasoning
 7. Tool names and arguments must match exactly what's available in the tools list
 8. Follow the resolution steps provided to guide your actions
+9. For simple responses, you can use Format 3 (plain text) without Thought or To User prefixes
 
 VALID EXAMPLES:
 
-Example 1 - Message to user:
+Example 1 - Message to user (recommended format):
 ```
 Thought:
 I need the user's username to reset their password.
@@ -341,7 +367,12 @@ To User:
 Could you please provide me with your username?
 ```
 
-Example 2 - Tool call:
+Example 2 - Simple message to user (fallback format):
+```
+Could you please provide me with your username?
+```
+
+Example 3 - Tool call:
 ```
 Thought:
 I will reset the password for user "john_doe" using the reset_password tool.
