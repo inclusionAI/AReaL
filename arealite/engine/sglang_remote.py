@@ -24,6 +24,8 @@ from arealite.api.io_struct import (
     LLMResponse,
     RolloutStat,
     WeightUpdateMeta,
+    VLMRequest, 
+    VLMResponse
 )
 from arealite.utils.data import concat_padded_tensors
 from arealite.utils.http import arequest_with_retry, get_default_connector
@@ -226,7 +228,7 @@ class RemoteSGLangEngine(InferenceEngine):
                 return server
         raise NotImplementedError("Only round-robin scheduling is implemented.")
 
-    async def agenerate(self, req: LLMRequest) -> LLMResponse:
+    async def agenerate(self, req: LLMRequest|VLMRequest) -> LLMResponse|VLMResponse:
         """Async version of generate using aiohttp."""
         # Prepare request payload
         gconfig = req.gconfig
@@ -244,14 +246,23 @@ class RemoteSGLangEngine(InferenceEngine):
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
         }
-
-        # NOTE: rid should NOT be passed in payload
-        payload = {
-            "input_ids": req.input_ids.copy(),
-            "sampling_params": sample_params,
-            "return_logprob": True,
-            "stream": False,
-        }
+        if isinstance(req, VLMRequest):
+            # VLMRequest has image_data
+            payload = {
+                "input_ids": req.input_ids.copy(),
+                "image_data": req.image_data,  # ImageObject or str
+                "sampling_params": sample_params,
+                "return_logprob": True,
+                "stream": False,
+            }
+        else:
+            # NOTE: rid should NOT be passed in payload
+            payload = {
+                "input_ids": req.input_ids.copy(),
+                "sampling_params": sample_params,
+                "return_logprob": True,
+                "stream": False,
+            }
 
         # Make request
         start_time = time.perf_counter()
@@ -307,8 +318,20 @@ class RemoteSGLangEngine(InferenceEngine):
             sample_params["max_new_tokens"] -= len(output_tokens)
 
         latency = time.perf_counter() - start_time
-
-        return LLMResponse(
+        
+        if isinstance(req, VLMRequest):
+            response = VLMResponse(
+            input_tokens=req.input_ids,
+            input_images=req.image_data,
+            output_tokens=accumulated_output_tokens,
+            output_logprobs=accumulated_output_logprobs,
+            output_versions=accumulated_versions,
+            stop_reason=stop_reason,
+            latency=latency,
+            ttft=latency,  # Simplified for non-streaming
+            )
+        else:
+            response=LLMResponse(
             input_tokens=req.input_ids,
             output_tokens=accumulated_output_tokens,
             output_logprobs=accumulated_output_logprobs,
@@ -317,6 +340,7 @@ class RemoteSGLangEngine(InferenceEngine):
             latency=latency,
             ttft=latency,  # Simplified for non-streaming
         )
+        return response
 
     def update_weights(self, meta):
         executor = ThreadPoolExecutor(max_workers=1)

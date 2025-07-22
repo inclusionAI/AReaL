@@ -125,11 +125,7 @@ def get_clevr_count_70k_rl_dataset(path, split,processor,  rank, world_size):
         system_prompt = {
             "role": "system", 
             "content": (
-                "Solve the following question step by step. Mark your thought process by using the word 'thinking' in your response. "
-                "First, analyze the image and identify the distinct items present in the image. "
-                "Then, count the number of items and provide the final answer in [ ] format, ensuring that only the number is inside the brackets "
-                "without any additional text or explanations. "
-                "Make sure to clearly state the number of items after your thought process."
+                "Solve the following question: count the number of items in the image and provide the final answer in [ ] format, ensuring that only the number is inside the brackets without any additional text or explanations. "
             )
         }
 

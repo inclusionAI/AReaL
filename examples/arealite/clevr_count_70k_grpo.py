@@ -9,7 +9,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from arealite.api.cli_args import GRPOConfig, load_expr_config
 from arealite.api.io_struct import FinetuneSpec, WeightUpdateMeta
 from arealite.engine.ppo.actor import FSDPPPOActor
-from arealite.engine.vl_sglang_remote import VL_RemoteSGLangEngine
+from arealite.engine.sglang_remote import RemoteSGLangEngine
 from arealite.utils.device import log_gpu_stats
 from arealite.utils.evaluator import Evaluator
 from arealite.utils.saver import Saver
@@ -71,7 +71,7 @@ def clevr_count_70k_reward_fn(prompt, completions, prompt_ids, completion_ids, a
         if is_thinking:
             return 1 
         else:
-            return 0.8
+            return 1
 
     if re.match(r"^\[\d+(\.\d+)?\]$", sol.strip()):
         return 0.05
@@ -129,9 +129,9 @@ def main(args):
     )
 
     # Initialize inference engine
-    rollout = VL_RemoteSGLangEngine(config.rollout)
+    rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(None, ft_spec)
-    eval_rollout = VL_RemoteSGLangEngine(config.rollout)
+    eval_rollout = RemoteSGLangEngine(config.rollout)
     eval_rollout.initialize(None, ft_spec)
     # NOTE: set a large version such that eval does not have any offpolicyness control
     eval_rollout.set_version(int(1e12))
