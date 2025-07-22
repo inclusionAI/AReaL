@@ -377,11 +377,6 @@ class Environment:
         """
         Validate the tool call in solo mode.
         """
-        if self.tools.enable_think_tool and self.user_tools.enable_think_tool:
-            logger.warning(
-                "Both tools and user tools have the think tool enabled. This is not allowed in solo mode. Disabling the think tool for the user tools."
-            )
-            self.user_tools.enable_think_tool = False
         assistant_tool_names = set(self.tools.get_tools().keys())
         user_tool_names = (
             set(self.user_tools.get_tools().keys())

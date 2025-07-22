@@ -1,3 +1,4 @@
+import re
 from copy import deepcopy
 from typing import List, Optional
 
@@ -24,12 +25,13 @@ from tau2.utils.llm_utils import generate
 
 AGENT_INSTRUCTION = """
 You are a customer service agent that helps the user according to the <policy> provided below.
-During each turn you can either:
-- Send a message to the user.
-- Make a tool call.
-IMPORTANT: You cannot do both at the same time!!
-If you send text content while making a tool call, the agent will raise an error.
-Text content will be sent to the user. Do not use this field for your own reasoning.
+
+You can generate:
+- Reasoning steps: Those should come first and be enclosed in the <think> <think/> tag. E.g. <think>I need to check the user's account balance before processing the refund.</think>
+- Message to the user. Those should come after the reasoning steps and be enclosed in the <user_message> <user_message/> tag. E.g. <user_message>Could you please provide me with your account balance?</user_message>
+- Tool calls.
+
+IMPORTANT: You cannot send a message to the user while making tool calls!
 
 Try to be helpful and always follow the policy. Always make sure you generate valid JSON only.
 """.strip()
@@ -49,6 +51,28 @@ class LLMAgentState(BaseModel):
 
     system_messages: list[SystemMessage]
     messages: list[APICompatibleMessage]
+
+
+def parse_text_content(
+    text_content: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Parse the text content into reasoning steps, user message"""
+    if text_content is None:
+        return None, None
+
+    # Extract reasoning content between <think> and </think> tags
+    think_match = re.search(r"<think>(.*?)</think>", text_content, re.DOTALL)
+    reasoning = think_match.group(1).strip() if think_match else None
+
+    # Extract user message content between <user_message> and </user_message> tags
+    user_msg_match = re.search(
+        r"<user_message>(.*?)</user_message>", text_content, re.DOTALL
+    )
+    user_message = user_msg_match.group(1).strip() if user_msg_match else None
+    logger.debug(
+        f"Parsing text content: {text_content}.\nReasoning: {reasoning}.\nUser message: {user_message}."
+    )
+    return reasoning, user_message
 
 
 class LLMAgent(LocalAgent[LLMAgentState]):
@@ -115,6 +139,11 @@ class LLMAgent(LocalAgent[LLMAgentState]):
             **self.llm_args,
         )
         state.messages.append(assistant_message)
+        reasoning, user_message = parse_text_content(assistant_message.content)
+        if reasoning is not None:
+            assistant_message.reasoning = reasoning
+        if user_message is not None:
+            assistant_message.content = user_message
         return assistant_message, state
 
     def set_seed(self, seed: int):
@@ -134,12 +163,12 @@ You must behave according to the <policy> provided below.
 To make following the policy easier, we give you the list of resolution steps you are expected to take.
 These steps involve either taking an action or asking the user to take an action.
 
-During each turn you can either:
-- Send a message to the user.
-- Make a tool call.
-IMPORTANT: You cannot do both at the same time!!
-If you send text content while making a tool call, the agent will raise an error.
-Text content will be sent to the user. Do not use this field for your own reasoning.
+You can generate:
+- Reasoning steps: Those should come first and be enclosed in the <think> <think/> tag. E.g. <think>I need to check the user's account balance before processing the refund.</think>
+- Message to the user. Those should come after the reasoning steps and be enclosed in the <user_message> <user_message/> tag. E.g. <user_message>Could you please provide me with your account balance?</user_message>
+- Tool calls.
+
+IMPORTANT: You cannot send a message to the user while making tool calls!
 
 Try to be helpful and always follow the policy. Always make sure you generate valid JSON only.
 """.strip()
@@ -245,6 +274,11 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
             **self.llm_args,
         )
         state.messages.append(assistant_message)
+        reasoning, user_message = parse_text_content(assistant_message.content)
+        if reasoning is not None:
+            assistant_message.reasoning = reasoning
+        if user_message is not None:
+            assistant_message.content = user_message
         return assistant_message, state
 
     def set_seed(self, seed: int):
@@ -296,7 +330,10 @@ You will be provided with a ticket that contains the user's request.
 You will need to plan and call the appropriate tools to solve the ticket.
 
 You cannot communicate with the user, only make tool calls.
-IMPORTANT: Only tool calls are allowed, do not output anything else.
+
+You can generate:
+- Reasoning steps: Those should be enclosed in the <think> <think/> tag. E.g. <think>I need to check the user's account balance before processing the refund.</think>
+- Tool calls.
 
 Stop when you consider that you have solved the ticket.
 To do so, send a message containing a single tool call to the `{stop_function_name}` tool. Do not include any other tool calls in this last message.
@@ -334,7 +371,6 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         task: Task,
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
-        allow_user_message_attempt: bool = True,
     ):
         """
         Initialize the LLMAgent.
@@ -346,7 +382,6 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         self.task = task
         self.llm = llm
         self.llm_args = llm_args if llm_args is not None else {}
-        self.allow_user_message_attempt = allow_user_message_attempt
         self.add_stop_tool()
         self.validate_tools()
 
@@ -405,7 +440,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
             ticket=self.task.ticket,
         )
 
-    def _check_if_stop_toolcall(self, message: AssistantMessage) -> AssistantMessage:
+    def _check_if_stop_toolcall(self, message: AssistantMessage) -> None:
         """Check if the message is a stop message.
         If the message contains a tool call with the name STOP_FUNCTION_NAME, then the message is a stop message.
         """
@@ -419,7 +454,6 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         if is_stop:
             message.content = self.STOP_TOKEN
             message.tool_calls = None
-        return message
 
     @classmethod
     def is_stop(cls, message: AssistantMessage) -> bool:
@@ -471,10 +505,13 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
             tool_choice="required",
             **self.llm_args,
         )
-        if not assistant_message.is_tool_call() and not self.allow_user_message_attempt:
-            raise AgentError("Only tool calls are allowed.")
-        message = self._check_if_stop_toolcall(assistant_message)
         state.messages.append(assistant_message)
+        reasoning, user_message = parse_text_content(assistant_message.content)
+        if reasoning is not None:
+            assistant_message.reasoning = reasoning
+        if user_message is not None:
+            assistant_message.content = user_message
+        self._check_if_stop_toolcall(assistant_message)
         return assistant_message, state
 
     def set_seed(self, seed: int):
