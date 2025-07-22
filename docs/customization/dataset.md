@@ -10,7 +10,7 @@ offline training, such as `LMEngine` for Supervised Fine-Tuning (SFT)).
 
 Here are two concrete examples from the existing implementation:
 
-### SFT (Offline Training)
+## SFT (Offline Training)
 
 In the SFT example, we see that the loaded data is directly passed to the `train_lm`
 method:
@@ -56,7 +56,7 @@ def get_gsm8k_dataset(split, tokenizer, rank, world_size):
     return process_gsm8k_sft_dataset(dataset, tokenizer)
 ```
 
-### GRPO (Online Training)
+## GRPO (Online Training)
 
 In the GRPO example, the loaded data is passed to the `InferenceEngine`, rather than the
 `TrainEngine`:

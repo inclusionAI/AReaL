@@ -6,7 +6,7 @@ problems until it finds the correct answer.
 
 You can find the complete implementation in `arealite/workflow/multi_turn.py`.
 
-### Step 1: Define Your Workflow
+## Step 1: Define Your Workflow
 
 AReaLite gives you flexibility in how you design your agents. Instead of rigid `Agent`
 classes that might constrain your agent's capabilities, AReaLite captures all rollout
@@ -40,7 +40,7 @@ interact.
 > generated from that prompt—it's not batched. However, you can generate multiple
 > trajectories from a single prompt (for example, with GRPO or tree search).
 
-#### Setting Up the Multi-Turn Math Workflow
+### Setting Up the Multi-Turn Math Workflow
 
 Let's build a multi-turn rollout workflow for solving math problems. First, we'll define
 the `__init__` method to set up what we need during rollout:
@@ -68,7 +68,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
         self.turn_discount = turn_discount
 ```
 
-#### Implementing the Episode Logic
+### Implementing the Episode Logic
 
 Now let's implement the `arun_episode` method. We'll start by tokenizing the prompt data
 and converting it into an `LLMRequest` object for the inference engine:
@@ -111,7 +111,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
 > **Note**: The `rid` field in `LLMRequest` is the request ID. Requests with the same ID
 > will reuse the LLM inference server's KV caches for better efficiency.
 
-#### Handling Multi-Turn Conversations
+### Handling Multi-Turn Conversations
 
 Next, we'll check if the current answer is correct using our `reward_fn`. This function
 should return 1 for correct answers and 0 otherwise. When the answer is wrong, we'll
@@ -150,7 +150,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
             discount *= self.turn_discount
 ```
 
-#### Reward Function Signature
+### Reward Function Signature
 
 To make it easier to switch between different reward functions, we recommend following
 this signature:
@@ -183,7 +183,7 @@ def reward_fn(
 While this signature is convenient, you're not restricted to it in custom
 workflows—modify as needed for your specific use case.
 
-#### Collecting Training Data
+### Collecting Training Data
 
 Finally, let's complete the implementation by collecting trajectories in the
 `TensorDict` format:
@@ -228,7 +228,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
 > `input_ids`, `loss_mask`, `attention_mask`, and `logprobs` (needed for computing
 > importance ratios).
 
-### Step 2: Training with Your Custom Workflow
+## Step 2: Training with Your Custom Workflow
 
 Using your custom workflow is straightforward—just create it in your training script and
 pass it to the `rollout_batch` or `prepare_batch` method:

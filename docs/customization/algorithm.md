@@ -3,8 +3,6 @@
 > **Note**: We recommend the user to first read the
 > [agent customization guide](agent.md).
 
-## Option 1: Using AReaLite (Recommended)
-
 AReaLite structures RL algorithms around two core components:
 
 - **RolloutWorkflow**: Defines what data to generate during rollouts
@@ -12,7 +10,7 @@ AReaLite structures RL algorithms around two core components:
 
 We'll demonstrate this by implementing an RL algorithm similar to ReMax.
 
-### Step 1: Implementing the RolloutWorkflow
+## Step 1: Implementing the RolloutWorkflow
 
 The rollout workflow generates both greedy and sampled completions, then uses the reward
 difference as the final training signal:
@@ -87,7 +85,7 @@ class ReMaxRLVRWorkflow(RolloutWorkflow):
 > **Note**: For detailed guidance on customizing rollout workflows, see the
 > [agent customization guide](agent.md).
 
-### Step 2: Implementing the REINFORCE Training Algorithm
+## Step 2: Implementing the REINFORCE Training Algorithm
 
 Training algorithms are implemented by subclassing `TrainEngine` and using its atomic
 operations like `forward`, `train_batch`, and `eval_batch`.
@@ -151,7 +149,7 @@ class FSDPReinforceActor(FSDPEngine):
 > **Note**: This pattern is similar to interfaces in Go or traits in Rust, adapted for
 > Python's object model.
 
-### Step 3: Composing the Complete Training Loop
+## Step 3: Composing the Complete Training Loop
 
 The main training loop brings everything together:
 

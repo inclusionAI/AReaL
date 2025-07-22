@@ -4,7 +4,7 @@
 > for new projects. It provides better flexibility, cleaner abstractions, and easier
 > maintenance.
 
-### Step 1: Define Your Agent Class
+## Step 1: Define Your Agent Class
 
 Create a new file under `realhf/impl/agent/`, such as `math_multi_turn_agent.py`. Your
 `Agent` must implement the interface defined in `realhf/api/core/agent.py`, which
@@ -23,7 +23,7 @@ class MathMultiTurnAgent(Agent):
         ...
 ```
 
-### Step 2: Implement the Trajectory Collection Logic
+## Step 2: Implement the Trajectory Collection Logic
 
 The `collect_trajectory` method takes a task prompt, an environment, and two
 communication queues. Within this method, you control the data flow between your agent
@@ -48,7 +48,7 @@ for turn in range(self.num_turns):
     # ... process results ...
 ```
 
-#### Environment Integration
+### Environment Integration
 
 The environment follows a
 [Gym-like interface](https://github.com/Farama-Foundation/Gymnasium) with `reset` and
@@ -73,7 +73,7 @@ class MathCodeSingleStepEnv(EnvironmentService):
         return None, format_rewards, True, False, {}
 ```
 
-#### Handling Multi-Turn Feedback
+### Handling Multi-Turn Feedback
 
 After receiving the reward from `env.step`, check if the answer is correct. If not,
 provide feedback and continue to the next turn:
@@ -100,7 +100,7 @@ for turn in range(self.num_turns):
     token_ids.extend(feedback_tokens)
 ```
 
-### Step 3: Register and Configure Your Agent
+## Step 3: Register and Configure Your Agent
 
 First, register your agent implementation:
 
@@ -143,16 +143,16 @@ class AsyncPPOMATHConfig(AsyncRLExperimentConfig, PPOMATHConfig):
         )
 ```
 
-### Step 4: Run Training
+## Step 4: Run Training
 
 Follow the standard training procedure outlined in the
-[quickstart guide](../tutorial/quickstart.md). Launch your experiment with:
+[quickstart guide](../../tutorial/quickstart.md). Launch your experiment with:
 
 ```bash
 python3 training/main_async_ppo.py my_param=5.0  # plus any additional CLI arguments
 ```
 
-### Training Results
+## Training Results
 
 Here's an example of the training reward curve from our multi-turn math agent:
 

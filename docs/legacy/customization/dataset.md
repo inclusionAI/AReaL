@@ -4,7 +4,7 @@
 > for new projects. It provides better flexibility, cleaner abstractions, and easier
 > maintenance.
 
-### Define Your Dataset
+## Define Your Dataset
 
 Create a new file under `realhf/impl/dataset/`, for example, `my_custom_dataset.py`.
 Your `Dataset` must implement the `torch.utils.data.Dataset` interface and follow the
@@ -41,11 +41,11 @@ class MyCustomDataset(torch.utils.data.Dataset):
         ...
 ```
 
-### Implement Core Methods
+## Implement Core Methods
 
 Every dataset class must implement the following two core methods:
 
-#### 1. `__len__` Method
+### 1. `__len__` Method
 
 Returns the size of the dataset:
 
@@ -54,7 +54,7 @@ def __len__(self):
     return len(self.data_samples)
 ```
 
-#### 2. `__getitem__` Method
+### 2. `__getitem__` Method
 
 Returns the sample at the specified index, must return a `SequenceSample` object:
 
@@ -77,7 +77,7 @@ def __getitem__(self, idx):
     )
 ```
 
-#### Dataset Examples
+### Dataset Examples
 
 We provide some examples of dataset under `realhf/impl/dataset/`:
 
@@ -85,9 +85,9 @@ We provide some examples of dataset under `realhf/impl/dataset/`:
 - For Reward model training, please refer `rw_paired_dataset.py`
 - For RL training, please refer `math_code_dataset.py`
 
-### Data Format Requirements
+## Data Format Requirements
 
-#### JSONL File Format
+### JSONL File Format
 
 Your data file should be in JSONL format, with one JSON object per line. If you are
 using our PromptDataset implementation, your data should be like:
@@ -112,9 +112,9 @@ using our PromptDataset implementation, your data should be like:
 Note: There is no format restriction for a customized dataset as long as it can be
 loaded by your custom code.
 
-### Registration and Configuration
+## Registration and Configuration
 
-#### Register Dataset
+### Register Dataset
 
 Register your dataset at the end of your dataset file:
 
@@ -123,7 +123,7 @@ Register your dataset at the end of your dataset file:
 data_api.register_dataset("my-custom", MyCustomDataset)
 ```
 
-#### Modify Experiment Configuration
+### Modify Experiment Configuration
 
 Use your new dataset in the experiment configuration (refer to
 `realhf/experiments/common/*_exp.py`):

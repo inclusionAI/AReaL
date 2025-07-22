@@ -47,12 +47,12 @@ file.
 > **Note**: We recommend using asynchronous RL so you can customize generation behavior
 > by [modifying your RL agent](agent.md) instead of the `generate` method.
 
-### Example 1: Grouped Advantage Normalization
+## Example 1: Grouped Advantage Normalization
 
 Let's modify PPO's global advantage normalization to use grouped normalization (GRPO
 approach).
 
-#### Understanding Data Organization
+### Understanding Data Organization
 
 Each batch contains multiple prompts (batch size) and each prompt may have multiple
 responses (group size). So total sequences = batch_size × group_size.
@@ -60,7 +60,7 @@ responses (group size). So total sequences = batch_size × group_size.
 Sequences have different lengths but are packed into a 1D tensor. We use `cu_seqlens`
 (cumulative sequence lengths) to mark boundaries, similar to flash-attention.
 
-#### Implementation
+### Implementation
 
 The standard PPO normalization looks like:
 
@@ -106,7 +106,7 @@ class PPOActorInterface(ModelInterface):
         # ...
 ```
 
-#### Configuration Changes
+### Configuration Changes
 
 Update the experiment configuration to expose the new parameter:
 
@@ -128,14 +128,14 @@ class PPOMATHConfig(CommonExperimentConfig, PPOMATHExperimentOptions):
         )
 ```
 
-### Example 2: Decoupled PPO Loss
+## Example 2: Decoupled PPO Loss
 
 The decoupled PPO loss (from AReaL's paper) recomputes probabilities before mini-batch
 updates and uses this as π_prox:
 
 ![decoupled loss](decoupled_loss.png)
 
-#### Probability Recomputation
+### Probability Recomputation
 
 We recompute probabilities using the existing `inference` method:
 
@@ -180,7 +180,7 @@ class PPOActorInterface(ModelInterface):
             )
 ```
 
-#### Modifying the Loss Function
+### Modifying the Loss Function
 
 Update the loss computation to use the recomputed probabilities:
 
@@ -238,7 +238,7 @@ def actor_loss_fn(
     return pg_loss, stat
 ```
 
-#### Configuration Update
+### Configuration Update
 
 ```python
 @dataclasses.dataclass
