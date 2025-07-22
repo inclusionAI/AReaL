@@ -23,7 +23,7 @@ parts:
     - file: customization/dataset
     - file: customization/agent
     - file: customization/algorithm
-  - caption: Code Walkthrough
+  - caption: Code Walkthrough (Legacy)
     chapters:
     - file: developer/overview
     - file: developer/trainer
