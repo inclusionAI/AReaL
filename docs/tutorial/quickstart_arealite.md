@@ -10,7 +10,7 @@ To run the experiment, you will need:
 - Training script: [examples/arealite/gsm8k_grpo.py](../../examples/arealite/gsm8k_grpo.py)
 - Config YAML: [examples/arealite/configs/gsm8k_grpo.yaml](../../examples/arealite/configs/gsm8k_grpo.yaml)
 
-Our training scripts will automatically download the dataset (openai/gsm8k) and model (Qwen/Qwen3-1.7B).
+Our training scripts will automatically download the dataset (openai/gsm8k) and model (Qwen/Qwen2-1.5B-Instruct).
 To run the example with default configuration, execute from the repository directory:
 ```
 python3 -m arealite.launcher.local examples/arealite/gsm8k_grpo.py --config examples/arealite/configs/gsm8k_grpo.yaml experiment_name=<your experiment name> trial_name=<your trial name>
@@ -91,4 +91,8 @@ Additional references:
 
 ## Next Steps
 
-Check [Getting Started with AReaLite](../arealite/gsm8k_grpo.md) for a complete code walkthrough on the GRPO GSM8K Example.
+1. Check [Getting Started with AReaLite](../arealite/gsm8k_grpo.md) for a complete code walkthrough on the GRPO GSM8K Example.
+2. Customization guides:
+- [Custom dataset](../customization/dataset.md)
+- [Custom agentic/RVLR rollout workflows](../customization/agent.md)
+- [Custom algorithms](../customization/algorithm.md)
