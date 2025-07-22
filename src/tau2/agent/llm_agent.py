@@ -1,3 +1,4 @@
+import json
 import re
 from copy import deepcopy
 from typing import List, Optional
@@ -6,6 +7,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from tau2.agent.base import (
+    AgentError,
     LocalAgent,
     ValidAgentInputMessage,
     is_valid_agent_history_message,
@@ -16,24 +18,176 @@ from tau2.data_model.message import (
     Message,
     MultiToolMessage,
     SystemMessage,
+    ToolCall,
     UserMessage,
 )
 from tau2.data_model.tasks import Action, Task
 from tau2.environment.tool import Tool, as_tool
 from tau2.utils.llm_utils import generate
 
+
+def parse_message(msg: AssistantMessage) -> None:
+    """Parse the text content into reasoning steps, and tool call.
+    The message.content should be in the following formats:
+    Option 1:
+    ```
+    Thought:
+    A single line of reasoning to process the context and inform the decision making. Do not include extra lines.
+
+    Action:
+    {{"name": <The name of tool you want to call>, "arguments": The arguments to pass to the tool in json format>}}
+    ```
+
+    Option 2:
+    ```
+    Thought:
+    A single line of reasoning to process the context and inform the decision making. Do not include extra lines.
+
+    To User:
+    The message to the user.
+    ```
+    In both cases the "Thought:" section is optional.
+
+    If the message is in the first format, the tool call will be parsed into the following fields:
+    - msg.reasoning: The reasoning steps.
+    - msg.content: The message to the user.
+    - msg.tool_calls: The json parsed tool call.
+    """
+    text_content = msg.content
+    if text_content is None:
+        return
+
+    logger.debug(f"Parsing message content: {text_content}.")
+    # Initialize variables
+    reasoning = None
+    user_message = None
+    tool_calls = None
+
+    # Extract reasoning content between "Thought:" and the next section
+    thought_match = re.search(
+        r"Thought:\s*(.*?)(?=\n\s*(?:Action:|To User:)|$)",
+        text_content,
+        re.DOTALL | re.MULTILINE,
+    )
+    if thought_match:
+        reasoning = thought_match.group(1).strip()
+        # Get the content after the thought section
+        thought_end = thought_match.end()
+        remaining_content = text_content[thought_end:].strip()
+    else:
+        # No thought section, use entire content
+        remaining_content = text_content.strip()
+
+    # Parse what comes after the thought (or entire content if no thought)
+    if remaining_content.startswith("Action:"):
+        # Extract Action section (tool call)
+        action_match = re.search(r"Action:\s*(\{.*\})", remaining_content, re.DOTALL)
+        if action_match:
+            try:
+                action_json = action_match.group(1).strip()
+                tool_calls = [ToolCall(**json.loads(action_json))]
+            except (json.JSONDecodeError, TypeError) as e:
+                raise AgentError(f"Failed to parse action JSON '{action_json}': {e}")
+        else:
+            raise AgentError(
+                "Action section found but no valid JSON could be extracted"
+            )
+    elif remaining_content.startswith("To User:"):
+        # Extract "To User" section
+        to_user_match = re.search(
+            r"To User:\s*(.*?)$", remaining_content, re.DOTALL | re.MULTILINE
+        )
+        if to_user_match:
+            user_message = to_user_match.group(1).strip()
+        else:
+            raise AgentError("To User section found but no content could be extracted")
+    else:
+        # Neither Action nor To User section found
+        raise AgentError(
+            f"Invalid message format. Expected 'Action:' or 'To User:' section after thought, but found: {remaining_content[:100]}..."
+        )
+
+    # Update the message object
+    msg.reasoning = reasoning
+    msg.content = user_message
+    msg.tool_calls = tool_calls
+
+    logger.debug(
+        f"Reasoning: {reasoning}.\n"
+        f"User message: {msg.content}.\n"
+        f"Tool calls: {msg.tool_calls}."
+    )
+
+
 AGENT_INSTRUCTION = """
 You are a customer service agent that helps the user according to the <policy> provided below.
+You are also provided with a list of <tools> that you can use to solve the ticket.
 
-You can generate:
-- Reasoning steps: Those should come first and be enclosed in the <think> <think/> tag. E.g. <think>I need to check the user's account balance before processing the refund.</think>
-- Message to the user. Those should come after the reasoning steps. E.g. Could you please provide me with your account balance?
-- Tool calls.
+CRITICAL: You must format your responses in exactly one of these two formats:
 
-IMPORTANT: You cannot send a message to the user while making tool calls!
-IMPORTANT: At each turn, you must send either a tool call or a message to the user.
+FORMAT 1 - Send a message to the user:
+```
+Thought:
+[Your reasoning in a single line]
 
-Try to be helpful and always follow the policy. Always make sure you generate valid JSON only.
+To User:
+[Your message to the user]
+```
+
+FORMAT 2 - Make a tool call:
+```
+Thought:
+[Your reasoning in a single line]
+
+Action:
+{"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}
+```
+
+IMPORTANT RULES:
+1. The "Thought:" section is OPTIONAL but recommended
+2. You must choose either "To User:" OR "Action:" - never both
+3. The Action JSON must be valid JSON with double quotes around keys and string values
+4. Do not use placeholder values - use actual data from the context
+5. Each section must be on its own line with proper spacing
+6. The Thought section should be a single line of reasoning
+7. Tool names and arguments must match exactly what's available in the tools list
+
+VALID EXAMPLES:
+
+Example 1 - Message to user:
+```
+Thought:
+I need the user's username to reset their password.
+
+To User:
+Could you please provide me with your username?
+```
+
+Example 2 - Tool call:
+```
+Thought:
+I will reset the password for user "john_doe" using the reset_password tool.
+
+Action:
+{"name": "reset_password", "arguments": {"username": "john_doe"}}
+```
+
+Example 3 - Tool call with multiple arguments:
+```
+Thought:
+I need to update the user's account with their new email and phone number.
+
+Action:
+{"name": "update_account", "arguments": {"email": "new@example.com", "phone": "555-1234"}}
+```
+
+INVALID FORMATS TO AVOID:
+- Don't use single quotes in JSON: {"name": 'tool'} ❌
+- Don't mix sections: Thought + Action + To User ❌
+- Don't use placeholder values: {"username": "user123"} when you don't know the username ❌
+- Don't forget quotes around JSON keys: {name: "tool"} ❌
+
+Be helpful and always follow the policy!
 """.strip()
 
 SYSTEM_PROMPT = """
@@ -43,6 +197,9 @@ SYSTEM_PROMPT = """
 <policy>
 {domain_policy}
 </policy>
+<tools>
+{tool_prompt}
+</tools>
 """.strip()
 
 
@@ -51,34 +208,6 @@ class LLMAgentState(BaseModel):
 
     system_messages: list[SystemMessage]
     messages: list[APICompatibleMessage]
-
-
-def parse_text_content(msg: AssistantMessage) -> None:
-    """Parse the text content into reasoning steps, user message."""
-    text_content = msg.content
-    if text_content is None:
-        return
-    # Extract reasoning content between <think> and </think> tags
-    think_match = re.search(r"<think>(.*?)</think>", text_content, re.DOTALL)
-    reasoning = think_match.group(1).strip() if think_match else None
-
-    # Extract user message as everything after </think> tag, or entire content if no think tag
-    if think_match:
-        # Find the end of the </think> tag and take everything after it
-        think_end = think_match.end()
-        user_message = (
-            text_content[think_end:].strip() if think_end < len(text_content) else None
-        )
-        user_message = user_message if user_message else None
-    else:
-        # No think tag, so the entire content is the user message
-        user_message = text_content.strip() if text_content.strip() else None
-
-    logger.debug(
-        f"Parsing text content: {text_content}.\nReasoning: {reasoning}.\nUser message: {user_message}."
-    )
-    msg.reasoning = reasoning
-    msg.content = user_message
 
 
 class LLMAgent(LocalAgent[LLMAgentState]):
@@ -99,11 +228,16 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         super().__init__(tools=tools, domain_policy=domain_policy)
         self.llm = llm
         self.llm_args = deepcopy(llm_args) if llm_args is not None else {}
+        self.tool_prompt = json.dumps(
+            [tool.openai_schema for tool in self.tools], indent=2
+        )
 
     @property
     def system_prompt(self) -> str:
         return SYSTEM_PROMPT.format(
-            domain_policy=self.domain_policy, agent_instruction=AGENT_INSTRUCTION
+            domain_policy=self.domain_policy,
+            agent_instruction=AGENT_INSTRUCTION,
+            tool_prompt=self.tool_prompt,
         )
 
     def get_init_state(
@@ -145,7 +279,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
             **self.llm_args,
         )
         state.messages.append(assistant_message)
-        parse_text_content(assistant_message)
+        parse_message(assistant_message)
         return assistant_message, state
 
     def set_seed(self, seed: int):
@@ -164,16 +298,65 @@ User simulator will have an issue for you to solve.
 You must behave according to the <policy> provided below.
 To make following the policy easier, we give you the list of resolution steps you are expected to take.
 These steps involve either taking an action or asking the user to take an action.
+You are also provided with a list of <tools> that you can use to solve the ticket.
 
-You can generate:
-- Reasoning steps: Those should come first and be enclosed in the <think> <think/> tag. E.g. <think>I need to check the user's account balance before processing the refund.</think>
-- Message to the user. Those should come after the reasoning steps. E.g. Could you please provide me with your account balance?
-- Tool calls.
+CRITICAL: You must format your responses in exactly one of these two formats:
 
-IMPORTANT: You cannot send a message to the user while making tool calls!
-IMPORTANT: At each turn, you must send either a tool call or a message to the user.
+FORMAT 1 - Send a message to the user:
+```
+Thought:
+[Your reasoning in a single line]
 
-Try to be helpful and always follow the policy. Always make sure you generate valid JSON only.
+To User:
+[Your message to the user]
+```
+
+FORMAT 2 - Make a tool call:
+```
+Thought:
+[Your reasoning in a single line]
+
+Action:
+{"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}
+```
+
+IMPORTANT RULES:
+1. The "Thought:" section is OPTIONAL but recommended
+2. You must choose either "To User:" OR "Action:" - never both
+3. The Action JSON must be valid JSON with double quotes around keys and string values
+4. Do not use placeholder values - use actual data from the context
+5. Each section must be on its own line with proper spacing
+6. The Thought section should be a single line of reasoning
+7. Tool names and arguments must match exactly what's available in the tools list
+8. Follow the resolution steps provided to guide your actions
+
+VALID EXAMPLES:
+
+Example 1 - Message to user:
+```
+Thought:
+I need the user's username to reset their password.
+
+To User:
+Could you please provide me with your username?
+```
+
+Example 2 - Tool call:
+```
+Thought:
+I will reset the password for user "john_doe" using the reset_password tool.
+
+Action:
+{"name": "reset_password", "arguments": {"username": "john_doe"}}
+```
+
+INVALID FORMATS TO AVOID:
+- Don't use single quotes in JSON: {"name": 'tool'} ❌
+- Don't mix sections: Thought + Action + To User ❌
+- Don't use placeholder values: {"username": "user123"} when you don't know the username ❌
+- Don't forget quotes around JSON keys: {name: "tool"} ❌
+
+Be helpful and always follow the policy!
 """.strip()
 
 SYSTEM_PROMPT_GT = """
@@ -183,6 +366,9 @@ SYSTEM_PROMPT_GT = """
 <policy>
 {domain_policy}
 </policy>
+<tools>
+{tool_prompt}
+</tools>
 <resolution_steps>
 {resolution_steps}
 </resolution_steps>
@@ -216,6 +402,9 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         self.llm = llm
         self.llm_args = deepcopy(llm_args) if llm_args is not None else {}
         self.provide_function_args = provide_function_args
+        self.tool_prompt = json.dumps(
+            [tool.openai_schema for tool in self.tools], indent=2
+        )
 
     @classmethod
     def check_valid_task(cls, task: Task) -> bool:
@@ -236,6 +425,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
             agent_instruction=AGENT_GT_INSTRUCTION,
             domain_policy=self.domain_policy,
             resolution_steps=self.make_agent_instructions_from_actions(),
+            tool_prompt=self.tool_prompt,
         )
 
     def get_init_state(
@@ -277,7 +467,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
             **self.llm_args,
         )
         state.messages.append(assistant_message)
-        parse_text_content(assistant_message)
+        parse_message(assistant_message)
         return assistant_message, state
 
     def set_seed(self, seed: int):
@@ -325,22 +515,72 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
 
 AGENT_SOLO_INSTRUCTION = """
 You are a customer service agent that helps the user according to the <policy> provided below.
-You will be provided with a ticket that contains the user's request.
+You are provided with a <ticket> that contains the user's request.
+You are also provided with a list of <tools> that you can use to solve the ticket.
 You will need to plan and call the appropriate tools to solve the ticket.
 
 You cannot communicate with the user, only make tool calls.
 
-You can generate:
-- Reasoning steps: Those should be enclosed in the <think> <think/> tag. E.g. <think>I need to check the user's account balance before processing the refund.</think>
-- Tool calls.
+CRITICAL: You must format your responses in exactly this format:
 
-IMPORTANT: You must generate tool calls at each turn.
+```
+Thought:
+[Your reasoning in a single line]
 
-Stop when you consider that you have solved the ticket.
-To do so, send a message containing a single tool call to the `{stop_function_name}` tool. Do not include any other tool calls in this last message.
+Action:
+{"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}
+```
 
-Always follow the policy. Always make sure you generate valid JSON only.
+IMPORTANT RULES:
+1. The "Thought:" section is OPTIONAL but recommended
+2. The Action JSON must be valid JSON with double quotes around keys and string values
+3. Do not use placeholder values - use actual data from the ticket context
+4. Each section must be on its own line with proper spacing
+5. The Thought section should be a single line of reasoning
+6. Tool names and arguments must match exactly what's available in the tools list
+
+COMPLETION SIGNAL:
+When you have successfully resolved the ticket, you MUST call the `<STOP_FUNCTION_NAME>` tool to signal completion. This is the ONLY way to indicate you are done with the task.
+
+VALID EXAMPLES:
+
+Example 1 - Tool call:
+```
+Thought:
+I will reset the password for user "john_doe" using the reset_password tool.
+
+Action:
+{"name": "reset_password", "arguments": {"username": "john_doe"}}
+```
+
+Example 2 - Tool call with multiple arguments:
+```
+Thought:
+I need to update the user's account with their new email and phone number.
+
+Action:
+{"name": "update_account", "arguments": {"email": "new@example.com", "phone": "555-1234"}}
+```
+
+Example 3 - COMPLETION (call this when done):
+```
+Thought:
+I have successfully resolved the user's issue. I will call the <STOP_FUNCTION_NAME> tool to finish.
+
+Action:
+{"name": "<STOP_FUNCTION_NAME>", "arguments": {}}
+```
+
+INVALID FORMATS TO AVOID:
+- Don't use single quotes in JSON: {"name": 'tool'} ❌
+- Don't use placeholder values: {"username": "user123"} when you don't know the username ❌
+- Don't forget quotes around JSON keys: {name: "tool"} ❌
+- Don't include multiple tool calls in one message ❌
+- Don't forget to call the `<STOP_FUNCTION_NAME>` tool when you're done ❌
+
+Be helpful and always follow the policy!
 """.strip()
+
 
 SYSTEM_PROMPT_SOLO = """
 <instructions>
@@ -352,6 +592,9 @@ SYSTEM_PROMPT_SOLO = """
 <ticket>
 {ticket}
 </ticket>
+<tools>
+{tool_prompt}
+</tools>
 """.strip()
 
 
@@ -383,6 +626,9 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         self.task = task
         self.llm = llm
         self.llm_args = llm_args if llm_args is not None else {}
+        self.tool_prompt = json.dumps(
+            [tool.openai_schema for tool in self.tools], indent=2
+        )
         self.add_stop_tool()
         self.validate_tools()
 
@@ -431,14 +677,14 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
 
     @property
     def system_prompt(self) -> str:
-        agent_instruction = AGENT_SOLO_INSTRUCTION.format(
-            stop_function_name=self.STOP_FUNCTION_NAME,
-            stop_token=self.STOP_TOKEN,
+        agent_instruction = AGENT_SOLO_INSTRUCTION.replace(
+            "<STOP_FUNCTION_NAME>", self.STOP_FUNCTION_NAME
         )
         return SYSTEM_PROMPT_SOLO.format(
             agent_instruction=agent_instruction,
             domain_policy=self.domain_policy,
             ticket=self.task.ticket,
+            tool_prompt=self.tool_prompt,
         )
 
     def _check_if_stop_toolcall(self, message: AssistantMessage) -> None:
@@ -501,13 +747,11 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         messages = state.system_messages + state.messages
         assistant_message = generate(
             model=self.llm,
-            tools=self.tools,
             messages=messages,
-            tool_choice="required",
             **self.llm_args,
         )
         state.messages.append(assistant_message)
-        parse_text_content(assistant_message)
+        parse_message(assistant_message)
         self._check_if_stop_toolcall(assistant_message)
         return assistant_message, state
 
