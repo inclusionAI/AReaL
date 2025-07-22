@@ -228,7 +228,8 @@ def pack_tensor_dict(data: TensorDict):
     assert attention_mask.ndim == 2, "Attention mask must be a 2D tensor."
     bs = attention_mask.shape[0]
     seq_len = attention_mask.shape[1]
-
+    # print(attention_mask)
+    # breakpoint()
     # Calculate cumulative sequence lengths
     lens = attention_mask.sum(dim=1, dtype=torch.int32)
     max_seqlen = lens.max().item()

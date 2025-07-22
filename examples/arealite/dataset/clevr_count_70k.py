@@ -88,7 +88,6 @@ def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
     dataset = dataset.map(
         lambda example, idx: process_example(example, idx),
         with_indices=True,
-        remove_columns=["answer"]
     )
 
     def _process(example):
@@ -105,27 +104,13 @@ def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
         example["input_ids"] =processed_input["input_ids"].squeeze(0)
         example["pixel_values"] = processed_input["pixel_values"]
         example["image_grid_thw"] = processed_input["image_grid_thw"]
-        prompt_token = tokenizer.encode(example["problem"])
-        loss_mask = [0] * len(prompt_token) + [1] * (len(example["input_ids"]) - len(prompt_token))
+        answer_token = tokenizer.encode(example["answer"])
+        loss_mask =  [0] * (len(example["input_ids"]) - len(answer_token))+[1]*len(answer_token)
         example["loss_mask"]=loss_mask
         return example
 
-    dataset = dataset.map(lambda x: _process(x),remove_columns=["images","seq","problem"])
+    dataset = dataset.map(lambda x: _process(x),remove_columns=["images","seq","problem","answer"])
     return dataset
-
-# def get_clevr_count_70k_rl_dataset(path, split,  rank, world_size):
-#     dataset = load_dataset(path=path, split=split)
-#     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
-#     def process(sample):
-#         processed_images = [convert_image(image, 113*113, 336*336) for image in sample["images"]]
-#         base64_images = [encode_image(image) for image in processed_images]
-#         messages = build_raw_message(sample, base64_images)
-
-#         return {"messages": messages,"images":processed_images}
-    
-#     dataset = dataset.map(process).remove_columns(["problem"])
-#     breakpoint()
-#     return dataset
 
 def get_clevr_count_70k_rl_dataset(path, split,processor,  rank, world_size):
     dataset = load_dataset(path=path, split=split)

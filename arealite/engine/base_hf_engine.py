@@ -94,10 +94,11 @@ class BaseHFEngine(TrainEngine):
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
 
         dtype = getattr(torch, self.config.dtype)
+
         if self.is_vision_model:
-            self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
-                self.config.path, trust_remote_code=True
-            )
+            dtype = torch.bfloat16 
+            self.processor, self.tokenizer = load_hf_processor_and_tokenizer(self.config.path)
+
             tik = time.perf_counter()
             with torch.device("cuda"):
                 model = AutoModelForImageTextToText.from_pretrained(
@@ -230,15 +231,19 @@ class BaseHFEngine(TrainEngine):
         assert self.lr_scheduler is not None
         self.lr_scheduler.step()
 
+        
+
     def prepare_mb_list(self, input_: TensorDict) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
         if self.is_vision_model:
             assert "pixel_values" in input_ and "image_grid_thw" in input_, (
                 "For vision-language models, pixel_values and image_grid_thw must be present in input_"
             )
+
         if isinstance(input_, dict):
             input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
         input_ = amend_position_ids(input_)
+
         mb_list = split_padded_tensor_dict_into_mb_list(input_, self.config.mb_spec)
         logger.info(
             f"Microbatch #tokens (rank {dist.get_rank()}): {mb_list.group_lens}"
@@ -255,6 +260,7 @@ class BaseHFEngine(TrainEngine):
         for mb in mb_list.padded_mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
             mb["use_cache"] = False
+
         return mb_list
 
     def train_batch(
@@ -287,6 +293,7 @@ class BaseHFEngine(TrainEngine):
             logits = outputs.logits.squeeze(0)
             logits = logits[:-pad_length] if pad_length > 0 else logits
             loss = loss_fn(logits, mb_input)
+
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
 
             # Scale loss for accumulation
@@ -295,7 +302,7 @@ class BaseHFEngine(TrainEngine):
             loss_scale *= self.world_size
 
             loss *= loss_scale
-            loss.backward()
+
 
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.model.parameters(),

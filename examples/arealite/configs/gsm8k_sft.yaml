@@ -1,8 +1,9 @@
 experiment_name: gsm8k-sft
 trial_name: trial0
-n_nodes: 1
-n_gpus_per_node: 8
+
 cluster:
+  n_nodes: 1
+  n_gpus_per_node: 8
   name_resolve:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve

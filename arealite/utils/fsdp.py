@@ -46,6 +46,7 @@ def fsdp2_clip_grad_norm_(
     grads = [p.grad for p in parameters if p.grad is not None]
     total_norm = _get_total_norm(grads, norm_type, error_if_nonfinite, foreach)
     total_norm = total_norm.to(torch.cuda.current_device(), non_blocking=True)
+    
     _clip_grads_with_norm_(parameters, max_norm, total_norm, foreach)
     return total_norm
 

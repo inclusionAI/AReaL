@@ -2,7 +2,7 @@ import os
 import time
 from datetime import datetime
 from typing import Callable, Dict, Optional, Tuple
-
+from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 import torch
 import torch.distributed as dist
 from tensordict import TensorDict
@@ -48,6 +48,7 @@ class FSDPEngine(BaseHFEngine):
 
         self.create_process_group()
         self.create_device_model()
+        
 
         # Wrap with FSDP2
         # Simple auto wrap policy
@@ -238,11 +239,14 @@ class FSDPEngine(BaseHFEngine):
 
             loss *= loss_scale
             loss.backward()
+            
 
         # NOTE: grad norm clip function is different
+
         grad_norm = fsdp2_clip_grad_norm_(
             self.model.parameters(), max_norm=self.optimizer_config.gradient_clipping
         )
+
         if not torch.isfinite(grad_norm):
             self.optimizer.zero_grad()
             update_successful = False

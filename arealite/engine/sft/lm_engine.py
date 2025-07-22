@@ -5,7 +5,7 @@ from tensordict import TensorDict
 from arealite.api.cli_args import TrainEngineConfig
 from arealite.api.engine_api import TrainEngine
 from arealite.engine.fsdp_engine import FSDPEngine
-from arealite.engine.vl_fsdp_engine import VL_FSDPEngine
+# from arealite.engine.vl_fsdp_engine import VL_FSDPEngine
 from arealite.utils.functional import gather_logprobs
 from realhf.base import stats_tracker
 
@@ -61,9 +61,8 @@ def compute_packed_sft_loss(logits: torch.Tensor, input_: TensorDict) -> torch.T
     logprobs = gather_logprobs(logits, torch.roll(packed_input_ids, shifts=-1, dims=-1))
     loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
     logprobs = torch.where(loss_mask, logprobs, 0)
-
+    
     loss = -logprobs.sum() / loss_mask.count_nonzero()
-
     with torch.no_grad():
         seqlogp = torch.zeros(
             cu_seqlens.shape[0] - 1, device=logits.device, dtype=torch.float64
