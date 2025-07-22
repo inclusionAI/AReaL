@@ -32,6 +32,7 @@ You can generate:
 - Tool calls.
 
 IMPORTANT: You cannot send a message to the user while making tool calls!
+IMPORTANT: At each turn, you must send either a tool call or a message to the user. Each message must either contain a <user_message> tag or tool calls.
 
 Try to be helpful and always follow the policy. Always make sure you generate valid JSON only.
 """.strip()
@@ -164,6 +165,7 @@ You can generate:
 - Tool calls.
 
 IMPORTANT: You cannot send a message to the user while making tool calls!
+IMPORTANT: At each turn, you must send either a tool call or a message to the user. Each message must either contain a <user_message> tag or tool calls.
 
 Try to be helpful and always follow the policy. Always make sure you generate valid JSON only.
 """.strip()
@@ -325,6 +327,8 @@ You cannot communicate with the user, only make tool calls.
 You can generate:
 - Reasoning steps: Those should be enclosed in the <think> <think/> tag. E.g. <think>I need to check the user's account balance before processing the refund.</think>
 - Tool calls.
+
+IMPORTANT: You must generate tool calls at each turn.
 
 Stop when you consider that you have solved the ticket.
 To do so, send a message containing a single tool call to the `{stop_function_name}` tool. Do not include any other tool calls in this last message.
