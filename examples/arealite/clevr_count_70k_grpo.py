@@ -80,7 +80,7 @@ def clevr_count_70k_reward_fn(prompt, completions, prompt_ids, completion_ids, a
 
 
 def main(args):
-    os.environ["WANDB_API_KEY"]=""
+    os.environ["WANDB_API_KEY"]="local-19d0958e7ee05589016d2b4e0518bf9f2ee84db9"
     wandb.init(project="clevr_70k")
 
     config, _ = load_expr_config(args, GRPOConfig)
