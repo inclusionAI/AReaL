@@ -1,6 +1,6 @@
 experiment_name: clevr_count_70k-grpo
 trial_name: trial0
-allocation_mode: sglang.d1p1t1+d7p1t1
+
 
 seed: 1
 total_train_epochs: 10
@@ -16,6 +16,8 @@ cluster:
     type: nfs
     nfs_record_root: /storage/openpsi/experiments/name_resolve/clevr_count_70k-grpo
     etcd3_addr: etcd-client.openpsi-etcd.svc.sigma-na130-lingbo.na130.wl-robby.local:2379
+
+allocation_mode: sglang.d1p1t1+d7p1t1
 
 rollout:
   experiment_name: ${experiment_name}
@@ -92,14 +94,14 @@ sglang:
 
 # datasets
 train_dataset:
-  batch_size: 16
+  batch_size: 32
   shuffle: true
   pin_memory: true
   num_workers: 4
   path: /storage/openpsi/data/clevr_count_70k/
 
 valid_dataset: 
-  batch_size: 16
+  batch_size: 32
   shuffle: true
   pin_memory: true
   num_workers: 4
@@ -136,3 +138,13 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
+
+# launcher:
+#   inference_server_cpus_per_gpu: 15
+#   inference_server_mem_per_gpu: 153600
+#   trainer_cpus_per_gpu: 15
+#   trainer_mem_per_gpu: 153600
+#   slurm:
+#     mount: /storage:/storage
+#     trainer_image: /storage/openpsi/images/areal-v0.3.0.post1.sif
+#     inference_server_image: /storage/openpsi/images/areal-v0.3.0.post1.sif

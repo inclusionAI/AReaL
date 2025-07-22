@@ -131,3 +131,4 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
+
