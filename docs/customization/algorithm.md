@@ -3,7 +3,7 @@
 > **Note**: We recommend the user to first read the
 > [agent customization guide](agent.md).
 
-AReaLite structures RL algorithms around two core components:
+**AReaLite** structures RL algorithms around two core components:
 
 - **RolloutWorkflow**: Defines what data to generate during rollouts
 - **TrainEngine**: Defines how to process the generated data for training

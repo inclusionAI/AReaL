@@ -1,4 +1,4 @@
-# Training Algorithm
+# Training Algorithm (Legacy)
 
 > **Note**: The AReaLite approach is more recommended for new implementations due to its
 > cleaner separation of concerns and better maintainability.
