@@ -8,51 +8,6 @@ from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 from PIL.Image import Image as ImageObject
 
-
-def input_text(text: str):
-    return {"type": "input_text", "text": text}
-
-
-def input_image(base64_image: str):
-    return {
-        "type": "input_image",
-        "image_url": f"data:image/jpeg;base64,{base64_image}",
-    }
-
-
-def build_raw_message(
-    sample: Dict[str, Any], base64_images: list[str]
-) -> list[Dict[str, Any]]:
-
-    raw_message = []
-    problem_parts = [
-        part.strip() for part in sample["problem"].split("<image>") if part.strip()
-    ]
-    insert_list = []
-    for i, part in enumerate(problem_parts):
-        if i > 0 or sample["problem"].startswith("<image>"):
-            insert_list.append("image")
-        part = part.strip()
-        if part:
-            insert_list.append("text")
-    image_index = 0
-    text_index = 0
-
-    for insert_type in insert_list:
-        if insert_type == "text" and text_index < len(problem_parts):
-            raw_message.append(input_text(problem_parts[text_index].strip()))
-            text_index += 1
-        elif insert_type == "image" and image_index < len(base64_images):
-            raw_message.append(input_image(base64_images[image_index]))
-            image_index += 1
-    messages = [{"role": "user", "content": raw_message}]
-    return messages
-
-
-def encode_image(image_file):
-    return base64.b64encode(image_file).decode("utf-8")
-
-
 def convert_image(
     image: Union[Dict[str, Any], ImageObject, str],
     min_pixels: Optional[int],
