@@ -55,9 +55,11 @@ class RLVRWorkflow(RolloutWorkflow):
 
             if "prompt" in data.keys():
                 del data["prompt"]
+            completion = self.tokenizer.decode(resp.output_tokens, clean_up_tokenization_spaces=False, skip_special_tokens=True)
+            print(f"debug: completion: {completion}")
             reward = self.reward_fn(
                 prompt=text,
-                completion="",
+                completion=completion,
                 prompt_ids=resp.input_tokens,
                 completion_ids=resp.output_tokens,
                 **data,

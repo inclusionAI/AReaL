@@ -11,6 +11,7 @@ from arealite.api.controller_api import RolloutController
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangInitConfig
+from realhf.base import stats_tracker
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
@@ -287,6 +288,12 @@ class DistributedRolloutController(RolloutController):
         padded = concat_padded_tensors(results)
         if isinstance(padded, dict):
             padded = TensorDict(padded, batch_size=[bs])
+
+        keys = ["rewards", "seqlen"]
+        for key in keys:
+            tensor = padded[key]
+            for value in tensor:
+                stats_tracker.scalar(**{key: value})
         return padded
 
     def split_list(self, lst, n):

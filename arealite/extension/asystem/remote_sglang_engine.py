@@ -347,7 +347,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
         consumer_bs = max(1, self.config.consumer_batch_size // world_size)
         capacity = min(capacity, (ofp + version + 1) * consumer_bs - sample_cnt)
-        logger.info(f"max_concurrent_rollouts: {max_concurrent_rollouts}, version: {version}, ofp: {ofp}, self.config.consumer_batch_size: {self.config.consumer_batch_size}, sample_cnt: {sample_cnt}")
+        # logger.info(f"max_concurrent_rollouts: {max_concurrent_rollouts}, version: {version}, ofp: {ofp}, self.config.consumer_batch_size: {self.config.consumer_batch_size}, sample_cnt: {sample_cnt}")
 
         return capacity
 

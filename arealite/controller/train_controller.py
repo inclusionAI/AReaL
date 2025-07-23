@@ -21,6 +21,7 @@ from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec
 from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronInitConfig
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 import logging
+from realhf.base import stats_tracker
 logger = logging.getLogger("DistributedTrainController")
 
 
@@ -172,6 +173,7 @@ class DistributedTrainController(TrainController):
         print("start to train_distributed_batch111")
         print(f"batches: {len(batches)}, workers: {len(self.workers)}")
         futures = []
+        results = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             for index, worker in enumerate(self.workers):
                 logger.info(f"controller debug111: {index}")
@@ -192,7 +194,6 @@ class DistributedTrainController(TrainController):
                 t4 = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 print(f"controller debug444: {index}, {t4}", flush=True)
 
-            results = []
             try:
                 for future in as_completed(futures):
                     result = future.result()
@@ -201,7 +202,15 @@ class DistributedTrainController(TrainController):
                 for f in futures:
                     f.cancel()
                 raise
-            return results
+
+        with (
+            stats_tracker.record_timing("distributed_train_step"),
+            stats_tracker.scope("grpo_actor"),
+        ):
+            for train_stat in results:
+                stats_tracker.scalar(**train_stat)
+
+        return results
 
     @torch.no_grad()
     def eval_batch(

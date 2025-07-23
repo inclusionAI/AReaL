@@ -62,34 +62,22 @@ def main_grpo():
 
 
 
-    rollout = DistributedRolloutController(
-        RemoteSGLangEngine(InferenceEngineConfig(experiment_name="arealite", trial_name="sync")),
-        RolloutControllerConfig(experiment_name="arealite", trial_name="sync", allocation_mode="sglang.d4t8p1+d32t1p1"),
-        scheduler,
-    )
-    actor = DistributedTrainController(
-        RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="arealite", trial_name="sync")),
-        TrainControllerConfig(experiment_name="arealite", trial_name="sync", allocation_mode="sglang.d4t8p1+d32t1p1"),
-        scheduler,
-    )
-    # engine initialize
-    rollout.initialize()
-    actor.initialize()
+
 
     dataset = load_dataset("json",
                            data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train.jsonl")
     train_dataset = dataset['train']
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
-    batch_size = 512
+    batch_size = 8
     batch_data = []
     step_num = 100
     epoch_num = 10
     global_step = 0
     os.environ['WANDB_API_KEY'] = 'local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe'
-    os.environ["WANDB_BASE_URL"] = "http://8.150.1.98:8080"
+    os.environ["WANDB_BASE_URL"] = "https://slurm.alipay.com"
 
     logger = StatsLogger(StatsLoggerConfig(
-        experiment_name="arealite", trial_name="sync",fileroot="/storage/openpsi/experiments",
+        experiment_name="arealite", trial_name="sync1",fileroot="/storage/openpsi/experiments",
         wandb=WandBConfig(
             mode="online",
         ),
@@ -97,6 +85,20 @@ def main_grpo():
     ), FinetuneSpec(total_train_epochs=epoch_num, dataset_size=step_num * batch_size ,train_batch_size=batch_size))
     logger.info(f"total_epochs={epoch_num} step_per_epoch={step_num}")
 
+    rollout = DistributedRolloutController(
+        RemoteSGLangEngine(InferenceEngineConfig(experiment_name="arealite", trial_name="sync1")),
+        RolloutControllerConfig(experiment_name="arealite", trial_name="sync1", allocation_mode="sglang.d4t8p1+d32t1p1"),
+        scheduler,
+    )
+    actor = DistributedTrainController(
+        RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="arealite", trial_name="sync1")),
+        TrainControllerConfig(experiment_name="arealite", trial_name="sync1", allocation_mode="sglang.d4t8p1+d32t1p1"),
+        scheduler,
+    )
+    # engine initialize
+    rollout.initialize()
+    actor.initialize()
+    
     for epoch in range(epoch_num):
         data_generator = iter(dataloader)
         for step in range(step_num):
@@ -107,7 +109,7 @@ def main_grpo():
 
             # Update inference engine weights
             exp_name = "arealite"
-            trial_name = "sync"
+            trial_name = "sync1"
             # actor_cfg = WeightUpdateMeta(
             #     type="disk",
             #     path=f"/storage/openpsi/checkpoints/{exp_name}/{trial_name}/",
@@ -140,34 +142,48 @@ def main_grpo():
                 gconfig=gconfig,
                 tokenizer=tokenizer,
             )
-
-            # input_: List[Dict[str, tensor]]
-            rollout_res = rollout.rollout(batch_data, workflow=workflow)
-            print(f"[Trainer] rollout exec success, rollout_res: {rollout_res}")
-            rollout_res = rollout_res.to("cpu").clone()
-
-            # torch.save(rollout_res, "rollout_res.pt")
-            rollout_res_dict = rollout_res.to_dict()
-            for k, v in rollout_res_dict.items():
-                if isinstance(v, torch.Tensor) and v.ndim > 1 and v.shape[0] == 1:
-                    rollout_res_dict[k] = v.squeeze(0)
-                    # print(f"[Trainer] dzq_debug rollout squeeze: key: {k}, shape: {rollout_res_dict[k].shape}")
-            torch.set_printoptions(threshold=float('inf'))
-            print(f"[Trainer] after rollout rewards: {rollout_res_dict["rewards"]}")
-            dis_batch = DistributedBatchMemory(rollout_res_dict)
-            print(f"[Trainer] debug1")
             with (
                 stats_tracker.record_timing("train_step"),
                 stats_tracker.scope("grpo_actor"),
             ):
-                stats = actor.train_distributed_batch(dis_batch)
-                print(f"[Trainer] train exec success, step: {step}, epoch: {epoch}, stats: {stats}")
+                # input_: List[Dict[str, tensor]]
+                rollout_res = rollout.rollout(batch_data, workflow=workflow)
+                print(f"[Trainer] rollout exec success, rollout_res: {rollout_res}")
+                rollout_res = rollout_res.to("cpu").clone()
 
-            rollout.update_weights(rollout_cfg)
-            print("[Trainer] rollout update_weights success.")
+                # torch.save(rollout_res, "rollout_res.pt")
+                rollout_res_dict = rollout_res.to_dict()
+                for k, v in rollout_res_dict.items():
+                    if isinstance(v, torch.Tensor) and v.ndim > 1 and v.shape[0] == 1:
+                        rollout_res_dict[k] = v.squeeze(0)
+                        # print(f"[Trainer] dzq_debug rollout squeeze: key: {k}, shape: {rollout_res_dict[k].shape}")
+                torch.set_printoptions(threshold=float('inf'))
+                print(f"[Trainer] after rollout rewards: {rollout_res_dict["rewards"]}")
+                dis_batch = DistributedBatchMemory(rollout_res_dict)
 
-            logger.commit(epoch, step, global_step, stats)
+            print(f"debug: step1", flush=True)
+            with (
+                stats_tracker.record_timing("train_step"),
+                stats_tracker.scope("grpo_actor"),
+            ):
+                actor.train_distributed_batch(dis_batch)
+                print(f"[Trainer] train exec success, step: {step}, epoch: {epoch}")
+
+            print(f"debug: step2", flush=True)
+            with (
+                stats_tracker.record_timing("weights_update_step"),
+                stats_tracker.scope("grpo_actor"),
+            ):
+                rollout.update_weights(rollout_cfg)
+                print(f"[Trainer] rollout update_weights success. step: {step}, epoch: {epoch}")
+
+            print(f"debug: step3", flush=True)
+            metric = stats_tracker.export()
+            logger.commit(epoch, step, global_step, metric)
+
             global_step += 1
+            print(f"debug: step4", flush=True)
+
 
     logger.close()
 
@@ -175,4 +191,5 @@ def main_grpo():
 
 if __name__ == "__main__":
     main_grpo()
+
 
