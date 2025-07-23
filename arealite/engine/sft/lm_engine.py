@@ -41,6 +41,7 @@ class FSDPLMEngine(FSDPEngine):
     def evaluate_lm(self, data):
         return self.lm_engine.evaluate_lm(data)
 
+
 def compute_packed_sft_loss(logits: torch.Tensor, input_: TensorDict) -> torch.Tensor:
     packed_input_ids: torch.Tensor = input_["input_ids"]
     cu_seqlens: torch.Tensor = input_["cu_seqlens"]
@@ -49,7 +50,7 @@ def compute_packed_sft_loss(logits: torch.Tensor, input_: TensorDict) -> torch.T
     logprobs = gather_logprobs(logits, torch.roll(packed_input_ids, shifts=-1, dims=-1))
     loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
     logprobs = torch.where(loss_mask, logprobs, 0)
-    
+
     loss = -logprobs.sum() / loss_mask.count_nonzero()
     with torch.no_grad():
         seqlogp = torch.zeros(

@@ -68,6 +68,7 @@ def load_hf_tokenizer(
         tokenizer.pad_token_id = tokenizer.eos_token_id
     return tokenizer
 
+
 @lru_cache(maxsize=8)
 def load_hf_processor_and_tokenizer(
     model_name_or_path: str,

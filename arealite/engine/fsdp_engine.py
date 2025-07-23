@@ -49,7 +49,6 @@ class FSDPEngine(BaseHFEngine):
 
         self.create_process_group()
         self.create_device_model()
-        
 
         # Wrap with FSDP2
         # Simple auto wrap policy
@@ -101,7 +100,10 @@ class FSDPEngine(BaseHFEngine):
             self.load_optimizer_state(meta.path)
 
     def _save_model_to_hf(
-        self, path: str, tokenizer: Optional[PreTrainedTokenizerFast], processor: Optional[AutoProcessor]
+        self,
+        path: str,
+        tokenizer: Optional[PreTrainedTokenizerFast],
+        processor: Optional[AutoProcessor],
     ):
         """Save model in HuggingFace format."""
         if self.model is None:
@@ -147,7 +149,7 @@ class FSDPEngine(BaseHFEngine):
             dist.barrier()
             torch.cuda.synchronize()
         elif meta.type == "disk":
-            self._save_model_to_hf(meta.path, self.tokenizer,self.processor)
+            self._save_model_to_hf(meta.path, self.tokenizer, self.processor)
             # dist.barrier() are called when _save_model_to_hf finished
             if dist.get_rank() == 0:
                 update_name = names.update_weights_from_disk(
@@ -240,7 +242,6 @@ class FSDPEngine(BaseHFEngine):
 
             loss *= loss_scale
             loss.backward()
-            
 
         # NOTE: grad norm clip function is different
 

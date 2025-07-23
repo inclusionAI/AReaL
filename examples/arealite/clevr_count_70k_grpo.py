@@ -24,7 +24,7 @@ from realhf.base import stats_tracker
 def extract_answer(pred_str, data_name, use_last_number=True):
     match = re.findall(r"\[([0-9\.]+)\]", pred_str)
     if match:
-        return match[-1] 
+        return match[-1]
 
     return ""
 
@@ -56,32 +56,35 @@ def extract_solution(solution_str, method="strict") -> str | None:
                     break
     return final_answer
 
-def clevr_count_70k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
+
+def clevr_count_70k_reward_fn(
+    prompt, completions, prompt_ids, completion_ids, answer, **kwargs
+):
     is_thinking = "thinking" in completions.lower()
 
-    sol = extract_answer(completions, data_name="") # str number
-    ans =answer
+    sol = extract_answer(completions, data_name="")  # str number
+    ans = answer
 
     if sol is None:
         return 0
     if ans is None:
         return 0
-    
+
     if sol.strip() == ans.strip():
         print(f"completions: {completions}, answer: {answer}")
         if is_thinking:
-            return 1 
+            return 1
         else:
             return 1
 
     if re.match(r"^\[\d+(\.\d+)?\]$", sol.strip()):
         return 0.05
-    
+
     return 0
 
 
 def main(args):
-    os.environ["WANDB_API_KEY"]=""
+    os.environ["WANDB_API_KEY"] = ""
     wandb.init(project="clevr_70k")
 
     config, _ = load_expr_config(args, GRPOConfig)
@@ -90,22 +93,22 @@ def main(args):
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
-    train_dataset=get_custom_dataset(
-                    path=config.train_dataset.path,
-                    rank=rank,
-                    world_size=world_size,
-                    split="train",
-                    training_type="rl",
-                    processor=processor
-                    )
-    valid_dataset=get_custom_dataset(
-                    path=config.valid_dataset.path,
-                    rank=rank,
-                    world_size=world_size,
-                    split="test",
-                    training_type="rl",
-                    processor=processor
-                    )
+    train_dataset = get_custom_dataset(
+        path=config.train_dataset.path,
+        rank=rank,
+        world_size=world_size,
+        split="train",
+        training_type="rl",
+        processor=processor,
+    )
+    valid_dataset = get_custom_dataset(
+        path=config.valid_dataset.path,
+        rank=rank,
+        world_size=world_size,
+        split="test",
+        training_type="rl",
+        processor=processor,
+    )
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         train_dataset,
@@ -142,7 +145,7 @@ def main(args):
     actor.initialize(None, ft_spec)
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
-        ref =FSDPPPOActor(config=config.ref)
+        ref = FSDPPPOActor(config=config.ref)
         ref.initialize(None, ft_spec)
 
     # Create rollout workflow
@@ -200,7 +203,7 @@ def main(args):
         if ref is not None:
             with stats_tracker.record_timing("ref_logp"):
                 batch["ref_logp"] = ref.compute_logp(batch)
-                
+
                 log_gpu_stats("ref logp")
 
         with stats_tracker.record_timing("compute_advantage"):
@@ -212,8 +215,8 @@ def main(args):
             stats_tracker.scope("grpo_actor"),
         ):
             stats = actor.ppo_update(batch)
-            wandb.log({"actor_reward": stats[0]['grpo_actor/final_reward/avg']})
-            
+            wandb.log({"actor_reward": stats[0]["grpo_actor/final_reward/avg"]})
+
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
@@ -252,7 +255,14 @@ def main(args):
                         cnt += 1
                 batch = eval_rollout.wait(cnt, timeout=None)
                 rewards = batch["rewards"].float().to(actor.device)
-                wandb.log({"eval_reward": rewards.mean().item(), "epoch": epoch, "step": step, "global_step": global_step})
+                wandb.log(
+                    {
+                        "eval_reward": rewards.mean().item(),
+                        "epoch": epoch,
+                        "step": step,
+                        "global_step": global_step,
+                    }
+                )
                 with stats_tracker.scope("grpo-eval"):
                     stats_tracker.denominator(
                         n_seqs=torch.ones(
@@ -281,6 +291,6 @@ def main(args):
     actor.destroy()
     wandb.finish()
 
+
 if __name__ == "__main__":
     main(sys.argv[1:])
-

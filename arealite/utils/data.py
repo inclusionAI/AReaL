@@ -65,8 +65,9 @@ def pad_sequences_to_tensors(
         return TensorDict()
     skip_keys = {"pixel_values", "image_grid_thw"}
     max_length = max(
-        len(seq) for item in sequence_list 
-        for key, seq in item.items() 
+        len(seq)
+        for item in sequence_list
+        for key, seq in item.items()
         if key not in skip_keys
     )
     result = {}
@@ -79,14 +80,18 @@ def pad_sequences_to_tensors(
             x = item[key]
             if not torch.is_tensor(x):
                 x = torch.tensor(x)
-            padded_x=torch.nn.functional.pad(
-                    x, (0, max_length - len(item[key])), value=pad_value
-                )
+            padded_x = torch.nn.functional.pad(
+                x, (0, max_length - len(item[key])), value=pad_value
+            )
             padded.append(padded_x)
         result[key] = torch.stack(padded)
     attention_mask = [
         [1] * len(next(iter(item[key] for key in item.keys() if key not in skip_keys)))
-        + [0] * (max_length - len(next(iter(item[key] for key in item.keys() if key not in skip_keys))))
+        + [0]
+        * (
+            max_length
+            - len(next(iter(item[key] for key in item.keys() if key not in skip_keys)))
+        )
         for item in sequence_list
     ]
     result["attention_mask"] = torch.tensor(attention_mask, dtype=torch.bool)
@@ -139,7 +144,7 @@ def concat_padded_tensors(
                 tensors_to_concat.append(tensor)
                 continue
             current_length = tensor.shape[1]
-            if key == "pixel_values" or key== "image_grid_thw":
+            if key == "pixel_values" or key == "image_grid_thw":
                 tensors_to_concat.append(tensor)
                 continue
             if current_length < max_length:
@@ -150,7 +155,7 @@ def concat_padded_tensors(
                     padding = torch.zeros(
                         (tensor.shape[0], pad_width), dtype=tensor.dtype
                     )
-               
+
                 else:
                     # Pad feature tensors with pad_value
                     padding = torch.full(
@@ -323,7 +328,7 @@ def split_padded_tensor_dict_into_mb_list(
     to_split = {}
     not_to_split = {}
     for key, value in data.items():
-        if key=="image_grid_thw" or key=="pixel_values":
+        if key == "image_grid_thw" or key == "pixel_values":
             continue
         if not torch.is_tensor(value) or value.numel() != bs * max_seqlen:
             not_to_split[key] = value
@@ -368,7 +373,7 @@ def split_padded_tensor_dict_into_mb_list(
 
         for group_index in group_indices:
             group_pixel_values = [pixel_values[i] for i in group_index]
-            group_image_grid_thw = [image_grid_thw[i].squeeze()for i in group_index]
+            group_image_grid_thw = [image_grid_thw[i].squeeze() for i in group_index]
 
             # Stack pixel_values for each group (assuming pixel_values is a list of tensors)
             pixel_values_split.append(torch.stack(group_pixel_values))

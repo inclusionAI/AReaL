@@ -257,8 +257,6 @@ class FSDPPPOActor(FSDPEngine):
         return self.actor.ppo_update(*args, **kwargs)
 
 
-
-
 def grpo_loss_fn(
     logits: torch.Tensor,
     input_data: Dict,
