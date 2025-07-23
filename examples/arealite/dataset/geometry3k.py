@@ -33,9 +33,9 @@ def convert_image(
         return output.getvalue()
 
 
-def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
+def get_geometry3k_sft_dataset(path, split, processor, rank, world_size):
     """
-    "clevr_count_70k": {
+    "geometry3k": {
         "image_key": "images",
         "question_key": "problem",
         "answer_key": "answer"
@@ -94,7 +94,7 @@ def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
     return dataset
 
 
-def get_clevr_count_70k_rl_dataset(path, split, processor, rank, world_size):
+def get_geometry3k_rl_dataset(path, split, processor, rank, world_size):
     dataset = load_dataset(path=path, split=split)
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
 
@@ -109,7 +109,7 @@ def get_clevr_count_70k_rl_dataset(path, split, processor, rank, world_size):
         system_prompt = {
             "role": "system",
             "content": (
-                "Solve the following question: count the number of items in the image and provide the final answer in [ ] format, ensuring that only the number is inside the brackets without any additional text or explanations. "
+                "Given the image and the mathematical problem, start by thinking step by step. Think through each step clearly and logically. Finally, provide the answer in LaTeX format, enclosed by $$ symbols. Do not include any additional text beyond the LaTeX answer. Start your thinking with 'Thinking:'."
             ),
         }
 
