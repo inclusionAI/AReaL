@@ -1,9 +1,11 @@
 import os
 import sys
+
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import SFTConfig, load_expr_config
 from arealite.api.io_struct import FinetuneSpec
+from arealite.dataset.__init__ import get_custom_dataset
 from arealite.engine.sft.lm_engine import FSDPLMEngine
 from arealite.utils.data import pad_sequences_to_tensors
 from arealite.utils.evaluator import Evaluator
@@ -11,7 +13,6 @@ from arealite.utils.saver import Saver
 from arealite.utils.stats_logger import StatsLogger
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import stats_tracker
-from arealite.dataset.__init__ import get_custom_dataset
 
 
 def main_sft():
@@ -21,25 +22,25 @@ def main_sft():
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
-    train_dataset=get_custom_dataset(
-                    path=config.train_dataset.path,
-                    rank=rank,
-                    world_size=world_size,
-                    split="train",
-                    training_type="sft",
-                    tokenizer=tokenizer,
-                    processor=processor,
-                    )
-    valid_dataset=get_custom_dataset(
-                    path=config.valid_dataset.path,
-                    rank=rank,
-                    world_size=world_size,
-                    split="test",
-                    training_type="sft",
-                    tokenizer=tokenizer,
-                    processor=processor,
-                    )
-                    
+    train_dataset = get_custom_dataset(
+        path=config.train_dataset.path,
+        rank=rank,
+        world_size=world_size,
+        split="train",
+        training_type="sft",
+        tokenizer=tokenizer,
+        processor=processor,
+    )
+    valid_dataset = get_custom_dataset(
+        path=config.valid_dataset.path,
+        rank=rank,
+        world_size=world_size,
+        split="test",
+        training_type="sft",
+        tokenizer=tokenizer,
+        processor=processor,
+    )
+
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         train_dataset,

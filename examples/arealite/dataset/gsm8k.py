@@ -1,9 +1,11 @@
-from datasets import load_dataset, Dataset
+from datasets import Dataset, load_dataset
 from datasets.distributed import split_dataset_by_node
+
 
 def get_gsm8k_sft_dataset(path, split, tokenizer, rank, world_size):
     dataset = load_dataset(path=path, name="main", split=split)
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+
     def process(sample):
         seq_token = tokenizer.encode(
             sample["question"] + sample["answer"] + tokenizer.eos_token
@@ -15,9 +17,11 @@ def get_gsm8k_sft_dataset(path, split, tokenizer, rank, world_size):
     dataset = dataset.map(process).remove_columns(["question", "answer"])
     return dataset
 
-def get_gsm8k_rl_dataset(path,split, rank, world_size):
+
+def get_gsm8k_rl_dataset(path, split, rank, world_size):
     dataset = load_dataset(path=path, name="main", split=split)
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+
     def process(sample):
         messages = [{"role": "user", "content": sample["question"]}]
         return {"messages": messages}

@@ -23,9 +23,9 @@ from arealite.api.io_struct import (
     LLMRequest,
     LLMResponse,
     RolloutStat,
+    VLMRequest,
+    VLMResponse,
     WeightUpdateMeta,
-    VLMRequest, 
-    VLMResponse
 )
 from arealite.utils.data import concat_padded_tensors
 from arealite.utils.http import arequest_with_retry, get_default_connector
@@ -228,7 +228,9 @@ class RemoteSGLangEngine(InferenceEngine):
                 return server
         raise NotImplementedError("Only round-robin scheduling is implemented.")
 
-    async def agenerate(self, req: LLMRequest|VLMRequest) -> LLMResponse|VLMResponse:
+    async def agenerate(
+        self, req: LLMRequest | VLMRequest
+    ) -> LLMResponse | VLMResponse:
         """Async version of generate using aiohttp."""
         # Prepare request payload
         gconfig = req.gconfig
@@ -318,28 +320,28 @@ class RemoteSGLangEngine(InferenceEngine):
             sample_params["max_new_tokens"] -= len(output_tokens)
 
         latency = time.perf_counter() - start_time
-        
+
         if isinstance(req, VLMRequest):
             response = VLMResponse(
-            input_tokens=req.input_ids,
-            input_images=req.image_data,
-            output_tokens=accumulated_output_tokens,
-            output_logprobs=accumulated_output_logprobs,
-            output_versions=accumulated_versions,
-            stop_reason=stop_reason,
-            latency=latency,
-            ttft=latency,  # Simplified for non-streaming
+                input_tokens=req.input_ids,
+                input_images=req.image_data,
+                output_tokens=accumulated_output_tokens,
+                output_logprobs=accumulated_output_logprobs,
+                output_versions=accumulated_versions,
+                stop_reason=stop_reason,
+                latency=latency,
+                ttft=latency,  # Simplified for non-streaming
             )
         else:
-            response=LLMResponse(
-            input_tokens=req.input_ids,
-            output_tokens=accumulated_output_tokens,
-            output_logprobs=accumulated_output_logprobs,
-            output_versions=accumulated_versions,
-            stop_reason=stop_reason,
-            latency=latency,
-            ttft=latency,  # Simplified for non-streaming
-        )
+            response = LLMResponse(
+                input_tokens=req.input_ids,
+                output_tokens=accumulated_output_tokens,
+                output_logprobs=accumulated_output_logprobs,
+                output_versions=accumulated_versions,
+                stop_reason=stop_reason,
+                latency=latency,
+                ttft=latency,  # Simplified for non-streaming
+            )
         return response
 
     def update_weights(self, meta):
@@ -526,7 +528,7 @@ class RemoteSGLangEngine(InferenceEngine):
             ):
                 try:
                     data = next(self.data_generator)
-                    
+
                 except StopIteration:
                     self.data_generator = iter(dataloader)
                     data = next(self.data_generator)

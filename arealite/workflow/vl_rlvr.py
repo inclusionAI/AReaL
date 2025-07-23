@@ -34,7 +34,7 @@ class VL_RLVRWorkflow(RLVRWorkflow):
             return_tensors="pt",
         )
 
-        input_ids=processed_input["input_ids"].tolist()[0]
+        input_ids = processed_input["input_ids"].tolist()[0]
 
         n_samples = self.gconfig.n_samples
 
@@ -62,13 +62,19 @@ class VL_RLVRWorkflow(RLVRWorkflow):
                 completion_ids=resp.output_tokens,
                 **data,
             )
-            
+
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),
                 loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                pixel_values=processed_input["pixel_values"].clone().detach().unsqueeze(0),
-                image_grid_thw=processed_input["image_grid_thw"].clone().detach().unsqueeze(0),
+                pixel_values=processed_input["pixel_values"]
+                .clone()
+                .detach()
+                .unsqueeze(0),
+                image_grid_thw=processed_input["image_grid_thw"]
+                .clone()
+                .detach()
+                .unsqueeze(0),
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
                 versions=torch.tensor(versions).unsqueeze(0),
                 attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),

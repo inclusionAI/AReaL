@@ -47,14 +47,17 @@ class LLMResponse:
     @property
     def output_len(self) -> int:
         return len(self.output_tokens)
-    
+
+
 @dataclass
 class VLMRequest(LLMRequest):
-    image_data: Optional[List[ImageObject|str]] = field(default_factory=list)
+    image_data: Optional[List[ImageObject | str]] = field(default_factory=list)
+
 
 @dataclass
 class VLMResponse(LLMResponse):
-    input_images: List[ImageObject|str] = field(default_factory=list)
+    input_images: List[ImageObject | str] = field(default_factory=list)
+
 
 @dataclass
 class FinetuneSpec:
@@ -142,6 +145,7 @@ class AllocationMode:
         raise ValueError(
             f"Unknown how to resolve parallelism strategy: {allocation_mode}"
         )
+
     @staticmethod
     def extract_decoupled_alloc(allocation_mode: str) -> Dict:
         pattern = re.compile(

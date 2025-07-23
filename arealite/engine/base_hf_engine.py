@@ -9,8 +9,8 @@ from tensordict import TensorDict
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
-    AutoProcessor,
     AutoModelForImageTextToText,
+    AutoProcessor,
     PretrainedConfig,
     PreTrainedTokenizerFast,
     get_constant_schedule_with_warmup,
@@ -31,8 +31,8 @@ from arealite.utils.data import (
     unsqueeze_mb_list,
 )
 from arealite.utils.fsdp import get_cosine_schedule_with_warmup
-from arealite.utils.model import disable_dropout_in_model,VALID_VISION_MODELS
-from realhf.api.core.data_api import load_hf_tokenizer, load_hf_processor_and_tokenizer
+from arealite.utils.model import VALID_VISION_MODELS, disable_dropout_in_model
+from realhf.api.core.data_api import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from realhf.base import constants, logging
 
 logger = logging.getLogger("Base HF Engine")
@@ -55,7 +55,7 @@ class BaseHFEngine(TrainEngine):
         self.own_global_group = False
         self._parallelism_group: dist.ProcessGroup
         self.weight_update_group_initialized = False
-        
+
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.config.path,
             trust_remote_code=True,
@@ -96,8 +96,10 @@ class BaseHFEngine(TrainEngine):
         dtype = getattr(torch, self.config.dtype)
 
         if self.is_vision_model:
-            dtype = torch.bfloat16 
-            self.processor, self.tokenizer = load_hf_processor_and_tokenizer(self.config.path)
+            dtype = torch.bfloat16
+            self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
+                self.config.path
+            )
 
             tik = time.perf_counter()
             with torch.device("cuda"):
@@ -132,7 +134,7 @@ class BaseHFEngine(TrainEngine):
                     )
                 if self.config.disable_dropout:
                     disable_dropout_in_model(model)
-                    
+
         if self.config.gradient_checkpointing:
             model.gradient_checkpointing_enable(
                 gradient_checkpointing_kwargs={"use_reentrant": False}
@@ -231,14 +233,12 @@ class BaseHFEngine(TrainEngine):
         assert self.lr_scheduler is not None
         self.lr_scheduler.step()
 
-        
-
     def prepare_mb_list(self, input_: TensorDict) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
         if self.is_vision_model:
-            assert "pixel_values" in input_ and "image_grid_thw" in input_, (
-                "For vision-language models, pixel_values and image_grid_thw must be present in input_"
-            )
+            assert (
+                "pixel_values" in input_ and "image_grid_thw" in input_
+            ), "For vision-language models, pixel_values and image_grid_thw must be present in input_"
 
         if isinstance(input_, dict):
             input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
@@ -302,7 +302,6 @@ class BaseHFEngine(TrainEngine):
             loss_scale *= self.world_size
 
             loss *= loss_scale
-
 
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.model.parameters(),
