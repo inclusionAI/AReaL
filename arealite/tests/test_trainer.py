@@ -68,7 +68,7 @@ def main_grpo():
                            data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train.jsonl")
     train_dataset = dataset['train']
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
-    batch_size = 8
+    batch_size = 512
     batch_data = []
     step_num = 100
     epoch_num = 10
@@ -77,7 +77,7 @@ def main_grpo():
     os.environ["WANDB_BASE_URL"] = "https://slurm.alipay.com"
 
     logger = StatsLogger(StatsLoggerConfig(
-        experiment_name="arealite", trial_name="sync1",fileroot="/storage/openpsi/experiments",
+        experiment_name="arealite", trial_name="sync2",fileroot="/storage/openpsi/experiments",
         wandb=WandBConfig(
             mode="online",
         ),
@@ -86,13 +86,13 @@ def main_grpo():
     logger.info(f"total_epochs={epoch_num} step_per_epoch={step_num}")
 
     rollout = DistributedRolloutController(
-        RemoteSGLangEngine(InferenceEngineConfig(experiment_name="arealite", trial_name="sync1")),
-        RolloutControllerConfig(experiment_name="arealite", trial_name="sync1", allocation_mode="sglang.d4t8p1+d32t1p1"),
+        RemoteSGLangEngine(InferenceEngineConfig(experiment_name="arealite", trial_name="sync2")),
+        RolloutControllerConfig(experiment_name="arealite", trial_name="sync2", allocation_mode="sglang.d4t8p1+d32t1p1"),
         scheduler,
     )
     actor = DistributedTrainController(
-        RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="arealite", trial_name="sync1")),
-        TrainControllerConfig(experiment_name="arealite", trial_name="sync1", allocation_mode="sglang.d4t8p1+d32t1p1"),
+        RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="arealite", trial_name="sync2")),
+        TrainControllerConfig(experiment_name="arealite", trial_name="sync2", allocation_mode="sglang.d4t8p1+d32t1p1"),
         scheduler,
     )
     # engine initialize
@@ -109,7 +109,7 @@ def main_grpo():
 
             # Update inference engine weights
             exp_name = "arealite"
-            trial_name = "sync1"
+            trial_name = "sync2"
             # actor_cfg = WeightUpdateMeta(
             #     type="disk",
             #     path=f"/storage/openpsi/checkpoints/{exp_name}/{trial_name}/",
@@ -134,7 +134,7 @@ def main_grpo():
             MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf"
             tokenizer = load_hf_tokenizer(MODEL_PATH)
             gconfig = GenerationHyperparameters(
-                max_new_tokens=15360, greedy=False, n_samples=16
+                max_new_tokens=15360, greedy=False, n_samples=8
             )
 
             workflow = RLVRWorkflow(

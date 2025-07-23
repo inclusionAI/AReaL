@@ -19,8 +19,10 @@ def reward_fn(
     # kwargs: all other attributes of this data in the dataset,
     #         for example, solutions, input_outputs, etc.
 
-    solutions = kwargs.get("solutions")
-    query_id = kwargs.get("query_id", "0")
+    solutions = kwargs.get("solutions")[0]
+    query_id = kwargs.get("query_id")[0]
+
+    print(f"solutions: {solutions}, completion: {completion}, query_id: {query_id}", flush=True)
     labels = math_verify([solutions], [completion], [query_id])
     print(f"ret:{labels}")
     return labels[0]

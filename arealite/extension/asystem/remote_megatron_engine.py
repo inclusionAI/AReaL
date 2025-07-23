@@ -724,7 +724,7 @@ remote_megatron_config = {
     "moe_router_load_balancing_type": "aux_loss",
     "seq_length": 16384,
     "micro_batch_size": 1,
-    "global_batch_size": 16,
+    "global_batch_size": 8,
     "lr": 2.0e-6,
     "lr_decay_style": "constant",
     "lr_warmup_iters": 35,

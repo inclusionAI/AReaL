@@ -624,7 +624,7 @@ class RemoteMegatronWrapPolicy:
     value_norm_type: str = field(metadata={"choices": ["exp", "ma"]}, default="exp")
     value_norm_beta: float = 0.99995
     value_norm_eps: float = 1e-5
-    group_size: int = 16
+    group_size: int = 8
     generation_size: Optional[int] = None
     mask_no_eos_with_zero: bool = False
     group_adv_norm: bool = True
@@ -653,7 +653,7 @@ class RemoteMegatronEngineConfig(TrainEngineConfig):
         metadata={"help": "Name of the trial (no '-' or '/'). Required."},
     )
     group_size: int = field(
-        default=16,
+        default=8,
         metadata={"help": "Number of answers retained per prompt (best-of-n)."},
     )
     train_bs_n_seqs: int = field(
