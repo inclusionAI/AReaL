@@ -262,7 +262,6 @@ class BaseHFEngine(TrainEngine):
             mb["max_seqlen"] = int(mb["max_seqlen"])
             mb["use_cache"] = False
 
-
         return mb_list
 
     def train_batch(
@@ -285,12 +284,12 @@ class BaseHFEngine(TrainEngine):
         )
         assert total_loss_weight != 0
         dist.all_reduce(total_loss_weight)
-        
+
         # Process microbatches with gradient accumulation
         for i, (pad_length, padded_mb_input, mb_input) in enumerate(
             zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
-        ):  
-          
+        ):
+
             outputs = self.model(**padded_mb_input)
 
             logits = outputs.logits.squeeze(0)

@@ -217,7 +217,7 @@ class FSDPEngine(BaseHFEngine):
 
         self.optimizer.zero_grad()
         mb_list = self.prepare_mb_list(input_)
-        
+
         total_loss_weight = torch.tensor(
             sum([loss_weight_fn(mb) for mb in mb_list.mbs]), dtype=torch.float32
         )

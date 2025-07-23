@@ -488,7 +488,11 @@ def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
     new_data = {}
     for key, value in data.items():
         if (
-            key not in ["cu_seqlens", "max_seqlen",]
+            key
+            not in [
+                "cu_seqlens",
+                "max_seqlen",
+            ]
             and torch.is_tensor(value)
             and value.numel() == total_length
         ):
