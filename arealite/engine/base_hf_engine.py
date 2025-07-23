@@ -253,6 +253,7 @@ class BaseHFEngine(TrainEngine):
         # NOTE: We unsqueeze here because huggingface transformer models requires
         # packed input to be of shape [1, total_seqlen].
         mb_list = unsqueeze_mb_list(mb_list)
+
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
         for mb in mb_list.mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
@@ -260,6 +261,7 @@ class BaseHFEngine(TrainEngine):
         for mb in mb_list.padded_mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
             mb["use_cache"] = False
+
 
         return mb_list
 
@@ -283,11 +285,12 @@ class BaseHFEngine(TrainEngine):
         )
         assert total_loss_weight != 0
         dist.all_reduce(total_loss_weight)
-
+        
         # Process microbatches with gradient accumulation
         for i, (pad_length, padded_mb_input, mb_input) in enumerate(
             zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
-        ):
+        ):  
+          
             outputs = self.model(**padded_mb_input)
 
             logits = outputs.logits.squeeze(0)
