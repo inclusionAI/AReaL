@@ -28,6 +28,7 @@ class RLVRWorkflow(RolloutWorkflow):
         #     data["messages"], tokenize=False, add_generation_prompt=True
         # )
         text = data["prompt"][0]
+        print(f"data in arun_episode, {data}")
         prompt_encodings = self.tokenizer(
             text,
             truncation=True,
@@ -55,6 +56,7 @@ class RLVRWorkflow(RolloutWorkflow):
 
             if "prompt" in data.keys():
                 del data["prompt"]
+
             completion = self.tokenizer.decode(resp.output_tokens, clean_up_tokenization_spaces=False, skip_special_tokens=True)
             print(f"debug: completion: {completion}")
             reward = self.reward_fn(

@@ -124,7 +124,7 @@ class DistributedRolloutController(RolloutController):
             portCount=3
         )
         mainServerSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test/AReaL"
-        mainServerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/sglang-13080189-20250716175343.sif"
+        mainServerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/sglang-server-13100195-20250718002946.sif"
         mainServerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         mainServerSpec.env_vars["WORKER_TYPE"] = "inference-main-worker"
 

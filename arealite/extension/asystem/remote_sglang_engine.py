@@ -73,9 +73,9 @@ class RemoteSGLangEngine(InferenceEngine):
     def initialize(self, config: RemoteSGLangInitConfig):
         logger.info(f"SGLangEngine begin exec initialize, config: {config}")
         # todo: init command from sglang config
-        command_template = ("/opt/conda/bin/python -m sglang.launch_server --model-path /storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/hf_ckpts/8604 "
-                            "--host {server_ip} --port {server_port} --tp 8 --dist-init-addr {dist_init_addr} --nnodes {node_num} --node-rank {node_rank} --tp 4 --pp 2 --skip-tokenizer-init --trust-remote-code --disable-radix-cache --mem-fraction-static 0.7 "
-                            "--max-running-requests 128 --chunked-prefill-size 16384 --cuda-graph-bs 1 2 4 8 16 32 64 128 256 384 512 640 768 896 1024 --attention-backend triton")
+        command_template = ("/opt/conda/bin/python -m sglang.launch_server --model-path /storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf "
+                            "--host {server_ip} --port {server_port} --dist-init-addr {dist_init_addr} --nnodes {node_num} --node-rank {node_rank} --tp 8 --enable-dp-attention --dp 2 --skip-tokenizer-init --trust-remote-code --disable-radix-cache --mem-fraction-static 0.7 "
+                            "--max-running-requests 256 --chunked-prefill-size 16384 --cuda-graph-bs 1 2 4 8 16 32 64 128 256 384 512 640 768 896 1024 --attention-backend triton")
 
         # self.addresses = config.server_addrs
         dist_init_addr = config.sglang_addrs_list[0][1]
@@ -165,6 +165,7 @@ class RemoteSGLangEngine(InferenceEngine):
                 ):
                     data, workflow = self.input_queue.get_nowait()
                     logger.debug(f"Get data from puller: {data}")
+                    print(f"print Get data from puller: {data}")
                     task = asyncio.create_task(
                         workflow.arun_episode(self, data), name=str(rid)
                     )

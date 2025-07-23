@@ -38,7 +38,7 @@ WPROCS_PER_JOBSTEP='{wprocs_per_jobstep}'
 WPROCS_IN_JOB='{wprocs_in_job}'
 WPROC_OFFSET='{wproc_offset}'
 
-WORKER_COMMAND="/usr/bin/python -m arealite.scheduler.rpc.rpc_server"
+WORKER_COMMAND="/usr/bin/python -u -m arealite.scheduler.rpc.rpc_server"
 
 #log output to local worker dir
 LOCAL_WORKER_DIR=/home/admin/logs/experiment/
