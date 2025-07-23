@@ -1,13 +1,15 @@
 import os
 import re
 import sys
-import wandb
+
 import torch
 import torch.distributed as dist
+import wandb
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import GRPOConfig, load_expr_config
 from arealite.api.io_struct import FinetuneSpec, WeightUpdateMeta
+from arealite.dataset.__init__ import get_custom_dataset
 from arealite.engine.ppo.actor import FSDPPPOActor
 from arealite.engine.sglang_remote import RemoteSGLangEngine
 from arealite.utils.device import log_gpu_stats
@@ -17,7 +19,6 @@ from arealite.utils.stats_logger import StatsLogger
 from arealite.workflow.vl_rlvr import VL_RLVRWorkflow
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import stats_tracker
-from arealite.dataset.__init__ import get_custom_dataset
 
 
 def extract_answer(pred_str, data_name, use_last_number=True):

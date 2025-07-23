@@ -9,8 +9,8 @@ from tensordict import TensorDict
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
-    AutoProcessor,
     AutoModelForImageTextToText,
+    AutoProcessor,
     PretrainedConfig,
     PreTrainedTokenizerFast,
     get_constant_schedule_with_warmup,
@@ -31,8 +31,8 @@ from arealite.utils.data import (
     unsqueeze_mb_list,
 )
 from arealite.utils.fsdp import get_cosine_schedule_with_warmup
-from arealite.utils.model import disable_dropout_in_model,VALID_VISION_MODELS
-from realhf.api.core.data_api import load_hf_tokenizer, load_hf_processor_and_tokenizer
+from arealite.utils.model import VALID_VISION_MODELS, disable_dropout_in_model
+from realhf.api.core.data_api import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from realhf.base import constants, logging
 
 logger = logging.getLogger("Base HF Engine")

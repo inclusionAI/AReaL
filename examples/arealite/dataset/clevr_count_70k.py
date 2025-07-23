@@ -1,11 +1,13 @@
-from typing import Any, Dict,  Optional, Union
+import base64
 import math
-from PIL.Image import Image as ImageObject
 import os
+from io import BytesIO
+from typing import Any, Dict, Optional, Union
+
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
-import base64
-from io import BytesIO
+from PIL.Image import Image as ImageObject
+
 
 def input_text(text:str):
     return {"type": "input_text", "text": text}

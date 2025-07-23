@@ -23,9 +23,9 @@ from arealite.api.io_struct import (
     LLMRequest,
     LLMResponse,
     RolloutStat,
+    VLMRequest,
+    VLMResponse,
     WeightUpdateMeta,
-    VLMRequest, 
-    VLMResponse
 )
 from arealite.utils.data import concat_padded_tensors
 from arealite.utils.http import arequest_with_retry, get_default_connector

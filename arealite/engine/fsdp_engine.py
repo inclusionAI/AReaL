@@ -2,7 +2,7 @@ import os
 import time
 from datetime import datetime
 from typing import Callable, Dict, Optional, Tuple
-from realhf.api.core.data_api import load_hf_processor_and_tokenizer
+
 import torch
 import torch.distributed as dist
 from tensordict import TensorDict
@@ -11,7 +11,7 @@ from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
 )
-from transformers import PreTrainedTokenizerFast,AutoProcessor
+from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from arealite.api.cli_args import TrainEngineConfig
 from arealite.api.engine_api import FinetuneSpec, SaveLoadMeta, WeightUpdateMeta
@@ -26,6 +26,7 @@ from arealite.utils.fsdp import (
     fsdp2_load_full_state_dict,
 )
 from arealite.utils.save_load import get_state_dict_from_repo_id_or_path
+from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import logging, name_resolve, names, pkg_version
 
 logger = logging.getLogger("FSDPEngine")
