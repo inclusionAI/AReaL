@@ -188,7 +188,6 @@ def main(args):
                 batch = rollout.rollout_batch(data, workflow=workflow)
 
         batch = batch.to(actor.device)
-        wandb.log({"reward": batch["rewards"].float().mean().item()})
         # Create barrier to synchronize all rollout processes.
         dist.barrier()
         torch.cuda.synchronize()
@@ -215,7 +214,7 @@ def main(args):
         ):
             stats = actor.ppo_update(batch)
             wandb.log({"actor_reward": stats[0]["grpo_actor/final_reward/avg"]})
-
+            wandb.log({"task_reward": stats[0]["grpo_actor/task_reward/avg"]})
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
