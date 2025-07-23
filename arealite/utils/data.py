@@ -244,12 +244,14 @@ def pack_tensor_dict(data: TensorDict):
     total_length = int(cu_seqlens[-1].item())
     # Pack tensors
     packed_data = {}
+    packed_data["cu_seqlens"] = cu_seqlens
+    packed_data["max_seqlen"] = max_seqlen
     for key, value in data.items():
-        if key == "attention_mask":
-            packed_data["cu_seqlens"] = cu_seqlens
-            packed_data["max_seqlen"] = max_seqlen
-        # tensor and of shape [B, S, ...]
-        elif (
+        # if key == "attention_mask":
+        #     packed_data["cu_seqlens"] = cu_seqlens
+        #     packed_data["max_seqlen"] = max_seqlen
+        # # tensor and of shape [B, S, ...]
+        if (
             torch.is_tensor(value)
             and value.ndim >= 2
             and value.shape[0] == bs
@@ -486,7 +488,7 @@ def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
     new_data = {}
     for key, value in data.items():
         if (
-            key not in ["cu_seqlens", "max_seqlen"]
+            key not in ["cu_seqlens", "max_seqlen",]
             and torch.is_tensor(value)
             and value.numel() == total_length
         ):
