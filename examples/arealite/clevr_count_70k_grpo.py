@@ -141,6 +141,9 @@ def main(args):
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
     )
 
     # Run training.
