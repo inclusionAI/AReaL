@@ -1,3 +1,4 @@
+import resource
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict
@@ -167,7 +168,9 @@ class DistributedTrainController(TrainController):
         logger.info(f"start to train_distributed_batch")
         print(f"start to train_distributed_batch")
         batches = input_.split(self.allocate_mode.train_dp_size)
-
+        time.sleep(10)
+        mem_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        print(f"内存使用111: {mem_usage / 1024:.2f} MB")
         assert len(self.workers) % self.dp_world_size == 0
         logger.info(f"controller debug111")
         print("start to train_distributed_batch111")

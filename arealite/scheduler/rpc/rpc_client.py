@@ -1,5 +1,8 @@
 import gzip
 import os
+import resource
+import time
+
 import requests
 import pickle
 import logging
@@ -37,7 +40,8 @@ class RPCClient:
         req = (method, args, kwargs)
         serialized_data = cloudpickle.dumps(req)
         serialized_req = gzip.compress(serialized_data)
-
+        mem_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        print(f"call engine: {method}, 内存使用: {mem_usage / 1024:.2f} MB", flush=True)
         resp = requests.post(url, data=serialized_req, timeout=7200)
         logging.error(
            f"Sent call '{method}' to {worker_id} ({ip}:{port}), status={resp.status_code}"

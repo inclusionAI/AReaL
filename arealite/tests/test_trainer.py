@@ -1,5 +1,8 @@
+import resource
 import sys
 import logging
+import time
+
 import torch
 from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -68,7 +71,7 @@ def main_grpo():
                            data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train.jsonl")
     train_dataset = dataset['train']
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
-    batch_size = 512
+    batch_size = 128
     batch_data = []
     step_num = 100
     epoch_num = 10
@@ -162,6 +165,9 @@ def main_grpo():
                 dis_batch = DistributedBatchMemory(rollout_res_dict)
 
             print(f"debug: step1", flush=True)
+            time.sleep(10)
+            mem_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            print(f"内存使用: {mem_usage / 1024:.2f} MB")
             with (
                 stats_tracker.record_timing("train_step"),
                 stats_tracker.scope("grpo_actor"),
