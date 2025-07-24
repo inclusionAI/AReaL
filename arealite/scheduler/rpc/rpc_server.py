@@ -32,9 +32,12 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                     self.wfile.write(b"Engine not initialized")
                     logging.error("Call received but engine not initialized.")
                     return
-                decompressed_data = gzip.decompress(data)
-                action, args, kwargs = cloudpickle.loads(decompressed_data)
+                action, args, kwargs = cloudpickle.loads(data)
                 method = getattr(EngineRPCServer.engine, action)
+
+                # decompressed_data = gzip.decompress(data)
+                # action, args, kwargs = cloudpickle.loads(decompressed_data)
+                # method = getattr(EngineRPCServer.engine, action)
                 logging.info(
                     f"RPC server calling engine method: {action} - {args} - {kwargs}"
                 )
@@ -92,4 +95,5 @@ if __name__ == "__main__":
 
     start_rpc_server(port)
     print(f"RPC server running on port {port}")
+
 
