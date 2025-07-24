@@ -1,0 +1,15 @@
+name: Test Self-Hosted Runners
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-self-hosted-runner:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: |
+          nvidia-smi
