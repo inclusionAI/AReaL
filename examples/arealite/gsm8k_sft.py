@@ -44,7 +44,7 @@ def main(args):
 
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
-        get_gsm8k_dataset("train", tokenizer, rank, world_size),
+        train_dataset,
         batch_size=config.train_dataset.batch_size // world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
@@ -52,7 +52,7 @@ def main(args):
         drop_last=config.train_dataset.drop_last,
     )
     valid_dataloader = StatefulDataLoader(
-        get_gsm8k_dataset("test", tokenizer, rank, world_size),
+        valid_dataset ,
         batch_size=config.valid_dataset.batch_size // world_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
