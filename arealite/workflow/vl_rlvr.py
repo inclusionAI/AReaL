@@ -82,5 +82,4 @@ class VL_RLVRWorkflow(RLVRWorkflow):
                 rewards=torch.tensor([reward]),
             )
             results.append(TensorDict(res, batch_size=[1]))
-
         return concat_padded_tensors(results)

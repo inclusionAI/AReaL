@@ -133,6 +133,7 @@ def concat_padded_tensors(
     assert all("attention_mask" in td for td in tensor_dicts)
     max_length = max([x["attention_mask"].shape[1] for x in tensor_dicts])
     result = {}
+
     # Process each key
     for key in tensor_dicts[0].keys():
         tensors_to_concat = []
@@ -161,10 +162,11 @@ def concat_padded_tensors(
                     padding = torch.full(
                         (tensor.shape[0], pad_width), pad_value, dtype=tensor.dtype
                     )
+
                 tensor = torch.cat([tensor, padding], dim=1)
             tensors_to_concat.append(tensor)
 
-        result[key] = torch.cat(tensors_to_concat, dim=0)
+        result[key] = torch.cat(tensors_to_concat, dim=0)       
     return TensorDict(result, batch_size=new_batch_size)
 
 
@@ -233,8 +235,7 @@ def pack_tensor_dict(data: TensorDict):
     assert attention_mask.ndim == 2, "Attention mask must be a 2D tensor."
     bs = attention_mask.shape[0]
     seq_len = attention_mask.shape[1]
-    # print(attention_mask)
-    # breakpoint()
+
     # Calculate cumulative sequence lengths
     lens = attention_mask.sum(dim=1, dtype=torch.int32)
     max_seqlen = lens.max().item()

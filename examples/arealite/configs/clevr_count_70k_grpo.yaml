@@ -34,12 +34,11 @@ gconfig:
   max_new_tokens: 512
   greedy: false
   temperature: 1.0
-  top_k: 50
 
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen2.5-VL-3B-Instruct
+  path: /storage/openpsi/models/Qwen2.5-VL-7B-Instruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: false
@@ -48,7 +47,7 @@ actor:
     max_tokens_per_mb: 10240
   optimizer:
     type: adam
-    lr: 1e-5
+    lr: 2e-6
     weight_decay: 0.01
     beta1: 0.9
     beta2: 0.999
