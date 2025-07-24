@@ -13,7 +13,7 @@ tokenizer_path: ${model.path}
 model:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen__Qwen3-1.7B/
+  path: Qwen/Qwen3-1.7B
   init_from_scratch: false
   gradient_checkpointing: false
   dtype: bfloat16
