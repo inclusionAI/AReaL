@@ -1,10 +1,11 @@
 import asyncio
 import os
 import random
+import shutil
 import threading
 import time
 import traceback
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor
 from datetime import datetime
 from queue import Empty, Full, Queue
 from typing import TYPE_CHECKING, Any, Callable, Dict, List
@@ -27,17 +28,12 @@ from arealite.api.io_struct import (
 )
 from arealite.utils.data import concat_padded_tensors
 from arealite.utils.http import arequest_with_retry, get_default_connector
-from realhf.base import logging, name_resolve, names, pkg_version
+from realhf.base import logging, name_resolve, names
 
 if TYPE_CHECKING:
     from arealite.api.workflow_api import RolloutWorkflow
 logger = logging.getLogger(__name__)
 
-if pkg_version.is_available("sglang"):
-    if pkg_version.is_version_greater_or_equal("sglang", "0.4.4"):
-        SGLANG_TOKEN_OUTPUT_IDENTIFIER = "output_ids"
-    else:
-        SGLANG_TOKEN_OUTPUT_IDENTIFIER = "token_ids"
 
 ROLLOUT_POLL_WAIT_TIME = 0.05
 RID_CACHE_SIZE = 128
@@ -91,10 +87,7 @@ class RemoteSGLangEngine(InferenceEngine):
     def check_health(self, base_url):
         # Check server endpoint
         try:
-            response = requests.get(
-                f"{base_url}/metrics",
-                timeout=30,
-            )
+            response = requests.get(f"{base_url}/health", timeout=30)
             return response.status_code == 200
         except requests.exceptions.RequestException as e:
             return False
@@ -123,7 +116,7 @@ class RemoteSGLangEngine(InferenceEngine):
         """Thread that runs the rollout loop."""
         try:
             uvloop.run(self._rollout_thread_async())
-        except Exception as e:
+        except Exception:
             traceback.print_exc()
 
     async def _rollout_thread_async(self):
@@ -259,9 +252,7 @@ class RemoteSGLangEngine(InferenceEngine):
         accumulated_output_logprobs = []
         accumulated_versions = []
 
-        # Deal with rollout interruption
-        stop_reason = "length"
-
+        # A single "rid" shares the same sever to allow KV cache reuse
         if req.rid in self.rid_to_address:
             server_addr = self.rid_to_address[req.rid]
         else:
@@ -273,10 +264,19 @@ class RemoteSGLangEngine(InferenceEngine):
             self.rid_to_address[req.rid] = server_addr
             self.rid_queue.append(req.rid)
 
+        # Deal with rollout interruption
+        # "abort" is the stop reason for later v0.4.9.post2 after
+        # we call the pause_generation endpoint
+        stop_reason = None
         while (
             stop_reason != "stop"
             and len(accumulated_output_tokens) < gconfig.max_new_tokens
         ):
+            # Request is interrupted, wait for some time to avoid interfering
+            # with update weights requests
+            if stop_reason is not None:
+                await asyncio.sleep(0.5)
+
             # loop until the generation is complete
             result = await arequest_with_retry(
                 session=self.session,
@@ -288,8 +288,17 @@ class RemoteSGLangEngine(InferenceEngine):
                 timeout=self.config.request_timeout,
             )
 
-            # Parse response
             meta_info = result["meta_info"]
+            # Check if generation is complete
+            finish_reason = meta_info["finish_reason"]
+            stop_reason = finish_reason["type"]
+            if (
+                stop_reason == "abort"
+                and finish_reason.get("message") == "Abort before prefill"
+            ):
+                continue
+
+            # Parse response
             output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
             output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
 
@@ -299,11 +308,7 @@ class RemoteSGLangEngine(InferenceEngine):
             # FIXME: Update with actual server versions
             accumulated_versions.extend([-1] * len(output_tokens))
 
-            # Check if generation is complete
-            finish_reason = meta_info["finish_reason"]
-            stop_reason = finish_reason["type"]
-
-            payload["input_ids"] += result[SGLANG_TOKEN_OUTPUT_IDENTIFIER]
+            payload["input_ids"] += result["output_ids"]
             sample_params["max_new_tokens"] -= len(output_tokens)
 
         latency = time.perf_counter() - start_time
@@ -318,30 +323,24 @@ class RemoteSGLangEngine(InferenceEngine):
             ttft=latency,  # Simplified for non-streaming
         )
 
-    def update_weights(self, meta):
-        executor = ThreadPoolExecutor(max_workers=1)
-        return executor.submit(self._update_weights, meta)
-
-    def _update_weights(self, meta: WeightUpdateMeta):
+    def update_weights(self, meta: WeightUpdateMeta):
+        for addr in self.addresses:
+            res = requests.post(f"http://{addr}/pause_generation")
+            res.raise_for_status()
+        fut = Future()
         if meta.type == "nccl":
-            if not self.distributed_weight_update_initialized:
-                self._init_distributed_weight_update(meta)
-            tik = time.perf_counter()
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                for param in meta.parameter_names:
-                    jobs = [
-                        self.aupdate_weights_from_distributed(addr, meta, param)
-                        for addr in self.addresses
-                    ]
-                    loop.run_until_complete(asyncio.gather(*jobs))
-            finally:
-                loop.close()
-            logger.info(
-                f"Distributed update weights done in {time.perf_counter() - tik}s"
+            fut = self.executor.submit(
+                update_weights_from_distributed,
+                meta,
+                self.addresses,
+                self.config.request_timeout,
+                not self.distributed_weight_update_initialized,
             )
-            self.set_version(meta.model_version)
+
+            def callback(fut):
+                self.distributed_weight_update_initialized = True
+
+            fut.add_done_callback(callback)
         elif meta.type == "disk":
             # Update weights from disk
             # Use ProcessPool to bypass python GIL for running async coroutines
@@ -349,7 +348,7 @@ class RemoteSGLangEngine(InferenceEngine):
                 update_weights_from_disk,
                 self.config.experiment_name,
                 self.config.trial_name,
-                meta.model_version,
+                self.get_version(),
                 self.addresses,
                 meta.path,
                 self.config.request_retries,
@@ -357,64 +356,19 @@ class RemoteSGLangEngine(InferenceEngine):
             )
 
             def callback(fut):
-                self.set_version(meta.model_version)
+                shutil.rmtree(meta.path, ignore_errors=True)
 
             fut.add_done_callback(callback)
-            return fut
         else:
             raise NotImplementedError(f"Unsupported weight update type: {meta.type}")
 
-    def _init_distributed_weight_update(self, meta: WeightUpdateMeta):
-        try:
-            # Initialize weights update group
-            jobs = [
-                self.ainit_weights_update_group(addr, meta) for addr in self.addresses
-            ]
-            loop = asyncio.new_event_loop()
-            # asyncio event loop should be manually set when running asyncio stuff in another thread
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(asyncio.gather(*jobs))
-            self.distributed_weight_update_initialized = True
-            logger.info(f"Distributed update weights initialized")
-        finally:
-            loop.close()
+        def callback(fut):
+            for addr in self.addresses:
+                res = requests.post(f"http://{addr}/continue_generation")
+                res.raise_for_status()
 
-    async def ainit_weights_update_group(self, addr: str, meta: WeightUpdateMeta):
-        rank_offset = 1 + self.addresses.index(addr) * meta.tp_size
-        payload = {
-            "master_address": meta.master_address,
-            "master_port": str(meta.master_port),
-            "rank_offset": rank_offset,
-            "world_size": meta.world_size,
-            "group_name": meta.group_name,
-            "backend": "nccl",
-        }
-        res = await arequest_with_retry(
-            addr=addr,
-            endpoint="/init_weights_update_group",
-            payload=payload,
-            method="POST",
-            max_retries=1,
-            timeout=self.config.request_timeout,
-        )
-        assert res["success"]
-
-    async def aupdate_weights_from_distributed(
-        self, addr: str, meta: WeightUpdateMeta, parameter_name: str
-    ):
-        res = await arequest_with_retry(
-            addr=addr,
-            endpoint="/update_weights_from_distributed",
-            payload={
-                "name": parameter_name,
-                "dtype": "bfloat16",
-                "shape": meta.state_dict_key_to_shape[parameter_name],
-            },
-            method="POST",
-            max_retries=1,
-            timeout=self.config.request_timeout,
-        )
-        assert res["success"]
+        fut.add_done_callback(callback)
+        return fut
 
     def get_capacity(self):
         if dist.is_initialized():
@@ -519,27 +473,6 @@ class RemoteSGLangEngine(InferenceEngine):
         self.paused.clear()
 
 
-async def aupdate_weights_from_disk(
-    session, addr, path: str, request_retries: int, request_timeout: float
-):
-    tik = time.time()
-    res = await arequest_with_retry(
-        addr=addr,
-        session=session,
-        endpoint="/update_weights_from_disk",
-        payload=dict(model_path=str(path), allow_interrupt=True),
-        method="POST",
-        max_retries=request_retries,
-        timeout=request_timeout,
-    )
-    assert res["success"]
-    if "num_paused_requests" in res:
-        logger.info(
-            f"{res['num_paused_requests']} requests are interrupted "
-            f"during updating weights for server {addr}"
-        )
-
-
 def update_weights_from_disk(
     experiment_name,
     trial_name,
@@ -569,12 +502,14 @@ def update_weights_from_disk(
             connector=get_default_connector(),
         )
         jobs = [
-            aupdate_weights_from_disk(
-                session=session,
+            arequest_with_retry(
                 addr=addr,
-                path=path,
-                request_retries=request_retries,
-                request_timeout=request_timeout,
+                session=session,
+                endpoint="/update_weights_from_disk",
+                payload=dict(model_path=str(path)),
+                method="POST",
+                max_retries=request_retries,
+                timeout=request_timeout,
             )
             for addr in addresses
         ]
@@ -585,3 +520,72 @@ def update_weights_from_disk(
         )
 
     return uvloop.run(_fn())
+
+
+def update_weights_from_distributed(
+    meta: WeightUpdateMeta,
+    addresses: List[str],
+    request_timeout,
+    init_group: bool,
+):
+    async def _fn():
+        tik = time.perf_counter()
+        if init_group:
+            await asyncio.gather(
+                *[
+                    ainit_weights_update_group(addr, i, meta, request_timeout)
+                    for i, addr in enumerate(addresses)
+                ]
+            )
+        await asyncio.gather(
+            *[
+                arequest_with_retry(
+                    addr=addr,
+                    endpoint="/update_weights_from_distributed",
+                    payload={
+                        "names": [pspec.name for pspec in meta.nccl_param_specs],
+                        "dtypes": [pspec.dtype for pspec in meta.nccl_param_specs],
+                        "shapes": [pspec.shape for pspec in meta.nccl_param_specs],
+                        "group_name": meta.nccl_group_name,
+                    },
+                    method="POST",
+                    max_retries=1,
+                    timeout=request_timeout,
+                )
+                for addr in addresses
+            ]
+        )
+        logger.info(f"Distributed update weights done in {time.perf_counter() - tik}s")
+
+    return uvloop.run(_fn())
+
+
+async def ainit_weights_update_group(
+    addr: str,
+    server_idx: int,
+    meta: WeightUpdateMeta,
+    request_timeout: float,
+):
+    assert meta.alloc_mode is not None
+    if meta.alloc_mode.gen_pp_size != 1:
+        raise NotImplementedError(
+            "NCCL weight update with PP size > 1 is not implemented yet."
+        )
+    rank_offset = 1 + server_idx * meta.alloc_mode.gen_tp_size
+    payload = {
+        "master_address": meta.nccl_master_address,
+        "master_port": str(meta.nccl_master_port),
+        "rank_offset": rank_offset,
+        "world_size": meta.alloc_mode.gen_world_size + 1,
+        "backend": "nccl",
+        "group_name": meta.nccl_group_name,
+    }
+    res = await arequest_with_retry(
+        addr=addr,
+        endpoint="/init_weights_update_group",
+        payload=payload,
+        method="POST",
+        max_retries=1,
+        timeout=request_timeout,
+    )
+    assert res["success"]
