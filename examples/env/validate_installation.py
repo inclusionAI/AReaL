@@ -67,6 +67,7 @@ class InstallationValidator:
     def test_flash_attn_functionality(self, flash_attn_module):
         """Test flash attention functionality."""
         # Try to import key functions
+        import flash_attn_2_cuda
         from flash_attn import flash_attn_func, flash_attn_varlen_func
         print("  - Flash attention functions imported successfully")
 
@@ -79,12 +80,12 @@ class InstallationValidator:
         """Test SGLang basic functionality."""
         # Basic import test is sufficient for CI
         import sgl_kernel
-        from sglang import launch_server
-        assert Version(get_version("sglang")) == Version("0.4.6.post4")
+        from sglang import Engine, launch_server
+        assert Version(get_version("sglang")) == Version("0.4.9.post2"), "SGLang version should be v0.4.9.post2"
         print("  - SGLang imported successfully")
     
     def test_transformers(self, transformers_module):
-        assert Version(get_version("transformers")) == Version("4.51.1")
+        assert Version(get_version("transformers")) == Version("4.53.1"), "transformers version should be 4.53.1"
         print("  - transformers imported successfully")
 
     def validate_critical_dependencies(self):
@@ -140,7 +141,7 @@ class InstallationValidator:
         self.test_import("flashattn_hopper", required=False)
         
         # Optional utilities
-        self.test_import("tensorboardx", required=False)
+        self.test_import("tensorboardX", required=False)
         self.test_import("swanlab", required=False)
         self.test_import("matplotlib", required=False)
         self.test_import("seaborn", required=False)

@@ -1,8 +1,9 @@
 experiment_name: gsm8k-grpo
 trial_name: trial0
 allocation_mode: sglang.d4p1t1+d4p1t1
-
 cluster:
+  n_nodes: 1
+  n_gpus_per_node: 8
   fileroot: /tmp/arealite/experiments
   n_nodes: 1
   n_gpus_per_node: 8
@@ -33,7 +34,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen__Qwen2-1.5B-Instruct/
+  path: Qwen/Qwen2-1.5B-Instruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: false

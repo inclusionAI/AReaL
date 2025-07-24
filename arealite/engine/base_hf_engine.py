@@ -49,6 +49,7 @@ class BaseHFEngine(TrainEngine):
         self.processor: AutoProcessor | None = None
         # huggingface model config
         self.model_config: PretrainedConfig
+        self._version: int = 0
 
         # initialization
         self.initialized = False
@@ -63,6 +64,12 @@ class BaseHFEngine(TrainEngine):
         self.is_vision_model = self.model_config.model_type in VALID_VISION_MODELS
 
         self.world_size = int(os.environ["WORLD_SIZE"])
+
+    def set_version(self, version: int):
+        self._version = version
+
+    def get_version(self) -> int:
+        return self._version
 
     def train(self, mode: bool = True):
         assert self.model is not None
@@ -222,7 +229,7 @@ class BaseHFEngine(TrainEngine):
         )
         state_dict = self.optimizer.state_dict()
         torch.save(state_dict, shard_path)
-        dist.barrier()
+        dist.barrier(device_ids=[self.device.index])
 
     def load_optimizer_state(self, path: str):
         # Load FSDP sharded state dict
@@ -234,7 +241,7 @@ class BaseHFEngine(TrainEngine):
         )
         optimizer_state_dict = torch.load(shard_path, weights_only=False)
         self.optimizer.load_state_dict(optimizer_state_dict)
-        dist.barrier()
+        dist.barrier(device_ids=[self.device.index])
 
     def step_lr_scheduler(self):
         assert self.lr_scheduler is not None

@@ -3,10 +3,8 @@ import subprocess
 import sys
 import time
 import uuid
-from pathlib import Path
 from typing import Optional
 
-import ray
 import requests
 
 from arealite.api.cli_args import (
@@ -19,12 +17,12 @@ from arealite.api.cli_args import (
 from arealite.api.io_struct import AllocationMode, AllocationType
 from arealite.utils.launcher import TRITON_CACHE_PATH
 from arealite.utils.network import find_free_ports, gethostip
-from realhf.base import logging, name_resolve, names, pkg_version
+from realhf.base import logging, name_resolve, names
 
 logger = logging.getLogger("SGLangServer Wrapper")
 
 
-def execute_shell_command(command: str) -> subprocess.Popen:
+def launch_server_cmd(command: str) -> subprocess.Popen:
     """
     Execute a shell command and return its process handle.
     """
@@ -43,46 +41,6 @@ def execute_shell_command(command: str) -> subprocess.Popen:
         stdout=sys.stdout,
         stderr=subprocess.STDOUT,
     )
-
-
-def apply_sglang_patch():
-    p = Path(os.path.dirname(__file__))
-    patch_path = str(
-        p.parent.parent
-        / "patch"
-        / "sglang"
-        / f"v{pkg_version.get_version('sglang')}.patch"
-    )
-
-    target_path = ""
-    sglang_meta = subprocess.check_output(
-        "python3 -m pip show sglang", shell=True
-    ).decode("ascii")
-    for line in sglang_meta.split("\n"):
-        line = line.strip()
-        if line.startswith("Editable project location: "):
-            target_path = str(Path(line.split(": ")[1]).parent)
-
-    if target_path:
-        proc = subprocess.Popen(
-            ["git", "apply", patch_path],
-            cwd=target_path,
-            stderr=sys.stdout,
-            stdout=sys.stdout,
-        )
-        proc.wait()
-        logger.info(f"Applied SGLang patch at {target_path}")
-
-
-def launch_server_cmd(command: str):
-    """
-    Launch the server using the given command.
-    If no port is specified, a free port is reserved.
-    """
-    if not ray.is_initialized():
-        apply_sglang_patch()
-    process = execute_shell_command(command)
-    return process
 
 
 def wait_for_server(base_url: str, timeout: Optional[int] = None) -> None:

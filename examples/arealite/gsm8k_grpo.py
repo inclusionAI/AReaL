@@ -1,5 +1,4 @@
 import os
-import shutil
 import sys
 
 import torch
@@ -9,7 +8,7 @@ from datasets.distributed import split_dataset_by_node
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import GRPOConfig, load_expr_config
-from arealite.api.io_struct import FinetuneSpec, WeightUpdateMeta
+from arealite.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
 from arealite.dataset.__init__ import get_custom_dataset
 from arealite.engine.ppo.actor import FSDPPPOActor
 from arealite.engine.sglang_remote import RemoteSGLangEngine
@@ -95,6 +94,18 @@ def main(args):
         ref = FSDPPPOActor(config=config.ref)
         ref.initialize(None, ft_spec)
 
+    # NOTE: Weight update meta only requires address and free port of rank 0,
+    # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
+    # due to `engine.get_param_specs()`.
+    # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
+    weight_update_meta = [
+        WeightUpdateMeta.from_fsdp_nccl(
+            AllocationMode.from_str(config.allocation_mode), actor
+        )
+    ]
+    dist.broadcast_object_list(weight_update_meta, src=0)
+    weight_update_meta = weight_update_meta[0]
+
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
@@ -138,7 +149,7 @@ def main(args):
 
         batch = batch.to(actor.device)
         # Create barrier to synchronize all rollout processes.
-        dist.barrier()
+        dist.barrier(device_ids=[actor.device.index])
         torch.cuda.synchronize()
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
@@ -165,26 +176,16 @@ def main(args):
             log_gpu_stats("ppo update")
 
         with stats_tracker.record_timing("update_weights"):
-            path = os.path.join(
-                Saver.get_save_checkpoint_root(config.saver),
-                "update_weights",
-                str(global_step + 1),
-            )
-            meta = WeightUpdateMeta(
-                type="disk",
-                path=path,
-                alloc_mode=None,
-                comm_backend=None,
-                model_version=global_step + 1,
-            )
+            rollout.pause()
             if dist.get_rank() == 0:
-                future = rollout.update_weights(meta)
-            actor.upload_weights(meta)
+                future = rollout.update_weights(weight_update_meta)
+            actor.upload_weights(weight_update_meta)
             if dist.get_rank() == 0:
                 future.result()
-                shutil.rmtree(path, ignore_errors=True)
-            dist.barrier()
+            dist.barrier(device_ids=[actor.device.index])
             torch.cuda.synchronize()
+            rollout.resume()
+            actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):

@@ -283,7 +283,7 @@ def main_local():
     if not cfg.server_only:
         launcher.submit(
             job_name="trainer",
-            cmd=f"torchrun --nnodes 1 --nproc-per-node {alloc_mode.train_world_size} --standalone {' '.join(sys.argv[1:])}",
+            cmd=f"torchrun --nnodes 1 --nproc-per-node {alloc_mode.train_world_size} --master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} {' '.join(sys.argv[1:])}",
             gpu=alloc_mode.train_world_size,
             env_vars=dict(AREAL_LLM_SERVER_ADDRS=",".join(server_addrs)),
         )

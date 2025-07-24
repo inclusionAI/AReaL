@@ -1,7 +1,7 @@
 import os
 import time
 from datetime import datetime
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -14,7 +14,8 @@ from torch.distributed.checkpoint.state_dict import (
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from arealite.api.cli_args import TrainEngineConfig
-from arealite.api.engine_api import FinetuneSpec, SaveLoadMeta, WeightUpdateMeta
+from arealite.api.engine_api import FinetuneSpec
+from arealite.api.io_struct import ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from arealite.engine.base_hf_engine import BaseHFEngine
 from arealite.utils.distributed import init_custom_process_group
 from arealite.utils.fsdp import (
@@ -125,7 +126,7 @@ class FSDPEngine(BaseHFEngine):
             if processor is not None:
                 processor.save_pretrained(path)
 
-        dist.barrier()
+        dist.barrier(device_ids=[self.device.index])
 
     def _load_model_from_hf(self, path: str):
         """Load model from HuggingFace format."""
@@ -146,7 +147,7 @@ class FSDPEngine(BaseHFEngine):
             if not self.weight_update_group_initialized:
                 self._init_distributed_weight_update(meta)
             self._update_weights_from_distributed()
-            dist.barrier()
+            dist.barrier(device_ids=[self.device.index])
             torch.cuda.synchronize()
         elif meta.type == "disk":
             self._save_model_to_hf(meta.path, self.tokenizer, self.processor)
@@ -155,7 +156,7 @@ class FSDPEngine(BaseHFEngine):
                 update_name = names.update_weights_from_disk(
                     self.config.experiment_name,
                     self.config.trial_name,
-                    meta.model_version,
+                    self.model_version,
                 )
                 name_resolve.add(
                     update_name, str(datetime.now().timestamp()), keepalive_ttl=120
@@ -164,16 +165,18 @@ class FSDPEngine(BaseHFEngine):
             raise ValueError(f"Unknown weight update type {meta.type}")
 
     def _init_distributed_weight_update(self, meta: WeightUpdateMeta):
+        # NOTE: Processes launched with torchrun will set the following env var to True,
+        # which blocks creating another TCP store for weight update.
+        os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
         if dist.get_rank() == 0:
             self.weight_update_group = init_custom_process_group(
                 backend="nccl",
-                world_size=meta.world_size,
-                init_method=f"tcp://{meta.master_address}:{meta.master_port}",
+                world_size=meta.alloc_mode.gen_world_size + 1,
+                init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
                 rank=0,
-                group_name=meta.group_name,
+                group_name=meta.nccl_group_name,
             )
-            # NOTE: synchronizing with sglang's barrier
-            dist.barrier(group=self.weight_update_group, device_ids=[self.device.index])
+            # NOTE: sglang v0.4.9.post2 or later does not have the barrier call
         self.weight_update_group_initialized = True
 
     def _update_weights_from_distributed(self):
@@ -185,23 +188,29 @@ class FSDPEngine(BaseHFEngine):
             else:
                 tensor = param.data
             if dist.get_rank() == 0:
-                print(f"Broadcasting {name} with shape {tensor.shape}", flush=True)
+                logger.debug(
+                    f"Broadcasting {name} with shape {tensor.shape}", flush=True
+                )
                 dist.broadcast(tensor, src=0, group=self.weight_update_group)
-            dist.barrier()
             del tensor  # optional, for memory hygiene
         torch.cuda.empty_cache()
 
-    def get_param_meta_for_distributed_update(self) -> Dict[str, Tuple[int]]:
-        """Return a dict mapping param name to its shape (expanded if DTensor)."""
-        param_shapes = {}
+    def get_param_specs(self) -> List[ParamSpec]:
+        param_specs = []
         for name, param in self.model.named_parameters():
             if isinstance(param.data, DTensor):
                 tensor = param.data.full_tensor()
             else:
                 tensor = param.data
-            param_shapes[name] = tuple(tensor.shape)
+            param_specs.append(
+                ParamSpec(
+                    name=name,
+                    shape=tuple(tensor.shape),
+                    dtype=str(tensor.dtype).split("torch.")[1],
+                )
+            )
             del tensor  # free memory if full_tensor was created
-        return param_shapes
+        return param_specs
 
     def train_batch(
         self,

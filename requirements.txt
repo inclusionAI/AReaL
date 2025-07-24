@@ -25,7 +25,6 @@ numba
 packaging
 pandas
 pybind11>=2.10.0
-numpy<2.0.0
 psutil
 pynvml
 pytest

@@ -34,7 +34,6 @@ dependencies = [
     "transformers==4.53.1",
     
     # Scientific computing
-    "numpy<2.0.0",
     "scipy",
     "pandas",
     "matplotlib",
