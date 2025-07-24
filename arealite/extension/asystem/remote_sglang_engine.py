@@ -408,7 +408,7 @@ class RemoteSGLangEngine(InferenceEngine):
     def update_weights_from_disk(self, addr, path: str):
         response = requests.post(
             f"http://{addr}/update_weights_from_disk",
-            json={"model_path": str(path), "allow_interrupt": True},
+            json={"model_path": str(path), "allow_interrupt": False},
             timeout=self.config.request_timeout
         )
         response.raise_for_status()
