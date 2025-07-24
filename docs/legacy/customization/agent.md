@@ -146,7 +146,7 @@ class AsyncPPOMATHConfig(AsyncRLExperimentConfig, PPOMATHConfig):
 ## Step 4: Run Training
 
 Follow the standard training procedure outlined in the
-[quickstart guide](../../tutorial/quickstart.md). Launch your experiment with:
+[quickstart guide](../../tutorial/quickstart_legacy.md). Launch your experiment with:
 
 ```bash
 python3 training/main_async_ppo.py my_param=5.0  # plus any additional CLI arguments
