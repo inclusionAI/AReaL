@@ -1,123 +1,121 @@
-# Quickstart (Legacy)
+# Quickstart
 
-> **Note**: This is a quickstart guide for launching AReaL experiment with legacy code in `realhf/`. We strongly recommend users to try AReaLite for better experiences. [Click here](quickstart_arealite.md) for AReaLite quickstart guide!
+Welcome to the **AReaLite** Quickstart Guide! This guide demonstrates how to run an
+AReaLite experiment training an LLM on the GSM8K dataset using the GRPO algorithm with
+function-based rewards. Ensure you've completed
+[the installation and environment setup](installation.md) before proceeding.
 
-This guide walks you through a simple example of training an LLM to solve math problems. Please ensure you have properly [installed dependencies and set up the runtime environment](installation.md) before proceeding.
+## Running the Experiment (on a single node)
 
-## Dataset
+To run the experiment, you will need:
 
-Use `huggingface-cli` to download our open-source dataset:
+- Training script:
+  [examples/arealite/gsm8k_grpo.py](../../examples/arealite/gsm8k_grpo.py)
+- Config YAML:
+  [examples/arealite/configs/gsm8k_grpo.yaml](../../examples/arealite/configs/gsm8k_grpo.yaml)
 
-```bash
-huggingface-cli download --repo-type=dataset inclusionAI/AReaL-RL-Data
+Our training scripts will automatically download the dataset (openai/gsm8k) and model
+(Qwen/Qwen2-1.5B-Instruct). To run the example with default configuration, execute from
+the repository directory:
+
+```
+python3 -m arealite.launcher.local examples/arealite/gsm8k_grpo.py --config examples/arealite/configs/gsm8k_grpo.yaml experiment_name=<your experiment name> trial_name=<your trial name>
 ```
 
-> **Note**: The command above will display the path of the downloaded dataset. You'll need to pass this path to the training command.
+> **Note**: The command above uses `LocalLauncher`, which only works for a single node
+> (`cluster.n_nodes == 1`). For distributed experiments, see
+> [Distributed Experiments with Ray or Slurm](quickstart.md#distributed-experiments-with-ray-or-slurm).
 
-## Model
+## Modifying configuration
 
-We train using open-source models available on Hugging Face Hub. You can either download the model in advance or use the model identifier when running the experiment.
+All available configuration options are listed in
+[arealite/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/arealite/api/cli_args.py).
+To customize the experiment (models, resources, algorithm options), you can:
 
-```bash
-# If you want to download it in advance
-huggingface-cli download Qwen/Qwen3-1.7B
+1. Edit the YAML file directly at
+   [examples/arealite/configs/gsm8k_grpo.yaml](../../examples/arealite/configs/gsm8k_grpo.yaml).
+1. Add command-line options:
+   - For existing options in the YAML file, directly add the option:
+     `actor.path=Qwen/Qwen3-1.7B`.
+   - For other options in `cli_args.py`, but not in the YAML file, add with a prefix
+     "+": `+sglang.attention_backend=triton`.
+
+For example, here is the command to launch a customized configuration, based on our
+GSM8K GRPO example:
+
+```
+python3 -m arealite.launcher.local examples/arealite/gsm8k_grpo.py \
+    --config examples/arealite/configs/gsm8k_grpo.yaml \
+    experiment_name=<your experiment name> \
+    trial_name=<your trial name> \
+    allocation_mode=sglang.d2p1t1+d2p1t1 \
+    cluster.n_nodes=1 \
+    cluster.n_gpus_per_node=4 \
+    gconfig.max_new_tokens=2048 \
+    train_dataset.batch_size=1024 \
+    +sglang.attention_backend=triton
 ```
 
-Refer to the [official documentation](https://huggingface.co/docs/huggingface_hub/guides/cli) for more information on using `huggingface-cli`.
+::::{important} We're currently refactoring from legacy AReaL to AReaLite, which
+introduces some configuration differences. We provide a **config converter** to transfer
+old AReaL config into AReaLite YAML file for users' convenience. [Click here](xxx) to
+learn how to use the **config converter**. ::::
 
-## Training
+## Distributed Experiments with Ray or Slurm
 
-From the repository directory, run:
+AReaLite provides standalone launchers for distributed experiments. After setting up
+your Ray or Slurm cluster, launch experiments similarly to `LocalLauncher`:
 
-```bash
-# examples/run_async_ppo.sh
-python3 training/main_async_ppo.py \
-    n_nodes=1 n_gpus_per_node=8 \
-    allocation_mode=sglang.d4p1m1+d2p2m1 \
-    cluster.fileroot=/path/to/save/logs/checkpoints/ \
-    actor.type._class=qwen3 \
-    actor.path=Qwen/Qwen3-1.7B \
-    ref.type._class=qwen3 \
-    ref.path=Qwen/Qwen3-1.7B \
-    dataset.path=/path/to/boba_106k_0319.jsonl \
-    dataset.train_bs_n_seqs=32 \
-    group_size=8 \
-    ppo.gen.max_new_tokens=4096 \
-    ppo.ppo_n_minibatches=4 \
-    actor_train.mb_spec.max_tokens_per_mb=32768 \
-    actor_inf.mb_spec.max_tokens_per_mb=32768 \
-    max_concurrent_rollouts=16 \
-    max_head_offpolicyness=4
+```
+# Launch with Ray launcher. 4 nodes (4 GPUs each), 3 nodes for generation, 1 node for training.
+python3 -m arealite.launcher.ray examples/arealite/gsm8k_grpo.py \
+    --config examples/arealite/configs/gsm8k_grpo.yaml \
+    experiment_name=<your experiment name> \
+    trial_name=<your trial name> \
+    allocation_mode=sglang.d12p1t1+d4p1t1 \
+    cluster.n_nodes=4 \
+    cluster.n_gpus_per_node=4 \
+    ...
+
+# Launch with Slurm launcher. 16 nodes (8 GPUs each), 12 nodes for generation, 4 nodes for training
+python3 -m arealite.launcher.slurm examples/arealite/gsm8k_grpo.py \
+    --config examples/arealite/configs/gsm8k_grpo.yaml \
+    experiment_name=<your experiment name> \
+    trial_name=<your trial name> \
+    allocation_mode=sglang.d96p1t1+d32p1t1 \
+    cluster.n_nodes=16 \
+    cluster.n_gpus_per_node=8 \
+    ...
 ```
 
-::::{important}
-Running `main_async_ppo.py` with `ppo.recompute_logprob=False`, `ppo.use_decoupled_loss=False`, and `max_head_offpolicyness=0` will essentially replicate the behavior of synchronous PPO. Therefore, it's usually not recommended to run synchronous PPO directly (i.e., `main_sync_ppo.py`). The workflow of asynchronous RL is more stable and easier to customize.
-::::
+Additional references:
 
-## Command Line Options
+- For more options for launchers, check `LauncherConfig` in
+  [arealite/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/arealite/api/cli_args.py).
+- [Ray cluster setup guide](installation.md#optional-launch-ray-cluster-for-distributed-training)
+  for a guide on how to set up a ray cluster.
 
-To view all available options:
+> **Important Notes**:
+>
+> 1. Ensure `allocation_mode` matches your cluster configuration
+>    (`#GPUs == cluster.n_nodes * cluster.n_gpus_per_node`)
+> 1. Ray/Slurm launchers only works for more than 1 node (`cluster.n_nodes > 1`). For
+>    single node scenario, please use `LocalLauncher`.
+> 1. In Ray/Slurm launchers, GPUs are allocated at node granularity, which means #GPUs
+>    for generation or training must be integer multiples of `cluster.n_gpus_per_node`.
 
-```bash
-python3 training/main_sync_ppo.py --help
-```
-
-### Configuration Parameters
-
-- **`experiment_name`**: The name of your project.
-- **`trial_name`**: The name of this trial in your project.
-- **`{actor|ref}.path`**: The path to the model files.
-- **`dataset.path`**: The path to the dataset JSONL file.
-- **`cluster.fileroot`**: The root path for saving training outputs (logs and checkpoints).
-- **`n_nodes`**: The number of nodes in the cluster.
-- **`n_gpus_per_node`**: The number of GPUs per node.
-- **`allocation_mode`**: The GPU allocation strategy and 3D parallelism configuration for the experiment. Format:
-  - `sglang.d${DP1}m${TP1}p${PP1}+d${DP2}m${TP2}p${PP2}`: Configures parallel strategies for SGLang generation and training respectively. Generation and training use separate GPU sets, and the total GPU count must equal: DP1×TP1×PP1 + DP2×TP2×PP2 = #GPUs.
-
-### Training Control
-
-- **`exp_ctrl.total_train_epochs`**: Number of training epochs (complete dataset iterations).
-- **`exp_ctrl.save_freq_{epochs|steps|secs}`**: Frequency for saving model parameters to persistent storage. Set to null to disable saving.
-- **`exp_ctrl.ckpt_freq_{epochs|steps|secs}`**: Frequency for saving temporary parameters for restart capability.
-- **`dataset.train_bs_n_seqs`**: Training batch size (number of prompts sampled per training iteration).
-- **`group_size`**: Number of responses sampled per prompt.
-
-### Memory and Performance
-
-- **`{actor_train|ref_inf|actor_inf}.mb_spec.max_tokens_per_mb`**: Maximum tokens per mini-batch for forward/backward passes during reference model inference and actor model training. Reduce this value to avoid OOM errors.
-- **`max_concurrent_rollouts`**: The maximum number of concurrent rollouts. SGLang will run out of memory if this value is too large. Defaults to `dataset.train_bs_n_seqs`.
-
-### Algorithm Configuration
-
-- **`max_head_offpolicyness`**: The allowed maximum data staleness. 0 recovers synchronous training. A large value will increase generation throughput but degrade final performance. We recommend keeping this value at 8 or below.
-- **`ppo.recompute_logprob`**: Whether to compute proximal log probabilities for training. Defaults to True for asynchronous experiments and False for synchronous baselines.
-- **`ppo.use_decoupled_loss`**: Use decoupled loss to stabilize asynchronous training. Defaults to True.
-- **`ppo.gen.max_new_tokens`**: Maximum tokens to generate per prompt.
-- **`ppo.ppo_n_minibatches`**: Number of mini-batches for dividing data during each PPO update.
-- **`success_rate_ub`**: Upper bound of success rate. Prompts with a higher success rate will be filtered out.
-- **`success_rate_lb`**: Lower bound of success rate. Prompts with a lower success rate will be filtered out.
-
-## Monitoring the Training Process
-
-+ We recommend using [Weights & Biases (wandb)](https://github.com/wandb/wandb)  or [SwanLab](https://github.com/SwanHubX/SwanLab)  for monitoring—run `wandb login` or `swanlab login`, or set the corresponding environment variable API key (`WANDB_API_KEY` or `SWANLAB_API_KEY`). Set `wandb.mode="online"` or `swanlab.mode="cloud"` in your configuration to upload training statistics. If you cannot connect to the server, you can also use `wandb.mode="offline"` or `swanlab.mode="local"` to save data locally without uploading.
-
-
-You can also use TensorBoard by setting the `tensorboard.path` parameter.
-
-The main log will be saved to `${fileroot}/logs/${USER}/${experiment_name}/${trial_name}/main.log` and contains the statistics uploaded to wandb.
-
-If SwanLab is enabled, logs will be saved to the directory specified by `swanlab.logdir`.
-
-### Key Training Statistics
-
-- **`Epoch 1/5`**: Indicates the total epochs required and the current epoch being trained.
-- **`step 6/19`**: Shows that the current epoch has 19 steps, with the 6th step just completed.
-- **`global step 6`**: Step count across all epochs.
-- **`ppo_actor/task_reward/avg`**: Average reward value of all sampled responses in this step. This should steadily increase during training and eventually stabilize.
-- **`ppo_actor/importance_weight/avg`**: Average importance sampling ratio across all tokens in the PPO loss. This is typically close to 1.0.
-- **`ppo_actor/actor_clip_ratio/avg`**: Ratio of clipped tokens in PPO loss to total tokens. This is usually less than 0.1.
-- **`ppo_actor/actor_loss/avg`**: PPO loss value. **This does not show clear trends during training** and should not be used as a performance indicator.
+<!--
+> **Notes**: Before launching distributed experiments, please check if your `allocation_mode` matches your cluster configuration. Make sure #GPUs allocated by `allocation_mode` equals to `cluster.n_nodes * cluster.n_gpus_per_node`.
+> **Note**: Ray and Slurm launchers only work for distributed experiments with more than 1 node (`cluster.n_nodes > 1`). They allocate GPUs for training and generation at the granularity of **nodes**, which means the number of GPUs allocated for generation and training must be integer multiples of `cluster.n_gpus_per_node`.
+-->
 
 ## Next Steps
 
-[Evaluate your model](eval.md) or check the [troubleshooting section](troubleshooting.md) if you encounter any issues.
+Check [Getting Started with AReaLite](../arealite/gsm8k_grpo.md) for a complete code
+walkthrough on the GRPO GSM8K Example.
+
+Customization guides:
+
+- [Custom dataset](../customization/dataset.md)
+- [Custom agentic/RVLR rollout workflows](../customization/agent.md)
+- [Custom algorithms](../customization/algorithm.md)
