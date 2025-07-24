@@ -7,7 +7,6 @@ GIT_COMMIT_SHA=${GIT_COMMIT_SHA:?"GIT_COMMIT_SHA is not set"}
 echo "GIT_COMMIT_SHA: $GIT_COMMIT_SHA"
 
 RUN_ID="areal-$GIT_COMMIT_SHA"
-cd "/tmp/$RUN_ID"
 
 if docker ps -a --format '{{.Names}}' | grep -q "$RUN_ID"; then
     docker rm -f $RUN_ID

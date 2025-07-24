@@ -7,7 +7,6 @@ GIT_COMMIT_SHA=${GIT_COMMIT_SHA:?"GIT_COMMIT_SHA is not set"}
 echo "GIT_COMMIT_SHA: $GIT_COMMIT_SHA"
 
 RUN_ID="areal-$GIT_COMMIT_SHA"
-cd "/tmp/$RUN_ID"
 
 # If there is already an image for the current environment, skip the build.
 ENV_SHA=$(sha256sum pyproject.toml | awk '{print $1}')
