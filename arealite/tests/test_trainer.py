@@ -43,11 +43,14 @@ def main_grpo():
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
         handlers=[logging.StreamHandler()]
     )
+    experiment_name = "arealite"
+    trial_name = "helloworld"
+
     # init controller
     scheduler = AsystemScheduler({
         "endpoint": "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081",
-        "expr_name": "arealite-test",
-        "trial_name": "trial-0",
+        "expr_name": experiment_name,
+        "trial_name": trial_name,
         "train_config": {
             "image": "xxx",
             "extra_envs": {
@@ -63,15 +66,11 @@ def main_grpo():
         },
     })
 
-
-
-
-
     dataset = load_dataset("json",
                            data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train.jsonl")
     train_dataset = dataset['train']
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
-    batch_size = 128
+    batch_size = 512
     batch_data = []
     step_num = 100
     epoch_num = 10
@@ -80,7 +79,7 @@ def main_grpo():
     os.environ["WANDB_BASE_URL"] = "https://slurm.alipay.com"
 
     logger = StatsLogger(StatsLoggerConfig(
-        experiment_name="arealite", trial_name="sync2",fileroot="/storage/openpsi/experiments",
+        experiment_name=experiment_name, trial_name=trial_name,fileroot="/storage/openpsi/experiments",
         wandb=WandBConfig(
             mode="online",
         ),
@@ -89,13 +88,13 @@ def main_grpo():
     logger.info(f"total_epochs={epoch_num} step_per_epoch={step_num}")
 
     rollout = DistributedRolloutController(
-        RemoteSGLangEngine(InferenceEngineConfig(experiment_name="arealite", trial_name="sync2")),
-        RolloutControllerConfig(experiment_name="arealite", trial_name="sync2", allocation_mode="sglang.d2t8p1+d16t1p1"),
+        RemoteSGLangEngine(InferenceEngineConfig(experiment_name=experiment_name, trial_name=trial_name)),
+        RolloutControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode="sglang.d4t8p1+d32t1p1"),
         scheduler,
     )
     actor = DistributedTrainController(
-        RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="arealite", trial_name="sync2")),
-        TrainControllerConfig(experiment_name="arealite", trial_name="sync2", allocation_mode="sglang.d2t8p1+d16t1p1"),
+        RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name=experiment_name, trial_name=trial_name)),
+        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode="sglang.d4t8p1+d32t1p1"),
         scheduler,
     )
     # engine initialize
@@ -111,8 +110,7 @@ def main_grpo():
                 batch_data.append(batch)
 
             # Update inference engine weights
-            exp_name = "arealite"
-            trial_name = "sync2"
+
             # actor_cfg = WeightUpdateMeta(
             #     type="disk",
             #     path=f"/storage/openpsi/checkpoints/{exp_name}/{trial_name}/",
@@ -121,7 +119,7 @@ def main_grpo():
             # )
             rollout_cfg = WeightUpdateMeta(
                 type="disk",
-                path=f"/storage/openpsi/checkpoints/{exp_name}/{trial_name}/{step}",
+                path=f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}/{step}",
                 alloc_mode=None,
                 comm_backend=None,
             )
@@ -146,7 +144,7 @@ def main_grpo():
                 tokenizer=tokenizer,
             )
             with (
-                stats_tracker.record_timing("train_step"),
+                stats_tracker.record_timing("rollout_step"),
                 stats_tracker.scope("grpo_actor"),
             ):
                 # input_: List[Dict[str, tensor]]
