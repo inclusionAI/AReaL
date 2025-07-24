@@ -171,7 +171,7 @@ def main(args):
 
         batch = batch.to(actor.device)
         # Create barrier to synchronize all rollout processes.
-        dist.barrier()
+        dist.barrier(device_ids=[actor.device.index])
         torch.cuda.synchronize()
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
