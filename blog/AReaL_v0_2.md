@@ -1,5 +1,5 @@
 <h1 align="center">
-<em>AReaL</em> v0.2: Training a SOTA 7B LRM with 1.5x Throughput Improvment
+<em>AReaL</em> v0.2: Training a SOTA 7B LRM with 1.5x Throughput Improvement
 </h1>
 
 <p align="center" style="font-size: 0.8em; color: #666;">

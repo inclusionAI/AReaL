@@ -1,4 +1,9 @@
-# AReaLite Design Document
+# AReaLite Design Doc
+
+## TL;DR
+
+Follow our [step-by-step code walk-through](../docs/arealite/gsm8k_grpo.md) to
+immediately get started with AReaLite!
 
 ## Motivation
 
@@ -105,10 +110,6 @@ distributed launch tools like `torchrun`:
 python3 -m arealite.launcher.ray entrypoint.py --config my-config.yaml
 ```
 
-### Data Flow Architecture
-
-*TODO: Add architectural diagram*
-
 ## Usage Examples
 
 ### Basic RL Training
@@ -140,9 +141,9 @@ python3 -m arealite.launcher.slurm examples/arealite/gsm8k_grpo.py \
 
 For detailed customization instructions, please refer to our documentation:
 
-- [Agent Customization](../docs/customization/agent.md)
-- [Dataset Customization](../docs/customization/dataset.md)
-- [Algorithm Customization](../docs/customization/algorithm.md)
+- [Adding new agents](../docs/customization/agent.md)
+- [Adding new datasets](../docs/customization/dataset.md)
+- [Adding new algorithms](../docs/customization/algorithm.md)
 
 ## Implementation Details
 

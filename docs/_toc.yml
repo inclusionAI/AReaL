@@ -7,8 +7,8 @@ parts:
   - caption: Tutorial
     chapters:
     - file: tutorial/installation
-    - file: tutorial/quickstart_arealite
     - file: tutorial/quickstart
+    - file: tutorial/quickstart_legacy
     - file: tutorial/eval
     - file: tutorial/troubleshooting
   - caption: Getting Started with AReaLite
