@@ -16,10 +16,9 @@ from arealite.utils.device import log_gpu_stats
 from arealite.utils.evaluator import Evaluator
 from arealite.utils.saver import Saver
 from arealite.utils.stats_logger import StatsLogger
-from arealite.workflow.vl_rlvr import VL_RLVRWorkflow
+from AReaL.arealite.workflow.Visionrlvr import VisionRLVRWorkflow 
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import stats_tracker
-
 
 def extract_answer(pred_str, data_name, use_last_number=True):
     match = re.findall(r"\[([0-9\.]+)\]", pred_str)
@@ -27,35 +26,6 @@ def extract_answer(pred_str, data_name, use_last_number=True):
         return match[-1]
 
     return ""
-
-
-# Adapted from verl.
-def extract_solution(solution_str, method="strict") -> str | None:
-    assert method in ["strict", "flexible"]
-
-    final_answer = None
-    if method == "strict":
-        # this also tests the formatting of the model
-        solutions = re.findall("#### (\\-?[0-9\\.\\,]+)", solution_str)
-        if len(solutions) == 0:
-            final_answer = None
-        else:
-            # take the last solution
-            final_answer = solutions[-1].replace(",", "").replace("$", "")
-    elif method == "flexible":
-        answer = re.findall("(\\-?[0-9\\.\\,]+)", solution_str)
-        final_answer = None
-        if len(answer) == 0:
-            # no reward is there is no answer
-            pass
-        else:
-            invalid_str = ["", "."]
-            # find the last number that is not '.'
-            for final_answer in reversed(answer):
-                if final_answer not in invalid_str:
-                    break
-    return final_answer
-
 
 def clevr_count_70k_reward_fn(
     prompt, completions, prompt_ids, completion_ids, answer, **kwargs
@@ -75,13 +45,12 @@ def clevr_count_70k_reward_fn(
         if is_thinking:
             return 1
         else:
-            return 1
+            return 0.8
 
     if re.match(r"^\[\d+(\.\d+)?\]$", sol.strip()):
         return 0.05
 
     return 0
-
 
 def main(args):
     wandb.init(project="clevr_70k")
@@ -97,7 +66,7 @@ def main(args):
         rank=rank,
         world_size=world_size,
         split="train",
-        training_type="rl",
+        training_type=config.train_dataset.type,
         processor=processor,
     )
     valid_dataset = get_custom_dataset(
@@ -105,7 +74,7 @@ def main(args):
         rank=rank,
         world_size=world_size,
         split="test",
-        training_type="rl",
+        training_type=config.valid_dataset.type,
         processor=processor,
     )
     # Create dataset and dataloaders
@@ -153,7 +122,7 @@ def main(args):
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
 
-    workflow = VL_RLVRWorkflow(
+    workflow = VisionRLVRWorkflow(
         reward_fn=clevr_count_70k_reward_fn,
         gconfig=config.gconfig,
         tokenizer=tokenizer,

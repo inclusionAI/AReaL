@@ -98,6 +98,7 @@ train_dataset:
   pin_memory: true
   num_workers: 4
   path: /storage/openpsi/data/clevr_count_70k/
+  type: rl
 
 valid_dataset: 
   batch_size: 32
@@ -105,6 +106,7 @@ valid_dataset:
   pin_memory: true
   num_workers: 4
   path: /storage/openpsi/data/clevr_count_70k/
+  type: rl
 
 # Utilities
 saver:
@@ -135,15 +137,3 @@ stats_logger:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-  wandb:
-    mode: disabled
-
-# launcher:
-#   inference_server_cpus_per_gpu: 15
-#   inference_server_mem_per_gpu: 153600
-#   trainer_cpus_per_gpu: 15
-#   trainer_mem_per_gpu: 153600
-#   slurm:
-#     mount: /storage:/storage
-#     trainer_image: /storage/openpsi/images/areal-v0.3.0.post1.sif
-#     inference_server_image: /storage/openpsi/images/areal-v0.3.0.post1.sif

@@ -27,7 +27,7 @@ def main_sft():
         rank=rank,
         world_size=world_size,
         split="train",
-        training_type="sft",
+        training_type=config.train_dataset.type,
         tokenizer=tokenizer,
         processor=processor,
     )
@@ -36,7 +36,7 @@ def main_sft():
         rank=rank,
         world_size=world_size,
         split="test",
-        training_type="sft",
+        training_type=config.valid_dataset.type,
         tokenizer=tokenizer,
         processor=processor,
     )

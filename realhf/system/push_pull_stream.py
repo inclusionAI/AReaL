@@ -25,19 +25,14 @@ class ZMQJsonPusher:
         hwm: High-water mark for outgoing messages (default: 1000)
     """
 
-    def __init__(
-        self, host: str = "localhost", port: int = 5555, hwm: int = 1000, bind=False
-    ):
+    def __init__(self, host: str = "localhost", port: int = 5555, hwm: int = 1000):
         self.host = host
         self.port = port
 
         self.ctx = zmq.Context.instance()
         self.socket = self.ctx.socket(zmq.PUSH)
         self.socket.setsockopt(zmq.SNDHWM, hwm)
-        if not bind:
-            self.socket.connect(f"tcp://{self.host}:{self.port}")
-        else:
-            self.socket.bind(f"tcp://{self.host}:{self.port}")
+        self.socket.connect(f"tcp://{self.host}:{self.port}")
 
     def push(self, data: JSONType) -> None:
         """
@@ -82,7 +77,6 @@ class ZMQJsonPuller:
         port: int = 5555,
         default_timeout_ms: int = 1000,
         hwm: int = 1000,
-        bind: bool = True,
     ):
         self.host = host
         self.port = port
@@ -92,10 +86,7 @@ class ZMQJsonPuller:
         self.socket = self.ctx.socket(zmq.PULL)
         self.socket.setsockopt(zmq.RCVHWM, hwm)
         self.socket.setsockopt(zmq.RCVTIMEO, self.default_timeout_ms)
-        if bind:
-            self.socket.bind(f"tcp://{self.host}:{self.port}")
-        else:
-            self.socket.connect(f"tcp://{self.host}:{self.port}")
+        self.socket.bind(f"tcp://{self.host}:{self.port}")
 
         self.poller = zmq.Poller()
         self.poller.register(self.socket, zmq.POLLIN)

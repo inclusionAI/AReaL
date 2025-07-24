@@ -12,7 +12,7 @@ from arealite.utils.image import image2base64
 from arealite.workflow.rlvr import RLVRWorkflow
 
 
-class VL_RLVRWorkflow(RLVRWorkflow):
+class VisionRLVRWorkflow(RLVRWorkflow):
     def __init__(
         self,
         reward_fn,
@@ -67,14 +67,8 @@ class VL_RLVRWorkflow(RLVRWorkflow):
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),
                 loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                pixel_values=processed_input["pixel_values"]
-                .clone()
-                .detach()
-                .unsqueeze(0),
-                image_grid_thw=processed_input["image_grid_thw"]
-                .clone()
-                .detach()
-                .unsqueeze(0),
+                pixel_values=processed_input["pixel_values"].unsqueeze(0),
+                image_grid_thw=processed_input["image_grid_thw"].unsqueeze(0),
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
                 versions=torch.tensor(versions).unsqueeze(0),
                 attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),

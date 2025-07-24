@@ -96,7 +96,14 @@ class BaseHFEngine(TrainEngine):
         dtype = getattr(torch, self.config.dtype)
 
         if self.is_vision_model:
-            dtype = torch.bfloat16
+            if dtype== torch.float16:
+                raise ValueError(
+                    "Vision models do not support float16 dtype. Please use bfloat16."
+                )
+            if self.config.init_from_scratch:
+                raise ValueError(
+                    "Vision models do not support initialization from scratch. Please use a pretrained model."
+                )
             self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
                 self.config.path
             )
@@ -304,6 +311,7 @@ class BaseHFEngine(TrainEngine):
             loss_scale *= self.world_size
 
             loss *= loss_scale
+            loss.backward()
 
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.model.parameters(),

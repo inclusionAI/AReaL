@@ -92,6 +92,7 @@ train_dataset:
   pin_memory: true
   num_workers: 4
   path: openai/gsm8k
+  type: rl
 
 valid_dataset: 
   batch_size: 256
@@ -99,6 +100,7 @@ valid_dataset:
   pin_memory: true
   num_workers: 4
   path: openai/gsm8k
+  type: rl
 
 # Utilities
 saver:
@@ -129,6 +131,4 @@ stats_logger:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-  wandb:
-    mode: disabled
 
