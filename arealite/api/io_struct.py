@@ -2,8 +2,8 @@
 # Licensed under the Apache License, Version 2.0
 import enum
 import itertools
-import re
 import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
@@ -184,6 +184,7 @@ class WeightUpdateMeta:
         saver_config: SaverConfig,
     ) -> "WeightUpdateMeta":
         from arealite.utils.saver import Saver
+
         path = os.path.join(
             Saver.get_save_checkpoint_root(saver_config),
             "weight_update",

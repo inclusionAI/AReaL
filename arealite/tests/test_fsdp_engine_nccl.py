@@ -98,7 +98,6 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     engine = FSDPEngine(engine_config)
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
     engine.initialize(None, ft_spec)
-    engine.model_version = 123
 
     # Initialize RemoteSGLangEngine
     config = InferenceEngineConfig(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
@@ -114,15 +113,12 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     )
 
     # Broadcast weights
-    future = remote_engine.update_weights(meta, engine.model_version)
+    future = remote_engine.update_weights(meta)
     print("got future", flush=True)
     engine.upload_weights(meta)
     print("uploaded wexights to remote engine", flush=True)
     # Wait for remote engine to finish
     future.result(timeout=120)
     print("got result", flush=True)
-    # Check model_version in meta and remote engine
-    remote_engine.set_version(engine.get_version())
-    assert remote_engine.get_version() == 123
     remote_engine.destroy()
     engine.destroy()
