@@ -4,10 +4,11 @@
 
 # Set default model if no argument provided
 MODEL_NAME=${1:-"qwen2.5:1.5b"}
+PORT=${2:-11434}
 
 echo ""
 echo "Testing $MODEL_NAME model..."
-TEST_RESPONSE=$(curl -s http://localhost:11434/api/generate -d '{
+TEST_RESPONSE=$(curl -s http://localhost:$PORT/api/generate -d '{
   "model": "'$MODEL_NAME'",
   "prompt": "Hello, please respond with: I am working!",
   "stream": false

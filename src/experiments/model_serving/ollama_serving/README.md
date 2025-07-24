@@ -1,0 +1,300 @@
+# Ollama Cluster with Load Balancing
+
+A production-ready setup for running multiple Ollama instances with nginx load balancing to distribute AI model inference across multiple GPUs.
+
+## 🚀 Overview
+
+This system provides:
+- **Drop-in Replacement**: Load balancer runs on port 11434 (standard Ollama port)
+- **Multi-GPU Support**: Run separate Ollama instances on different GPUs
+- **Load Balancing**: Nginx distributes requests across instances using round-robin
+- **High Availability**: If one instance fails, others continue serving
+- **Easy Management**: Simple scripts to start, stop, and monitor the cluster
+
+> **Note**: The load balancer runs on port 11434, making it a seamless replacement for single-instance Ollama. Tools like LiteLLM, Continue.dev, and others will work without configuration changes!
+
+## 📁 Scripts
+
+### `setup_ollama_cluster.sh`
+The main orchestration script that manages the entire cluster.
+
+```bash
+./setup_ollama_cluster.sh {start|stop|restart|status|test} [port1 port2 ...]
+```
+
+**Commands:**
+- `start` - Start all Ollama instances and nginx load balancer
+- `stop` - Stop all components
+- `restart` - Restart the entire cluster
+- `status` - Check cluster health
+- `test` - Run diagnostic tests
+
+**Examples:**
+```bash
+# Start with default ports (11435, 11436, 11437, 11438)
+./setup_ollama_cluster.sh start
+
+# Start with custom ports
+./setup_ollama_cluster.sh start 11435 11436
+
+# Check status
+./setup_ollama_cluster.sh status
+```
+
+### `manage_ollama_instance.sh`
+Manages individual Ollama instances on different ports/GPUs.
+
+```bash
+./manage_ollama_instance.sh {start|stop|status} [port1 port2 ...]
+```
+
+**Features:**
+- Automatically assigns GPU devices based on port order
+- Sets `OLLAMA_ORIGINS="*"` for nginx compatibility
+- Manages process lifecycle
+
+**GPU Assignment:**
+- Port 1 → GPU 0
+- Port 2 → GPU 1
+- Port 3 → GPU 2
+- etc.
+
+### `manage_nginx_lb.sh`
+Configures and manages the nginx load balancer.
+
+```bash
+./manage_nginx_lb.sh {start|stop|restart|status|config} [port1 port2 ...]
+```
+
+**Commands:**
+- `start` - Generate config and start nginx
+- `stop` - Stop load balancer
+- `restart` - Restart with new configuration
+- `status` - Check nginx and backend status
+- `config` - Show generated nginx configuration
+
+**Load Balancer Details:**
+- Listens on port 11434 (standard Ollama port)
+- Round-robin distribution
+- WebSocket support for streaming
+- Custom timeouts for long-running inference
+
+### `test_ollama_generate.sh`
+Quick test script to verify cluster functionality.
+
+```bash
+./test_ollama_generate.sh [MODEL] [PROMPT]
+```
+
+**Features:**
+- Health checks
+- Model availability verification
+- Performance metrics
+- Colored output for easy reading
+
+**Examples:**
+```bash
+# Test with defaults
+./test_ollama_generate.sh
+
+# Test specific model
+./test_ollama_generate.sh qwen2.5:7b
+
+# Custom prompt
+./test_ollama_generate.sh qwen2.5:1.5b "Write a haiku"
+```
+
+## 🛠️ Prerequisites
+
+1. **Ollama** must be installed:
+   ```bash
+   curl -fsSL https://ollama.ai/install.sh | sh
+   ```
+
+2. **Nginx** (automatically installed if missing)
+
+3. **Multiple GPUs** (recommended for multi-instance setup)
+
+4. **Models** pulled in Ollama:
+   ```bash
+   ollama pull qwen2.5:1.5b
+   ollama pull qwen2.5:7b
+   ```
+
+## 🚦 Quick Start
+
+1. **Start the cluster:**
+   ```bash
+   ./setup_ollama_cluster.sh start
+   ```
+
+2. **Verify it's working:**
+   ```bash
+   ./test_ollama_generate.sh
+   ```
+
+3. **Use the load balancer:**
+   ```bash
+   # API endpoint (using standard Ollama port)
+   curl http://localhost:11434/api/tags
+   
+   # Generate request
+   curl -X POST http://localhost:11434/api/generate \
+     -H "Content-Type: application/json" \
+     -d '{"model": "qwen2.5:1.5b", "prompt": "Hello"}'
+   ```
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────┐
+│           Client Applications           │
+└─────────────────┬───────────────────────┘
+                  │
+                  ▼ Port 11434 (Standard Ollama Port)
+         ┌────────────────┐
+         │  Nginx Load    │
+         │   Balancer     │
+         └───┬──┬──┬──┬───┘
+             │  │  │  │
+    ┌────────┴──┼──┼──┴────────┐
+    │           │  │           │
+    ▼           ▼  ▼           ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
+│ Ollama   │ │ Ollama   │ │ Ollama   │ │ Ollama   │
+│ :11435   │ │ :11436   │ │ :11437   │ │ :11438   │
+│ (GPU 0)  │ │ (GPU 1)  │ │ (GPU 2)  │ │ (GPU 3)  │
+└──────────┘ └──────────┘ └──────────┘ └──────────┘
+```
+
+## ⚙️ Configuration
+
+### Default Ports
+- Load Balancer: `11434` (standard Ollama port)
+- Ollama Instances: `11435`, `11436`, `11437`, `11438`
+
+### Nginx Configuration
+The load balancer configuration includes:
+- WebSocket support for streaming responses
+- 5-minute timeouts for long inference
+- Health check endpoints
+- Proper Host header handling for Ollama
+
+### Environment Variables
+Each Ollama instance runs with:
+- `OLLAMA_HOST=127.0.0.1:PORT`
+- `OLLAMA_ORIGINS=*`
+- `CUDA_VISIBLE_DEVICES=GPU_INDEX`
+
+## 🔧 Troubleshooting
+
+### 403 Forbidden Error
+If you get a 403 error through the load balancer:
+1. Check that Ollama instances were started with the scripts (not manually)
+2. Verify `OLLAMA_ORIGINS="*"` is set
+3. Restart the cluster: `./setup_ollama_cluster.sh restart`
+
+### Model Not Found
+```bash
+# List available models
+curl http://localhost:11434/api/tags
+
+# Pull missing model
+ollama pull model_name
+```
+
+### Port Already in Use
+```bash
+# Check what's using a port
+sudo lsof -i :11434
+
+# Force stop all components
+./setup_ollama_cluster.sh stop
+pkill -f "ollama serve"
+sudo pkill -f nginx
+```
+
+### Checking Logs
+```bash
+# Nginx error logs
+sudo tail -f /var/log/nginx/error.log
+
+# Check Ollama instance status
+./manage_ollama_instance.sh status
+```
+
+## 🔌 Integration Examples
+
+### With LiteLLM
+```python
+import litellm
+
+# No need to specify api_base - uses default Ollama port!
+response = litellm.completion(
+    model="ollama/qwen2.5:1.5b",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+
+# Or explicitly specify if needed
+response = litellm.completion(
+    model="ollama/qwen2.5:1.5b",
+    messages=[{"role": "user", "content": "Hello"}],
+    api_base="http://localhost:11434"  # Standard Ollama port
+)
+```
+
+### With curl
+```bash
+# List models
+curl http://localhost:11434/api/tags
+
+# Generate (streaming)
+curl -X POST http://localhost:11434/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen2.5:1.5b",
+    "prompt": "Why is the sky blue?",
+    "stream": true
+  }'
+
+# Chat completion
+curl -X POST http://localhost:11434/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen2.5:1.5b",
+    "messages": [
+      {"role": "user", "content": "Hello!"}
+    ]
+  }'
+```
+
+### With Python requests
+```python
+import requests
+
+# Non-streaming
+response = requests.post(
+    "http://localhost:11434/api/generate",
+    json={
+        "model": "qwen2.5:1.5b",
+        "prompt": "Hello world",
+        "stream": False
+    }
+)
+print(response.json()["response"])
+```
+
+## 📊 Performance Tips
+
+1. **Model Loading**: First request to each instance loads the model into GPU memory
+2. **Warm-up**: Run a few test requests to warm up all instances
+3. **Monitor GPU Usage**: Use `nvidia-smi` to check GPU utilization
+4. **Scaling**: Add more instances/ports based on your GPU availability
+
+## 🤝 Contributing
+
+Feel free to submit issues or pull requests to improve this setup!
+
+## 📄 License
+
+This project is provided as-is for educational and production use. 

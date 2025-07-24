@@ -539,8 +539,6 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
                 **self.llm_args,
             )
             assistant_message.errors = [error]
-        if not assistant_message.is_tool_call() or assistant_message.has_text_content():
-            raise AgentError(f"Only tool calls are allowed. Got {assistant_message}")
         message = self._check_if_stop_toolcall(assistant_message)
         state.messages.append(assistant_message)
         return assistant_message, state
