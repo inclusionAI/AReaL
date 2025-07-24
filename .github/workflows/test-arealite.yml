@@ -12,6 +12,8 @@ on:
 
 jobs:
   test-arealite:
+    environment:
+      name: AReaLite-unittests
     runs-on: a800
     steps:
       - uses: actions/checkout@v4
