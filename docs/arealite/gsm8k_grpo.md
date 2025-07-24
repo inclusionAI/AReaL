@@ -29,8 +29,8 @@ show you how these steps are done in details.
 
 ## Launching the Experiment
 
-As shown in [Quickstart Guide](../tutorial/quickstart_arealite.md), experiments in
-AReaLite are launched using standalone launchers with the following commands:
+As shown in [Quickstart Guide](../tutorial/quickstart.md), experiments in AReaLite are
+launched using standalone launchers with the following commands:
 
 ```
 # Local Launcher
