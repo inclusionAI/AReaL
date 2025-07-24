@@ -16,10 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - run: ./ci/build_env_image.sh
+      - run: bash ./ci/build_env_image.sh
         env:
           GIT_COMMIT_SHA: ${{ github.sha }}
 
-      - run: ./ci/test_arealite.sh
+      - run: bash ./ci/test_arealite.sh
         env:
           GIT_COMMIT_SHA: ${{ github.sha }}
