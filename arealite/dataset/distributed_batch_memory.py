@@ -1,140 +1,116 @@
 import torch
-from abc import ABC
 
 
-class DistributedBatchMemory(ABC):
+class DistributedBatchMemory:
     def __init__(self, dataset):
-        """
-        初始化 DistributedBatchMemory
-
-        Args:
-            dataset: 支持两种格式：
-                1) list[Dict[str, torch.Tensor]]: 每个元素是一个样本的所有属性
-                2) Dict[str, torch.Tensor]: 每个key对应一个属性，tensor的shape是batch_size
-        """
         if isinstance(dataset, list):
-            # 格式1: list[Dict[str, torch.Tensor]] - 直接存储
-            self.dataset = dataset
+            self.dataset = self._convert_list_to_dict(dataset)
         elif isinstance(dataset, dict):
-            # 格式2: Dict[str, torch.Tensor] - 需要转换
-            self.dataset = self._convert_dict_to_list(dataset)
+            self._validate_dict_dataset(dataset)
+            self.dataset = dataset
         else:
             raise TypeError(f"dataset must be list or dict, got {type(dataset)}")
 
-    def _convert_dict_to_list(self, dict_dataset):
-        """
-        将 Dict[str, torch.Tensor] 转换为 list[Dict[str, torch.Tensor]]
-
-        Args:
-            dict_dataset: Dict[str, torch.Tensor] 格式的数据
-
-        Returns:
-            list[Dict[str, torch.Tensor]] 格式的数据
-        """
-        if not dict_dataset:
-            return []
-
-        # 获取第一个tensor的长度作为batch_size
-        first_tensor = next(iter(dict_dataset.values()))
-        if not isinstance(first_tensor, torch.Tensor):
-            raise TypeError(f"All values in dict_dataset must be torch.Tensor, got {type(first_tensor)}")
-
-        batch_size = first_tensor.shape[0]
-
-        # 检查所有tensor的batch_size是否一致
-        for key, tensor in dict_dataset.items():
-            if not isinstance(tensor, torch.Tensor):
-                raise TypeError(f"All values in dict_dataset must be torch.Tensor, got {type(tensor)} for key '{key}'")
+    def _validate_dict_dataset(self, dataset):
+        """验证 Dict[str, Tensor] 格式的完整性"""
+        if not dataset:
+            return
+        batch_size = next(iter(dataset.values())).shape[0]
+        for key, tensor in dataset.items():
             if tensor.shape[0] != batch_size:
-                raise ValueError(
-                    f"All tensors must have same batch_size, got {tensor.shape[0]} for key '{key}' vs {batch_size}")
+                raise ValueError(f"Batch size mismatch for key '{key}': expected {batch_size}, got {tensor.shape[0]}")
 
-        # 转换为list格式
-        converted_dataset = []
-        for i in range(batch_size):
-            sample = {}
-            for key, tensor in dict_dataset.items():
-                sample[key] = tensor[i:i + 1]  # 保持tensor维度为1
-            converted_dataset.append(sample)
-
-        return converted_dataset
+    def _convert_list_to_dict(self, list_dataset):
+        """将 list[Dict] 转换为 Dict[str, Tensor]"""
+        if not list_dataset:
+            return {}
+        keys = list_dataset[0].keys()
+        dict_dataset = {}
+        for key in keys:
+            tensors = [sample[key] for sample in list_dataset]
+            dict_dataset[key] = torch.cat(tensors, dim=0)
+        return dict_dataset
 
     def split(self, dp_size: int) -> list:
-        batches = []
-        if self.dataset is not None:
-            total = len(self.dataset)
-            part_size = (total + dp_size - 1) // dp_size  # ceil division
-            for i in range(dp_size):
-                start = i * part_size
-                end = min((i + 1) * part_size, total)
-                sub_dataset = self.dataset[start:end]
-                batch = DistributedBatchMemory(sub_dataset)
-                batches.append(batch)
-        else:
-            raise ValueError("cannot split empty dataset")
+        """分割数据集"""
+        if not self.dataset:
+            raise ValueError("Cannot split empty dataset")
 
+        batch_size = next(iter(self.dataset.values())).shape[0]
+        part_size = (batch_size + dp_size - 1) // dp_size  # 向上取整
+        batches = []
+        for i in range(dp_size):
+            start = i * part_size
+            end = min(start + part_size, batch_size)
+            split_data = {k: v[start:end] for k, v in self.dataset.items()}
+            batches.append(DistributedBatchMemory(split_data))
         return batches
 
-    def merge(self, batch):
-        merged_dataset = (self.dataset or []) + (batch.dataset or [])
-        if not merged_dataset:
-            merged_dataset = None
-        new_batch = DistributedBatchMemory(merged_dataset)
-        return new_batch
+    def merge(self, other):
+        """合并另一个批次的数据"""
+        merged_data = {k: v for k, v in self.dataset.items()}
+        for k, v in other.dataset.items():
+            if k in merged_data:
+                merged_data[k] = torch.cat([merged_data[k], v], dim=0)
+            else:
+                merged_data[k] = v
+        return DistributedBatchMemory(merged_data)
 
     def __getstate__(self):
-        state = {
-            'dataset': self.dataset,
-        }
-
-        return state
+        return {"dataset": self.dataset}
 
     def __setstate__(self, state):
-        self.dataset = state['dataset']
+        self.dataset = state["dataset"]
 
     def __getitem__(self, key):
-        # list[Dict[str, torch.Tensor]]
         if isinstance(key, int):
-            return self.dataset[key]
+            return {k: v[key] for k, v in self.dataset.items()}
         elif isinstance(key, str):
-            # 返回所有item[key] cat后的tensor
-            tensor_list = [item[key] for item in self.dataset]
-            return torch.cat(tensor_list, dim=0)
+            return self.dataset[key]
         else:
-            raise TypeError(f"Key must be int or str, got {type(key)}")
+            raise TypeError("Key must be int or str")
 
     def __setitem__(self, key, value):
+        """支持两种赋值方式：
+            - str键: 更新整个属性张量
+            - int索引: 需要将数据转换为列表格式后更新（效率较低，建议避免）
         """
-        如果 key 是 int，value 应为 Dict[str, Tensor]，直接赋值。
-        如果 key 是 str，value 应为 Tensor，shape[0] == batchsize，
-        按 batchsize 拆分后分别写入 self.dataset[i][key]。
-        """
-        if isinstance(key, int):
-            if not isinstance(value, dict):
-                raise ValueError("When key is int, value must be a dict of str->Tensor.")
-            self.dataset[key] = value
-        elif isinstance(key, str):
+        if isinstance(key, str):
+            # 更新整个属性张量
             if not isinstance(value, torch.Tensor):
-                raise ValueError("When key is str, value must be a torch.Tensor.")
-            batchsize = len(self.dataset)
-            if value.shape[0] != batchsize:
-                raise ValueError(
-                    f"Tensor batchsize mismatch: value.shape[0]={value.shape[0]}, dataset batchsize={batchsize}")
-            for i in range(batchsize):
-                self.dataset[i][key] = value[i:i + 1]  # 保持shape为(1,...)
+                raise ValueError("值必须为torch.Tensor类型")
+            if self.dataset:
+                expected_batch_size = next(iter(self.dataset.values())).shape[0]
+                if value.shape[0] != expected_batch_size:
+                    raise ValueError(f"张量的批处理大小不匹配。期望{expected_batch_size}, 实际{value.shape[0]}")
+            self.dataset[key] = value
         else:
-            raise TypeError(f"Key must be int or str, got {type(key)}")
+            raise TypeError("键必须为str类型以更新属性张量")
 
     def __delitem__(self, key):
-        """
-        If key is int, delete self.dataset[key].
-        If key is str, 删除 self.dataset 所有元素的该属性。
+        """支持两种删除方式：
+            - int索引: 删除指定位置的样本
+            - str键: 删除整个属性
         """
         if isinstance(key, int):
-            del self.dataset[key]
+            # 转换为列表格式进行删除
+            list_dataset = self._convert_dict_to_list(self.dataset)
+            del list_dataset[key]
+            self.dataset = self._convert_list_to_dict(list_dataset)
         elif isinstance(key, str):
-            for item in self.dataset:
-                if key in item:
-                    del item[key]
+            # 直接删除整个属性
+            if key in self.dataset:
+                del self.dataset[key]
         else:
-            raise TypeError(f"Key must be int or str, got {type(key)}")
+            raise TypeError(f"键必须为int或str类型, 实际类型为{type(key)}")
+
+    def _convert_dict_to_list(self, dict_dataset):
+        """将字典格式的数据集转换为列表格式（用于按索引删除）"""
+        if not dict_dataset:
+            return []
+        batch_size = next(iter(dict_dataset.values())).shape[0]
+        list_dataset = []
+        for i in range(batch_size):
+            sample = {k: v[i] for k, v in dict_dataset.items()}
+            list_dataset.append(sample)
+        return list_dataset

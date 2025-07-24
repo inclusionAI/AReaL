@@ -229,9 +229,9 @@ class RemoteMegatronEngine(TrainEngine):
         logger.info(f"debug 2")
         # 0.接受rollout和reward之后的数据
         # - input_ids, prompt_mask, logprobs, versions, seqlen, rewards, task_ids, seq_no_eos_mask
-        if not input_.dataset or len(input_.dataset) == 0:
-            raise ValueError("input_.dataset is empty")
-        first_item = input_.dataset[0]
+        if not input_ or len(input_.dataset) == 0:
+            raise ValueError("input_ is empty")
+        first_item = input_[0]
         attrs = list(first_item.keys())
 
         # 1. 获取所有属性名。input_的key：input_ids, prompt_mask, logprobs, versions, seqlen, rewards, task_ids, seq_no_eos_mask
@@ -771,3 +771,4 @@ loss_configs = {
     "temperature": 1,
     "token_normalize_scope": "global"
 }
+
