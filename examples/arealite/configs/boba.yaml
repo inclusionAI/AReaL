@@ -87,7 +87,7 @@ sglang:
   random_seed: ${seed}
   skip_tokenizer_init: true
   dtype: ${actor.dtype}
-  max_running_requests: null 
+  max_running_requests: null
   context_length: 32768
   mem_fraction_static: 0.9
 
@@ -128,7 +128,7 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: online
-  
+
 # Launcher
 launcher:
   inference_server_cpus_per_gpu: 15
@@ -138,4 +138,4 @@ launcher:
   slurm:
     mount: /storage:/storage
     trainer_image: /storage/openpsi/images/arealite-20250712-update-hf-xet.sif
-    inference_server_image: /storage/openpsi/images/arealite-20250712-update-hf-xet.sif
+    inference_server_image: /storage/openpsi/images/sglang-v0.4.9.post2-cu126-v2.sif

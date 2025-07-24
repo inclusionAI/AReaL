@@ -12,6 +12,7 @@ from arealite.api.io_struct import (
     FinetuneSpec,
     LLMRequest,
     LLMResponse,
+    ParamSpec,
     SaveLoadMeta,
     WeightUpdateMeta,
 )
@@ -63,7 +64,19 @@ class TrainEngine(abc.ABC):
         return self.train(False)
 
     def upload_weights(self, meta: WeightUpdateMeta):
-        """Upload weights to the inference engine."""
+        """Upload weights to the inference engine (in a blocking manner)."""
+        raise NotImplementedError()
+
+    def get_param_specs(self) -> List[ParamSpec]:
+        """Get the parameter specifications for the model."""
+        raise NotImplementedError()
+
+    def set_version(self, version: int):
+        """Set the current weight version in the train engine."""
+        raise NotImplementedError()
+
+    def get_version(self) -> int:
+        """Get the current weight version in the train engine."""
         raise NotImplementedError()
 
     def save(self, meta: SaveLoadMeta):
@@ -122,12 +135,20 @@ class InferenceEngine(abc.ABC):
     def destroy(self):
         """Destroy the engine and release GPU memory."""
 
-    def update_weights(self, meta: WeightUpdateMeta) -> Future:
-        """Update weights in the inference engine."""
-        raise NotImplementedError()
-
     async def agenerate(self, req: LLMRequest) -> LLMResponse:
         """Asynchronously generate a response for the given request."""
+        raise NotImplementedError()
+
+    def update_weights(self, meta: WeightUpdateMeta) -> Future:
+        """Update weights in the inference engine in a non-blocking manner."""
+        raise NotImplementedError()
+
+    def set_version(self, version: int) -> None:
+        """Set the current weight version in the inference engine."""
+        raise NotImplementedError()
+
+    def get_version(self) -> int:
+        """Get the current weight version in the inference engine."""
         raise NotImplementedError()
 
     def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:

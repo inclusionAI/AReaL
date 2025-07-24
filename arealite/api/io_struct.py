@@ -3,13 +3,18 @@
 import enum
 import itertools
 import re
+import os
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
 
 from transformers import PreTrainedTokenizerFast
 
-from arealite.api.cli_args import GenerationHyperparameters
+from arealite.api.cli_args import GenerationHyperparameters, SaverConfig
+from arealite.utils.network import find_free_ports, gethostip
+
+if TYPE_CHECKING:
+    from arealite.api.engine_api import TrainEngine
 
 
 @dataclass
@@ -156,19 +161,53 @@ class AllocationMode:
 
 
 @dataclass
+class ParamSpec:
+    name: str
+    shape: Tuple
+    dtype: str
+
+
+@dataclass
 class WeightUpdateMeta:
-    type: str
-    path: str | None
-    alloc_mode: AllocationMode | None
-    comm_backend: str | None
-    model_version: int = 0
-    tp_size: int = 1
-    master_address: str = "127.0.0.1"
-    master_port: int = 29500
-    world_size: int = 1
-    group_name: str = "aupdate_weights_from_distributed"
-    parameter_names: List[str] = field(default_factory=list)
-    state_dict_key_to_shape: Dict[str, Tuple[int]] = field(default_factory=dict)
+    type: Literal["disk", "nccl"]
+    path: str | None = None
+    alloc_mode: AllocationMode | None = None
+
+    nccl_master_address: str = "127.0.0.1"
+    nccl_master_port: int = 29500
+    nccl_param_specs: List[ParamSpec] = field(default_factory=list)
+    nccl_group_name: str = "update_weight_group"
+
+    @classmethod
+    def from_disk(
+        cls,
+        saver_config: SaverConfig,
+    ) -> "WeightUpdateMeta":
+        from arealite.utils.saver import Saver
+        path = os.path.join(
+            Saver.get_save_checkpoint_root(saver_config),
+            "weight_update",
+        )
+        return cls(
+            type="disk",
+            path=path,
+        )
+
+    @classmethod
+    def from_fsdp_nccl(
+        cls,
+        allocation_mode: AllocationMode,
+        fsdp_engine: "TrainEngine",
+        nccl_group_name: str = "update_weight_group",
+    ):
+        return cls(
+            type="nccl",
+            alloc_mode=allocation_mode,
+            nccl_master_address=gethostip(),
+            nccl_master_port=find_free_ports(1)[0],
+            nccl_param_specs=fsdp_engine.get_param_specs(),
+            nccl_group_name=nccl_group_name,
+        )
 
 
 @dataclass

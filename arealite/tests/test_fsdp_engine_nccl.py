@@ -12,10 +12,9 @@ from arealite.api.cli_args import (
     SGLangConfig,
     TrainEngineConfig,
 )
-from arealite.api.io_struct import FinetuneSpec, WeightUpdateMeta
+from arealite.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
 from arealite.engine.fsdp_engine import FSDPEngine
 from arealite.engine.sglang_remote import RemoteSGLangEngine
-from arealite.utils.network import find_free_ports
 from realhf.base import network
 
 EXPR_NAME = "test_fsdp_engine_nccl"
@@ -33,7 +32,7 @@ RUN_SERVER_TIMEOUT = 180
 
 def check_server_health(base_url):
     try:
-        response = requests.get(f"{base_url}/metrics", timeout=30)
+        response = requests.get(f"{base_url}/health", timeout=30)
         return response.status_code == 200
     except requests.exceptions.RequestException:
         return False
@@ -82,14 +81,14 @@ def sglang_server_nccl():
 
 
 def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server_nccl):
-    # 设置分布式环境变量
+    # Set environment variables for torch distributed
     os.environ["WORLD_SIZE"] = "1"
     os.environ["RANK"] = "0"
     os.environ["LOCAL_RANK"] = "0"
     os.environ["MASTER_ADDR"] = HOST
     os.environ["MASTER_PORT"] = str(MASTER_PORT)
 
-    # 启动本地FSDPEngine
+    # Initialize FSDPEngine
     engine_config = TrainEngineConfig(
         experiment_name=EXPR_NAME,
         trial_name=TRIAL_NAME,
@@ -99,39 +98,31 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     engine = FSDPEngine(engine_config)
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
     engine.initialize(None, ft_spec)
+    engine.model_version = 123
 
-    # 启动远端RemoteSGLangEngine
+    # Initialize RemoteSGLangEngine
     config = InferenceEngineConfig(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
     config.server_addrs = [f"{HOST}:{PORT}"]
     remote_engine = RemoteSGLangEngine(config)
     remote_engine.initialize(None, None)
 
-    # 构造WeightUpdateMeta（type=nccl）
-    param_meta = engine.get_param_meta_for_distributed_update()
-    meta = WeightUpdateMeta(
-        type="nccl",
-        path=None,
-        alloc_mode=None,
-        comm_backend="nccl",
-        model_version=123,
-        tp_size=1,
-        master_address="localhost",
-        master_port=find_free_ports(1)[0],
-        world_size=2,
-        group_name=GROUP_NAME,
-        parameter_names=list(param_meta.keys()),
-        state_dict_key_to_shape=param_meta,
+    # Get WeightUpdateMeta
+    meta = WeightUpdateMeta.from_fsdp_nccl(
+        AllocationMode.from_str("sglang.d1p1t1+d1p1t1"),
+        engine,
+        nccl_group_name=GROUP_NAME,
     )
 
-    # 本地engine广播参数
-    future = remote_engine.update_weights(meta)
+    # Broadcast weights
+    future = remote_engine.update_weights(meta, engine.model_version)
     print("got future", flush=True)
     engine.upload_weights(meta)
     print("uploaded wexights to remote engine", flush=True)
-    # 远端engine拉取参数
+    # Wait for remote engine to finish
     future.result(timeout=120)
     print("got result", flush=True)
-    # 检查远端参数版本
+    # Check model_version in meta and remote engine
+    remote_engine.set_version(engine.get_version())
     assert remote_engine.get_version() == 123
     remote_engine.destroy()
     engine.destroy()

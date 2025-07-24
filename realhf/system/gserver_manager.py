@@ -155,39 +155,22 @@ class GserverManager(Worker):
 
         return None
 
-    async def flush_requests_and_update_weights(
-        self, server_url, new_param_path, update_weights_retries=5
-    ):
-        server_index = self.server_urls.index(server_url)
-        success = False
-        for _ in range(update_weights_retries):
-            async with aiohttp.ClientSession(
-                server_url,
-                timeout=aiohttp.ClientTimeout(
-                    total=self.config.flush_request_timeout,
-                    sock_connect=self.config.flush_request_timeout,
-                ),
-            ) as session:
-                async with session.post(
-                    f"/update_weights_from_disk",
-                    json=dict(model_path=new_param_path, allow_interrupt=True),
-                ) as resp:
-                    if resp.status == 200:
-                        res = await resp.json()
-                        success = res["success"]
-                        if success:
-                            if "num_paused_requests" in res:
-                                logger.info(
-                                    f"{res['num_paused_requests']} requests are interrupted "
-                                    f"during updating weights for server {server_index}: {server_url}"
-                                )
-                            return
-                        logger.warning(
-                            f"Update weights failed: {res['message']}. Retrying."
-                        )
-                    logger.warning(f"Update weights failed: {resp.reason}. Retrying.")
-                time.sleep(0.1)
-        raise RuntimeError("Update weights failed.")
+    async def flush_requests_and_update_weights(self, server_url, new_param_path):
+        async with aiohttp.ClientSession(
+            server_url,
+            timeout=aiohttp.ClientTimeout(
+                total=self.config.flush_request_timeout,
+                sock_connect=self.config.flush_request_timeout,
+            ),
+        ) as session:
+            (await session.post("/pause_generation")).raise_for_status()
+            async with session.post(
+                f"/update_weights_from_disk",
+                json=dict(model_path=new_param_path),
+            ) as resp:
+                resp.raise_for_status()
+                assert (await resp.json())["success"]
+            (await session.post("/continue_generation")).raise_for_status()
 
     def _round_robin_schedule(self, req_meta: GenReqMeta) -> int:
         if not hasattr(self, "round_robin_idx"):

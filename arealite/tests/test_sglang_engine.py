@@ -31,10 +31,7 @@ RUN_SERVER_TIMEOUT = 180
 
 def check_server_health(base_url):
     try:
-        response = requests.get(
-            f"{base_url}/metrics",
-            timeout=30,
-        )
+        response = requests.get(f"{base_url}/health", timeout=30)
         return response.status_code == 200
     except requests.exceptions.RequestException as e:
         return False
@@ -85,6 +82,7 @@ async def test_remote_sglang_generate(sglang_server):
     tokenizer = load_hf_tokenizer(MODEL_PATH)
     os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
     engine = RemoteSGLangEngine(config)
+    engine.initialize(None, None)
     req = LLMRequest(
         rid=str(uuid.uuid4()),
         input_ids=tokenizer.encode("hello! how are you today"),
@@ -211,6 +209,7 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
     engine = FSDPEngine(engine_config)
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
     engine.initialize(None, ft_spec)
+    engine.model_version = 100
 
     # setup name resolve
     import realhf.base.name_resolve as name_resolve
@@ -229,10 +228,8 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
     inf_engine.initialize(None, None)
     # test update weights
     path = tmp_path_factory.mktemp("upload_weights_from_disk")
-    update_weight_meta = WeightUpdateMeta(
-        type="disk", path=path, alloc_mode=None, comm_backend=None, model_version=100
-    )
-    future = inf_engine.update_weights(update_weight_meta)
+    update_weight_meta = WeightUpdateMeta.from_disk(path=path)
+    future = inf_engine.update_weights(update_weight_meta, engine.get_version())
     engine.upload_weights(update_weight_meta)
     future.result()
     assert inf_engine.get_version() == 100
