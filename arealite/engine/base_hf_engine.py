@@ -96,7 +96,7 @@ class BaseHFEngine(TrainEngine):
         dtype = getattr(torch, self.config.dtype)
 
         if self.is_vision_model:
-            if dtype== torch.float16:
+            if dtype == torch.float16:
                 raise ValueError(
                     "Vision models do not support float16 dtype. Please use bfloat16."
                 )

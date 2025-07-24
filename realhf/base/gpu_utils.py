@@ -43,7 +43,8 @@ def gpu_count():
                 continue
             else:
                 break
-        return cnt 
+        return cnt
+
 
 def set_cuda_device(device):
     """Set the default cuda-device.

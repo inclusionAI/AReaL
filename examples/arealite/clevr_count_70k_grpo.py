@@ -7,6 +7,7 @@ import torch.distributed as dist
 import wandb
 from torchdata.stateful_dataloader import StatefulDataLoader
 
+from AReaL.arealite.workflow.Visionrlvr import VisionRLVRWorkflow
 from arealite.api.cli_args import GRPOConfig, load_expr_config
 from arealite.api.io_struct import FinetuneSpec, WeightUpdateMeta
 from arealite.dataset.__init__ import get_custom_dataset
@@ -16,9 +17,9 @@ from arealite.utils.device import log_gpu_stats
 from arealite.utils.evaluator import Evaluator
 from arealite.utils.saver import Saver
 from arealite.utils.stats_logger import StatsLogger
-from AReaL.arealite.workflow.Visionrlvr import VisionRLVRWorkflow 
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import stats_tracker
+
 
 def extract_answer(pred_str, data_name, use_last_number=True):
     match = re.findall(r"\[([0-9\.]+)\]", pred_str)
@@ -26,6 +27,7 @@ def extract_answer(pred_str, data_name, use_last_number=True):
         return match[-1]
 
     return ""
+
 
 def clevr_count_70k_reward_fn(
     prompt, completions, prompt_ids, completion_ids, answer, **kwargs
@@ -51,6 +53,7 @@ def clevr_count_70k_reward_fn(
         return 0.05
 
     return 0
+
 
 def main(args):
     wandb.init(project="clevr_70k")

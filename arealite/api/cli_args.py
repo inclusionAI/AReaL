@@ -697,7 +697,8 @@ class DatasetConfig:
         },
     )
     type: Optional[str] = field(
-        default=None, metadata={"help": "Type of training method.e.g., 'sft', 'rl', etc."}
+        default=None,
+        metadata={"help": "Type of training method.e.g., 'sft', 'rl', etc."},
     )
     batch_size: int = field(
         default=1, metadata={"help": "Batch size of the dataloader"}

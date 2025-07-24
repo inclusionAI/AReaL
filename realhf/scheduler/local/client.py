@@ -122,7 +122,7 @@ class LocalSchedulerClient(SchedulerClient):
                 gpu > 0
             ), "All workers of the same type must either use GPU or not use GPU."
         else:
-            self._job_with_gpu[worker_type] = (gpu > 0)
+            self._job_with_gpu[worker_type] = gpu > 0
 
         if worker_type in self._job_env_vars:
             assert (
