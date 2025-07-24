@@ -9,7 +9,6 @@ import pickle
 import logging
 import inspect
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from arealite.scheduler.utils import serialize_with_metadata
 import cloudpickle
 from pympler import asizeof
 
@@ -39,7 +38,7 @@ class RPCClient:
         url = f"http://{ip}:{port}/call"
         # 支持变长参数
         req = (method, args, kwargs)
-
+        print(f"call engine0: {method}, args: {args} MB, kwargs: {kwargs}",flush=True)
         mem_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         print(f"call engine1: {method}, 内存使用: {mem_usage / 1024:.2f} MB, req size: {asizeof.asizeof(req)}", flush=True)
 

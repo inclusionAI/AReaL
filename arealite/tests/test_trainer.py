@@ -90,12 +90,12 @@ def main_grpo():
 
     rollout = DistributedRolloutController(
         RemoteSGLangEngine(InferenceEngineConfig(experiment_name="arealite", trial_name="sync2")),
-        RolloutControllerConfig(experiment_name="arealite", trial_name="sync2", allocation_mode="sglang.d4t8p1+d32t1p1"),
+        RolloutControllerConfig(experiment_name="arealite", trial_name="sync2", allocation_mode="sglang.d2t8p1+d16t1p1"),
         scheduler,
     )
     actor = DistributedTrainController(
         RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="arealite", trial_name="sync2")),
-        TrainControllerConfig(experiment_name="arealite", trial_name="sync2", allocation_mode="sglang.d4t8p1+d32t1p1"),
+        TrainControllerConfig(experiment_name="arealite", trial_name="sync2", allocation_mode="sglang.d2t8p1+d16t1p1"),
         scheduler,
     )
     # engine initialize
