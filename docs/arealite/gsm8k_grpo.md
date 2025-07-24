@@ -15,12 +15,12 @@ bunch of various workers. In a training step, AReaLite:
 
 1. Submits prompts from the dataset to `RemoteSGLangEngine`, who runs `RLVRWorkflow` in
    a streaming manner.
-1. Complete `RLVRWorkflow` by interacting with remote `SGLangServer` instances to
+1. Completes `RLVRWorkflow` by interacting with remote `SGLangServer` instances to
    generate sequences, and computing rewards with the reward function.
-1. Once there are enough outputs from `RLVRWorkflow`, collect a data batch for
-   algorithm-specific training engine `FSDPPPOActor`.
-1. Compute losses and update weights in `FSDPPPOActor`.
-1. Transfer updated weights to remote `SGLangServer` instances.
+1. Once there are enough outputs from `RLVRWorkflow`, aggregates them into a data batch
+   for algorithm-specific training engine `FSDPPPOActor`.
+1. Computes losses and update weights in `FSDPPPOActor`.
+1. Transfers the updated weights to remote `SGLangServer` instances.
 
 ![arealite-gsm8k-example](gsm8k_grpo.png)
 
@@ -110,11 +110,11 @@ details.
 ## Rollout
 
 The data lifecycle is controlled by an `RLVRWorkflow`, which defines how data progresses
-from prompt to complete rollout data with fields required for training. Our example
-shows a single-turn RLVR workflow with a math reward function. The workflow is defined
-in an async method `arun_episode`, which takes one prompt and generate answers with
-`RemoteSGLangEngine`. Then it computes rewards for these answers and complete other
-fields for a piece of complete training data.
+from prompts to complete rollout data containing all fields required for training. Our
+example shows a single-turn RLVR workflow with a math reward function. The core logic of
+the workflow is implemented in an async method `arun_episode`, which takes a prompt,
+generate answers with `RemoteSGLangEngine`, computes rewards, and populates additional
+fields to produce finalized training data.
 
 ```python
 class RLVRWorkflow(RolloutWorkflow):
@@ -158,22 +158,21 @@ workflow = RLVRWorkflow(
 )
 ```
 
-In AReaLite, GPUs used for generation is occupied by inference servers, which is
-splitted from training GPUs. In the training script, `RemoteSGLangEngine` serves as
-clients that interacts with the servers. `RemoteSGLangEngine` also runs in a SPMD manner
-on every training process, while it does not occupy any GPUs. `RemoteSGLangEngine` is
-mainly responsible for two major tasks.
+In AReaLite, generation tasks are offloaded to remote inference servers, which operate
+on separate GPUs from those used for training. The `RemoteSGLangEngine` acts as a client
+that interacts with the servers. `RemoteSGLangEngine` runs in a SPMD manner on every
+training process, without occupying any GPUs.
 
-The first one is executing the rollout workflows. `RemoteSGLangEngine` manages the data
-streaming through the rollout workflow, and collates completed rollout data output by
-the workflows into batched training samples. When initializing, it launches a rollout
-thread that runs rollout workflows with `asyncio`. The following code shows the
-simplified version of rollout thread implementation, which repeats these steps:
+`RemoteSGLangEngine` is responsible for managing the data streaming through rollout
+workflows, and collates completed rollout data into batched training samples. When
+initializing, it launches a rollout thread that runs rollout workflows as `asyncio`
+tasks. The following code shows the simplified version of rollout thread implementation,
+which iteratively:
 
-- Checks capacity. The capacity controls current number of rollout workflows to limit
-  concurrency and data off-policyness.
+- Checks available capacity. The capacity controls current number of rollout workflows
+  to limit concurrency and data off-policyness.
 - If there is capacity left and rollout is not paused for weight update, continuously
-  obtains data from `input_queue` and creates `asyncio` task to run the workflow.
+  obtains data from `input_queue` and creates `asyncio` tasks to run the workflows.
 - Waits for rollout workflows to finish.
 - Gathers data from finished workflows and puts them into `output_queue`
 
@@ -222,10 +221,10 @@ class RemoteSGLangEngine(InferenceEngine):
     ...
 ```
 
-With this rollout thread running, the training script (the main thread) submit prompts
-into `input_queue` and collate rollout data from `output_queue` into training batches
+With this rollout thread running, the training script (the main thread) submits prompts
+into `input_queue` and collates rollout data from `output_queue` into training batches
 with `prepare_batch` (for asynchronous RL) or `rollout_batch` (for synchronous RL). The
-following code shows the implementation of `prepare_batch`
+following code shows the implementation of `prepare_batch`:
 
 ```python
 def prepare_batch(
@@ -287,10 +286,10 @@ details.
 
 After obtaining the training batch, we use `FSDPPPOActor` to calculate losses and update
 weights. Each train engine corresponds to one model, therefore we need an additional
-engine for reference model. Note that `torch.distributed` process groups will be lazily
-created using `init_process_group` when the first train engine is initialized. The
-initialization of train engine will also load model weights from paths specified by the
-configuration.
+engine for the reference model. Note that `torch.distributed` process groups will be
+lazily initialized using `init_process_group` when the first train engine is
+initialized. The initialization of train engine will also load model weights from paths
+specified by the configuration.
 
 ```python
 actor = FSDPPPOActor(config=config.actor)
@@ -318,7 +317,7 @@ stats = actor.ppo_update(batch)
 actor.step_lr_scheduler()
 ```
 
-If you wants to customize your own training algorithm, see
+If you want to customize your own training algorithm, see
 [Customize algorithms](../customization/algorithm.md) for more details.
 
 ## Transferring Weights to Inference Servers
@@ -326,7 +325,7 @@ If you wants to customize your own training algorithm, see
 After training, we transfer updated model weights to remote inference servers through
 cooperation between `FSDPPPOActor` and `RemoteSGLangEngine`. We provide options to
 transfer model weights from shared storage or NCCL. In our example training script, we
-first prepare `WeightUpdateMeta` for NCCL on all training processes.
+first prepare `WeightUpdateMeta` for NCCL backend on all training processes.
 
 ```python
 # NOTE: Weight update meta only requires address and free port of rank 0,
@@ -426,15 +425,20 @@ according to the experiment configuration.
 ### `stats_tracker`
 
 `stats_tracker` ([realhf/base/stats_tracker.py](../../realhf/base/stats_tracker.py))
-gathers training statistics across parallel ranks and reduce them according to whether
-the statistic is a scalar or a tensor. Scalar-type statistics are recorded by
-`stats_tracker.scalar(key=value)` and will be averaged by the number of scalars with the
-same key when reduced. When recording tensor-type statistics, a `denominator` and
-`reduce_type` is required to decide how to reduce statistics under the same key.
-`denominator` is a bool tensor that masks the elements in the tensor that we do not want
-to record. `reduce_type` includes average, sum, min and max. By default, the average,
-min and max are all calculated. For example, if we want to record the length of
-sequences with correct and incorrect answers in a training batch:
+gathers training statistics across parallel ranks and reduce them.
+
+1. **Scalar-type statistics** are recorded by `stats_tracker.scalar(key=value)` and will
+   be averaged by the number of scalars with the same key when reduced.
+1. **Tensor-type statistics** require `denominator` and `reduce_type` to decide how to
+   reduce statistics under the same key.
+
+- `denominator` is a bool tensor that masks the elements in the tensor that we do not
+  want to record.
+- `reduce_type` includes average, sum, min and max. By default, the average, min and max
+  are all calculated.
+
+For example, if we want to record the length of sequences with correct and incorrect
+answers in a training batch:
 
 ```python
 seqlens = ... # tensor of shape [#seqs,]
@@ -464,11 +468,12 @@ with stats_tracker.record_timing("train_step"):
     ...
 
 with stats_tracker.scope("A"):
+    stats_tracker.scalar(c=123) # key="A/c", value=123
     with stats_tracker.scope("B"):
-        stats_tracker.scalar(c=123) # key="A/B/c", value=123
+        stats_tracker.scalar(c=234) # key="A/B/c", value=234
 ```
 
-After recording sufficient data, i.e. after a `train_batch` is finished,
+After recording sufficient data, e.g. after a `train_batch` is finished,
 `stats_tracker.export` is called to aggregate all statistics and dump them into a
 dictionary.
 
