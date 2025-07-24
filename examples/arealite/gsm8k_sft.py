@@ -24,7 +24,7 @@ def main(args):
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
-    
+
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
         rank=rank,
@@ -52,7 +52,7 @@ def main(args):
         drop_last=config.train_dataset.drop_last,
     )
     valid_dataloader = StatefulDataLoader(
-        valid_dataset ,
+        valid_dataset,
         batch_size=config.valid_dataset.batch_size // world_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,

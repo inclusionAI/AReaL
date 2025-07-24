@@ -24,8 +24,6 @@ from realhf.base import logging, seeding, stats_tracker
 logger = logging.getLogger("GSM8K grpo")
 
 
-
-
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
     from realhf.impl.dataset.math_parser import process_results
 
