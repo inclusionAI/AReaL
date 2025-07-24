@@ -7,7 +7,7 @@ import torch.distributed as dist
 import wandb
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from AReaL.arealite.workflow.Visionrlvr import VisionRLVRWorkflow
+from arealite.workflow.vision_rlvr import VisionRLVRWorkflow
 from arealite.api.cli_args import GRPOConfig, load_expr_config
 from arealite.api.io_struct import FinetuneSpec, WeightUpdateMeta
 from arealite.dataset.__init__ import get_custom_dataset
@@ -69,7 +69,7 @@ def main(args):
         rank=rank,
         world_size=world_size,
         split="train",
-        training_type=config.train_dataset.type,
+        type=config.train_dataset.type,
         processor=processor,
     )
     valid_dataset = get_custom_dataset(
@@ -77,7 +77,7 @@ def main(args):
         rank=rank,
         world_size=world_size,
         split="test",
-        training_type=config.valid_dataset.type,
+        type=config.valid_dataset.type,
         processor=processor,
     )
     # Create dataset and dataloaders

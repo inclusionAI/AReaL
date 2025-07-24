@@ -7,6 +7,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import SFTConfig, load_expr_config
 from arealite.api.io_struct import FinetuneSpec
+from arealite.dataset.__init__ import get_custom_dataset
 from arealite.engine.sft.lm_engine import FSDPLMEngine
 from arealite.utils.data import pad_sequences_to_tensors
 from arealite.utils.evaluator import Evaluator
@@ -16,25 +17,6 @@ from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import stats_tracker
 
 
-def process_gsm8k_sft_dataset(dataset: Dataset, tokenizer):
-    def process(sample):
-        seq_token = tokenizer.encode(
-            sample["question"] + sample["answer"] + tokenizer.eos_token
-        )
-        prompt_token = tokenizer.encode(sample["question"])
-        loss_mask = [0] * len(prompt_token) + [1] * (len(seq_token) - len(prompt_token))
-        return {"input_ids": seq_token, "loss_mask": loss_mask}
-
-    dataset = dataset.map(process).remove_columns(["question", "answer"])
-    return dataset
-
-
-def get_gsm8k_dataset(split, tokenizer, rank, world_size):
-    dataset = load_dataset(path="openai/gsm8k", name="main", split=split)
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
-    return process_gsm8k_sft_dataset(dataset, tokenizer)
-
-
 def main(args):
     config, _ = load_expr_config(args, SFTConfig)
     config: SFTConfig
@@ -42,6 +24,23 @@ def main(args):
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
+    
+    train_dataset = get_custom_dataset(
+        path=config.train_dataset.path,
+        rank=rank,
+        world_size=world_size,
+        split="train",
+        type=config.train_dataset.type,
+        tokenizer=tokenizer,
+    )
+    valid_dataset = get_custom_dataset(
+        path=config.valid_dataset.path,
+        rank=rank,
+        world_size=world_size,
+        split="test",
+        type=config.valid_dataset.type,
+        tokenizer=tokenizer,
+    )
 
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(

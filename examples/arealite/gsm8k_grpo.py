@@ -10,6 +10,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import GRPOConfig, load_expr_config
 from arealite.api.io_struct import FinetuneSpec, WeightUpdateMeta
+from arealite.dataset.__init__ import get_custom_dataset
 from arealite.engine.ppo.actor import FSDPPPOActor
 from arealite.engine.sglang_remote import RemoteSGLangEngine
 from arealite.utils.device import log_gpu_stats
@@ -23,19 +24,6 @@ from realhf.base import logging, seeding, stats_tracker
 logger = logging.getLogger("GSM8K grpo")
 
 
-def process_gsm8k_rl_dataset(dataset: Dataset):
-    def process(sample):
-        messages = [{"role": "user", "content": sample["question"]}]
-        return {"messages": messages}
-
-    dataset = dataset.map(process).remove_columns(["question"])
-    return dataset
-
-
-def get_gsm8k_dataset(split, rank, world_size):
-    dataset = load_dataset(path="openai/gsm8k", name="main", split=split)
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
-    return process_gsm8k_rl_dataset(dataset)
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
@@ -53,10 +41,26 @@ def main(args):
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
+    train_dataset = get_custom_dataset(
+        path=config.train_dataset.path,
+        rank=rank,
+        world_size=world_size,
+        split="train",
+        type=config.train_dataset.type,
+        tokenizer=tokenizer,
+    )
+    valid_dataset = get_custom_dataset(
+        path=config.valid_dataset.path,
+        rank=rank,
+        world_size=world_size,
+        split="test",
+        type=config.valid_dataset.type,
+        tokenizer=tokenizer,
+    )
 
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
-        get_gsm8k_dataset("train", rank, world_size),
+        train_dataset,
         batch_size=config.train_dataset.batch_size // world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
@@ -64,7 +68,7 @@ def main(args):
         drop_last=config.train_dataset.drop_last,
     )
     valid_dataloader = StatefulDataLoader(
-        get_gsm8k_dataset("test", rank, world_size),
+        valid_dataset,
         batch_size=config.valid_dataset.batch_size // world_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,

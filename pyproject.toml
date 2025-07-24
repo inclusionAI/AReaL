@@ -31,7 +31,7 @@ dependencies = [
     "huggingface_hub",
     "datasets",
     "accelerate",
-    "transformers>=4.53.3",
+    "transformers>=4.53.1",
     
     # Scientific computing
     "numpy<2.0.0",
