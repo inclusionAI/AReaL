@@ -35,6 +35,10 @@ def get_custom_dataset(
         )
 
         return get_clevr_count_70k_rl_dataset(path, split, processor, rank, world_size)
+    elif "geometry3k" in path and training_type == "rl":
+        from examples.arealite.dataset.geometry3k import get_geometry3k_rl_dataset
+
+        return get_geometry3k_rl_dataset(path, split, processor, rank, world_size)
     else:
         raise ValueError(
             f"Dataset {path} with split {split} and training type {training_type} is not supported. "
