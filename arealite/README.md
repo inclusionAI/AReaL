@@ -163,7 +163,6 @@ class WeightUpdateMeta:
     type: str
     path: str | None
     alloc_mode: AllocationMode | None
-    comm_backend: str | None
 
 @dataclass
 class SaveLoadMeta:

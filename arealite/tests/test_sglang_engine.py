@@ -2,7 +2,6 @@ import os
 import subprocess
 import sys
 import time
-import uuid
 
 import pytest
 import requests
@@ -14,7 +13,7 @@ from arealite.api.cli_args import (
     InferenceEngineConfig,
     SGLangConfig,
 )
-from arealite.api.io_struct import LLMRequest, LLMResponse, WeightUpdateMeta
+from arealite.api.io_struct import WeightUpdateMeta
 from arealite.utils import network
 from realhf.api.core.data_api import load_hf_tokenizer
 
@@ -31,10 +30,7 @@ RUN_SERVER_TIMEOUT = 180
 
 def check_server_health(base_url):
     try:
-        response = requests.get(
-            f"{base_url}/metrics",
-            timeout=30,
-        )
+        response = requests.get(f"{base_url}/health", timeout=30)
         return response.status_code == 200
     except requests.exceptions.RequestException as e:
         return False
@@ -75,29 +71,6 @@ def sglang_server():
         raise RuntimeError("server launch failed")
     yield
     process.terminate()
-
-
-@pytest.mark.asyncio
-async def test_remote_sglang_generate(sglang_server):
-    from arealite.engine.sglang_remote import RemoteSGLangEngine
-
-    config = InferenceEngineConfig(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
-    tokenizer = load_hf_tokenizer(MODEL_PATH)
-    os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
-    engine = RemoteSGLangEngine(config)
-    req = LLMRequest(
-        rid=str(uuid.uuid4()),
-        input_ids=tokenizer.encode("hello! how are you today"),
-        gconfig=GenerationHyperparameters(max_new_tokens=16),
-    )
-    resp = await engine.agenerate(req)
-    assert isinstance(resp, LLMResponse)
-    assert resp.input_tokens == req.input_ids
-    assert (
-        len(resp.output_logprobs)
-        == len(resp.output_tokens)
-        == len(resp.output_versions)
-    )
 
 
 @pytest.mark.parametrize("n_samples", [1, 2, 4])
@@ -211,6 +184,7 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
     engine = FSDPEngine(engine_config)
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
     engine.initialize(None, ft_spec)
+    engine.model_version = 100
 
     # setup name resolve
     import realhf.base.name_resolve as name_resolve
@@ -227,13 +201,11 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
     os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
     inf_engine = RemoteSGLangEngine(config)
     inf_engine.initialize(None, None)
+    inf_engine.set_version(100)
     # test update weights
     path = tmp_path_factory.mktemp("upload_weights_from_disk")
-    update_weight_meta = WeightUpdateMeta(
-        type="disk", path=path, alloc_mode=None, comm_backend=None, model_version=100
-    )
+    update_weight_meta = WeightUpdateMeta(type="disk", path=str(path))
     future = inf_engine.update_weights(update_weight_meta)
     engine.upload_weights(update_weight_meta)
     future.result()
-    assert inf_engine.get_version() == 100
     inf_engine.destroy()

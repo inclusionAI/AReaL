@@ -31,10 +31,9 @@ dependencies = [
     "huggingface_hub",
     "datasets",
     "accelerate",
-    "transformers==4.51.1",
+    "transformers==4.53.0",
     
     # Scientific computing
-    "numpy<2.0.0",
     "scipy",
     "pandas",
     "matplotlib",
