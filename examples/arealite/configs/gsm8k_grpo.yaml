@@ -83,7 +83,7 @@ sglang:
   dtype: ${actor.dtype}
   max_running_requests: null 
   context_length: 32768
-  mem_fraction_static: 0.9
+  mem_fraction_static: 0.8
 
 # datasets
 train_dataset:
