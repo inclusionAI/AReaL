@@ -27,7 +27,7 @@ if ! docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "areal-env:$ENV
         " || { docker rm -f $RUN_ID; exit 1; }
 
     # Commit the container as the environment image
-    docker commit $RUN_ID "areal-env:$ENV_SHA"
+    docker commit $RUN_ID areal-env:$ENV_SHA
     docker rm -f $RUN_ID
 else
     echo "Image areal-env:$ENV_SHA already exists, skipping build."
@@ -36,14 +36,12 @@ fi
 # Run tests using the environment image
 echo "Running tests on image areal-env:$ENV_SHA..."
 docker run \
+    -e HF_ENDPOINT=https://hf-mirror.com \
     --name $RUN_ID \
     --gpus all \
     --shm-size=8g \
+    --rm \
     -v $(pwd):/workspace \
     -w /workspace \
-    "areal-env:$ENV_SHA" \
-    bash -c "
-        HF_ENDPOINT=https://hf-mirror.com python -m pytest -s arealite/
-    " || { docker rm -f $RUN_ID; exit 1; }
-
-docker rm -f $RUN_ID
+    areal-env:$ENV_SHA \
+    python -m pytest -s arealite/
