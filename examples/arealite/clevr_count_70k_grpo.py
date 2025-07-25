@@ -5,8 +5,8 @@ import sys
 import torch
 import torch.distributed as dist
 import wandb
-from torchdata.stateful_dataloader import StatefulDataLoader
 from torch.utils.data import Subset
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from arealite.api.cli_args import GRPOConfig, load_expr_config
 from arealite.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
@@ -125,10 +125,7 @@ def main(args):
     # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
-    weight_update_meta = [
-        WeightUpdateMeta.from_disk(
-            config.saver)
-    ]
+    weight_update_meta = [WeightUpdateMeta.from_disk(config.saver)]
     dist.broadcast_object_list(weight_update_meta, src=0)
     weight_update_meta = weight_update_meta[0]
 
@@ -145,7 +142,7 @@ def main(args):
         processor=processor,
         enable_thinking=False,
     )
-    
+
     # Run training.
     saver = Saver(config.saver, ft_spec, for_recover=False)
     logger = StatsLogger(config.stats_logger, ft_spec)
