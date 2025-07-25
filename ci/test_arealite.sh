@@ -2,7 +2,7 @@
 
 set -e
 
-RUN_ID="test-arealite-$(cat /dev/urandom | tr -dc 'a-z0-9' | head -c 16)"
+RUN_ID="test-arealite-$RANDOM"
 
 # Calculate environment hash from pyproject.toml
 ENV_SHA=$(sha256sum pyproject.toml | awk '{print $1}')
@@ -50,7 +50,6 @@ docker run \
     -w /workspace \
     "areal-env:$ENV_SHA" \
     bash -c "
-        mv /sglang ./sglang
         HF_ENDPOINT=https://hf-mirror.com python -m pytest -s arealite/
     " || { docker rm -f $RUN_ID; exit 1; }
 
