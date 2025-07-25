@@ -46,7 +46,6 @@ def clevr_count_70k_reward_fn(
         print(f"completions: {completions}, answer: {answer}")
         return 1
 
-
     if re.match(r"^\[\d+(\.\d+)?\]$", sol.strip()):
         return 0.05
 

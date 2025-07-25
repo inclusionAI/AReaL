@@ -48,13 +48,13 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             gconfig=self.gconfig.new(n_samples=1),
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
-        
+
         version = engine.get_version()
         prompt_strs = []
         completions_strs = []
         rewards = []
         seqlens = []
-        
+
         results = []
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
@@ -116,4 +116,3 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                     f.write(info + "\n")
 
         return concat_padded_tensors(results)
-
