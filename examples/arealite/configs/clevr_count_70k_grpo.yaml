@@ -1,9 +1,9 @@
 experiment_name: clevr_count_70k-grpo
-trial_name: trial0
+trial_name: trial1
 
 
 seed: 1
-total_train_epochs: 3
+total_train_epochs: 1
 tokenizer_path: ${actor.path}
 async_training: true
 

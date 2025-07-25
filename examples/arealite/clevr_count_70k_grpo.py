@@ -68,12 +68,10 @@ def main(args):
     )
 
     train_size = len(train_dataset)
-    subset_size = int(0.3 * train_size)
+    subset_size = int(1.0 * train_size)
 
-    # 随机选择 30% 数据的索引
     random_indices = torch.randperm(train_size).tolist()[:subset_size]
 
-    # 创建一个新的子集数据集
     subset_train_dataset = Subset(train_dataset, random_indices)
 
     valid_dataset = get_custom_dataset(
