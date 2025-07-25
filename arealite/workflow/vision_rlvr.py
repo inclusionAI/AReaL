@@ -26,9 +26,9 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         self.processor = processor
 
     async def arun_episode(self, engine, data):
-        
+
         padded_images = pad_images_batch_to_max_size(data["images"])
-        
+
         processed_input = self.processor(
             images=padded_images,
             text=data["messages"],

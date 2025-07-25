@@ -4,6 +4,7 @@ from dataclasses import MISSING
 from io import BytesIO
 from typing import List
 
+from PIL import Image
 from PIL.Image import Image as ImageObject
 
 
@@ -22,22 +23,23 @@ def image2base64(images: List[ImageObject] | ImageObject) -> List[str] | str:
 
     return byte_images
 
+
 def pad_images_batch_to_max_size(images):
     max_width = max(image.size[0] for image in images)
     max_height = max(image.size[1] for image in images)
-    
+
     padded_images = []
-    
+
     for image in images:
 
         width, height = image.size
-        
+
         padding_left = (max_width - width) // 2
         padding_top = (max_height - height) // 2
-        
-        padded_image = Image.new("RGB", (max_width, max_height), (0, 0, 0))  
+
+        padded_image = Image.new("RGB", (max_width, max_height), (0, 0, 0))
         padded_image.paste(image, (padding_left, padding_top))
-        
+
         padded_images.append(padded_image)
-    
+
     return padded_images
