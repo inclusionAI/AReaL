@@ -7,7 +7,6 @@ on:
       - .github/workflows/test-arealite.yml
       - arealite/**
       - ci/**
-  push:
   workflow_dispatch:
 
 jobs:
