@@ -29,7 +29,9 @@ docker run \
     bash -c "
         pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
         pip config unset global.extra-index-url
-        pip uninstall -y transformer-engine torch-tensorrt nvidia-dali-cuda120
+        pip uninstall -y --ignore-installed transformer-engine
+        pip uninstall -y --ignore-installed torch-tensorrt
+        pip uninstall -y --ignore-installed nvidia-dali-cuda120
         bash examples/env/scripts/setup-pip-deps.sh
     " || { docker rm -f $RUN_ID; exit 1; }
 
