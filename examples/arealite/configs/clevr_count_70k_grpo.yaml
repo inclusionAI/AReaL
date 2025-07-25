@@ -3,7 +3,7 @@ trial_name: trial1
 
 
 seed: 1
-total_train_epochs: 1
+total_train_epochs: 3
 tokenizer_path: ${actor.path}
 async_training: true
 
