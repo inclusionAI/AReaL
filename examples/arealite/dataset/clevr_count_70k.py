@@ -9,18 +9,10 @@ from PIL.Image import Image as ImageObject
 
 def convert_image(
     image: Union[Dict[str, Any], ImageObject, str],
-    min_pixels: Optional[int],
     max_pixels: Optional[int],
 ) -> ImageObject:
     if max_pixels is not None and (image.width * image.height) > max_pixels:
         resize_factor = math.sqrt(max_pixels / (image.width * image.height))
-        width, height = int(image.width * resize_factor), int(
-            image.height * resize_factor
-        )
-        image = image.resize((width, height))
-
-    if min_pixels is not None and (image.width * image.height) < min_pixels:
-        resize_factor = math.sqrt(min_pixels / (image.width * image.height))
         width, height = int(image.width * resize_factor), int(
             image.height * resize_factor
         )
@@ -56,7 +48,7 @@ def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
         example["problem"] = example["problem"].replace("<image>", image_token)
         processed_images = []
         for image in images:
-            processed_images.append(convert_image(image, 113 * 113, 336 * 336))
+            processed_images.append(convert_image(image, 336 * 336))
         example["images"] = processed_images
         example["seq"] = example["problem"] + example["answer"] + tokenizer.eos_token
 
@@ -100,7 +92,7 @@ def get_clevr_count_70k_rl_dataset(path, split, processor, rank, world_size):
 
     def process(sample):
         processed_images = [
-            convert_image(image, 113 * 113, 336 * 336) for image in sample["images"]
+            convert_image(image, 336 * 336) for image in sample["images"]
         ]
         if "qwen" in processor.image_processor.image_processor_type.lower():
             image_token = "<|vision_start|><|image_pad|><|vision_end|>"
