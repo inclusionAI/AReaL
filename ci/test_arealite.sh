@@ -47,6 +47,7 @@ docker run \
     -w /workspace \
     "areal-env:$ENV_SHA" \
     bash -c "
+        pwd
         ls
         HF_ENDPOINT=https://hf-mirror.com python -m pytest -s arealite/
     " || { docker rm -f $RUN_ID; exit 1; }
