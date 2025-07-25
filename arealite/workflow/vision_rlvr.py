@@ -10,7 +10,7 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from arealite.api.cli_args import GenerationHyperparameters
 from arealite.api.io_struct import VLMRequest
 from arealite.utils.data import concat_padded_tensors
-from arealite.utils.image import image2base64
+from arealite.utils.image import image2base64, pad_images_batch_to_max_size
 from arealite.workflow.rlvr import RLVRWorkflow
 
 
@@ -28,10 +28,11 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         self.processor = processor
 
     async def arun_episode(self, engine, data):
-        # self.processor.tokenizer.add_generation_prompt=True
+
+        padded_images = pad_images_batch_to_max_size(data["images"])
 
         processed_input = self.processor(
-            images=data["images"],
+            images=padded_images,
             text=data["messages"],
             padding=False,
             return_tensors="pt",
@@ -41,7 +42,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
 
         n_samples = self.gconfig.n_samples
 
-        byte_images = image2base64(data["images"])
+        byte_images = image2base64(padded_images)
 
         req = VLMRequest(
             rid=uuid.uuid4().hex,
@@ -50,13 +51,13 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             gconfig=self.gconfig.new(n_samples=1),
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
-        
+
         version = engine.get_version()
         prompt_strs = []
         completions_strs = []
         rewards = []
         seqlens = []
-        
+
         results = []
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
@@ -118,4 +119,3 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                     f.write(info + "\n")
 
         return concat_padded_tensors(results)
-
