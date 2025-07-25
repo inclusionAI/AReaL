@@ -34,8 +34,6 @@ def pad_images_batch_to_max_size(images):
         
         padding_left = (max_width - width) // 2
         padding_top = (max_height - height) // 2
-        padding_right = max_width - width - padding_left
-        padding_bottom = max_height - height - padding_top
         
         padded_image = Image.new("RGB", (max_width, max_height), (0, 0, 0))  
         padded_image.paste(image, (padding_left, padding_top))
