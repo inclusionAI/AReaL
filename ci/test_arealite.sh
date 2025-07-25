@@ -2,8 +2,6 @@
 
 set -e
 
-ls
-
 RUN_ID="test-arealite-$RANDOM"
 
 # Calculate environment hash from pyproject.toml
@@ -36,6 +34,9 @@ if ! docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "areal-env:$ENV
 else
     echo "Image areal-env:$ENV_SHA already exists, skipping build."
 fi
+
+pwd
+ls
 
 # Run tests using the environment image
 echo "Running tests on image areal-env:$ENV_SHA..."
