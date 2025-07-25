@@ -29,14 +29,9 @@ if ! docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "areal-env:$ENV
     # Commit the container as the environment image
     docker commit $RUN_ID "areal-env:$ENV_SHA"
     docker rm -f $RUN_ID
-    
-    echo "Image areal-env:$ENV_SHA built successfully."
 else
     echo "Image areal-env:$ENV_SHA already exists, skipping build."
 fi
-
-pwd
-ls
 
 # Run tests using the environment image
 echo "Running tests on image areal-env:$ENV_SHA..."
@@ -48,8 +43,6 @@ docker run \
     -w /workspace \
     "areal-env:$ENV_SHA" \
     bash -c "
-        pwd
-        ls
         HF_ENDPOINT=https://hf-mirror.com python -m pytest -s arealite/
     " || { docker rm -f $RUN_ID; exit 1; }
 
