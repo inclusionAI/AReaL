@@ -150,7 +150,7 @@ class FSDPEngine(BaseHFEngine):
                 update_name = names.update_weights_from_disk(
                     self.config.experiment_name,
                     self.config.trial_name,
-                    self.model_version,
+                    self.get_version(),
                 )
                 name_resolve.add(
                     update_name, str(datetime.now().timestamp()), keepalive_ttl=120
