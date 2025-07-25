@@ -70,7 +70,10 @@ def main_grpo():
                            data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train.jsonl")
     train_dataset = dataset['train']
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
-    batch_size = 512
+    batch_size = 64
+    group_size = 8
+    MODEL_PATH = "/storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/hf_ckpts/8604"
+    max_new_tokens = 15360
     batch_data = []
     step_num = 100
     epoch_num = 10
@@ -132,10 +135,10 @@ def main_grpo():
             # print(f"[Trainer] clear update weights dir success: {rollout_cfg.path}")
 
             # synchronous rollout
-            MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf"
+
             tokenizer = load_hf_tokenizer(MODEL_PATH)
             gconfig = GenerationHyperparameters(
-                max_new_tokens=15360, greedy=False, n_samples=8
+                max_new_tokens=max_new_tokens, greedy=False, n_samples=group_size
             )
 
             workflow = RLVRWorkflow(

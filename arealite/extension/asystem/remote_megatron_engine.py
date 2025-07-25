@@ -675,6 +675,8 @@ def pack_prompt_mask(prompt_mask: torch.Tensor, seqlen: torch.Tensor) -> torch.T
 
 remote_megatron_config = {
     "moe_router_dtype": "fp32",
+    "moe_permute_fusion": True,
+    "attention_backend": "flash",
     "moe_shared_expert_overlap": True,
     "seed": 42,
     "auto_detect_ckpt_format": True,
@@ -713,22 +715,23 @@ remote_megatron_config = {
     "position_embedding_type": "rope",
     "rotary_base": 600000,
     "add_position_embedding": True,
-    "max_position_embeddings": 16384,
+    "max_position_embeddings": 32768,
     "make_vocab_size_divisible_by": 128,
     "vocab_size": 126464,
     "use_flash_attn": True,
+    "use_random_logits": True,
     "router_warmup_step": 0,
     "num_experts": 64,
     "moe_router_topk": 6,
     "moe_shared_expert_intermediate_size": 2816,
     "moe_router_load_balancing_type": "aux_loss",
-    "seq_length": 16384,
+    "seq_length": 32768,
     "micro_batch_size": 1,
     "global_batch_size": 8,
-    "lr": 2.0e-6,
+    "lr": 3.0e-6,
     "lr_decay_style": "constant",
-    "lr_warmup_iters": 35,
-    "weight_decay": 0,
+    "lr_warmup_iters": 10,
+    "weight_decay": 0.01,
     "clip_grad": 1.0,
     "optimizer": "adam",
     "adam_beta1": 0.9,
@@ -756,11 +759,11 @@ remote_megatron_config = {
     "train_iters": 100000,
     "num_workers": 16,
     "tokenizer_type": "HuggingFaceTokenizer",
-    "tokenizer_model": "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe_lite_0428_base_32k_hgf",
-    "load": "/storage/george.zr/openpsi/models/moe_lite_0428_base_32k_dcp/",
-    "save": "/storage/xukuan.xk/repos/antnlp/personal/llm/dumps/rl/mcore_test2",
+    "tokenizer_model": "/storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/hf_ckpts/8604",
+    "load": "/storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/iter_0008604_asystem",
+    "save": "/storage/xukuan.xk/repos/antnlp/personal/llm/dumps/rl/asystem_moe_lite_distll_test",
     "save_interval": 1,
-    "expert_model_parallel_size": 8,
+    "expert_model_parallel_size": 8
 }
 
 loss_configs = {
@@ -769,6 +772,6 @@ loss_configs = {
     "adaptive_kl_horizon": 10000,
     "eps_clip": 0.2,
     "temperature": 1,
-    "token_normalize_scope": "global"
+    "token_normalize_scope": "dp"
 }
 
