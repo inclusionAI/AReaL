@@ -13,7 +13,7 @@ on:
 jobs:
   test-arealite:
     concurrency:
-      group: a800
+      group: test-arealite-a800
     environment:
       name: AReaLite-unittests
     runs-on: a800
