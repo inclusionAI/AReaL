@@ -12,20 +12,10 @@ on:
 
 jobs:
   test-arealite:
-    concurrency:
-      group: test-arealite-a800
     environment:
       name: AReaLite-unittests
-    runs-on: a800
+    runs-on: gpu
     steps:
       - uses: actions/checkout@v4
 
-      - run: ls /data1
-
-      - run: bash ./ci/build_env_image.sh
-        env:
-          GIT_COMMIT_SHA: ${{ github.sha }}
-
       - run: bash ./ci/test_arealite.sh
-        env:
-          GIT_COMMIT_SHA: ${{ github.sha }}
