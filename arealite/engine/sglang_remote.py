@@ -582,6 +582,8 @@ def update_weights_from_distributed(
                 for addr in addresses
             ]
         )
+       
+        
         logger.info(f"Distributed update weights done in {time.perf_counter() - tik}s")
 
     return uvloop.run(_fn())

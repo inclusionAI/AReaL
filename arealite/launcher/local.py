@@ -17,7 +17,6 @@ from realhf.base import gpu_utils, logging, name_resolve, names
 from realhf.scheduler.client import JobException, JobInfo, JobState
 
 logger = logging.getLogger("Local Scheduler")
-
 JOB_STATE_TO_PROCESS_STATUS = {
     JobState.NOT_FOUND: [],
     JobState.PENDING: [psutil.STATUS_PARKED],

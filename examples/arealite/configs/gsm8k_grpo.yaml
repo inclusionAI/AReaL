@@ -2,8 +2,6 @@ experiment_name: gsm8k-grpo
 trial_name: trial0
 allocation_mode: sglang.d4p1t1+d4p1t1
 cluster:
-  n_nodes: 1
-  n_gpus_per_node: 8
   fileroot: /tmp/arealite/experiments
   n_nodes: 1
   n_gpus_per_node: 8

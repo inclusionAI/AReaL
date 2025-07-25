@@ -6,6 +6,7 @@ import torch
 import torch.distributed as dist
 import wandb
 from torchdata.stateful_dataloader import StatefulDataLoader
+from torch.utils.data import Subset
 
 from arealite.workflow.vision_rlvr import VisionRLVRWorkflow
 from arealite.api.cli_args import GRPOConfig, load_expr_config
@@ -32,8 +33,6 @@ def extract_answer(pred_str, data_name, use_last_number=True):
 def clevr_count_70k_reward_fn(
     prompt, completions, prompt_ids, completion_ids, answer, **kwargs
 ):
-    is_thinking = "thinking" in completions.lower()
-
     sol = extract_answer(completions, data_name="")  # str number
     ans = answer
 
@@ -46,14 +45,11 @@ def clevr_count_70k_reward_fn(
         print(f"completions: {completions}, answer: {answer}")
         return 1
 
-
-    if re.match(r"^\[\d+(\.\d+)?\]$", sol.strip()):
-        return 0.05
-
     return 0
 
 
 def main(args):
+
     wandb.init(project="clevr_70k")
 
     config, _ = load_expr_config(args, GRPOConfig)
@@ -70,6 +66,16 @@ def main(args):
         type=config.train_dataset.type,
         processor=processor,
     )
+
+    train_size = len(train_dataset)
+    subset_size = int(0.3 * train_size)
+
+    # 随机选择 30% 数据的索引
+    random_indices = torch.randperm(train_size).tolist()[:subset_size]
+
+    # 创建一个新的子集数据集
+    subset_train_dataset = Subset(train_dataset, random_indices)
+
     valid_dataset = get_custom_dataset(
         path=config.valid_dataset.path,
         rank=rank,
@@ -80,7 +86,7 @@ def main(args):
     )
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
-        train_dataset,
+        subset_train_dataset,
         batch_size=config.train_dataset.batch_size // world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
@@ -122,9 +128,8 @@ def main(args):
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
     weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
-            AllocationMode.from_str(config.allocation_mode), actor
-        )
+        WeightUpdateMeta.from_disk(
+            config.saver)
     ]
     dist.broadcast_object_list(weight_update_meta, src=0)
     weight_update_meta = weight_update_meta[0]
@@ -141,11 +146,8 @@ def main(args):
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
     )
-
+    
     # Run training.
     saver = Saver(config.saver, ft_spec, for_recover=False)
     logger = StatsLogger(config.stats_logger, ft_spec)
@@ -198,7 +200,7 @@ def main(args):
             stats_tracker.scope("grpo_actor"),
         ):
             stats = actor.ppo_update(batch)
-            wandb.log({"actor_reward": stats[0]["grpo_actor/final_reward/avg"]})
+            wandb.log({"final_reward": stats[0]["grpo_actor/final_reward/avg"]})
             wandb.log({"task_reward": stats[0]["grpo_actor/task_reward/avg"]})
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
@@ -230,14 +232,7 @@ def main(args):
                         cnt += 1
                 batch = eval_rollout.wait(cnt, timeout=None)
                 rewards = batch["rewards"].float().to(actor.device)
-                wandb.log(
-                    {
-                        "eval_reward": rewards.mean().item(),
-                        "epoch": epoch,
-                        "step": step,
-                        "global_step": global_step,
-                    }
-                )
+                wandb.log({"eval_reward": rewards.mean().item()})
                 with stats_tracker.scope("grpo-eval"):
                     stats_tracker.denominator(
                         n_seqs=torch.ones(

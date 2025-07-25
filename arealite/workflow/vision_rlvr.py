@@ -1,3 +1,4 @@
+import os
 import asyncio
 import uuid
 
@@ -21,8 +22,9 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         tokenizer: PreTrainedTokenizerFast,
         processor: AutoProcessor,
         enable_thinking: bool,
+        dump_dir: str | None = None,
     ):
-        super().__init__(reward_fn, gconfig, tokenizer, enable_thinking)
+        super().__init__(reward_fn, gconfig, tokenizer, enable_thinking, dump_dir)
         self.processor = processor
 
     async def arun_episode(self, engine, data):
