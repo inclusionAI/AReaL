@@ -250,35 +250,8 @@ class DistributedRolloutController(RolloutController):
         results = []
         batches = self.split_list(data, self.allocate_mode.gen_dp_size)
 
-
         results = self._rpc_call("rollout", batches,workflow)
 
-        # with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
-        #     for i in range(self.allocate_mode.gen_dp_size):
-        #         master_worker = server_addrs[self.server_group_size * i]
-        #         server_addrs = [
-        #             f"{worker.ip}:{worker.ports[0]}" for worker in
-        #             self.workers[self.server_group_size * i:self.server_group_size * i + 1] if worker.ports
-        #         ]
-        #         batch_data = batches[i]
-        #         futures.append(executor.submit(
-        #             self.scheduler.call_engine,
-        #             master_worker.id,
-        #             "rollout",
-        #             batch_data,
-        #             workflow,
-        #         ))
-        #     print(f"submit workers: {len(futures)}")
-        #     try:
-        #         for future in as_completed(futures):
-        #             result = future.result()  # 可加异常处理
-        #             results.append(result)
-        #     except KeyboardInterrupt:
-        #         print("收到Ctrl+C，正在终止所有初始化任务...")
-        #         # 取消所有未完成的future
-        #         for f in futures:
-        #             f.cancel()
-        #         raise  # 重新抛出异常，主程序能感知
         print(f"type(results): {type(results)}, results: {results}")
         group_size = 1
         if len(results) > 0:
