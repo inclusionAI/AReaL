@@ -2,7 +2,7 @@
 
 set -e
 
-RUN_ID="test-arealite-$(uuidgen)"
+RUN_ID="test-arealite-$(openssl rand -hex 6)"
 
 # Calculate environment hash from pyproject.toml
 ENV_SHA=$(sha256sum pyproject.toml | awk '{print $1}')
