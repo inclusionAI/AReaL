@@ -44,4 +44,4 @@ docker run \
     -v $(pwd):/workspace \
     -w /workspace \
     areal-env:$ENV_SHA \
-    python -m pytest -s arealite/
+    python -m pytest -s arealite/tests/
