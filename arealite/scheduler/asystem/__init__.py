@@ -241,6 +241,7 @@ class AsystemScheduler(Scheduler):
             "description": f"Job for {self.run_name}",
             "labels": labels,
             "asystemWorkerGroups": [worker_group],
+            "scheduleStrategy": scheduling_config.schedule_strategy if scheduling_config.schedule_strategy else None,
         }
 
         return payload

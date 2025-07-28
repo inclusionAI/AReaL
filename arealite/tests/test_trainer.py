@@ -47,19 +47,43 @@ def main_grpo():
         "endpoint": "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081",
         "expr_name": experiment_name,
         "trial_name": trial_name,
-        "train_config": {
-            "image": "xxx",
-            "extra_envs": {
-                "REAL_PACKAGE_PATH": "fff",
+        "train": {
+            "worker": {
+                "image": "",
+                "cmd": "",
+                "cpu": 4,
+                "memory": "",
+                "extra_envs": {
+                    "REAL_PACKAGE_PATH": "fff",
+                },
+            },
+            "engine": {
+                "image": "",
+                "cmd": "",
+                "cpu": 4,
+                "memory": 20,
+                "gpu": 1,
+                "extra_envs": {
+                    "REAL_PACKAGE_PATH": "fff",
+                },
             },
         },
-        "rollout_config": {
-            "image": "xxx",
-            "extra_envs": {
-                "REAL_PACKAGE_PATH": "fff",
+        "rollout": {
+            "worker": {
+                "image": "",
+                "cmd": "",
+                "extra_envs": {
+                    "REAL_PACKAGE_PATH": "fff",
+                },
             },
-
-        },
+            "engine": {
+                "image": "",
+                "cmd": "",
+                "extra_envs": {
+                    "REAL_PACKAGE_PATH": "fff",
+                },
+            },
+        }
     })
 
     dataset = load_dataset("json",
@@ -76,6 +100,7 @@ def main_grpo():
     global_step = 0
     os.environ['WANDB_API_KEY'] = 'local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe'
     os.environ["WANDB_BASE_URL"] = "https://slurm.alipay.com"
+    deploy_mode = "colocation"
 
     stats_logger = StatsLogger(StatsLoggerConfig(
         experiment_name=experiment_name, trial_name=trial_name,fileroot="/storage/openpsi/experiments",
@@ -98,7 +123,7 @@ def main_grpo():
     )
     # engine initialize
     rollout.initialize()
-    actor.initialize()
+    actor.initialize(colotion_with=rollout if deploy_mode == "colocation" else None)
 
     tokenizer = load_hf_tokenizer(MODEL_PATH)
     gconfig = GenerationHyperparameters(

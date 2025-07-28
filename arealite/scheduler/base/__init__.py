@@ -21,11 +21,15 @@ class ContainerSpec:
     env_vars: Dict[str, str] = field(default_factory=dict)
     portCount: int = 2
 
+class ScheduleStrategy:
+    type: str = ""
+    uid: str = ""
 
 @dataclass
 class SchedulingConfig:
     replicas: int = 0
     specs: List[ContainerSpec] = field(default_factory=list)
+    schedule_strategy: ScheduleStrategy=None
 
 
 class Scheduler(abc.ABC):
@@ -40,7 +44,7 @@ class Scheduler(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def create_workers(self, worker_key, scheduler_config, *args, **kwargs):
+    def create_workers(self, worker_key, scheduler_config, *args, **kwargs) -> str:
         """
         启动worker，返回 [(id, ip, port), ...]
         """

@@ -1,5 +1,6 @@
 from typing import List, Dict, Any
 from tensordict import TensorDict, stack
+from torch.compiler.config import job_id
 
 from arealite.api.engine_api import InferenceEngine
 from arealite.api.io_struct import WeightUpdateMeta, AllocationMode
@@ -9,7 +10,7 @@ from arealite.api.workflow_api import RolloutWorkflow
 from arealite.utils.data import concat_padded_tensors
 from arealite.api.controller_api import RolloutController
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
-from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec
+from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec, ScheduleStrategy
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangInitConfig
 from realhf.base import stats_tracker
 import logging
@@ -88,7 +89,7 @@ class DistributedRolloutController(RolloutController):
         return results
 
 
-    def initialize(self):
+    def initialize(self, *args, **kwargs):
         """Initialize environments for distributed inference and load models."""
 
         # 1个engine代表一组sglang实例，存在以下部署场景
@@ -100,6 +101,8 @@ class DistributedRolloutController(RolloutController):
 
         # replicas = self.allocate_mode.gen_world_size * node_count if scheduling.gpu >= n_gpu_per_node else self.allocate_mode.gen_world_size
         scheduling_config = SchedulingConfig(replicas=self.allocate_mode.gen_dp_size)
+        target = kwargs.get("colocation_with")
+        scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
 
         engineSpec = ContainerSpec(
             cpu=0,
@@ -132,7 +135,7 @@ class DistributedRolloutController(RolloutController):
         scheduling_config.specs.append(mainServerSpec)
 
 
-        self.scheduler.create_workers("rollout", scheduling_config)
+        self.job_id = self.scheduler.create_workers("rollout", scheduling_config)
 
         self.workers = self.scheduler.get_workers("rollout", timeout=5 * 60)
         # 如果1个实例跨机部署，返回的server_addrs是engine实例数的整数倍;e.g. dp2tp8pp2, 需要2个engine，返回了4个server_addrs， 只有index==0|2的才是真正的服务地址

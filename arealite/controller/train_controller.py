@@ -18,7 +18,7 @@ from arealite.api.io_struct import (
     WeightUpdateMeta,
     AllocationMode,
 )
-from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec
+from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec, ScheduleStrategy
 from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronInitConfig
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 import logging
@@ -42,14 +42,14 @@ class DistributedTrainController(TrainController):
         self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
         self.dp_world_size = self.allocate_mode.train_world_size // self.allocate_mode.train_dp_size
 
-    def initialize(self):
+    def initialize(self, *args, **kwargs):
         """Initialize environments for distributed training and load models."""
         scheduling = self.train_engine.get_scheduling_config()
-
         scheduling_config = SchedulingConfig(replicas=self.allocate_mode.train_world_size)
-        # scheduling_config = {
-        #     "num_workers": self.allocate_mode.train_world_size,
-        # }
+
+        target = kwargs.get("colocation_with")
+        scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
+
         engineSpec = ContainerSpec(
             cpu=0,
             mem=0,
@@ -80,7 +80,8 @@ class DistributedTrainController(TrainController):
 
         scheduling_config.specs.append(engineSpec)
         scheduling_config.specs.append(mainServerSpec)
-        self.scheduler.create_workers("train",scheduling_config)
+
+        self.scheduler.create_workers("train",scheduling_config, schedule_strategy = target)
 
         self.workers = self.scheduler.get_workers("train", timeout=60*5)
 
