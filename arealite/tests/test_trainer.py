@@ -63,12 +63,13 @@ def main_grpo():
     })
 
     dataset = load_dataset("json",
-                           data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train.jsonl")
+                           data_files="/storage/xinyu.kxy/data/moe_lite_math_0527_merge_train_areal.jsonl")
     train_dataset = dataset['train']
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
     batch_size = 64
     group_size = 8
     MODEL_PATH = "/storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/hf_ckpts/8604"
+    max_prompt_len = 1024
     max_new_tokens = 15360
     step_num = 1145
     epoch_num = 10
@@ -118,9 +119,18 @@ def main_grpo():
                 stats_tracker.scope("grpo_actor"),
             ):
                 batch_data = []
-                for _ in range(batch_size):
+                while len(batch_data) < batch_size:
                     batch = next(data_generator)
-                    batch_data.append(batch)
+                    prompt = batch["prompt"] if isinstance(batch, dict) else batch[0]["prompt"]
+                    tokenized = tokenizer(prompt, truncation=False, return_length=True)
+                    if tokenized["length"][0] <= max_prompt_len:
+                        batch_data.append(batch)
+                    else:
+                        logger.warning(f"Ignored prompt with length {tokenized['length'][0]} > {max_prompt_len}")
+
+                if len(batch_data) < batch_size:
+                    break
+
 
                 rollout_cfg = WeightUpdateMeta(
                     type="disk",
