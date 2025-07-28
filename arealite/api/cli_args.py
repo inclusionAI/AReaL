@@ -327,6 +327,34 @@ class InferenceEngineConfig:
 
 
 @dataclass
+class RemoteHybridInferenceConfig(InferenceEngineConfig):
+    model_path: str = field(
+        default=MISSING,
+        metadata={"help": "model path"},
+    )
+    storage_path: str = field(
+        default=MISSING,
+        metadata={"help": "storage path"},
+    )
+    random_seed: int = field(
+        default=0,
+        metadata={"help": "random seed"},
+    )
+    engine_config: Dict = field(default_factory=dict)
+    dp_size: int = field(
+        default=1,
+        metadata={"help": "dp size"},
+    )
+    pp_size: int = field(
+        default=1,
+        metadata={"help": "pp size"},
+    )
+    tp_size: int = field(
+        default=1,
+        metadata={"help": "tp size"},
+    )
+
+@dataclass
 class SGLangEngineConfig:
     pass
 
