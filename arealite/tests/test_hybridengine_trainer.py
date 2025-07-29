@@ -131,7 +131,7 @@ def main_grpo():
     )
     # engine initialize
     rollout.initialize()
-    actor.initialize(colotion_with=rollout if deploy_mode == "colocation" else None)
+    actor.initialize(colocation_with=rollout if deploy_mode == "colocation" else None)
 
     tokenizer = load_hf_tokenizer(MODEL_PATH)
     gconfig = GenerationHyperparameters(
