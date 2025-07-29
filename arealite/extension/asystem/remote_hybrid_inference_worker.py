@@ -42,6 +42,9 @@ RID_CACHE_SIZE = 128
 @dataclass
 class RemoteHypidInferenceInitConfig:
     main_server_addrs: list[str]  # dp address
+    free_addrs: list[str] # 给出每个 ip 的 free_port, 顺序和main_server_addrs一致
+    world_size: int     # 总的 world size
+    global_ranks: list[int] # 要求和 main_server_addrs 的 idx 一一对应
 
 
 class RemoteHybridInferenceWorker(InferenceEngine):
@@ -65,20 +68,17 @@ class RemoteHybridInferenceWorker(InferenceEngine):
     def initialize(self, initialize_cfg: RemoteHypidInferenceInitConfig):
         logger.info(f"[RemoteHybridInferenceWorker] begin exec initialize, config: {initialize_cfg}")
         seeding.set_random_seed(1, self.config.experiment_name)
-        master_addr_info = initialize_cfg.main_server_addrs[0]
+        master_addr_info = initialize_cfg.free_addrs[0]
         master_addr, master_port = master_addr_info.split(":")
-        world_size = len(initialize_cfg.main_server_addrs)
+        world_size = initialize_cfg.world_size
         seeding.set_random_seed(1, self.config.experiment_name)
-        master_addr_info = initialize_cfg.main_server_addrs[0]
-        master_addr, master_port = master_addr_info.split(":")
-        world_size = len(initialize_cfg.main_server_addrs)
-        
+
         self.addresses = []
         futures = []
         
         with ThreadPoolExecutor(max_workers=len(initialize_cfg.main_server_addrs)) as executor:
             for index, engine_addrs in enumerate(initialize_cfg.main_server_addrs):
-                global_rank = index
+                global_rank = initialize_cfg.global_ranks[index]
                 server_ip_port = engine_addrs.split(":")
                 server_ip = server_ip_port[0]
                 server_port = server_ip_port[1]
