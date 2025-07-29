@@ -69,44 +69,59 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         master_addr, master_port = master_addr_info.split(":")
         world_size = len(initialize_cfg.main_server_addrs)
         seeding.set_random_seed(1, self.config.experiment_name)
-        for index, engine_addrs in enumerate(initialize_cfg.main_server_addrs):
-            global_rank = index
-            server_ip_port = engine_addrs.split(":")
-            server_ip = server_ip_port[0]
-            server_port = server_ip_port[1]
-            if index == 0:
-                self.addresses = [server_ip + ":" + server_port]
+        master_addr_info = initialize_cfg.main_server_addrs[0]
+        master_addr, master_port = master_addr_info.split(":")
+        world_size = len(initialize_cfg.main_server_addrs)
+        
+        self.addresses = []
+        futures = []
+        
+        with ThreadPoolExecutor(max_workers=len(initialize_cfg.main_server_addrs)) as executor:
+            for index, engine_addrs in enumerate(initialize_cfg.main_server_addrs):
+                global_rank = index
+                server_ip_port = engine_addrs.split(":")
+                server_ip = server_ip_port[0]
+                server_port = server_ip_port[1]
+                if index == 0:
+                    self.addresses = [server_ip + ":" + server_port]
 
-            # http body data
-            body = dict(self.config.engine_config)
-            body["model_path"] = self.config.model_path
-            body["storage_path"] = self.config.storage_path
-            body["random_seed"] = seeding.get_seed()
-            body["engine_config"] = self.config.engine_config
-            rank_config = {
-                "master_addr": master_addr,
-                "master_port": master_port,
-                "world_size": world_size,
-                "global_rank": global_rank,
-                "dp_size": self.config.dp_size,
-                "pp_size": self.config.pp_size,
-                "tp_size": self.config.tp_size,
-            }
-            body["rank_config"] = rank_config
-            url = "http://" + initialize_cfg.main_server_addrs[index] + "/initialize"
-            logger.info(
-                f"[RemoteHybridInferenceWorker] url: {url}, send hybrid inference initialize config to engine: {body}")
-            response = requests.post(
-                url,
-                headers={"Content-Type": "application/json"},
-                json=body,
-                timeout=60  # 增加超时控制
-            )
+                # http body data
+                body = dict(self.config.engine_config)
+                body["model_path"] = self.config.model_path
+                body["storage_path"] = self.config.storage_path
+                body["random_seed"] = seeding.get_seed()
+                body["engine_config"] = self.config.engine_config
+                rank_config = {
+                    "master_addr": master_addr,
+                    "master_port": master_port,
+                    "world_size": world_size,
+                    "global_rank": global_rank,
+                    "dp_size": self.config.dp_size,
+                    "pp_size": self.config.pp_size,
+                    "tp_size": self.config.tp_size,
+                }
+                body["rank_config"] = rank_config
+                url = "http://" + initialize_cfg.main_server_addrs[index] + "/initialize"
+                logger.info(
+                    f"[RemoteHybridInferenceWorker] url: {url}, send hybrid inference initialize config to engine: {body}")
+                
+                futures.append(executor.submit(
+                    requests.post,
+                    url,
+                    headers={"Content-Type": "application/json"},
+                    json=body,
+                    timeout=60
+                ))
 
-            response.raise_for_status()  # 自动处理 4xx/5xx 状态码
-
-            result = response.json()
-            logger.info(f"[RemoteHybridInferenceWorker] initialize success, response: {result}")
+            try:
+                for future in as_completed(futures):
+                    response = future.result()
+                    response.raise_for_status()  # 自动处理 4xx/5xx 状态码
+                    result = response.json()
+                    logger.info(f"[RemoteHybridInferenceWorker] initialize success, response: {result}")
+            except Exception as e:
+                logger.error(f"[RemoteHybridInferenceWorker] initialize failed: {str(e)}")
+                raise
 
         self.exiting = threading.Event()
         self.paused = threading.Event()
