@@ -191,13 +191,22 @@ class DistributedRolloutController(RolloutController):
         self._rpc_call("update_weights", None,  meta)
         return
 
+    def notify_inference_event(self, event: str, global_step: int) -> None:
+        """Notify workers about inference start/end events.
+        
+        Args:
+            event: "start" or "end"
+            global_step: Current global step
+        """
+        self._rpc_call("notify_inference_event", None, event, global_step)
+        return None
+
     def submit(self, data: List[Dict[str, Any]], workflow: RolloutWorkflow) -> None:
         """Asynchronously submit a request to the inference engine. Exits immediately."""
         batches = self.split_list(data, self.allocate_mode.gen_dp_size)
 
         for index in range(self.allocate_mode.gen_dp_size):
             master_worker = self.workers[self.dp_world_size * index]
-
             self.scheduler.call_engine(master_worker.id, "submit_distributed_batch", batches[index], workflow)
 
     def wait(self, count: int, timeout: int)  -> TensorDict:

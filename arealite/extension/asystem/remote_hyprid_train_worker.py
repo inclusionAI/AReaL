@@ -284,6 +284,41 @@ class RemoteHypridTrainWorker(TrainEngine):
         self.global_step += 1
         return train_stats
 
+    def notify_training_event(self, event: str, global_step: int) -> None:
+        """Handle training start/end events by sending HTTP notification.
+        
+        Args:
+            event: "start" or "end"
+            global_step: Current global step
+        """
+        if event not in ["start", "end"]:
+            raise ValueError(f"Invalid event type: {event}")
+            
+        logger.info(f"[RemoteHypridTrainWorker] Sending training {event} notification at global_step: {global_step}")
+        
+        try:
+            target_url = f"http://{self.megatron_addr}/training_events"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "event": event,
+                "global_step": global_step
+            }
+            response = requests.post(
+                target_url, 
+                data=json.dumps(payload), 
+                headers=headers,
+                timeout=60
+            )
+            if response.status_code != 200:
+                raise ValueError(
+                    f"Failed to send training event. Status code: {response.status_code}, "
+                    f"Response: {response.text}"
+                )
+        except Exception as e:
+            raise ValueError(f"Error sending notify training event: {e}")
+        
+        return None
+
     def train_batch(
         self,
         input_: Dict,  # key: str, value: tensor
@@ -301,7 +336,7 @@ class RemoteHypridTrainWorker(TrainEngine):
         )
 
         mb_spec = MicroBatchSpec(n_mbs=self.config.n_mbs,
-                                 max_tokens_per_mb=self.config.max_tokens_per_mb)
+                                 max_tokens_per_mb=self.config.max_tokens_per_mb)ion as e:
         try:
             target_url = f"http://{self.megatron_addr}/train_batch"
             headers = {"Content-Type": "application/octet-stream"}
