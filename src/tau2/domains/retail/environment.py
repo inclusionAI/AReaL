@@ -33,9 +33,16 @@ def get_environment(
     )
 
 
-def get_tasks() -> list[Task]:
+def get_tasks(task_split_name: Optional[str] = None) -> list[Task]:
     tasks = load_file(RETAIL_TASK_SET_PATH)
-    return [Task.model_validate(task) for task in tasks]
+    tasks = [Task.model_validate(task) for task in tasks]
+    if task_split_name is None:
+        return tasks
+    task_splits = get_tasks_split()
+    if task_split_name not in task_splits:
+        raise ValueError(f"Invalid task split name: {task_split_name}. Valid splits are: {task_splits.keys()}")
+    tasks = [task for task in tasks if task.id in task_splits[task_split_name]]
+    return tasks
 
 
 def get_tasks_split() -> dict[str, list[str]]:

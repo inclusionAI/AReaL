@@ -167,8 +167,15 @@ def load_tasks_split(path: str) -> Optional[dict[str, list[str]]]:
     return None
 
 
-def get_tasks() -> list[Task]:
-    return load_tasks(TELECOM_TASK_SET_PATH)
+def get_tasks(task_split_name: Optional[str] = None) -> list[Task]:
+    tasks = load_tasks(TELECOM_TASK_SET_PATH)
+    tasks = [Task.model_validate(task) for task in tasks]
+    if task_split_name is None:
+        return tasks
+    task_splits = get_tasks_split()
+    if task_split_name not in task_splits:
+        raise ValueError(f"Invalid task split name: {task_split_name}. Valid splits are: {task_splits.keys()}")
+    return [task for task in tasks if task.id in task_splits[task_split_name]]
 
 
 def get_tasks_split() -> dict[str, list[str]]:

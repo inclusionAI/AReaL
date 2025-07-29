@@ -7,13 +7,19 @@ from typing import Optional
 
 from loguru import logger
 
-from tau2.gym.gym_agent import GymAgent
 from tau2.agent.llm_agent import LLMAgent, LLMGTAgent, LLMSoloAgent
-from tau2.data_model.simulation import (AgentInfo, Info, Results, RunConfig,
-                                        SimulationRun, UserInfo)
+from tau2.data_model.simulation import (
+    AgentInfo,
+    Info,
+    Results,
+    RunConfig,
+    SimulationRun,
+    UserInfo,
+)
 from tau2.data_model.tasks import Task
 from tau2.environment.environment import Environment, EnvironmentInfo
 from tau2.evaluator.evaluator import EvaluationType, evaluate_simulation
+from tau2.gym.gym_agent import GymAgent
 from tau2.metrics.agent_metrics import compute_metrics
 from tau2.orchestrator.orchestrator import Orchestrator
 from tau2.registry import RegistryInfo, registry
@@ -39,18 +45,19 @@ def get_environment_info(
     return env_constructor().get_info(include_tool_info=include_tool_info)
 
 
-def load_tasks(task_set_name: str) -> list[Task]:
+def load_tasks(task_set_name: str, task_split_name: Optional[str] = None) -> list[Task]:
     """
     Loads the tasks for the given domain.
     """
     global registry
     task_loader = registry.get_tasks_loader(task_set_name)
-    tasks = task_loader()
+    tasks = task_loader(task_split_name=task_split_name)
     return tasks
 
 
 def get_tasks(
     task_set_name: str,
+    task_split_name: Optional[str] = None,
     task_ids: Optional[list[str]] = None,
     num_tasks: Optional[int] = None,
 ) -> list[Task]:
@@ -58,15 +65,19 @@ def get_tasks(
     Loads the tasks for the given domain.
     """
     if task_ids is None:
-        tasks = load_tasks(task_set_name=task_set_name)
+        tasks = load_tasks(task_set_name=task_set_name, task_split_name=task_split_name)
     else:
         tasks = [
-            task for task in load_tasks(task_set_name=task_set_name) if task.id in task_ids
+            task
+            for task in load_tasks(
+                task_set_name=task_set_name, task_split_name=task_split_name
+            )
+            if task.id in task_ids
         ]
     if task_ids is not None and len(tasks) != len(task_ids):
         missing_tasks = set(task_ids) - set([task.id for task in tasks])
         raise ValueError(
-            f"Not all tasks were found for task set {task_set_name}: {missing_tasks}"
+            f"Not all tasks were found for task set {task_set_name} - {task_split_name}: {missing_tasks}"
         )
     if num_tasks is not None:
         tasks = tasks[:num_tasks]
@@ -96,18 +107,29 @@ def run_domain(config: RunConfig) -> Results:
         task_set_name = config.domain
     else:
         task_set_name = config.task_set_name
-    tasks = get_tasks(task_set_name, config.task_ids, config.num_tasks)
+    tasks = get_tasks(
+        task_set_name=task_set_name,
+        task_split_name=config.task_split_name,
+        task_ids=config.task_ids,
+        num_tasks=config.num_tasks,
+    )
     if "gt" in config.agent:
         total_num_tasks = len(tasks)
         tasks = [task for task in tasks if LLMGTAgent.check_valid_task(task)]
         num_tasks = len(tasks)
-        console_text = Text(text=f"Running {num_tasks} out of {total_num_tasks} tasks for GT agent.", style="bold green")
+        console_text = Text(
+            text=f"Running {num_tasks} out of {total_num_tasks} tasks for GT agent.",
+            style="bold green",
+        )
         ConsoleDisplay.console.print(console_text)
     if "solo" in config.agent:
         total_num_tasks = len(tasks)
         tasks = [task for task in tasks if LLMSoloAgent.check_valid_task(task)]
         num_tasks = len(tasks)
-        console_text = Text(text=f"Running {num_tasks} out of {total_num_tasks} tasks for solo agent.", style="bold green")
+        console_text = Text(
+            text=f"Running {num_tasks} out of {total_num_tasks} tasks for solo agent.",
+            style="bold green",
+        )
         ConsoleDisplay.console.print(console_text)
 
     num_trials = config.num_trials
@@ -287,7 +309,10 @@ def run_tasks(
                     ]
                 )
                 simulation_results = prev_simulation_results
-                console_text = Text(text=f"Resuming run from {len(done_runs)} runs. {len(tasks) * num_trials - len(done_runs)} runs remaining.", style="bold yellow")
+                console_text = Text(
+                    text=f"Resuming run from {len(done_runs)} runs. {len(tasks) * num_trials - len(done_runs)} runs remaining.",
+                    style="bold yellow",
+                )
                 ConsoleDisplay.console.print(console_text)
         # Create new save file
         else:
@@ -309,7 +334,10 @@ def run_tasks(
                 json.dump(ckpt, fp, indent=2)
 
     def _run(task: Task, trial: int, seed: int, progress_str: str) -> SimulationRun:
-        console_text = Text(text=f"{progress_str}. Running task {task.id}, trial {trial + 1}", style="bold green")
+        console_text = Text(
+            text=f"{progress_str}. Running task {task.id}, trial {trial + 1}",
+            style="bold green",
+        )
         ConsoleDisplay.console.print(console_text)
         try:
             simulation = run_task(
@@ -339,7 +367,10 @@ def run_tasks(
     for trial in range(num_trials):
         for i, task in enumerate(tasks):
             if (trial, task.id, seeds[trial]) in done_runs:
-                console_text = Text(text=f"Skipping task {task.id}, trial {trial} because it has already been run.", style="bold yellow")
+                console_text = Text(
+                    text=f"Skipping task {task.id}, trial {trial} because it has already been run.",
+                    style="bold yellow",
+                )
                 ConsoleDisplay.console.print(console_text)
                 continue
             progress_str = f"{i}/{len(tasks)} (trial {trial + 1}/{num_trials})"

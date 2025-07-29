@@ -35,7 +35,9 @@ def get_environment(
     return env
 
 
-def get_tasks() -> list[Task]:
+def get_tasks(task_split_name: Optional[str] = None) -> list[Task]:
+    if task_split_name is not None:
+        raise ValueError(f"Task split not supported for mock domain")
     with open(MOCK_TASK_SET_PATH, "r") as fp:
         tasks = json.load(fp)
     return [Task.model_validate(task) for task in tasks]

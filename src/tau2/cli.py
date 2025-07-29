@@ -80,6 +80,12 @@ def add_run_args(parser):
         help="The task set to run the simulation on. If not provided, will load default task set for the domain.",
     )
     parser.add_argument(
+        "--task-split-name",
+        type=str,
+        default="train+test",
+        help="The task split to run the simulation on. If not provided, will load 'train+test' split.",
+    )
+    parser.add_argument(
         "--task-ids",
         type=str,
         nargs="+",
@@ -141,6 +147,7 @@ def main():
             RunConfig(
                 domain=args.domain,
                 task_set_name=args.task_set_name,
+                task_split_name=args.task_split_name,
                 task_ids=args.task_ids,
                 num_tasks=args.num_tasks,
                 agent=args.agent,

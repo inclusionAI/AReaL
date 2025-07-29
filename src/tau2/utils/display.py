@@ -41,6 +41,8 @@ class ConsoleDisplay:
         header_content = Panel(
             f"[white]Domain:[/] {config.domain}\n"
             f"[white]Task Set:[/] {config.task_set_name if config.task_set_name else 'Default'}\n"
+            f"[white]Task Split:[/] {config.task_split_name if config.task_split_name else 'None'}\n"
+            f"[white]Num Tasks:[/] {config.num_tasks if config.num_tasks else 'All'}\n"
             f"[white]Task IDs:[/] {', '.join(map(str, config.task_ids)) if config.task_ids else 'All'}\n"
             f"[white]Number of trials:[/] {config.num_trials}\n"
             f"[white]Max steps:[/] {config.max_steps}\n"
