@@ -50,36 +50,37 @@ class DistributedTrainController(TrainController):
         target = kwargs.get("colocation_with")
         scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
 
-        engineSpec = ContainerSpec(
+        workerSpec = ContainerSpec(
             cpu=0,
             mem=0,
             gpu=scheduling.gpu,
-            cmd="bash /storage/openpsi/codes/dh183333/arealite-test/AReaL/arealite/scheduler/scripts/launch-engine.sh",
+            cmd="bash /storage/openpsi/codes/dh183333/arealite-test/AReaL/arealite/scheduler/scripts/launch-worker.sh",
             env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
             portCount=1
         )
-        engineSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test/AReaL"
-        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
-        engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
+        workerSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test/AReaL"
+        workerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
+        workerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
             experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
-        engineSpec.env_vars["WORKER_TYPE"] = "model-worker"
+        workerSpec.env_vars["WORKER_TYPE"] = "model-worker"
 
-        mainServerSpec = ContainerSpec(
+        engineSpec = ContainerSpec(
             cpu=0,
             mem=0,
             gpu=0,
-            cmd="bash /storage/openpsi/codes/dh183333/v0.1.2/AReaL/realhf/scheduler/asystem/scripts/megatron.sh",
+            cmd="bash /storage/openpsi/codes/dh183333/arealite-test/AReaL/arealite/scheduler/scripts/launch-hybrid-server.sh",
             env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
             portCount=1
         )
-        mainServerSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/v0.1.2/AReaL"
-        mainServerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/megatron-server-12510151-20250621103525.sif"
-        mainServerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
+        engineSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/Asystem-HybridEngine"
+        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13060133-20250724003115.sif"
+        engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
             experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
-        mainServerSpec.env_vars["WORKER_TYPE"] = "model-worker"
+        engineSpec.env_vars["WORKER_TYPE"] = "model-worker"
+        engineSpec.env_vars["WORK_MODE"] = "TRAINING"
 
+        scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
-        scheduling_config.specs.append(mainServerSpec)
 
         self.scheduler.create_workers("train",scheduling_config, schedule_strategy = target)
 

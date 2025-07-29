@@ -5,13 +5,15 @@ from torch.compiler.config import job_id
 from arealite.api.engine_api import InferenceEngine
 from arealite.api.io_struct import WeightUpdateMeta, AllocationMode
 
-from arealite.api.cli_args import RolloutControllerConfig
+from arealite.api.cli_args import RolloutControllerConfig, RemoteHybridInferenceConfig
 from arealite.api.workflow_api import RolloutWorkflow
+from arealite.extension.asystem.remote_hybrid_inference_worker import RemoteHybridInferenceWorker, \
+    RemoteHypidInferenceInitConfig
 from arealite.utils.data import concat_padded_tensors
 from arealite.api.controller_api import RolloutController
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec, ScheduleStrategy
-from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangInitConfig
+from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangInitConfig, RemoteSGLangEngine
 from realhf.base import stats_tracker
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -104,35 +106,36 @@ class DistributedRolloutController(RolloutController):
         target = kwargs.get("colocation_with")
         scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
 
-        engineSpec = ContainerSpec(
+        workerSpec = ContainerSpec(
             cpu=0,
             mem=0,
             gpu=scheduling.gpu,
-            cmd="bash /storage/openpsi/codes/dh183333/arealite-test/AReaL/arealite/scheduler/scripts/launch-engine.sh",
+            cmd="bash /storage/openpsi/codes/dh183333/arealite-test/AReaL/arealite/scheduler/scripts/launch-worker.sh",
             env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
             portCount=1
         )
-        engineSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test/AReaL"
-        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
-        engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
-        engineSpec.env_vars["WORKER_TYPE"] = "inference-engine"
-        engineSpec.env_vars["FUNCTIONCALL_SERVICE_DOMAIN"] = "http://110.75.237.19:8080"
+        workerSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test/AReaL"
+        workerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
+        workerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
+        workerSpec.env_vars["WORKER_TYPE"] = "inference-engine"
+        workerSpec.env_vars["FUNCTIONCALL_SERVICE_DOMAIN"] = "http://110.75.237.19:8080"
 
-        mainServerSpec = ContainerSpec(
+        engineSpec = ContainerSpec(
             cpu=0,
             mem=0,
             gpu=0,
-            cmd="bash /storage/openpsi/codes/dh183333/arealite-test/AReaL/arealite/scheduler/scripts/launch-inference-server.sh",
+            cmd="bash /storage/openpsi/codes/dh183333/arealite-test/AReaL/arealite/scheduler/scripts/launch-hybrid-server.sh",
             env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
             portCount=3
         )
-        mainServerSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test/AReaL"
-        mainServerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/sglang-server-13100195-20250718002946.sif"
-        mainServerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
-        mainServerSpec.env_vars["WORKER_TYPE"] = "inference-main-worker"
+        engineSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test/AReaL"
+        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13060133-20250724003115.sif"
+        engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
+        engineSpec.env_vars["WORKER_TYPE"] = "inference-main-worker"
+        engineSpec.env_vars["WORK_MODE"] = "GENERATION"
 
+        scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
-        scheduling_config.specs.append(mainServerSpec)
 
 
         self.job_id = self.scheduler.create_workers("rollout", scheduling_config)
@@ -140,31 +143,37 @@ class DistributedRolloutController(RolloutController):
         self.workers = self.scheduler.get_workers("rollout", timeout=5 * 60)
         # 如果1个实例跨机部署，返回的server_addrs是engine实例数的整数倍;e.g. dp2tp8pp2, 需要2个engine，返回了4个server_addrs， 只有index==0|2的才是真正的服务地址
         # 如果多个实例同机部署，返回的server_addrs和engine实例数等长
-        server_addrs = [
+        worker_addrs = [
             f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports
         ]
-        assert len(server_addrs) % self.allocate_mode.gen_dp_size == 0
+        assert len(worker_addrs) % self.allocate_mode.gen_dp_size == 0
 
-        self.server_group_size = len(server_addrs) // self.allocate_mode.gen_dp_size
+        self.server_group_size = len(worker_addrs) // self.allocate_mode.gen_dp_size
 
         futures = []
 
         time.sleep(100)
+
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             for i in range(self.allocate_mode.gen_dp_size):
                 master_worker = self.workers[self.server_group_size * i]
-                server_addrs = [
+                worker_addrs = [
                     f"{worker.ip}:{worker.ports[0]}" for worker in self.workers[self.server_group_size * i:self.server_group_size * i+1] if worker.ports
                 ]
-                sglang_addrs_list = [
+                engine_addrs_list = [
                     [f"{worker.ip}:{port}" for worker in
                      self.workers[self.server_group_size * i:self.server_group_size * (i + 1)] for port in worker.ports[1:]]
                 ]
+                if isinstance(self.inf_engine, RemoteSGLangEngine):
+                    init_config = RemoteSGLangInitConfig(main_server_addrs=worker_addrs, sglang_addrs_list=engine_addrs_list)
+                elif isinstance(self.inf_engine, RemoteHybridInferenceWorker):
+                    init_config = RemoteHypidInferenceInitConfig(main_server_addrs=worker_addrs)
+
                 futures.append(executor.submit(
                     self.scheduler.create_engine,
                     master_worker.id,
                     self.inf_engine,
-                    RemoteSGLangInitConfig(main_server_addrs=server_addrs, sglang_addrs_list=sglang_addrs_list),
+                    init_config,
                 ))
             print(f"submit workers: {len(futures)}")
             try:
