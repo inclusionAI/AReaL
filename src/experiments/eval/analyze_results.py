@@ -1382,8 +1382,6 @@ def plot_pass_k_vs_num_issues_all_llms(
         logger.warning(f"No data found for {telecom_version} domain. Skipping...")
         return
 
-    print(len(df_pass_hat_k_filtered))
-
     # Get unique k values
     k_values = sorted(
         [
