@@ -336,7 +336,7 @@ class RemoteHypridTrainWorker(TrainEngine):
         )
 
         mb_spec = MicroBatchSpec(n_mbs=self.config.n_mbs,
-                                 max_tokens_per_mb=self.config.max_tokens_per_mb)ion as e:
+                                 max_tokens_per_mb=self.config.max_tokens_per_mb)
         try:
             target_url = f"http://{self.megatron_addr}/train_batch"
             headers = {"Content-Type": "application/octet-stream"}
