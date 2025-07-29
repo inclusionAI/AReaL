@@ -101,8 +101,8 @@ class Orchestrator:
 
         if self.solo_mode:
             assert self.environment.solo_mode, "Environment should be in solo mode"
-            assert isinstance(self.agent, LLMSoloAgent), (
-                "Agent must be a LLMSoloAgent in solo mode"
+            assert isinstance(self.agent, LLMSoloAgent) or self.agent.__class__.__name__ == "GymAgent", (
+                "Agent must be a LLMSoloAgent or GymAgent in solo mode"
             )
             assert isinstance(self.user, DummyUser), (
                 "User must be a DummyUser in solo mode"
@@ -217,17 +217,20 @@ class Orchestrator:
                 )
             self.trajectory = message_history
         else:
-            self.agent_state = self.agent.get_init_state()
             self.user_state = self.user.get_init_state()
             if not self.solo_mode:
                 first_message = deepcopy(DEFAULT_FIRST_AGENT_MESSAGE)
                 first_message.timestamp = get_now()
+                self.agent_state = self.agent.get_init_state(
+                    message_history=[first_message]
+                )
                 self.trajectory = [first_message]
                 self.message = first_message
                 self.from_role = Role.AGENT
                 self.to_role = Role.USER
             else:
-                first_message, agent_state = self.agent.generate_next_message(
+                self.agent_state = self.agent.get_init_state()
+                first_message, self.agent_state = self.agent.generate_next_message(
                     None, self.agent_state
                 )
                 self.trajectory = [first_message]
@@ -331,6 +334,19 @@ class Orchestrator:
             if self.num_errors >= self.max_errors:
                 self.done = True
                 self.termination_reason = TerminationReason.TOO_MANY_ERRORS
+        # Send stop signal to the agent, user, and environment
+        last_msg_to_agent = None
+        last_msg_to_user = None
+        if self.to_role == Role.AGENT:
+            last_msg_to_agent = self.message
+        elif self.to_role == Role.USER:
+            last_msg_to_user = self.message
+        elif self.to_role == Role.ENV:
+            raise ValueError("Environment should not be the last message")
+        self.agent.stop(last_msg_to_agent, self.agent_state)
+        self.user.stop(last_msg_to_user, self.user_state)
+
+        # Wrap up the simulation
         duration = time.perf_counter() - start
         messages = self.get_trajectory()
         res = get_cost(messages)

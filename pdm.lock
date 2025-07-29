@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:3fa0e01d2307f70841c56d4afdaa158e09c50daa5539b37d03cf4ed2841d486f"
+content_hash = "sha256:a9f1b6ed92179ed90a97b1f9dcb2b7d2b08fd8ff5d694969f2b9380dc9f68560"
 
 [[metadata.targets]]
 requires_python = ">=3.13"
@@ -26,7 +26,7 @@ name = "aiohappyeyeballs"
 version = "2.6.1"
 requires_python = ">=3.9"
 summary = "Happy Eyeballs for asyncio"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "aiohappyeyeballs-2.6.1-py3-none-any.whl", hash = "sha256:f349ba8f4b75cb25c99c5c2d84e997e485204d2902a9597802b0371f09331fb8"},
@@ -38,7 +38,7 @@ name = "aiohttp"
 version = "3.11.14"
 requires_python = ">=3.9"
 summary = "Async http client/server framework (asyncio)"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 dependencies = [
     "aiohappyeyeballs>=2.3.0",
@@ -123,7 +123,7 @@ name = "aiosignal"
 version = "1.3.2"
 requires_python = ">=3.9"
 summary = "aiosignal: a list of registered asynchronous callbacks"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 dependencies = [
     "frozenlist>=1.1.0",
@@ -138,7 +138,7 @@ name = "annotated-types"
 version = "0.7.0"
 requires_python = ">=3.8"
 summary = "Reusable constraint types to use with typing.Annotated"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 dependencies = [
     "typing-extensions>=4.0.0; python_version < \"3.9\"",
@@ -182,7 +182,7 @@ name = "attrs"
 version = "25.3.0"
 requires_python = ">=3.8"
 summary = "Classes Without Boilerplate"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "attrs-25.3.0-py3-none-any.whl", hash = "sha256:427318ce031701fea540783410126f03899a97ffc6f61596ad581ac2e40e3bc3"},
@@ -206,7 +206,7 @@ name = "certifi"
 version = "2025.1.31"
 requires_python = ">=3.6"
 summary = "Python package for providing Mozilla's CA Bundle."
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "certifi-2025.1.31-py3-none-any.whl", hash = "sha256:ca78db4565a652026a4db2bcdf68f2fb589ea80d0be70e03929ed730746b84fe"},
@@ -218,7 +218,7 @@ name = "charset-normalizer"
 version = "3.4.1"
 requires_python = ">=3.7"
 summary = "The Real First Universal Charset Detector. Open, modern and actively maintained alternative to Chardet."
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "charset_normalizer-3.4.1-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:91b36a978b5ae0ee86c394f5a54d6ef44db1de0815eb43de826d41d21e4af3de"},
@@ -282,7 +282,7 @@ name = "click"
 version = "8.1.8"
 requires_python = ">=3.7"
 summary = "Composable command line interface toolkit"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 dependencies = [
     "colorama; platform_system == \"Windows\"",
@@ -294,11 +294,23 @@ files = [
 ]
 
 [[package]]
+name = "cloudpickle"
+version = "3.1.1"
+requires_python = ">=3.8"
+summary = "Pickler class to extend the standard pickle.Pickler functionality"
+groups = ["default"]
+marker = "python_version >= \"3.13\""
+files = [
+    {file = "cloudpickle-3.1.1-py3-none-any.whl", hash = "sha256:c8c5a44295039331ee9dad40ba100a9c7297b6f988e50e87ccdf3765a668350e"},
+    {file = "cloudpickle-3.1.1.tar.gz", hash = "sha256:b216fa8ae4019d5482a8ac3c95d8f6346115d8835911fd4aefd1a445e4242c64"},
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 requires_python = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,!=3.5.*,!=3.6.*,>=2.7"
 summary = "Cross-platform colored terminal text."
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "sys_platform == \"win32\" and python_version >= \"3.13\" or platform_system == \"Windows\" and python_version >= \"3.13\""
 files = [
     {file = "colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"},
@@ -391,15 +403,14 @@ files = [
 ]
 
 [[package]]
-name = "eval-type-backport"
-version = "0.2.2"
-requires_python = ">=3.8"
-summary = "Like `typing._eval_type`, but lets older Python versions use newer typing features."
-groups = ["dev"]
+name = "farama-notifications"
+version = "0.0.4"
+summary = "Notifications for all Farama Foundation maintained libraries."
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
-    {file = "eval_type_backport-0.2.2-py3-none-any.whl", hash = "sha256:cb6ad7c393517f476f96d456d0412ea80f0a8cf96f6892834cd9340149111b0a"},
-    {file = "eval_type_backport-0.2.2.tar.gz", hash = "sha256:f0576b4cf01ebb5bd358d02314d31846af5e07678387486e2c798af0e7d849c1"},
+    {file = "Farama-Notifications-0.0.4.tar.gz", hash = "sha256:13fceff2d14314cf80703c8266462ebf3733c7d165336eee998fc58e545efd18"},
+    {file = "Farama_Notifications-0.0.4-py3-none-any.whl", hash = "sha256:14de931035a41961f7c056361dc7f980762a143d05791ef5794a751a2caf05ae"},
 ]
 
 [[package]]
@@ -424,7 +435,7 @@ name = "filelock"
 version = "3.18.0"
 requires_python = ">=3.9"
 summary = "A platform independent file lock."
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "filelock-3.18.0-py3-none-any.whl", hash = "sha256:c401f4f8377c4464e6db25fff06205fd89bdd83b65eb0488ed1b160f780e21de"},
@@ -456,7 +467,7 @@ name = "frozenlist"
 version = "1.5.0"
 requires_python = ">=3.8"
 summary = "A list-like structure which implements collections.abc.MutableSequence"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "frozenlist-1.5.0-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:5b6a66c18b5b9dd261ca98dffcb826a525334b2f29e7caa54e182255c5f6a65a"},
@@ -555,6 +566,25 @@ files = [
 ]
 
 [[package]]
+name = "gymnasium"
+version = "1.1.1"
+requires_python = ">=3.8"
+summary = "A standard API for reinforcement learning and a diverse set of reference environments (formerly Gym)."
+groups = ["default"]
+marker = "python_version >= \"3.13\""
+dependencies = [
+    "cloudpickle>=1.2.0",
+    "farama-notifications>=0.0.1",
+    "importlib-metadata>=4.8.0; python_version < \"3.10\"",
+    "numpy>=1.21.0",
+    "typing-extensions>=4.3.0",
+]
+files = [
+    {file = "gymnasium-1.1.1-py3-none-any.whl", hash = "sha256:9c167ec0a2b388666e37f63b2849cd2552f7f5b71938574c637bb36487eb928a"},
+    {file = "gymnasium-1.1.1.tar.gz", hash = "sha256:8bd9ea9bdef32c950a444ff36afc785e1d81051ec32d30435058953c20d2456d"},
+]
+
+[[package]]
 name = "h11"
 version = "0.14.0"
 requires_python = ">=3.7"
@@ -629,7 +659,7 @@ name = "idna"
 version = "3.10"
 requires_python = ">=3.6"
 summary = "Internationalized Domain Names in Applications (IDNA)"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "idna-3.10-py3-none-any.whl", hash = "sha256:946d195a0d259cbba61165e88e65941f16e9b36ea6ddb97f00452bae8b1287d3"},
@@ -896,7 +926,7 @@ name = "markdown-it-py"
 version = "3.0.0"
 requires_python = ">=3.8"
 summary = "Python port of markdown-it. Markdown parsing, done right!"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 dependencies = [
     "mdurl~=0.1",
@@ -1006,7 +1036,7 @@ name = "mdurl"
 version = "0.1.2"
 requires_python = ">=3.7"
 summary = "Markdown URL utilities"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"},
@@ -1018,7 +1048,7 @@ name = "multidict"
 version = "6.2.0"
 requires_python = ">=3.9"
 summary = "multidict implementation"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 dependencies = [
     "typing-extensions>=4.1.0; python_version < \"3.11\"",
@@ -1120,7 +1150,7 @@ name = "numpy"
 version = "2.2.5"
 requires_python = ">=3.10"
 summary = "Fundamental package for array computing in Python"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "numpy-2.2.5-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:059b51b658f4414fff78c6d7b1b4e18283ab5fa56d270ff212d5ba0c561846f4"},
@@ -1229,7 +1259,7 @@ name = "pillow"
 version = "11.1.0"
 requires_python = ">=3.9"
 summary = "Python Imaging Library (Fork)"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "pillow-11.1.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:ae98e14432d458fc3de11a77ccb3ae65ddce70f730e7c76140653048c71bfcbc"},
@@ -1287,7 +1317,7 @@ name = "propcache"
 version = "0.3.0"
 requires_python = ">=3.9"
 summary = "Accelerated property cache"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "propcache-0.3.0-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:efa44f64c37cc30c9f05932c740a8b40ce359f51882c70883cc95feac842da4d"},
@@ -1397,7 +1427,7 @@ name = "pydantic"
 version = "2.10.6"
 requires_python = ">=3.8"
 summary = "Data validation using Python type hints"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 dependencies = [
     "annotated-types>=0.6.0",
@@ -1429,7 +1459,7 @@ name = "pydantic-core"
 version = "2.27.2"
 requires_python = ">=3.8"
 summary = "Core functionality for Pydantic validation and serialization"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 dependencies = [
     "typing-extensions!=4.7.0,>=4.6.0",
@@ -1529,7 +1559,7 @@ name = "pygments"
 version = "2.19.1"
 requires_python = ">=3.8"
 summary = "Pygments is a syntax highlighting package written in Python."
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "pygments-2.19.1-py3-none-any.whl", hash = "sha256:9ea1544ad55cecf4b8242fab6dd35a93bbce657034b0611ee383099054ab6d8c"},
@@ -1735,7 +1765,7 @@ name = "requests"
 version = "2.32.3"
 requires_python = ">=3.8"
 summary = "Python HTTP for Humans."
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 dependencies = [
     "certifi>=2017.4.17",
@@ -1753,7 +1783,7 @@ name = "rich"
 version = "14.0.0"
 requires_python = ">=3.8.0"
 summary = "Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 dependencies = [
     "markdown-it-py>=2.2.0",
@@ -2052,7 +2082,7 @@ name = "tabulate"
 version = "0.9.0"
 requires_python = ">=3.7"
 summary = "Pretty-print tabular data"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "tabulate-0.9.0-py3-none-any.whl", hash = "sha256:024ca478df22e9340661486f85298cff5f6dcdba14f3813e8830015b9ed1948f"},
@@ -2194,7 +2224,7 @@ name = "tqdm"
 version = "4.67.1"
 requires_python = ">=3.7"
 summary = "Fast, Extensible Progress Meter"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 dependencies = [
     "colorama; platform_system == \"Windows\"",
@@ -2227,7 +2257,7 @@ name = "typing-extensions"
 version = "4.12.2"
 requires_python = ">=3.8"
 summary = "Backported and Experimental Type Hints for Python 3.8+"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "typing_extensions-4.12.2-py3-none-any.whl", hash = "sha256:04e5ca0351e0f3f85c6853954072df659d0d13fac324d0072316b67d7794700d"},
@@ -2251,7 +2281,7 @@ name = "urllib3"
 version = "2.3.0"
 requires_python = ">=3.9"
 summary = "HTTP library with thread-safe connection pooling, file post, and more."
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 files = [
     {file = "urllib3-2.3.0-py3-none-any.whl", hash = "sha256:1cee9ad369867bfdbbb48b7dd50374c0967a0bb7710050facf0dd6911440e3df"},
@@ -2350,7 +2380,7 @@ name = "yarl"
 version = "1.18.3"
 requires_python = ">=3.9"
 summary = "Yet another URL library"
-groups = ["default", "dev"]
+groups = ["default"]
 marker = "python_version >= \"3.13\""
 dependencies = [
     "idna>=2.0",

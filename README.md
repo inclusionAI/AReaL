@@ -145,6 +145,131 @@ tau2 check-data
 ```
 This command checks if your data directory is properly configured and all required files are present.
 
+### Manual Agent Mode (Play)
+```bash
+tau2 play
+```
+This interactive mode allows you to manually play the role of the agent in a domain simulation. You can:
+
+- Choose from available domains (airline, retail, telecom, mock)
+- Select specific tasks to work on
+- **Choose interaction mode**: Normal mode (with user simulator) or Solo mode (independent ticket resolution)
+- **Configure user simulator**: Specify which LLM to use for user simulation (normal mode only)
+- View the agent policy and available tools
+- **View task tickets**: In solo mode, access the task ticket for context
+- Interact with the environment by typing responses and using tools
+- Experience the simulation from the agent's perspective
+
+#### Interaction Modes
+
+**Normal Mode (Default):**
+- Interactive conversations with a user simulator
+- Best for customer service and conversational scenarios
+- User simulator responds based on task persona and instructions
+
+**Solo Mode:**
+- Work independently on task tickets without user interaction
+- Best for technical troubleshooting and problem-solving scenarios
+- Access task tickets through the 'ticket' command
+
+**Available commands during play:**
+- `help`: Show available commands and tips
+- `tools`: Display available tools and their parameters
+- `policy`: Show the agent policy guidelines
+- `ticket`: Show task ticket (solo mode only)
+- `quit`: Exit the simulation
+
+**Example usage:**
+```bash
+$ tau2 play
+
+🎮 Welcome to Tau2 Manual Mode!
+You will be playing the role of the agent in a domain.
+
+🎯 Available Domains
+┌────────┬─────────┐
+│ Number │ Domain  │
+├────────┼─────────┤
+│   1    │ airline │
+│   2    │ retail  │
+│   3    │ telecom │
+│   4    │ mock    │
+└────────┴─────────┘
+
+Select a domain (1-4)> 1
+✅ Selected domain: airline
+
+📋 Available Tasks for airline
+┌────────┬─────────┬─────────────────────────────┐
+│ Number │ Task ID │ Description                 │
+├────────┼─────────┼─────────────────────────────┤
+│   1    │ task_1  │ Book a flight from NYC...   │
+│   2    │ task_2  │ Check flight status...      │
+└────────┴─────────┴─────────────────────────────┘
+
+Select a task (1-2)> 1
+✅ Selected task: task_1
+
+🔧 Mode Selection
+Choose your interaction mode:
+
+Normal Mode: You interact with a simulated user
+• The user simulator will respond based on the task scenario
+• You'll have conversations back and forth
+
+Solo Mode: You work independently on a ticket
+• No user interaction - you solve the task directly
+• You'll see a ticket with the problem description
+• Work through the solution step by step
+
+Enable Solo Mode? (y/n) [n]> n
+✅ Selected mode: Normal
+
+⚙️ LLM Configuration
+Configure which LLM to use for the user simulator.
+Leave empty to use the default LLM.
+
+Enter User LLM name (or press Enter for default)> gpt-4
+✅ User LLM: gpt-4
+
+🔧 Available Tools
+┌──────────────┬─────────────────────────┬─────────────┐
+│ Tool Name    │ Description             │ Parameters  │
+├──────────────┼─────────────────────────┼─────────────┤
+│ search_flights│ Search for flights...  │ origin, dest│
+│ book_flight  │ Book a flight...        │ flight_id   │
+└──────────────┴─────────────────────────┴─────────────┘
+
+STEP 1 - Enter your action as the agent:
+(Type 'quit' to exit, 'help' for commands, 'tools' to see available tools, 'policy' to see agent policy)
+Action> Hello! I can help you book a flight. What's your destination?
+```
+
+**Solo Mode Example:**
+```bash
+Enable Solo Mode? (y/n) [n]> y
+✅ Selected mode: Solo
+
+🎫 Task Ticket
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Customer Issue: Mobile data not working                                     │
+│ Customer ID: user_123                                                       │
+│ Problem: Customer reports unable to access internet on mobile device       │
+│ Steps to resolve: Check account status, verify data plan, troubleshoot...  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+STEP 1 - Enter your action as the agent:
+(Type 'quit' to exit, 'help' for commands, 'tools' to see available tools, 'policy' to see agent policy, 'ticket' to see task ticket)
+Action> get_user_details(user_id='user_123')
+```
+
+This mode is useful for:
+- Understanding how agents interact with domains
+- Testing domain functionality manually
+- Debugging agent behavior
+- Learning the available tools and policies
+- **Practicing both conversational and independent problem-solving scenarios**
+
 ## Experiments
 
 ### Running Ablation Studies (No User, or Agent with Oracle Plan)
@@ -262,6 +387,9 @@ To enable LLM calls caching:
 
 ## Evaluate Your Own Agent
 For local or remote agent evaluation, see our [agent developer guide](src/tau2/agent/README.md).
+
+### Programmatic Environment Access
+For programmatic agent evaluation, you can use the Gymnasium-compatible environment. This provides a standardized gym interface for step-by-step agent interaction. See the [gym README](src/tau2/gym/README.md) for detailed usage examples and API documentation.
 
 ## Orchestration Sequence Diagram
 
