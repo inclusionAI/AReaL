@@ -47,6 +47,7 @@ class DistributedTrainController(TrainController):
         scheduling = self.train_engine.get_scheduling_config()
         scheduling_config = SchedulingConfig(replicas=self.allocate_mode.train_world_size)
 
+        print(f"fenghui debug: args: {args}, kwargs: {kwargs}")
         target = kwargs.get("colocation_with")
         scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
         print(f"fenghui debug scheduling_config: {scheduling_config}")
@@ -83,7 +84,7 @@ class DistributedTrainController(TrainController):
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
 
-        self.scheduler.create_workers("train",scheduling_config, schedule_strategy = target)
+        self.scheduler.create_workers("train",scheduling_config)
 
         self.workers = self.scheduler.get_workers("train", timeout=60*5)
 

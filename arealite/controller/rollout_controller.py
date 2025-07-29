@@ -138,7 +138,7 @@ class DistributedRolloutController(RolloutController):
         scheduling_config.specs.append(engineSpec)
 
 
-        self.job_id = self.scheduler.create_workers("rollout", scheduling_config)
+        self.uid = self.scheduler.create_workers("rollout", scheduling_config)
 
         self.workers = self.scheduler.get_workers("rollout", timeout=5 * 60)
         # 如果1个实例跨机部署，返回的server_addrs是engine实例数的整数倍;e.g. dp2tp8pp2, 需要2个engine，返回了4个server_addrs， 只有index==0|2的才是真正的服务地址
