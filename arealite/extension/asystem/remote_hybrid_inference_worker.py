@@ -93,7 +93,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 body["engine_config"] = self.config.engine_config
                 rank_config = {
                     "master_addr": master_addr,
-                    "master_port": master_port,
+                    "master_port": '10011',#master_port,
                     "world_size": world_size,
                     "global_rank": global_rank,
                     "dp_size": self.config.dp_size,
@@ -116,6 +116,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             try:
                 for future in as_completed(futures):
                     response = future.result()
+                    print(f"[RemoteHybridInferenceWorker] response: {response._content}")
                     response.raise_for_status()  # 自动处理 4xx/5xx 状态码
                     result = response.json()
                     logger.info(f"[RemoteHybridInferenceWorker] initialize success, response: {result}")

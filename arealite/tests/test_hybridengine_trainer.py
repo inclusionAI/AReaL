@@ -99,7 +99,7 @@ def main_grpo():
     os.environ['WANDB_API_KEY'] = 'local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe'
     os.environ["WANDB_BASE_URL"] = "https://slurm.alipay.com"
     deploy_mode = "colocation"
-    allocation_mode = "sglang.d4t8p1+d32t1p1"
+    allocation_mode = "sglang.d1t8p1+d8t1p1"
     allocate_mode = AllocationMode.from_str(allocation_mode)
     storage_path = "/storage/openpsi/checkpoints/{experiment_name}/{trial_name}".format(
         experiment_name=experiment_name, trial_name=trial_name)

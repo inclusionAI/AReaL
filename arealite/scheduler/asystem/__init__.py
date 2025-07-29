@@ -79,6 +79,7 @@ class AsystemScheduler(Scheduler):
         if job_uid:
             self.submitted_jobs[worker_key] = job_uid
             logger.info(f"Job {job_name} submitted with UID: {job_uid}")
+            return job_uid
         else:
             raise RuntimeError(f"Failed to submit job: {job_info}")
 

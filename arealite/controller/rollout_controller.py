@@ -131,7 +131,7 @@ class DistributedRolloutController(RolloutController):
         engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13060133-20250724003115.sif"
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         engineSpec.env_vars["WORKER_TYPE"] = "rollout-engine"
-        engineSpec.env_vars["WORK_MODE"] = "INFERENCE"
+        engineSpec.env_vars["WORK_MODE"] = "GENERATION"
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
