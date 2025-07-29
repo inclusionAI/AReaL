@@ -128,7 +128,7 @@ class DistributedRolloutController(RolloutController):
             env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
             portCount=3
         )
-        engineSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test-bugfix/AReaL"
+        engineSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/Asystem-HybridEngine"
         engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13060133-20250724003115.sif"
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         engineSpec.env_vars["WORKER_TYPE"] = "inference-main-worker"

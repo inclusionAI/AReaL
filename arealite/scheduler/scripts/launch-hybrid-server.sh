@@ -33,8 +33,6 @@ env >> ${WORKER_LOG_FILE}
 
 echo "ASystem Worker Command: ${WORKER_COMMAND}" >> ${WORKER_LOG_FILE}
 
-
-cd ${REAL_PACKAGE_PATH}/arealite/scheduler/scripts
 uname -a >> ${WORKER_LOG_FILE}
 
 #systemctl stop nanovisor
@@ -83,4 +81,5 @@ sync_copy() {
 sync_copy
 WORKER_IMAGE="/tmp/image_hybrid_engine.sif"
 echo "before start." >> ${WORKER_LOG_FILE}
-singularity --debug exec --pid --nv --no-home --writable-tmpfs --bind /storage:/storage "${WORKER_IMAGE}" bash -c "export PATH=/opt/conda/bin:$PATH; export PYTHONPATH=${REAL_PACKAGE_PATH}:$PYTHONPATH;python -m asystem_runtime.hybrid_server --port 0" >> ${WORKER_LOG_FILE} 2>&1
+singularity --debug exec --pid --nv --no-home --writable-tmpfs --bind /storage:/storage "${WORKER_IMAGE}" bash -c "export PATH=/opt/conda/bin:$PATH; export PYTHONPATH=${REAL_PACKAGE_PATH}:/storage/openpsi/codes/antllm:/storage/openpsi/codes/atorch:/storage/openpsi/codes/Asystem-HybridEngine:/storage/openpsi/codes/Megatron-LM:/storage/openpsi/codes/Megatron-LM/ant_utils/dcp_utils:$PYTHONPATH;python -m asystem_runtime.hybrid_server --port 0" >> ${WORKER_LOG_FILE} 2>&1
+

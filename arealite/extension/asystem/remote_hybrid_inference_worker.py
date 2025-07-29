@@ -43,8 +43,6 @@ RID_CACHE_SIZE = 128
 class RemoteHypidInferenceInitConfig:
     main_server_addrs: list[str]  # dp address
 
-    global_rank: int
-
 
 class RemoteHybridInferenceWorker(InferenceEngine):
     def __init__(self, config: RemoteHybridInferenceConfig):
@@ -69,6 +67,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         master_addr_info = initialize_cfg.main_server_addrs[0]
         master_addr, master_port = master_addr_info.split(":")
         world_size = len(initialize_cfg.main_server_addrs)
+        seeding.set_random_seed(1, self.config.experiment_name)
         for index, engine_addrs in enumerate(initialize_cfg.main_server_addrs):
             global_rank = index
             server_ip_port = engine_addrs.split(":")
