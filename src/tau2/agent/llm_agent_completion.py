@@ -1,3 +1,8 @@
+"""
+This modules implement LLMAgent using the base completion API (instead of the chat API with tools passed as a special parameter).
+This allows for full control over the prompt sent to the LLM.
+"""
+
 import json
 import re
 from copy import deepcopy
@@ -11,6 +16,7 @@ from tau2.agent.base import (
     LocalAgent,
     ValidAgentInputMessage,
     is_valid_agent_history_message,
+    validate_message_format,
 )
 from tau2.data_model.message import (
     APICompatibleMessage,
@@ -25,10 +31,10 @@ from tau2.data_model.tasks import Action, Task
 from tau2.environment.tool import Tool, as_tool
 from tau2.utils.llm_utils import generate
 
-RESPOND_ACTION_NAME = "respond"
+RESPOND_ACTION_NAME = "respond"  # Not used.
 
 
-def parse_message(msg: AssistantMessage) -> None:
+def parse_message(msg: AssistantMessage, solo: bool = False) -> AssistantMessage:
     """Parse the text content into reasoning steps, and tool call.
     The message.content should be in the following formats:
     Option 1:
@@ -58,19 +64,21 @@ def parse_message(msg: AssistantMessage) -> None:
 
     If the message is in the first format, the tool call will be parsed into the following fields:
     - msg.reasoning: The reasoning steps.
-    - msg.content: The message to the user.
     - msg.tool_calls: The json parsed tool call.
 
-    If the message is in the second or third format, it will be parsed as a user message.
+    If the message is in the second or third format, it will be parsed into the following fields:
+    - msg.reasoning: The reasoning steps.
+    - msg.content: The message to the user.
     """
+    msg = deepcopy(msg)
     text_content = msg.content
     if text_content is None:
-        return
+        return msg
 
     logger.debug(f"Parsing message content: {text_content}.")
     # Initialize variables
     reasoning = None
-    user_message = None
+    message_to_user = None
     tool_calls = None
 
     # Extract reasoning content between "Thought:" and the next section
@@ -108,26 +116,31 @@ def parse_message(msg: AssistantMessage) -> None:
             r"Respond:\s*(.*?)$", remaining_content, re.DOTALL | re.MULTILINE
         )
         if to_user_match:
-            user_message = to_user_match.group(1).strip()
+            message_to_user = to_user_match.group(1).strip()
         else:
             raise AgentError("Respond section found but no content could be extracted")
     else:
         # If no Action or Respond section is found, treat the entire content as a user message
         # This handles cases where the LLM sends plain text without the expected format
-        user_message = remaining_content.strip()
-        if not user_message:
+        message_to_user = remaining_content.strip()
+        if not message_to_user:
             raise AgentError("No content found in message")
 
     # Update the message object
     msg.reasoning = reasoning
-    msg.content = user_message
+    msg.content = message_to_user
     msg.tool_calls = tool_calls
 
     logger.debug(
-        f"Reasoning: {reasoning}.\n"
+        f"Reasoning: {msg.reasoning}.\n"
         f"User message: {msg.content}.\n"
         f"Tool calls: {msg.tool_calls}."
     )
+    valid, error_msg = validate_message_format(msg, solo=solo)
+    if not valid:
+        raise AgentError(f"Invalid message format: {error_msg}")
+
+    return msg
 
 
 AGENT_INSTRUCTION = """
@@ -254,6 +267,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         domain_policy: str,
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
+        allow_format_retry: bool = True,
     ):
         """
         Initialize the LLMAgent.
@@ -264,6 +278,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         self.tool_prompt = json.dumps(
             [tool.openai_schema for tool in self.tools], indent=2
         )
+        self.allow_format_retry = allow_format_retry
 
     @property
     def system_prompt(self) -> str:
@@ -305,14 +320,36 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         else:
             state.messages.append(message)
         messages = state.system_messages + state.messages
-        assistant_message = generate(
+        completion_assistant_message = generate(
             model=self.llm,
             tools=self.tools,
             messages=messages,
             **self.llm_args,
         )
-        state.messages.append(assistant_message)
-        parse_message(assistant_message)
+        valid, error_msg = True, None
+        try:
+            assistant_message = parse_message(completion_assistant_message, solo=False)
+        except AgentError as e:
+            logger.warning(f"Error: {e}. Retrying...")
+            valid, error_msg = False, str(e)
+        if not valid and self.allow_format_retry:
+            logger.warning(f"Format error: {error_msg}. Retrying...")
+            retry_messages = messages[:]
+            retry_messages.append(completion_assistant_message)
+            retry_messages.append(
+                SystemMessage(role="system", content=f"Error: {error_msg}. Try again.")
+            )
+            completion_assistant_message = generate(
+                model=self.llm,
+                tools=self.tools,
+                messages=retry_messages,
+                **self.llm_args,
+            )
+            assistant_message = parse_message(completion_assistant_message, solo=False)
+        elif not valid and not self.allow_format_retry:
+            logger.warning(f"Format error: {error_msg}. Format retry is disabled.")
+            assistant_message.errors = [error_msg]
+        state.messages.append(completion_assistant_message)
         return assistant_message, state
 
     def set_seed(self, seed: int):
@@ -440,6 +477,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
         provide_function_args: bool = True,
+        allow_format_retry: bool = True,
     ):
         """
         Initialize the LLMAgent.
@@ -456,6 +494,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         self.tool_prompt = json.dumps(
             [tool.openai_schema for tool in self.tools], indent=2
         )
+        self.allow_format_retry = allow_format_retry
 
     @classmethod
     def check_valid_task(cls, task: Task) -> bool:
@@ -511,14 +550,36 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         else:
             state.messages.append(message)
         messages = state.system_messages + state.messages
-        assistant_message = generate(
+        completion_assistant_message = generate(
             model=self.llm,
             tools=self.tools,
             messages=messages,
             **self.llm_args,
         )
-        state.messages.append(assistant_message)
-        parse_message(assistant_message)
+        valid, error_msg = True, None
+        try:
+            assistant_message = parse_message(completion_assistant_message, solo=False)
+        except AgentError as e:
+            logger.warning(f"Error: {e}. Retrying...")
+            valid, error_msg = False, str(e)
+        if not valid and self.allow_format_retry:
+            logger.warning(f"Format error: {error_msg}. Retrying...")
+            retry_messages = messages[:]
+            retry_messages.append(completion_assistant_message)
+            retry_messages.append(
+                SystemMessage(role="system", content=f"Error: {error_msg}. Try again.")
+            )
+            completion_assistant_message = generate(
+                model=self.llm,
+                tools=self.tools,
+                messages=retry_messages,
+                **self.llm_args,
+            )
+            assistant_message = parse_message(completion_assistant_message)
+        elif not valid and not self.allow_format_retry:
+            logger.warning(f"Format error: {error_msg}. Format retry is disabled.")
+            assistant_message.errors = [error_msg]
+        state.messages.append(completion_assistant_message)
         return assistant_message, state
 
     def set_seed(self, seed: int):
@@ -685,6 +746,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         task: Task,
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
+        allow_format_retry: bool = True,
     ):
         """
         Initialize the LLMAgent.

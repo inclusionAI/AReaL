@@ -11,7 +11,7 @@ This script demonstrates:
 import json
 from typing import List
 
-from tau2.agent.llm_agent_v2 import LLMAgentV2
+from tau2.agent.llm_agent_completion_advanced import LLMAgentV2
 from tau2.data_model.message import ToolMessage, UserMessage
 from tau2.environment.tool import Tool, as_tool
 

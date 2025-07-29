@@ -5,10 +5,10 @@ from loguru import logger
 from pydantic import BaseModel
 
 from tau2.agent.base import (
-    AgentError,
     LocalAgent,
     ValidAgentInputMessage,
     is_valid_agent_history_message,
+    validate_message_format,
 )
 from tau2.data_model.message import (
     APICompatibleMessage,
@@ -21,27 +21,6 @@ from tau2.data_model.message import (
 from tau2.data_model.tasks import Action, Task
 from tau2.environment.tool import Tool, as_tool
 from tau2.utils.llm_utils import generate
-
-
-def validate_message_default(message: AssistantMessage) -> tuple[bool, str]:
-    """Validate the message."""
-    has_content = message.has_text_content()
-    is_tool_call = message.is_tool_call()
-    if not has_content and not is_tool_call:
-        return False, "You sent an empty message. Each message must contain either a text content (message to the user) or tool calls (actions to perform). Message cannot contain both or be empty."
-    if has_content and is_tool_call:
-        return False, "You sent a message with both text content and tool calls. Each message must contain either a text content (message to the user) or tool calls (actions to perform). Message cannot contain both or be empty."
-    return True, None
-
-def validate_message_solo(message: AssistantMessage) -> tuple[bool, str]:
-    """Validate the message."""
-    has_content = message.has_text_content()
-    is_tool_call = message.is_tool_call()
-    if not has_content and not is_tool_call:
-        return False, "You sent an empty message. Each message must contain tool calls and no other text content."
-    if has_content:
-        return False, "You sent a message with text content. Each message must contain tool calls and no other text content."
-    return True, None
 
 AGENT_INSTRUCTION = """
 You are a customer service agent that helps the user according to the <policy> provided below.
@@ -83,6 +62,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         domain_policy: str,
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
+        allow_format_retry: bool = True,
     ):
         """
         Initialize the LLMAgent.
@@ -90,6 +70,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         super().__init__(tools=tools, domain_policy=domain_policy)
         self.llm = llm
         self.llm_args = deepcopy(llm_args) if llm_args is not None else {}
+        self.allow_format_retry = allow_format_retry
 
     @property
     def system_prompt(self) -> str:
@@ -135,9 +116,9 @@ class LLMAgent(LocalAgent[LLMAgentState]):
             messages=messages,
             **self.llm_args,
         )
-        valid, error_msg = validate_message_default(assistant_message)
-        if not valid:
-            logger.warning(f"Error: {error_msg}. Retrying...")
+        valid, error_msg = validate_message_format(assistant_message, solo=False)
+        if not valid and self.allow_format_retry:
+            logger.warning(f"Format error: {error_msg}. Retrying...")
             error = f"Invalid message format. Original message: {assistant_message}. Error: {error_msg}"
             retry_messages = messages[:]
             retry_messages.append(assistant_message)
@@ -151,6 +132,9 @@ class LLMAgent(LocalAgent[LLMAgentState]):
                 **self.llm_args,
             )
             assistant_message.errors = [error]
+        elif not valid and not self.allow_format_retry:
+            logger.warning(f"Format error: {error_msg}. Format retry is disabled.")
+            assistant_message.errors = [error_msg]
         state.messages.append(assistant_message)
         return assistant_message, state
 
@@ -208,6 +192,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
         provide_function_args: bool = True,
+        allow_format_retry: bool = True,
     ):
         """
         Initialize the LLMAgent.
@@ -221,6 +206,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         self.llm = llm
         self.llm_args = deepcopy(llm_args) if llm_args is not None else {}
         self.provide_function_args = provide_function_args
+        self.allow_format_retry = allow_format_retry
 
     @classmethod
     def check_valid_task(cls, task: Task) -> bool:
@@ -281,9 +267,9 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
             messages=messages,
             **self.llm_args,
         )
-        valid, error_msg = validate_message_default(assistant_message)
-        if not valid:
-            logger.warning(f"Error: {error_msg}. Retrying...")
+        valid, error_msg = validate_message_format(assistant_message, solo=False)
+        if not valid and self.allow_format_retry:
+            logger.warning(f"Format error: {error_msg}. Retrying...")
             error = f"Invalid message format. Original message: {assistant_message}. Error: {error_msg}"
             retry_messages = messages[:]
             retry_messages.append(assistant_message)
@@ -297,6 +283,9 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
                 **self.llm_args,
             )
             assistant_message.errors = [error]
+        elif not valid and not self.allow_format_retry:
+            logger.warning(f"Format error: {error_msg}. Format retry is disabled.")
+            assistant_message.errors = [error_msg]
         state.messages.append(assistant_message)
         return assistant_message, state
 
@@ -402,6 +391,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         self.add_stop_tool()
         self.validate_tools()
         self.allow_format_retry = allow_format_retry
+
     def add_stop_tool(self) -> None:
         """Add the stop tool to the tools."""
 
@@ -522,9 +512,9 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
             tool_choice="required",
             **self.llm_args,
         )
-        valid, error_msg = validate_message_solo(assistant_message)
+        valid, error_msg = validate_message_format(assistant_message, solo=True)
         if not valid and self.allow_format_retry:
-            logger.warning(f"Error: {error_msg}. Retrying...")
+            logger.warning(f"Format error: {error_msg}. Retrying...")
             error = f"Invalid message format. Original message: {assistant_message}. Error: {error_msg}"
             retry_messages = messages[:]
             retry_messages.append(assistant_message)
@@ -539,6 +529,9 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
                 **self.llm_args,
             )
             assistant_message.errors = [error]
+        elif not valid and not self.allow_format_retry:
+            logger.warning(f"Format error: {error_msg}. Format retry is disabled.")
+            assistant_message.errors = [error_msg]
         message = self._check_if_stop_toolcall(assistant_message)
         state.messages.append(assistant_message)
         return assistant_message, state
