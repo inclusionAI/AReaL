@@ -21,6 +21,7 @@ class ContainerSpec:
     env_vars: Dict[str, str] = field(default_factory=dict)
     portCount: int = 2
 
+@dataclass
 class ScheduleStrategy:
     type: str = ""
     uid: str = ""

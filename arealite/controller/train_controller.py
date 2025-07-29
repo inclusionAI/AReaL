@@ -49,6 +49,7 @@ class DistributedTrainController(TrainController):
 
         target = kwargs.get("colocation_with")
         scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
+        print(f"fenghui debug scheduling_config: {scheduling_config}")
 
         workerSpec = ContainerSpec(
             cpu=0,
@@ -62,7 +63,7 @@ class DistributedTrainController(TrainController):
         workerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
         workerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
             experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
-        workerSpec.env_vars["WORKER_TYPE"] = "model-worker"
+        workerSpec.env_vars["WORKER_TYPE"] = "training-worker"
 
         engineSpec = ContainerSpec(
             cpu=0,
@@ -76,7 +77,7 @@ class DistributedTrainController(TrainController):
         engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13060133-20250724003115.sif"
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
             experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
-        engineSpec.env_vars["WORKER_TYPE"] = "model-worker"
+        engineSpec.env_vars["WORKER_TYPE"] = "training-engine"
         engineSpec.env_vars["WORK_MODE"] = "TRAINING"
 
         scheduling_config.specs.append(workerSpec)
