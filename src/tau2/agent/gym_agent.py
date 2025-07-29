@@ -9,7 +9,12 @@ from pydantic import BaseModel
 
 from tau2.agent.base import LocalAgent, ValidAgentInputMessage
 from tau2.config import DEFAULT_LLM_ARGS_USER, DEFAULT_LLM_USER
-from tau2.data_model.message import AssistantMessage, Message, MultiToolMessage
+from tau2.data_model.message import (
+    APICompatibleMessage,
+    AssistantMessage,
+    Message,
+    MultiToolMessage,
+)
 from tau2.data_model.simulation import Task
 from tau2.environment.environment import Environment
 from tau2.environment.tool import Tool
@@ -20,15 +25,31 @@ from tau2.user.user_simulator import UserSimulator
 class GymAgentState(BaseModel):
     """The state of the agent."""
 
-    messages: list[Any]
+    messages: list[APICompatibleMessage]
 
 
 class GymAgent(LocalAgent):
     """
-    A gym agent that can be used to solve a task with a gym-like interface.
+    A gym-style agent that provides a step-based interface for task execution.
+
+    This agent implements a gym-like interface where external code can control
+    the agent's actions step-by-step. It uses threading events to synchronize
+    between the external step() calls and internal message generation.
+
+    The agent maintains an observation-action cycle:
+    1. External code calls step(action) to provide the next action
+    2. The agent processes the action and generates a response
+    3. The agent waits for the next step() call
     """
 
     def __init__(self, tools: List[Tool], domain_policy: str):
+        """
+        Initialize the gym agent with tools and domain policy.
+
+        Args:
+            tools: List of tools available to the agent
+            domain_policy: Policy string defining the agent's behavior in the domain
+        """
         super().__init__(tools=tools, domain_policy=domain_policy)
         self._observation: Optional[list[Message]] = None
         self._next_action: Optional[str] = None
@@ -38,10 +59,26 @@ class GymAgent(LocalAgent):
 
     def step(self, action: str) -> list[Message]:
         """
-        Set the next action
-        This should allow generate_next_message to continue
-        Wait until generate_next_message sets the observation
-        return the observation
+        Provide the next action to the agent and get the resulting observation.
+
+        This method implements the gym-style step interface. It provides an action
+        to the agent, waits for the agent to process it and generate a response,
+        then returns the current observation (message history).
+
+        The method uses threading events to synchronize with generate_next_message():
+        - Sets the next action and signals that an action is available
+        - Waits for generate_next_message() to process the action and set the observation
+        - Returns a copy of the current observation
+
+        Args:
+            action: The action string to be executed by the agent
+
+        Returns:
+            A deep copy of the current message history (observation)
+
+        Note:
+            This method blocks until the agent has sent the action to the orchestrator and received an observation back.
+            The returned observation includes all messages up to and including the agent's response to the provided action.
         """
         with self._lock:
             logger.info(f"Stepping with action: {action}")
@@ -62,9 +99,33 @@ class GymAgent(LocalAgent):
         self, message: ValidAgentInputMessage, state: GymAgentState
     ) -> tuple[AssistantMessage, GymAgentState]:
         """
-        Set current observation to messages
-        Wait for next_action to be set
-        Return the next message
+        Generate the next message in the conversation.
+
+        This method is called by the orchestrator to process incoming messages
+        and generate responses. It implements a two-phase synchronization:
+
+        1. **Observation Phase**: Updates the agent's observation with the current
+           message history and signals that an observation is ready
+        2. **Action Phase**: Waits for an external action to be provided via step(),
+           then generates and returns the response message
+
+        The method handles both regular messages and MultiToolMessages by
+        appropriately updating the state's message history.
+
+        Args:
+            message: The incoming message to process (can be a regular message
+                    or MultiToolMessage containing tool call results)
+            state: The current agent state containing message history
+
+        Returns:
+            A tuple containing:
+            - The generated AssistantMessage response
+            - The updated GymAgentState with the new message history
+
+        Note:
+            This method blocks during the action phase until step() is called
+            to provide the next action. The synchronization ensures that the
+            agent's responses are controlled externally through the gym interface.
         """
         with self._lock:
             logger.info(f"Got message: {message}")
@@ -90,7 +151,9 @@ class GymAgent(LocalAgent):
             self._next_action = None
 
         # Create the response message
-        response_message = AssistantMessage(role="assistant", content=action) ## FIXME: We need to handle tool calls here
+        response_message = AssistantMessage(
+            role="assistant", content=action
+        )  ## FIXME: We need to handle tool calls here
         state.messages.append(response_message)
         return response_message, state
 
@@ -98,19 +161,50 @@ class GymAgent(LocalAgent):
         self,
         message_history: Optional[list[Message]] = None,
     ) -> GymAgentState:
-        """Get the initial state of the agent."""
+        """
+        Create and return the initial state for the agent.
+
+        Args:
+            message_history: Optional list of existing messages to initialize
+                           the state with. If None, starts with an empty list.
+
+        Returns:
+            A new GymAgentState instance with the provided or empty message history
+        """
         messages = message_history.copy() if message_history else []
         return GymAgentState(messages=messages)
 
     @property
     def waiting_for_input(self) -> bool:
-        """Check if the agent is waiting for input via step()."""
+        """
+        Check if the agent is currently waiting for input via step().
+
+        This property indicates whether the agent has set an observation
+        and is waiting for an external action to be provided through
+        the step() method.
+
+        Returns:
+            True if the agent is waiting for input, False otherwise
+        """
         return self._observation_set.is_set() and not self._action_received.is_set()
 
     def reset(self) -> list[Message]:
         """
-        Reset the agent state and wait for generate_next_message to be called for the first time.
-        Returns the initial observation from generate_next_message.
+        Reset the agent's internal state and wait for the first observation.
+
+        This method clears all internal synchronization state and waits
+        for generate_next_message() to be called for the first time to
+        set the initial observation.
+
+        Returns:
+            A deep copy of the initial observation (message history) once
+            generate_next_message() has been called and set the observation.
+            Returns an empty list if no observation is set.
+
+        Note:
+            This method blocks until generate_next_message() is called and
+            sets the initial observation. It's typically used to initialize
+            the agent before starting the step-action cycle.
         """
         with self._lock:
             # Clear any pending synchronization
@@ -126,12 +220,34 @@ class GymAgent(LocalAgent):
         return deepcopy(self._observation) if self._observation else []
 
 
-class TauGymEnv(gym.Env):
+class AgentGymEnv(gym.Env):
     """
-    A gym environment for the gym agent.
+    A Gymnasium environment that wraps the Tau2 simulation system.
+
+    This environment provides a standard gym interface for interacting with
+    Tau2 simulations. It manages the lifecycle of orchestrators, agents,
+    and user simulators in a thread-safe manner.
+
+    The environment coordinates between:
+    - The external gym interface (reset/step calls)
+    - The internal Tau2 orchestrator running in a separate thread
+    - The GymAgent that provides step-by-step control
+
+    Key Features:
+    - Thread-safe operation with proper synchronization
+    - Automatic orchestrator lifecycle management
+    - Standard gym observation/action spaces
+    - Graceful handling of simulation termination
     """
 
     def __init__(self, domain: str, task_id: str):
+        """
+        Initialize the Tau2 gym environment.
+
+        Args:
+            domain: The domain name (e.g., 'retail', 'telecom', 'airline')
+            task_id: The specific task ID to run within the domain
+        """
         self.domain: str = domain
         self.task_id: str = task_id
         self._lock: threading.Lock = threading.Lock()
@@ -146,18 +262,31 @@ class TauGymEnv(gym.Env):
     def reset(
         self, seed: Optional[int] = None, options: Optional[dict] = None
     ) -> tuple[str, dict]:
-        """Reset the environment.
-        This should create a new orchestrator and start it in a separate thread.
-        it should call reset on the agent and return the first observation.
-        It should return that observation.
-        At this point:
-            - the Agent should be waiting for input.
-            - The orchestrator should be waiting for the agent to get this input so that it can continue the simulation.
+        """
+        Reset the environment and start a new simulation.
+
+        This method creates a fresh simulation by:
+        1. Creating a new orchestrator with the specified domain and task
+        2. Starting the orchestrator in a separate thread
+        3. Waiting for the agent to be ready for input
+        4. Returning the initial observation
+
+        The method ensures proper cleanup of any existing simulation
+        and thread-safe initialization of the new one.
+
+        Args:
+            seed: Optional random seed for reproducibility (passed to gym.Env.reset)
+            options: Optional configuration options (passed to gym.Env.reset)
 
         Returns:
-        observation, info
+            A tuple containing:
+            - observation: String representation of the initial message history
+            - info: Dictionary with additional information (currently empty)
 
-        For now only return the observation. The info can be placeholder values.
+        Note:
+            This method blocks until the orchestrator has started and the agent
+            is waiting for the first action. If the simulation ends immediately
+            (e.g., due to an error), an empty observation is returned.
         """
         super().reset(seed=seed)
 
@@ -201,17 +330,35 @@ class TauGymEnv(gym.Env):
 
     def step(self, action: str) -> tuple[str, dict, bool, bool, dict]:
         """
-        Provide an action and continue the simulation.
-        - This should call step on the agent and return the observation along with other required values
-        At this point:
-            - The agent should be waiting for input.
-            - The orchestrator should be waiting for the agent to get this input so that it can continue the simulation.
-        We should check if the orchestrator is done.
+        Execute an action and advance the simulation.
+
+        This method provides the standard gym step interface. It:
+        1. Passes the action to the GymAgent via its step() method
+        2. Waits for the agent to process the action and receive a response
+        3. Checks if the simulation has terminated
+        4. Returns the updated observation and termination status
+
+        The method handles the coordination between the external gym interface
+        and the internal Tau2 simulation running in a separate thread.
+
+        Args:
+            action: The action string to be executed by the agent
 
         Returns:
-        observation, reward, terminated, truncated, info
+            A tuple containing:
+            - observation: String representation of the current message history
+            - reward: Always 0.0 (not used in current implementation)
+            - terminated: True if the simulation has ended, False otherwise
+            - truncated: Always False (not used in current implementation)
+            - info: Dictionary with additional information (currently empty)
 
-        For now only return the observation and terminated. The rest can be placeholder values.
+        Raises:
+            RuntimeError: If reset() has not been called before step()
+
+        Note:
+            This method blocks until the agent has processed the action and
+            is ready for the next step. The simulation may terminate during
+            this process, in which case terminated will be True.
         """
         if self._orchestrator is None:
             raise RuntimeError("Orchestrator not initialized. Call reset() first.")
@@ -236,7 +383,17 @@ class TauGymEnv(gym.Env):
             return observation_str, 0.0, terminated, False, {}
 
     def _run_orchestrator(self):
-        """Run the orchestrator in a separate thread."""
+        """
+        Run the orchestrator in a separate thread.
+
+        This private method is the target for the orchestrator thread.
+        It runs the orchestrator's main simulation loop and handles
+        any exceptions that occur during execution.
+
+        The method sets the _simulation_done flag when the orchestrator
+        finishes (either normally or due to an error), which signals
+        to the main thread that the simulation has ended.
+        """
         try:
             if self._orchestrator:
                 self._orchestrator.run()
@@ -246,19 +403,51 @@ class TauGymEnv(gym.Env):
             self._simulation_done = True
 
     def _format_observation(self, messages: list[Message]) -> str:
-        """Format the observation as a string."""
+        """
+        Convert a list of messages to a string observation.
+
+        This method formats the message history into a readable string
+        format for the gym observation space. Each message is formatted
+        as "role: content" and messages are separated by newlines.
+
+        Args:
+            messages: List of Message objects representing the conversation history
+
+        Returns:
+            A string representation of the message history, or empty string
+            if no messages are provided
+        """
         if not messages:
             return ""
         return "\n".join([f"{m.role}: {m.content}" for m in messages])
 
     def get_environment(self) -> Environment:
-        """Get the environment."""
+        """
+        Create and return the environment for the specified domain.
+
+        This method uses the registry to construct the appropriate
+        environment instance based on the domain name.
+
+        Returns:
+            An Environment instance configured for the specified domain
+        """
         from tau2.registry import registry
 
         return registry.get_env_constructor(self.domain)()
 
     def get_task(self) -> Task:
-        """Get the task."""
+        """
+        Retrieve the task configuration for the specified task ID.
+
+        This method loads all tasks for the domain and finds the one
+        matching the specified task_id.
+
+        Returns:
+            The Task object corresponding to the specified task_id
+
+        Raises:
+            StopIteration: If no task is found with the specified task_id
+        """
         from tau2.registry import registry
 
         return next(
@@ -268,7 +457,15 @@ class TauGymEnv(gym.Env):
         )
 
     def get_agent(self) -> GymAgent:
-        """Get the agent."""
+        """
+        Create and return a GymAgent instance for the domain.
+
+        This method creates a GymAgent with the tools and policy
+        from the domain's environment.
+
+        Returns:
+            A GymAgent instance configured with the domain's tools and policy
+        """
         environment = self.get_environment()
         return GymAgent(
             tools=environment.get_tools(),
@@ -276,7 +473,17 @@ class TauGymEnv(gym.Env):
         )
 
     def get_user(self) -> UserSimulator:
-        """Get the user."""
+        """
+        Create and return a UserSimulator instance for the task.
+
+        This method creates a UserSimulator with the task's user scenario
+        and any available user tools from the environment. If user tools
+        are not available for the domain, they are set to None.
+
+        Returns:
+            A UserSimulator instance configured with the task's user scenario
+            and domain-specific user tools (if available)
+        """
         environment = self.get_environment()
         task = self.get_task()
         try:
@@ -291,7 +498,17 @@ class TauGymEnv(gym.Env):
         )
 
     def get_orchestrator(self) -> Orchestrator:
-        """Get the orchestrator."""
+        """
+        Create and return an Orchestrator instance for the simulation.
+
+        This method creates a complete Orchestrator with all necessary
+        components: agent, user, environment, and task. The orchestrator
+        coordinates the interaction between these components during the
+        simulation.
+
+        Returns:
+            An Orchestrator instance configured with all simulation components
+        """
         return Orchestrator(
             domain=self.domain,
             agent=self.get_agent(),
@@ -299,7 +516,3 @@ class TauGymEnv(gym.Env):
             environment=self.get_environment(),
             task=self.get_task(),
         )
-    
-
-# if __name__ == "__main__":
-#     env = TauGymEnv(domain="retail", task_id="1")

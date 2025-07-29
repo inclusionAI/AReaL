@@ -160,6 +160,12 @@ def main():
         )
     )
 
+    # Play command
+    play_parser = subparsers.add_parser(
+        "play", help="Play manual mode - interact with a domain as the agent"
+    )
+    play_parser.set_defaults(func=lambda args: run_manual_mode())
+
     # View command
     view_parser = subparsers.add_parser("view", help="View simulation results")
     view_parser.add_argument(
@@ -232,6 +238,12 @@ def run_check_data():
     from tau2.scripts.check_data import main as check_data_main
 
     check_data_main()
+
+
+def run_manual_mode():
+    from tau2.scripts.manual_mode import main as manual_main
+
+    manual_main()
 
 
 if __name__ == "__main__":

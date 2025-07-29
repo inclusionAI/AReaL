@@ -1,7 +1,7 @@
 import gymnasium as gym
 import pytest
 
-from tau2.agent.gym_agent import GymAgent, TauGymEnv
+from tau2.agent.gym_agent import AgentGymEnv, GymAgent
 from tests.utils import timeout
 
 
@@ -10,7 +10,7 @@ class TestTauGymEnv:
 
     def test_tau_gym_env_initialization(self):
         """Test that TauGymEnv initializes correctly."""
-        env = TauGymEnv(domain="mock", task_id="create_task_1")
+        env = AgentGymEnv(domain="mock", task_id="create_task_1")
 
         assert env.domain == "mock"
         assert env.task_id == "create_task_1"
@@ -24,7 +24,7 @@ class TestTauGymEnv:
     @timeout(10)
     def test_tau_gym_env_reset(self):
         """Test that TauGymEnv reset works correctly."""
-        env = TauGymEnv(domain="mock", task_id="create_task_1")
+        env = AgentGymEnv(domain="mock", task_id="create_task_1")
 
         # Test reset
         observation, info = env.reset()
@@ -46,7 +46,7 @@ class TestTauGymEnv:
     @timeout(15)
     def test_tau_gym_env_step(self):
         """Test that TauGymEnv step works correctly."""
-        env = TauGymEnv(domain="mock", task_id="create_task_1")
+        env = AgentGymEnv(domain="mock", task_id="create_task_1")
 
         # Reset the environment first
         observation, info = env.reset()
@@ -68,7 +68,7 @@ class TestTauGymEnv:
     @timeout(20)
     def test_tau_gym_env_multiple_steps(self):
         """Test that TauGymEnv can handle multiple steps."""
-        env = TauGymEnv(domain="mock", task_id="create_task_1")
+        env = AgentGymEnv(domain="mock", task_id="create_task_1")
 
         # Reset the environment
         observation, info = env.reset()
@@ -96,7 +96,7 @@ class TestTauGymEnv:
 
     def test_tau_gym_env_step_without_reset(self):
         """Test that TauGymEnv raises an error when step is called without reset."""
-        env = TauGymEnv(domain="mock", task_id="create_task_1")
+        env = AgentGymEnv(domain="mock", task_id="create_task_1")
 
         # Try to step without reset
         with pytest.raises(RuntimeError, match="Orchestrator not initialized"):
@@ -105,7 +105,7 @@ class TestTauGymEnv:
     @timeout(15)
     def test_tau_gym_env_reset_multiple_times(self):
         """Test that TauGymEnv can be reset multiple times."""
-        env = TauGymEnv(domain="mock", task_id="create_task_1")
+        env = AgentGymEnv(domain="mock", task_id="create_task_1")
 
         # Reset multiple times
         for i in range(3):
@@ -120,7 +120,7 @@ class TestTauGymEnv:
     @timeout(15)
     def test_tau_gym_env_observation_format(self):
         """Test that TauGymEnv formats observations correctly."""
-        env = TauGymEnv(domain="mock", task_id="create_task_1")
+        env = AgentGymEnv(domain="mock", task_id="create_task_1")
 
         # Reset the environment
         observation, info = env.reset()
@@ -143,7 +143,7 @@ class TestTauGymEnv:
     @timeout(30)
     def test_tau_gym_env_termination(self):
         """Test that TauGymEnv properly handles simulation termination."""
-        env = TauGymEnv(domain="mock", task_id="create_task_1")
+        env = AgentGymEnv(domain="mock", task_id="create_task_1")
 
         # Reset the environment
         observation, info = env.reset()
@@ -167,7 +167,7 @@ class TestTauGymEnv:
     @timeout(15)
     def test_tau_gym_env_thread_safety(self):
         """Test that TauGymEnv handles threading correctly."""
-        env = TauGymEnv(domain="mock", task_id="create_task_1")
+        env = AgentGymEnv(domain="mock", task_id="create_task_1")
 
         # Reset the environment
         observation, info = env.reset()
@@ -186,7 +186,7 @@ class TestTauGymEnv:
     def test_tau_gym_env_invalid_domain(self):
         """Test that TauGymEnv handles invalid domain gracefully."""
         with pytest.raises(Exception):  # Should raise some exception for invalid domain
-            env = TauGymEnv(domain="invalid_domain", task_id="create_task_1")
+            env = AgentGymEnv(domain="invalid_domain", task_id="create_task_1")
             env.reset()
 
     def test_tau_gym_env_invalid_task_id(self):
@@ -194,12 +194,12 @@ class TestTauGymEnv:
         with pytest.raises(
             StopIteration
         ):  # Should raise StopIteration for invalid task_id
-            env = TauGymEnv(domain="mock", task_id="invalid_task_id")
+            env = AgentGymEnv(domain="mock", task_id="invalid_task_id")
             env.reset()
 
     def test_tau_gym_env_reset_simple(self):
         """Test that TauGymEnv reset creates components correctly without running full simulation."""
-        env = TauGymEnv(domain="mock", task_id="create_task_1")
+        env = AgentGymEnv(domain="mock", task_id="create_task_1")
 
         # Test that components can be created
         environment = env.get_environment()
@@ -223,7 +223,7 @@ class TestTauGymEnv:
 
     def test_tau_gym_env_basic_functionality(self):
         """Test basic TauGymEnv functionality without running full simulation."""
-        env = TauGymEnv(domain="mock", task_id="create_task_1")
+        env = AgentGymEnv(domain="mock", task_id="create_task_1")
 
         # Test initialization
         assert env.domain == "mock"
@@ -252,7 +252,7 @@ if __name__ == "__main__":
     # Run a simple test with timeout
     @timeout(30)
     def run_basic_test():
-        env = TauGymEnv(domain="mock", task_id="create_task_1")
+        env = AgentGymEnv(domain="mock", task_id="create_task_1")
         observation, info = env.reset()
         print(f"Initial observation: {observation}")
 

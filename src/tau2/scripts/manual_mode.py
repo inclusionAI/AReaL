@@ -4,8 +4,9 @@ Manual mode script for interacting with TauGymEnv as the agent.
 Allows users to play the role of the agent in a domain.
 """
 
-from tau2.agent.gym_agent import TauGymEnv
+from tau2.agent.gym_agent import AgentGymEnv
 from tau2.run import get_options, load_tasks
+from tau2.utils.tools import is_functional_tool_call, parse_functional_tool_call
 
 
 def display_domains():
@@ -66,7 +67,7 @@ def display_tasks(domain: str):
             print("Please enter a valid number")
 
 
-def get_available_tools(env: TauGymEnv):
+def get_available_tools(env: AgentGymEnv):
     """Get available tools for the environment."""
     try:
         environment = env.get_environment()
@@ -133,7 +134,7 @@ def format_observation(observation: str, step_count: int):
     print("=" * 60)
 
 
-def get_user_action(env: TauGymEnv, step_count: int) -> str:
+def get_user_action(env: AgentGymEnv, step_count: int) -> str:
     """Get the next action from the user."""
     print(f"\n🎯 STEP {step_count} - Enter your action as the agent:")
     print("(Type 'quit' to exit, 'help' for commands, 'tools' to see available tools)")
@@ -150,12 +151,28 @@ def get_user_action(env: TauGymEnv, step_count: int) -> str:
             print("- 'tools': Show available tools")
             print("\n💡 Tips:")
             print("- You can use tools by typing their names and parameters")
-            print("- Example: 'search_flights' or 'book_ticket'")
+            print('- Example: \'search_flights(origin="NYC", destination="LAX")\'')
             print("- Be conversational and helpful to the user")
         elif action.lower() == "tools":
             tools = get_available_tools(env)
             display_tools(tools)
         elif action:
+            # Check if the action looks like a functional tool call
+            if is_functional_tool_call(action):
+                try:
+                    # Parse the functional tool call
+                    tool_call = parse_functional_tool_call(action)
+                    print(
+                        f"🔧 Parsed tool call: {tool_call.name} with arguments: {tool_call.arguments}"
+                    )
+                    # Return the action as-is for now - the environment will handle the tool call
+                    return action
+                except (ValueError, SyntaxError) as e:
+                    print(f"❌ Error parsing tool call: {e}")
+                    print(
+                        "Please check the format. Example: function_name(arg1='value1', arg2=123)"
+                    )
+                    continue
             return action
         else:
             print("Please enter a valid action")
@@ -184,7 +201,7 @@ def main():
         print(
             f"\n🔧 Initializing environment for domain '{domain}' and task '{task.id}'..."
         )
-        env = TauGymEnv(domain=domain, task_id=task.id)
+        env = AgentGymEnv(domain=domain, task_id=task.id)
 
         # Show available tools
         tools = get_available_tools(env)
