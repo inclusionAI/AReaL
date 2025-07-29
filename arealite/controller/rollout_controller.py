@@ -53,7 +53,7 @@ class DistributedRolloutController(RolloutController):
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             for i in range(self.allocate_mode.gen_dp_size):
                 # 获取当前 master worker 的地址
-                master_worker = self.workers[self.server_group_size * i]
+                master_worker = self.workers[self.dp_world_size * i]
 
                 # 如果 batches 为空，使用通用参数；否则使用 batch 中的特定参数
                 if batches and i < len(batches):
@@ -99,10 +99,9 @@ class DistributedRolloutController(RolloutController):
         # 二、多组sglang实例在同一台机器部署，如tp4pp1 2个实例可以部署在1台机器上（每台机器8卡）
 
         scheduling = self.inf_engine.get_scheduling_config()
-        assert scheduling.gpu == self.dp_world_size
 
         # replicas = self.allocate_mode.gen_world_size * node_count if scheduling.gpu >= n_gpu_per_node else self.allocate_mode.gen_world_size
-        scheduling_config = SchedulingConfig(replicas=self.allocate_mode.gen_dp_size)
+        scheduling_config = SchedulingConfig(replicas=self.allocate_mode.gen_world_size)
         target = kwargs.get("colocation_with")
         scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
 
@@ -148,21 +147,22 @@ class DistributedRolloutController(RolloutController):
         ]
         assert len(worker_addrs) % self.allocate_mode.gen_dp_size == 0
 
-        self.server_group_size = len(worker_addrs) // self.allocate_mode.gen_dp_size
-
         futures = []
 
         time.sleep(100)
 
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
-            for i in range(self.allocate_mode.gen_dp_size):
-                master_worker = self.workers[self.server_group_size * i]
+            # for i in range(self.allocate_mode.gen_dp_size):
+            for index, worker in enumerate(self.workers):
+                if index % self.dp_world_size != 0:
+                    continue
+                master_worker = self.workers[index]
                 worker_addrs = [
-                    f"{worker.ip}:{worker.ports[0]}" for worker in self.workers[self.server_group_size * i:self.server_group_size * i+1] if worker.ports
+                    f"{worker.ip}:{worker.ports[0]}" for worker in self.workers[index:index+self.dp_world_size] if worker.ports
                 ]
                 engine_addrs_list = [
                     [f"{worker.ip}:{port}" for worker in
-                     self.workers[self.server_group_size * i:self.server_group_size * (i + 1)] for port in worker.ports[1:]]
+                     self.workers[index:index+self.dp_world_size] for port in worker.ports[1:]]
                 ]
                 if isinstance(self.inf_engine, RemoteSGLangEngine):
                     init_config = RemoteSGLangInitConfig(main_server_addrs=worker_addrs, sglang_addrs_list=engine_addrs_list)
@@ -196,7 +196,7 @@ class DistributedRolloutController(RolloutController):
         batches = self.split_list(data, self.allocate_mode.gen_dp_size)
 
         for index in range(self.allocate_mode.gen_dp_size):
-            master_worker = self.workers[self.server_group_size * index]
+            master_worker = self.workers[self.dp_world_size * index]
 
             self.scheduler.call_engine(master_worker.id, "submit_distributed_batch", batches[index], workflow)
 
@@ -206,7 +206,7 @@ class DistributedRolloutController(RolloutController):
         assert count % self.allocate_mode.gen_dp_size == 0
         results = []
         for index in range(self.allocate_mode.gen_dp_size):
-            master_worker = self.workers[self.server_group_size * index]
+            master_worker = self.workers[self.dp_world_size * index]
             result = self.scheduler.call_engine(master_worker.id, "wait", batch_count, timeout)
             results.append(result)
         res = stack(results, dim=0)

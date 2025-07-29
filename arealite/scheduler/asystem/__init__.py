@@ -1,3 +1,5 @@
+from dataclasses import asdict
+
 from arealite.scheduler.base import Scheduler, Worker
 import json
 import logging
@@ -243,6 +245,10 @@ class AsystemScheduler(Scheduler):
             "asystemWorkerGroups": [worker_group],
             "scheduleStrategy": scheduling_config.schedule_strategy if scheduling_config.schedule_strategy else None,
         }
+        if scheduling_config.schedule_strategy is not None:
+            payload["scheduleStrategy"] = asdict(scheduling_config.schedule_strategy)
+
+        print(f"fenghui debug: payload: {payload}")
 
         return payload
 
