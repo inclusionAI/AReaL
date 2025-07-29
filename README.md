@@ -63,7 +63,7 @@ New highlights in AReaLite:
 
 - Follows an *AI-centric* API design instead of the *system-centric* architecture in old
   AReaL, which make it easier for AI researchers to adopt, understand, and develop
-  effectively and efficiently. To learn more about the design philosophy of AReaL,
+  effectively and efficiently. To learn more about the design principles of AReaL,
   please read [AReaLite Design Doc](/arealite/README.md)!
 
 - A much more *light-weight* codebase compared to old AReaL codebase with only **20%** #
@@ -71,9 +71,9 @@ New highlights in AReaLite:
   GRPO-on-GSM8K example. Save your time & efforts for code reading!
 
 - Smoother customization for your own **algorithms** and **agentic & RLVR rollout** RL
-  with `RolloutWorkflow` and SPMD training scripts! Check
-  [here](/docs/customization/agent.md) for agent & RLVR customization and
-  [here](/docs/customization/algorithm.md) for algorithm customization.
+  within a single file! Check [here](/docs/customization/agent.md) for agent & RLVR
+  customization and [here](/docs/customization/algorithm.md) for algorithm
+  customization.
 
 Good old stuff from AReaL:
 
@@ -104,13 +104,26 @@ python3 -m arealite.launcher.ray examples/arealite/gsm8k_grpo.py --config exampl
   cluster.n_gpus_per_node=8
 ```
 
+<!-- TBD: not finished yet -->
+
 Evaluation (on a single node):
 
 ```
 python3 -m arealite.launcher.local examples/arealite/eval.py --config examples/arealite/configs/eval.yaml
 ```
 
-## Switching from Old AReaL to AReaLite
+## Switching from AReaL to AReaLite
+
+We also provide a convenient script to convert your AReaL YAML config into AReaLite
+config in one command line. First you need to locate your AReaL config either modified
+from files from `examples` folder, or generated when you run your experiments in
+`<fileroot>/<expr_name>/<trial_name>` folder. Runs:
+
+```
+python3 examples/arealite/convert_config.py -f <config_path> -o <output_path>
+```
+
+You can easily convert your config to
 
 ## Resources
 
@@ -120,11 +133,21 @@ python3 -m arealite.launcher.local examples/arealite/eval.py --config examples/a
 ### Quickstart
 
 - [Installation](https://inclusionai.github.io/AReaL/tutorial/installation.html)
-- [Example: Improving the math capability of Qwen3 with PPO](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
+- [AReaLite Quickstart](/docs/tutorial/quickstart.md)
+
+### Code Walkthrough
+
+- [Running GRPO on GSM8K dataset with AReaLite](/docs/arealite/gsm8k_grpo.md)
+
+### Customization
+
+- [Customize dataset with AReaLite](../customization/dataset.md)
+- [Customize Agentic/RVLR rollout workflows with AReaLite](../customization/agent.md)
+- [Customize algorithms with AReaLite](../customization/algorithm.md)
 
 ### AReaL Legacy
 
-For old AReaL documentation, check legacy sections in our
+For old AReaL documentation, check the legacy sections in our
 [Documentation](https://inclusionai.github.io/AReaL/). To reproduce AReaL boba & boba²
 results, check our
 [reproduction guide with legacy AReaL](https://inclusionai.github.io/AReaL/references/reproduce.html).
