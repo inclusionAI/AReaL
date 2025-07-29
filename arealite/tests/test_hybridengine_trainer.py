@@ -54,8 +54,6 @@ def main_grpo():
             "worker": {
                 "image": "",
                 "cmd": "",
-                "cpu": 4,
-                "memory": "",
                 "extra_envs": {
                     "REAL_PACKAGE_PATH": "fff",
                 },
@@ -63,9 +61,6 @@ def main_grpo():
             "engine": {
                 "image": "",
                 "cmd": "",
-                "cpu": 4,
-                "memory": 20,
-                "gpu": 1,
                 "extra_envs": {
                     "REAL_PACKAGE_PATH": "fff",
                 },

@@ -117,7 +117,7 @@ class DistributedRolloutController(RolloutController):
         workerSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test-bugfix/AReaL"
         workerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
         workerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
-        workerSpec.env_vars["WORKER_TYPE"] = "inference-worker"
+        workerSpec.env_vars["WORKER_TYPE"] = "rollout-worker"
         workerSpec.env_vars["FUNCTIONCALL_SERVICE_DOMAIN"] = "http://110.75.237.19:8080"
 
         engineSpec = ContainerSpec(
@@ -131,8 +131,8 @@ class DistributedRolloutController(RolloutController):
         engineSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/Asystem-HybridEngine"
         engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13060133-20250724003115.sif"
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
-        engineSpec.env_vars["WORKER_TYPE"] = "inference-engine"
-        engineSpec.env_vars["WORK_MODE"] = "GENERATION"
+        engineSpec.env_vars["WORKER_TYPE"] = "rollout-engine"
+        engineSpec.env_vars["WORK_MODE"] = "INFERENCE"
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)

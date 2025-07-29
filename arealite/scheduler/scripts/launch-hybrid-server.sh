@@ -78,7 +78,12 @@ sync_copy() {
     fi
 }
 
+CMD="python -m asystem_runtime.hybrid_server --port 0"
+if [[ "${WORK_MODE}" == "INFERENCE" ]]; then
+    CMD="python -m asystem_runtime.engine_server"
+fi
+
 sync_copy
 WORKER_IMAGE="/tmp/image_hybrid_engine.sif"
 echo "before start." >> ${WORKER_LOG_FILE}
-singularity --debug exec --pid --nv --no-home --writable-tmpfs --bind /storage:/storage "${WORKER_IMAGE}" bash -c "export PATH=/opt/conda/bin:$PATH; export PYTHONPATH=${REAL_PACKAGE_PATH}:/storage/openpsi/codes/antllm:/storage/openpsi/codes/atorch:/storage/openpsi/codes/Asystem-HybridEngine:/storage/openpsi/codes/Megatron-LM:/storage/openpsi/codes/Megatron-LM/ant_utils/dcp_utils:$PYTHONPATH;python -m asystem_runtime.hybrid_server --port 0" >> ${WORKER_LOG_FILE} 2>&1
+singularity --debug exec --pid --nv --no-home --writable-tmpfs --bind /storage:/storage "${WORKER_IMAGE}" bash -c "export PATH=/opt/conda/bin:$PATH; export PYTHONPATH=${REAL_PACKAGE_PATH}:/storage/openpsi/codes/antllm:/storage/openpsi/codes/atorch:/storage/openpsi/codes/Asystem-HybridEngine:/storage/openpsi/codes/Megatron-LM:/storage/openpsi/codes/Megatron-LM/ant_utils/dcp_utils:$PYTHONPATH;$CMD" >> ${WORKER_LOG_FILE} 2>&1

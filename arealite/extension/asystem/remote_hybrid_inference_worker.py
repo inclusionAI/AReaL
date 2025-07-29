@@ -509,7 +509,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         # one dp total resources
         return Scheduling(
             cpu=0,
-            gpu=8,
+            gpu=1,
             mem=0,
             type="engine",
         )
