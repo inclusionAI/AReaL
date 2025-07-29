@@ -1,0 +1,9 @@
+Mean cost per LLM:
+Empty DataFrame
+Columns: [agent_cost, user_cost]
+Index: []
+
+Sum cost per LLM:
+Empty DataFrame
+Columns: [agent_cost, user_cost]
+Index: []
