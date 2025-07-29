@@ -248,6 +248,9 @@ def plot_avg_pass_k_metrics_per_llm_per_mode(
     llms = df_metrics["llm"].unique()
     llms = [model for model in LLMS_FOR_TELECOM_ANALYSIS if model in llms]
     n_llms = len(llms)
+    if n_llms == 0:
+        logger.warning(f"No LLMs found for telecom domain. Skipping...")
+        return
 
     _, axes = plt.subplots(n_llms, 1, figsize=(10, 4 * n_llms))
     if n_llms == 1:
@@ -348,6 +351,9 @@ def plot_pass_one_metrics_per_llm_per_mode(
     llms = df_metrics["llm"].unique()
     llms = [model for model in LLMS_FOR_TELECOM_ANALYSIS if model in llms]
     n_llms = len(llms)
+    if n_llms == 0:
+        logger.warning(f"No LLMs found for telecom domain. Skipping...")
+        return
 
     _, axes = plt.subplots(n_llms, 1, figsize=(10, 4 * n_llms))
     if n_llms == 1:
@@ -1195,9 +1201,15 @@ def plot_pass_k_vs_num_actions_all_llms(
     # Use first k value for this plot
     k = k_values[0]
 
+    modes = df_pass_hat_k_filtered["mode"].unique()
+    count_actions_mode = "default" if "default" in modes else modes[0]
+    if count_actions_mode not in modes:
+        logger.warning(f"No data found for {count_actions_mode}. Using {modes[0]} instead to count number of actions in each task.")
+        count_actions_mode = modes[0]
+
     # Calculate task proportions for background plot
     task_proportions = (
-        df_pass_hat_k_filtered[(df_pass_hat_k_filtered["mode"] == "default")][
+        df_pass_hat_k_filtered[(df_pass_hat_k_filtered["mode"] == count_actions_mode)][
             "num_actions"
         ].value_counts(normalize=True)
         * 100
@@ -1363,6 +1375,8 @@ def plot_pass_k_vs_num_issues_all_llms(
         logger.warning(f"No data found for {telecom_version} domain. Skipping...")
         return
 
+    print(len(df_pass_hat_k_filtered))
+
     # Get unique k values
     k_values = sorted(
         [
@@ -1382,9 +1396,15 @@ def plot_pass_k_vs_num_issues_all_llms(
         axis=1,
     )
 
+    modes = df_pass_hat_k_filtered["mode"].unique()
+    count_issues_mode = "default" if "default" in modes else modes[0]
+    if count_issues_mode not in modes:
+        logger.warning(f"No data found for {count_issues_mode}. Using {modes[0]} instead to count number of issues in each task.")
+        count_issues_mode = modes[0]
+
     # Calculate task proportions for background plot
     task_proportions = (
-        df_pass_hat_k_filtered[(df_pass_hat_k_filtered["mode"] == "default")][
+        df_pass_hat_k_filtered[(df_pass_hat_k_filtered["mode"] == count_issues_mode)][
             "num_issues"
         ].value_counts(normalize=True)
         * 100
