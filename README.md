@@ -20,13 +20,13 @@ like how you enjoy real-world milk tea (cheers).
 
 **AReaL Highlights**
 
-- 🔥 **Asynchronous RL**: With algorithm-system co-design, AReaL supports fully
-  asynchronous RL for **the fastest training**! Experimental support for multi-turn
-  agentic RL is also provided.
 - ⚡ **\[NEW\] Light-weight & AI-centric:** In our new release AReaLite, we deliver
   **90%** of AReaL functionalities with only **20%** # lines of code! AReaLite also
   follows an **AI-centric** design that make users build their own **agentic** and
   **RLVR** training workflows with much less effort.
+- 🔥 **Asynchronous RL**: With algorithm-system co-design, AReaL supports fully
+  asynchronous RL for **the fastest training**! Experimental support for multi-turn
+  agentic RL is also provided.
 - 🛠️ **Open & Reproducible**: We continuously release _all code, datasets, and training
   recipes_ for RL training of LLMs.
 - 🚀 **Scalability**: AReaL can seamlessly adapt to different computational resource
@@ -123,7 +123,7 @@ from files from `examples` folder, or generated when you run your experiments in
 python3 examples/arealite/convert_config.py -f <config_path> -o <output_path>
 ```
 
-You can easily convert your config to
+Then you should be able to run experiments with your old settings on AReaLite!
 
 ## Resources
 
