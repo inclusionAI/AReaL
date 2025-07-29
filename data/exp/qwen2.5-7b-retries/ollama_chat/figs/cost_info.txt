@@ -1,9 +1,9 @@
 Mean cost per LLM:
-Empty DataFrame
-Columns: [agent_cost, user_cost]
-Index: []
+            agent_cost  user_cost
+llm                              
+qwen2.5:7b         0.0   0.064823
 
 Sum cost per LLM:
-Empty DataFrame
-Columns: [agent_cost, user_cost]
-Index: []
+            agent_cost  user_cost
+llm                              
+qwen2.5:7b         0.0  10.630922

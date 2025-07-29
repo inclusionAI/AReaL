@@ -1,0 +1,13 @@
+compute_environment: LOCAL_MACHINE
+deepspeed_config: null
+distributed_type: MULTI_GPU
+downcast_bf16: 'no'
+fsdp_config: {}
+machine_rank: 0
+main_process_ip: null
+main_process_port: null
+main_training_function: main
+mixed_precision: bf16  # change to fp16 if needed
+num_machines: 1
+num_processes: 4
+use_cpu: false

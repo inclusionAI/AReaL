@@ -219,8 +219,7 @@ def plot_pass_k_metrics_per_llm_per_domain_bar_chart(
 
         plt.xlabel("k", fontsize=12)
         plt.ylabel("Pass^k", fontsize=12)
-        if "o4" in llm:  # FIX ME: Hack to only get the legend once.
-            plt.legend(fontsize=10, framealpha=0.9)
+        plt.legend(fontsize=10, framealpha=0.9)
         plt.xticks(x, k_values, fontsize=12)
         plt.yticks(fontsize=12)
         plt.ylim(bottom=0, top=0.9)
@@ -663,12 +662,7 @@ def results_per_intent_telecom(
 
         plt.xlabel("k", fontsize=16)  # Increased from 12
         plt.ylabel("Pass^k", fontsize=16)  # Increased from 12
-        if (
-            "gpt" in llm and "mini" not in llm
-        ):  # FIX ME: Hack to only get the legend once.
-            plt.legend(
-                loc="upper right", fontsize=14, framealpha=0.9
-            )  # Increased from 10
+        plt.legend(loc="upper right", fontsize=14, framealpha=0.9)  # Increased from 10
         plt.xticks(x, k_values, fontsize=14)  # Increased from 12
         plt.yticks(fontsize=14)  # Increased from 12
         current_top = plt.gca().get_ylim()[1]
@@ -799,10 +793,7 @@ def results_per_persona_telecom(
 
         plt.xlabel("k", fontsize=12)
         plt.ylabel("Pass^k", fontsize=12)
-        if (
-            "gpt" in llm and "mini" not in llm
-        ):  # FIX ME: Hack to only get the legend once.
-            plt.legend(loc="upper right", fontsize=12, framealpha=0.9)
+        plt.legend(loc="upper right", fontsize=12, framealpha=0.9)
         plt.xticks(x, k_values, fontsize=12)
         plt.yticks(fontsize=12)
         current_top = plt.gca().get_ylim()[1]
