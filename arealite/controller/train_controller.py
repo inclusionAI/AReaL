@@ -54,11 +54,11 @@ class DistributedTrainController(TrainController):
             cpu=0,
             mem=0,
             gpu=scheduling.gpu,
-            cmd="bash /storage/openpsi/codes/dh183333/arealite-test/AReaL/arealite/scheduler/scripts/launch-worker.sh",
+            cmd="bash /storage/openpsi/codes/dh183333/arealite-test-bugfix/AReaL/arealite/scheduler/scripts/launch-worker.sh",
             env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
             portCount=1
         )
-        workerSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test/AReaL"
+        workerSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test-bugfix/AReaL"
         workerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
         workerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
             experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
@@ -68,7 +68,7 @@ class DistributedTrainController(TrainController):
             cpu=0,
             mem=0,
             gpu=0,
-            cmd="bash /storage/openpsi/codes/dh183333/arealite-test/AReaL/arealite/scheduler/scripts/launch-hybrid-server.sh",
+            cmd="bash /storage/openpsi/codes/dh183333/arealite-test-bugfix/AReaL/arealite/scheduler/scripts/launch-hybrid-server.sh",
             env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
             portCount=1
         )
