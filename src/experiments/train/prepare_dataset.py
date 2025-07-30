@@ -37,7 +37,7 @@ print(
 
 
 ## Setting up data in ChatML format.
-def format_openai_chat(messages):
+def format_openai_chat_to_chatml(messages):
     chatml = ""
     for msg in messages:
         role = msg["role"]
@@ -47,18 +47,18 @@ def format_openai_chat(messages):
 
 
 def preprocess(example):
-    full_text = format_openai_chat(example["messages"])
+    full_text = format_openai_chat_to_chatml(example["messages"])
     return tokenizer(full_text, truncation=True, padding="max_length", max_length=1024)
 
 
-def preprocess_assistant_only(example):
+def preprocess_assistant_only_chatml(example):
     messages = example["messages"]
     assert messages[-1]["role"] == "assistant"
 
     prompt_messages = messages[:-1]
     target_message = messages[-1]["content"]
 
-    prompt = format_openai_chat(prompt_messages)
+    prompt = format_openai_chat_to_chatml(prompt_messages)
     full_text = prompt + f"<|im_start|>assistant\n{target_message}<|im_end|>"
 
     tokenized = tokenizer(

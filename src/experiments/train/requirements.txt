@@ -7,5 +7,5 @@ trl>=0.8.6
 scipy
 numpy
 torch>=2.1.0
-sentencepiece
+# sentencepiece
 einops
