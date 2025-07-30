@@ -75,7 +75,6 @@ python3 -m arealite.launcher.ray examples/arealite/gsm8k_grpo.py \
     allocation_mode=sglang.d12p1t1+d4p1t1 \
     cluster.n_nodes=4 \
     cluster.n_gpus_per_node=4 \
-    ...
 
 # Launch with Slurm launcher. 16 nodes (8 GPUs each), 12 nodes for generation, 4 nodes for training
 python3 -m arealite.launcher.slurm examples/arealite/gsm8k_grpo.py \
@@ -85,7 +84,6 @@ python3 -m arealite.launcher.slurm examples/arealite/gsm8k_grpo.py \
     allocation_mode=sglang.d96p1t1+d32p1t1 \
     cluster.n_nodes=16 \
     cluster.n_gpus_per_node=8 \
-    ...
 ```
 
 Additional references:
@@ -99,9 +97,9 @@ Additional references:
 >
 > 1. Ensure `allocation_mode` matches your cluster configuration
 >    (`#GPUs == cluster.n_nodes * cluster.n_gpus_per_node`)
-> 1. Ray/Slurm launchers only works for more than 1 node (`cluster.n_nodes > 1`). For
+> 1. Ray / Slurm launchers only works for more than 1 node (`cluster.n_nodes > 1`). For
 >    single node scenario, please use `LocalLauncher`.
-> 1. In Ray/Slurm launchers, GPUs are allocated at node granularity, which means #GPUs
+> 1. In Ray / Slurm launchers, GPUs are allocated at node granularity, which means #GPUs
 >    for generation or training must be integer multiples of `cluster.n_gpus_per_node`.
 
 <!--

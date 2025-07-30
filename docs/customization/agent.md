@@ -8,10 +8,12 @@ You can find the complete implementation in `arealite/workflow/multi_turn.py`.
 
 ## Step 1: Define Your Workflow
 
-AReaLite gives you flexibility in how you design your agents. Instead of rigid `Agent`
-classes that might constrain your agent's capabilities, AReaLite captures all rollout
-behavior in a `RolloutWorkflow` class. This approach lets you customize your agent's
-behavior however you need.
+AReaLite gives you flexibility in how you design your agents to run **an episode**. **An
+episode** defines how your agent rollouts a complete training sample from an input
+prompt, using tools, reward functions, and (multi-turn) generation. Instead of rigid
+`Agent` classes that might constrain your agent's capabilities, AReaLite captures all
+rollout behavior in a `RolloutWorkflow` class. This approach allows you to customize
+your agent's behavior however you need.
 
 ```python
 # arealite/api/workflow_api.py
@@ -40,7 +42,7 @@ interact.
 > generated from that prompt—it's not batched. However, you can generate multiple
 > trajectories from a single prompt (for example, with GRPO or tree search).
 
-### Setting Up the Multi-Turn Math Workflow
+### Setting Up the Multi-turn Math Workflow
 
 Let's build a multi-turn rollout workflow for solving math problems. First, we'll define
 the `__init__` method to set up what we need during rollout:
@@ -82,10 +84,11 @@ class MultiTurnWorkflow(RolloutWorkflow):
         seq, logprobs, loss_mask, versions = [], [], [], []
         messages = data["messages"]
         # Run multi-turn rollout until we get the correct answer
-        t = reward = 0
+        turn_index = 0
+        reward = 0
         discount = 1.0
         rid = uuid.uuid4().hex
-        while reward == 0 and t < self.max_turns:
+        while reward == 0 and turn_index < self.max_turns:
             # Convert the conversation into input tokens
             input_ids = self.tokenizer.apply_chat_template(
                 messages,
@@ -111,7 +114,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
 > **Note**: The `rid` field in `LLMRequest` is the request ID. Requests with the same ID
 > will reuse the LLM inference server's KV caches for better efficiency.
 
-### Handling Multi-Turn Conversations
+### Handling Multi-turn Conversations
 
 Next, we'll check if the current answer is correct using our `reward_fn`. This function
 should return 1 for correct answers and 0 otherwise. When the answer is wrong, we'll
