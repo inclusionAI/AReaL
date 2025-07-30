@@ -152,14 +152,14 @@ class DistributedTrainController(TrainController):
         """
         return self._rpc_call("step_lr_scheduler")
 
-    def notify_training_event(self, event: str, global_step: int) -> None:
+    def notify_event(self, event: str, global_step: int) -> None:
         """Notify workers about training start/end events.
         
         Args:
-            event: "start" or "end"
+            event: "train_start" or "train_end"
             global_step: Current global step
         """
-        self._rpc_call("notify_training_event", event, global_step)
+        self._rpc_call("notify_event", event, global_step)
         return None
 
     def train_distributed_batch(

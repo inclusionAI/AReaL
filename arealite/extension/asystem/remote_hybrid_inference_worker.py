@@ -531,20 +531,20 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             type="engine",
         )
 
-    def notify_inference_event(self, event: str, global_step: int) -> None:
+    def notify_event(self, event: str, global_step: int) -> None:
         """Handle inference start/end events by sending HTTP notification.
         
         Args:
-            event: "start" or "end" 
+            event: "rollout_start" or "rollout_end"
             global_step: Current global step
         """
-        if event not in ["start", "end"]:
+        if event not in ["rollout_start", "rollout_end"]:
             raise ValueError(f"Invalid event type: {event}")
             
         logger.info(f"[RemoteHybridInferenceWorker] Sending inference {event} notification at global_step: {global_step}")
         
         try:
-            target_url = f"http://{self.addresses[0]}/inference_events"
+            target_url = f"http://{self.addresses[0]}/events"
             headers = {"Content-Type": "application/json"}
             payload = {
                 "event": event,

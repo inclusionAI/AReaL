@@ -8,6 +8,7 @@ from transformers import PreTrainedTokenizerFast
 from arealite.api.cli_args import GenerationHyperparameters
 from arealite.api.io_struct import LLMRequest
 from arealite.api.workflow_api import RolloutWorkflow
+from realhf.api.core.data_api import RL_TASKS
 from arealite.utils.padding import concat_padded_tensors
 
 
@@ -63,6 +64,7 @@ class RLVRWorkflow(RolloutWorkflow):
                 completion_ids=resp.output_tokens,
                 **data,
             )
+            task_id = RL_TASKS.index(data["task"])
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
@@ -72,7 +74,7 @@ class RLVRWorkflow(RolloutWorkflow):
                 attention_mask=torch.ones(len(seq)).unsqueeze(0),
                 rewards=torch.tensor([reward]),
                 seqlen=torch.tensor([len(seq)]),
-                task_ids=torch.tensor([0]),  # TODO: hardcode
+                task_ids=torch.tensor([task_id]),
                 seq_no_eos_mask=torch.tensor([seq_no_eos_mask])
             )
             results.append(TensorDict(res, batch_size=[1]))

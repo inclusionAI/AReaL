@@ -285,20 +285,20 @@ class RemoteHypridTrainWorker(TrainEngine):
         self.global_step += 1
         return train_stats
 
-    def notify_training_event(self, event: str, global_step: int) -> None:
+    def notify_event(self, event: str, global_step: int) -> None:
         """Handle training start/end events by sending HTTP notification.
         
         Args:
-            event: "start" or "end"
+            event: "train_start" or "train_end"
             global_step: Current global step
         """
-        if event not in ["start", "end"]:
+        if event not in ["train_start", "train_end"]:
             raise ValueError(f"Invalid event type: {event}")
             
         logger.info(f"[RemoteHypridTrainWorker] Sending training {event} notification at global_step: {global_step}")
         
         try:
-            target_url = f"http://{self.megatron_addr}/training_events"
+            target_url = f"http://{self.megatron_addr}/events"
             headers = {"Content-Type": "application/json"}
             payload = {
                 "event": event,
