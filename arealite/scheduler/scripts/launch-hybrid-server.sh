@@ -78,10 +78,9 @@ sync_copy() {
     fi
 }
 
-CMD="python -m asystem_runtime.hybrid_server --port 0"
-if [[ "${WORK_MODE}" == "GENERATION" ]]; then
-    CMD="python -m asystem_runtime.engine_server"
-fi
+
+CMD="python -m asystem_runtime.engine_server"
+
 
 sync_copy
 WORKER_IMAGE="/tmp/image_hybrid_engine.sif"
