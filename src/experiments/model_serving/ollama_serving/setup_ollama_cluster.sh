@@ -8,6 +8,8 @@ MANAGE_NGINX="$SCRIPT_DIR/manage_nginx_lb.sh"
 # Default ports if none provided
 DEFAULT_PORTS=(11435 11436 11437 11438)
 LOAD_BALANCER_PORT=11434
+# Default context length
+DEFAULT_CONTEXT_LENGTH=32768
 
 # Function to get ports from arguments or use defaults
 get_ports() {
@@ -15,6 +17,15 @@ get_ports() {
         echo "${DEFAULT_PORTS[@]}"
     else
         echo "$@"
+    fi
+}
+
+# Function to get context length from environment or use default
+get_context_length() {
+    if [ -n "$OLLAMA_CONTEXT_LENGTH" ]; then
+        echo "$OLLAMA_CONTEXT_LENGTH"
+    else
+        echo "$DEFAULT_CONTEXT_LENGTH"
     fi
 }
 
@@ -45,19 +56,21 @@ case "$1" in
     start)
         shift  # Remove 'start' from arguments
         PORTS=($(get_ports "$@"))
+        CONTEXT_LENGTH=$(get_context_length)
         
         echo "🚀 Starting Ollama cluster with load balancer"
         echo "Backend ports: ${PORTS[*]}"
         echo "Load balancer port: $LOAD_BALANCER_PORT"
+        echo "Context length: $CONTEXT_LENGTH"
         echo ""
         
         # Check prerequisites
         check_ollama
         check_nginx
         
-        # Start Ollama instances
+        # Start Ollama instances with context length
         echo "📦 Starting Ollama instances..."
-        $MANAGE_OLLAMA start "${PORTS[@]}"
+        OLLAMA_CONTEXT_LENGTH=$CONTEXT_LENGTH $MANAGE_OLLAMA start "${PORTS[@]}"
         
         # Wait a moment for instances to start
         echo "⏳ Waiting for Ollama instances to initialize..."
@@ -84,6 +97,10 @@ case "$1" in
         echo ""
         echo "📝 For LiteLLM, use this base URL:"
         echo "   http://localhost:$LOAD_BALANCER_PORT"
+        echo ""
+        echo "⚙️  Cluster configuration:"
+        echo "   Context length: $CONTEXT_LENGTH"
+        echo "   Backend instances: ${#PORTS[@]}"
         ;;
     stop)
         shift  # Remove 'stop' from arguments
@@ -122,6 +139,15 @@ case "$1" in
         # Check nginx load balancer
         echo "⚖️  Nginx load balancer:"
         $MANAGE_NGINX status
+        echo ""
+        
+        # Show cluster configuration
+        CONTEXT_LENGTH=$(get_context_length)
+        PORTS=($(get_ports))
+        echo "⚙️  Cluster configuration:"
+        echo "   Context length: $CONTEXT_LENGTH"
+        echo "   Backend instances: ${#PORTS[@]}"
+        echo "   Load balancer port: $LOAD_BALANCER_PORT"
         ;;
     test)
         echo "🧪 Testing Ollama cluster"
@@ -156,13 +182,20 @@ case "$1" in
     *)
         echo "Usage: $0 {start|stop|restart|status|test} [port1 port2 port3 ...]"
         echo ""
+        echo "Environment variables:"
+        echo "  OLLAMA_CONTEXT_LENGTH    Context length for Ollama instances (default: $DEFAULT_CONTEXT_LENGTH)"
+        echo ""
         echo "Examples:"
-        echo "  $0 start                    # Start cluster with default ports: 11434, 11435, 11436, 11437"
+        echo "  $0 start                    # Start cluster with default ports and context length"
         echo "  $0 start 11434 11435        # Start cluster with specific ports"
         echo "  $0 stop                     # Stop the entire cluster"
         echo "  $0 restart                  # Restart the entire cluster"
         echo "  $0 status                   # Check cluster status"
         echo "  $0 test                     # Test cluster functionality"
+        echo ""
+        echo "Examples with custom context length:"
+        echo "  OLLAMA_CONTEXT_LENGTH=16384 $0 start  # Start with 16k context length"
+        echo "  OLLAMA_CONTEXT_LENGTH=65536 $0 start  # Start with 64k context length"
         echo ""
         echo "Load balancer will be available at: http://localhost:$LOAD_BALANCER_PORT"
         echo ""
