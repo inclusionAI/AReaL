@@ -127,7 +127,10 @@ class LocalAgent(BaseAgent[AgentState]):
         """
         pass
 
-def validate_message_format(message: AssistantMessage, solo: bool = False) -> tuple[bool, str]:
+
+def validate_message_format(
+    message: AssistantMessage, solo: bool = False
+) -> tuple[bool, str]:
     """Validate the message format for the agent."""
     if solo:
         return validate_message_format_solo(message)

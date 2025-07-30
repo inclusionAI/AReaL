@@ -11,24 +11,18 @@ from typing import List, Optional
 from loguru import logger
 from pydantic import BaseModel
 
-from tau2.agent.base import (
-    AgentError,
-    LocalAgent,
-    ValidAgentInputMessage,
-    is_valid_agent_history_message,
-    validate_message_format,
-)
+from tau2.agent.base import AgentError, ValidAgentInputMessage, validate_message_format
+from tau2.agent.llm_agent import LLMAgent, LLMGTAgent, LLMSoloAgent
 from tau2.data_model.message import (
     APICompatibleMessage,
     AssistantMessage,
-    Message,
     MultiToolMessage,
     SystemMessage,
     ToolCall,
     UserMessage,
 )
-from tau2.data_model.tasks import Action, Task
-from tau2.environment.tool import Tool, as_tool
+from tau2.data_model.tasks import Task
+from tau2.environment.tool import Tool
 from tau2.utils.llm_utils import generate
 
 RESPOND_ACTION_NAME = "respond"  # Not used.
@@ -256,9 +250,10 @@ class LLMAgentState(BaseModel):
     messages: list[APICompatibleMessage]
 
 
-class LLMAgent(LocalAgent[LLMAgentState]):
+class LLMAgentCompletion(LLMAgent):
     """
-    An LLM agent that can be used to solve a task.
+    An LLM agent that can be used to solve a task using the completion API.
+    Inherits from LLMAgent but overrides the message generation to use completion API.
     """
 
     def __init__(
@@ -270,15 +265,18 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         allow_format_retry: bool = True,
     ):
         """
-        Initialize the LLMAgent.
+        Initialize the LLMAgentCompletion.
         """
-        super().__init__(tools=tools, domain_policy=domain_policy)
-        self.llm = llm
-        self.llm_args = deepcopy(llm_args) if llm_args is not None else {}
+        super().__init__(
+            tools=tools,
+            domain_policy=domain_policy,
+            llm=llm,
+            llm_args=llm_args,
+            allow_format_retry=allow_format_retry,
+        )
         self.tool_prompt = json.dumps(
             [tool.openai_schema for tool in self.tools], indent=2
         )
-        self.allow_format_retry = allow_format_retry
 
     @property
     def system_prompt(self) -> str:
@@ -288,32 +286,11 @@ class LLMAgent(LocalAgent[LLMAgentState]):
             tool_prompt=self.tool_prompt,
         )
 
-    def get_init_state(
-        self, message_history: Optional[list[Message]] = None
-    ) -> LLMAgentState:
-        """Get the initial state of the agent.
-
-        Args:
-            message_history: The message history of the conversation.
-
-        Returns:
-            The initial state of the agent.
-        """
-        if message_history is None:
-            message_history = []
-        assert all(is_valid_agent_history_message(m) for m in message_history), (
-            "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
-        )
-        return LLMAgentState(
-            system_messages=[SystemMessage(role="system", content=self.system_prompt)],
-            messages=message_history,
-        )
-
     def generate_next_message(
         self, message: ValidAgentInputMessage, state: LLMAgentState
     ) -> tuple[AssistantMessage, LLMAgentState]:
         """
-        Respond to a user or tool message.
+        Respond to a user or tool message using the completion API.
         """
         if isinstance(message, MultiToolMessage):
             state.messages.extend(message.tool_messages)
@@ -322,7 +299,6 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         messages = state.system_messages + state.messages
         completion_assistant_message = generate(
             model=self.llm,
-            tools=self.tools,
             messages=messages,
             **self.llm_args,
         )
@@ -341,7 +317,6 @@ class LLMAgent(LocalAgent[LLMAgentState]):
             )
             completion_assistant_message = generate(
                 model=self.llm,
-                tools=self.tools,
                 messages=retry_messages,
                 **self.llm_args,
             )
@@ -351,15 +326,6 @@ class LLMAgent(LocalAgent[LLMAgentState]):
             assistant_message.errors = [error_msg]
         state.messages.append(completion_assistant_message)
         return assistant_message, state
-
-    def set_seed(self, seed: int):
-        """Set the seed for the LLM."""
-        if self.llm is None:
-            raise ValueError("LLM is not set")
-        cur_seed = self.llm_args.get("seed", None)
-        if cur_seed is not None:
-            logger.warning(f"Seed is already set to {cur_seed}, resetting it to {seed}")
-        self.llm_args["seed"] = seed
 
 
 AGENT_GT_INSTRUCTION = """
@@ -463,10 +429,10 @@ You are a ground truth customer service agent that demonstrates the correct work
 """.strip()
 
 
-class LLMGTAgent(LocalAgent[LLMAgentState]):
+class LLMGTAgentCompletion(LLMGTAgent):
     """
-    An GroundTruth agent that can be used to solve a task.
-    This agent will receive the expected actions.
+    A GroundTruth agent that can be used to solve a task using the completion API.
+    Inherits from LLMGTAgent but overrides the message generation to use completion API.
     """
 
     def __init__(
@@ -480,34 +446,21 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         allow_format_retry: bool = True,
     ):
         """
-        Initialize the LLMAgent.
+        Initialize the LLMGTAgentCompletion.
         If provide_function_args is True, the resolution steps will include the function arguments.
         """
-        super().__init__(tools=tools, domain_policy=domain_policy)
-        assert self.check_valid_task(task), (
-            f"Task {task.id} is not valid. Cannot run GT agent."
+        super().__init__(
+            tools=tools,
+            domain_policy=domain_policy,
+            task=task,
+            llm=llm,
+            llm_args=llm_args,
+            provide_function_args=provide_function_args,
+            allow_format_retry=allow_format_retry,
         )
-        self.task = task
-        self.llm = llm
-        self.llm_args = deepcopy(llm_args) if llm_args is not None else {}
-        self.provide_function_args = provide_function_args
         self.tool_prompt = json.dumps(
             [tool.openai_schema for tool in self.tools], indent=2
         )
-        self.allow_format_retry = allow_format_retry
-
-    @classmethod
-    def check_valid_task(cls, task: Task) -> bool:
-        """
-        Check if the task is valid.
-        Only the tasks that require at least one action are valid.
-        """
-        if task.evaluation_criteria is None:
-            return False
-        expected_actions = task.evaluation_criteria.actions or []
-        if len(expected_actions) == 0:
-            return False
-        return True
 
     @property
     def system_prompt(self) -> str:
@@ -518,32 +471,11 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
             tool_prompt=self.tool_prompt,
         )
 
-    def get_init_state(
-        self, message_history: Optional[list[Message]] = None
-    ) -> LLMAgentState:
-        """Get the initial state of the agent.
-
-        Args:
-            message_history: The message history of the conversation.
-
-        Returns:
-            The initial state of the agent.
-        """
-        if message_history is None:
-            message_history = []
-        assert all(is_valid_agent_history_message(m) for m in message_history), (
-            "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
-        )
-        return LLMAgentState(
-            system_messages=[SystemMessage(role="system", content=self.system_prompt)],
-            messages=message_history,
-        )
-
     def generate_next_message(
         self, message: ValidAgentInputMessage, state: LLMAgentState
     ) -> tuple[AssistantMessage, LLMAgentState]:
         """
-        Respond to a user or tool message.
+        Respond to a user or tool message using the completion API.
         """
         if isinstance(message, MultiToolMessage):
             state.messages.extend(message.tool_messages)
@@ -552,7 +484,6 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         messages = state.system_messages + state.messages
         completion_assistant_message = generate(
             model=self.llm,
-            tools=self.tools,
             messages=messages,
             **self.llm_args,
         )
@@ -571,7 +502,6 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
             )
             completion_assistant_message = generate(
                 model=self.llm,
-                tools=self.tools,
                 messages=retry_messages,
                 **self.llm_args,
             )
@@ -581,48 +511,6 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
             assistant_message.errors = [error_msg]
         state.messages.append(completion_assistant_message)
         return assistant_message, state
-
-    def set_seed(self, seed: int):
-        """Set the seed for the LLM."""
-        if self.llm is None:
-            raise ValueError("LLM is not set")
-        cur_seed = self.llm_args.get("seed", None)
-        if cur_seed is not None:
-            logger.warning(f"Seed is already set to {cur_seed}, resetting it to {seed}")
-        self.llm_args["seed"] = seed
-
-    def make_agent_instructions_from_actions(self) -> str:
-        """
-        Make agent instructions from a list of actions
-        """
-        lines = []
-        for i, action in enumerate(self.task.evaluation_criteria.actions):
-            lines.append(
-                f"[Step {i + 1}] {self.make_agent_instructions_from_action(action=action, include_function_args=self.provide_function_args)}"
-            )
-        return "\n".join(lines)
-
-    @classmethod
-    def make_agent_instructions_from_action(
-        cls, action: Action, include_function_args: bool = False
-    ) -> str:
-        """
-        Make agent instructions from an action.
-        If the action is a user action, returns instructions for the agent to give to the user.
-        If the action is an agent action, returns instructions for the agent to perform the action.
-        """
-        if action.requestor == "user":
-            if include_function_args:
-                return f"Instruct the user to perform the following action: {action.get_func_format()}."
-            else:
-                return f"User action: {action.name}."
-        elif action.requestor == "assistant":
-            if include_function_args:
-                return f"Perform the following action: {action.get_func_format()}."
-            else:
-                return f"Assistant action: {action.name}."
-        else:
-            raise ValueError(f"Unknown action requestor: {action.requestor}")
 
 
 AGENT_SOLO_INSTRUCTION = """
@@ -729,15 +617,11 @@ You are a customer service agent operating in solo mode. Your objective is to co
 """.strip()
 
 
-class LLMSoloAgent(LocalAgent[LLMAgentState]):
+class LLMSoloAgentCompletion(LLMSoloAgent):
     """
-    An LLM agent that can be used to solve a task without any interaction with the customer.
-    The task need to specify a ticket format.
+    An LLM agent that can be used to solve a task without any interaction with the customer using the completion API.
+    Inherits from LLMSoloAgent but overrides the message generation to use completion API.
     """
-
-    STOP_FUNCTION_NAME = "done"
-    TRANSFER_TOOL_NAME = "transfer_to_human_agents"
-    STOP_TOKEN = "###STOP###"
 
     def __init__(
         self,
@@ -749,63 +633,19 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         allow_format_retry: bool = True,
     ):
         """
-        Initialize the LLMAgent.
+        Initialize the LLMSoloAgentCompletion.
         """
-        super().__init__(tools=tools, domain_policy=domain_policy)
-        assert self.check_valid_task(task), (
-            f"Task {task.id} is not valid. Cannot run GT agent."
+        super().__init__(
+            tools=tools,
+            domain_policy=domain_policy,
+            task=task,
+            llm=llm,
+            llm_args=llm_args,
+            allow_format_retry=allow_format_retry,
         )
-        self.task = task
-        self.llm = llm
-        self.llm_args = llm_args if llm_args is not None else {}
         self.tool_prompt = json.dumps(
             [tool.openai_schema for tool in self.tools], indent=2
         )
-        self.add_stop_tool()
-        self.validate_tools()
-
-    def add_stop_tool(self) -> None:
-        """Add the stop tool to the tools."""
-
-        def done() -> str:
-            """Call this function when you are done with the task."""
-            return self.STOP_TOKEN
-
-        self.tools.append(as_tool(done))
-
-    def validate_tools(self) -> None:
-        """Check if the tools are valid."""
-        tool_names = {tool.name for tool in self.tools}
-        if self.TRANSFER_TOOL_NAME not in tool_names:
-            logger.warning(
-                f"Tool {self.TRANSFER_TOOL_NAME} not found in tools. This tool is required for the agent to transfer the user to a human agent."
-            )
-        if self.STOP_FUNCTION_NAME not in tool_names:
-            raise ValueError(f"Tool {self.STOP_FUNCTION_NAME} not found in tools.")
-
-    @classmethod
-    def check_valid_task(cls, task: Task) -> bool:
-        """
-        Check if the task is valid.
-        Task should contain a ticket and evaluation criteria.
-        If the task contains an initial state, the message history should only contain tool calls and responses.
-        """
-        if task.initial_state is not None:
-            message_history = task.initial_state.message_history or []
-            for message in message_history:
-                if isinstance(message, UserMessage):
-                    return False
-                if isinstance(message, AssistantMessage) and not message.is_tool_call():
-                    return False
-            return True
-        if task.ticket is None:
-            return False
-        if task.evaluation_criteria is None:
-            return False
-        expected_actions = task.evaluation_criteria.actions or []
-        if len(expected_actions) == 0:
-            return False
-        return True
 
     @property
     def system_prompt(self) -> str:
@@ -834,39 +674,11 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
             message.content = self.STOP_TOKEN
             message.tool_calls = None
 
-    @classmethod
-    def is_stop(cls, message: AssistantMessage) -> bool:
-        """Check if the message is a stop message."""
-        if message.content is None:
-            return False
-        return cls.STOP_TOKEN in message.content
-
-    def get_init_state(
-        self, message_history: Optional[list[Message]] = None
-    ) -> LLMAgentState:
-        """Get the initial state of the agent.
-
-        Args:
-            message_history: The message history of the conversation.
-
-        Returns:
-            The initial state of the agent.
-        """
-        if message_history is None:
-            message_history = []
-        assert all(is_valid_agent_history_message(m) for m in message_history), (
-            "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
-        )
-        return LLMAgentState(
-            system_messages=[SystemMessage(role="system", content=self.system_prompt)],
-            messages=message_history,
-        )
-
     def generate_next_message(
         self, message: Optional[ValidAgentInputMessage], state: LLMAgentState
     ) -> tuple[AssistantMessage, LLMAgentState]:
         """
-        Respond to a user or tool message.
+        Respond to a user or tool message using the completion API.
         """
         if isinstance(message, UserMessage):
             raise ValueError("LLMSoloAgent does not support user messages.")
@@ -886,12 +698,3 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         parse_message(assistant_message)
         self._check_if_stop_toolcall(assistant_message)
         return assistant_message, state
-
-    def set_seed(self, seed: int):
-        """Set the seed for the LLM."""
-        if self.llm is None:
-            raise ValueError("LLM is not set")
-        cur_seed = self.llm_args.get("seed", None)
-        if cur_seed is not None:
-            logger.warning(f"Seed is already set to {cur_seed}, resetting it to {seed}")
-        self.llm_args["seed"] = seed
