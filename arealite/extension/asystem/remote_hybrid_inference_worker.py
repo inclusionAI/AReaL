@@ -42,7 +42,7 @@ RID_CACHE_SIZE = 128
 @dataclass
 class RemoteHypidInferenceInitConfig:
     main_server_addrs: list[str]  # dp address
-    free_addrs: list[str] # 给出每个 ip 的 free_port, 顺序和main_server_addrs一致
+    free_addrs: list[list[str]] # 给出每个 ip 的 free_port, 顺序和main_server_addrs一致,[[ip:port1, ip:port2]]
     world_size: int     # 总的 world size
     global_ranks: list[int] # 要求和 main_server_addrs 的 idx 一一对应
 
@@ -68,7 +68,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
     def initialize(self, initialize_cfg: RemoteHypidInferenceInitConfig):
         logger.info(f"[RemoteHybridInferenceWorker] begin exec initialize, config: {initialize_cfg}")
         seeding.set_random_seed(1, self.config.experiment_name)
-        master_addr_info = initialize_cfg.free_addrs[0]
+        master_addr_info = initialize_cfg.free_addrs[0][0]
         master_addr, master_port = master_addr_info.split(":")
         world_size = initialize_cfg.world_size
         seeding.set_random_seed(1, self.config.experiment_name)
