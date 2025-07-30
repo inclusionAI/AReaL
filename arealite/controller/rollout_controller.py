@@ -19,6 +19,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
+logger = logging.getLogger("DistributedRolloutController")
 
 class DistributedRolloutController(RolloutController):
     # RolloutController可以通过同名接口调用所有InferenceEngine的方法
@@ -46,7 +47,7 @@ class DistributedRolloutController(RolloutController):
         :param kwargs: 通用关键字参数
         :return: 所有调用的结果列表
         """
-        logging.info(f"[rollout controller] start to rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
+        logger.info(f"start to rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
         futures = []
         results = []
 
@@ -58,7 +59,6 @@ class DistributedRolloutController(RolloutController):
                 # 如果 batches 为空，使用通用参数；否则使用 batch 中的特定参数
                 if batches and i < len(batches):
                     batch = batches[i]
-                    print(f"batch: {batch}")
                     futures.append(executor.submit(
                         self.scheduler.call_engine,
                         master_worker.id,
@@ -76,17 +76,15 @@ class DistributedRolloutController(RolloutController):
                         **kwargs
                     ))
 
-            print(f"submit workers: {len(futures)}")
             try:
                 for future in as_completed(futures):
                     result = future.result()  # 可加异常处理
                     results.append(result)
             except KeyboardInterrupt:
-                print("收到Ctrl+C，正在终止所有初始化任务...")
-                # 取消所有未完成的 future
+                logger.info("receive ctrl+c, terminating all initialization tasks...")
                 for f in futures:
                     f.cancel()
-                raise  # 重新抛出异常，主程序能感知
+                raise
 
         return results
 
@@ -150,7 +148,6 @@ class DistributedRolloutController(RolloutController):
         futures = []
 
         time.sleep(100)
-
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             # for i in range(self.allocate_mode.gen_dp_size):
             for index, worker in enumerate(self.workers):
@@ -176,16 +173,14 @@ class DistributedRolloutController(RolloutController):
                     self.inf_engine,
                     init_config,
                 ))
-            print(f"submit workers: {len(futures)}")
             try:
                 for future in as_completed(futures):
                     future.result()  # 可加异常处理
             except KeyboardInterrupt:
-                print("收到Ctrl+C，正在终止所有初始化任务...")
-                # 取消所有未完成的future
+                logger.info("receive ctrl+c, terminating all initialization tasks...")
                 for f in futures:
                     f.cancel()
-                raise  # 重新抛出异常，主程序能感知
+                raise
 
     def update_weights(self, meta: WeightUpdateMeta) -> None:
         """Update weights in the inference engine."""
@@ -229,35 +224,7 @@ class DistributedRolloutController(RolloutController):
         """Submit a batch of requests to the inference engine and wait for the results."""
         batches = data.split(self.allocate_mode.gen_dp_size)
         assert len(self.workers) % self.dp_world_size == 0
-        futures = []
-        results = []
         results = self._rpc_call("rollout_distributed_batch", batches, workflow)
-
-        # with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
-        #     for i in range(self.allocate_mode.gen_dp_size):
-        #         master_worker = server_addrs[self.server_group_size * i]
-        #         server_addrs = [
-        #             f"{worker.ip}:{worker.ports[0]}" for worker in self.workers[self.server_group_size * i:self.server_group_size * i+1] if worker.ports
-        #         ]
-        #         batch_data = batches[i]
-        #         futures.append(executor.submit(
-        #             self.scheduler.call_engine,
-        #             master_worker.id,
-        #             "rollout_distributed_batch",
-        #             batch_data,
-        #             workflow,
-        #         ))
-        #     print(f"submit workers: {len(futures)}")
-        #     try:
-        #         for future in as_completed(futures):
-        #             result = future.result()  # 可加异常处理
-        #             results.append(result)
-        #     except KeyboardInterrupt:
-        #         print("收到Ctrl+C，正在终止所有初始化任务...")
-        #         # 取消所有未完成的future
-        #         for f in futures:
-        #             f.cancel()
-        #         raise  # 重新抛出异常，主程序能感知
 
         batchdata = DistributedBatchMemory(None)
         for dataset in results:
@@ -268,13 +235,10 @@ class DistributedRolloutController(RolloutController):
     def rollout(
         self, data: List[Dict[str, Any]], workflow: RolloutWorkflow
     ) -> TensorDict:
-        futures = []
-        results = []
         batches = self.split_list(data, self.allocate_mode.gen_dp_size)
 
         results = self._rpc_call("rollout", batches,workflow)
 
-        print(f"type(results): {type(results)}, results: {results}")
         group_size = 1
         if len(results) > 0:
             group_size = int(results[0]["input_ids"].shape[0])
@@ -293,7 +257,7 @@ class DistributedRolloutController(RolloutController):
 
     def split_list(self, lst, n):
         if n <= 0:
-            raise ValueError("n 必须大于 0")
+            raise ValueError("n must larger than 0")
         chunk_size, rem = divmod(len(lst), n)
         result = []
         index = 0

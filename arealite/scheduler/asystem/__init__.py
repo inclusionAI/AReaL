@@ -19,10 +19,9 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Default Asystem API endpoints
-DEFAULT_ASYSTEM_SERVER_URL = "http://33.215.20.149:8081"
+DEFAULT_ASYSTEM_SERVER_URL = "http://127.0.0.1:8081"
 API_BASE_PATH = "/api/v1"
 SCHEDULER_WAIT_CHECK_TIME_INTERVAL = 5  # Seconds
-logger = logging.getLogger(__name__)
 
 class SchedulerError(Exception):
     """Scheduler related errors"""
@@ -249,7 +248,7 @@ class AsystemScheduler(Scheduler):
         if scheduling_config.schedule_strategy is not None:
             payload["scheduleStrategy"] = asdict(scheduling_config.schedule_strategy)
 
-        print(f"fenghui debug: payload: {payload}")
+        logger.info(f"fenghui debug: payload: {payload}")
 
         return payload
 

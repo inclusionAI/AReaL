@@ -9,7 +9,6 @@ from arealite.api.cli_args import GenerationHyperparameters
 from arealite.api.io_struct import LLMRequest
 from arealite.api.workflow_api import RolloutWorkflow
 from arealite.utils.padding import concat_padded_tensors
-from realhf.api.core.data_api import RL_TASKS
 
 
 class RLVRWorkflow(RolloutWorkflow):
@@ -28,7 +27,6 @@ class RLVRWorkflow(RolloutWorkflow):
         #     data["messages"], tokenize=False, add_generation_prompt=True
         # )
         text = data["prompt"][0]
-        print(f"data in arun_episode, {data}")
         prompt_encodings = self.tokenizer(
             text,
             truncation=True,
@@ -52,13 +50,12 @@ class RLVRWorkflow(RolloutWorkflow):
             prompt_mask = [1] * resp.input_len + [0] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
             seq_no_eos_mask = resp.stop_reason == "stop"
-            print(f"fenghui debug: resp.input_tokens: {len(resp.input_tokens)}, resp.output_tokens: {len(resp.output_tokens)}", flush=True)
 
             if "prompt" in data.keys():
                 del data["prompt"]
 
             completion = self.tokenizer.decode(resp.output_tokens, clean_up_tokenization_spaces=False, skip_special_tokens=True)
-            print(f"debug: completion: {completion}")
+
             reward = self.reward_fn(
                 prompt=text,
                 completion=completion,

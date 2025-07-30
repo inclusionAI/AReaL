@@ -1,14 +1,8 @@
 import resource
 import time
-from abc import ABC, abstractmethod
-from typing import Any, Dict
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import torch
-from tensordict import TensorDict
-import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from arealite.api.cli_args import TrainControllerConfig
 from arealite.api.controller_api import TrainController
@@ -27,11 +21,6 @@ logger = logging.getLogger("DistributedTrainController")
 
 
 class DistributedTrainController(TrainController):
-    # TrainController可以通过同名接口调用所有TrainEngine/actor/critic的方法
-    # 除此之外没有别的方法了
-    # 虽然方法相同，但是传数据集的参数类型不同:
-    #   Engine data: List[Dict[str, Any]]
-    #   Controller data: DistributedBatch
     def __init__(
         self,
         train_engine: TrainEngine,
@@ -47,10 +36,9 @@ class DistributedTrainController(TrainController):
         scheduling = self.train_engine.get_scheduling_config()
         scheduling_config = SchedulingConfig(replicas=self.allocate_mode.train_world_size)
 
-        print(f"fenghui debug: args: {args}, kwargs: {kwargs}")
         target = kwargs.get("colocation_with")
         scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
-        print(f"fenghui debug scheduling_config: {scheduling_config}")
+        logger.info(f"scheduling config: {scheduling_config}")
 
         workerSpec = ContainerSpec(
             cpu=0,
@@ -90,7 +78,6 @@ class DistributedTrainController(TrainController):
 
         server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
 
-        print(f"self.workers: {len(self.workers)}")
         # todo: 等待megatron server启动完成
         time.sleep(100)
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
@@ -119,7 +106,7 @@ class DistributedTrainController(TrainController):
         pass
 
     def _rpc_call(self, method, *args, **kwargs):
-        logging.info(f"[train controller] start to  rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
+        logging.info(f"start to  rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             futures = [
                 executor.submit(
@@ -138,7 +125,7 @@ class DistributedTrainController(TrainController):
                     result = future.result()  # 可加异常处理
                     results.append(result)
             except KeyboardInterrupt:
-                print("收到Ctrl+C，正在终止所有初始化任务...")
+                logger.info("receive ctrl+c, terminating all initialization tasks...")
                 # 取消所有未完成的future
                 for f in futures:
                     f.cancel()
@@ -180,37 +167,21 @@ class DistributedTrainController(TrainController):
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function."""
         logger.info(f"start to train_distributed_batch")
-        print(f"start to train_distributed_batch")
         batches = input_.split(self.allocate_mode.train_dp_size)
         time.sleep(10)
-        mem_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        print(f"内存使用111: {mem_usage / 1024:.2f} MB")
         assert len(self.workers) % self.dp_world_size == 0
-        logger.info(f"controller debug111")
-        print("start to train_distributed_batch111")
-        print(f"batches: {len(batches)}, workers: {len(self.workers)}")
         futures = []
         results = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             for index, worker in enumerate(self.workers):
-                logger.info(f"controller debug111: {index}")
-                t1 = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                print(f"start to train_distributed_batch111: {index}, {t1}")
                 batch_index = index // self.dp_world_size
-                t2 = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                print(f"controller debug222: {index}, {t2}", flush=True)
                 batch_data = batches[batch_index]
-                t3 = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                print(f"controller debug333: {index}, {t3}", flush=True)
                 futures.append(executor.submit(
                     self.scheduler.call_engine,
                     worker.id,
                     "train_distributed_batch",
                     batch_data
                 ))
-                t4 = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                print(f"controller debug444: {index}, {t4}", flush=True)
-
             try:
                 for future in as_completed(futures):
                     result = future.result()
