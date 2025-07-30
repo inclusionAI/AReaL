@@ -116,6 +116,9 @@ Evaluation (on a single node):
 python3 -m arealite.launcher.local examples/arealite/eval.py --config examples/arealite/configs/eval.yaml
 ```
 
+For more detailed guide on how to run experiments in AReaLite, please check out
+[our quickstart guide](/docs/tutorial/quickstart.md)!
+
 ## Switching from AReaL to AReaLite
 
 We also provide a convenient script to convert your AReaL YAML config into AReaLite

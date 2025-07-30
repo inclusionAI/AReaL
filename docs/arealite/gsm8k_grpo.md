@@ -253,7 +253,8 @@ tasks. The following code shows the simplified version of rollout thread impleme
 which iteratively:
 
 - Checks available capacity. The capacity controls current number of rollout workflows
-  to limit concurrency and data off-policyness.
+  to limit concurrency and **data off-policyness** (The difference between the model
+  version used by generation and the model version updated by the trainer).
 - If there is capacity left and rollout is not paused for weight update, continuously
   obtains data from `input_queue` and creates `asyncio` tasks to run the workflows.
 - Waits for rollout workflows to finish.
@@ -435,7 +436,7 @@ After a training step is finished, we transfer new weights from actor engine to 
 inference servers:
 
 1. The rollout engine needs to stop sending generation requests to remote servers
-   (`rollout.pause()`) to avoid server-side congestion.
+   (`rollout.pause()`) before weight update to avoid server-side congestion.
 1. Since we need to invoke weight update on the trainer engine and remote inference
    servers at the same time, in the training script, we asynchronously send requests to
    remote inference servers, and then immediately upload weights on the trainer engine.
