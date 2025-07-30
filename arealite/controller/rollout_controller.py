@@ -157,17 +157,18 @@ class DistributedRolloutController(RolloutController):
                 if index % self.dp_world_size != 0:
                     continue
                 master_worker = self.workers[index]
-                worker_addrs = [
+                main_server_addrs = [
                     f"{worker.ip}:{worker.ports[0]}" for worker in self.workers[index:index+self.dp_world_size] if worker.ports
                 ]
-                engine_addrs_list = [
+                free_addrs = [
                     [f"{worker.ip}:{port}" for worker in
                      self.workers[index:index+self.dp_world_size] for port in worker.ports[1:]]
                 ]
+
                 if isinstance(self.inf_engine, RemoteSGLangEngine):
-                    init_config = RemoteSGLangInitConfig(main_server_addrs=worker_addrs, sglang_addrs_list=engine_addrs_list)
+                    init_config = RemoteSGLangInitConfig(main_server_addrs=main_server_addrs, sglang_addrs_list=free_addrs)
                 elif isinstance(self.inf_engine, RemoteHybridInferenceWorker):
-                    init_config = RemoteHypidInferenceInitConfig(main_server_addrs=worker_addrs)
+                    init_config = RemoteHypidInferenceInitConfig(main_server_addrs=main_server_addrs, free_addrs=free_addrs, world_size=self.allocate_mode.gen_world_size, global_ranks=list(range(index, index+self.dp_world_size)))
 
                 futures.append(executor.submit(
                     self.scheduler.create_engine,
