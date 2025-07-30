@@ -88,17 +88,17 @@ def main_grpo():
                            data_files="/storage/xinyu.kxy/data/moe_lite_math_0527_merge_train_areal.jsonl")
     train_dataset = dataset['train']
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
-    batch_size = 64
+    batch_size = 8 #64
     group_size = 8
     MODEL_PATH = "/storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/hf_ckpts/8604"
     max_prompt_len = 1024
-    max_new_tokens = 15360
+    max_new_tokens = 1024 #15360
     step_num = 1145
     epoch_num = 10
     global_step = 0
     os.environ['WANDB_API_KEY'] = 'local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe'
     os.environ["WANDB_BASE_URL"] = "https://slurm.alipay.com"
-    deploy_mode = "colocation"
+    deploy_mode = "separation"
     allocation_mode = "sglang.d1t8p1+d8t1p1"
     allocate_mode = AllocationMode.from_str(allocation_mode)
     storage_path = "/storage/openpsi/checkpoints/{experiment_name}/{trial_name}".format(

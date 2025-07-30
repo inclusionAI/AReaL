@@ -102,7 +102,7 @@ class RemoteHypridTrainWorker(TrainEngine):
             "megatron_config": remote_megatron_config,
             "loss_configs": loss_configs,
             "recover_dir": cfg.recover_dir,
-            "enable_colocate": True,
+            "enable_colocate_mode": True,
         }
 
         try:
@@ -366,7 +366,7 @@ class RemoteHypridTrainWorker(TrainEngine):
                 "[RemoteHypridTrainWorker] Send train request, an error occurred:", e
             )
 
-        return response.json()
+        return response.json()['result']
 
     @torch.no_grad()
     def eval_batch(

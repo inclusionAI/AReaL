@@ -101,7 +101,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     "tp_size": self.config.tp_size,
                 }
                 body["rank_config"] = rank_config
-                body["enable_colocate"] = True
+                body["enable_colocate_mode"] = True
                 url = "http://" + initialize_cfg.main_server_addrs[index] + "/initialize"
                 logger.info(
                     f"[RemoteHybridInferenceWorker] url: {url}, send hybrid inference initialize config to engine: {body}")
@@ -308,7 +308,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             and len(accumulated_output_tokens) < gconfig.max_new_tokens
         ):
             # loop until the generation is complete
-            result = await arequest_with_retry(
+            response = await arequest_with_retry(
                 session=self.session,
                 addr=server_addr,
                 endpoint="/async_generate_sequences",
@@ -317,6 +317,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 max_retries=3,
                 timeout=self.config.request_timeout,
             )
+            result = response['result']
 
             # Parse response
             meta_info = result["meta_info"]
