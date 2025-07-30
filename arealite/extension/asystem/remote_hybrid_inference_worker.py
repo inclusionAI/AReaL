@@ -93,7 +93,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 body["engine_config"] = self.config.engine_config
                 rank_config = {
                     "master_addr": master_addr,
-                    "master_port": '10011',#master_port,
+                    "master_port": master_port,
                     "world_size": world_size,
                     "global_rank": global_rank,
                     "dp_size": self.config.dp_size,
