@@ -123,7 +123,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
             retry_messages = messages[:]
             retry_messages.append(assistant_message)
             retry_messages.append(
-                SystemMessage(role="system", content=f"Error: {error_msg}. Try again.")
+                SystemMessage(role="system", content=f"Error: {error_msg}. Try again.") #TODO: Check if it is better to use a UserMessage instead of a SystemMessage.
             )
             assistant_message = generate(
                 model=self.llm,

@@ -233,7 +233,7 @@ try:
         get_task_splits=telecom_domain_get_tasks_split,
     )
 
-    logger.info(
+    logger.debug(
         f"Default components registered successfully. Registry info: {json.dumps(registry.get_info().model_dump(), indent=2)}"
     )
 except Exception as e:

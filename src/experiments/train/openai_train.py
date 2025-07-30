@@ -114,51 +114,6 @@ def retrieve_ft_metrics(metrics_file_id: str, show_plot: bool = True) -> pd.Data
     return df
 
 
-####
-
-
-def create_fine_tuning_job(
-    client: OpenAI,
-    training_file_id: str,
-    model: str,
-    mode: Literal["dpo", "sft"] = "sft",
-    hyperparams: dict = None,
-    auto: bool = True,
-) -> str:
-    """
-    Create a fine-tuning job with OpenAI.
-
-    Args:
-        client: OpenAI client instance
-        training_file_id: ID of the uploaded training file
-        model: Base model to fine-tune
-        mode: Fine-tuning mode, either "dpo" or "sft"
-        hyperparams: Dictionary of hyperparameters to use
-        auto: Whether to use auto-parameters
-    Returns:
-        Job ID from OpenAI
-    """
-    if mode == "dpo":
-        job = client.fine_tuning.jobs.create(
-            training_file=training_file_id,
-            model=model,
-            method={
-                "type": "dpo",
-                "dpo": {
-                    "hyperparameters": hyperparams if not auto else {},
-                },
-            },
-        )
-    else:  # sft mode
-        job = client.fine_tuning.jobs.create(
-            training_file=training_file_id,
-            model=model,
-            hyperparameters=hyperparams if not auto else {},
-        )
-
-    return job.id
-
-
 def monitor_fine_tuning_job(client: OpenAI, job_id: str):
     """
     Monitor the progress of a fine-tuning job.

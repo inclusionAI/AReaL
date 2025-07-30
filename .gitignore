@@ -10,6 +10,7 @@ dump.rdb
 logs/
 data/simulations/
 data/exp/
+data/datasets/
 .ruff_cache
 
 # Byte-compiled / optimized / DLL files
