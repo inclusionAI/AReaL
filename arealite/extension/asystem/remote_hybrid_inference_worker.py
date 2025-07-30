@@ -101,6 +101,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     "tp_size": self.config.tp_size,
                 }
                 body["rank_config"] = rank_config
+                body["enable_colocate"] = True
                 url = "http://" + initialize_cfg.main_server_addrs[index] + "/initialize"
                 logger.info(
                     f"[RemoteHybridInferenceWorker] url: {url}, send hybrid inference initialize config to engine: {body}")
