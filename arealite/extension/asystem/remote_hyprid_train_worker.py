@@ -99,10 +99,10 @@ class RemoteHypridTrainWorker(TrainEngine):
             "master_port": "57937",
             "master_addr": str(master_ip),
             "world_size": str(cfg.world_size),
-            "megatron_config": remote_megatron_config,
-            "loss_configs": loss_configs,
+            "megatron_config": self.config.remote_megatron_config,
+            "loss_configs": self.config.loss_configs,
             "recover_dir": cfg.recover_dir,
-            "enable_colocate_mode": True,
+            "enable_colocate_mode": False,
         }
 
         try:
@@ -709,7 +709,7 @@ def pack_prompt_mask(prompt_mask: torch.Tensor, seqlen: torch.Tensor) -> torch.T
     return torch.cat(packed, dim=0)
 
 
-remote_megatron_config = remote_megatron_config = {
+remote_megatron_config = {
     "adam_beta1": 0.9,
     "adam_beta2": 0.95,
     "adam_eps": 1.0e-08,

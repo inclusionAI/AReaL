@@ -91,14 +91,14 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 body["model_path"] = self.config.model_path
                 body["storage_path"] = self.config.storage_path
                 body["random_seed"] = seeding.get_seed()
-                # body["engine_config"] = self.config.engine_config
-                body["engine_config"] = {
-                    "attention_backend": "triton",
-                    "disable_custom_all_reduce": True,
-                    "enable_metrics": True,
-                    "mem_fraction_static": 0.7,
-                    "triton_attention_num_kv_splits": 16
-                }
+                body["engine_config"] = self.config.engine_config
+                # body["engine_config"] = {
+                #     "attention_backend": "triton",
+                #     "disable_custom_all_reduce": True,
+                #     "enable_metrics": True,
+                #     "mem_fraction_static": 0.7,
+                #     "triton_attention_num_kv_splits": 16
+                # }
 
                 rank_config = {
                     "master_addr": master_addr,
@@ -110,7 +110,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     "tp_size": self.config.tp_size,
                 }
                 body["rank_config"] = rank_config
-                body["enable_colocate_mode"] = True
+                body["enable_colocate_mode"] = False
                 url = "http://" + initialize_cfg.main_server_addrs[index] + "/initialize"
                 logger.info(
                     f"[RemoteHybridInferenceWorker] url: {url}, send hybrid inference initialize config to engine: {body}")

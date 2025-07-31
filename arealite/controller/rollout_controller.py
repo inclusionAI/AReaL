@@ -132,7 +132,7 @@ class DistributedRolloutController(RolloutController):
         engineSpec.env_vars["WORK_MODE"] = "GENERATION"
         engineSpec.env_vars["GLOO_SOCKET_IFNAME"] = "eth0"
         engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "eth0"
-
+        engineSpec.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
