@@ -120,7 +120,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     url,
                     headers={"Content-Type": "application/json"},
                     json=body,
-                    timeout=60
+                    timeout=7200
                 ))
 
             try:

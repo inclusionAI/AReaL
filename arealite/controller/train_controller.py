@@ -71,6 +71,7 @@ class DistributedTrainController(TrainController):
         engineSpec.env_vars["GLOO_SOCKET_IFNAME"] = "eth0"
         engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "eth0"
         engineSpec.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        engineSpec.env_vars["USE_MAX_V2"] = "1"
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
