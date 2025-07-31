@@ -264,7 +264,8 @@ def main_grpo():
     workflow = RLVRWorkflow(
         reward_fn=reward_fn,
         gconfig=gconfig,
-        tokenizer=tokenizer,
+        # tokenizer=tokenizer,
+        tokenizer_path=MODEL_PATH
     )
 
     for epoch in range(epoch_num):

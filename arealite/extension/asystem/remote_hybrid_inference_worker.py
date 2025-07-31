@@ -192,6 +192,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     and self.input_queue.qsize() > 0
                 ):
                     data, workflow = self.input_queue.get_nowait()
+
                     logger.info(f"[RemoteHybridInferenceWorker] Get data from puller: {data}")
                     task = asyncio.create_task(
                         workflow.arun_episode(self, data), name=str(rid)

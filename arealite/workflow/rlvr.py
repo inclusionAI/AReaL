@@ -8,7 +8,7 @@ from transformers import PreTrainedTokenizerFast
 from arealite.api.cli_args import GenerationHyperparameters
 from arealite.api.io_struct import LLMRequest
 from arealite.api.workflow_api import RolloutWorkflow
-from realhf.api.core.data_api import RL_TASKS
+from realhf.api.core.data_api import RL_TASKS, load_hf_tokenizer
 from arealite.utils.padding import concat_padded_tensors
 
 
@@ -17,11 +17,16 @@ class RLVRWorkflow(RolloutWorkflow):
         self,
         reward_fn,
         gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerFast = None,
+        tokenizer_path: str = None,
     ):
+        if tokenizer is None and tokenizer_path is None:
+            raise ValueError("Either tokenizer or tokenizer_path must be provided")
+            
         self.reward_fn = reward_fn
         self.gconfig = gconfig
-        self.tokenizer = tokenizer
+        self.tokenizer = tokenizer if tokenizer is not None else load_hf_tokenizer(tokenizer_path)
+        self.tokenizer_path = tokenizer_path
 
     async def arun_episode(self, engine, data):
         # text = self.tokenizer.apply_chat_template(
