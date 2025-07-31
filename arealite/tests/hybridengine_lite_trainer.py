@@ -242,14 +242,14 @@ def main_grpo():
 
     rollout = DistributedRolloutController(
         RemoteHybridInferenceWorker(RemoteHybridInferenceConfig(experiment_name=experiment_name, trial_name=trial_name, model_path=MODEL_PATH, storage_path=storage_path,
-                                                                dp_size=allocate_mode.gen_dp_size, tp_size=allocate_mode.gen_tp_size, pp_size=allocate_mode.gen_pp_size)),
+                                                                dp_size=allocate_mode.gen_dp_size, tp_size=allocate_mode.gen_tp_size, pp_size=allocate_mode.gen_pp_size, engine_config=engine_config)),
         RolloutControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
         scheduler,
     )
     actor = DistributedTrainController(
-        RemoteHypridTrainWorker(RemoteMegatronEngineConfig(experiment_name=experiment_name, trial_name=trial_name)),
-        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode,
-                              loss_configs=loss_configs, remote_megatron_config=remote_megatron_config),
+        RemoteHypridTrainWorker(RemoteMegatronEngineConfig(experiment_name=experiment_name, trial_name=trial_name,
+                                                           loss_configs=loss_configs, remote_megatron_config=remote_megatron_config)),
+        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
         scheduler,
     )
     # engine initialize
