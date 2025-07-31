@@ -41,8 +41,8 @@ like how you enjoy real-world milk tea (cheers).
 AReaL designed specifically for AI researchers and rapid prototyping. AReaLite features
 an **AI-centric** API design that prioritizes ease of use and algorithm development,
 while inherently supporting fully asynchronous **agentic RL**. With 80% fewer lines of
-code, AReaLite maintains 90% of AReaL's core functionality. Check out
-[our AReaLite design doc](/arealite/README.md) and
+code, AReaLite maintains 90% of AReaL's high performance and core functionality. Check
+out [our AReaLite design doc](/arealite/README.md) and
 [the quickstart guide](/docs/tutorial/quickstart.md) to begin your journey with
 **AReaLite**!
 
@@ -108,13 +108,15 @@ python3 -m arealite.launcher.ray examples/arealite/gsm8k_grpo.py --config exampl
   cluster.n_gpus_per_node=8
 ```
 
-<!-- TBD: not finished yet -->
+<!-- not finished in this release -->
 
+<!--
 Evaluation (on a single node):
 
 ```
 python3 -m arealite.launcher.local examples/arealite/eval.py --config examples/arealite/configs/eval.yaml
 ```
+-->
 
 For more detailed guide on how to run experiments in AReaLite, please check out
 [our quickstart guide](/docs/tutorial/quickstart.md)!
