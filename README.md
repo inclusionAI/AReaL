@@ -22,9 +22,9 @@ like how you enjoy real-world milk tea (cheers).
 
 - ⚡ **\[NEW\] Light-weight & AI-centric:** Our new release **AReaLite** follows an
   **AI-centric** design that prioritizes better development experiences for AI
-  researchers. As a result, **AReaLite** delivers most AReaL functionalities with a much
-  more light-weight codebase, supporting users to build their own **agentic** and
-  **RLVR** training workflows with less effort.
+  researchers. As a result, **AReaLite** delivers most AReaL functionalities and
+  maintains its high performance with a much more light-weight codebase, supporting
+  users to build their own **agentic** and **RLVR** training workflows with less effort.
 - 🔥 **Asynchronous RL**: With algorithm-system co-design, AReaL supports fully
   asynchronous RL for **the fastest training**! Experimental support for multi-turn
   agentic RL is also provided.
