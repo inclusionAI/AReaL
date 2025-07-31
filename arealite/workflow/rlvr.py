@@ -14,6 +14,9 @@ from arealite.api.engine_api import InferenceEngine
 from arealite.api.io_struct import LLMRequest
 from arealite.api.workflow_api import RolloutWorkflow
 from arealite.utils.data import concat_padded_tensors
+from realhf.base import logging
+
+logger = logging.getLogger("RLVR workflow")
 
 REWARD_TIMEOUT_SECONDS = 15
 
@@ -86,6 +89,9 @@ class RLVRWorkflow(RolloutWorkflow):
                     timeout=REWARD_TIMEOUT_SECONDS,
                 )
             except asyncio.TimeoutError:
+                logger.warning(
+                    f"Computing reward timeout after {REWARD_TIMEOUT_SECONDS}s. Set reward to 0."
+                )
                 reward = 0
             rewards.append(reward)
             res = dict(

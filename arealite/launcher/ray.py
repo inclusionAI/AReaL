@@ -324,7 +324,6 @@ def ray_main():
     )
     allocation_mode = config.allocation_mode
     allocation_mode = AllocationMode.from_str(allocation_mode)
-    sglang_cmds = []
     sglang_addrs = []
     n_sglang_nodes = 0
     if allocation_mode.type_ == AllocationType.DECOUPLED_SGLANG:
