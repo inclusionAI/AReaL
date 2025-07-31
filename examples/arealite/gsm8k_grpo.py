@@ -1,3 +1,4 @@
+import itertools
 import os
 import sys
 
@@ -129,7 +130,7 @@ def main(args):
     max_steps = total_epochs * steps_per_epoch
 
     logger.info(f"total_epochs={total_epochs} step_per_epoch={steps_per_epoch}")
-    data_generator = iter(train_dataloader)
+    data_generator = itertools.cycle(train_dataloader)
     for global_step in range(max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -138,12 +139,7 @@ def main(args):
             if config.async_training:
                 batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
             else:
-                try:
-                    data = next(data_generator)
-                except StopIteration:
-                    data_generator = iter(train_dataloader)
-                    data = next(data_generator)
-                batch = rollout.rollout_batch(data, workflow=workflow)
+                batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
 
         batch = batch.to(actor.device)
         # Create barrier to synchronize all rollout processes.

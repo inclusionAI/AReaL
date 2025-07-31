@@ -128,7 +128,7 @@ class PPOActor:
         advantages = torch.stack(advantages_reversed[::-1], dim=1)
 
         # Optionally perform advantage normalization.
-        if self.adv_norm:
+        if self.adv_norm or self.group_adv_norm:
             if self.group_adv_norm:
                 adv_list = []
                 for i in range(0, bs, self.group_size):

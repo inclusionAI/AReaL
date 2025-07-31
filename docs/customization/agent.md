@@ -75,7 +75,7 @@ and converting it into an `LLMRequest` object for the inference engine:
 class MultiTurnWorkflow(RolloutWorkflow):
     # ... __init__ method above ...
 
-    async def arun_episode(self, engine: InferenceEngine, data):
+    async def arun_episode(self, engine: InferenceEngine, data) -> TensorDict:
         # Initialize result containers
         seq, logprobs, loss_mask, versions = [], [], [], []
         messages = data["messages"]
@@ -119,7 +119,7 @@ we'll apply a discount, add feedback to the conversation, and let the model try 
 class MultiTurnWorkflow(RolloutWorkflow):
     # ... previous methods ...
 
-    async def arun_episode(self, engine: InferenceEngine, data):
+    async def arun_episode(self, engine: InferenceEngine, data) -> TensorDict:
         # ... initialization code ...
         while reward == 0 and t < self.max_turns:
             # Add feedback if the previous answer was incorrect
@@ -190,7 +190,7 @@ Finally, let's complete the implementation by collecting trajectories in the
 class MultiTurnWorkflow(RolloutWorkflow):
     # ... previous methods ...
 
-    async def arun_episode(self, engine: InferenceEngine, data):
+    async def arun_episode(self, engine: InferenceEngine, data) -> TensorDict:
         # ... episode logic above ...
 
         while reward == 0 and t < self.max_turns:
@@ -417,8 +417,27 @@ Using your custom workflow is straightforward—just create it in your training 
 pass it to the `rollout_batch` or `prepare_batch` method:
 
 ```python
-# in realhf/impl/agent/__init__.py
-import realhf.impl.agent.math_multi_turn_agent
+def main(args):
+    # ... setup code ...
+
+    # Create your custom workflow
+    workflow = MultiTurnWorkflow(
+        reward_fn=gsm8k_reward_fn,
+        gconfig=config.gconfig,
+        tokenizer=tokenizer,
+        turn_discount=0.9,
+        max_turns=5,
+    )
+
+    # Run training—no other changes needed!
+    data_generator = itertools.cycle(train_dataloader)
+    for global_step in range(max_steps):
+        with stats_tracker.record_timing("rollout"):
+            if config.async_training:
+                batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
+            else:
+                batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
+        # ... continue with training loop ...
 ```
 
 Then update your experiment configuration in
