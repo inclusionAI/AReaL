@@ -1,0 +1,10 @@
+model_list:
+  - model_name: qwen2.5-7b
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen2.5-7b
+      api_base: http://localhost:8000/v1
+  - model_name: gpt-4o
+    litellm_params:
+      model: gpt-4o
+      api_key: "os.environ/OPENAI_API_KEY"
+

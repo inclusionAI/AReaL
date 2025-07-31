@@ -1,0 +1,17 @@
+# LiteLLM Proxy Configuration
+# Copy this file to .env and fill in your actual API keys
+
+# OpenAI API Key (required for GPT-4o)
+OPENAI_API_KEY=your-openai-api-key-here
+
+# Optional: Other API keys you might need
+# ANTHROPIC_API_KEY=your-anthropic-api-key-here
+# GOOGLE_API_KEY=your-google-api-key-here
+# AZURE_API_KEY=your-azure-api-key-here
+
+# Optional: Proxy configuration overrides
+# LITELLM_PROXY_URL=http://localhost:4000
+
+# Optional: Model-specific configurations
+# MODEL_TEMPERATURE=0.7
+# MODEL_MAX_TOKENS=1000 
