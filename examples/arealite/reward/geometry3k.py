@@ -1,9 +1,9 @@
 import re
 
 def extract_answer(pred_str, data_name, use_last_number=True):
-    match = re.findall(r"\[([0-9\.]+)\]", pred_str)
-    if match:
-        return match[-1]
+    matches = re.findall(r"\[([^\]]+)\]", pred_str)
+    if matches:
+        return matches[-1]
 
     return ""
 
@@ -19,7 +19,7 @@ def geometry3k_reward_fn(
         return 0
     if ans is None:
         return 0
-    print(f"sol: {sol}, ans: {ans}")
+    # print(f"sol: {sol}, ans: {ans}")
     from realhf.impl.dataset.math_parser import math_equal
     if math_equal(sol, ans):
         print(f"completions: {completions}, answer: {answer}")
