@@ -37,12 +37,12 @@ like how you enjoy real-world milk tea (cheers).
 
 ## News
 
-**\[2025/07/31\] (v0.4, AReaLite)** We introduce **AReaLite**, a **light-weight**
-version of AReaL designed specifically for AI researchers and rapid prototyping.
-AReaLite features an **AI-centric** API design that prioritizes ease of use and
-algorithm development, while inherently supporting fully asynchronous **agentic RL**.
-With 80% fewer lines of code, AReaLite maintains 90% of AReaL's core functionality.
-Check out [our AReaLite design doc](/arealite/README.md) and
+**\[2025/07/31\] (AReaLite)** We introduce **AReaLite**, a **light-weight** version of
+AReaL designed specifically for AI researchers and rapid prototyping. AReaLite features
+an **AI-centric** API design that prioritizes ease of use and algorithm development,
+while inherently supporting fully asynchronous **agentic RL**. With 80% fewer lines of
+code, AReaLite maintains 90% of AReaL's core functionality. Check out
+[our AReaLite design doc](/arealite/README.md) and
 [the quickstart guide](/docs/tutorial/quickstart.md) to begin your journey with
 **AReaLite**!
 
