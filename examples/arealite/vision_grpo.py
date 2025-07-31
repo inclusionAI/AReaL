@@ -11,6 +11,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from arealite.api.cli_args import GRPOConfig, load_expr_config
 from arealite.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
 from arealite.dataset.__init__ import get_custom_dataset
+from arealite.reward.__init__ import custom_reward_fn
 from arealite.engine.ppo.actor import FSDPPPOActor
 from arealite.engine.sglang_remote import RemoteSGLangEngine
 from arealite.utils.device import log_gpu_stats
@@ -22,35 +23,12 @@ from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import stats_tracker
 
 
-def extract_answer(pred_str, data_name, use_last_number=True):
-    match = re.findall(r"\[([0-9\.]+)\]", pred_str)
-    if match:
-        return match[-1]
 
-    return ""
-
-
-def clevr_count_70k_reward_fn(
-    prompt, completions, prompt_ids, completion_ids, answer, **kwargs
-):
-    sol = extract_answer(completions, data_name="")  # str number
-    ans = answer
-
-    if sol is None:
-        return 0
-    if ans is None:
-        return 0
-
-    if sol.strip() == ans.strip():
-        print(f"completions: {completions}, answer: {answer}")
-        return 1
-
-    return 0
 
 
 def main(args):
 
-    wandb.init(project="clevr_70k")
+    wandb.init(project=config.wandb.project)
 
     config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
@@ -134,9 +112,13 @@ def main(args):
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
+        
+    reward_fn = custom_reward_fn(
+        path=config.reward_fn.path,
+    )
 
     workflow = VisionRLVRWorkflow(
-        reward_fn=clevr_count_70k_reward_fn,
+        reward_fn=reward_fn,
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,

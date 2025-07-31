@@ -14,7 +14,7 @@ cluster:
   fileroot: /storage/openpsi/experiments
   name_resolve:
     type: nfs
-    nfs_record_root: /storage/openpsi/experiments/name_resolve/clevr_count_70k-grpo
+    nfs_record_root: /storage/openpsi/experiments/name_resolve/geometry3k-grpo
     etcd3_addr: etcd-client.openpsi-etcd.svc.sigma-na130-lingbo.na130.wl-robby.local:2379
 
 allocation_mode: sglang.d1p1t1+d7p1t1
@@ -97,7 +97,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/data/clevr_count_70k/
+  path: hiyouga/geometry3k
   type: rl
 
 valid_dataset: 
@@ -142,4 +142,4 @@ stats_logger:
   fileroot: ${cluster.fileroot}
 
 wandb:
-  project: clevr_count_70k-grpo
+  project: geometry3k-grpo

@@ -2,7 +2,7 @@ from typing import Optional
 
 import transformers
 
-VALID_DATASETS = ["gsm8k", "clevr_count_70k"]
+VALID_DATASETS = ["gsm8k", "clevr_count_70k", "geometry3k"]
 
 
 def get_custom_dataset(
