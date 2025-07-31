@@ -89,7 +89,7 @@ remote_megatron_config = {
     "hidden_dropout": 0.0,
     "hidden_size": 2048,
     "init_method_std": 0.006,
-    "load": "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe-mini-v2-e256-0627-fp8-32k-constant-merge-pack-merge-mean_w8",
+    "load": "/storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/iter_0008604_asystem",
     "log_loss_scale_to_tensorboard": False,
     "log_num_zeros_in_grad": True,
     "log_params_norm": True,
@@ -217,7 +217,7 @@ def main_grpo():
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
     batch_size = 64
     group_size = 8
-    MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe-mini-v2-e256-0627-fp8-32k-constant-merge-pack-merge-mean_w8/sglang_iter_0011770"
+    MODEL_PATH = "/storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/hf_ckpts/8604"
     max_prompt_len = 1024
     max_new_tokens = 15360
     step_num = 1145
