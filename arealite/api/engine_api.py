@@ -174,6 +174,7 @@ class InferenceEngine(abc.ABC):
         self,
         dataloader: StatefulDataLoader,
         workflow: "RolloutWorkflow",
+        should_accept: Callable | None = None,
     ):
         """Asynchronously submit and wait until a full batch is ready."""
         raise NotImplementedError()

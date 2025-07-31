@@ -55,7 +55,7 @@ class FSDPEngine(BaseHFEngine):
         # Simple auto wrap policy
         self.mixed_precision_policy = MixedPrecisionPolicy(
             param_dtype=getattr(torch, self.config.dtype),
-            reduce_dtype=torch.float32,
+            reduce_dtype=getattr(torch, self.config.grad_reduce_dtype),
             cast_forward_inputs=True,
         )
         self.device_mesh = create_fsdp_device_mesh(self.world_size, self.world_size)

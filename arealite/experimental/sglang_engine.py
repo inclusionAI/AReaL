@@ -94,6 +94,7 @@ class SGLangEngine(InferenceEngine):
             asyncio.run(self._rollout_thread_async())
         except Exception as e:
             traceback.print_exc()
+            raise e
 
     async def _rollout_thread_async(self):
         data = None

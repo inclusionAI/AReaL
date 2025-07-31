@@ -233,7 +233,7 @@ def prepare_batch(
     workflow: "RolloutWorkflow",
 ):
     if not hasattr(self, "data_generator"):
-        self.data_generator = iter(dataloader)
+        self.data_generator = itertools.cycle(dataloader)
     assert dataloader.batch_size is not None
     while True:
         # Submit at least two batches to allow maximum overlap
@@ -242,11 +242,7 @@ def prepare_batch(
             and self.input_queue.qsize() + dataloader.batch_size
             < self.input_queue.maxsize
         ):
-            try:
-                data = next(self.data_generator)
-            except StopIteration:
-                self.data_generator = iter(dataloader)
-                data = next(self.data_generator)
+            data = next(self.data_generator)
             for item in data:
                 # submit data into input_queue
                 self.submit(item, workflow=workflow)
@@ -264,18 +260,13 @@ rollout = RemoteSGLangEngine(config.rollout)
 rollout.initialize()
 eval_rollout = ...
 
-data_generator = iter(train_dataloader)
+data_generator = iterools.cycle(train_dataloader)
 for global_step in range(max_steps):
     # rollout batched training data for current step
     if config.async_training:
         batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
     else:
-        try:
-            data = next(data_generator)
-        except StopIteration:
-            data_generator = iter(train_dataloader)
-            data = next(data_generator)
-        batch = rollout.rollout_batch(data, workflow=workflow)
+        batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
 ```
 
 If you want to use rollout workflows with custom reward functions or agentic tool
@@ -375,17 +366,12 @@ Now a complete GRPO training step in AReaLite is done! The core logic of our exa
 training script can be summarized as:
 
 ```python
-data_generator = iter(train_dataloader)
+data_generator = itertools.cycle(train_dataloader)
 for global_step in range(max_steps):
     if config.async_training:
         batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
     else:
-        try:
-            data = next(data_generator)
-        except StopIteration:
-            data_generator = iter(train_dataloader)
-            data = next(data_generator)
-        batch = rollout.rollout_batch(data, workflow=workflow)
+        batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
 
     logp = actor.compute_logp(batch)
     batch["prox_logp"] = logp
