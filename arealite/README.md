@@ -9,15 +9,24 @@ immediately get started with AReaLite!
 
 AReaL presents several challenges that make it difficult for AI researchers to adopt,
 understand, and develop with effectively. The primary issue stems from its
-*system-centric* rather than *AI-centric* architecture and API design. An *AI-centric* design aims to provide three 
-key features:
-- **Light-weight & focused customization:** Users can implement their algorithms and training workflows with minimal and concentrated code, often in just a few files or even a single file.
-- **Easy to scale up:** Experiments can be scaled up seamlessly without requiring knowledge of underlying system or infrastructure details.
-- **Adaptable and plugable:** Users is free to integrate the system with code or APIs from other AI libraries, or plug APIs from the system into other frameworks.    
-We believe that AReaL, as well as other existing RL systems, falls short in fully delivering these features. 
-For example, the RL training workflow in AReaL is built around multiple *workers* executing *model
-function calls* in a *DAG* (Directed Acyclic Graph). To customize a training workflow, researchers first need to understand these system-level concepts. Then they are forced to find code to modify, which is scattered around in the codebase. It is also nearly impossible to exploit packages like `datasets` since it is not compatible with the workers.
-This gap is the core motivation behind AReaLite: rebuilding AReaL with an AI-centric architecture and APIs.
+*system-centric* rather than *AI-centric* architecture and API design. An *AI-centric*
+design aims to provide three key features:
+
+- **Light-weight & focused customization:** Users can implement their algorithms and
+  training workflows with minimal and concentrated code, often in just a few files or
+  even a single file.
+- **Easy to scale up:** Experiments can be scaled up seamlessly without requiring
+  knowledge of underlying system or infrastructure details.
+- **Adaptable and plugable:** Users is free to integrate the system with code or APIs
+  from other AI libraries, or plug APIs from the system into other frameworks. We
+  believe that AReaL, as well as other existing RL systems, falls short in fully
+  delivering these features. For example, the RL training workflow in AReaL is built
+  around multiple *workers* executing *model function calls* in a *DAG* (Directed
+  Acyclic Graph). To customize a training workflow, researchers first need to understand
+  these system-level concepts. Then they are forced to find code to modify, which is
+  scattered around in the codebase. It is also nearly impossible to exploit packages
+  like `datasets` since it is not compatible with the workers. This gap is the core
+  motivation behind AReaLite: rebuilding AReaL with an AI-centric architecture and APIs.
 
 Beyond architectural concerns, AReaL suffers from accumulated technical debt. The
 codebase contains substantial legacy code inherited from previous projects that no
@@ -41,7 +50,8 @@ backends for efficient large-scale training.
 
 ## Design Principles
 
-To achieve *AI-centric* and *light-weight* while maintaining the efficiency, our design is guided by seven core principles:
+To achieve *AI-centric* and *light-weight* while maintaining the efficiency, our design
+is guided by seven core principles:
 
 1. **Native asynchronous RL training support** — Built from the ground up for
    disentangled generation and training

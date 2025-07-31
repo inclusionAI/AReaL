@@ -20,11 +20,12 @@ like how you enjoy real-world milk tea (cheers).
 
 **AReaL Highlights**
 
-- ⚡ <span style="color: red; font-weight: bold;">**\[NEW\] AReaLite:**</span> Our new release AReaLite is 
-  a **light-weight** and **AI-centric** codebase that prioritizes better development experiences for AI
-  researchers. As a result, AReaLite delivers most AReaL functionalities and
-  maintains its high performance with much fewer lines of code, supporting
-  users to build their own **agentic** and **RLVR** training workflows with minimal effort.
+- ⚡ <span style="color: red; font-weight: bold;">**\[NEW\] AReaLite:**</span> Our new
+  release AReaLite is a **light-weight** and **AI-centric** codebase that prioritizes
+  better development experiences for AI researchers. As a result, AReaLite delivers most
+  AReaL functionalities and maintains its high performance with much fewer lines of
+  code, supporting users to build their own **agentic** and **RLVR** training workflows
+  with minimal effort.
 - 🔥 **Asynchronous RL**: With algorithm-system co-design, AReaL supports fully
   asynchronous RL for **the fastest training**! Experimental support for multi-turn
   agentic RL is also provided.
@@ -37,12 +38,12 @@ like how you enjoy real-world milk tea (cheers).
 
 ## News
 
-**\[2025/07/31\] (AReaLite)** We introduce AReaLite, a **light-weight** version of
-AReaL designed specifically for AI researchers and rapid prototyping. AReaLite features
-an **AI-centric** API design that prioritizes ease of use and algorithm development,
-while inherently supporting fully asynchronous **agentic RL**. With 80% fewer lines of
-code, AReaLite maintains 90% of AReaL's high performance and core functionality. Check
-out [our AReaLite design doc](/arealite/README.md) and
+**\[2025/07/31\] (AReaLite)** We introduce AReaLite, a **light-weight** version of AReaL
+designed specifically for AI researchers and rapid prototyping. AReaLite features an
+**AI-centric** API design that prioritizes ease of use and algorithm development, while
+inherently supporting fully asynchronous **agentic RL**. With 80% fewer lines of code,
+AReaLite maintains 90% of AReaL's high performance and core functionality. Check out
+[our AReaLite design doc](/arealite/README.md) and
 [the quickstart guide](/docs/tutorial/quickstart.md) to begin your journey with
 **AReaLite**!
 
@@ -65,13 +66,16 @@ SOTA 7B and 32B models on math reasoning. Check our
 
 New highlights in AReaLite:
 
-- Instead of the *system-centric* architecture in old AReaL, AReaLite follows an **AI-centric** API design that aims to provide the following key features:
-  * **Light-weight**, **focused** algorithm and training workflow customization.
-  * **Easy to scale up** without knowing system and infrastructure details.
-  * **Adaptable and plugable:** Smooth to integrate with other modern AI applications. 
+- Instead of the *system-centric* architecture in old AReaL, AReaLite follows an
+  **AI-centric** API design that aims to provide the following key features:
+
+  - **Light-weight**, **focused** algorithm and training workflow customization.
+  - **Easy to scale up** without knowing system and infrastructure details.
+  - **Adaptable and plugable:** Smooth to integrate with other modern AI applications.
 
   These features make AReaLite easy for AI researchers to adopt, understand, and develop
-  effectively and efficiently. To learn more about the design principles of AReaL, please read the [AReaLite design doc](/arealite/README.md)!
+  effectively and efficiently. To learn more about the design principles of AReaL,
+  please read the [AReaLite design doc](/arealite/README.md)!
 
 - A much more *light-weight* codebase compared to old AReaL codebase with only **20%** #
   lines of code, with a detailed [code walkthrough](/docs/arealite/gsm8k_grpo.md) on an
@@ -139,7 +143,14 @@ Then you should be able to run experiments with your old settings on AReaLite!
 
 ## AReaLite vs legacy AReaL
 
-AReaLite is an initiative to fully refactor AReaL, addressing historical issues such as redundant code and unnecessary system-level abstractions. Currently, AReaLite provides a lightweight codebase that enables fast prototyping for new RL training workflows and algorithms on a relatively small scale. For large-scale experiments (1K+ GPUs), we recommend using the battle-tested legacy AReaL to ensure stability. In the future, we will continue developing AReaLite by expanding its APIs, migrating legacy features, introducing new functionality, and validating the system through large-scale experiments.
+AReaLite is an initiative to fully refactor AReaL, addressing historical issues such as
+redundant code and unnecessary system-level abstractions. Currently, AReaLite provides a
+lightweight codebase that enables fast prototyping for new RL training workflows and
+algorithms on a relatively small scale. For large-scale experiments (1K+ GPUs), we
+recommend using the battle-tested legacy AReaL to ensure stability. In the future, we
+will continue developing AReaLite by expanding its APIs, migrating legacy features,
+introducing new functionality, and validating the system through large-scale
+experiments.
 
 ## Resources
 
