@@ -170,7 +170,7 @@ remote_megatron_config = {
 
 def main_grpo():
     experiment_name = "arealite-mini"
-    trial_name = "helloworld"
+    trial_name = "helloworld-64x8-0801-0"
 
     # init controller
     scheduler = AsystemScheduler({
