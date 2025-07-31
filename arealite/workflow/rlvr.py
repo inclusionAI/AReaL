@@ -25,13 +25,15 @@ class RLVRWorkflow(RolloutWorkflow):
             
         self.reward_fn = reward_fn
         self.gconfig = gconfig
-        self.tokenizer = tokenizer if tokenizer is not None else load_hf_tokenizer(tokenizer_path)
+        self.tokenizer = tokenizer if tokenizer is not None else None
         self.tokenizer_path = tokenizer_path
 
     async def arun_episode(self, engine, data):
         # text = self.tokenizer.apply_chat_template(
         #     data["messages"], tokenize=False, add_generation_prompt=True
         # )
+        if self.tokenizer is None:
+            self.tokenizer = load_hf_tokenizer(self.tokenizer_path)
         text = data["prompt"][0]
         prompt_encodings = self.tokenizer(
             text,
