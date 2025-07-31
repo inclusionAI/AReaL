@@ -242,7 +242,7 @@ def main_grpo():
 
     rollout = DistributedRolloutController(
         RemoteHybridInferenceWorker(RemoteHybridInferenceConfig(experiment_name=experiment_name, trial_name=trial_name, model_path=MODEL_PATH, storage_path=storage_path,
-                                                                dp_size=allocate_mode.gen_dp_size, tp_size=allocate_mode.gen_tp_size, pp_size=allocate_mode.gen_pp_size, engine_config=engine_config)),
+                                                                dp_size=allocate_mode.gen_dp_size, tp_size=allocate_mode.gen_tp_size, pp_size=allocate_mode.gen_pp_size)),
         RolloutControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
         scheduler,
     )
