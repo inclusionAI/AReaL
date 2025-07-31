@@ -169,8 +169,8 @@ remote_megatron_config = {
 
 
 def main_grpo():
-    experiment_name = "arealite-mini"
-    trial_name = "helloworld"
+    experiment_name = "arealite-lite"
+    trial_name = "helloworld-0"
 
     # init controller
     scheduler = AsystemScheduler({
@@ -289,7 +289,7 @@ def main_grpo():
 
                 weight_update_config = WeightUpdateMeta(
                     type="disk",
-                    path=f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}/{step}",
+                    path=f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}",
                     alloc_mode=None,
                     comm_backend=None,
                 )
@@ -300,6 +300,7 @@ def main_grpo():
                 ):
                     logger.info(f"start to update weight, step: {step}, epoch: {epoch}")
                     actor.upload_weights(weight_update_config)
+                    weight_update_config.path = f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}/{step}"
                     rollout.update_weights(weight_update_config)
                     logger.info(f"update weight succeeded, step: {step}, epoch: {epoch}")
                     clear_dir(weight_update_config.path)
