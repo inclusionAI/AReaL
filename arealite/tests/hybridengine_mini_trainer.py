@@ -247,9 +247,9 @@ def main_grpo():
         scheduler,
     )
     actor = DistributedTrainController(
-        RemoteHypridTrainWorker(RemoteMegatronEngineConfig(experiment_name=experiment_name, trial_name=trial_name)),
-        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode,
-                              loss_configs=loss_configs, remote_megatron_config=remote_megatron_config),
+        RemoteHypridTrainWorker(RemoteMegatronEngineConfig(experiment_name=experiment_name, trial_name=trial_name,
+                                                           loss_configs=loss_configs, remote_megatron_config=remote_megatron_config)),
+        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
         scheduler,
     )
     # engine initialize
@@ -289,7 +289,7 @@ def main_grpo():
 
                 weight_update_config = WeightUpdateMeta(
                     type="disk",
-                    path=f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}/{step}",
+                    path=f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}",
                     alloc_mode=None,
                     comm_backend=None,
                 )
@@ -300,6 +300,7 @@ def main_grpo():
                 ):
                     logger.info(f"start to update weight, step: {step}, epoch: {epoch}")
                     actor.upload_weights(weight_update_config)
+                    weight_update_config.path = f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}/{step}"
                     rollout.update_weights(weight_update_config)
                     logger.info(f"update weight succeeded, step: {step}, epoch: {epoch}")
                     clear_dir(weight_update_config.path)
