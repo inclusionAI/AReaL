@@ -28,10 +28,12 @@ from realhf.base import stats_tracker
 
 def main(args):
 
-    wandb.init(project=config.wandb.project)
+    
 
     config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
+
+    wandb.init(project=config.stats_logger.wandb.project)
 
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
@@ -114,7 +116,7 @@ def main(args):
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
         
     reward_fn = custom_reward_fn(
-        path=config.reward_fn.path,
+        path=config.train_dataset.reward_fn,
     )
 
     workflow = VisionRLVRWorkflow(

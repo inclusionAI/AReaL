@@ -637,6 +637,9 @@ class DatasetConfig:
         default=0, metadata={"help": "Number of worker processes for data loading"}
     )
     drop_last: bool = field(default=True)
+    reward_fn: Optional[str] = field(
+        default=None,
+    )
 
 
 @dataclass
