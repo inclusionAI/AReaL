@@ -149,7 +149,7 @@ remote_megatron_config = {
     "swiglu": True,
     "tensor_model_parallel_size": 1,
     "tensorboard_log_interval": 1,
-    "tokenizer_model": "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe-mini-v2-e256-0627-fp8-32k-constant-merge-pack-merge-mean_w8/sglang_iter_0011770",
+    "tokenizer_model": "/storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/hf_ckpts/8604",
     "tokenizer_type": "HuggingFaceTokenizer",
     "train_iters": 100000,
     "transformer_xl": False,
