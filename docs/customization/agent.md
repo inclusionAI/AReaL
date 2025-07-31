@@ -77,7 +77,7 @@ and converting it into an `LLMRequest` object for the inference engine:
 class MultiTurnWorkflow(RolloutWorkflow):
     # ... __init__ method above ...
 
-    async def arun_episode(self, engine: InferenceEngine, data):
+    async def arun_episode(self, engine: InferenceEngine, data) -> TensorDict:
         # Initialize result containers
         seq, logprobs, loss_mask, versions = [], [], [], []
         messages = data["messages"]
@@ -121,7 +121,7 @@ apply a discount, add feedback to the conversation, and let the model try again:
 class MultiTurnWorkflow(RolloutWorkflow):
     # ... previous methods ...
 
-    async def arun_episode(self, engine: InferenceEngine, data):
+    async def arun_episode(self, engine: InferenceEngine, data) -> TensorDict:
         # ... initialization code ...
         while reward == 0 and t < self.max_turns:
             # Add feedback if the previous answer was incorrect
@@ -192,7 +192,7 @@ Finally, let's complete the implementation by collecting trajectories in the
 class MultiTurnWorkflow(RolloutWorkflow):
     # ... previous methods ...
 
-    async def arun_episode(self, engine: InferenceEngine, data):
+    async def arun_episode(self, engine: InferenceEngine, data) -> TensorDict:
         # ... episode logic above ...
 
         while reward == 0 and t < self.max_turns:
@@ -247,18 +247,13 @@ def main(args):
     )
 
     # Run training—no other changes needed!
-    data_generator = iter(train_dataloader)
+    data_generator = itertools.cycle(train_dataloader)
     for global_step in range(max_steps):
         with stats_tracker.record_timing("rollout"):
             if config.async_training:
                 batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
             else:
-                try:
-                    data = next(data_generator)
-                except StopIteration:
-                    data_generator = iter(train_dataloader)
-                    data = next(data_generator)
-                batch = rollout.rollout_batch(data, workflow=workflow)
+                batch = rollout.rollout_batch(danext(data_generator)ta, workflow=workflow)
         # ... continue with training loop ...
 ```
 

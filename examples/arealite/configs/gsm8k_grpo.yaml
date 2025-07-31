@@ -68,6 +68,7 @@ ref:
   trial_name: ${trial_name}
   path: ${actor.path}
   init_from_scratch: false
+  disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
     max_tokens_per_mb: 10240

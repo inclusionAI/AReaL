@@ -31,7 +31,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
         messages = data["messages"]
         # Run multi-turn rollout until correct
         t = reward = 0
-        discount = 0
+        discount = 1
         rid = uuid.uuid4().hex
         while reward == 0 and t < self.max_turns:
             # Amend a prompt if the previous answer is incorrect

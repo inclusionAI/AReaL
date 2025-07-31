@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import queue
 import threading
 import time
@@ -76,18 +77,17 @@ class WorkflowExecutor:
         else:
             world_size = 1
 
-        max_concurrent_rollouts = max(
-            1, self.config.max_concurrent_rollouts // world_size
-        )
-        capacity = max_concurrent_rollouts - len(self.rollout_tasks)
-        # Staleness control
         with self.lock:
+            max_concurrent_rollouts = max(
+                1, self.config.max_concurrent_rollouts // world_size
+            )
+            capacity = max_concurrent_rollouts - len(self.rollout_tasks)
+            # Staleness control
             version = self.inference_engine.get_version()
-        ofp = self.config.max_head_offpolicyness
-        with self.lock:
+            ofp = self.config.max_head_offpolicyness
             sample_cnt = self.rollout_stat.accepted + self.rollout_stat.running
-        consumer_bs = max(1, self.config.consumer_batch_size // world_size)
-        capacity = min(capacity, (ofp + version + 1) * consumer_bs - sample_cnt)
+            consumer_bs = max(1, self.config.consumer_batch_size // world_size)
+            capacity = min(capacity, (ofp + version + 1) * consumer_bs - sample_cnt)
         return capacity
 
     def _rollout_thread(self):
@@ -105,6 +105,7 @@ class WorkflowExecutor:
                 # Check capacity
                 capacity = self.get_capacity()
                 # Create new rollout task
+                self.lock.acquire()
                 while (
                     capacity > 0
                     and not self.paused.is_set()
@@ -116,22 +117,22 @@ class WorkflowExecutor:
                         workflow.arun_episode(self.inference_engine, data),
                         name=str(rid),
                     )
-                    with self.lock:
-                        rollout_tasks[str(rid)] = task
-                        self.rollout_stat.submitted += 1
-                        self.rollout_stat.running += 1
-                        if self.config.enable_rollout_tracing:
-                            logger.info(
-                                f"Submit rollout rid {rid}. "
-                                f"Submit: {self.rollout_stat.submitted}, "
-                                f"running: {self.rollout_stat.running}, "
-                                f"accepted: {self.rollout_stat.accepted}."
-                            )
+                    rollout_tasks[str(rid)] = task
+                    self.rollout_stat.submitted += 1
+                    self.rollout_stat.running += 1
+                    if self.config.enable_rollout_tracing:
+                        logger.info(
+                            f"Submit rollout rid {rid}. "
+                            f"Submit: {self.rollout_stat.submitted}, "
+                            f"running: {self.rollout_stat.running}, "
+                            f"accepted: {self.rollout_stat.accepted}."
+                        )
                     capacity -= 1
                     rid += 1
+                tasks = list(rollout_tasks.values())
+                self.lock.release()
+
                 # Wait for rollout completion
-                with self.lock:
-                    tasks = list(rollout_tasks.values())
                 done = []
                 if tasks:
                     done, _ = await asyncio.wait(
@@ -148,14 +149,6 @@ class WorkflowExecutor:
                         rollout_tasks.pop(task_rid)
                         self.rollout_stat.accepted += 1
 
-                    try:
-                        self.output_queue.put_nowait(traj)
-                    except queue.Full:
-                        raise RuntimeError(
-                            "Output queue full. Please increase queue_size."
-                        )
-
-                    with self.lock:
                         self.rollout_stat.running -= 1
                         if self.config.enable_rollout_tracing:
                             logger.info(
@@ -164,6 +157,13 @@ class WorkflowExecutor:
                                 f"running: {self.rollout_stat.running}, "
                                 f"accepted: {self.rollout_stat.accepted}."
                             )
+                    try:
+                        self.output_queue.put_nowait(traj)
+                    except queue.Full:
+                        raise RuntimeError(
+                            "Output queue full. Please increase queue_size."
+                        )
+
                 await asyncio.sleep(1)
         except Exception:
             traceback.print_exc()
@@ -235,7 +235,7 @@ class WorkflowExecutor:
         should_accept: Callable | None = None,
     ):
         if not hasattr(self, "data_generator"):
-            self.data_generator = iter(dataloader)
+            self.data_generator = itertools.cycle(dataloader)
         assert dataloader.batch_size is not None
         while True:
             # Submit at least two batches to allow maximum overlap
@@ -244,11 +244,7 @@ class WorkflowExecutor:
                 and self.input_queue.qsize() + dataloader.batch_size
                 < self.input_queue.maxsize
             ):
-                try:
-                    data = next(self.data_generator)
-                except StopIteration:
-                    self.data_generator = iter(dataloader)
-                    data = next(self.data_generator)
+                data = next(self.data_generator)
                 for item in data:
                     self.submit(item, workflow=workflow)
             try:

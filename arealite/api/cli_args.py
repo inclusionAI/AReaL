@@ -195,7 +195,10 @@ class TrainEngineConfig:
     gradient_checkpointing: bool = field(
         default=True, metadata={"help": "Enable gradient checkpointing"}
     )
-    dtype: str = field(default="float16", metadata={"help": "Parameter dtype."})
+    dtype: str = field(default="bfloat16", metadata={"help": "Parameter dtype."})
+    grad_reduce_dtype: str = field(
+        default="float32", metadata={"help": "Gradient reduce dtype."}
+    )
     optimizer: Optional[OptimizerConfig] = field(
         default=None, metadata={"help": "Optimizer configuration"}
     )
@@ -262,7 +265,7 @@ class PPOActorConfig(TrainEngineConfig):
         default=1.0, metadata={"help": "Lambda parameter for GAE"}
     )
     adv_norm: bool = field(
-        default=True, metadata={"help": "Enable advantage normalization"}
+        default=True, metadata={"help": "Enable advantage normalization globally"}
     )
 
     # KL Control
@@ -275,7 +278,9 @@ class PPOActorConfig(TrainEngineConfig):
     )
     use_decoupled_loss: bool = field(
         default=False,
-        metadata={"help": "Use the decoupled loss. recompute_logprob must be True."},
+        metadata={
+            "help": "Use the decoupled loss. Implicitly enable recompute_logprob."
+        },
     )
     behav_imp_weight_cap: Optional[float] = field(
         default=None,
@@ -329,7 +334,7 @@ class SGLangConfig:
     schedule_policy: str = "lpm"
     schedule_conservativeness: float = 1.0
     cpu_offload_gb: int = 0
-    dtype: str = "float16"
+    dtype: str = "bfloat16"
     kv_cache_dtype: str = "auto"
     # logging
     log_level: str = "warning"
@@ -407,31 +412,8 @@ class SGLangConfig:
             dist_init_addr=dist_init_addr,
             **args,
         )
-        sglang_version = pkg_version.get_version("sglang")
-        if sglang_version:
-            version_less_than_0_4_4 = (
-                pkg_version.compare_versions(sglang_version, "0.4.4") < 0
-            )
-            version_less_than_0_4_3 = (
-                pkg_version.compare_versions(sglang_version, "0.4.3") < 0
-            )
-        elif pkg_version.is_available("sglang"):
-            version_less_than_0_4_4 = pkg_version.is_version_less("sglang", "0.4.4")
-            version_less_than_0_4_3 = pkg_version.is_version_less("sglang", "0.4.3")
-        else:
-            raise ValueError(
-                "A installed SGLang package or a specific SGLang version should be provided to build SGLang server cmd."
-            )
-        if version_less_than_0_4_4:
-            args.pop("log_requests_level")
-        if version_less_than_0_4_3:
-            args.pop("enable_nccl_nvls")
-            args.pop("triton_attention_num_kv_splits")
-            args.pop("cuda_graph_bs")
-            args.pop("enable_memory_saver")
-            args.pop("allow_auto_truncate")
-            args.pop("file_storage_path")
-
+        if not pkg_version.is_version_greater_or_equal("sglang", "0.4.9.post2"):
+            raise RuntimeError("Needs sglang>=0.4.9.post2 to run the code.")
         return args
 
 
@@ -466,7 +448,7 @@ class InferenceEngineConfig:
         default="round_robin",
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
     )
-    setup_timeout: float = field(default=90.0)
+    setup_timeout: float = field(default=120.0)
     request_timeout: float = field(
         default=3600, metadata={"help": "Timeout for HTTP requests."}
     )
