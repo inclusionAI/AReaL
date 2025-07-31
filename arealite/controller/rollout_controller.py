@@ -130,6 +130,9 @@ class DistributedRolloutController(RolloutController):
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         engineSpec.env_vars["WORKER_TYPE"] = "rollout-engine"
         engineSpec.env_vars["WORK_MODE"] = "GENERATION"
+        engineSpec.env_vars["GLOO_SOCKET_IFNAME"] = "eth0"
+        engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "eth0"
+
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
