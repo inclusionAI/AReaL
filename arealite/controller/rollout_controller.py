@@ -148,6 +148,7 @@ class DistributedRolloutController(RolloutController):
         futures = []
 
         time.sleep(100)
+        master_addr = ""
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             # for i in range(self.allocate_mode.gen_dp_size):
             for index, worker in enumerate(self.workers):
@@ -165,7 +166,15 @@ class DistributedRolloutController(RolloutController):
                 if isinstance(self.inf_engine, RemoteSGLangEngine):
                     init_config = RemoteSGLangInitConfig(main_server_addrs=main_server_addrs, sglang_addrs_list=free_addrs)
                 elif isinstance(self.inf_engine, RemoteHybridInferenceWorker):
-                    init_config = RemoteHypidInferenceInitConfig(main_server_addrs=main_server_addrs, free_addrs=free_addrs, world_size=self.allocate_mode.gen_world_size, global_ranks=list(range(index, index+self.dp_world_size)))
+                    if index == 0:
+                        master_addr = free_addrs[0][0]
+                    init_config = RemoteHypidInferenceInitConfig(
+                        main_server_addrs=main_server_addrs, 
+                        free_addrs=free_addrs,
+                        world_size=self.allocate_mode.gen_world_size,
+                        global_ranks=list(range(index, index+self.dp_world_size)),
+                        master_addr=master_addr
+                    )
 
                 futures.append(executor.submit(
                     self.scheduler.create_engine,
