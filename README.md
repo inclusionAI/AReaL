@@ -226,13 +226,17 @@ the Institute for Interdisciplinary Information Sciences, Tsinghua University.
 Our team has also received invaluable assistance from the following groups (listed in
 alphabetical order):
 
-• The Data Intelligence Lab at Ant Research for their data support • The
-[Relaxed System Lab](https://github.com/Relaxed-System-Lab) from HKUST for seamless
-cooperation on many system-related aspects • The
-[SGLang team](https://github.com/sgl-project/sglang) for supporting customized features
-for asynchronous RL training and their contributions during the development of
-AReaL-lite • The Super Computing Technology (SCT) team at Ant Group, particularly for
-their expertise in large-scale cluster operations and maintenance
+- The Data Intelligence Lab at Ant Research for their data support
+
+- The [Relaxed System Lab](https://github.com/Relaxed-System-Lab) from HKUST for
+  seamless cooperation on many system-related aspects
+
+- The [SGLang team](https://github.com/sgl-project/sglang) for supporting customized
+  features for asynchronous RL training and their contributions during the development
+  of AReaL-lite
+
++The Super Computing Technology (SCT) team at Ant Group, particularly for their
+expertise in large-scale cluster operations and maintenance
 
 We also appreciate all the pioneering works from the community, particularly the
 [ReaLHF](https://github.com/openpsi-project/ReaLHF) project from OpenPsi Inc. and other
