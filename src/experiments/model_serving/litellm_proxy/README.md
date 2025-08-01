@@ -9,12 +9,14 @@ LiteLLM is a library that provides a unified interface to various LLM providers.
 - Configuration file (`litellm_config.yaml`) for model definitions
 - Test script (`test_query.sh`) for validating the setup
 
+**Important**: The proxy requires environment variables (like `OPENAI_API_KEY`) to be exported to its process. See the Environment Setup section for details.
+
 ## Files
 
 - **`litellm_proxy.sh`** - Main management script for the LiteLLM proxy
 - **`litellm_config.yaml`** - Configuration file defining available models
 - **`test_query.sh`** - Test script to validate proxy functionality
-- **`test_litellm_sdk.py`** - Python test script using OpenAI SDK to call LiteLLM proxy
+- **`test_openai_sdk.py`** - Python test script using OpenAI SDK to call LiteLLM proxy
 
 ## Prerequisites
 
@@ -34,9 +36,19 @@ LiteLLM is a library that provides a unified interface to various LLM providers.
    nano .env
    ```
 
-2. **Start the proxy:**
+2. **Export environment variables and start the proxy:**
    ```bash
+   # Method 1: Export all variables from .env file
+   set -a  # automatically export all variables
+   source .env
+   set +a  # turn off automatic export
    ./litellm_proxy.sh start
+   
+   # Method 2: Export variables inline
+   export $(cat .env | xargs) && ./litellm_proxy.sh start
+   
+   # Method 3: Use dotenv with the proxy script
+   # (requires modifying the proxy script to load .env)
    ```
 
 3. **Test the connection:**
@@ -112,7 +124,24 @@ The scripts use `python-dotenv` to load environment variables from a `.env` file
    GOOGLE_API_KEY=your-google-key-here
    ```
 
-3. **Keep your `.env` file secure:**
+3. **Export environment variables for the proxy:**
+   ```bash
+   # The proxy needs environment variables to be exported to its process
+   # Choose one of these methods:
+   
+   # Method 1: Export all variables from .env file
+   set -a  # automatically export all variables
+   source .env
+   set +a  # turn off automatic export
+   
+   # Method 2: Export variables inline
+   export $(cat .env | xargs)
+   
+   # Method 3: Export specific variables
+   export OPENAI_API_KEY=$(grep OPENAI_API_KEY .env | cut -d'=' -f2)
+   ```
+
+4. **Keep your `.env` file secure:**
    - Never commit it to version control
    - Add `.env` to your `.gitignore` file
    - Use different keys for development and production
@@ -192,8 +221,11 @@ For testing using the OpenAI Python SDK to call the LiteLLM proxy:
 # Install required dependencies
 pip install openai loguru python-dotenv
 
+# Export environment variables for the proxy
+set -a && source .env && set +a
+
 # Run the OpenAI SDK test suite (loads keys from .env)
-python3 test_litellm_sdk.py
+python3 test_openai_sdk.py
 ```
 
 The OpenAI SDK test script includes:
@@ -244,7 +276,19 @@ curl --location 'http://localhost:4000/chat/completions' \
    python3 -c "from dotenv import load_dotenv; import os; load_dotenv(); print('OPENAI_API_KEY:', 'SET' if os.getenv('OPENAI_API_KEY') else 'NOT SET')"
    ```
 
-5. **Proxy timeout**: If you encounter timeout errors, the scripts now use 15-second timeouts. If issues persist:
+5. **Proxy environment variables**: Make sure environment variables are exported for the proxy process:
+   ```bash
+   # Check if variables are exported in current shell
+   echo "OPENAI_API_KEY: ${OPENAI_API_KEY:0:8}..."
+   
+   # Export variables if needed
+   set -a && source .env && set +a
+   
+   # Restart proxy with exported variables
+   ./litellm_proxy.sh restart
+   ```
+
+6. **Proxy timeout**: If you encounter timeout errors, the scripts now use 15-second timeouts. If issues persist:
    ```bash
    # Check proxy status
    ./litellm_proxy.sh status
