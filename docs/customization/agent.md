@@ -192,7 +192,7 @@ Finally, let's complete the implementation by collecting trajectories in the
 class MultiTurnWorkflow(RolloutWorkflow):
     # ... previous methods ...
 
-    async def arun_episode(self, engine: InferenceEngine, data):
+    async def arun_episode(self, engine: InferenceEngine, data) -> TensorDict:
         # ... episode logic above ...
 
         while reward == 0 and t < self.max_turns:
