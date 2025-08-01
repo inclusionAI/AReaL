@@ -1,7 +1,7 @@
 import argparse
 import json
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional, Union
 
 from pydantic import Field
 from rich.console import Console
@@ -68,7 +68,7 @@ class SFTDataset(BaseModelNoExtra):
     def json_dump(self, path: str | Path):
         console.print(f"Saving dataset to {path}")
         with open(path, "w") as f:
-            json.dump(self.model_dump(), f)
+            json.dump(self.model_dump(), f, indent=4)
 
     @classmethod
     def json_load(cls, path: str | Path):
@@ -81,17 +81,83 @@ class SFTDataset(BaseModelNoExtra):
 
 
 def make_sft_dataset(
+    result_paths_or_dir: Union[Iterable[str | Path], str | Path],
+    save_dir: Optional[str | Path] = None,
+    name: Optional[str] = None,
+    success_only: bool = True,
+    splits: tuple[str] = ("train", "test"),
+) -> SFTDataset:
+    """
+    Make a SFT dataset from a list of result paths.
+    Dataset is saved to save_path if provided in json format.
+
+    Args:
+        result_paths_or_dir: List of result paths or a directory path containing result files.
+        save_dir: Path to save the dataset.
+        name: Name of the dataset (you have to provide it if save_dir is provided)
+        success_only: If True, only include successful simulations.
+        splits: Splits to include in the dataset. Default is ("train", "test").
+    """
+
+    if isinstance(result_paths_or_dir, str):
+        result_paths_or_dir = Path(result_paths_or_dir)
+    if isinstance(result_paths_or_dir, Path):
+        result_paths = list(result_paths_or_dir.glob("*.json"))
+    elif isinstance(result_paths_or_dir, Iterable):
+        result_paths = list(result_paths_or_dir)
+    else:
+        raise ValueError(
+            f"Invalid type for result_paths_or_dir: {type(result_paths_or_dir)}"
+        )
+
+    if save_dir is not None and name is None:
+        raise ValueError("Name is required if save_dir is provided")
+    if isinstance(save_dir, str):
+        save_dir = Path(save_dir)
+    if save_dir is not None:
+        save_path = save_dir / f"{name}.json"
+    else:
+        save_path = None
+    splits_data = {split: [] for split in splits}
+    for result_path in result_paths:
+        dataset = make_sft_dataset_from_results(
+            result_path=result_path, success_only=success_only
+        )
+        for split in splits:
+            if split not in dataset:
+                raise ValueError(f"Dataset from {result_path} is missing split {split}")
+            splits_data[split] += dataset[split]
+
+    sft_dataset = SFTDataset(splits=splits_data)
+    console.print_json(json.dumps(sft_dataset.get_info(), indent=2))
+    do_save = save_path is not None
+    if do_save and not save_dir.exists():
+        save_dir.mkdir(parents=True, exist_ok=True)
+    if save_path.exists() and do_save:
+        console.print(f"Dataset already exists at {save_path}")
+        user_input = input("Overwrite? (y/n): ")
+        do_save = user_input.lower().strip() == "y"
+    if do_save:
+        sft_dataset.json_dump(save_path)
+    else:
+        console.print("Exiting...")
+    return sft_dataset
+
+
+def make_sft_dataset_from_results(
     result_path: str | Path,
     save_dir: Optional[str | Path] = None,
+    name: Optional[str] = None,
     success_only: bool = True,
 ) -> list[SFTDataPoint]:
     """
     Make a SFT dataset from a results file.
-    Dataset is saved to save_path if provided in HuggingFace format.
+    Dataset is saved to save_path if provided in json format.
 
     Args:
         result_path: Path to the results file.
         save_dir: Path to save the dataset.
+        name: Name of the dataset (if None, it will be the name of the results file)
         success_only: If True, only include successful simulations.
     Returns:
         list[SFTDataPoint]: A list of SFT data points.
@@ -178,6 +244,12 @@ def make_sft_dataset(
         f"Number trajectories: {len(sft_dataset['train'])} (train) and {len(sft_dataset['test'])} (test), {num_discarded} discarded out of {len(results.simulations)}"
     )
     sft_dataset = SFTDataset(splits=sft_dataset)
+    console.print_json(json.dumps(sft_dataset.get_info(), indent=2))
+    # save dataset if save_dir is provided
+    do_save = save_dir is not None
+    if not do_save:
+        return sft_dataset
+
     if isinstance(save_dir, str):
         save_dir = Path(save_dir)
     if isinstance(result_path, str):
@@ -185,8 +257,10 @@ def make_sft_dataset(
     if not save_dir.exists():
         save_dir.mkdir(parents=True, exist_ok=True)
 
-    save_path = save_dir / f"{result_path.stem}.json"
-    do_save = True
+    if name is None:
+        name = result_path.stem
+    save_path = save_dir / f"{name}.json"
+
     if save_path.exists() and do_save:
         console.print(f"Dataset already exists at {save_path}")
         user_input = input("Overwrite? (y/n): ")
@@ -358,18 +432,66 @@ def get_parser() -> argparse.ArgumentParser:
     make_parser = subparsers.add_parser(
         "make", help="Create SFT dataset from Tau2 result file"
     )
-    make_parser.add_argument("--result-path", type=str, required=True)
-    make_parser.add_argument("--save-path", type=str, required=True)
-    make_parser.add_argument("--success-only", action="store_true")
+
+    # Create mutually exclusive group for result paths
+    result_group = make_parser.add_mutually_exclusive_group(required=True)
+    result_group.add_argument(
+        "--result-paths",
+        type=str,
+        nargs="+",
+        help="Paths to result JSON files.",
+    )
+    result_group.add_argument(
+        "--result-dir",
+        type=str,
+        help="Directory containing result JSON files.",
+    )
+    make_parser.add_argument(
+        "--save-dir",
+        type=str,
+        required=True,
+        help="Path to save the dataset.",
+    )
+    make_parser.add_argument(
+        "--name",
+        type=str,
+        required=True,
+        help="Name of the dataset.",
+    )
+    make_parser.add_argument(
+        "--success-only",
+        action="store_true",
+        help="Only include successful simulations.",
+    )
 
     # Subparser for to_openai_sft_dataset
     convert_parser = subparsers.add_parser(
         "to-openai", help="Convert existing SFT dataset to OpenAI format"
     )
-    convert_parser.add_argument("--dataset-path", type=str, required=True)
-    convert_parser.add_argument("--save-dir", type=str, required=True)
-    convert_parser.add_argument("--split", type=str, nargs="+", default=["train"])
-    convert_parser.add_argument("--success-only", action="store_true")
+    convert_parser.add_argument(
+        "--dataset-path",
+        type=str,
+        required=True,
+        help="Path to the dataset.",
+    )
+    convert_parser.add_argument(
+        "--save-dir",
+        type=str,
+        required=True,
+        help="Path to save the dataset.",
+    )
+    convert_parser.add_argument(
+        "--split",
+        type=str,
+        nargs="+",
+        default=["train"],
+        help="Splits to convert.",
+    )
+    convert_parser.add_argument(
+        "--success-only",
+        action="store_true",
+        help="Only include successful simulations.",
+    )
 
     return parser
 
@@ -379,7 +501,18 @@ def main():
     args = parser.parse_args()
 
     if args.command == "make":
-        make_sft_dataset(args.result_path, args.save_path, args.success_only)
+        # Determine which argument was provided
+        if args.result_paths:
+            result_paths_or_dir = args.result_paths
+        else:  # args.result_dir
+            result_paths_or_dir = args.result_dir
+
+        make_sft_dataset(
+            result_paths_or_dir=result_paths_or_dir,
+            save_dir=args.save_dir,
+            name=args.name,
+            success_only=args.success_only,
+        )
     elif args.command == "to-openai":
         for split in args.split:
             console.print(f"Processing split: {split}")
