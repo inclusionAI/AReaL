@@ -117,20 +117,28 @@ class SGLangAPIClient(LLMAPIClient):
                             )
 
                         most_recent_timestamps[output_idx] = timestamp
-                        output.output_ids = [data[SGLANG_TOKEN_OUTPUT_IDENTIFIER]]
-                        finish_reason = data["meta_info"]["finish_reason"]
-                        if req.return_logprob:
-                            output.output_logprobs = [
-                                [
-                                    x[0]
-                                    for x in data["meta_info"]["output_token_logprobs"]
-                                ]
-                            ]
+                        meta_info = data["meta_info"]
+                        finish_reason = meta_info["finish_reason"]
                         assert finish_reason["type"] in [
                             "length",
                             "stop",
+                            "abort",
                         ], finish_reason
-                        output.no_eos = [finish_reason["type"] == "length"]
+
+                        if meta_info.get("output_token_logprobs"):
+                            output.output_ids = [
+                                [x[1] for x in meta_info["output_token_logprobs"]]
+                            ]
+                            if req.return_logprob:
+                                output.output_logprobs = [
+                                    [x[0] for x in meta_info["output_token_logprobs"]]
+                                ]
+                        else:
+                            output.output_ids = [[]]
+                            if req.return_logprob:
+                                output.output_logprobs = [[]]
+
+                        output.no_eos = [finish_reason["type"] in ["length", "abort"]]
                         output.latency = latency
 
                         output_idx += 1

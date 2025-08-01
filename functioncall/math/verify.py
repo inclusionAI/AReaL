@@ -10,7 +10,12 @@ from functioncall.base.utils import construct_uid, logger
 
 
 def math_verify(
-    id2info, generateds: List, query_ids: List, batch_size=10, timeout=1000
+    id2info,
+    generateds: List,
+    query_ids: List,
+    batch_size=10,
+    timeout=1000,
+    max_workers=None,
 ) -> List:
     assert len(generateds) == len(query_ids), (
         len(generateds),
