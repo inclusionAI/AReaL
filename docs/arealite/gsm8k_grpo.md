@@ -2,9 +2,9 @@
 
 This guide introduces how AReaL-lite runs the GRPO algorithm on the GSM8K dataset, using
 the training script
-[examples/arealite/gsm8k_grpo.py](../../examples/arealite/gsm8k_grpo.py) and
-configuration file
-[examples/arealite/configs/gsm8k_grpo.yaml](../../examples/arealite/configs/gsm8k_grpo.yaml).
+[examples/arealite/gsm8k_grpo.py](https://github.com/inclusionAI/AReaL/blob/main/examples/arealite/gsm8k_grpo.py)
+and configuration file
+[examples/arealite/configs/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/arealite/configs/gsm8k_grpo.yaml).
 
 ## How AReaL-lite Works
 
@@ -49,20 +49,22 @@ In AReaL-lite:
   `LocalLauncher`, `ray.remote` for `RayLauncher`, `srun` for `SlurmLauncher`).
 - The launcher also manages inference servers (currently only supporting
   `SGLangServer`). The number and parallelization strategies (e.g. tensor parallel) are
-  determined by the option [allocation_mode](../../arealite/api/cli_args.py#L797).
+  determined by the option
+  [allocation_mode](https://github.com/inclusionAI/AReaL/blob/main/areal/api/cli_args.py#L797).
 - For distributed launchers (`RayLauncher` and `SlurmLauncher`), inference servers run
   with a wrapper
-  [arealite/launcher/sglang_server.py](../../arealite/launcher/sglang_server.py) to
-  handle addresses and ports in distributed settings.
+  [arealite/launcher/sglang_server.py](https://github.com/inclusionAI/AReaL/blob/main/areal/launcher/sglang_server.py)
+  to handle addresses and ports in distributed settings.
 - After `SGLangServer` instances are started, launchers collect their addresses and
   ports to set the `AREAL_LLM_SERVER_ADDRS` environment variable for training scripts to
   access these inference servers.
 
 The **configuration file** is a YAML file that sets the options provided in
-[arealite/api/cli_args.py](../../arealite/api/cli_args.py). It could be modified via CLI
-arguments such as `actor.path=Qwen/Qwen3-1.7B` and `+sglang.attention_backend=triton`.
-The training scripts parse the config with CLI arguments into the config class defined
-in [arealite/api/cli_args.py](../../arealite/api/cli_args.py).
+[arealite/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/areal/api/cli_args.py).
+It could be modified via CLI arguments such as `actor.path=Qwen/Qwen3-1.7B` and
+`+sglang.attention_backend=triton`. The training scripts parse the config with CLI
+arguments into the config class defined in
+[arealite/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/areal/api/cli_args.py).
 
 ```
 config, _ = load_expr_config(args, GRPOConfig)
@@ -409,7 +411,8 @@ actor.step_lr_scheduler()
 ```
 
 If you want to customize your own training algorithm, see
-[Customize algorithms](../customization/algorithm.md) for more details.
+[Customize algorithms](https://inclusionai.github.io/AReaL/customization/algorithm.html)
+for more details.
 
 ## Transferring Weights to Inference Servers
 
@@ -499,9 +502,11 @@ for observing and tuning your experiments.
 
 ### `Saver` and `Evaluator`
 
-`Saver` ([arealite/utils/saver.py](../../arealite/utils/saver.py)) and `Evaluator`
-([arealite/utils/evaluator.py](../../arealite/utils/evaluator.py)) manage the frequency
-to save and evaluate the model with the train engine.
+`Saver`
+([arealite/utils/saver.py](https://github.com/inclusionAI/AReaL/blob/main/areal/utils/saver.py))
+and `Evaluator`
+([arealite/utils/evaluator.py](https://github.com/inclusionAI/AReaL/blob/main/areal/utils/evaluator.py))
+manage the frequency to save and evaluate the model with the train engine.
 
 In our example, we call `saver.save` and `evaluator.evaluate` after every training step.
 these two methods will automatically check if it is time to save or evaluate the model,
@@ -509,7 +514,8 @@ according to the experiment configuration.
 
 ### `stats_tracker`
 
-`stats_tracker` ([realhf/base/stats_tracker.py](../../realhf/base/stats_tracker.py))
+`stats_tracker`
+([realhf/base/stats_tracker.py](https://github.com/inclusionAI/AReaL/blob/main/realhf/base/stats_tracker.py))
 gathers training statistics across parallel ranks and reduce them.
 
 1. **Scalar-type statistics** are recorded by `stats_tracker.scalar(key=value)` and will
@@ -568,7 +574,8 @@ stats = stats_tracker.export()
 
 ### `StatsLogger`
 
-`StatsLogger` ([arealite/utils/stats_logger.py](../../arealite/utils/stats_logger.py))
+`StatsLogger`
+([arealite/utils/stats_logger.py](https://github.com/inclusionAI/AReaL/blob/main/areal/utils/stats_logger.py))
 logs gathered training data to recorders like `wandb` and `tensorboard` on rank 0. In
 our example script, after finishing a training step,
 `logger.commit(epoch, step, global_step, stats)` is called to record all statistics from

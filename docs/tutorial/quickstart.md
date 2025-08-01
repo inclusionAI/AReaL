@@ -10,9 +10,9 @@ function-based rewards. Ensure you've completed
 To run the experiment, you will need:
 
 - Training script:
-  [examples/arealite/gsm8k_grpo.py](../../examples/arealite/gsm8k_grpo.py)
+  [examples/arealite/gsm8k_grpo.py](https://github.com/inclusionAI/AReaL/blob/main/examples/arealite/gsm8k_grpo.py)
 - Config YAML:
-  [examples/arealite/configs/gsm8k_grpo.yaml](../../examples/arealite/configs/gsm8k_grpo.yaml)
+  [examples/arealite/configs/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/arealite/configs/gsm8k_grpo.yaml)
 
 Our training scripts will automatically download the dataset (openai/gsm8k) and model
 (Qwen/Qwen2-1.5B-Instruct). To run the example with default configuration, execute from
@@ -33,7 +33,7 @@ All available configuration options are listed in
 To customize the experiment (models, resources, algorithm options), you can:
 
 1. Edit the YAML file directly at
-   [examples/arealite/configs/gsm8k_grpo.yaml](../../examples/arealite/configs/gsm8k_grpo.yaml).
+   [examples/arealite/configs/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/arealite/configs/gsm8k_grpo.yaml).
 1. Add command-line options:
    - For existing options in the YAML file, directly add the option:
      `actor.path=Qwen/Qwen3-1.7B`.
@@ -97,10 +97,11 @@ Additional references:
 >
 > 1. Ensure `allocation_mode` matches your cluster configuration
 >    (`#GPUs == cluster.n_nodes * cluster.n_gpus_per_node`)
-> 1. Ray / Slurm launchers only works for more than 1 node (`cluster.n_nodes > 1`). For
+> 1. Ray or Slurm launchers only works for more than 1 node (`cluster.n_nodes > 1`). For
 >    single node scenario, please use `LocalLauncher`.
-> 1. In Ray / Slurm launchers, GPUs are allocated at node granularity, which means #GPUs
->    for generation or training must be integer multiples of `cluster.n_gpus_per_node`.
+> 1. In Ray or Slurm launchers, GPUs are allocated at node granularity, which means
+>    #GPUs for generation or training must be integer multiples of
+>    `cluster.n_gpus_per_node`.
 
 <!--
 > **Notes**: Before launching distributed experiments, please check if your `allocation_mode` matches your cluster configuration. Make sure #GPUs allocated by `allocation_mode` equals to `cluster.n_nodes * cluster.n_gpus_per_node`.

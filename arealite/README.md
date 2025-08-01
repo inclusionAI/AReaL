@@ -2,8 +2,9 @@
 
 ## TL;DR
 
-Follow our [step-by-step code walk-through](../docs/arealite/gsm8k_grpo.md) to
-immediately get started with AReaL-lite!
+Follow our
+[step-by-step code walk-through](https://inclusionai.github.io/AReaL/arealite/gsm8k_grpo.html)
+to immediately get started with AReaL-lite!
 
 ## Motivation
 
@@ -88,7 +89,7 @@ isolating them from the complex backend implementation. With AReaL-lite, users c
 define their custom training workflows and algorithms entirely within a single entry
 point file.
 
-![arealite-layers](../assets/arealite_layers.png)
+![arealite-layers](../assets/areal_lite_layers.png)
 
 #### 1. API Layer (`api/`)
 
@@ -166,9 +167,9 @@ python3 -m arealite.launcher.slurm examples/arealite/gsm8k_grpo.py \
 
 For detailed customization instructions, please refer to our documentation:
 
-- [Adding new agents](../docs/customization/agent.md)
-- [Adding new datasets](../docs/customization/dataset.md)
-- [Adding new algorithms](../docs/customization/algorithm.md)
+- [Adding new agents](https://inclusionai.github.io/AReaL/customization/agent.html)
+- [Adding new datasets](https://inclusionai.github.io/AReaL/customization/dataset.html)
+- [Adding new algorithms](https://inclusionai.github.io/AReaL/customization/algorithm.html)
 
 ## Implementation Details
 

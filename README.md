@@ -7,11 +7,11 @@
 <a href="./assets/wechat_qrcode.png" target="_blank"><b>WeChat Group</b></a> |
 </p>
 
-<img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
+<img align="right" alt="ReaL" src="/assets/logo_lite.png" width="20%">
 
 AReaL (Ant Reasoning RL) is an open-source **fully asynchronous reinforcement learning
 training system** for large reasoning models developed at **the RL Lab, Ant Research**.
-Built upon the open-source project [RealHF](https://github.com/openpsi-project/ReaLHF),
+Built upon the open-source project [ReaLHF](https://github.com/openpsi-project/ReaLHF),
 we are fully committed to open-source by providing training details, data, and
 infrastructure required to reproduce results along with the model itself. AReaL aims to
 help everyone build their own AI agents easily and affordably. Our team loves milk tea
@@ -44,8 +44,8 @@ features an **AI-centric** API design that prioritizes ease of use and algorithm
 development, while inherently supporting fully asynchronous **agentic RL**. With 80%
 fewer lines of code, AReaL-lite maintains 90% of AReaL's high performance and core
 functionality. Check out [our AReaL-lite design doc](/arealite/README.md) and
-[the quickstart guide](/docs/tutorial/quickstart.md) to begin your journey with
-**AReaL-lite**!
+[the quickstart guide](https://inclusionai.github.io/AReaL/tutorial/quickstart.html) to
+begin your journey with **AReaL-lite**!
 
 **\[2025/06/03\] (v0.3, boba²)** We release **boba²** (double-boba) for fully
 asynchronous RL training, which achieves a **2.77x speedup while obtaining on-par or
@@ -78,13 +78,15 @@ New highlights in AReaL-lite:
   AReaL, please read the [AReaL-lite design doc](/arealite/README.md)!
 
 - A much more *light-weight* codebase compared to old AReaL codebase with only **20%** #
-  lines of code, with a detailed [code walkthrough](/docs/arealite/gsm8k_grpo.md) on an
+  lines of code, with a detailed
+  [code walkthrough](https://inclusionai.github.io/AReaL/arealite/gsm8k_grpo.html) on an
   GRPO-on-GSM8K example. Save your time & efforts for code reading!
 
 - Smoother customization for your own **algorithms** and **agentic & RLVR rollout** RL
-  within a single file! Check [here](/docs/customization/agent.md) for agent & RLVR
-  customization and [here](/docs/customization/algorithm.md) for algorithm
-  customization.
+  within a single file! Check
+  [here](https://inclusionai.github.io/AReaL/customization/agent.html) for agent & RLVR
+  customization and [here](https://inclusionai.github.io/AReaL/tutorial/algorithm.html)
+  for algorithm customization.
 
 Good old stuff from AReaL:
 
@@ -126,7 +128,7 @@ python3 -m arealite.launcher.local examples/arealite/eval.py --config examples/a
 -->
 
 For more detailed guide on how to run experiments in AReaL-lite, please check out
-[our quickstart guide](/docs/tutorial/quickstart.md)!
+[our quickstart guide](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)!
 
 ## Switching from legacy AReaL to AReaL-lite
 
@@ -136,7 +138,7 @@ from files from `examples` folder, or generated when you run your experiments in
 `<fileroot>/<expr_name>/<trial_name>` folder. Runs:
 
 ```
-python3 examples/arealite/convert_config.py -f <config_path> -o <output_path>
+python arealite/utils/convert.py --convert_src AReaL --src_config_path <path_to_areal_yaml> --template_path examples/arealite/configs/gsm8k_grpo.yaml --output_path <output_yaml>
 ```
 
 Then you should be able to run experiments with your old settings on AReaL-lite!
@@ -160,22 +162,22 @@ experiments.
 ### Quickstart
 
 - [Installation](https://inclusionai.github.io/AReaL/tutorial/installation.html)
-- [AReaL-lite Quickstart](/docs/tutorial/quickstart.md)
+- [AReaL-lite Quickstart](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
 
 ### Code Walkthrough
 
-- [Running GRPO on GSM8K dataset with AReaL-lite](/docs/arealite/gsm8k_grpo.md)
+- [Running GRPO on GSM8K dataset with AReaL-lite](https://inclusionai.github.io/AReaL/arealite/gsm8k_grpo.html)
 
 ### Customization
 
-- [Customize dataset with AReaL-lite](../customization/dataset.md)
-- [Customize Agentic/RVLR rollout workflows with AReaL-lite](../customization/agent.md)
-- [Customize algorithms with AReaL-lite](../customization/algorithm.md)
+- [Customize dataset with AReaL-lite](https://inclusionai.github.io/AReaL/customization/dataset.html)
+- [Customize Agentic/RVLR rollout workflows with AReaL-lite](https://inclusionai.github.io/AReaL/customization/agent.html)
+- [Customize algorithms with AReaL-lite](https://inclusionai.github.io/AReaL/customization/algorithm.html)
 
 ### AReaL Legacy
 
 For old AReaL documentation, check the legacy sections in our
-[Documentation](https://inclusionai.github.io/AReaL/). To reproduce AReaL boba & boba²
+[documentation](https://inclusionai.github.io/AReaL/). To reproduce AReaL boba & boba²
 results, check our
 [reproduction guide with legacy AReaL](https://inclusionai.github.io/AReaL/references/reproduce.html).
 
