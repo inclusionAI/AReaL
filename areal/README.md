@@ -10,8 +10,8 @@ to immediately get started with AReaL-lite!
 
 AReaL presents several challenges that make it difficult for AI researchers to adopt,
 understand, and develop with effectively. The primary issue stems from its
-*system-centric* rather than *AI-centric* architecture and API design. An *AI-centric*
-design aims to provide three key features:
+*system-first* rather than *algorithm-first* architecture and API design. An
+*algorithm-first* design aims to provide three key features:
 
 - **Light-weight & easy-to-write customization:** Users can implement their algorithms
   and training workflows with minimal and concentrated code, often in just a few files
@@ -28,7 +28,7 @@ Graph). To customize a training workflow, researchers first need to understand t
 system-level concepts. Then they are forced to find code to modify, which is scattered
 around in the codebase. It is also nearly impossible to exploit packages like `datasets`
 since it is not compatible with the workers. This gap is the core motivation behind
-AReaL-lite: rebuilding AReaL with an AI-centric architecture and APIs.
+AReaL-lite: rebuilding AReaL with an algorithm-first architecture and APIs.
 
 Beyond architectural concerns, AReaL suffers from accumulated technical debt. The
 codebase contains substantial legacy code inherited from previous projects that no
@@ -46,14 +46,14 @@ user burden. This philosophy drives AReaL-lite — the lightweight version of AR
 AReaL-lite serves as the first phase in AReaL's broader refactoring initiative. It
 functions both as a standalone training library with intuitive interfaces and as the
 foundation for AReaL's future core API definitions. The plan is to transform AReaL's
-current worker-based architecture into an AI-centric architecture similar to AReaL-lite,
-where AReaL will **extend** AReaL-lite's APIs and implementations to support additional
-backends for efficient large-scale training.
+current worker-based architecture into an algorithm-first architecture similar to
+AReaL-lite, where AReaL will **extend** AReaL-lite's APIs and implementations to support
+additional backends for efficient large-scale training.
 
 ## Design Principles
 
-To achieve *AI-centric* and *light-weight* while maintaining the efficiency, our design
-is guided by seven core principles:
+To achieve *algorithm-first* and *light-weight* while maintaining the efficiency, our
+design is guided by seven core principles:
 
 1. **Native asynchronous RL training support** — Built from the ground up for
    disentangled generation and training

@@ -21,11 +21,11 @@ like how you enjoy real-world milk tea (cheers).
 **AReaL Highlights**
 
 - ⚡ <span style="color: red; font-weight: bold;">**\[NEW\] AReaL-lite:**</span> Our new
-  release AReaL-lite is a **light-weight** and **AI-centric** codebase that prioritizes
-  better development experiences for AI researchers. As a result, AReaL-lite delivers
-  most AReaL functionalities while maintains its high performance with much fewer lines
-  of code. This allows users to build their own **agentic** and **RLVR** training
-  workflows with minimal effort.
+  release AReaL-lite is a **light-weight** and **algorithm-first** codebase that
+  prioritizes better development experiences for AI researchers. As a result, AReaL-lite
+  delivers most AReaL functionalities while maintains its high performance with much
+  fewer lines of code. This allows users to build their own **agentic** training
+  workflows with minimal efforts.
 - 🔥 **Asynchronous RL**: With algorithm-system co-design, AReaL supports fully
   asynchronous RL for **the fastest training speed**! Experimental support for
   multi-turn agentic RL is also provided.
@@ -40,10 +40,10 @@ like how you enjoy real-world milk tea (cheers).
 
 **\[2025/07/31\] (AReaL-lite)** We introduce AReaL-lite, a **light-weight** version of
 AReaL designed specifically for AI researchers and rapid prototyping. AReaL-lite
-features an **AI-centric** API design that prioritizes ease of use and algorithm
-development, while inherently supporting fully asynchronous **agentic RL**. With 80%
+features an **algorithm-first** API design that prioritizes ease of use and algorithm
+development, while inherently supporting **fully asynchronous agentic RL**. With 80%
 fewer lines of code, AReaL-lite maintains 90% of AReaL's high performance and core
-functionality. Check out [our AReaL-lite design doc](/arealite/README.md) and
+functionality. Check out [our AReaL-lite design doc](/areal/README.md) and
 [the quickstart guide](https://inclusionai.github.io/AReaL/tutorial/quickstart.html) to
 begin your journey with **AReaL-lite**!
 
@@ -66,8 +66,8 @@ SOTA 7B and 32B models on math reasoning. Check our
 
 New highlights in AReaL-lite:
 
-- Instead of the *system-centric* architecture in old AReaL, AReaL-lite follows an
-  **AI-centric** API design that aims to provide the following key features:
+- Instead of the *system-first* architecture in old AReaL, AReaL-lite follows an
+  **algorithm-first** API design that aims to provide the following key features:
 
   - **Light-weight** & **easy-to-write** algorithm and training workflow customization.
   - **Easy to scale up** without knowing system and infrastructure details.
@@ -75,11 +75,11 @@ New highlights in AReaL-lite:
 
   These features make AReaL-lite easy for AI researchers to adopt, understand, and
   develop effectively and efficiently. To learn more about the design principles of
-  AReaL, please read the [AReaL-lite design doc](/arealite/README.md)!
+  AReaL, please read the [AReaL-lite design doc](/areal/README.md)!
 
 - A much more *light-weight* codebase compared to old AReaL codebase with only **20%** #
   lines of code, with a detailed
-  [code walkthrough](https://inclusionai.github.io/AReaL/arealite/gsm8k_grpo.html) on an
+  [code walkthrough](https://inclusionai.github.io/AReaL/areal/gsm8k_grpo.html) on an
   GRPO-on-GSM8K example. Save your time & efforts for code reading!
 
 - Smoother customization for your own **algorithms** and **agentic & RLVR rollout** RL
@@ -104,14 +104,14 @@ below!
 Our training scripts will automatically download the dataset (openai/gsm8k) and model
 (Qwen/Qwen2-1.5B-Instruct). On a single node, runs:
 
-```
+```bash
 python3 -m arealite.launcher.local examples/arealite/gsm8k_grpo.py --config examples/arealite/configs/gsm8k_grpo.yaml
 ```
 
 On a Ray cluster with 2 nodes & 8 GPUs each node, runs (Remember to change paths in the
 YAML file to your own shared storage):
 
-```
+```bash
 python3 -m arealite.launcher.ray examples/arealite/gsm8k_grpo.py --config examples/arealite/configs/gsm8k_grpo.yaml \
   cluster.n_nodes=2 \
   cluster.n_gpus_per_node=8
@@ -206,7 +206,7 @@ For the research and development plan already in place, please see the following
 - [x] RL training recipes for 1.5B and 7B models
 - [x] A complete RL training recipe for 32B models
 - [ ] Sample-efficient multi-task RL algorithms
-- [ ] Agentic capabilities with end-to-end RL
+- [x] Agentic capabilities with end-to-end RL
 - [ ] Stable RL training for larger MOE models
 
 ## Acknowledgement
@@ -214,9 +214,16 @@ For the research and development plan already in place, please see the following
 We would like to note that major contributors are from the RL Lab at Ant Research and
 the Institute for Interdisciplinary Information Sciences, Tsinghua University.
 
-Our team has also received invaluable assistance from the Data Intelligence Lab at Ant
-Research for data support and from the Super Computing Technology (SCT) team at Ant
-Group, particularly in the realm of large-scale cluster operations and maintenance.
+Our team has also received invaluable assistance from the following groups (listed in
+alphabetical order):
+
+• The Data Intelligence Lab at Ant Research for their data support • The
+[Relaxed System Lab](https://github.com/Relaxed-System-Lab) from HKUST for seamless
+cooperation on many system-related aspects • The
+[SGLang team](https://github.com/sgl-project/sglang) for supporting customized features
+for asynchronous RL training and their contributions during the development of
+AReaL-lite • The Super Computing Technology (SCT) team at Ant Group, particularly for
+their expertise in large-scale cluster operations and maintenance
 
 We also appreciate all the pioneering works from the community, particularly the
 [ReaLHF](https://github.com/openpsi-project/ReaLHF) project from OpenPsi Inc. and other

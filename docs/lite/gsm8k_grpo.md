@@ -22,7 +22,7 @@ a bunch of various workers. In a training step, AReaL-lite:
 1. Computes losses and update weights in `FSDPPPOActor`.
 1. Transfers the updated weights to remote `SGLangServer` instances.
 
-![AReaL-Lite-gsm8k-example](gsm8k_grpo.png)
+![AReaL-lite-gsm8k-example](gsm8k_grpo.png)
 
 In the following sections, we will walk you through the code to explain concepts and
 show you how these steps are done in details.

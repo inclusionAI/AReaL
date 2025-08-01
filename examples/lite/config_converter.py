@@ -461,7 +461,7 @@ def post_process_args(args: dict):
 
 class AReaLConverter(Converter):
     """
-    Convert realhf arguments to AReaL-Lite arguments.
+    Convert realhf arguments to AReaL-lite arguments.
     """
 
     ARG_MAP = {
