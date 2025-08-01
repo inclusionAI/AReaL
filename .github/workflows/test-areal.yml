@@ -1,4 +1,4 @@
-name: Test AReaLi
+name: Test AReaL
 
 on:
   pull_request:
