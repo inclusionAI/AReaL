@@ -7,6 +7,14 @@ from datasets.distributed import split_dataset_by_node
 from PIL import Image
 from PIL.Image import Image as ImageObject
 
+def pad_to_square(img: Image.Image, fill=(0, 0, 0)) -> Image.Image:
+
+    w, h = img.size
+    side = max(w, h)
+    new_img = Image.new(img.mode, (side, side), color=fill)
+    offset = ((side - w) // 2, (side - h) // 2)
+    new_img.paste(img, offset)
+    return new_img
 
 def convert_image(
     image: Union[Dict[str, Any], ImageObject, str],
@@ -14,6 +22,7 @@ def convert_image(
     fixed_height: Optional[int] = None,
 ) -> ImageObject:
     if fixed_width is not None and fixed_height is not None and (image.width != fixed_width or image.height != fixed_height):
+        image=pad_to_square(image)
         image = image.resize((fixed_width, fixed_height))
 
     if image.mode != "RGB":
@@ -44,9 +53,6 @@ def get_geometry3k_sft_dataset(path, split, processor, rank, world_size):
     """
     dataset = load_dataset(path=path, split=split)
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
-
-    max_width, max_height = get_max_image_size(dataset)
-
     tokenizer = processor.tokenizer
 
     def process_example(example, idx):
@@ -61,7 +67,7 @@ def get_geometry3k_sft_dataset(path, split, processor, rank, world_size):
         )
         processed_images = []
         for image in images:
-            processed_images.append(convert_image(image, max_width, max_height))
+            processed_images.append(convert_image(image, 512, 512))
         example["images"] = processed_images
         example["seq"] = example["problem"] + example["answer"] + tokenizer.eos_token
 
@@ -103,12 +109,9 @@ def get_geometry3k_rl_dataset(path, split, processor, rank, world_size):
     dataset = load_dataset(path=path, split=split)
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
 
-
-    max_width, max_height = get_max_image_size(dataset)
-
     def process(sample):
         processed_images = [
-            convert_image(image, max_width, max_height) for image in sample["images"]
+            convert_image(image, 448, 448) for image in sample["images"]
         ]
         if "qwen" in processor.image_processor.image_processor_type.lower():
             image_token = "<|vision_start|><|image_pad|><|vision_end|>"
