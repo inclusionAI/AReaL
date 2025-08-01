@@ -42,11 +42,11 @@ We recommend using Docker with our provided image. The Dockerfile is available i
 top-level directory of the AReaL repository.
 
 ```bash
-docker pull ghcr.io/inclusionai/areal-runtime:v0.3.0.post1
+docker pull ghcr.io/inclusionai/areal-runtime:v0.3.0.post2
 docker run -it --name areal-node1 \
    --privileged --gpus all --network host \
    --shm-size 700g -v /path/to/mount:/path/to/mount \
-   ghcr.io/inclusionai/areal-runtime:v0.3.0.post1 \
+   ghcr.io/inclusionai/areal-runtime:v0.3.0.post2 \
    /bin/bash
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
