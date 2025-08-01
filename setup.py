@@ -5,7 +5,7 @@
 import setuptools
 
 setuptools.setup(
-    name="realhf",
+    name="areal",
     packages=setuptools.find_packages(),
     include_package_data=True,
 )

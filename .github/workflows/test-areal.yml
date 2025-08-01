@@ -1,0 +1,20 @@
+name: Test AReaL
+
+on:
+  pull_request:
+    branches: [ lite ]
+    paths:
+      - .github/workflows/test-areal.yml
+      - areal/**
+      - ci/**
+  workflow_dispatch:
+
+jobs:
+  test-areal:
+    environment:
+      name: AReaL-unittests
+    runs-on: gpu
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: bash ./ci/test_areal.sh

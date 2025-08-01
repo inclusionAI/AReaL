@@ -1,6 +1,6 @@
 # Rollout and Agentic RL (Legacy)
 
-> **Note**: While this legacy approach works, we strongly recommend using the AReaLite
+> **Note**: While this legacy approach works, we strongly recommend using the new AReaL
 > for new projects. It provides better flexibility, cleaner abstractions, and easier
 > maintenance.
 
