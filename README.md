@@ -238,6 +238,8 @@ alphabetical order):
 - The Super Computing Technology (SCT) team at Ant Group, particularly for their
   expertise in large-scale cluster operations and maintenance
 
+- Special thanks to @Lyken17 for providing suggestions across our development process
+
 We also appreciate all the pioneering works from the community, particularly the
 [ReaLHF](https://github.com/openpsi-project/ReaLHF) project from OpenPsi Inc. and other
 projects, including but not limited to
