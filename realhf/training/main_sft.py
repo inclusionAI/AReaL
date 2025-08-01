@@ -6,23 +6,23 @@ from typing import Dict
 import hydra
 import yaml
 from omegaconf import MISSING, OmegaConf
-
-from realhf.api.quickstart.entrypoint import kind_reminder
-from realhf.experiments.async_exp.async_ppo_math_exp import AsyncPPOMATHConfig
 from training.utils import run_experiment
 
+from realhf.api.quickstart.entrypoint import kind_reminder
+from realhf.experiments.common.sft_exp import SFTConfig
 
-@hydra.main(version_base=None, config_path="configs", config_name="async-ppo")
-def main_ppo_math(args):
+
+@hydra.main(version_base=None, config_path="configs", config_name="sft")
+def main(args):
     # NOTE: we import logging here to avoid hydra logging overwrite
     import realhf.base.logging as logging
 
     logger = logging.getLogger("quickstart", "colored")
 
     # Overwrite the python dataclass configuration with yaml
-    default_args = OmegaConf.structured(AsyncPPOMATHConfig)
+    default_args = OmegaConf.structured(SFTConfig)
     args = OmegaConf.merge(default_args, args)
-    args: AsyncPPOMATHConfig = OmegaConf.to_object(args)
+    args: SFTConfig = OmegaConf.to_object(args)
 
     # Set experiment trial name.
     exp_name = args.experiment_name
@@ -50,7 +50,7 @@ def main_ppo_math(args):
             sort_keys=False,
         )
 
-    kind_reminder("async-ppo-math", logger, args)
+    kind_reminder("sft", logger, args)
 
     run_experiment(args, exp_name, trial_name)
 
@@ -64,7 +64,6 @@ if __name__ == "__main__":
     if args.help:
         from realhf.api.cli_args import print_config_help
 
-        print_config_help(AsyncPPOMATHConfig())
+        print_config_help(SFTConfig())
         exit(0)
-
-    main_ppo_math()
+    main()

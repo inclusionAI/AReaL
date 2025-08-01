@@ -40,7 +40,7 @@ From the repository directory, run:
 
 ```bash
 # examples/run_async_ppo.sh
-python3 training/main_async_ppo.py \
+python3 realhf/training/main_async_ppo.py \
     n_nodes=1 n_gpus_per_node=8 \
     allocation_mode=sglang.d4p1m1+d2p2m1 \
     cluster.fileroot=/path/to/save/logs/checkpoints/ \
@@ -70,7 +70,7 @@ is more stable and easier to customize. ::::
 To view all available options:
 
 ```bash
-python3 training/main_sync_ppo.py --help
+python3 realhf/training/main_sync_ppo.py --help
 ```
 
 ### Configuration Parameters

@@ -6,13 +6,13 @@ from typing import Dict
 import hydra
 import yaml
 from omegaconf import MISSING, OmegaConf
-
-from realhf.api.quickstart.entrypoint import kind_reminder
-from realhf.experiments.common.sft_exp import SFTConfig
 from training.utils import run_experiment
 
+from realhf.api.quickstart.entrypoint import kind_reminder
+from realhf.experiments.common.ppo_math_exp import PPOMATHConfig
 
-@hydra.main(version_base=None, config_path="configs", config_name="sft")
+
+@hydra.main(version_base=None, config_path="configs", config_name="sync-ppo")
 def main(args):
     # NOTE: we import logging here to avoid hydra logging overwrite
     import realhf.base.logging as logging
@@ -20,9 +20,9 @@ def main(args):
     logger = logging.getLogger("quickstart", "colored")
 
     # Overwrite the python dataclass configuration with yaml
-    default_args = OmegaConf.structured(SFTConfig)
+    default_args = OmegaConf.structured(PPOMATHConfig)
     args = OmegaConf.merge(default_args, args)
-    args: SFTConfig = OmegaConf.to_object(args)
+    args: PPOMATHConfig = OmegaConf.to_object(args)
 
     # Set experiment trial name.
     exp_name = args.experiment_name
@@ -50,7 +50,15 @@ def main(args):
             sort_keys=False,
         )
 
-    kind_reminder("sft", logger, args)
+    kind_reminder("ppo-math", logger, args)
+
+    logger.warning(
+        f"Synchronous PPO is not recommended for production and customization. "
+        "Run asynchronous PPO with `ppo.recompute_logprob=False`, "
+        "`ppo.use_decoupled_loss=False`, and `max_head_offpolicyness=0` "
+        "will essentially replicate the synchronous PPO behavior, but "
+        "is easier to customize and more stable."
+    )
 
     run_experiment(args, exp_name, trial_name)
 
@@ -64,6 +72,6 @@ if __name__ == "__main__":
     if args.help:
         from realhf.api.cli_args import print_config_help
 
-        print_config_help(SFTConfig())
+        print_config_help(PPOMATHConfig())
         exit(0)
     main()
