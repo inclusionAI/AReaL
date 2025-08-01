@@ -1,8 +1,8 @@
 # Dataset
 
-AReaL directly integrates with the `Dataset` class from the HuggingFace `datasets`
-package. This gives you full flexibility to load, process, and filter your data before
-training.
+**AReaL-lite** directly integrates with the `Dataset` class from the HuggingFace
+`datasets` package. This gives you full flexibility to load, process, and filter your
+data before training.
 
 The required columns in your dataset depend on the specific implementation of the
 `RolloutWorkflow` (for online reinforcement learning) or the training engines (for

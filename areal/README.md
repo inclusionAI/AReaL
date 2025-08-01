@@ -1,19 +1,34 @@
-# AReaL-Lite Design Doc
+# AReaL-lite Design Doc
 
 ## TL;DR
 
-Follow our [step-by-step code walk-through](../docs/areal/gsm8k_grpo.md) to immediately
-get started with AReaL-Lite!
+Follow our
+[step-by-step code walk-through](https://inclusionai.github.io/AReaL/lite/gsm8k_grpo.html)
+to immediately get started with AReaL-lite!
 
 ## Motivation
 
 AReaL presents several challenges that make it difficult for AI researchers to adopt,
 understand, and develop with effectively. The primary issue stems from its
-*system-centric* rather than *AI-centric* architecture. The reinforcement learning
-algorithm workflow is built around multiple *workers* executing consecutive *model
-function calls* — concepts that are unfamiliar to most AI researchers. This forces users
-to first master these system-level abstractions before they can implement workflows and
-algorithms for their specific research needs.
+*system-first* rather than *algorithm-first* architecture and API design. An
+*algorithm-first* design aims to provide three key features:
+
+- **Light-weight & easy-to-write customization:** Users can implement their algorithms
+  and training workflows with minimal and concentrated code, often in just a few files
+  or even a single file.
+- **Easy to scale up:** Experiments can be scaled up seamlessly without requiring
+  knowledge of underlying system or infrastructure details.
+- **Adaptable and plugable:** Users is free to integrate the system with code or APIs
+  from other AI libraries, or plug APIs from the system into other frameworks.
+
+We believe that AReaL, as well as other existing RL systems, falls short in fully
+delivering these features. For example, the RL training workflow in AReaL is built
+around multiple *workers* executing *model function calls* in a *DAG* (Directed Acyclic
+Graph). To customize a training workflow, researchers first need to understand these
+system-level concepts. Then they are forced to find code to modify, which is scattered
+around in the codebase. It is also nearly impossible to exploit packages like `datasets`
+since it is not compatible with the workers. This gap is the core motivation behind
+AReaL-lite: rebuilding AReaL with an algorithm-first architecture and APIs.
 
 Beyond architectural concerns, AReaL suffers from accumulated technical debt. The
 codebase contains substantial legacy code inherited from previous projects that no
@@ -26,22 +41,23 @@ possible to achieve comparable efficiency with significantly fewer lines of code
 presents an ideal opportunity to redesign the API and distill the massive codebase into
 something clean and maintainable. Rather than pursuing maximum efficiency, our goal is
 to deliver 90% of AReaL's functionality while dramatically reducing code complexity and
-user burden. This philosophy drives AReaL-Lite — the lightweight version of AReaL.
+user burden. This philosophy drives AReaL-lite — the lightweight version of AReaL.
 
-AReaL-Lite serves as the first phase in AReaL's broader refactoring initiative. It
+AReaL-lite serves as the first phase in AReaL's broader refactoring initiative. It
 functions both as a standalone training library with intuitive interfaces and as the
 foundation for AReaL's future core API definitions. The plan is to transform AReaL's
-current worker-based architecture into an AI-centric architecture similar to AReaL-Lite,
-where AReaL will **extend** AReaL-Lite's APIs and implementations to support additional
-backends for efficient large-scale training.
+current worker-based architecture into an algorithm-first architecture similar to
+AReaL-lite, where AReaL will **extend** AReaL-lite's APIs and implementations to support
+additional backends for efficient large-scale training.
 
 ## Design Principles
 
-Our design is guided by seven core principles:
+To achieve *algorithm-first* and *light-weight* while maintaining the efficiency, our
+design is guided by seven core principles:
 
 1. **Native asynchronous RL training support** — Built from the ground up for
    disentangled generation and training
-1. **AI-centric design** — Minimize exposure to system concepts like "PlacementGroup"
+1. **System-less design** — Minimize exposure to system concepts like "PlacementGroup"
 1. **PyTorch-centric approach** — Use raw PyTorch types without unnecessary abstractions
 1. **Transparent algorithm orchestration** — Make the flow of operations clear and
    understandable
@@ -64,6 +80,16 @@ areal/
 ```
 
 ### Component Overview
+
+The AReaL-lite codebase is structured into four distinct layers: the API layer, backend
+layer, customization layer, and entry point layer. As illustrated in the figure below,
+workflow and algorithm customization logic resides in separate layers above the backend.
+We prioritize keeping the entry point and customization layers clean and intuitive,
+isolating them from the complex backend implementation. With AReaL-lite, users can
+define their custom training workflows and algorithms entirely within a single entry
+point file.
+
+![arealite-layers](../assets/areal_lite_layers.png)
 
 #### 1. API Layer (`api/`)
 
@@ -141,9 +167,9 @@ python3 -m areal.launcher.slurm examples/lite/gsm8k_grpo.py \
 
 For detailed customization instructions, please refer to our documentation:
 
-- [Adding new agents](../docs/customization/agent.md)
-- [Adding new datasets](../docs/customization/dataset.md)
-- [Adding new algorithms](../docs/customization/algorithm.md)
+- [Adding new agents](https://inclusionai.github.io/AReaL/customization/agent.html)
+- [Adding new datasets](https://inclusionai.github.io/AReaL/customization/dataset.html)
+- [Adding new algorithms](https://inclusionai.github.io/AReaL/customization/algorithm.html)
 
 ## Implementation Details
 

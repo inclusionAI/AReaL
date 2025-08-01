@@ -1,16 +1,17 @@
 # Running GRPO on GSM8K Dataset
 
-This guide introduces how AReaL-Lite runs the GRPO algorithm on the GSM8K dataset, using
-the training script [examples/lite/gsm8k_grpo.py](../../examples/lite/gsm8k_grpo.py) and
-configuration file
-[examples/lite/configs/gsm8k_grpo.yaml](../../examples/lite/configs/gsm8k_grpo.yaml).
+This guide introduces how AReaL-lite runs the GRPO algorithm on the GSM8K dataset, using
+the training script
+[examples/lite/gsm8k_grpo.py](https://github.com/inclusionAI/AReaL/blob/main/examples/lite/gsm8k_grpo.py)
+and configuration file
+[examples/lite/configs/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/lite/configs/gsm8k_grpo.yaml).
 
-## How AReaL-Lite Works
+## How AReaL-lite Works
 
 The following figure illustrates the launching and one asynchronous training step of the
-GRPO algorithm on the GSM8K dataset on AReaL-Lite. Compared with the old AReaL
-implementation, AReaL-Lite runs inference servers and a SPMD training script instead of
-a bunch of various workers. In a training step, AReaL-Lite:
+GRPO algorithm on the GSM8K dataset on AReaL-lite. Compared with the old AReaL
+implementation, AReaL-lite runs inference servers and a SPMD training script instead of
+a bunch of various workers. In a training step, AReaL-lite:
 
 1. Submits prompts from the dataset to `RemoteSGLangEngine`, who runs `RLVRWorkflow` in
    a streaming manner.
@@ -21,15 +22,15 @@ a bunch of various workers. In a training step, AReaL-Lite:
 1. Computes losses and update weights in `FSDPPPOActor`.
 1. Transfers the updated weights to remote `SGLangServer` instances.
 
-![AReaL-Lite-gsm8k-example](gsm8k_grpo.png)
+![AReaL-lite-gsm8k-example](gsm8k_grpo.png)
 
 In the following sections, we will walk you through the code to explain concepts and
 show you how these steps are done in details.
 
 ## Launching the Experiment
 
-As shown in [Quickstart Guide](../tutorial/quickstart.md), experiments in AReaL-Lite are
-launched using standalone launchers with the following commands:
+As shown in the [quickstart guide](../tutorial/quickstart.md), experiments in AReaL-lite
+are launched using standalone launchers with the following commands:
 
 ```
 # Local Launcher
@@ -40,7 +41,7 @@ python -m areal.launcher.ray <training script> --config <configuration file> <cl
 python -m areal.launcher.slurm <training script> --config <configuration file> <cli args>
 ```
 
-In AReaL-Lite:
+In AReaL-lite:
 
 - The **training script** is an SPMD python script that serves as the experiment entry
   point.
@@ -48,20 +49,22 @@ In AReaL-Lite:
   `LocalLauncher`, `ray.remote` for `RayLauncher`, `srun` for `SlurmLauncher`).
 - The launcher also manages inference servers (currently only supporting
   `SGLangServer`). The number and parallelization strategies (e.g. tensor parallel) are
-  determined by the option [allocation_mode](../../areal/api/cli_args.py#L797).
+  determined by the option
+  [allocation_mode](https://github.com/inclusionAI/AReaL/blob/main/areal/api/cli_args.py#L797).
 - For distributed launchers (`RayLauncher` and `SlurmLauncher`), inference servers run
   with a wrapper
-  [areal/launcher/sglang_server.py](../../areal/launcher/sglang_server.py) to handle
-  addresses and ports in distributed settings.
+  [areal/launcher/sglang_server.py](https://github.com/inclusionAI/AReaL/blob/main/areal/launcher/sglang_server.py)
+  to handle addresses and ports in distributed settings.
 - After `SGLangServer` instances are started, launchers collect their addresses and
   ports to set the `AREAL_LLM_SERVER_ADDRS` environment variable for training scripts to
   access these inference servers.
 
 The **configuration file** is a YAML file that sets the options provided in
-[areal/api/cli_args.py](../../areal/api/cli_args.py). It could be modified via CLI
-arguments such as `actor.path=Qwen/Qwen3-1.7B` and `+sglang.attention_backend=triton`.
-The training scripts parse the config with CLI arguments into the config class defined
-in [areal/api/cli_args.py](../../areal/api/cli_args.py).
+[areal/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/areal/api/cli_args.py).
+It could be modified via CLI arguments such as `actor.path=Qwen/Qwen3-1.7B` and
+`+sglang.attention_backend=triton`. The training scripts parse the config with CLI
+arguments into the config class defined in
+[areal/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/areal/api/cli_args.py).
 
 ```
 config, _ = load_expr_config(args, GRPOConfig)
@@ -71,7 +74,7 @@ config: GRPOConfig
 ## Loading and Preprocessing Dataset
 
 We use the `datasets` and `torchdata` packages to load and preprocess the dataset into
-our dataloader. First, we download `openai/gsm8k` from Huggingface and split it by data
+our dataloader. First, we download `openai/gsm8k` from Hugging Face and split it by data
 parallel ranks, then map it to our desired format:
 
 ```python
@@ -108,12 +111,106 @@ details.
 
 ## Rollout
 
-The data lifecycle is controlled by an `RLVRWorkflow`, which defines how data progresses
-from prompts to complete rollout data containing all fields required for training. Our
-example shows a single-turn RLVR workflow with a math reward function. The core logic of
-the workflow is implemented in an async method `arun_episode`, which takes a prompt,
-generate answers with `RemoteSGLangEngine`, computes rewards, and populates additional
-fields to produce finalized training data.
+### Inference Engine: `RemoteSGLangEngine`
+
+In AReaL-lite, generation tasks are offloaded to remote inference servers, which operate
+on separate GPUs from those used for training. The `RemoteSGLangEngine` acts as a client
+that interacts with the servers. `RemoteSGLangEngine` runs in a SPMD manner on every
+training process, without occupying any GPUs.
+
+`RemoteSGLangEngine` provides two core APIs that access the remote servers, `agenerate`
+and `update_weights_async`. It is worth mentioning that, in asynchronous RL experiment
+in AReaL-lite, inference-side weight update could happen **in the middle of** generation
+of one prompt. With that being said, one output sequence could be generated by multiple
+versions of models. Let us glimpse into code of `agenerate` and `update_weights_async`
+for a better understanding.
+
+In `update_weights_async`, the engine first send `pause_generation` requests to all
+inference servers, notifying them a weight update is about to happen. Upon receiveing
+`pause_generation`, inference servers will immediately stop generating and respond with
+already generated tokens. Then, the engine sends `update_weights_from_distributed` (for
+NCCL update) or `update_weights_from_disk` (for disk update). After the update is
+finished, the engine sends `continue_generation` to inference server telling them to
+start working again.
+
+```python
+class RemoteSGLangEngine:
+    ...
+    def update_weights_async(self, meta: WeightUpdateMeta):
+        # `update_weights_async` is completely async.
+        # It submits task to a ProcessPoolExecutor and returns a future
+        for addr in self.addresses:
+            res = requests.post(f"http://{addr}/pause_generation")
+        if meta.type == "nccl":
+            future = self.executor.submit(
+                # a function that send `update_weights_from_distributed` request
+                update_weights_from_distributed,
+            )
+        elif meta.type == "disk":
+            ...
+
+        def callback(future):
+            for addr in self.addresses
+                requests.post(f"http://{addr}/continue_generation")
+
+        future.add_done_callback(callback)
+        return future
+```
+
+`agenerate` takes an `LLMRequest` with `input_ids` of **a single prompt** and generation
+hyperparameters, and returns the final generation result, an `LLMResponse` with
+`output_tokens` and other outputs. Since the generation could be interrupted,
+`agenerate` iteratively prepares payload, sends requests and receives responses until
+the generation finishes.
+
+```python
+class RemoteSGLangEngine:
+    ...
+    async def agenerate(self, req: LLMRequest):
+        payload = ... # prepare payload for request
+        # If request is from the same workflow, choose old server
+        # to allow KVCache reuse. Otherwise choose server in a round
+        # robin manner.
+        server_addr = self.choose_server(req)
+        stop_reason = None
+        # other outputs are omitted for simplicity
+        output_tokens = []
+        while (stop_reason != "stop" and len(output_tokens) < max_new_tokens):
+            # Request is interrupted, wait to avoid contention
+            if stop_reason is not None:
+                await asyncio.sleep(0.5)
+            # send request to remote sever
+            result = await arequest_with_retry(
+                addr=server_addr,
+                endpoint="/generate",
+                payload=payload,
+                method="POST"
+            )
+            output_tokens.extend(result["output_ids"])
+            # prepare payload for the next request
+            payload["input_ids"] += results["output_ids"]
+            payload["sample_params"]["max_new_tokens"] -= len(results["output_ids"])
+        return LLMResponse(
+            input_tokens=req.input_ids,
+            output_tokens=output_tokens,
+            ...
+        )
+
+```
+
+The `InferenceEngine` class is designed to be extensible, supporting not just SGLang but
+also other backends like vLLM. While different inference engines may be used, the
+rollout management logic remains consistent. This common functionality is abstracted
+into the `WorkflowExecutor`, which will be introduced in the following section.
+
+### `RLVRWorkflow` and `WorkflowExecutor`
+
+The rollout data lifecycle is controlled by an `RLVRWorkflow`, which defines how data
+progresses from prompts to complete rollout data containing all fields required for
+training. Our example shows a single-turn RLVR workflow with a math reward function. The
+core logic of the workflow is implemented in an async method `arun_episode`, which takes
+a prompt, generate answers with `RemoteSGLangEngine`, computes rewards, and populates
+additional fields to produce finalized training data.
 
 ```python
 class RLVRWorkflow(RolloutWorkflow):
@@ -157,26 +254,22 @@ workflow = RLVRWorkflow(
 )
 ```
 
-In AReaL-Lite, generation tasks are offloaded to remote inference servers, which operate
-on separate GPUs from those used for training. The `RemoteSGLangEngine` acts as a client
-that interacts with the servers. `RemoteSGLangEngine` runs in a SPMD manner on every
-training process, without occupying any GPUs.
-
-`RemoteSGLangEngine` is responsible for managing the data streaming through rollout
+`WorkflowExecutor` is responsible for managing the data streaming through rollout
 workflows, and collates completed rollout data into batched training samples. When
 initializing, it launches a rollout thread that runs rollout workflows as `asyncio`
 tasks. The following code shows the simplified version of rollout thread implementation,
 which iteratively:
 
 - Checks available capacity. The capacity controls current number of rollout workflows
-  to limit concurrency and data off-policyness.
+  to limit concurrency and **data off-policyness** (The difference between the model
+  version used by generation and the model version updated by the trainer).
 - If there is capacity left and rollout is not paused for weight update, continuously
   obtains data from `input_queue` and creates `asyncio` tasks to run the workflows.
 - Waits for rollout workflows to finish.
 - Gathers data from finished workflows and puts them into `output_queue`
 
 ```python
-class RemoteSGLangEngine(InferenceEngine):
+class WorkflowExecutor:
     ...
     async def _rollout_thread_async(self):
         rid = 0
@@ -201,15 +294,15 @@ class RemoteSGLangEngine(InferenceEngine):
                     rid += 1
                 # Wait for rollout completion
                 tasks = list(rollout_tasks.values())
-                done = []
+                completed_tasks = []
                 if tasks:
-                    done, _ = await asyncio.wait(
+                    completed_tasks, _ = await asyncio.wait(
                         tasks,
                         timeout=ROLLOUT_POLL_WAIT_TIME,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                 # Collect done results, put the results into output queue
-                for task in done:
+                for task in completed_tasks:
                     traj = await task
                     task_rid = task.get_name()
                     rollout_tasks.pop(task_rid)
@@ -252,14 +345,24 @@ def prepare_batch(
             pass
 ```
 
+The `RemoteSGLangEngine` exposes `rollout_batch` and `prepare_batch` by calling them in
+the workflow executor:
+
+```python
+class RemoteSGLangEngine(InferenceEngine):
+    ...
+    def prepare_batch(self, *args, **kwargs):
+        return self.workflow_executor.prepare_batch(*args, **kwargs)
+```
+
 The usage of `RemoteSGLangEngine` in the training script is simple:
 
 ```python
-rollout = RemoteSGLangEngine(config.rollout)
+rollout = RemoteSGLangEngine(config.inf_engine)
 rollout.initialize()
 eval_rollout = ...
 
-data_generator = iterools.cycle(train_dataloader)
+data_generator = itertools.cycle(train_dataloader)
 for global_step in range(max_steps):
     # rollout batched training data for current step
     if config.async_training:
@@ -308,7 +411,8 @@ actor.step_lr_scheduler()
 ```
 
 If you want to customize your own training algorithm, see
-[Customize algorithms](../customization/algorithm.md) for more details.
+[Customize algorithms](https://inclusionai.github.io/AReaL/customization/algorithm.html)
+for more details.
 
 ## Transferring Weights to Inference Servers
 
@@ -338,30 +442,29 @@ weight_update_meta = WeightUpdateMeta.from_disk(config.saver)
 ```
 
 After a training step is finished, we transfer new weights from actor engine to remote
-inference servers with steps shown in the following code:
+inference servers:
+
+1. The rollout engine needs to stop sending generation requests to remote servers
+   (`rollout.pause()`) before weight update to avoid server-side congestion.
+1. Since we need to invoke weight update on the trainer engine and remote inference
+   servers at the same time, in the training script, we asynchronously send requests to
+   remote inference servers, and then immediately upload weights on the trainer engine.
 
 ```python
-# 1. Pause rollout on remote inference servers
 rollout.pause()
-# 2. Send requests to remote servers, tell them to update weights
 if dist.get_rank() == 0:
-    future = rollout.update_weights(weight_update_meta)
-# 3. Actor begins to transfer weights
+    future = rollout.update_weights_async(weight_update_meta)
 actor.upload_weights(weight_update_meta)
-# 4. Wait for remote servers to return after finishing updates
 if dist.get_rank() == 0:
     future.result()
-# 5. Synchronize rollout processes for model version update
 dist.barrier(device_ids=[actor.device.index])
 torch.cuda.synchronize()
-# 6. Resume rollout on remote inference servers
 rollout.resume()
-# 7. Set version, ensures versions on actor and rollout engine are identical
 actor.set_version(global_step + 1)
 rollout.set_version(global_step + 1)
 ```
 
-Now a complete GRPO training step in AReaL-Lite is done! The core logic of our example
+Now a complete GRPO training step in AReaL-lite is done! The core logic of our example
 training script can be summarized as:
 
 ```python
@@ -383,7 +486,7 @@ for global_step in range(max_steps):
 
     rollout.pause()
     if dist.get_rank() == 0:
-        future = rollout.update_weights(weight_update_meta)
+        future = rollout.update_weights_async(weight_update_meta)
     actor.upload_weights(weight_update_meta)
     if dist.get_rank() == 0:
         future.result()
@@ -394,14 +497,16 @@ for global_step in range(max_steps):
 
 ## Utilities
 
-In AReaL-Lite, we provide a wide range of utilities for basic functionalities required
+In AReaL-lite, we provide a wide range of utilities for basic functionalities required
 for observing and tuning your experiments.
 
 ### `Saver` and `Evaluator`
 
-`Saver` ([areal/utils/saver.py](../../areal/utils/saver.py)) and `Evaluator`
-([areal/utils/evaluator.py](../../areal/utils/evaluator.py)) manage the frequency to
-save and evaluate the model with the train engine.
+`Saver`
+([areal/utils/saver.py](https://github.com/inclusionAI/AReaL/blob/main/areal/utils/saver.py))
+and `Evaluator`
+([areal/utils/evaluator.py](https://github.com/inclusionAI/AReaL/blob/main/areal/utils/evaluator.py))
+manage the frequency to save and evaluate the model with the train engine.
 
 In our example, we call `saver.save` and `evaluator.evaluate` after every training step.
 these two methods will automatically check if it is time to save or evaluate the model,
@@ -409,7 +514,8 @@ according to the experiment configuration.
 
 ### `stats_tracker`
 
-`stats_tracker` ([realhf/base/stats_tracker.py](../../realhf/base/stats_tracker.py))
+`stats_tracker`
+([realhf/base/stats_tracker.py](https://github.com/inclusionAI/AReaL/blob/main/realhf/base/stats_tracker.py))
 gathers training statistics across parallel ranks and reduce them.
 
 1. **Scalar-type statistics** are recorded by `stats_tracker.scalar(key=value)` and will
@@ -468,9 +574,10 @@ stats = stats_tracker.export()
 
 ### `StatsLogger`
 
-`StatsLogger` ([areal/utils/stats_logger.py](../../areal/utils/stats_logger.py)) logs
-gathered training data to recorders like `wandb` and `tensorboard` on rank 0. In our
-example script, after finishing a training step,
+`StatsLogger`
+([areal/utils/stats_logger.py](https://github.com/inclusionAI/AReaL/blob/main/areal/utils/stats_logger.py))
+logs gathered training data to recorders like `wandb` and `tensorboard` on rank 0. In
+our example script, after finishing a training step,
 `logger.commit(epoch, step, global_step, stats)` is called to record all statistics from
 `stats_tracker` to print them as well as log them into the recorders set by the
 configuration.

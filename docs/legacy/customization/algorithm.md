@@ -1,6 +1,6 @@
 # Training Algorithm (Legacy)
 
-> **Note**: The AReaL's new approach is more recommended for new implementations due to
+> **Note**: The AReaL-lite approach is more recommended for new implementations due to
 > its cleaner separation of concerns and better maintainability.
 
 The legacy approach encapsulates algorithms in a `ModelInterface` with three core
