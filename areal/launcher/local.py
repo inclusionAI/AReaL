@@ -264,22 +264,20 @@ def main_local():
             )
             server_cmd.append(cmd)
             server_addrs.append(f"{host}:{ports[i * 2]}")
-    else:
-        raise NotImplementedError()
 
-    # Launch inference servers.
-    launcher.submit_array(
-        job_name="llm_server",
-        cmd=server_cmd,
-        count=alloc_mode.gen_dp_size,
-        gpu=alloc_mode.gen_pp_size * alloc_mode.gen_tp_size,
-    )
-    logger.info(
-        f"LLM inference server launched at: AREAL_LLM_SERVER_ADDRS={','.join(server_addrs)}"
-    )
+        # Launch inference servers.
+        launcher.submit_array(
+            job_name="llm_server",
+            cmd=server_cmd,
+            count=alloc_mode.gen_dp_size,
+            gpu=alloc_mode.gen_pp_size * alloc_mode.gen_tp_size,
+        )
+        logger.info(
+            f"LLM inference server launched at: AREAL_LLM_SERVER_ADDRS={','.join(server_addrs)}"
+        )
 
     # Launch trainer entrypoint
-    if not cfg.server_only:
+    if alloc_mode.type_ == AllocationType.COLOCATE or not cfg.server_only:
         launcher.submit(
             job_name="trainer",
             cmd=f"torchrun --nnodes 1 --nproc-per-node {alloc_mode.train_world_size} --master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} {' '.join(sys.argv[1:])}",

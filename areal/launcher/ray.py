@@ -12,7 +12,6 @@ from ray.runtime_env import RuntimeEnv
 from ray.util.placement_group import PlacementGroup
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
-import realhf.base.logging as logging
 from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
