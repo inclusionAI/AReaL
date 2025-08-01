@@ -19,7 +19,7 @@ from arealite.utils.saver import Saver
 from arealite.utils.stats_logger import StatsLogger
 from arealite.workflow.vision_rlvr import VisionRLVRWorkflow
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
-from realhf.base import stats_tracker
+from realhf.base import seeding, stats_tracker
 
 
 def extract_answer(pred_str, data_name, use_last_number=True):
@@ -57,6 +57,9 @@ def main(args):
 
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
+
+    seeding.set_random_seed(config.seed, f"trainer{rank}")
+
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,

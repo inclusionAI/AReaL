@@ -259,11 +259,16 @@ class BaseHFEngine(TrainEngine):
         input_ = amend_position_ids(input_)
 
         mb_list = split_padded_tensor_dict_into_mb_list(input_, self.config.mb_spec)
-        logger.info(
-            f"Microbatch #tokens (rank {dist.get_rank()}): {mb_list.group_lens}"
-        )
         mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
-        mb_list = pad_mb_list(mb_list, pad_value=0.0)
+        mb_list = pad_mb_list(
+            mb_list,
+            pad_value=0.0,
+            pad_to_maximum=self.config.pad_to_maximum,
+        )
+        logger.info(
+            f"Microbatch #tokens (rank {dist.get_rank()}): {mb_list.group_lens}, "
+            f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}"
+        )
         # NOTE: We unsqueeze here because huggingface transformer models requires
         # packed input to be of shape [1, total_seqlen].
         mb_list = unsqueeze_mb_list(mb_list)

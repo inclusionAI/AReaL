@@ -298,6 +298,7 @@ class MicroBatchList:
     group_lens: List[int]
     padded_mbs: Optional[List[TensorDict]] = None
     padding_lengths: Optional[List[int]] = None
+    padded_to_lengths: Optional[List[int]] = None
 
 
 DEFAULT_MAX_TOKENS_PER_MB = int(1e12)
@@ -459,25 +460,35 @@ def pad_packed_tensor_dict(
 def pad_mb_list(
     mb_list: MicroBatchList,
     pad_value: float = 0.0,
+    pad_to_maximum: bool = False,
 ) -> MicroBatchList:
     padded_mb_inputs, pad_lengths = [], []
     pad_to_lengths = []
-    for mb, l in zip(mb_list.mbs, mb_list.group_lens):
+    if (
+        pad_to_maximum
+        and mb_list.mb_spec.max_tokens_per_mb is not None
+        and mb_list.mb_spec.max_tokens_per_mb < DEFAULT_MAX_TOKENS_PER_MB
+    ):
+        pad_to_length = mb_list.mb_spec.max_tokens_per_mb
+    else:
+        if pad_to_maximum:
+            logger.warning(
+                f"Cannot pad to upper bound since mb_spec.max_tokens_per_mb is not set."
+            )
         # NOTE: GPU page size is 2MB
         # Take hidden size 4096 with bf16 dtype as an example,
         # the batch size of a page is 256
-        pad_to_length = (int(l) + 255) // 256 * 256
+        pad_to_length = (int(max(mb_list.group_lens)) + 255) // 256 * 256
+    for mb, l in zip(mb_list.mbs, mb_list.group_lens):
         padded_mb, pad_len = pad_packed_tensor_dict(
             mb, pad_to_length, pad_value=pad_value
         )
         padded_mb_inputs.append(padded_mb)
         pad_lengths.append(pad_len)
         pad_to_lengths.append(pad_to_length)
-    logger.debug(
-        f"Microbatch original lengths: {mb_list.group_lens}, padded to {pad_to_lengths}."
-    )
     mb_list.padded_mbs = padded_mb_inputs
     mb_list.padding_lengths = pad_lengths
+    mb_list.padded_to_lengths = pad_to_lengths
     return mb_list
 
 

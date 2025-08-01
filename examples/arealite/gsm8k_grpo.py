@@ -37,6 +37,7 @@ def main(args):
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
+
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
         rank=rank,

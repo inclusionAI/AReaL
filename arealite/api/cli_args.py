@@ -189,6 +189,15 @@ class TrainEngineConfig:
     )
     # Runtime microbatch limit
     mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
+    pad_to_maximum: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Whether to pad each microbatch to the length upper bound specified by mb_spec. "
+                "Can reduce memory fragmentation but slow down training."
+            )
+        },
+    )
 
     # Training Backend Configuration
     disable_dropout: bool = field(default=False)

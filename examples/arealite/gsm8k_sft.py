@@ -14,7 +14,7 @@ from arealite.utils.evaluator import Evaluator
 from arealite.utils.saver import Saver
 from arealite.utils.stats_logger import StatsLogger
 from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import stats_tracker
+from realhf.base import seeding, stats_tracker
 
 
 def main(args):
@@ -24,6 +24,8 @@ def main(args):
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
+
+    seeding.set_random_seed(config.seed, f"trainer{rank}")
 
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
