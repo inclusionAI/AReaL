@@ -111,7 +111,7 @@ python3 -m areal.launcher.local \
   --config examples/lite/configs/gsm8k_grpo.yaml
 ```
 
-On a Ray cluster with 2 nodes & 8 GPUs each node, runs (Remember to change paths in the
+On a Ray cluster with 2 nodes & 8 GPUs each node, runs (remember to change paths in the
 YAML file to your own shared storage):
 
 ```bash
@@ -235,8 +235,8 @@ alphabetical order):
   features for asynchronous RL training and their contributions during the development
   of AReaL-lite
 
-+The Super Computing Technology (SCT) team at Ant Group, particularly for their
-expertise in large-scale cluster operations and maintenance
+- The Super Computing Technology (SCT) team at Ant Group, particularly for their
+  expertise in large-scale cluster operations and maintenance
 
 We also appreciate all the pioneering works from the community, particularly the
 [ReaLHF](https://github.com/openpsi-project/ReaLHF) project from OpenPsi Inc. and other
