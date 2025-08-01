@@ -2,7 +2,7 @@ name: Test AReaL
 
 on:
   pull_request:
-    branches: [ lite ]
+    branches: [ main ]
     paths:
       - .github/workflows/test-areal.yml
       - areal/**
