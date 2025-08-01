@@ -11,7 +11,7 @@ from realhf.api.cli_args import BaseExperimentConfig, NameResolveConfig
 from realhf.api.core import config as config_api
 from realhf.api.core import data_api
 from realhf.base import constants, name_resolve, testing
-from tests.fixtures import *
+from realhf.tests.fixtures import *
 
 
 @pytest.fixture

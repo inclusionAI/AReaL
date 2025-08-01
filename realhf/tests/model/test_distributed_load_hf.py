@@ -22,7 +22,7 @@ from realhf.base.testing import (
     init_global_constants,
 )
 
-logger = logging.getLogger("tests.test_saveload")
+logger = logging.getLogger("realhf.tests.test_saveload")
 
 
 def _load_all_pytorch_bin(path: pathlib.Path):

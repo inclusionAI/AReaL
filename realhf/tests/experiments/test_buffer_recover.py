@@ -18,8 +18,8 @@ from realhf.api.cli_args import (
 )
 from realhf.base import logging, name_resolve, testing
 from realhf.experiments.common.null_exp import NullPPOConfig, NullSFTConfig
-from tests.experiments.utils import run_test_exp
-from tests.fixtures import *
+from realhf.tests.experiments.utils import run_test_exp
+from realhf.tests.fixtures import *
 
 logger = logging.getLogger("test buffer recover")
 

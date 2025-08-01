@@ -9,9 +9,9 @@ import pytest
 from realhf.api.core.system_api import Experiment, register_experiment
 from realhf.base import constants, logging, testing
 from realhf.system.worker_base import WorkerServerStatus
-from tests.fixtures import *
+from realhf.tests.fixtures import *
 
-logger = logging.getLogger("tests.experiments.utils", "benchmark")
+logger = logging.getLogger("realhf.tests.experiments.utils", "benchmark")
 
 
 @pytest.fixture(params=["llama"])

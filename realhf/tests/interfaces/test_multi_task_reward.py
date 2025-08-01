@@ -17,7 +17,7 @@ from realhf.api.core.data_api import (
 )
 from realhf.api.core.model_api import FinetuneSpec, Model
 from realhf.base import constants, name_resolve, network, testing
-from tests.fixtures import *
+from realhf.tests.fixtures import *
 
 
 @pytest.fixture(params=[testing.TESTING_DATASET_SIZE])

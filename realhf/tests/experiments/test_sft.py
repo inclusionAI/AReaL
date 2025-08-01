@@ -13,8 +13,8 @@ from realhf.api.cli_args import (
 )
 from realhf.base import testing
 from realhf.experiments.common.sft_exp import SFTConfig
-from tests.experiments.utils import run_test_exp
-from tests.fixtures import *
+from realhf.tests.experiments.utils import run_test_exp
+from realhf.tests.fixtures import *
 
 
 @pytest.fixture(params=["llama"])

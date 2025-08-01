@@ -10,9 +10,9 @@ import torch
 import transformers
 
 from realhf.base import constants, logging, testing
-from tests.fixtures import *
+from realhf.tests.fixtures import *
 
-logger = logging.getLogger("tests.test_cpu")
+logger = logging.getLogger("realhf.tests.test_cpu")
 
 
 # NOTE: To run test for a new model class, please implement and register `real_config_maker`

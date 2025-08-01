@@ -7,11 +7,11 @@ import uuid
 
 import pytest
 import torch
+from tests.fixtures import *
 from torch.utils.data import DataLoader
 
 from realhf.api.core import config as config_api
 from realhf.api.core import data_api
-from tests.fixtures import *
 
 
 def _validate_dataset(cfg: config_api.DatasetAbstraction, tokenizer):
