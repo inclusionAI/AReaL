@@ -27,8 +27,8 @@ like how you enjoy real-world milk tea (cheers).
   code. This allows users to build their own **agentic** and **RLVR** training workflows
   with minimal effort.
 - 🔥 **Asynchronous RL**: With algorithm-system co-design, AReaL supports fully
-  asynchronous RL for **the fastest training speed**! Experimental support for multi-turn
-  agentic RL is also provided.
+  asynchronous RL for **the fastest training speed**! Experimental support for
+  multi-turn agentic RL is also provided.
 - 🛠️ **Open & Reproducible**: We continuously release _all code, datasets, and training
   recipes_ for RL training of LLMs.
 - 🚀 **Scalability**: AReaL can seamlessly adapt to different computational resource
@@ -69,7 +69,7 @@ New highlights in AReaLite:
 - Instead of the *system-centric* architecture in old AReaL, AReaLite follows an
   **AI-centric** API design that aims to provide the following key features:
 
-  - **Light-weight** & **easy to write** algorithm and training workflow customization.
+  - **Light-weight** & **easy-to-write** algorithm and training workflow customization.
   - **Easy to scale up** without knowing system and infrastructure details.
   - **Adaptable and plugable:** Smooth to integrate with other modern AI applications.
 
@@ -106,8 +106,8 @@ Our training scripts will automatically download the dataset (openai/gsm8k) and 
 python3 -m arealite.launcher.local examples/arealite/gsm8k_grpo.py --config examples/arealite/configs/gsm8k_grpo.yaml
 ```
 
-On a Ray cluster with 2 nodes & 8 GPUs each node, runs (Remember to change paths in the YAML
-file to your own shared storage):
+On a Ray cluster with 2 nodes & 8 GPUs each node, runs (Remember to change paths in the
+YAML file to your own shared storage):
 
 ```
 python3 -m arealite.launcher.ray examples/arealite/gsm8k_grpo.py --config examples/arealite/configs/gsm8k_grpo.yaml \

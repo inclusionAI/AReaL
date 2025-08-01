@@ -12,9 +12,9 @@ understand, and develop with effectively. The primary issue stems from its
 *system-centric* rather than *AI-centric* architecture and API design. An *AI-centric*
 design aims to provide three key features:
 
-- **Light-weight & focused customization:** Users can implement their algorithms and
-  training workflows with minimal and concentrated code, often in just a few files or
-  even a single file.
+- **Light-weight & easy-to-write customization:** Users can implement their algorithms
+  and training workflows with minimal and concentrated code, often in just a few files
+  or even a single file.
 - **Easy to scale up:** Experiments can be scaled up seamlessly without requiring
   knowledge of underlying system or infrastructure details.
 - **Adaptable and plugable:** Users is free to integrate the system with code or APIs
@@ -79,6 +79,16 @@ arealite/
 ```
 
 ### Component Overview
+
+The AReaLite codebase is structured into four distinct layers: the API layer, backend
+layer, customization layer, and entry point layer. As illustrated in the figure below,
+workflow and algorithm customization logic resides in separate layers above the backend.
+We prioritize keeping the entry point and customization layers clean and intuitive,
+isolating them from the complex backend implementation. With AReaLite, users can define
+their custom training workflows and algorithms entirely within a single entry point
+file.
+
+![arealite-layers](../assets/arealite_layers.png)
 
 #### 1. API Layer (`api/`)
 
