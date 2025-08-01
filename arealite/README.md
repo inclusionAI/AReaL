@@ -18,15 +18,16 @@ design aims to provide three key features:
 - **Easy to scale up:** Experiments can be scaled up seamlessly without requiring
   knowledge of underlying system or infrastructure details.
 - **Adaptable and plugable:** Users is free to integrate the system with code or APIs
-  from other AI libraries, or plug APIs from the system into other frameworks. We
-  believe that AReaL, as well as other existing RL systems, falls short in fully
-  delivering these features. For example, the RL training workflow in AReaL is built
-  around multiple *workers* executing *model function calls* in a *DAG* (Directed
-  Acyclic Graph). To customize a training workflow, researchers first need to understand
-  these system-level concepts. Then they are forced to find code to modify, which is
-  scattered around in the codebase. It is also nearly impossible to exploit packages
-  like `datasets` since it is not compatible with the workers. This gap is the core
-  motivation behind AReaLite: rebuilding AReaL with an AI-centric architecture and APIs.
+  from other AI libraries, or plug APIs from the system into other frameworks.
+
+We believe that AReaL, as well as other existing RL systems, falls short in fully
+delivering these features. For example, the RL training workflow in AReaL is built
+around multiple *workers* executing *model function calls* in a *DAG* (Directed Acyclic
+Graph). To customize a training workflow, researchers first need to understand these
+system-level concepts. Then they are forced to find code to modify, which is scattered
+around in the codebase. It is also nearly impossible to exploit packages like `datasets`
+since it is not compatible with the workers. This gap is the core motivation behind
+AReaLite: rebuilding AReaL with an AI-centric architecture and APIs.
 
 Beyond architectural concerns, AReaL suffers from accumulated technical debt. The
 codebase contains substantial legacy code inherited from previous projects that no
