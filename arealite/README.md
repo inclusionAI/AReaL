@@ -1,9 +1,9 @@
-# AReaLite Design Doc
+# AReaL-lite Design Doc
 
 ## TL;DR
 
 Follow our [step-by-step code walk-through](../docs/arealite/gsm8k_grpo.md) to
-immediately get started with AReaLite!
+immediately get started with AReaL-lite!
 
 ## Motivation
 
@@ -27,7 +27,7 @@ Graph). To customize a training workflow, researchers first need to understand t
 system-level concepts. Then they are forced to find code to modify, which is scattered
 around in the codebase. It is also nearly impossible to exploit packages like `datasets`
 since it is not compatible with the workers. This gap is the core motivation behind
-AReaLite: rebuilding AReaL with an AI-centric architecture and APIs.
+AReaL-lite: rebuilding AReaL with an AI-centric architecture and APIs.
 
 Beyond architectural concerns, AReaL suffers from accumulated technical debt. The
 codebase contains substantial legacy code inherited from previous projects that no
@@ -40,13 +40,13 @@ possible to achieve comparable efficiency with significantly fewer lines of code
 presents an ideal opportunity to redesign the API and distill the massive codebase into
 something clean and maintainable. Rather than pursuing maximum efficiency, our goal is
 to deliver 90% of AReaL's functionality while dramatically reducing code complexity and
-user burden. This philosophy drives AReaLite — the lightweight version of AReaL.
+user burden. This philosophy drives AReaL-lite — the lightweight version of AReaL.
 
-AReaLite serves as the first phase in AReaL's broader refactoring initiative. It
+AReaL-lite serves as the first phase in AReaL's broader refactoring initiative. It
 functions both as a standalone training library with intuitive interfaces and as the
 foundation for AReaL's future core API definitions. The plan is to transform AReaL's
-current worker-based architecture into an AI-centric architecture similar to AReaLite,
-where AReaL will **extend** AReaLite's APIs and implementations to support additional
+current worker-based architecture into an AI-centric architecture similar to AReaL-lite,
+where AReaL will **extend** AReaL-lite's APIs and implementations to support additional
 backends for efficient large-scale training.
 
 ## Design Principles
@@ -80,13 +80,13 @@ arealite/
 
 ### Component Overview
 
-The AReaLite codebase is structured into four distinct layers: the API layer, backend
+The AReaL-lite codebase is structured into four distinct layers: the API layer, backend
 layer, customization layer, and entry point layer. As illustrated in the figure below,
 workflow and algorithm customization logic resides in separate layers above the backend.
 We prioritize keeping the entry point and customization layers clean and intuitive,
-isolating them from the complex backend implementation. With AReaLite, users can define
-their custom training workflows and algorithms entirely within a single entry point
-file.
+isolating them from the complex backend implementation. With AReaL-lite, users can
+define their custom training workflows and algorithms entirely within a single entry
+point file.
 
 ![arealite-layers](../assets/arealite_layers.png)
 

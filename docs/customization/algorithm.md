@@ -3,7 +3,7 @@
 > **Note**: We recommend the user to first read the
 > [agent customization guide](agent.md).
 
-**AReaLite** structures RL algorithms around two core components:
+**AReaL-lite** structures RL algorithms around two core components:
 
 - **RolloutWorkflow**: Defines what data to generate during rollouts
 - **TrainEngine**: Defines how to process the generated data for training
@@ -108,7 +108,7 @@ def reinforce_loss_fn(logits, data):
 ```
 
 ```{note}
-To decrease memory usage, AReaLite automatically packs multiple sequences in an 1D tensor before forward passes. Hence, the loss function should assume handling 1D *packed* tensors instead of *padded* tensors.
+To decrease memory usage, AReaL-lite automatically packs multiple sequences in an 1D tensor before forward passes. Hence, the loss function should assume handling 1D *packed* tensors instead of *padded* tensors.
 ```
 
 Next, we implement the training engine. We use a two-class design to maintain backend

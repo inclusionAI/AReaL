@@ -1,6 +1,6 @@
 # Dataset
 
-**AReaLite** directly integrates with the `Dataset` class from the HuggingFace
+**AReaL-lite** directly integrates with the `Dataset` class from the HuggingFace
 `datasets` package. This gives you full flexibility to load, process, and filter your
 data before training.
 

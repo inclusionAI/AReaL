@@ -1,8 +1,8 @@
 # Quickstart (Legacy)
 
 > **Note**: This is a quickstart guide for launching AReaL experiment with legacy code
-> in `realhf/`. We strongly recommend users to try AReaLite for better experiences.
-> [Click here](quickstart.md) for AReaLite quickstart guide!
+> in `realhf/`. We strongly recommend users to try AReaL-lite for better experiences.
+> [Click here](quickstart.md) for AReaL-lite quickstart guide!
 
 This guide walks you through a simple example of training an LLM to solve math problems.
 Please ensure you have properly

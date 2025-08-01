@@ -1,7 +1,7 @@
 # Quickstart
 
-Welcome to the **AReaLite** Quickstart Guide! This guide demonstrates how to run an
-AReaLite experiment training an LLM on the GSM8K dataset using the GRPO algorithm with
+Welcome to the **AReaL-lite** Quickstart Guide! This guide demonstrates how to run an
+AReaL-lite experiment training an LLM on the GSM8K dataset using the GRPO algorithm with
 function-based rewards. Ensure you've completed
 [the installation and environment setup](installation.md) before proceeding.
 
@@ -56,14 +56,14 @@ python3 -m arealite.launcher.local examples/arealite/gsm8k_grpo.py \
     +sglang.attention_backend=triton
 ```
 
-::::{important} We're currently refactoring from legacy AReaL to AReaLite, which
+::::{important} We're currently refactoring from legacy AReaL to AReaL-lite, which
 introduces some configuration differences. We provide a **config converter** to transfer
-old AReaL config into AReaLite YAML file for users' convenience. [Click here](xxx) to
+old AReaL config into AReaL-lite YAML file for users' convenience. [Click here](xxx) to
 learn how to use the **config converter**. ::::
 
 ## Distributed Experiments with Ray or Slurm
 
-AReaLite provides standalone launchers for distributed experiments. After setting up
+AReaL-lite provides standalone launchers for distributed experiments. After setting up
 your Ray or Slurm cluster, launch experiments similarly to `LocalLauncher`:
 
 ```
@@ -109,7 +109,7 @@ Additional references:
 
 ## Next Steps
 
-Check [Getting Started with AReaLite](../arealite/gsm8k_grpo.md) for a complete code
+Check [Getting Started with AReaL-lite](../arealite/gsm8k_grpo.md) for a complete code
 walkthrough on the GRPO GSM8K Example.
 
 Customization guides:

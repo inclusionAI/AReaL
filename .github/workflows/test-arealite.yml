@@ -1,4 +1,4 @@
-name: Test AReaLite
+name: Test AReaL-lite
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ on:
 jobs:
   test-arealite:
     environment:
-      name: AReaLite-unittests
+      name: AReaL-lite-unittests
     runs-on: ubuntu-latest
     concurrency:
       group: test-arealite

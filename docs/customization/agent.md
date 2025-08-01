@@ -1,17 +1,17 @@
 # Rollout and Agentic RL
 
 This guide shows you how to create custom rollout behaviors for RL training by building
-a multi-turn math agent with **AReaLite**. This agent keeps trying to solve math
+a multi-turn math agent with **AReaL-lite**. This agent keeps trying to solve math
 problems until it finds the correct answer.
 
 You can find the complete implementation in `arealite/workflow/multi_turn.py`.
 
 ## Step 1: Define Your Workflow
 
-AReaLite gives you flexibility in how you design your agents to run **an episode**. **An
-episode** defines how your agent rollouts a complete training sample from an input
+AReaL-lite gives you flexibility in how you design your agents to run **an episode**.
+**An episode** defines how your agent rollouts a complete training sample from an input
 prompt, using tools, reward functions, and (multi-turn) generation. Instead of rigid
-`Agent` classes that might constrain your agent's capabilities, AReaLite captures all
+`Agent` classes that might constrain your agent's capabilities, AReaL-lite captures all
 rollout behavior in a `RolloutWorkflow` class. This approach allows you to customize
 your agent's behavior however you need.
 
@@ -222,7 +222,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
 ```
 
 > **Important**: The returned `TensorDict` must follow HuggingFace's padded data format,
-> where each tensor has shape `[batch_size, sequence_length, *]`. This allows AReaLite
+> where each tensor has shape `[batch_size, sequence_length, *]`. This allows AReaL-lite
 > to automatically batch multiple trajectories for training. Since this example returns
 > a single trajectory, we use `unsqueeze(0)` to create a batch of size 1.
 

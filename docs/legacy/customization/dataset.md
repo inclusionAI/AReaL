@@ -1,6 +1,6 @@
 # Dataset (Legacy)
 
-> **Note**: While this legacy approach works, we strongly recommend using the AReaLite
+> **Note**: While this legacy approach works, we strongly recommend using the AReaL-lite
 > for new projects. It provides better flexibility, cleaner abstractions, and easier
 > maintenance.
 

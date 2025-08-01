@@ -20,12 +20,12 @@ like how you enjoy real-world milk tea (cheers).
 
 **AReaL Highlights**
 
-- ⚡ <span style="color: red; font-weight: bold;">**\[NEW\] AReaLite:**</span> Our new
-  release AReaLite is a **light-weight** and **AI-centric** codebase that prioritizes
-  better development experiences for AI researchers. As a result, AReaLite delivers most
-  AReaL functionalities while maintains its high performance with much fewer lines of
-  code. This allows users to build their own **agentic** and **RLVR** training workflows
-  with minimal effort.
+- ⚡ <span style="color: red; font-weight: bold;">**\[NEW\] AReaL-lite:**</span> Our new
+  release AReaL-lite is a **light-weight** and **AI-centric** codebase that prioritizes
+  better development experiences for AI researchers. As a result, AReaL-lite delivers
+  most AReaL functionalities while maintains its high performance with much fewer lines
+  of code. This allows users to build their own **agentic** and **RLVR** training
+  workflows with minimal effort.
 - 🔥 **Asynchronous RL**: With algorithm-system co-design, AReaL supports fully
   asynchronous RL for **the fastest training speed**! Experimental support for
   multi-turn agentic RL is also provided.
@@ -38,14 +38,14 @@ like how you enjoy real-world milk tea (cheers).
 
 ## News
 
-**\[2025/07/31\] (AReaLite)** We introduce AReaLite, a **light-weight** version of AReaL
-designed specifically for AI researchers and rapid prototyping. AReaLite features an
-**AI-centric** API design that prioritizes ease of use and algorithm development, while
-inherently supporting fully asynchronous **agentic RL**. With 80% fewer lines of code,
-AReaLite maintains 90% of AReaL's high performance and core functionality. Check out
-[our AReaLite design doc](/arealite/README.md) and
+**\[2025/07/31\] (AReaL-lite)** We introduce AReaL-lite, a **light-weight** version of
+AReaL designed specifically for AI researchers and rapid prototyping. AReaL-lite
+features an **AI-centric** API design that prioritizes ease of use and algorithm
+development, while inherently supporting fully asynchronous **agentic RL**. With 80%
+fewer lines of code, AReaL-lite maintains 90% of AReaL's high performance and core
+functionality. Check out [our AReaL-lite design doc](/arealite/README.md) and
 [the quickstart guide](/docs/tutorial/quickstart.md) to begin your journey with
-**AReaLite**!
+**AReaL-lite**!
 
 **\[2025/06/03\] (v0.3, boba²)** We release **boba²** (double-boba) for fully
 asynchronous RL training, which achieves a **2.77x speedup while obtaining on-par or
@@ -62,20 +62,20 @@ SOTA 7B and 32B models on math reasoning. Check our
 **\[2025/02/24\] (v0.1)** Our initial release includes reproducible results for 1.5B and
 7B LRMs. Check our [v0.1 technical blog](/blog/AReaL_v0_1.md).
 
-## AReaLite Release Highlights
+## AReaL-lite Release Highlights
 
-New highlights in AReaLite:
+New highlights in AReaL-lite:
 
-- Instead of the *system-centric* architecture in old AReaL, AReaLite follows an
+- Instead of the *system-centric* architecture in old AReaL, AReaL-lite follows an
   **AI-centric** API design that aims to provide the following key features:
 
   - **Light-weight** & **easy-to-write** algorithm and training workflow customization.
   - **Easy to scale up** without knowing system and infrastructure details.
   - **Adaptable and plugable:** Smooth to integrate with other modern AI applications.
 
-  These features make AReaLite easy for AI researchers to adopt, understand, and develop
-  effectively and efficiently. To learn more about the design principles of AReaL,
-  please read the [AReaLite design doc](/arealite/README.md)!
+  These features make AReaL-lite easy for AI researchers to adopt, understand, and
+  develop effectively and efficiently. To learn more about the design principles of
+  AReaL, please read the [AReaL-lite design doc](/arealite/README.md)!
 
 - A much more *light-weight* codebase compared to old AReaL codebase with only **20%** #
   lines of code, with a detailed [code walkthrough](/docs/arealite/gsm8k_grpo.md) on an
@@ -94,10 +94,10 @@ Good old stuff from AReaL:
 - A single command line to launch an experiment, no matter on a single node or a
   large-scale distributed cluster.
 
-Now, let us run an example experiment with AReaLite following the quickstart guide
+Now, let us run an example experiment with AReaL-lite following the quickstart guide
 below!
 
-## Getting Started with AReaLite
+## Getting Started with AReaL-lite
 
 Our training scripts will automatically download the dataset (openai/gsm8k) and model
 (Qwen/Qwen2-1.5B-Instruct). On a single node, runs:
@@ -125,12 +125,12 @@ python3 -m arealite.launcher.local examples/arealite/eval.py --config examples/a
 ```
 -->
 
-For more detailed guide on how to run experiments in AReaLite, please check out
+For more detailed guide on how to run experiments in AReaL-lite, please check out
 [our quickstart guide](/docs/tutorial/quickstart.md)!
 
-## Switching from legacy AReaL to AReaLite
+## Switching from legacy AReaL to AReaL-lite
 
-We also provide a convenient script to convert your AReaL YAML config into AReaLite
+We also provide a convenient script to convert your AReaL YAML config into AReaL-lite
 config in one command line. First you need to locate your AReaL config either modified
 from files from `examples` folder, or generated when you run your experiments in
 `<fileroot>/<expr_name>/<trial_name>` folder. Runs:
@@ -139,17 +139,17 @@ from files from `examples` folder, or generated when you run your experiments in
 python3 examples/arealite/convert_config.py -f <config_path> -o <output_path>
 ```
 
-Then you should be able to run experiments with your old settings on AReaLite!
+Then you should be able to run experiments with your old settings on AReaL-lite!
 
-## AReaLite vs legacy AReaL
+## AReaL-lite vs legacy AReaL
 
-AReaLite is an initiative to fully refactor AReaL, addressing historical issues such as
-redundant code and unnecessary system-level abstractions. Currently, AReaLite provides a
-lightweight codebase that enables fast prototyping for new RL training workflows and
-algorithms on a relatively small scale. For large-scale experiments (1K+ GPUs), we
-recommend using the battle-tested legacy AReaL to ensure stability. In the future, we
-will continue developing AReaLite by expanding its APIs, migrating legacy features,
-introducing new functionality, and validating the system through large-scale
+AReaL-lite is an initiative to fully refactor AReaL, addressing historical issues such
+as redundant code and unnecessary system-level abstractions. Currently, AReaL-lite
+provides a lightweight codebase that enables fast prototyping for new RL training
+workflows and algorithms on a relatively small scale. For large-scale experiments (1K+
+GPUs), we recommend using the battle-tested legacy AReaL to ensure stability. In the
+future, we will continue developing AReaL-lite by expanding its APIs, migrating legacy
+features, introducing new functionality, and validating the system through large-scale
 experiments.
 
 ## Resources
@@ -160,17 +160,17 @@ experiments.
 ### Quickstart
 
 - [Installation](https://inclusionai.github.io/AReaL/tutorial/installation.html)
-- [AReaLite Quickstart](/docs/tutorial/quickstart.md)
+- [AReaL-lite Quickstart](/docs/tutorial/quickstart.md)
 
 ### Code Walkthrough
 
-- [Running GRPO on GSM8K dataset with AReaLite](/docs/arealite/gsm8k_grpo.md)
+- [Running GRPO on GSM8K dataset with AReaL-lite](/docs/arealite/gsm8k_grpo.md)
 
 ### Customization
 
-- [Customize dataset with AReaLite](../customization/dataset.md)
-- [Customize Agentic/RVLR rollout workflows with AReaLite](../customization/agent.md)
-- [Customize algorithms with AReaLite](../customization/algorithm.md)
+- [Customize dataset with AReaL-lite](../customization/dataset.md)
+- [Customize Agentic/RVLR rollout workflows with AReaL-lite](../customization/agent.md)
+- [Customize algorithms with AReaL-lite](../customization/algorithm.md)
 
 ### AReaL Legacy
 
