@@ -1,7 +1,7 @@
 # Rollout and Agentic RL (Legacy)
 
-> **Note**: While this legacy approach works, we strongly recommend using the AReaL-lite
-> for new projects. It provides better flexibility, cleaner abstractions, and easier
+> **Note**: While this legacy approach works, we strongly recommend using AReaL-lite for
+> new projects. It provides better flexibility, cleaner abstractions, and easier
 > maintenance.
 
 ## Step 1: Define Your Agent Class

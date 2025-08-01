@@ -4,7 +4,7 @@ This guide shows you how to create custom rollout behaviors for RL training by b
 a multi-turn math agent with **AReaL-lite**. This agent keeps trying to solve math
 problems until it finds the correct answer.
 
-You can find the complete implementation in `arealite/workflow/multi_turn.py`.
+You can find the complete implementation in `areal/workflow/multi_turn.py`.
 
 ## Step 1: Define Your Workflow
 
@@ -16,14 +16,14 @@ rollout behavior in a `RolloutWorkflow` class. This approach allows you to custo
 your agent's behavior however you need.
 
 ```python
-# arealite/api/workflow_api.py
+# areal/api/workflow_api.py
 class RolloutWorkflow:
     async def arun_episode(
         self, engine: InferenceEngine, data: Dict[str, Any]
     ) -> TensorDict:
         """Run a single episode of the workflow.
 
-        See concrete example implementations under the `arealite/workflow` directory.
+        See concrete example implementations under the `areal/workflow` directory.
         """
         raise NotImplementedError()
 ```

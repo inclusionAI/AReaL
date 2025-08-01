@@ -13,7 +13,7 @@ parts:
     - file: tutorial/troubleshooting
   - caption: Getting Started with AReaL-lite
     chapters:
-    - file: arealite/gsm8k_grpo
+    - file: lite/gsm8k_grpo
   - caption: References
     chapters:
     - file: references/benchmark
