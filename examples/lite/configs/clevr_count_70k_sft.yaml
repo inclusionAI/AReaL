@@ -1,0 +1,81 @@
+experiment_name: clevr_count_70k-sft
+trial_name: trial0
+
+cluster:
+  n_nodes: 1
+  n_gpus_per_node: 1
+  cluster_name: na132
+  fileroot: /storage/openpsi/experiments
+  name_resolve:
+    type: nfs
+    nfs_record_root: /storage/openpsi/experiments/name_resolve/clevr_count_70k-sft
+    etcd3_addr: etcd-client.openpsi-etcd.svc.sigma-na130-lingbo.na130.wl-robby.local:2379
+seed: 1
+total_train_epochs: 3
+tokenizer_path: ${model.path}
+
+model:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: /storage/openpsi/models/Qwen2-VL-7B
+  dtype: bfloat16
+  init_from_scratch: false
+  gradient_checkpointing: false
+  mb_spec:
+    max_tokens_per_mb: 4096
+  optimizer:
+    type: adam
+    lr: 2e-5
+    weight_decay: 0.05
+    beta1: 0.9
+    beta2: 0.95
+    eps: 1e-5
+    lr_scheduler_type: cosine
+    gradient_clipping: 1.0
+  backend: fsdp
+
+train_dataset:
+  batch_size: 128
+  shuffle: true
+  pin_memory: true
+  num_workers: 4
+  path: /storage/openpsi/data/clevr_count_70k/
+  type: sft
+
+valid_dataset:
+  batch_size: 128
+  shuffle: true
+  pin_memory: true
+  num_workers: 4
+  path: /storage/openpsi/data/clevr_count_70k/
+  type: sft
+
+# Utilities
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+checkpointer:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: 3600
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: 1
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
