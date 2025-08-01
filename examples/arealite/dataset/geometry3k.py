@@ -9,32 +9,17 @@ from PIL.Image import Image as ImageObject
 
 
 def convert_image(
-    image: Union[Dict[str, Any], Image.Image, str],
-    target_width: int,
-    target_height: int,
-) -> Image.Image:
-    """
-    Convert the image by padding it to the target width and height.
-    """
-    # Get the current size of the image
-    width, height = image.size
-    
-    # Calculate padding for width and height
-    pad_width = max(target_width - width, 0)
-    pad_height = max(target_height - height, 0)
-    
-    # Calculate padding for left, right, top, bottom
-    left = pad_width // 2
-    top = pad_height // 2
-    
-    # Create a new image with target size and a white background
-    new_image = Image.new("RGB", (target_width, target_height), (255, 255, 255))
-    
-    # Paste the original image into the center of the new image
-    new_image.paste(image, (left, top))
-    
+    image: Union[Dict[str, Any], ImageObject, str],
+    fixed_width: Optional[int] = None,
+    fixed_height: Optional[int] = None,
+) -> ImageObject:
+    if fixed_width is not None and fixed_height is not None and (image.width != fixed_width or image.height != fixed_height):
+        image = image.resize((fixed_width, fixed_height))
+
+    if image.mode != "RGB":
+        image = image.convert("RGB")
     with BytesIO() as output:
-        new_image.save(output, format="JPEG")
+        image.save(output, format="JPEG")
         return output.getvalue()
 
 def get_max_image_size(dataset):
