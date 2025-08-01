@@ -79,14 +79,15 @@ New highlights in AReaL-lite:
 
 - A much more *light-weight* codebase compared to old AReaL codebase with only **20%** #
   lines of code, with a detailed
-  [code walkthrough](https://inclusionai.github.io/AReaL/areal/gsm8k_grpo.html) on an
+  [code walkthrough](https://inclusionai.github.io/AReaL/lite/gsm8k_grpo.html) on an
   GRPO-on-GSM8K example. Save your time & efforts for code reading!
 
 - Smoother customization for your own **algorithms** and **agentic & RLVR rollout** RL
   within a single file! Check
   [here](https://inclusionai.github.io/AReaL/customization/agent.html) for agent & RLVR
-  customization and [here](https://inclusionai.github.io/AReaL/tutorial/algorithm.html)
-  for algorithm customization.
+  customization and
+  [here](https://inclusionai.github.io/AReaL/customization/algorithm.html) for algorithm
+  customization.
 
 Good old stuff from AReaL:
 
@@ -105,14 +106,18 @@ Our training scripts will automatically download the dataset (openai/gsm8k) and 
 (Qwen/Qwen2-1.5B-Instruct). On a single node, runs:
 
 ```bash
-python3 -m arealite.launcher.local examples/arealite/gsm8k_grpo.py --config examples/arealite/configs/gsm8k_grpo.yaml
+python3 -m areal.launcher.local \
+  examples/lite/gsm8k_grpo.py \
+  --config examples/lite/configs/gsm8k_grpo.yaml
 ```
 
 On a Ray cluster with 2 nodes & 8 GPUs each node, runs (Remember to change paths in the
 YAML file to your own shared storage):
 
 ```bash
-python3 -m arealite.launcher.ray examples/arealite/gsm8k_grpo.py --config examples/arealite/configs/gsm8k_grpo.yaml \
+python3 -m areal.launcher.ray \
+  examples/lite/gsm8k_grpo.py \
+  --config examples/lite/configs/gsm8k_grpo.yaml \
   cluster.n_nodes=2 \
   cluster.n_gpus_per_node=8
 ```
@@ -123,7 +128,7 @@ python3 -m arealite.launcher.ray examples/arealite/gsm8k_grpo.py --config exampl
 Evaluation (on a single node):
 
 ```
-python3 -m arealite.launcher.local examples/arealite/eval.py --config examples/arealite/configs/eval.yaml
+python3 -m areal.launcher.local examples/lite/eval.py --config examples/lite/configs/eval.yaml
 ```
 -->
 
@@ -137,8 +142,11 @@ config in one command line. First you need to locate your AReaL config either mo
 from files from `examples` folder, or generated when you run your experiments in
 `<fileroot>/<expr_name>/<trial_name>` folder. Runs:
 
-```
-python arealite/utils/convert.py --convert_src AReaL --src_config_path <path_to_areal_yaml> --template_path examples/arealite/configs/gsm8k_grpo.yaml --output_path <output_yaml>
+```bash
+python examples/lite/config_converter.py \
+  --convert_src AReaL --src_config_path <path_to_areal_yaml> \
+  --template_path examples/lite/configs/gsm8k_grpo.yaml \
+  --output_path <output_yaml>
 ```
 
 Then you should be able to run experiments with your old settings on AReaL-lite!
@@ -148,11 +156,12 @@ Then you should be able to run experiments with your old settings on AReaL-lite!
 AReaL-lite is an initiative to fully refactor AReaL, addressing historical issues such
 as redundant code and unnecessary system-level abstractions. Currently, AReaL-lite
 provides a lightweight codebase that enables fast prototyping for new RL training
-workflows and algorithms on a relatively small scale. For large-scale experiments (1K+
-GPUs), we recommend using the battle-tested legacy AReaL to ensure stability. In the
-future, we will continue developing AReaL-lite by expanding its APIs, migrating legacy
-features, introducing new functionality, and validating the system through large-scale
-experiments.
+workflows and algorithms on a relatively small scale.
+
+For large-scale experiments (1K+ GPUs), we recommend using the battle-tested legacy
+AReaL (under directory `./realhf`) to ensure stability. In the future, we will continue
+developing AReaL-lite by expanding its APIs, migrating legacy features, introducing new
+functionality, and validating the system through large-scale experiments.
 
 ## Resources
 
@@ -166,7 +175,7 @@ experiments.
 
 ### Code Walkthrough
 
-- [Running GRPO on GSM8K dataset with AReaL-lite](https://inclusionai.github.io/AReaL/arealite/gsm8k_grpo.html)
+- [Running GRPO on GSM8K dataset with AReaL-lite](https://inclusionai.github.io/AReaL/lite/gsm8k_grpo.html)
 
 ### Customization
 

@@ -876,8 +876,8 @@ def parse_args():
 def main():
     """
     Usage:
-    - OpenRLHF: python areal/utils/convert.py --convert_src OpenRLHF --src_script_path <path_to_script> --template_path <path_to_template_alite_yaml> --output_path <output_yaml>
-    - AReaL:    python areal/utils/convert.py --convert_srv AReaL --src_config_path <path_to_areal_yaml> --template_path <path_to_template_alite_yaml> --output_path <output_yaml>
+    - OpenRLHF: python convert.py --convert_src OpenRLHF --src_script_path <path_to_script> --template_path <path_to_template_alite_yaml> --output_path <output_yaml>
+    - AReaL:    python convert.py --convert_srv AReaL --src_config_path <path_to_areal_yaml> --template_path <path_to_template_alite_yaml> --output_path <output_yaml>
     """
     args = parse_args()
     converters = {"OpenRLHF": OpenRLHFConverter, "AReaL": AReaLConverter}

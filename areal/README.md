@@ -89,7 +89,7 @@ isolating them from the complex backend implementation. With AReaL-lite, users c
 define their custom training workflows and algorithms entirely within a single entry
 point file.
 
-![arealite-layers](../assets/areal_lite_layers.png)
+![areal-lite-layers](../assets/areal_lite_layers.png)
 
 #### 1. API Layer (`api/`)
 
