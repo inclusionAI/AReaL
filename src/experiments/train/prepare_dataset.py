@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 from typing import Callable, Optional
 
-from datasets import Dataset, DatasetDict
 from pydantic import Field
 from rich.console import Console
 
@@ -22,19 +21,8 @@ from tau2.environment.environment import Environment
 from tau2.environment.tool import Tool
 from tau2.registry import registry
 from tau2.utils.pydantic_utils import BaseModelNoExtra
-from tau2.utils.utils import DATA_DIR
 
 console = Console()
-
-res_path = (
-    DATA_DIR
-    / "exp"
-    / "qwen2.5-7b-retries"
-    / "ollama_chat"
-    / "qwen2.5:7b_telecom_no-user_gpt-4.1-2025-04-14_1trials.json"
-)
-
-save_path = DATA_DIR / "exp" / "data" / "test_sft_dataset"
 
 
 class SFTDataPoint(BaseModelNoExtra):
@@ -57,11 +45,46 @@ class OpenAICompletionDataPoint(BaseModelNoExtra):
     )
 
 
+class SFTDataset(BaseModelNoExtra):
+    splits: dict[str, list[SFTDataPoint]] = Field(
+        description="The splits of the dataset."
+    )
+
+    def __getitem__(self, key: str) -> list[SFTDataPoint]:
+        return self.splits[key]
+
+    def __setitem__(self, key: str, value: list[SFTDataPoint]):
+        self.splits[key] = value
+
+    def __len__(self) -> int:
+        return sum(len(split) for split in self.splits.values())
+
+    def __iter__(self):
+        return iter(self.splits)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.splits
+
+    def json_dump(self, path: str | Path):
+        console.print(f"Saving dataset to {path}")
+        with open(path, "w") as f:
+            json.dump(self.model_dump(), f)
+
+    @classmethod
+    def json_load(cls, path: str | Path):
+        console.print(f"Loading dataset from {path}")
+        with open(path, "r") as f:
+            return cls.model_validate_json(f.read())
+
+    def get_info(self) -> dict:
+        return {split: len(self[split]) for split in self.splits.keys()}
+
+
 def make_sft_dataset(
     result_path: str | Path,
     save_dir: Optional[str | Path] = None,
     success_only: bool = True,
-) -> DatasetDict:
+) -> list[SFTDataPoint]:
     """
     Make a SFT dataset from a results file.
     Dataset is saved to save_path if provided in HuggingFace format.
@@ -71,7 +94,7 @@ def make_sft_dataset(
         save_dir: Path to save the dataset.
         success_only: If True, only include successful simulations.
     Returns:
-        DatasetDict: A dataset containing the SFT data.
+        list[SFTDataPoint]: A list of SFT data points.
     """
     console.print(f"Loading results from {result_path}")
     results = Results.load(result_path)
@@ -154,12 +177,7 @@ def make_sft_dataset(
     console.print(
         f"Number trajectories: {len(sft_dataset['train'])} (train) and {len(sft_dataset['test'])} (test), {num_discarded} discarded out of {len(results.simulations)}"
     )
-    sft_dataset = DatasetDict(
-        {
-            "train": Dataset.from_list(sft_dataset["train"]),
-            "test": Dataset.from_list(sft_dataset["test"]),
-        }
-    )
+    sft_dataset = SFTDataset(splits=sft_dataset)
     if isinstance(save_dir, str):
         save_dir = Path(save_dir)
     if isinstance(result_path, str):
@@ -167,15 +185,16 @@ def make_sft_dataset(
     if not save_dir.exists():
         save_dir.mkdir(parents=True, exist_ok=True)
 
-    save_path = save_dir / f"{result_path.stem}"
-    console.print(f"Saving dataset to {save_path}")
-    if save_path.exists():
+    save_path = save_dir / f"{result_path.stem}.json"
+    do_save = True
+    if save_path.exists() and do_save:
         console.print(f"Dataset already exists at {save_path}")
         user_input = input("Overwrite? (y/n): ")
-        if user_input.lower().strip() != "y":
-            console.print("Exiting...")
-            return
-    sft_dataset.save_to_disk(save_path)
+        do_save = user_input.lower().strip() == "y"
+    if do_save:
+        sft_dataset.json_dump(save_path)
+    else:
+        console.print("Exiting...")
     return sft_dataset
 
 
@@ -184,9 +203,10 @@ def to_openai_sft_dataset(
     save_dir: str | Path,
     split: str = "train",
     success_only: bool = True,
-) -> None:
+) -> list[OpenAICompletionDataPoint]:
     """
     Convert a dataset to an OpenAI SFT dataset in jsonl chat completion format.
+    Removes messages after the last agent message.
     Dataset is saved to save_path if provided in HuggingFace format.
 
     Args:
@@ -195,14 +215,30 @@ def to_openai_sft_dataset(
         split: Split to convert.
         success_only: If True, only include successful simulations.
     """
+
+    def remove_messages_after_last_agent_message(messages: list[dict]) -> list[dict]:
+        """
+        Remove messages after the last agent message.
+        """
+        last_agent_message_index = None
+        for i in reversed(range(len(messages))):
+            if messages[i]["role"] == "assistant":
+                last_agent_message_index = i
+                break
+
+        if last_agent_message_index is None:
+            raise ValueError("No agent message found in the messages")
+        return messages[: last_agent_message_index + 1]
+
     if isinstance(dataset_path, str):
         dataset_path = Path(dataset_path)
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset path {dataset_path} does not exist")
-    dataset = DatasetDict.load_from_disk(dataset_path)
+    dataset = SFTDataset.json_load(dataset_path)
     if split not in dataset:
         raise ValueError(f"Split {split} not found in dataset")
     datapoints = dataset[split]
+    datapoints = [datapoint.model_dump() for datapoint in datapoints]
     num_discarded = 0
     openai_datapoints = []
     for datapoint in datapoints:
@@ -210,7 +246,7 @@ def to_openai_sft_dataset(
             num_discarded += 1
             continue
         openai_datapoint = OpenAICompletionDataPoint(
-            messages=datapoint["messages"],
+            messages=remove_messages_after_last_agent_message(datapoint["messages"]),
             tools=datapoint["tools"],
         )
         openai_datapoints.append(openai_datapoint)
@@ -222,16 +258,19 @@ def to_openai_sft_dataset(
     if not save_dir.exists():
         save_dir.mkdir(parents=True, exist_ok=True)
     save_path = save_dir / f"{split}_{dataset_path.stem}.jsonl"
+    do_save = True
     if save_path.exists():
         console.print(f"Dataset already exists at {save_path}")
         user_input = input("Overwrite? (y/n): ")
         if user_input.lower().strip() != "y":
             console.print("Exiting...")
-            return
-    console.print(f"Saving dataset to {save_path}")
-    with open(save_path, "w") as f:
-        for datapoint in openai_datapoints:
-            f.write(datapoint.model_dump_json() + "\n")
+            do_save = False
+    if do_save:
+        console.print(f"Saving dataset to {save_path}")
+        with open(save_path, "w") as f:
+            for datapoint in openai_datapoints:
+                f.write(datapoint.model_dump_json() + "\n")
+    return openai_datapoints
 
 
 def make_sft_from_simulation(
@@ -283,7 +322,7 @@ def to_openai_train_messages(messages: list[APICompatibleMessage]) -> list[dict]
             if message.is_tool_call():
                 tool_calls = [
                     {
-                        "name": tc.name,
+                        "id": tc.id,
                         "function": {
                             "name": tc.name,
                             "arguments": json.dumps(tc.arguments),
@@ -292,16 +331,16 @@ def to_openai_train_messages(messages: list[APICompatibleMessage]) -> list[dict]
                     }
                     for tc in message.tool_calls
                 ]
-            openai_train_messages.append(
-                {
-                    "role": "assistant",
-                    "content": message.content,
-                    "tool_calls": tool_calls,
-                }
-            )
+            msg = {"role": "assistant"}
+            if message.content:
+                msg["content"] = message.content
+            if tool_calls:
+                msg["tool_calls"] = tool_calls
+            openai_train_messages.append(msg)
         elif isinstance(message, ToolMessage):
             openai_train_messages.append(
                 {
+                    "tool_call_id": message.id,
                     "role": "tool",
                     "content": message.content,
                 }
@@ -329,7 +368,7 @@ def get_parser() -> argparse.ArgumentParser:
     )
     convert_parser.add_argument("--dataset-path", type=str, required=True)
     convert_parser.add_argument("--save-dir", type=str, required=True)
-    convert_parser.add_argument("--split", type=str, default="train")
+    convert_parser.add_argument("--split", type=str, nargs="+", default=["train"])
     convert_parser.add_argument("--success-only", action="store_true")
 
     return parser
@@ -342,9 +381,11 @@ def main():
     if args.command == "make":
         make_sft_dataset(args.result_path, args.save_path, args.success_only)
     elif args.command == "to-openai":
-        to_openai_sft_dataset(
-            args.dataset_path, args.save_dir, args.split, args.success_only
-        )
+        for split in args.split:
+            console.print(f"Processing split: {split}")
+            to_openai_sft_dataset(
+                args.dataset_path, args.save_dir, split, args.success_only
+            )
 
 
 if __name__ == "__main__":
