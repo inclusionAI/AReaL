@@ -171,16 +171,11 @@ def main(args):
     )
 
     # Main training loop
+    data_generator = itertools.cycle(dataloader)
     for global_step in range(max_steps):
         # Generate training data
         with stats_tracker.record_timing("rollout"):
-            try:
-                data = next(data_generator)
-            except StopIteration:
-                data_generator = iter(train_dataloader)
-                data = next(data_generator)
-
-            batch = rollout.rollout_batch(data, workflow=workflow)
+            batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
 
         batch = batch.to(actor.device)
 
