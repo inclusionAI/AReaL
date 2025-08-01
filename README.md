@@ -69,7 +69,7 @@ New highlights in AReaLite:
 - Instead of the *system-centric* architecture in old AReaL, AReaLite follows an
   **AI-centric** API design that aims to provide the following key features:
 
-  - **Light-weight**, **focused** algorithm and training workflow customization.
+  - **Light-weight** & **focused** algorithm and training workflow customization.
   - **Easy to scale up** without knowing system and infrastructure details.
   - **Adaptable and plugable:** Smooth to integrate with other modern AI applications.
 
@@ -195,9 +195,9 @@ For the research and development plan already in place, please see the following
 - [x] Asynchronous generation and RL training
 - [ ] Optimizations for distributed training: expert parallel for MOE and zero-bubble
   pipelining
-- [ ] RL for vision-language models (VLM)
+- [x] RL for vision-language models (VLM)
 - [x] Multi-turn agentic RL
-- [ ] Function calling and tool use
+- [x] Function calling and tool use
 
 ### Algorithm Development
 
