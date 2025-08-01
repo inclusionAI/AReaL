@@ -58,8 +58,9 @@ python3 -m areal.launcher.local examples/lite/gsm8k_grpo.py \
 
 ::::{important} We're currently refactoring from legacy AReaL to AReaL-lite, which
 introduces some configuration differences. We provide a **config converter** to transfer
-old AReaL config into AReaL-lite YAML file for users' convenience. [Click here](xxx) to
-learn how to use the **config converter**. ::::
+old AReaL config into AReaL-lite YAML file for users' convenience.
+[Click here](#switching-from-legacy-areal-to-areal-lite) to learn how to use the
+**config converter**. ::::
 
 ## Distributed Experiments with Ray or Slurm
 
@@ -107,6 +108,19 @@ Additional references:
 > **Notes**: Before launching distributed experiments, please check if your `allocation_mode` matches your cluster configuration. Make sure #GPUs allocated by `allocation_mode` equals to `cluster.n_nodes * cluster.n_gpus_per_node`.
 > **Note**: Ray and Slurm launchers only work for distributed experiments with more than 1 node (`cluster.n_nodes > 1`). They allocate GPUs for training and generation at the granularity of **nodes**, which means the number of GPUs allocated for generation and training must be integer multiples of `cluster.n_gpus_per_node`.
 -->
+
+## Switching from legacy AReaL to AReaL-lite
+
+We also provide a convenient script to convert your AReaL YAML config into AReaL-lite
+config in one command line. First you need to locate your AReaL config either modified
+from files from `examples` folder, or generated when you run your experiments in
+`<fileroot>/<expr_name>/<trial_name>` folder. Runs:
+
+```
+python arealite/utils/convert.py --convert_src AReaL --src_config_path <path_to_areal_yaml> --template_path examples/arealite/configs/gsm8k_grpo.yaml --output_path <output_yaml>
+```
+
+Then you should be able to run experiments with your old settings on AReaL-lite!
 
 ## Next Steps
 
