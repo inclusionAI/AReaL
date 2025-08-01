@@ -12,11 +12,12 @@ from arealite.api.io_struct import FinetuneSpec
 from realhf.api.core.data_api import tabulate_stats
 from realhf.base import logging
 
+logger = logging.getLogger("StatsLogger", "system")
+
 
 class StatsLogger:
 
     def __init__(self, config: StatsLoggerConfig, ft_spec: FinetuneSpec):
-        self.logger = logging.getLogger("StatsLogger", "system")
         self.config = config
         self.ft_spec = ft_spec
         self.init()
@@ -56,7 +57,7 @@ class StatsLogger:
     def close(self):
         if dist.is_initialized() and dist.get_rank() != 0:
             return
-        self.info(
+        logger.info(
             f"Training completes! Total time elapsed {time.monotonic() - self.start_time:.2f}."
         )
         wandb.finish()
@@ -66,7 +67,7 @@ class StatsLogger:
     def commit(self, epoch: int, step: int, global_step: int, data: Dict | List[Dict]):
         if dist.is_initialized() and dist.get_rank() != 0:
             return
-        self.info(
+        logger.info(
             f"Epoch {epoch+1}/{self.ft_spec.total_train_epochs} "
             f"Step {step+1}/{self.ft_spec.steps_per_epoch} "
             f"Train step {global_step + 1}/{self.ft_spec.total_train_steps} done."
@@ -75,7 +76,7 @@ class StatsLogger:
             data = [data]
         log_step = max(global_step, self._last_commit_step + 1)
         for i, item in enumerate(data):
-            self.info(f"Stats ({i+1}/{len(data)}):")
+            logger.info(f"Stats ({i+1}/{len(data)}):")
             self.print_stats(item)
             wandb.log(item, step=log_step + i)
             if self.summary_writer is not None:
@@ -84,35 +85,10 @@ class StatsLogger:
         self._last_commit_step = log_step + len(data) - 1
 
     def print_stats(self, stats: Dict[str, float]):
-        self.info("\n" + tabulate_stats(stats))
+        logger.info("\n" + tabulate_stats(stats))
 
     @staticmethod
     def get_log_path(config: StatsLoggerConfig):
         path = f"{config.fileroot}/logs/{getpass.getuser()}/{config.experiment_name}/{config.trial_name}"
         os.makedirs(path, exist_ok=True)
         return path
-
-    def info(self, msg: str, *args, **kwargs):
-        if dist.is_initialized() and dist.get_rank() > 0:
-            return
-        self.logger.info(msg, *args, **kwargs)
-
-    def debug(self, msg: str, *args, **kwargs):
-        if dist.is_initialized() and dist.get_rank() > 0:
-            return
-        self.logger.debug(msg, *args, **kwargs)
-
-    def critical(self, msg: str, *args, **kwargs):
-        if dist.is_initialized() and dist.get_rank() > 0:
-            return
-        self.logger.critical(msg, *args, **kwargs)
-
-    def warning(self, msg: str, *args, **kwargs):
-        if dist.is_initialized() and dist.get_rank() > 0:
-            return
-        self.logger.warning(msg, *args, **kwargs)
-
-    def error(self, msg: str, *args, **kwargs):
-        if dist.is_initialized() and dist.get_rank() > 0:
-            return
-        self.logger.error(msg, *args, **kwargs)

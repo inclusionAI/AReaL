@@ -17,9 +17,7 @@ from arealite.utils.saver import Saver
 from arealite.utils.stats_logger import StatsLogger
 from arealite.workflow.rlvr import RLVRWorkflow
 from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import logging, seeding, stats_tracker
-
-logger = logging.getLogger("GSM8K grpo")
+from realhf.base import seeding, stats_tracker
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
@@ -123,14 +121,13 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec, for_recover=False)
-    logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config.stats_logger, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     total_epochs = config.total_train_epochs
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    logger.info(f"total_epochs={total_epochs} step_per_epoch={steps_per_epoch}")
     data_generator = itertools.cycle(train_dataloader)
     for global_step in range(max_steps):
         epoch = global_step // steps_per_epoch
@@ -215,9 +212,9 @@ def main(args):
                 global_step,
             )
 
-        logger.commit(epoch, step, global_step, stats)
+        stats_logger.commit(epoch, step, global_step, stats)
 
-    logger.close()
+    stats_logger.close()
     eval_rollout.destroy()
     rollout.destroy()
     if ref is not None:

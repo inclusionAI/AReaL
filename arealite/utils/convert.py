@@ -715,7 +715,9 @@ class AReaLConverter(Converter):
         "actor_inf.parallel": ArgSpec("", int, CVRT_WARNING),
         "actor_inf.device_mesh": ArgSpec("", str, CVRT_WARNING),
         "ref_inf.mb_spec.n_mbs": ArgSpec("ref.mb_spec.n_mbs", int, ""),
-        "ref_inf.mb_spec.max_tokens_per_mb": ArgSpec("ref.mb_spec.max_tokens_per_mb", int, ""),
+        "ref_inf.mb_spec.max_tokens_per_mb": ArgSpec(
+            "ref.mb_spec.max_tokens_per_mb", int, ""
+        ),
         "ref_inf.parallel": ArgSpec("", int, CVRT_WARNING),
         "ref_inf.device_mesh": ArgSpec("", str, CVRT_WARNING),
         # Dataset
@@ -764,8 +766,12 @@ class AReaLConverter(Converter):
         "n_rollout_workers": ArgSpec("", int, CVRT_WARNING),
         "max_concurrent_rollouts": ArgSpec("rollout.max_concurrent_rollouts", int, ""),
         "flush_request_timeout": ArgSpec("rollout.request_timeout", float, ""),
-        "cpus_per_generation_server": ArgSpec("launcher.inference_server_cpus_per_gpu", int, ""),
-        "mem_per_generation_server": ArgSpec("launcher.inference_server_mem_per_gpu", int, ""),
+        "cpus_per_generation_server": ArgSpec(
+            "launcher.inference_server_cpus_per_gpu", int, ""
+        ),
+        "mem_per_generation_server": ArgSpec(
+            "launcher.inference_server_mem_per_gpu", int, ""
+        ),
         "cpus_per_gserver_manager": ArgSpec("", int, CVRT_WARNING),
         "mem_per_gserver_manager": ArgSpec("", int, CVRT_WARNING),
         "cpus_per_rollout_worker": ArgSpec("", int, CVRT_WARNING),

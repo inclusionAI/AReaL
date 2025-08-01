@@ -148,14 +148,13 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec, for_recover=False)
-    logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config.stats_logger, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     total_epochs = config.total_train_epochs
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    logger.info(f"total_epochs={total_epochs} step_per_epoch={steps_per_epoch}")
     data_generator = iter(train_dataloader)
     for global_step in range(max_steps):
         epoch = global_step // steps_per_epoch
@@ -249,9 +248,9 @@ def main(args):
                 global_step,
             )
 
-        logger.commit(epoch, step, global_step, stats)
+        stats_logger.commit(epoch, step, global_step, stats)
 
-    logger.close()
+    stats_logger.close()
     eval_rollout.destroy()
     rollout.destroy()
     if ref is not None:

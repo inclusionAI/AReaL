@@ -73,13 +73,12 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec, for_recover=False)
-    logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config.stats_logger, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     total_epochs = config.total_train_epochs
     steps_per_epoch = len(train_dataloader)
 
-    logger.info(f"total_epochs={total_epochs} step_per_epoch={steps_per_epoch}")
     global_step = 0
     for epoch in range(total_epochs):
         for step, data in enumerate(train_dataloader):
@@ -109,7 +108,7 @@ def main(args):
                     global_step,
                 )
 
-            logger.commit(
+            stats_logger.commit(
                 epoch,
                 step,
                 global_step,
@@ -117,7 +116,7 @@ def main(args):
             )
             global_step += 1
 
-    logger.close()
+    stats_logger.close()
     engine.destroy()
 
 
