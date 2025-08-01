@@ -23,7 +23,7 @@ python3 -m areal.launcher.local examples/lite/gsm8k_grpo.py --config examples/li
 
 > **Note**: The command above uses `LocalLauncher`, which only works for a single node
 > (`cluster.n_nodes == 1`). For distributed experiments, see
-> [Distributed Experiments with Ray or Slurm](quickstart.md#distributed-experiments-with-ray-or-slurm).
+> [Distributed Experiments with Ray or Slurm](#distributed-experiments-with-ray-or-slurm).
 
 ## Modifying configuration
 
@@ -91,7 +91,7 @@ Additional references:
 
 - For more options for launchers, check `LauncherConfig` in
   [areal/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/areal/api/cli_args.py).
-- [Ray cluster setup guide](installation.md#optional-launch-ray-cluster-for-distributed-training)
+- [Ray cluster setup guide](./installation.md#optional-launch-ray-cluster-for-distributed-training)
   for a guide on how to set up a ray cluster.
 
 > **Important Notes**:
@@ -110,7 +110,7 @@ Additional references:
 
 ## Next Steps
 
-Check [Getting Started with AReaL](../areal/gsm8k_grpo.md) for a complete code
+Check [Getting Started with AReaL](../lite/gsm8k_grpo.md) for a complete code
 walkthrough on the GRPO GSM8K Example.
 
 Customization guides:

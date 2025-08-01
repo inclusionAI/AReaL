@@ -1,6 +1,6 @@
 # Overview
 
-## Welcome to AReaL’s documentation!
+## Welcome to AReaL's documentation!
 
 ```{tableofcontents}
 ```
