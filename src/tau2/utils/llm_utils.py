@@ -29,6 +29,7 @@ from tau2.data_model.message import (
     UserMessage,
 )
 from tau2.environment.tool import Tool
+from tau2.utils.display import MarkdownDisplay
 
 # litellm._turn_on_debug()
 
@@ -203,6 +204,8 @@ def generate(
         kwargs["thinking"] = {"type": "disabled"}
     litellm_messages = to_litellm_messages(messages)
     tools = [tool.openai_schema for tool in tools] if tools else None
+    if not tools:
+        tool_choice = None
     if tools and tool_choice is None:
         logger.debug("Tool choice is None, setting to auto")
         tool_choice = "auto"
@@ -215,6 +218,7 @@ def generate(
             **kwargs,
         )
     except Exception as e:
+        print(MarkdownDisplay.display_messages(messages))
         logger.error(e)
         raise e
     cost = get_response_cost(response)

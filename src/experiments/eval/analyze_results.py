@@ -64,28 +64,35 @@ LLMS = [
     "claude-3-7-sonnet-20250219",
     "gpt-4.1-mini-2025-04-14",
     "qwen2.5:7b",
+    "gpt-4.1-ft"
 ]
 
 LLMS_FOR_TELECOM_ANALYSIS = [
     "gpt-4.1-2025-04-14",
     "o4-mini-2025-04-16",
     "qwen2.5:7b",
+    "gpt-4.1-ft",
+    "gpt-4.1"
 ]
 
 LLM_NAME_MAP = {
+    "gpt-4.1": "gpt4.1",
     "gpt-4.1-2025-04-14": "gpt4.1",
     "o4-mini-2025-04-16": "o4-mini",
     "claude-3-7-sonnet-20250219": "claude-3.7-sonnet",
     "gpt-4.1-mini-2025-04-14": "gpt4.1-mini",
     "qwen2.5:7b": "qwen2.5-7b",
+    "gpt-4.1-ft": "gpt-4.1-ft",
 }
 
 LLM_COLORS = {
     "gpt-4.1-2025-04-14": "#4C72B0",  # Nice blue
+    "gpt-4.1": "#4C72B0",  # Nice blue
     "o4-mini-2025-04-16": "#DD8452",  # Warm orange
     "claude-3-7-sonnet-20250219": "#55A868",  # Fresh green
     "gpt-4.1-mini-2025-04-14": "#C44E52",  # Rich red
     "qwen2.5:7b": "#8C564B",  # Rich brown
+    "gpt-4.1-ft": "#55A868",  # nice green
 }
 
 

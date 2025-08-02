@@ -329,6 +329,8 @@ class Orchestrator:
         self.initialize()
         while not self.done:
             self.step()
+            if self.to_role == Role.ENV:  # We don't want to terminate if the last message is to the environment
+                continue
             if self.step_count >= self.max_steps:
                 self.done = True
                 self.termination_reason = TerminationReason.MAX_STEPS
