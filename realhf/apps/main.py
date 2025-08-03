@@ -277,9 +277,12 @@ def main_start(args, job_group_id: str = "", recover_count: int = 0):
                 )
                 logger.warning("*" * 100)
         except name_resolve.NameEntryNotFoundError:
-            raise name_resolve.NameEntryNotFoundError(
-                f"Experiment status not found during recover. "
-                "This indicates that the master worker is not running. Exit the recover loop."
+            recover_this = False
+            pass
+            # raise name_resolve.NameEntryNotFoundError(
+            logger.info(
+                 f"Experiment status not found during recover. "
+                 "This indicates that the master worker is not running. Exit the recover loop."
             )
 
         kill_signal = (

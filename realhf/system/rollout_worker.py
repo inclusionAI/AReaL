@@ -40,6 +40,7 @@ logger = logging.getLogger("RolloutWorker")
 ROLLOUT_POLL_WAIT_TIME = 0.4
 
 
+
 class RolloutWorker(AsyncWorker):
     def _configure(self, config: RolloutWorkerConfig):
         self.model_name = config.model_name
@@ -54,8 +55,9 @@ class RolloutWorker(AsyncWorker):
         self.env = make_env(config.env)
         self.agent = make_agent(config.agent)
 
-        self.rollout_request_queue = asyncio.Queue(1024)
-        self.rollout_response_queue = asyncio.Queue(1024)
+        self.rollout_request_queue = asyncio.Queue(1024*4)
+        self.rollout_response_queue = asyncio.Queue(1024*4)
+        self.request_release_queue = asyncio.Queue(1024*4)
 
         self.act_queues = {}
         self.rollout_tasks = {}
@@ -213,6 +215,25 @@ class RolloutWorker(AsyncWorker):
                         f"Cannot allocate new rollout because: {res['reason']}"
                     )
                 return res["success"]
+    
+    async def release_rollout_propotion(self, propotion):
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"http://{self.gserver_manager_addr}/release_proportion",
+                json=dict(propotion=propotion),
+                timeout=ClientTimeout(
+                    total=self.config.rollout_request_timeout,
+                    sock_connect=self.config.rollout_request_timeout,
+                ),
+            ) as resp:
+                resp.raise_for_status()
+                res = await resp.json()
+                if not res["success"]:
+                    logger.debug(
+                        f"Cannot release propotion because: {res['reason']}"
+                    )
+                return res["success"]
+
 
     async def _poll_async(self):
         # Lazily initializing dataset to avoid over long configuration time.
@@ -242,6 +263,7 @@ class RolloutWorker(AsyncWorker):
 
         if self.push_stream is None:
             # Initialize stream after configure to ensure that puller names have been written.
+            logger.info("Initializing NameResolvingZmqPusher")
             self.push_stream = NameResolvingZmqPusher(
                 self.experiment_name,
                 self.trial_name,
@@ -250,8 +272,10 @@ class RolloutWorker(AsyncWorker):
             )
 
         if self.gserver_manager_addr is None:
+            logger.info(f"waiting for gserver_manager_addr")
             name = names.gen_server_manager(self.experiment_name, self.trial_name)
             self.gserver_manager_addr = name_resolve.wait(name)
+            logger.info(f"gserver_manager_addr: {self.gserver_manager_addr}")
 
         # Create new trajectory collection tasks.
         # Load only one data in each poll to avoid over consumption.
@@ -261,8 +285,10 @@ class RolloutWorker(AsyncWorker):
         if self._cur_data is not None:
             data = self._cur_data
             qid = data.ids[0]
+            logger.info(f"try to allocate new rollout {qid}")
             can_rollout = await self.allocate_new_rollout(qid)
             if can_rollout:
+                logger.info(f"can rollout {qid}")
                 assert qid not in self.act_queues
                 self.act_queues[qid] = asyncio.Queue(1024)
 
@@ -274,18 +300,21 @@ class RolloutWorker(AsyncWorker):
 
                 self.rollout_stat.submitted += 1
                 self.rollout_stat.running += 1
-                logger.debug(
+                logger.info(
                     f"Submit a new rollout for qid {qid}. "
                     f"Submit: {self.rollout_stat.submitted}, "
                     f"running: {self.rollout_stat.running}, "
                     f"accepted: {self.rollout_stat.accepted}."
                 )
+            else:
+                await asyncio.sleep(2.)
 
         # Run rollouts and wait
         done, *_ = await asyncio.gather(
             self.poll_rollout_task(),
             self.poll_queue_dispatch_task(),
             self.poll_inference_task(),
+            self.poll_release_task(),
         )
 
         # Process done tasks.
@@ -325,7 +354,7 @@ class RolloutWorker(AsyncWorker):
                 ) as resp:
                     resp.raise_for_status()
                     assert (await resp.json())["success"]
-            logger.debug(
+            logger.info(
                 f"Finish rollout for qid {qid}. "
                 f"Submit: {self.rollout_stat.submitted}, "
                 f"running: {self.rollout_stat.running}, "
@@ -346,6 +375,7 @@ class RolloutWorker(AsyncWorker):
             prompt=data,
             act_queue=self.act_queues[qid],
             obs_queue=self.rollout_request_queue,
+            # release_queue=self.request_release_queue,
         )
 
     async def poll_inference_task(self):
@@ -366,7 +396,15 @@ class RolloutWorker(AsyncWorker):
         for _ in range(20):
             try:
                 resp = self.rollout_response_queue.get_nowait()
-                self.act_queues[resp.qid].put_nowait(resp)
+                self.act_queues[resp.qid.split("##")[0]].put_nowait(resp)
+            except QueueEmpty:
+                await asyncio.sleep(0.02)
+    
+    async def poll_release_task(self):
+        for _ in range(32):
+            try:
+                resp = self.request_release_queue.get_nowait()
+                self.release_rollout_propotion(resp["propotion"])
             except QueueEmpty:
                 await asyncio.sleep(0.02)
 

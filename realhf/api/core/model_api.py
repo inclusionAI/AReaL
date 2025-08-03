@@ -72,6 +72,8 @@ class APIGenerateInput:
     gconfig: GenerationHyperparameters
     # stop tokens, usually EOS and PAD
     stop_token_ids: List[int] = dataclasses.field(default_factory=list)
+    # stop when hitting any of the strings in this list
+    stop: Optional[List[str]] = None #dataclasses.field(default_factory=list)
     # whether to return logprobs
     return_logprob: bool = True
     # logprobs of preivous generation
@@ -112,6 +114,9 @@ class APIGenerateOutput:
         default_factory=list
     )  # List of inter-token latencies
 
+    # finish reason
+    finish_reason: List[Dict] = dataclasses.field(default_factory=list)
+
     @classmethod
     def from_input(cls, inp: APIGenerateInput):
         return cls(
@@ -142,6 +147,7 @@ class APIGenerateOutput:
             latency=max([o.latency for o in outputs]),
             ttft=max([o.ttft for o in outputs]),
             itl=sum([o.itl for o in outputs], []),
+            finish_reason=sum([o.finish_reason for o in outputs], []),
         )
 
     @property

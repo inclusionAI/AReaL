@@ -73,6 +73,7 @@ class SGLangAPIClient(LLMAPIClient):
             "max_new_tokens": gconfig.max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": req.stop_token_ids,
+            # "stop": req.stop,
         }
         payload = {
             "input_ids": req.input_ids,
@@ -80,6 +81,8 @@ class SGLangAPIClient(LLMAPIClient):
             "return_logprob": req.return_logprob,
             "stream": stream,
         }
+
+        # print("[DEBUG] sglang _do_generate", req.qid, len(req.input_ids), sample_params, flush=True)
 
         assert not stream, "streaming mode not yet implemented"
         outputs = [APIGenerateOutput.from_input(req) for _ in range(gconfig.n)]
@@ -131,6 +134,7 @@ class SGLangAPIClient(LLMAPIClient):
                             "length",
                             "stop",
                         ], finish_reason
+                        output.finish_reason = [finish_reason]
                         output.no_eos = [finish_reason["type"] == "length"]
                         output.latency = latency
 

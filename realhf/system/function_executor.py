@@ -120,8 +120,14 @@ class FunctionExecutor:
 
         load_data_iter = 0
 
+        import time
+        last_time_debug_log = time.time()
         while buffer.size < max(rpc.n_seqs for rpc in self.rpcs):
             load_data_iter += 1
+
+            if time.time() - last_time_debug_log > 60:
+                last_time_debug_log = time.time()
+                logger.info("Master worker sends fetch request to model workers")
             resps = await self.stream.call_async(
                 handlers=[f"__data{dp_idx}__" for dp_idx in range(self.src_dp_size)],
                 handle_type="fetch",

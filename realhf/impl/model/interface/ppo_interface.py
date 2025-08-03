@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 
 import dataclasses
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -18,7 +18,7 @@ from realhf.api.core.data_api import (
 )
 from realhf.base import constants, logging, stats_tracker
 from realhf.base.datapack import flat2d
-from realhf.impl.dataset.math_parser import parse_lines_in_parallel
+# from realhf.impl.dataset.math_parser import parse_lines_in_parallel
 from realhf.impl.model.nn.real_llm_api import ReaLModel
 from realhf.impl.model.nn.real_llm_generate import concat_prompt_to_generation_output
 from realhf.impl.model.utils.functional import (
@@ -253,6 +253,8 @@ class PPOActorInterface(model_api.ModelInterface):
     token_normalize_scope: Literal["global", "dp"] = "global"
 
     sample_reuse: int = 1
+
+    logging_keys: Tuple = ("num_queries", "act_tokens", "doc_tokens", "seqlen", "format_reward")
 
     def __post_init__(self):
         if self.adaptive_kl_ctl:
@@ -494,7 +496,7 @@ class PPOActorInterface(model_api.ModelInterface):
             return logprobs
 
         input_flattend = SequenceSample.from_default(
-            ids=list(range(input_.bs * self.group_size)),
+            ids=list(range(len(flat2d(input_.seqlens["packed_input_ids"])))),
             seqlens=flat2d(input_.seqlens["packed_input_ids"]),
             data=dict(packed_input_ids=input_.data["packed_input_ids"]),
         )
@@ -539,10 +541,14 @@ class PPOActorInterface(model_api.ModelInterface):
             flat2d(input_.seqlens["packed_input_ids"]), device=model.device
         )
         cu_seqlens = torch.nn.functional.pad(input_lens.cumsum(0), (1, 0)).int()
-        prompt_lens = []
-        for s, e in zip(cu_seqlens[:-1], cu_seqlens[1:]):
-            prompt_lens.append(prompt_mask[s:e].sum())
-        prompt_lens = torch.tensor(prompt_lens, device=model.device)
+        prompt_lens = None
+        if "packed_prompts" in input_.seqlens:
+            prompt_lens = torch.tensor(flat2d(input_.seqlens["packed_prompts"]), device=model.device).repeat(self.group_size)
+        else:
+            prompt_lens = []
+            for s, e in zip(cu_seqlens[:-1], cu_seqlens[1:]):
+                prompt_lens.append(prompt_mask[s:e].sum())
+            prompt_lens = torch.tensor(prompt_lens, device=model.device)
         reward_score = input_.data["rewards"].float()
         task_ids = input_.data["task_ids"]
         task_ids = task_ids.repeat(self.group_size, 1).transpose(0, 1).reshape(-1)
@@ -692,7 +698,7 @@ class PPOActorInterface(model_api.ModelInterface):
             flat_data["prox_logp"] = input_.data["proximal_logprobs"].float()
 
         flat_input = SequenceSample.from_default(
-            ids=list(range(input_.bs * self.group_size)),
+            ids=list(range(len(input_lens.cpu().numpy().tolist()))),
             data=flat_data,
             seqlens=[int(x) for x in input_lens.cpu().numpy().tolist()],
         )
@@ -703,14 +709,14 @@ class PPOActorInterface(model_api.ModelInterface):
         ### Logging code starts. ###
         all_stats = []
         with stats_tracker.scope("ppo_actor"):
-            assert (
-                task_ids.shape == reward_score.shape
-            ), f"task_ids ({task_ids.shape}) and reward_score ({reward_score.shape}) must have the same shape"
+            # assert (
+            #     task_ids.shape == reward_score.shape
+            # ), f"task_ids ({task_ids.shape}) and reward_score ({reward_score.shape}) must have the same shape"
 
-            task_denominators = {
-                f"{task}_n_seqs": (task_ids == idx).bool()
-                for idx, task in enumerate(RL_TASKS)
-            }
+            # task_denominators = {
+            #     f"{task}_n_seqs": (task_ids == idx).bool()
+            #     for idx, task in enumerate(RL_TASKS)
+            # }
 
             result_denominators = {
                 "correct_n_seqs": (reward_score > 0).bool(),
@@ -718,18 +724,18 @@ class PPOActorInterface(model_api.ModelInterface):
             }
 
             global_denominators = dict(
-                n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
+                n_seqs=torch.ones_like(input_.data["version_start"], dtype=torch.bool).reshape(-1),
                 n_tokens=torch.ones_like(prompt_mask, dtype=torch.bool),
                 n_valid_tokens=loss_mask.bool(),
-                **task_denominators,
+                # **task_denominators,
                 **result_denominators,
             )
             stats_tracker.denominator(**global_denominators)
 
-            for task in RL_TASKS:
-                stats_tracker.stat(
-                    **{f"{task}_reward": reward_score}, denominator=f"{task}_n_seqs"
-                )
+            # for task in RL_TASKS:
+            #     stats_tracker.stat(
+            #         **{f"{task}_reward": reward_score}, denominator=f"{task}_n_seqs"
+            #     )
 
             stats_tracker.stat(
                 correct_seq_len=input_lens.float(), denominator="correct_n_seqs"
@@ -748,10 +754,10 @@ class PPOActorInterface(model_api.ModelInterface):
             stats_tracker.stat(**stats, denominator="n_valid_tokens")
 
             seq_stats = dict(
-                no_eos_ratios=seq_no_eos_mask.float(),
-                task_reward=reward_score,
+                # no_eos_ratios=seq_no_eos_mask.float(),
+                # task_reward=reward_score,
                 prompt_len=prompt_lens.float(),
-                seq_len=input_lens.float(),
+                # seq_len=input_lens.float(),
             )
             if "version_start" in input_.data:
                 seq_stats["head_offpolicyness"] = (
@@ -761,6 +767,12 @@ class PPOActorInterface(model_api.ModelInterface):
                 seq_stats["tail_offpolicyness"] = (
                     model.version.global_step - input_.data["version_end"]
                 ).float()
+            if "logging" in input_.data:
+                logging_keys = self.logging_keys # ["num_queries", "act_tokens", "doc_tokens", "seqlen", "format_reward"]
+                logging_env = input_.data["logging"].reshape(-1, len(logging_keys)).float()
+                for i, k in enumerate(logging_keys):
+                    seq_stats[f"env_{k}"] = logging_env[:, i].float()
+            print("[DEBUG] seq_stats", {k: v.shape for k,v  in seq_stats.items()}, flush=True)
             stats_tracker.stat(
                 **seq_stats,
                 denominator="n_seqs",

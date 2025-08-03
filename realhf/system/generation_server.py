@@ -79,6 +79,7 @@ def launch_server_cmd(command: str, port: int = 30000):
         apply_sglang_path()
     assert port is not None
     full_command = f"{command} --port {port}"
+    print("[DEBUG] sglang server command", full_command, flush=True)
     process = execute_shell_command(full_command)
     return process, port
 
@@ -184,10 +185,13 @@ class GenerationServer(Worker):
 
         self.server_process, self.server_port = launch_server_cmd(cmd, port=server_port)
         self.server_addr = f"http://{host}:{self.server_port}"
+        
+        logger.info(f"try to launch server addr at {self.server_addr}")
 
         wait_for_server(self.server_addr)
 
         name = names.gen_servers(self.experiment_name, self.trial_name)
+        logger.info(f"add server addr {self.server_addr} to {name}")
         name_resolve.add_subentry(name, self.server_addr)
 
         key = names.metric_server(

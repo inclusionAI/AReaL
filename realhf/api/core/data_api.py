@@ -45,7 +45,7 @@ from realhf.utils import load_hf_or_local_file
 
 logger = logging.getLogger("api.data")
 
-RL_TASKS = ["math", "code", "rlhf", "stem"]
+RL_TASKS = ["math", "code", "rlhf", "stem", "search"]
 
 
 def load_hf_tokenizer(

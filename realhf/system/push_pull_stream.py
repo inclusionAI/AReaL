@@ -46,6 +46,7 @@ class ZMQJsonPusher:
         """
         # Directly encode to bytes without intermediate string
         json_bytes = asbytes(orjson.dumps(data))
+        logger.info(f"push {len(json_bytes)} bytes to trainer")
         self.socket.send(json_bytes, copy=False)
 
     def close(self) -> None:
@@ -107,6 +108,7 @@ class ZMQJsonPuller:
         events = dict(self.poller.poll(current_timeout))
         if self.socket in events:
             msg = self.socket.recv(flags=zmq.NOBLOCK, copy=False)
+            logger.info(f"pull {len(msg.bytes)} bytes from rollout workers")
             return orjson.loads(msg.bytes.decode("utf-8"))
         raise QueueEmpty(f"No data available after {current_timeout}ms timeout")
 

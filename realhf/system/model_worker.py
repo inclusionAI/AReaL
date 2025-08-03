@@ -465,7 +465,9 @@ class ModelWorker(worker_base.Worker):
                 # because we may want to copy huggingface configurations from it, and
                 # th next recover save will remove this symlink.
                 dst_path = Path(model_path).parent / "_tmp_ckpt"
+                print(f"[DEBUG] Removing {dst_path}", flush=True)
                 shutil.rmtree(dst_path, ignore_errors=True)
+                print(f"[DEBUG] Copying {model_path} to {dst_path}", flush=True)
                 shutil.copytree(model_path, dst_path)
                 os.unlink(model_path)
                 os.system(f"mv {str(dst_path)} {model_path}")
@@ -671,6 +673,9 @@ class ModelWorker(worker_base.Worker):
                 data_loaded.append(x)
                 self.data_manager.store(x)
             assert len(set([x.ids[0] for x in data_loaded])) == len(data_loaded)
+            
+            if len(samples) > 0:
+                logger.info(f"Model worker @ dp_rank={dp_rank} pulled {len(samples)} samples and loaded {len(data_loaded)} samples")
 
             meta_sample = None
             birth_times = []
@@ -1307,7 +1312,8 @@ class ModelWorker(worker_base.Worker):
                 data=res,
             )
             self.__stream.post(reply)
-            # logger.info(f"handle_name {request.handle_name} Posted req id = {request.request_id}")
+            if hasattr(res, "meta_sample") and res.meta_sample is not None:
+                logger.info(f"handle_name {request.handle_name} Posted req id = {request.request_id}. res={res}")
             sample_size += self.__request_sample_size.pop(request.request_id)
             batch_size += 1
         return worker_base.PollResult(sample_count=sample_size, batch_count=batch_size)

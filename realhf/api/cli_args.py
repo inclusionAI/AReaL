@@ -574,6 +574,7 @@ class GenerationHyperparameters:
             "help": "[Deprecated] Disable logits masking (reduces stability but saves memory)."
         },
     )
+    stop: Optional[List[str]] = None # field(default_factory=list)
 
     def __post_init__(self):
         if self.temperature == 0.0:
@@ -893,7 +894,7 @@ class ClusterSpecConfig:
         default="slurmd-", metadata={"help": "Node prefix for a slurm cluster."}
     )
     n_nodes: int = field(
-        default=32,
+        default=128,
         metadata={
             "help": "The size of the cluster. Used to decide slurm hostname suffix."
         },

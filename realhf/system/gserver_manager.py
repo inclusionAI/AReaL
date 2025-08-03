@@ -28,6 +28,10 @@ STALENESS_WARNED = defaultdict(lambda: False)
 class AllocateRolloutInput:
     qid: str
 
+@dataclass
+class AllocateReleaseInput:
+    propotion: int
+
 
 class GserverManager(AsyncWorker):
     """This worker has the following functionalities:
@@ -93,8 +97,8 @@ class GserverManager(AsyncWorker):
         return config.worker_info
 
     def _discover_servers(self, n_servers: int, timeout: int = 300) -> List[str]:
-        logger.info(f"Waiting for {n_servers} generation servers...")
         name = names.gen_servers(self.experiment_name, self.trial_name)
+        logger.info(f"Waiting for {n_servers} generation servers @ {name}...")
         cnt = 0
         while len(name_resolve.find_subtree(name)) < n_servers:
             time.sleep(1)
@@ -383,6 +387,7 @@ class GserverManager(AsyncWorker):
         @self.app.post("/schedule_request")
         async def schedule_request(req_meta: GenReqMeta):
             with self.threading_lock:
+                logger.info(f"schedule request for {req_meta.qid}")
                 if (
                     req_meta.previous_server_url
                     and req_meta.previous_version == self._last_param_realloc_step
@@ -433,7 +438,7 @@ class GserverManager(AsyncWorker):
                 if has_capacity and not is_staled:
                     self.rollout_stat.submitted += 1
                     self.rollout_stat.running += 1
-                    logger.debug(
+                    logger.info(
                         f"Allocate rollout for qid {req.qid}. "
                         f"Submitted: {self.rollout_stat.submitted}, "
                         f"running: {self.rollout_stat.running}, "
@@ -462,17 +467,18 @@ class GserverManager(AsyncWorker):
         @self.app.post("/finish_rollout")
         async def finish_rollout(resp_meta: GenRespMeta):
             with self.threading_lock:
-                server_url = self._qid_to_server_url[resp_meta.qid]
-                self._server_request_counts[server_url] -= 1
-                assert (
-                    self._server_request_counts[server_url] >= 0
-                ), "server request count < 0"
-                self._qid_to_server_url.pop(resp_meta.qid)
+                if resp_meta.qid in self._qid_to_server_url:
+                    server_url = self._qid_to_server_url[resp_meta.qid]
+                    self._server_request_counts[server_url] -= 1
+                    assert (
+                        self._server_request_counts[server_url] >= 0
+                    ), "server request count < 0"
+                    self._qid_to_server_url.pop(resp_meta.qid)
                 self._gen_tokens += resp_meta.n_tokens
                 self.rollout_stat.running -= 1
                 if resp_meta.accepted:
                     self.rollout_stat.accepted += 1
-                logger.debug(
+                logger.info(
                     f"Finish rollout for qid {resp_meta.qid}. "
                     f"Submit: {self.rollout_stat.submitted}, "
                     f"running: {self.rollout_stat.running}, "

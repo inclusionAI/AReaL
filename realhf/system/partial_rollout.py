@@ -57,6 +57,7 @@ class PartialRolloutManager:
         # answers in this cache and pop the result when the whole group is done.
         self.gen_cache: Dict[Hashable, Dict[int, APIGenerateOutput]]
         self.gen_cache = defaultdict(dict)
+        self.gen_meta = defaultdict(dict)
 
         self.tokenizer = tokenizer
 
@@ -76,6 +77,7 @@ class PartialRolloutManager:
             )
             self.gserver_manager_addr = name_resolve.wait(name, timeout=300)
             time.sleep(1)  # Wait for the server to start
+        logger.info(f"schedule request for {req_meta.qid}")
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"http://{self.gserver_manager_addr}/schedule_request",
@@ -128,6 +130,7 @@ class PartialRolloutManager:
                         self.tokenizer.pad_token_id,
                         self.tokenizer.eos_token_id,
                     ],
+                    stop=raw_gconfig.stop,
                     return_logprob=True,
                     version_start=version_start,
                     prev_logprobs=prev_logprobs,
@@ -161,6 +164,14 @@ class PartialRolloutManager:
         If model weights are updated, the KV cache will be refreshed,
         otherwise the server will reuse the radix cache with no additional overhead.
         """
+
+        logger.info(f"post request: qid={qid}. prompt_len={len(prompt_ids)}. input_len={len(input_ids)}. prev_logprobs_len={len(prev_logprobs)}. version_start={version_start}. cur_version={cur_server_version}. #cache={(len(self.gen_cache.keys()), len(self.gen_meta.keys()))} target={url}")
+
+        if qid.split("##")[0] in self.gen_meta:
+            self.gen_meta[qid.split("##")[0]].update(dict(server_url=url, version=cur_server_version))
+        else:
+            self.gen_meta[qid.split("##")[0]] = dict(server_url=url, version=cur_server_version, running=0)
+        self.gen_meta[qid.split("##")[0]]["running"] += 1
 
         task = asyncio.create_task(
             self._run_gen(
@@ -198,6 +209,33 @@ class PartialRolloutManager:
             raw_gconfig = s.metadata["raw_gconfig"]
             previous_version = s.metadata["version"]
 
+            self.gen_meta[s.qid.split("##")[0]]["running"] -= 1
+
+            # manually check stop_strs here. 
+            # WARNING: this is a walkaround since sglang does not return output ids as expected when passing stop
+            if raw_gconfig.stop is not None and len(raw_gconfig.stop) > 0:
+                all_stop_ids = self.tokenizer(raw_gconfig.stop, add_special_tokens=False)["input_ids"]
+                max_stop_len = max([len(stop_ids) for stop_ids in all_stop_ids])
+                input_len = len(s.input_ids)
+                output_len = len(s.output_ids[0])
+                all_tokens = s.input_ids + s.output_ids[0]
+                stopped = False
+                for i in range(1, output_len + 1):
+                    recent_str = self.tokenizer.decode(all_tokens[input_len + i - min(max_stop_len + 3, input_len + i): input_len + i])
+                    for j, stop_ids in enumerate(all_stop_ids):
+                        if  raw_gconfig.stop[j] in recent_str:
+                            reduce = output_len - i
+                            if reduce > 0:
+                                s.output_ids[0] = s.output_ids[0][:-reduce]
+                                s.output_logprobs[0] = s.output_logprobs[0][:-reduce]
+                            s.no_eos[0] = False
+                            s.finish_reason[0] = dict(type="stop", reason=stop_ids)
+
+                            stopped = True
+                            break
+                    if stopped:
+                        break
+
             assert s.group_size == 1
             no_eos = s.no_eos[0]
             gen_len = s.gen_lens[0]
@@ -210,7 +248,7 @@ class PartialRolloutManager:
                 # Unfinished request due to chunked generation.
                 # Send it back to continue.
                 req_meta = GenReqMeta(
-                    qid=s.qid,
+                    qid=s.qid.split("##")[0],
                     prompt_len=s.prompt_len,
                     group_size=raw_gconfig.n,
                     new_token_budget=raw_gconfig.max_new_tokens,
@@ -249,17 +287,32 @@ class PartialRolloutManager:
                     )
                     self.reply_queue.put_nowait(output)
 
+                    # if self.gen_meta[s.qid.split("##")[0]]["running"] == 0:
+                    #     self.gen_meta.pop(s.qid.split("##")[0])
+
     async def poll_fresh_requests_task(self):
         for _ in range(8):
             try:
                 qid, prompt_token_ids, gconfig = self.request_queue.get_nowait()
+                
+                # the request is fully completed
+                if prompt_token_ids is None:
+                    if qid in self.gen_meta:
+                        self.gen_meta.pop(qid)
+                    if qid in self.gen_cache:
+                        self.gen_cache.pop(qid)
+                    continue
+
                 req_meta = GenReqMeta(
-                    qid=qid,
+                    qid=qid.split("##")[0],
                     prompt_len=len(prompt_token_ids),
                     group_size=gconfig.n,
                     new_token_budget=gconfig.max_new_tokens,
                     predicted_new_tokens=None,
                 )
+                if req_meta.qid in self.gen_meta:
+                    req_meta.previous_server_url = self.gen_meta[req_meta.qid]["server_url"]
+                    req_meta.previous_version = self.gen_meta[req_meta.qid]["version"]
                 dst_server_info = await self._schedule_request(req_meta)
 
                 for group_idx in range(gconfig.n):

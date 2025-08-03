@@ -151,6 +151,7 @@ class NameResolvingRequestClient:
         self.close()
 
     def post(self, payload: Payload) -> uuid.UUID:
+        # logger.info(f"post payload {payload}")
         assert payload.request_id is not None and payload.handle_name is not None
         payload.send_time = time.monotonic()
         idx = self._handler_routing[payload.handler]
@@ -253,11 +254,14 @@ class NameResolvingRequestClient:
 
     def poll(self, pattern: re.Pattern | None = None, block: bool = False) -> Payload:
         payloads = self.poll_batch(pattern=pattern, block=block)
+        if any([hasattr(p.data, "meta_sample") and p.data.meta_sample is not None for p in payloads]):
+            logger.info(f"Successfully poll payloads: {payloads}")
         for p in payloads[1:]:
             self._response_buffer[p.request_id] = p
         return payloads[0]
 
     async def poll_async(self, pattern: re.Pattern | None = None) -> Payload:
+        # logger.info(f"Poll async {pattern}")
         while True:
             try:
                 return self.poll(pattern=pattern, block=False)

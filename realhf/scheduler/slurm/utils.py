@@ -448,6 +448,7 @@ class SlurmLaunchInfo:
             n_pads = (length - len(s) - 2) // 2
             return pad_s * n_pads + " " + s + " " + pad_s * n_pads
 
+        print(self.log_path, flush=True)
         with open(self.log_path, "a") as f:
             f.write(pad_output_str_to_length("SBATCH SCRIPT BEGIN", "=", 80) + "\n")
             f.write(script_strs)
@@ -637,7 +638,7 @@ def available_hostnames(
             if hn in valid_hostnames:
                 valid_hostnames.remove(hn)
 
-    invalid_hostnames = []
+    invalid_hostnames = ["slurmd-252", "slurmd-191", "slurmd-158", "slurmd-239", "slurmd-41"]
     for hn in valid_hostnames:
         if hn not in all_hostnames:
             logger.warning(
@@ -646,7 +647,8 @@ def available_hostnames(
             invalid_hostnames.append(hn)
 
     for hn in invalid_hostnames:
-        valid_hostnames.remove(hn)
+        if hn in valid_hostnames:
+            valid_hostnames.remove(hn)
 
     return valid_hostnames
 

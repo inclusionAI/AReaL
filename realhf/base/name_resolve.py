@@ -1393,8 +1393,9 @@ def make_repository(type_="nfs", **kwargs):
 
 # DEFAULT_REPOSITORY_TYPE = "redis" if socket.gethostname().startswith("frl") else "nfs"
 DEFAULT_REPOSITORY_TYPE = "nfs"
-if etcd3 is not None and os.getenv("REAL_ETCD_ADDR", ""):
-    DEFAULT_REPOSITORY_TYPE = "etcd3"
+# if etcd3 is not None and os.getenv("REAL_ETCD_ADDR", ""):
+#     print("[DEBUG] using etcd3", os.getenv("REAL_ETCD_ADDR", ""), flush=True)
+#     DEFAULT_REPOSITORY_TYPE = "etcd3"
 if os.getenv("REAL_ETCD_ADDR", "") and etcd3 is None:
     logger.warning(
         f"Detected REAL_ETCD_ADDR but etcd3 client is not available. "

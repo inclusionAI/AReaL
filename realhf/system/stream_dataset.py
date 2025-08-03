@@ -24,7 +24,7 @@ class PullerStreamDataset(Dataset):
         self,
         util: DatasetUtility,
         dataset_cfgs: List[DatasetAbstraction],
-        pull_timeout_ms=100,
+        pull_timeout_ms=500,
     ):
         # This dataset is just used for computing the dataset size,
         # and the number of steps per epoch.
@@ -71,7 +71,7 @@ class PullerStreamDataset(Dataset):
                     processed_data = [
                         SequenceSample.from_json_compatible(x) for x in data
                     ]
-                    logger.debug(
+                    logger.info(
                         f"Get data {[x.ids[0] for x in processed_data]} from puller stream."
                     )
                     self.data_queue.put(processed_data)

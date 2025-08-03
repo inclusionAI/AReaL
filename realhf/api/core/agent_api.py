@@ -20,6 +20,7 @@ class Agent(ABC):
         env: EnvironmentService,
         obs_queue: asyncio.Queue,
         act_queue: asyncio.Queue,
+        **kwargs,
     ) -> List[SequenceSample]:
         raise NotImplementedError()
 

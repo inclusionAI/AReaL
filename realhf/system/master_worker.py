@@ -169,7 +169,7 @@ class MasterWorker(worker_base.AsyncWorker):
     def initialize_models(self):
         # Initialize model backends.
         model_names = list(self.__model_topos.keys())
-        self.logger.debug(f"Initialize model backends with order: {model_names}.")
+        self.logger.info(f"Initialize model backends with order: {model_names}.")
         train_rpcs = list(
             filter(
                 lambda rpc: rpc.interface_type == dfg.ModelInterfaceType.TRAIN_STEP,

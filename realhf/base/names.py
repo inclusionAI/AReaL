@@ -35,6 +35,8 @@ def worker(experiment_name, trial_name, worker_name):
 def worker_key(experiment_name, trial_name, key):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/worker_key/{key}"
 
+def rag_retrieval_server():
+    return "admin/Search-R1/retrieval-access-server-no-href"
 
 def request_reply_stream(experiment_name, trial_name, stream_name):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/request_reply_stream/{stream_name}"
