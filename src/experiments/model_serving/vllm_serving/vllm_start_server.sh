@@ -7,8 +7,8 @@ set -e
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PID_FILE="$SCRIPT_DIR/vllm_server.pid"
-LOG_FILE="$SCRIPT_DIR/vllm_server.log"
+PID_FILE="$SCRIPT_DIR/.vllm_server.pid"
+LOG_FILE="$SCRIPT_DIR/.vllm_server.log"
 VENV_DIR="$SCRIPT_DIR/.venv"
 HOST=127.0.0.1
 PORT=8000
@@ -144,11 +144,11 @@ start_server() {
     print_status "Server will be available at: http://$HOST:$PORT"
     
     # Build vllm command with optional data parallelism
-    local vllm_cmd="vllm serve --model \"$model_name\" --host \"$HOST\" --port \"$PORT\" --dtype auto --tensor-parallel-size \"$tensor_parallel_size\" --pipeline-parallel-size \"$pipeline_parallel_size\""
+    local vllm_cmd="vllm serve $model_name --host $HOST --port $PORT --dtype auto --tensor-parallel-size $tensor_parallel_size --pipeline-parallel-size $pipeline_parallel_size"
     
     # Add data parallelism if specified and greater than 1
     if [ "$data_parallel_size" -gt 1 ]; then
-        vllm_cmd="$vllm_cmd --data-parallel-size \"$data_parallel_size\""
+        vllm_cmd="$vllm_cmd --data-parallel-size $data_parallel_size"
     fi
     
     nohup $vllm_cmd > "$LOG_FILE" 2>&1 &
