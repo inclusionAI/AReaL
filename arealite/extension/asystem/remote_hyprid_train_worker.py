@@ -99,7 +99,7 @@ class RemoteHypridTrainWorker(TrainEngine):
             "master_port": "57937",
             "master_addr": str(master_ip),
             "world_size": str(cfg.world_size),
-            "megatron_config": self.config.remote_megatron_config,
+            "megatron_config": megatron_config,
             "loss_configs": self.config.loss_configs,
             "recover_dir": cfg.recover_dir,
             "enable_colocate_mode": False,
