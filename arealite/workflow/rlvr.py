@@ -43,6 +43,7 @@ class RLVRWorkflow(RolloutWorkflow):
             return_length=True,
             return_attention_mask=False)
 
+        n_samples = self.gconfig.n_samples
         new_gconfig = self.gconfig.new(
             n_samples=1,
             max_new_tokens=self.gconfig.max_new_tokens,
