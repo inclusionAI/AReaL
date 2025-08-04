@@ -40,7 +40,7 @@ class RPCClient:
 
         serialized_data = cloudpickle.dumps(req)
         resp = requests.post(url, data=serialized_data, timeout=7200)
-        logging.info(
+        logger.info(
            f"Sent call '{method}' to {worker_id} ({ip}:{port}), status={resp.status_code}"
         )
         if resp.status_code == 200:
