@@ -14,33 +14,30 @@ from arealite.extension.asystem.functioncall.base.utils import construct_uid, lo
 
 
 def math_verify(
-    solutions_list, generateds: List, query_ids: List, batch_size=10, timeout=1000
+    id2info, generateds: List, query_ids: List, batch_size=10, timeout=1000
 ) -> List:
     assert len(generateds) == len(query_ids), (
         len(generateds),
         len(query_ids),
     )
 
-    assert len(generateds) == len(solutions_list), (
-        len(generateds),
-        len(solutions_list),
-    )
-
     st = time.monotonic()
     query_indices = []
     parameters = []
     # Collect all (generated, solution) pairs with their original indices
-    for idx, (query_id, generated, solutions) in enumerate(
-        zip(query_ids, generateds, solutions_list)
-    ):
-        # base_query_id = query_id.split("@idx:")[0]
-        for cur_solution in solutions:
+    for idx, (query_id, generated) in enumerate(zip(query_ids, generateds)):
+        base_query_id = query_id.split("@idx:")[0]
+        info = id2info[base_query_id]
+        for cur_solution in info["solutions"]:
             parameters.append((generated, cur_solution, idx))
             query_indices.append(idx)
 
     # Process in batches
     start_time = time.time()
     batch_args_list = []
+
+    # value None means math_provider by default, other value like "math-huggingface"
+    math_provider = os.getenv("MATH_VERIFY_PROVIDER", "math-huggingface")
     for i in range(0, len(parameters), batch_size):
         end_idx = min(i + batch_size, len(parameters))
         answers, solutions, indices = zip(*parameters[i:end_idx])
@@ -53,7 +50,7 @@ def math_verify(
         sub_problem = {
             "uid": construct_uid("math", i, end_idx),
             "language": str(Language.MATH).upper(),
-            "runtime": get_runtime_name(None, str(Language.MATH)),
+            "runtime": get_runtime_name(math_provider, str(Language.MATH)),
             "code": 'print("hello math!")',
             "testcases": [{}] * (end_idx - i),  # required filed
             "timeout": 5,
@@ -80,7 +77,7 @@ def math_verify(
         ):
             index += len(batch_args_list[batch_idx]["extraInfo"]["query_ids"])
             logger.warning(
-                f"Invalid functioncall math results: {results}, batch index:{batch_idx}, query index: {query_indices[index]}, params: {batch_args_list[batch_idx]}."
+                f"Invalid functioncall math results: {results}, math_provider={math_provider}, batch index:{batch_idx}, query index: {query_indices[index]}, params: {batch_args_list[batch_idx]}."
             )
             continue
 
@@ -93,7 +90,7 @@ def math_verify(
             index += 1
 
     logger.info(
-        f"verify math with query size={len(query_ids)}, takes {time.time() - start_time:.4f} seconds"
+        f"verify math with query size={len(query_ids)}, math_provider={math_provider}, takes {time.time() - start_time:.4f} seconds, math reward: {labels}"
     )
     return labels
 

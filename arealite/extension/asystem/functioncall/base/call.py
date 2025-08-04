@@ -61,6 +61,8 @@ class Language(Enum):
     CSHARP = 8
     TYPESCRIPT = 9
     JAVASCRIPT = 10
+    LOGIC = 11
+    INSTRUCT = 12
 
     def __str__(self):
         return f"{self.name.lower()}"
@@ -84,7 +86,7 @@ async def async_invoke_function(
     url: str,
     timeout: aiohttp.ClientTimeout,
     payload: Dict[str, Any] = None,
-    max_retries: int = 2,
+    max_retries: int = 100,
     initial_retry_interval: float = 0.5,
     max_retry_interval: float = 10.0,
 ):
@@ -105,7 +107,6 @@ async def async_invoke_function(
 
                 try:
                     response_json = await response.json()
-                    logger.warning(f"response_json: {response_json}")
 
                     exist, err_info = has_system_error(response_json)
                     if exist:
@@ -203,12 +204,20 @@ async def batch_function_call_async(payload_list, url, timeout, concurrency=1500
 
 
 def get_runtime_name(runtime, language):
+    # math runtime
+    if language == str(Language.MATH):
+        if runtime == "math-qwen":
+            return str(language).lower() + "-default"
+        elif runtime:
+            return runtime
+        else:
+            return "math-huggingface"
+
+    # code runtime
     if runtime:
         return runtime
-    elif runtime == "math-qwen":
-        return str(language).lower() + "-default"
     else:
-        return "math-huggingface"
+        return str(language).lower() + "-default"
 
 
 def caculate_concurrency():
@@ -231,8 +240,9 @@ def batch_function_call(payload_list, task_type, timeout):
     )
 
     async def _main():
-        return await batch_function_call_async(payload_list, url, timeout, concurrency=concurrency)
-
+        return await batch_function_call_async(
+            payload_list, url, timeout, concurrency=concurrency
+        )
 
     with ThreadPoolExecutor() as executor:
         future = executor.submit(asyncio.run, _main())

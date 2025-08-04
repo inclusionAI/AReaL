@@ -3,6 +3,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 import json
 from datetime import datetime
+import uuid
 
 try:
     from arealite.base import constants, logging
@@ -27,10 +28,10 @@ except Exception:
 def construct_uid(query_id: str, start_idx: int, end_idx: int):
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     try:
-        trial_name = f"{constants.experiment_name()}-{constants.trial_name()}"
+        trial_name = f"{constants.experiment_name()}&{constants.trial_name()}"
     except Exception as e:
         trial_name = "test"
-    uid = f"[{timestamp}-{trial_name}]-{query_id}-[{start_idx}-{end_idx}]"
+    uid = f"{timestamp}-[{trial_name}]-{query_id}-[{start_idx}-{end_idx}]-{str(uuid.uuid4())[:4]}-0"
     return uid
 
 

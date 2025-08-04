@@ -123,6 +123,8 @@ class DistributedRolloutController(RolloutController):
         workerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         workerSpec.env_vars["WORKER_TYPE"] = "rollout-worker"
         workerSpec.env_vars["FUNCTIONCALL_SERVICE_DOMAIN"] = "http://110.75.237.19:8080"
+        workerSpec.env_vars["REWARD_MODEL_PATH"] = "/storage/jiulin.jl/Skywork-Reward-V2-Qwen3-8B"
+        workerSpec.env_vars["REWARD_MODEL_SERVICE_URL"] = "http://reward-model-service.asystem-test.svc.sigma-my001.ml01.sgp-ml.local:30000/classify"
 
         engineSpec = ContainerSpec(
             cpu=0,

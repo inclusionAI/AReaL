@@ -1,8 +1,20 @@
-import traceback
-from typing import List, Union
-from arealite.extension.asystem.functioncall.math.verify import math_verify
+# Copyright 2025 Ant Group Inc.
 
-# math-verify==0.5.2
+import os
+import re
+
+import requests
+import xml.etree.ElementTree as ET
+from typing import Dict, List, Tuple
+from transformers import AutoTokenizer
+
+import arealite.base.logging as logging
+from arealite.extension.asystem.functioncall.code.verify import code_verify
+from arealite.extension.asystem.functioncall.math.verify import math_verify
+from arealite.extension.asystem.functioncall.logic.verify import logic_verify
+from arealite.extension.asystem.functioncall.ifeval.verify import ifeval_verify
+
+logger = logging.getLogger("__name__")
 
 
 def reward_fn(
@@ -19,26 +31,182 @@ def reward_fn(
     # kwargs: all other attributes of this data in the dataset,
     #         for example, solutions, input_outputs, etc.
 
-    solutions = kwargs.get("solutions")[0]
-    query_id = kwargs.get("query_id")[0]
+    format_rewards = []
 
-    print(f"solutions: {solutions}, completion: {completion}, query_id: {query_id}", flush=True)
-    labels = math_verify([solutions], [completion], [query_id])
-    return labels[0]
+    query_id = kwargs.get("query_id")[0]
+    task = kwargs.get("task")[0]
+    answers = [completion]
+    query_id_strs = [query_id]
+
+    info_details = {key: value[0] for key, value in kwargs.items()}
+    info_details["prompt"] = prompt
+    id2info = {query_id: info_details}
+
+    if task == "math" or task == "stem":
+        format_rewards = math_verify(id2info, answers, query_id_strs)
+    elif task == "code":
+        codes = [extract_python_code(_answer) for _answer in answers]
+        format_rewards = code_verify(id2info, codes, query_id_strs)
+    elif task == "general":
+        format_rewards = general_verify(id2info, answers, query_id_strs)
+    elif task == "logic":
+        format_rewards = logic_verify(id2info, answers, query_id_strs)
+    elif task == "ifeval":
+        format_rewards = ifeval_verify(id2info, answers, query_id_strs)
+    assert len(format_rewards) == len(answers), (
+        task,
+        len(format_rewards),
+        len(answers),
+        answers,
+    )
+
+    logger.info(
+            f"task: {task}, completion: {completion}, query_id: {query_id}, reward: {format_rewards}"
+    )
+    return format_rewards[0]
+
+    # labels = math_verify([solutions], [completion], [query_id])
+    # return labels[0]
+
+
+REWARD_MODEL_PATH = os.environ.get("REWARD_MODEL_PATH")
+REWARD_MODEL_SERVICE_URL = os.environ.get("REWARD_MODEL_SERVICE_URL")
+
+try:
+    reward_model_tokenizer = None
+    if REWARD_MODEL_PATH and REWARD_MODEL_SERVICE_URL:
+        reward_model_tokenizer = AutoTokenizer.from_pretrained(REWARD_MODEL_PATH)
+        logger.info(
+            f"Reward Model Tokenizer for '{REWARD_MODEL_PATH}' loaded successfully."
+        )
+    elif REWARD_MODEL_PATH or REWARD_MODEL_SERVICE_URL:
+        raise ValueError(
+            "The 'REWARD_MODEL_SERVICE_URL' or REWARD_MODEL_PATH env variable is not set."
+        )
+
+except Exception as e:
+    logger.error(
+        f"FATAL: Could not load reward model tokenizer for '{REWARD_MODEL_PATH}'. Error: {e}"
+    )
+    raise e
+
+
+def extract_content(input_text):
+    pattern = r"</think>(.*)$"
+    match = re.search(pattern, input_text, re.DOTALL)
+
+    if match and match.group(1).strip():
+        return match.group(1)
+    else:
+        return input_text
+
+
+def general_verify(id2info, responses: List[str], query_ids: List) -> List[float]:
+    assert len(responses) == len(query_ids), (
+        len(responses),
+        len(query_ids),
+    )
+
+    prompts = []
+    for _, (query_id, response) in enumerate(zip(query_ids, responses)):
+        base_query_id = query_id.split("@idx:")[0]
+        prompts.append(id2info[base_query_id]["prompt"])
+
+    assert len(responses) == len(prompts), (
+        len(responses),
+        len(prompts),
+    )
+
+    payload = {"model": REWARD_MODEL_PATH}
+    convs_formatted = []
+
+    for index, (prompt, response) in enumerate(zip(prompts, responses)):
+        response = extract_content(response)
+        prompt = re.sub(r"<role>.*?</role>", "", prompt)
+        conv = [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": response},
+        ]
+
+        formatted_text = reward_model_tokenizer.apply_chat_template(
+            conv, tokenize=False, add_generation_prompt=False
+        )
+
+        # Remove the beginning-of-sequence token if it exists, as it's often not needed by the API
+        if reward_model_tokenizer.bos_token and formatted_text.startswith(
+            reward_model_tokenizer.bos_token
+        ):
+            formatted_text = formatted_text[len(reward_model_tokenizer.bos_token) :]
+
+        if index == 0:
+            logger.info(f"general reward call start: {formatted_text}")
+        convs_formatted.append(formatted_text)
+
+    payload.update({"text": convs_formatted})
+
+    try:
+        api_responses = requests.post(REWARD_MODEL_SERVICE_URL, json=payload).json()
+        if "error" in api_responses:
+            raise Exception(f"General reward call failed with err msg: {api_responses}")
+
+        rewards = [res["embedding"][0] for res in api_responses]
+
+        assert len(rewards) == len(
+            prompts
+        ), f"Expected {len(prompts)} general rewards, but got {len(rewards)}."
+
+        logger.info(
+            f"general reward call finished, request count: {len(prompts)}, result count: {rewards}"
+        )
+        return rewards
+    except Exception as e:
+        logger.error(
+            f"Error during reward model API call or while processing the response: {e}"
+        )
+        raise e
+
+
+def extract_python_code(text, min_length=20, strict_syntax=True):
+    code_pattern = r"(?i)```(?:python|py)?\s*\n?(.*?)\n?```"
+    code_blocks = re.findall(code_pattern, text, re.DOTALL)
+    valid_blocks = []
+    for block in code_blocks:
+        clean_block = block.strip()
+        if len(clean_block) < min_length:
+            continue
+
+        # verify code syntax
+        if strict_syntax:
+            try:
+                ast.parse(clean_block, mode="exec")
+            except (SyntaxError, IndentationError):
+                continue
+
+        valid_blocks.append(clean_block)
+
+    if not valid_blocks:
+        # logger.warning(f"failed to extract python code from {text}")
+        return None
+    # return the last code block
+    return valid_blocks[-1]
 
 
 if __name__ == "__main__":
     answer = "<answer>\n28\n</answer>"
-    solutions = [
-        "<answer>\n28\n</answer>",
-    ]
+    data = {
+        "task": ["general"],
+        "query_id": ["general-42941"],
+        "prompt": ["<role>HUMAN</role>33岁孩子不听话,如何处理父子之间矛盾?<role>ASSISTANT</role>"],
+    }
 
     print(
         reward_fn(
-            None,
+            "<role>HUMAN</role>33岁孩子不听话,如何处理父子之间矛盾?<role>ASSISTANT</role>", #data["prompt"][0],
             answer,
             None,
             None,
-            solutions=solutions,
+            task=data["task"],
+            query_id=data["query_id"],
+            #prompt=data["prompt"],
         )
     )
