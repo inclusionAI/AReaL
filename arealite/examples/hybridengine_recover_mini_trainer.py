@@ -133,7 +133,7 @@ remote_megatron_config = {
     "overlap_grad_reduce": True,
     "overlap_p2p_comm": True,
     "overlap_param_gather": False,
-    "pipeline_model_parallel_size": 1,
+    "pipeline_model_parallel_size": 4,
     "position_embedding_type": "rope",
     "qk_layernorm": True,
     "recompute_granularity": "full",
@@ -251,6 +251,7 @@ def main_grpo():
     model_path = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/ring-moe-v2-sft-general700w_longcot200w_0725/hf_ckpts/28869_kz"
     max_prompt_len = 1024
     seed = 42
+    weight_update_type = "disk" # nccl
 
     ########### gconfig ####################
     force_no_logits_mask = True # asystem/0.1中已经废弃
@@ -391,7 +392,7 @@ def main_grpo():
                     batch_data.append(batch)
 
                 weight_update_config = WeightUpdateMeta(
-                    type="disk",
+                    type=weight_update_type,
                     path=f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}",
                     alloc_mode=None,
                     comm_backend=None,
@@ -402,12 +403,24 @@ def main_grpo():
                     stats_tracker.scope("weights_update"),
                 ):
                     logger.info(f"start to update weight, step: {step}, epoch: {epoch}")
-                    actor.upload_weights(weight_update_config)
-                    weight_update_config.path = f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}/{step}"
-                    rollout.update_weights(weight_update_config)
-                    logger.info(f"update weight succeeded, step: {step}, epoch: {epoch}")
-                    clear_dir(weight_update_config.path)
-
+                    if weight_update_config.type == "disk":
+                        actor.upload_weights(weight_update_config)
+                        weight_update_config.path = f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}/{step}"
+                        rollout.update_weights(weight_update_config)
+                        logger.info(f"disk mode update weight succeeded, step: {step}, epoch: {epoch}")
+                        clear_dir(weight_update_config.path)
+                    elif weight_update_config.type == "nccl":
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                            upload_future = executor.submit(actor.upload_weights, weight_update_config)
+                            update_future = executor.submit(rollout.update_weights, weight_update_config)
+                            concurrent.futures.wait([upload_future, update_future])
+                            # Check for exceptions
+                            for future in [upload_future, update_future]:
+                                if future.exception() is not None:
+                                    raise future.exception()
+                        logger.info(f"nccl mode update weight succeeded (parallel), step: {step}, epoch: {epoch}")
+                    
                 with (
                     stats_tracker.record_timing("rollout_step"),
                     stats_tracker.scope("rollout"),

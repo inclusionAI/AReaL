@@ -381,11 +381,23 @@ def main_grpo():
                     stats_tracker.scope("weights_update"),
                 ):
                     logger.info(f"start to update weight, step: {step}, epoch: {epoch}")
-                    actor.upload_weights(weight_update_config)
-                    weight_update_config.path = f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}/{step}"
-                    rollout.update_weights(weight_update_config)
-                    logger.info(f"update weight succeeded, step: {step}, epoch: {epoch}")
-                    clear_dir(weight_update_config.path)
+                    if weight_update_config.type == "disk":
+                        actor.upload_weights(weight_update_config)
+                        weight_update_config.path = f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}/{step}"
+                        rollout.update_weights(weight_update_config)
+                        logger.info(f"disk mode update weight succeeded, step: {step}, epoch: {epoch}")
+                        clear_dir(weight_update_config.path)
+                    elif weight_update_config.type == "nccl":
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                            upload_future = executor.submit(actor.upload_weights, weight_update_config)
+                            update_future = executor.submit(rollout.update_weights, weight_update_config)
+                            concurrent.futures.wait([upload_future, update_future])
+                            # Check for exceptions
+                            for future in [upload_future, update_future]:
+                                if future.exception() is not None:
+                                    raise future.exception()
+                        logger.info(f"nccl mode update weight succeeded (parallel), step: {step}, epoch: {epoch}")
 
                 with (
                     stats_tracker.record_timing("rollout_step"),
