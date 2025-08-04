@@ -40,10 +40,10 @@ if not res:
 
 VLLM_API_BASE = os.getenv("HOSTED_VLLM_API_BASE", "http://127.0.0.1:8000/v1")
 OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434")
-print(f"VLLM_API_BASE: {VLLM_API_BASE}")
-print(f"OLLAMA_API_BASE: {OLLAMA_API_BASE}")
+logger.info(f"VLLM_API_BASE: {VLLM_API_BASE}")
+logger.info(f"OLLAMA_API_BASE: {OLLAMA_API_BASE}")
 
-litellm._turn_on_debug()
+# litellm._turn_on_debug()
 
 if USE_LANGFUSE:
     # set callbacks
