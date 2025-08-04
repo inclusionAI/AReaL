@@ -46,7 +46,8 @@ engine_config = {
     "disable_custom_all_reduce": True,
     "enable_metrics": True,
     "mem_fraction_static": 0.7,
-    "triton_attention_num_kv_splits": 16
+    "triton_attention_num_kv_splits": 16,
+    "disable_shared_experts_fusion": True,
 }
 
 loss_configs = {
