@@ -41,7 +41,7 @@ def clear_dir(path):
 
 logger = logging.getLogger("Trainer")
 
-weight_update_type = "disk"  # nccl
+weight_update_type = "nccl"  # nccl
 
 if weight_update_type == "nccl":
     from asystem_runtime.weights_exchange.meta_server import start_meta_server
@@ -227,44 +227,19 @@ def main_grpo():
     experiment_name = "arealite-mini"
     trial_name = "align-64x8"
 
-    # init controller
-    scheduler = AsystemScheduler({
-        "endpoint": "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081",
-        "expr_name": experiment_name,
-        "trial_name": trial_name,
-        "train": {
-            "worker": {
-                "image": "",
-                "cmd": "",
-                "extra_envs": {
-                    "REAL_PACKAGE_PATH": "fff",
-                },
-            },
-            "engine": {
-                "image": "",
-                "cmd": "",
-                "extra_envs": {
-                    "REAL_PACKAGE_PATH": "fff",
-                },
-            },
-        },
-        "rollout": {
-            "worker": {
-                "image": "",
-                "cmd": "",
-                "extra_envs": {
-                    "REAL_PACKAGE_PATH": "fff",
-                },
-            },
-            "engine": {
-                "image": "",
-                "cmd": "",
-                "extra_envs": {
-                    "REAL_PACKAGE_PATH": "fff",
-                },
+    # init scheduler
+    scheduler = AsystemScheduler(
+        {
+            "endpoint": "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081",
+            "expr_name": experiment_name,
+            "trial_name": trial_name,
+            "extra_envs": {
+                "FUNCTIONCALL_SERVICE_DOMAIN": "http://110.75.237.19:8080",
+                "REWARD_MODEL_PATH": "/storage/jiulin.jl/Skywork-Reward-V2-Qwen3-8B",
+                "REWARD_MODEL_SERVICE_URL": "http://reward-model-service.asystem-test.svc.sigma-my001.ml01.sgp-ml.local:30000/classify"
             },
         }
-    })
+    )
 
     batch_size = 64
     group_size = 8

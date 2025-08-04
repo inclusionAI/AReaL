@@ -50,6 +50,20 @@ def clear_dir(path):
 
 
 logger = logging.getLogger("Trainer")
+weight_update_type = "nccl"  # nccl
+
+if weight_update_type == "nccl":
+    from asystem_runtime.weights_exchange.meta_server import start_meta_server
+    host, port = start_meta_server()
+    meta_server_addr = f"{host}:{port}"
+    print(f'meta_server_addr {meta_server_addr}')
+
+    asystem_hybrid_config = {
+        "meta_server_addr": meta_server_addr,
+        "weights_exchange_comm_backend": "nccl",
+        "weights_validation_steps": 0,
+        "enable_debug_mode": True,
+    }
 
 engine_config = {
     "attention_backend": "triton",
@@ -59,6 +73,8 @@ engine_config = {
     "triton_attention_num_kv_splits": 16,
     "disable_shared_experts_fusion": True,
 }
+if weight_update_type == "nccl":
+    engine_config['asystem_hybrid_config'] = asystem_hybrid_config
 
 loss_configs = {
     "kl_ctl": 0.0,
@@ -162,64 +178,83 @@ remote_megatron_config = {
     "weight_decay": 0.01,
 }
 
+megatron_wrap_policy = {
+    "n_minibatches": 1,
+    "kl_ctl": 0.0,
+    "adv_norm": False,
+    "discount": 1.0,
+    "gae_lambda": 1.0,
+    "eps_clip": 0.2,
+    "c_clip": None,
+    "value_eps_clip": 0.2,
+    "max_reward_clip": 5.0,
+    "disable_value": True,
+    "early_stop_kl": None,
+    "early_stop_imp_ratio": None,
+    "adaptive_kl_ctl": False,
+    "adaptive_kl_target": 6,
+    "adaptive_kl_horizon": 10000,
+    "enable_save": True,
+    "value_norm": True,
+    "value_norm_type": "exp",
+    "value_norm_beta": 0.99995,
+    "value_norm_eps": 1e-5,
+    "group_size": 8,
+    "generation_size": None,
+    "mask_no_eos_with_zero": False,
+    "group_adv_norm": True,
+    "mask_too_long": False,
+    "use_dense_reward": False,
+    "reward_delta": True,
+    "token_normalize_scope": "global",
+    "sample_reuse": 1,
+    "temperature": 1.0,
+    "reward_output_scaling": 0.5,
+    "reward_output_bias": -1.0
+}
+if weight_update_type == "nccl":
+    remote_megatron_config['asystem_train_config'] = asystem_hybrid_config
 
 def main_grpo():
     experiment_name = "arealite-lite"
-    trial_name = "helloworld-recover-64x8-0"
+    trial_name = "helloworld-rlhf-align"
 
-    # init controller
+    # init scheduler
     scheduler = AsystemScheduler(
         {
             "endpoint": "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081",
             "expr_name": experiment_name,
             "trial_name": trial_name,
-            "train": {
-                "worker": {
-                    "image": "",
-                    "cmd": "",
-                    "extra_envs": {
-                        "REAL_PACKAGE_PATH": "fff",
-                    },
-                },
-                "engine": {
-                    "image": "",
-                    "cmd": "",
-                    "extra_envs": {
-                        "REAL_PACKAGE_PATH": "fff",
-                    },
-                },
-            },
-            "rollout": {
-                "worker": {
-                    "image": "",
-                    "cmd": "",
-                    "extra_envs": {
-                        "REAL_PACKAGE_PATH": "fff",
-                    },
-                },
-                "engine": {
-                    "image": "",
-                    "cmd": "",
-                    "extra_envs": {
-                        "REAL_PACKAGE_PATH": "fff",
-                    },
-                },
+            "extra_envs": {
+                "FUNCTIONCALL_SERVICE_DOMAIN": "http://110.75.237.19:8080",
+                "REWARD_MODEL_PATH": "/storage/jiulin.jl/Skywork-Reward-V2-Qwen3-8B",
+                "REWARD_MODEL_SERVICE_URL": "http://reward-model-service.asystem-test.svc.sigma-my001.ml01.sgp-ml.local:30000/classify"
             },
         }
     )
 
-    batch_size = 8  # 64
+    batch_size = 64
     group_size = 8
     model_path = "/storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/hf_ckpts/8604"
     max_prompt_len = 1024
+    seed = 42
+
+    ########### gconfig ####################
     max_new_tokens = 15360
+    min_new_tokens = 0
+    temperature = 1.0
+    top_k = 1000000
+    top_p = 1.0
+    greedy = False
+    #########################################
+
     step_num = 1145
     epoch_num = 10
     global_step = 0
     os.environ["WANDB_API_KEY"] = "local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe"
     os.environ["WANDB_BASE_URL"] = "https://slurm.alipay.com"
     deploy_mode = "separation"
-    allocation_mode = "gen:d4t8p1,train:d32t1p1"
+    allocation_mode = "gen:d2t8p1,train:d16t1p1"
     allocate_mode = AllocationMode.from_str(allocation_mode)
     storage_path = "/storage/openpsi/checkpoints/{experiment_name}/{trial_name}".format(
         experiment_name=experiment_name, trial_name=trial_name
@@ -228,7 +263,7 @@ def main_grpo():
     tokenizer = load_hf_tokenizer(model_path)
     dataset = load_dataset(
         "json",
-        data_files="/storage/yuyan/xukuan.xk/repos/antnlp/personal/llm/benchmark/merge_subjective_magpie_ifeval_sys_areal_train.jsonl",
+        data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/dom_mix_train_after_0718_areal_train.jsonl",
     )
     train_dataset = dataset["train"]
     train_dataset = train_dataset.filter(
@@ -343,7 +378,13 @@ def main_grpo():
     actor.initialize(colocation_with=rollout if deploy_mode == "colocation" else None)
 
     gconfig = GenerationHyperparameters(
-        max_new_tokens=max_new_tokens, greedy=False, n_samples=group_size
+        min_new_tokens=min_new_tokens,
+        max_new_tokens=max_new_tokens,
+        greedy=greedy,
+        n_samples=group_size,
+        temperature=temperature,
+        top_k=top_k,
+        top_p=top_p,
     )
 
     if tokenizer.pad_token_id not in gconfig.stop_token_ids:
@@ -376,7 +417,7 @@ def main_grpo():
                     batch_data.append(batch)
 
                 weight_update_config = WeightUpdateMeta(
-                    type="disk",
+                    type=weight_update_type,
                     path=f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}",
                     alloc_mode=None,
                     comm_backend=None,
@@ -387,13 +428,23 @@ def main_grpo():
                     stats_tracker.scope("weights_update"),
                 ):
                     logger.info(f"start to update weight, step: {step}, epoch: {epoch}")
-                    actor.upload_weights(weight_update_config)
                     weight_update_config.path = f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}/{step}"
-                    rollout.update_weights(weight_update_config)
-                    logger.info(
-                        f"update weight succeeded, step: {step}, epoch: {epoch}"
-                    )
-                    clear_dir(weight_update_config.path)
+                    if weight_update_config.type == "disk":
+                        actor.upload_weights(weight_update_config)
+                        rollout.update_weights(weight_update_config)
+                        logger.info(f"disk mode update weight succeeded, step: {step}, epoch: {epoch}")
+                        clear_dir(weight_update_config.path)
+                    elif weight_update_config.type == "nccl":
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                            upload_future = executor.submit(actor.upload_weights, weight_update_config)
+                            update_future = executor.submit(rollout.update_weights, weight_update_config)
+                            concurrent.futures.wait([upload_future, update_future])
+                            # Check for exceptions
+                            for future in [upload_future, update_future]:
+                                if future.exception() is not None:
+                                    raise future.exception()
+                        logger.info(f"nccl mode update weight succeeded (parallel), step: {step}, epoch: {epoch}")
 
                 with (
                     stats_tracker.record_timing("rollout_step"),

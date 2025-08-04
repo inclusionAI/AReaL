@@ -36,6 +36,7 @@ class AsystemScheduler(Scheduler):
         super().__init__(config)
         self.worker_infos = []
         self.submitted_jobs = {}  # job_name -> job_uid
+        self.extra_envs = config.get("extra_envs", {})
 
         # Initialize Asystem client attributes
         self.expr_name = config.get("expr_name", "default_expr")
@@ -215,6 +216,7 @@ class AsystemScheduler(Scheduler):
 
         if scheduling_config.specs:
             for i, spec in enumerate(scheduling_config.specs):
+                spec.env_vars.update(self.extra_envs)
                 container = {
                     "name": f"worker_{i}",
                     "command": ["/bin/sh"],
@@ -248,7 +250,7 @@ class AsystemScheduler(Scheduler):
         if scheduling_config.schedule_strategy is not None:
             payload["scheduleStrategy"] = asdict(scheduling_config.schedule_strategy)
 
-        logger.info(f"fenghui debug: payload: {payload}")
+        logger.info(f"schedule payload: {payload}")
 
         return payload
 
