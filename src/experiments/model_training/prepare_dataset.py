@@ -1,7 +1,7 @@
 import argparse
 import json
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Union
+from typing import Callable, Iterable, Mapping, Optional, TypeVar, Union
 
 from pydantic import Field
 from rich.console import Console
@@ -23,6 +23,45 @@ from tau2.registry import registry
 from tau2.utils.pydantic_utils import BaseModelNoExtra
 
 console = Console()
+
+
+TListOrMapping = TypeVar("TListOrMapping", list, Mapping)
+
+
+def remove_none_values(example: TListOrMapping) -> TListOrMapping:
+    """
+    # From TRL: https://github.com/huggingface/trl/blob/30576d2ddcf2c0e17c399399e2465fbe81446ade/trl/trainer/sft_trainer.py#L71
+    # Use to remove None values added by Arrow/Parquet when there are mismatched keys in nested structures.
+    Recursively removes entries with `None` values from a nested structure (list or dictionary).
+
+    Args:
+        example (`list` or `Mapping`):
+            Input nested structure (list or dictionary) from which to remove `None`.
+
+    Example:
+    ```python
+    >>> [{
+    ...     "a": {"aa": None,
+    ...           "ab": 1},
+    ...     "b": "my_string",
+    ... }]
+    >>> remove_none_values(example)
+    [{'a': {'ab': 1}, 'b': 'my_string'}]
+    ```
+    """
+    if isinstance(example, list):
+        return [
+            remove_none_values(value) if isinstance(value, (dict, list)) else value
+            for value in example
+        ]
+    elif isinstance(example, Mapping):
+        return {
+            key: remove_none_values(value) if isinstance(value, (dict, list)) else value
+            for key, value in example.items()
+            if value is not None
+        }
+    else:
+        raise TypeError("Input must be a list or a dictionary.")
 
 
 class SFTDataPoint(BaseModelNoExtra):
