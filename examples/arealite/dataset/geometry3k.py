@@ -1,11 +1,13 @@
 import math
 from io import BytesIO
 from typing import Any, Dict, Optional, Union
-
+from torchvision import transforms
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 from PIL import Image
 from PIL.Image import Image as ImageObject
+
+
 
 def pad_to_square(img: Image.Image, fill=(0, 0, 0)) -> Image.Image:
 
@@ -22,26 +24,15 @@ def convert_image(
     fixed_height: Optional[int] = None,
 ) -> ImageObject:
     if fixed_width is not None and fixed_height is not None and (image.width != fixed_width or image.height != fixed_height):
-        image=pad_to_square(image)
-        image = image.resize((fixed_width, fixed_height))
-
+        preprocess = transforms.Compose([
+            transforms.CenterCrop((fixed_width, fixed_height)),  # <─ 核心操作
+        ])
+        image=preprocess(image)
     if image.mode != "RGB":
         image = image.convert("RGB")
     with BytesIO() as output:
         image.save(output, format="JPEG")
         return output.getvalue()
-
-def get_max_image_size(dataset):
-    """
-    Traverse the dataset to find the maximum width and height across all images.
-    """
-    max_width, max_height = 0, 0
-    for example in dataset:
-        for image in example["images"]:
-            width, height = image.size
-            max_width = max(max_width, width)
-            max_height = max(max_height, height)
-    return max_width, max_height
 
 def get_geometry3k_sft_dataset(path, split, processor, rank, world_size):
     """
