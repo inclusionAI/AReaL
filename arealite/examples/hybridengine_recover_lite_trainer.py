@@ -152,6 +152,40 @@ remote_megatron_config = {
     "weight_decay": 0.01,
 }
 
+megatron_wrap_policy = {
+    "n_minibatches": 1,
+    "kl_ctl": 0.0,
+    "adv_norm": False,
+    "discount": 1.0,
+    "gae_lambda": 1.0,
+    "eps_clip": 0.2,
+    "c_clip": None,
+    "value_eps_clip": 0.2,
+    "max_reward_clip": 5.0,
+    "disable_value": True,
+    "early_stop_kl": None,
+    "early_stop_imp_ratio": None,
+    "adaptive_kl_ctl": False,
+    "adaptive_kl_target": 6,
+    "adaptive_kl_horizon": 10000,
+    "enable_save": True,
+    "value_norm": True,
+    "value_norm_type": "exp",
+    "value_norm_beta": 0.99995,
+    "value_norm_eps": 1e-5,
+    "group_size": 8,
+    "generation_size": None,
+    "mask_no_eos_with_zero": False,
+    "group_adv_norm": True,
+    "mask_too_long": False,
+    "use_dense_reward": False,
+    "reward_delta": True,
+    "token_normalize_scope": "global",
+    "sample_reuse": 1,
+    "temperature": 1.0,
+    "reward_output_scaling": 0.5,
+    "reward_output_bias": -1.0
+}
 
 def main_grpo():
     experiment_name = "arealite-lite"
@@ -201,7 +235,16 @@ def main_grpo():
     model_path = "/storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/hf_ckpts/8604"
     max_prompt_len = 1024
     seed = 42
+
+    ########### gconfig ####################
     max_new_tokens = 15360
+    min_new_tokens = 0
+    temperature = 1.0
+    top_k = 1000000
+    top_p = 1.0
+    greedy = False
+    #########################################
+
     step_num = 1145
     epoch_num = 10
     global_step = 0
@@ -279,7 +322,7 @@ def main_grpo():
     actor = DistributedTrainController(
         RemoteHypridTrainWorker(RemoteMegatronEngineConfig(experiment_name=experiment_name, trial_name=trial_name,
                                                            loss_configs=loss_configs,
-                                                           remote_megatron_config=remote_megatron_config)),
+                                                           remote_megatron_config=remote_megatron_config,wrap_policy=RemoteMegatronEngineConfig.assign_wrap_policy(megatron_wrap_policy))),
         TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
         scheduler,
     )
@@ -288,7 +331,13 @@ def main_grpo():
     actor.initialize(colocation_with=rollout if deploy_mode == "colocation" else None)
 
     gconfig = GenerationHyperparameters(
-        max_new_tokens=max_new_tokens, greedy=False, n_samples=group_size
+        min_new_tokens=min_new_tokens,
+        max_new_tokens=max_new_tokens,
+        greedy=greedy,
+        n_samples=group_size,
+        temperature=temperature,
+        top_k=top_k,
+        top_p=top_p,
     )
 
     if tokenizer.pad_token_id not in gconfig.stop_token_ids:
