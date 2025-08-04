@@ -680,6 +680,22 @@ class RemoteMegatronEngineConfig(TrainEngineConfig):
     )
     remote_megatron_config: Dict = field(default_factory=dict)
     loss_configs: Dict = field(default_factory=dict)
+
+    @staticmethod
+    def assign_wrap_policy(policy_dict: Dict) -> RemoteMegatronWrapPolicy:
+        """Assign values from dictionary to RemoteMegatronWrapPolicy fields.
+        
+        Args:
+            policy_dict: Dictionary containing wrap policy configuration
+            
+        Returns:
+            Configured RemoteMegatronWrapPolicy instance
+        """
+        policy = RemoteMegatronWrapPolicy()
+        for field_name, field_value in policy_dict.items():
+            if hasattr(policy, field_name):
+                setattr(policy, field_name, field_value)
+        return policy
     experiment_name: str = field(
         default="test-exp",
         metadata={"help": "Name of the experiment (no '_' or '/'). Required."},

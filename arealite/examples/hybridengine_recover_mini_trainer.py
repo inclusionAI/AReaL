@@ -341,10 +341,12 @@ def main_grpo():
     actor = DistributedTrainController(
         RemoteHypridTrainWorker(RemoteMegatronEngineConfig(experiment_name=experiment_name, trial_name=trial_name,
                                                            loss_configs=loss_configs,
-                                                           remote_megatron_config=remote_megatron_config, wrap_policy=megatron_wrap_policy)),
+                                                           remote_megatron_config=remote_megatron_config, 
+                                                           wrap_policy=RemoteMegatronEngineConfig.assign_wrap_policy(megatron_wrap_policy))),
         TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
         scheduler,
     )
+    
     # engine initialize
     rollout.initialize()
     actor.initialize(colocation_with=rollout if deploy_mode == "colocation" else None)
