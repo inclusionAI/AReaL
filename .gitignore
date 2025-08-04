@@ -11,7 +11,7 @@ logs/
 data/simulations/
 data/exp/
 data/datasets/
-experiments/model_serving/vllm_serving/.*
+src/experiments/model_serving/vllm_serving/.*
 .ruff_cache
 
 # Byte-compiled / optimized / DLL files
