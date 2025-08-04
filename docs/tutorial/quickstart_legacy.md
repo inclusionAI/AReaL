@@ -1,8 +1,8 @@
 # Quickstart (Legacy)
 
 > **Note**: This is a quickstart guide for launching AReaL experiment with legacy code
-> in `realhf/`. We strongly recommend users to try AReaLite for better experiences.
-> [Click here](quickstart.md) for AReaLite quickstart guide!
+> in `realhf/`. We strongly recommend users to try AReaL-lite for better experiences.
+> [Click here](quickstart.md) for AReaL-lite quickstart guide!
 
 This guide walks you through a simple example of training an LLM to solve math problems.
 Please ensure you have properly
@@ -40,7 +40,7 @@ From the repository directory, run:
 
 ```bash
 # examples/run_async_ppo.sh
-python3 training/main_async_ppo.py \
+python3 realhf/training/main_async_ppo.py \
     n_nodes=1 n_gpus_per_node=8 \
     allocation_mode=sglang.d4p1m1+d2p2m1 \
     cluster.fileroot=/path/to/save/logs/checkpoints/ \
@@ -70,7 +70,7 @@ is more stable and easier to customize. ::::
 To view all available options:
 
 ```bash
-python3 training/main_sync_ppo.py --help
+python3 realhf/training/main_sync_ppo.py --help
 ```
 
 ### Configuration Parameters

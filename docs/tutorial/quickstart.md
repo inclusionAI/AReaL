@@ -1,7 +1,7 @@
 # Quickstart
 
-Welcome to the **AReaLite** Quickstart Guide! This guide demonstrates how to run an
-AReaLite experiment training an LLM on the GSM8K dataset using the GRPO algorithm with
+Welcome to the **AReaL-lite** Quickstart Guide! This guide demonstrates how to run an
+AReaL-lite experiment training an LLM on the GSM8K dataset using the GRPO algorithm with
 function-based rewards. Ensure you've completed
 [the installation and environment setup](installation.md) before proceeding.
 
@@ -10,30 +10,30 @@ function-based rewards. Ensure you've completed
 To run the experiment, you will need:
 
 - Training script:
-  [examples/arealite/gsm8k_grpo.py](../../examples/arealite/gsm8k_grpo.py)
+  [examples/lite/gsm8k_grpo.py](https://github.com/inclusionAI/AReaL/blob/main/examples/lite/gsm8k_grpo.py)
 - Config YAML:
-  [examples/arealite/configs/gsm8k_grpo.yaml](../../examples/arealite/configs/gsm8k_grpo.yaml)
+  [examples/lite/configs/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/lite/configs/gsm8k_grpo.yaml)
 
 Our training scripts will automatically download the dataset (openai/gsm8k) and model
 (Qwen/Qwen2-1.5B-Instruct). To run the example with default configuration, execute from
 the repository directory:
 
 ```
-python3 -m arealite.launcher.local examples/arealite/gsm8k_grpo.py --config examples/arealite/configs/gsm8k_grpo.yaml experiment_name=<your experiment name> trial_name=<your trial name>
+python3 -m areal.launcher.local examples/lite/gsm8k_grpo.py --config examples/lite/configs/gsm8k_grpo.yaml experiment_name=<your experiment name> trial_name=<your trial name>
 ```
 
 > **Note**: The command above uses `LocalLauncher`, which only works for a single node
 > (`cluster.n_nodes == 1`). For distributed experiments, see
-> [Distributed Experiments with Ray or Slurm](quickstart.md#distributed-experiments-with-ray-or-slurm).
+> [Distributed Experiments with Ray or Slurm](#distributed-experiments-with-ray-or-slurm).
 
 ## Modifying configuration
 
 All available configuration options are listed in
-[arealite/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/arealite/api/cli_args.py).
+[areal/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/areal/api/cli_args.py).
 To customize the experiment (models, resources, algorithm options), you can:
 
 1. Edit the YAML file directly at
-   [examples/arealite/configs/gsm8k_grpo.yaml](../../examples/arealite/configs/gsm8k_grpo.yaml).
+   [examples/lite/configs/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/lite/configs/gsm8k_grpo.yaml).
 1. Add command-line options:
    - For existing options in the YAML file, directly add the option:
      `actor.path=Qwen/Qwen3-1.7B`.
@@ -44,8 +44,8 @@ For example, here is the command to launch a customized configuration, based on 
 GSM8K GRPO example:
 
 ```
-python3 -m arealite.launcher.local examples/arealite/gsm8k_grpo.py \
-    --config examples/arealite/configs/gsm8k_grpo.yaml \
+python3 -m areal.launcher.local examples/lite/gsm8k_grpo.py \
+    --config examples/lite/configs/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
     allocation_mode=sglang.d2p1t1+d2p1t1 \
@@ -56,62 +56,75 @@ python3 -m arealite.launcher.local examples/arealite/gsm8k_grpo.py \
     +sglang.attention_backend=triton
 ```
 
-::::{important} We're currently refactoring from legacy AReaL to AReaLite, which
+::::{important} We're currently refactoring from legacy AReaL to AReaL-lite, which
 introduces some configuration differences. We provide a **config converter** to transfer
-old AReaL config into AReaLite YAML file for users' convenience. [Click here](xxx) to
-learn how to use the **config converter**. ::::
+old AReaL config into AReaL-lite YAML file for users' convenience.
+[Click here](#switching-from-legacy-areal-to-areal-lite) to learn how to use the
+**config converter**. ::::
 
 ## Distributed Experiments with Ray or Slurm
 
-AReaLite provides standalone launchers for distributed experiments. After setting up
+AReaL-lite provides standalone launchers for distributed experiments. After setting up
 your Ray or Slurm cluster, launch experiments similarly to `LocalLauncher`:
 
 ```
 # Launch with Ray launcher. 4 nodes (4 GPUs each), 3 nodes for generation, 1 node for training.
-python3 -m arealite.launcher.ray examples/arealite/gsm8k_grpo.py \
-    --config examples/arealite/configs/gsm8k_grpo.yaml \
+python3 -m areal.launcher.ray examples/lite/gsm8k_grpo.py \
+    --config examples/lite/configs/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
     allocation_mode=sglang.d12p1t1+d4p1t1 \
     cluster.n_nodes=4 \
     cluster.n_gpus_per_node=4 \
-    ...
 
 # Launch with Slurm launcher. 16 nodes (8 GPUs each), 12 nodes for generation, 4 nodes for training
-python3 -m arealite.launcher.slurm examples/arealite/gsm8k_grpo.py \
-    --config examples/arealite/configs/gsm8k_grpo.yaml \
+python3 -m areal.launcher.slurm examples/lite/gsm8k_grpo.py \
+    --config examples/lite/configs/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
     allocation_mode=sglang.d96p1t1+d32p1t1 \
     cluster.n_nodes=16 \
     cluster.n_gpus_per_node=8 \
-    ...
 ```
 
 Additional references:
 
 - For more options for launchers, check `LauncherConfig` in
-  [arealite/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/arealite/api/cli_args.py).
-- [Ray cluster setup guide](installation.md#optional-launch-ray-cluster-for-distributed-training)
+  [areal/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/areal/api/cli_args.py).
+- [Ray cluster setup guide](./installation.md#optional-launch-ray-cluster-for-distributed-training)
   for a guide on how to set up a ray cluster.
 
 > **Important Notes**:
 >
 > 1. Ensure `allocation_mode` matches your cluster configuration
 >    (`#GPUs == cluster.n_nodes * cluster.n_gpus_per_node`)
-> 1. Ray/Slurm launchers only works for more than 1 node (`cluster.n_nodes > 1`). For
+> 1. Ray or Slurm launchers only works for more than 1 node (`cluster.n_nodes > 1`). For
 >    single node scenario, please use `LocalLauncher`.
-> 1. In Ray/Slurm launchers, GPUs are allocated at node granularity, which means #GPUs
->    for generation or training must be integer multiples of `cluster.n_gpus_per_node`.
+> 1. In Ray or Slurm launchers, GPUs are allocated at node granularity, which means
+>    #GPUs for generation or training must be integer multiples of
+>    `cluster.n_gpus_per_node`.
 
 <!--
 > **Notes**: Before launching distributed experiments, please check if your `allocation_mode` matches your cluster configuration. Make sure #GPUs allocated by `allocation_mode` equals to `cluster.n_nodes * cluster.n_gpus_per_node`.
 > **Note**: Ray and Slurm launchers only work for distributed experiments with more than 1 node (`cluster.n_nodes > 1`). They allocate GPUs for training and generation at the granularity of **nodes**, which means the number of GPUs allocated for generation and training must be integer multiples of `cluster.n_gpus_per_node`.
 -->
 
+## Switching from legacy AReaL to AReaL-lite
+
+We also provide a convenient script to convert your AReaL YAML config into AReaL-lite
+config in one command line. First you need to locate your AReaL config either modified
+from files from `examples` folder, or generated when you run your experiments in
+`<fileroot>/<expr_name>/<trial_name>` folder. Runs:
+
+```bash
+python examples/lite/config_converter.py --convert_src AReaL --src_config_path <path_to_areal_yaml> --template_path examples/lite/configs/gsm8k_grpo.yaml --output_path <output_yaml>
+```
+
+Then you should be able to run experiments with your old settings on AReaL-lite!
+
 ## Next Steps
 
-Check [Getting Started with AReaLite](../arealite/gsm8k_grpo.md) for a complete code
+Check [Getting Started with AReaL-lite](../lite/gsm8k_grpo.md) for a complete code
 walkthrough on the GRPO GSM8K Example.
 
 Customization guides:

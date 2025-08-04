@@ -4,6 +4,9 @@
 format: jb-book
 root: intro
 parts:
+  - caption: Getting Started with AReaL-lite
+    chapters:
+    - file: lite/gsm8k_grpo
   - caption: Tutorial
     chapters:
     - file: tutorial/installation
@@ -23,6 +26,14 @@ parts:
     - file: customization/dataset
     - file: customization/agent
     - file: customization/algorithm
+  - caption: Contributing
+    chapters:
+    - file: contrib
+  - caption: Customization (Legacy)
+    chapters:
+    - file: legacy/customization/dataset
+    - file: legacy/customization/agent
+    - file: legacy/customization/algorithm
   - caption: Code Walkthrough (Legacy)
     chapters:
     - file: developer/overview
@@ -36,11 +47,3 @@ parts:
       sections:
         - file: developer/rollout/gserver
         - file: developer/rollout/rollout_worker
-  - caption: Contributing
-    chapters:
-    - file: contrib
-  - caption: Customization (Legacy)
-    chapters:
-    - file: legacy/customization/dataset
-    - file: legacy/customization/agent
-    - file: legacy/customization/algorithm

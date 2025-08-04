@@ -38,7 +38,7 @@ repos:
           - -r
           - --remove-all-unused-imports
           - --remove-unused-variables
-        files: ^(arealite/|examples/arealite/).*\.py$
+        files: ^(areal/|examples/lite/).*\.py$
 
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2

@@ -56,6 +56,11 @@ dependencies = [
     "torchdata",
     "autoflake",
     "tensordict",
+<<<<<<< HEAD
+=======
+    "pybase64",
+    "msgspec",
+>>>>>>> origin/main
     
     # Monitoring and logging
     "wandb",

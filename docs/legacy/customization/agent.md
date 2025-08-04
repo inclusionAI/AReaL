@@ -1,7 +1,7 @@
 # Rollout and Agentic RL (Legacy)
 
-> **Note**: While this legacy approach works, we strongly recommend using the AReaLite
-> for new projects. It provides better flexibility, cleaner abstractions, and easier
+> **Note**: While this legacy approach works, we strongly recommend using AReaL-lite for
+> new projects. It provides better flexibility, cleaner abstractions, and easier
 > maintenance.
 
 ## Step 1: Define Your Agent Class
@@ -149,7 +149,7 @@ Follow the standard training procedure outlined in the
 [quickstart guide](../../tutorial/quickstart_legacy.md). Launch your experiment with:
 
 ```bash
-python3 training/main_async_ppo.py my_param=5.0  # plus any additional CLI arguments
+python3 realhf/training/main_async_ppo.py my_param=5.0  # plus any additional CLI arguments
 ```
 
 ## Training Results

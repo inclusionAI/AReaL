@@ -1,5 +1,5 @@
 #!/bin/bash
-python3 training/main_async_ppo.py \
+python3 realhf/training/main_async_ppo.py \
     n_nodes=1 n_gpus_per_node=8 \
     allocation_mode=sglang.d4p1m1+d2p2m1 \
     cluster.fileroot=experiments \

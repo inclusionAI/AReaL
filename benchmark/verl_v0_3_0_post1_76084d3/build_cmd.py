@@ -129,7 +129,7 @@ def build_cmd(model_size: int, ctx: int, n_nodes: int):
     config_path = Path(__file__).parent / "areal_config.yaml"
     cli_args = yaml_to_cli_args(str(config_path))
     cmd = (
-        ["python3", "training/main_async_ppo.py"]
+        ["python3", "realhf/training/main_async_ppo.py"]
         + cli_args
         + [
             f"actor.path={paths[model_size]}",

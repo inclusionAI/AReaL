@@ -1,5 +1,5 @@
 #!/bin/bash
-python3 training/main_sft.py \
+python3 realhf/training/main_sft.py \
     n_nodes=1 n_gpus_per_node=8 \
     allocation_mode=d4p2m1 \
     cluster.fileroot=/storage/testing/experiments \

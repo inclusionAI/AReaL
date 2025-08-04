@@ -1,6 +1,6 @@
 # Dataset
 
-**AReaLite** directly integrates with the `Dataset` class from the HuggingFace
+**AReaL-lite** directly integrates with the `Dataset` class from the HuggingFace
 `datasets` package. This gives you full flexibility to load, process, and filter your
 data before training.
 
@@ -16,7 +16,7 @@ In the SFT example, we see that the loaded data is directly passed to the `train
 method:
 
 ```python
-# examples/arealite/gsm8k_sft.py
+# examples/lite/gsm8k_sft.py
 def main(args):
     ...
     # Create dataset and dataloaders
@@ -62,7 +62,7 @@ In the GRPO example, the loaded data is passed to the `InferenceEngine`, rather 
 `TrainEngine`:
 
 ```python
-# examples/arealite/gsm8k_ppo.py
+# examples/lite/gsm8k_ppo.py
 def main(args):
     ...
     # Create dataset and dataloaders
