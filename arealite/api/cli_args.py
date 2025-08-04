@@ -353,6 +353,10 @@ class RemoteHybridInferenceConfig(InferenceEngineConfig):
         default=1,
         metadata={"help": "tp size"},
     )
+    seed: int = field(
+        default=1,
+        metadata={"help": "seed"},
+    )
 
 @dataclass
 class SGLangEngineConfig:
@@ -662,6 +666,10 @@ class RemoteMegatronWrapPolicy:
     token_normalize_scope: str = field(default="global", metadata={"choices": ["global", "dp"]})
     sample_reuse: int = 1
     temperature: float = 1.0  # GenerationHyperparameters
+    reward_output_scaling: float = field(
+        default=1.0, metadata={"help": "Reward scaling factor"}
+    )
+    reward_output_bias: float = field(default=0.0, metadata={"help": "Reward bias"})
 
 
 @dataclass

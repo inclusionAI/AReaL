@@ -90,7 +90,7 @@ remote_megatron_config = {
     "hidden_dropout": 0.0,
     "hidden_size": 2048,
     "init_method_std": 0.006,
-    "load": "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe-mini-v2-e256-0627-fp8-32k-constant-merge-pack-merge-mean_w8",
+    "load": "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/ring-moe-v2-sft-general700w_longcot200w_0725/iter_0028869",
     "log_loss_scale_to_tensorboard": False,
     "log_num_zeros_in_grad": True,
     "log_params_norm": True,
@@ -150,7 +150,7 @@ remote_megatron_config = {
     "swiglu": True,
     "tensor_model_parallel_size": 1,
     "tensorboard_log_interval": 1,
-    "tokenizer_model": "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe-mini-v2-e256-0627-fp8-32k-constant-merge-pack-merge-mean_w8/sglang_iter_0011770",
+    "tokenizer_model": "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/ring-moe-v2-sft-general700w_longcot200w_0725/hf_ckpts/28869_kz",
     "tokenizer_type": "HuggingFaceTokenizer",
     "train_iters": 100000,
     "transformer_xl": False,
@@ -168,10 +168,44 @@ remote_megatron_config = {
     "weight_decay": 0.01,
 }
 
+megatron_wrap_policy = {
+    "n_minibatches": 1,
+    "kl_ctl": 0.0,
+    "adv_norm": False,
+    "discount": 1.0,
+    "gae_lambda": 1.0,
+    "eps_clip": 0.2,
+    "c_clip": None,
+    "value_eps_clip": 0.2,
+    "max_reward_clip": 5.0,
+    "disable_value": True,
+    "early_stop_kl": None,
+    "early_stop_imp_ratio": None,
+    "adaptive_kl_ctl": False,
+    "adaptive_kl_target": 6,
+    "adaptive_kl_horizon": 10000,
+    "enable_save": True,
+    "value_norm": True,
+    "value_norm_type": "exp",
+    "value_norm_beta": 0.99995,
+    "value_norm_eps": 1e-5,
+    "group_size": 8,
+    "generation_size": None,
+    "mask_no_eos_with_zero": False,
+    "group_adv_norm": True,
+    "mask_too_long": False,
+    "use_dense_reward": False,
+    "reward_delta": True,
+    "token_normalize_scope": "global",
+    "sample_reuse": 1,
+    "temperature": 1.0,
+    "reward_output_scaling": 0.5,
+    "reward_output_bias": -1.0
+}
 
 def main_grpo():
     experiment_name = "arealite-mini"
-    trial_name = "helloworld-recover-16x8"
+    trial_name = "align-64x8"
 
     # init controller
     scheduler = AsystemScheduler({
@@ -212,18 +246,30 @@ def main_grpo():
         }
     })
 
-    batch_size = 8 #64
+    batch_size = 64
     group_size = 8
-    model_path = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe-mini-v2-e256-0627-fp8-32k-constant-merge-pack-merge-mean_w8/sglang_iter_0011770"
+    model_path = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/ring-moe-v2-sft-general700w_longcot200w_0725/hf_ckpts/28869_kz"
     max_prompt_len = 1024
+    seed = 42
+
+    ########### gconfig ####################
+    force_no_logits_mask = True # asystem/0.1中已经废弃
+    use_cuda_graph = True # asystem/0.1中已经废弃
     max_new_tokens = 15360
+    min_new_tokens = 0
+    temperature = 1.0
+    top_k = 1000000
+    top_p = 1.0
+    greedy = False
+    #########################################
+
     step_num = 1145
     epoch_num = 10
     global_step = 0
     os.environ['WANDB_API_KEY'] = 'local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe'
     os.environ["WANDB_BASE_URL"] = "https://slurm.alipay.com"
     deploy_mode = "separation"
-    allocation_mode = "gen:d4t8p1,train:d32t1p1"
+    allocation_mode = "gen:d8t4p1,train:d8t1p4"
     allocate_mode = AllocationMode.from_str(allocation_mode)
     storage_path = "/storage/openpsi/checkpoints/{experiment_name}/{trial_name}".format(
         experiment_name=experiment_name, trial_name=trial_name)
@@ -287,7 +333,7 @@ def main_grpo():
             RemoteHybridInferenceConfig(experiment_name=experiment_name, trial_name=trial_name, model_path=model_path,
                                         storage_path=storage_path,
                                         dp_size=allocate_mode.gen_dp_size, tp_size=allocate_mode.gen_tp_size,
-                                        pp_size=allocate_mode.gen_pp_size, engine_config=engine_config)),
+                                        pp_size=allocate_mode.gen_pp_size, seed=seed, engine_config=engine_config)),
         RolloutControllerConfig(experiment_name=experiment_name, trial_name=trial_name,
                                 allocation_mode=allocation_mode),
         scheduler,
@@ -295,7 +341,7 @@ def main_grpo():
     actor = DistributedTrainController(
         RemoteHypridTrainWorker(RemoteMegatronEngineConfig(experiment_name=experiment_name, trial_name=trial_name,
                                                            loss_configs=loss_configs,
-                                                           remote_megatron_config=remote_megatron_config)),
+                                                           remote_megatron_config=remote_megatron_config, wrap_policy=megatron_wrap_policy)),
         TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
         scheduler,
     )
@@ -304,7 +350,13 @@ def main_grpo():
     actor.initialize(colocation_with=rollout if deploy_mode == "colocation" else None)
 
     gconfig = GenerationHyperparameters(
-        max_new_tokens=max_new_tokens, greedy=False, n_samples=group_size
+        min_new_tokens=min_new_tokens,
+        max_new_tokens=max_new_tokens,
+        greedy=greedy,
+        n_samples=group_size,
+        temperature=temperature,
+        top_k=top_k,
+        top_p=top_p,
     )
 
     if tokenizer.pad_token_id not in gconfig.stop_token_ids:

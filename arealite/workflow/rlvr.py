@@ -43,11 +43,16 @@ class RLVRWorkflow(RolloutWorkflow):
             return_length=True,
             return_attention_mask=False)
 
-        n_samples = self.gconfig.n_samples
-        new_gconfig = self.gconfig.new(n_samples=1)
-        new_gconfig.stop_token_ids = self.gconfig.stop_token_ids
-        new_gconfig.max_new_tokens = self.gconfig.max_new_tokens
-        new_gconfig.greedy = self.gconfig.greedy
+        new_gconfig = self.gconfig.new(
+            n_samples=1,
+            max_new_tokens=self.gconfig.max_new_tokens,
+            min_new_tokens=self.gconfig.min_new_tokens,
+            greedy=self.gconfig.greedy,
+            top_p=self.gconfig.top_p,
+            top_k=self.gconfig.top_k,
+            temperature=self.gconfig.temperature,
+            stop_token_ids=self.gconfig.stop_token_ids,
+        )
         req = LLMRequest(
             rid=uuid.uuid4().hex,
             input_ids=prompt_encodings["input_ids"],

@@ -68,11 +68,10 @@ class RemoteHybridInferenceWorker(InferenceEngine):
 
     def initialize(self, initialize_cfg: RemoteHypidInferenceInitConfig):
         logger.info(f"[RemoteHybridInferenceWorker] begin exec initialize, config: {initialize_cfg}")
-        seeding.set_random_seed(1, self.config.experiment_name)
+        seeding.set_random_seed(self.config.seed, self.config.experiment_name)
         master_addr_info = initialize_cfg.master_addr
         master_addr, master_port = master_addr_info.split(":")
         world_size = initialize_cfg.world_size
-        seeding.set_random_seed(1, self.config.experiment_name)
 
         self.addresses = []
         futures = []

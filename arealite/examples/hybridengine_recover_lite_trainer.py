@@ -196,10 +196,11 @@ def main_grpo():
         }
     })
 
-    batch_size = 8 #64
+    batch_size = 64
     group_size = 8
     model_path = "/storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/hf_ckpts/8604"
     max_prompt_len = 1024
+    seed = 42
     max_new_tokens = 15360
     step_num = 1145
     epoch_num = 10
@@ -270,7 +271,7 @@ def main_grpo():
             RemoteHybridInferenceConfig(experiment_name=experiment_name, trial_name=trial_name, model_path=model_path,
                                         storage_path=storage_path,
                                         dp_size=allocate_mode.gen_dp_size, tp_size=allocate_mode.gen_tp_size,
-                                        pp_size=allocate_mode.gen_pp_size, engine_config=engine_config)),
+                                        pp_size=allocate_mode.gen_pp_size, seed=seed, engine_config=engine_config)),
         RolloutControllerConfig(experiment_name=experiment_name, trial_name=trial_name,
                                 allocation_mode=allocation_mode),
         scheduler,
