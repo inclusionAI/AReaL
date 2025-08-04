@@ -44,10 +44,14 @@ class RLVRWorkflow(RolloutWorkflow):
             return_attention_mask=False)
 
         n_samples = self.gconfig.n_samples
+        new_gconfig = self.gconfig.new(n_samples=1)
+        new_gconfig.stop_token_ids = self.gconfig.stop_token_ids
+        new_gconfig.max_new_tokens = self.gconfig.max_new_tokens
+        new_gconfig.greedy = self.gconfig.greedy
         req = LLMRequest(
             rid=uuid.uuid4().hex,
             input_ids=prompt_encodings["input_ids"],
-            gconfig=self.gconfig.new(n_samples=1),
+            gconfig=new_gconfig,
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
 
@@ -72,8 +76,6 @@ class RLVRWorkflow(RolloutWorkflow):
                 **data,
             )
             task_id = RL_TASKS.index(data["task"][0])
-            for k, v in range(data):
-                print(f"[RLVRWorkflow] data: key={k}, value={v}")
             print(f"[RLVRWorkflow] prompt: {text}, completion: {completion}, solutions: {data["solutions"][0]}")
             res = dict(
                 # unsqueeze to add an additional batch dimension
