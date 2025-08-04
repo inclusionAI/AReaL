@@ -218,38 +218,38 @@ class DistributedTrainController(TrainController):
 
         return results
 
-    @torch.no_grad
-    def compute_logprobs_with_distributed(self, input_: DistributedBatchMemory) -> Tensor:
-        """Update the model with a batch of data and a loss function."""
-        logger.info(f"start to compute_logprobs_with_distributed")
-        batches = input_.split(self.dp_size)
-        dp_world_size = self.tp_size * self.pp_size
-        assert len(self.workers) % dp_world_size == 0
-        futures = []
-        results = []
-        with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
-            for index, worker in enumerate(self.workers):
-                batch_index = index // dp_world_size
-                batch_data = batches[batch_index]
-                futures.append(executor.submit(
-                    self.scheduler.call_engine,
-                    worker.id,
-                    "compute_logprobs_with_distributed",
-                    batch_data
-                ))
-            try:
-                for future in as_completed(futures):
-                    result = future.result()
-                    results.append(result)
-            except KeyboardInterrupt:
-                for f in futures:
-                    f.cancel()
-                raise
-
-        # cat tensor from dp head
-        tensors_from_dp_heads = results[::dp_world_size]
-        concatenated_result = torch.cat(tensors_from_dp_heads, dim=0)
-        return concatenated_result
+    # @torch.no_grad
+    # def compute_logprobs_with_distributed(self, input_: DistributedBatchMemory) -> Tensor:
+    #     """Update the model with a batch of data and a loss function."""
+    #     logger.info(f"start to compute_logprobs_with_distributed")
+    #     batches = input_.split(self.dp_size)
+    #     dp_world_size = self.tp_size * self.pp_size
+    #     assert len(self.workers) % dp_world_size == 0
+    #     futures = []
+    #     results = []
+    #     with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
+    #         for index, worker in enumerate(self.workers):
+    #             batch_index = index // dp_world_size
+    #             batch_data = batches[batch_index]
+    #             futures.append(executor.submit(
+    #                 self.scheduler.call_engine,
+    #                 worker.id,
+    #                 "compute_logprobs_with_distributed",
+    #                 batch_data
+    #             ))
+    #         try:
+    #             for future in as_completed(futures):
+    #                 result = future.result()
+    #                 results.append(result)
+    #         except KeyboardInterrupt:
+    #             for f in futures:
+    #                 f.cancel()
+    #             raise
+    #
+    #     # cat tensor from dp head
+    #     tensors_from_dp_heads = results[::dp_world_size]
+    #     concatenated_result = torch.cat(tensors_from_dp_heads, dim=0)
+    #     return concatenated_result
 
     @torch.no_grad()
     def eval_batch(

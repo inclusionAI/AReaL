@@ -34,7 +34,7 @@ def main_grpo():
 
     rollout = DistributedRolloutController(
         RemoteSGLangEngine(InferenceEngineConfig(experiment_name="arealite", trial_name="sync")),
-        RolloutControllerConfig(experiment_name="arealite", trial_name="sync", allocation_mode="sglang.d4t8p1+d32t1p1"),
+        RolloutControllerConfig(experiment_name="arealite", trial_name="sync", allocation_mode="gen:d4t8p1,train:d32t1p1"),
         scheduler,
     )
     # engine initialize

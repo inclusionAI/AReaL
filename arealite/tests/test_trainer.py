@@ -113,12 +113,12 @@ def main_grpo():
 
     rollout = DistributedRolloutController(
         RemoteSGLangEngine(InferenceEngineConfig(experiment_name=experiment_name, trial_name=trial_name)),
-        RolloutControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode="sglang.d4t8p1+d32t1p1"),
+        RolloutControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode="gen:d4t8p1,train:d32t1p1"),
         scheduler,
     )
     actor = DistributedTrainController(
         RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name=experiment_name, trial_name=trial_name)),
-        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode="sglang.d4t8p1+d32t1p1"),
+        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode="gen:d4t8p1,train:d32t1p1"),
         scheduler,
     )
     # engine initialize

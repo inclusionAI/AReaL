@@ -132,7 +132,7 @@ remote_megatron_config = {
     "overlap_grad_reduce": True,
     "overlap_p2p_comm": True,
     "overlap_param_gather": False,
-    "pipeline_model_parallel_size": 1,
+    "pipeline_model_parallel_size": 4,
     "position_embedding_type": "rope",
     "qk_layernorm": True,
     "recompute_granularity": "full",
@@ -170,7 +170,7 @@ remote_megatron_config = {
 
 def main_grpo():
     experiment_name = "arealite-mini"
-    trial_name = "helloworld-64x8-0801-2"
+    trial_name = "helloworld-64x8-0801-0"
 
     # init controller
     scheduler = AsystemScheduler({

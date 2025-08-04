@@ -58,14 +58,14 @@ def main_grpo():
     rollout = DistributedRolloutController(
         RemoteSGLangEngine(rollout_config),
         RolloutControllerConfig(
-            experiment_name="arealite", trial_name="async", allocation_mode="sglang.d1t8p1+d1t8p1"
+            experiment_name="arealite", trial_name="async", allocation_mode="gen:d1t8p1,train:d1t8p1"
         ),
         scheduler,
     )
     actor = DistributedTrainController(
         RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="arealite", trial_name="async")),
         TrainControllerConfig(
-            experiment_name="arealite", trial_name="async", allocation_mode="sglang.d1t8p1+d1t8p1"
+            experiment_name="arealite", trial_name="async", allocation_mode="gen:d1t8p1,train:d1t8p1"
         ),
         scheduler,
     )
