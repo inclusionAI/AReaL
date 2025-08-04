@@ -24,7 +24,6 @@ def reward_fn(
 
     print(f"solutions: {solutions}, completion: {completion}, query_id: {query_id}", flush=True)
     labels = math_verify([solutions], [completion], [query_id])
-    print(f"ret:{labels}")
     return labels[0]
 
 

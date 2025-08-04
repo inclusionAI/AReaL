@@ -49,7 +49,7 @@ class RemoteMegatronEngine(TrainEngine):
         self.config = config
 
         self.megatron_addr = None
-        self.global_step = 0
+        self.global_step = config.global_step
         self.global_rank = 0
 
         # initialization

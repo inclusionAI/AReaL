@@ -65,9 +65,9 @@ class StatsLogger:
         if dist.is_initialized() and dist.get_rank() != 0:
             return
         self.info(
-            f"Epoch {epoch+1}/{self.ft_spec.total_train_epochs} "
-            f"Step {step+1}/{self.ft_spec.steps_per_epoch} "
-            f"Train step {global_step + 1}/{self.ft_spec.total_train_steps} done."
+            f"Epoch {epoch}/{self.ft_spec.total_train_epochs} "
+            f"Step {step}/{self.ft_spec.steps_per_epoch} "
+            f"Train step {global_step}/{self.ft_spec.total_train_steps} done."
         )
         self.info("Stats:")
         self.print_stats(data)

@@ -71,9 +71,10 @@ class RLVRWorkflow(RolloutWorkflow):
                 completion_ids=resp.output_tokens,
                 **data,
             )
-            # task_id = RL_TASKS.index(data["task"])
-            print(f"[RLVRWorkflow] data: {data}")
-            task_id = 0
+            task_id = RL_TASKS.index(data["task"][0])
+            for k, v in range(data):
+                print(f"[RLVRWorkflow] data: key={k}, value={v}")
+            print(f"[RLVRWorkflow] prompt: {text}, completion: {completion}, solutions: {data["solutions"][0]}")
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])

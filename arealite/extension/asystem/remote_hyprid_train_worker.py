@@ -49,7 +49,7 @@ class RemoteHypridTrainWorker(TrainEngine):
         self.config = config
 
         self.megatron_addr = None
-        self.global_step = 0
+        self.global_step = config.global_step
         self.global_rank = 0
 
         # initialization
@@ -271,15 +271,15 @@ class RemoteHypridTrainWorker(TrainEngine):
 
         # 3、保存模型
         # TODO: hardcode, remove this dave logic to trainer
-        self.save(SaveLoadMeta(
-            path=f"/storage/openpsi/checkpoints/{self.config.experiment_name}/{self.config.trial_name}",
-            weight_format="huggingface",
-            global_step=self.global_step,
-            with_optim=True,
-            tokenizer=None,
-            base_model_path=None,
-        ))
-        logger.info(f"[RemoteHypridTrainWorker] Train save hf exec success, global_step: {self.global_step}.")
+        # self.save(SaveLoadMeta(
+        #     path=f"/storage/openpsi/checkpoints/{self.config.experiment_name}/{self.config.trial_name}",
+        #     weight_format="huggingface",
+        #     global_step=self.global_step,
+        #     with_optim=True,
+        #     tokenizer=None,
+        #     base_model_path=None,
+        # ))
+        # logger.info(f"[RemoteHypridTrainWorker] Train save hf exec success, global_step: {self.global_step}.")
 
         # 4. 更新global_step
         self.global_step += 1

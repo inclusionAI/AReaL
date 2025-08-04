@@ -699,7 +699,12 @@ class RemoteMegatronEngineConfig(TrainEngineConfig):
             "help": "Maximum tokens per micro-batch. When set, n_mbs becomes the minimum number of micro-batches",
         },
     )
-    
+    global_step: int = field(
+        default=0,
+        metadata={
+            "help": "global step for recover",
+        },
+    )
 
 def load_expr_config(argv: List[str], config_cls) -> Tuple[BaseExperimentConfig, str]:
     parser = argparse.ArgumentParser()

@@ -1,12 +1,14 @@
 import resource
 import sys
 import time
+import os
+import shutil
 
 import torch
 from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from arealite.api.cli_args import load_expr_config, BaseExperimentConfig, InferenceEngineConfig, TrainEngineConfig, \
+from arealite.api.cli_args import SaverConfig, \
     RolloutControllerConfig, TrainControllerConfig, RemoteMegatronEngineConfig, StatsLoggerConfig, WandBConfig, \
     RemoteHybridInferenceConfig
 from arealite.api.io_struct import FinetuneSpec, AllocationMode
@@ -14,9 +16,6 @@ from arealite.controller.rollout_controller import DistributedRolloutController
 from arealite.controller.train_controller import DistributedTrainController
 from arealite.extension.asystem.remote_hybrid_inference_worker import RemoteHybridInferenceWorker
 from arealite.extension.asystem.remote_hyprid_train_worker import RemoteHypridTrainWorker
-from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronEngine
-from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangEngine
-from arealite.scheduler.local import LocalScheduler
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.utils.stats_logger import StatsLogger
 from arealite.workflow.rlvr import RLVRWorkflow
@@ -25,10 +24,10 @@ from realhf.api.core.data_api import load_hf_tokenizer
 from arealite.api.engine_api import WeightUpdateMeta
 from arealite.extension.asystem.math_reward import reward_fn
 from arealite.scheduler.asystem import AsystemScheduler
-import os
-import shutil
+from arealite.utils.recover import Recover
 
 from realhf.base import logging, stats_tracker
+
 
 def clear_dir(path):
     if os.path.exists(path):
@@ -38,6 +37,7 @@ def clear_dir(path):
                 os.unlink(file_path)
             elif os.path.isdir(file_path):
                 shutil.rmtree(file_path)
+
 
 logger = logging.getLogger("Trainer")
 
@@ -170,7 +170,7 @@ remote_megatron_config = {
 
 def main_grpo():
     experiment_name = "arealite-mini"
-    trial_name = "helloworld-64x8-0801-2"
+    trial_name = "helloworld-recover-16x8"
 
     # init controller
     scheduler = AsystemScheduler({
@@ -211,13 +211,9 @@ def main_grpo():
         }
     })
 
-    dataset = load_dataset("json",
-                           data_files="/storage/dataset/nlp/areal/moe_lite_math_0527_merge_train_areal.jsonl")
-    train_dataset = dataset['train']
-    dataloader = StatefulDataLoader(train_dataset, batch_size=1)
-    batch_size = 64
+    batch_size = 8 #64
     group_size = 8
-    MODEL_PATH = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe-mini-v2-e256-0627-fp8-32k-constant-merge-pack-merge-mean_w8/sglang_iter_0011770"
+    model_path = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe-mini-v2-e256-0627-fp8-32k-constant-merge-pack-merge-mean_w8/sglang_iter_0011770"
     max_prompt_len = 1024
     max_new_tokens = 15360
     step_num = 1145
@@ -226,29 +222,79 @@ def main_grpo():
     os.environ['WANDB_API_KEY'] = 'local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe'
     os.environ["WANDB_BASE_URL"] = "https://slurm.alipay.com"
     deploy_mode = "separation"
-    allocation_mode = "sglang.d4t8p1+d32t1p1"
+    allocation_mode = "sglang.d1t8p1+d8t1p1"
     allocate_mode = AllocationMode.from_str(allocation_mode)
     storage_path = "/storage/openpsi/checkpoints/{experiment_name}/{trial_name}".format(
         experiment_name=experiment_name, trial_name=trial_name)
 
+    tokenizer = load_hf_tokenizer(model_path)
+    dataset = load_dataset("json",
+                           data_files="/storage/dataset/nlp/areal/moe_lite_math_0527_merge_train_areal.jsonl")
+    train_dataset = dataset['train']
+    train_dataset = train_dataset.filter(lambda x: len(tokenizer.encode(x["prompt"])) <= max_prompt_len)
+    dataloader = StatefulDataLoader(train_dataset, batch_size=1)
+
+    ############################## recover #########################################
+    recover_meta_info_path = ""
+    enable_recover = True
+    freq_epochs = 1
+    freq_steps = 1
+    freq_secs = None
+
+    recover_cfg = SaverConfig(
+        experiment_name=experiment_name,
+        trial_name=trial_name,
+        fileroot="/storage/openpsi",
+        freq_epochs=freq_epochs,
+        freq_steps=freq_steps,
+        freq_secs=freq_secs,
+    )
+    can_recover = False
+    recover_epoch = 0
+    recover_step = 0
+    if recover_meta_info_path != "" and enable_recover:
+        can_recover, recover_meta_info = Recover.load(recover_meta_info_path)
+
+    if can_recover:
+        recover_epoch = recover_meta_info.epoch
+        recover_global_step = recover_meta_info.global_step + 1
+        recover_step = recover_meta_info.epoch_step + 1
+        logger.info(
+            f"🚀[Trainer] Recover success! global_step: {recover_meta_info.global_step}, epoch: {recover_meta_info.epoch}, step: {recover_meta_info.epoch_step}, "
+            f"start new exp: global_step: {recover_global_step}, cur_step: {recover_step}")
+    recover = Recover(config=recover_cfg,
+                      ft_spec=FinetuneSpec(total_train_epochs=epoch_num,
+                                           dataset_size=step_num * batch_size,
+                                           train_batch_size=batch_size))
+    if can_recover:
+        recover.load_ctl_states(recover_meta_info)
+        dataloader.load_state_dict(recover_meta_info.dataloader_state)
+        remote_megatron_config["load"] = recover_meta_info.checkpoint_path
+    ##################################################################################
+
     stats_logger = StatsLogger(StatsLoggerConfig(
-        experiment_name=experiment_name, trial_name=trial_name,fileroot="/storage/openpsi/experiments",
+        experiment_name=experiment_name, trial_name=trial_name, fileroot="/storage/openpsi/experiments",
         wandb=WandBConfig(
             mode="online",
         ),
 
-    ), FinetuneSpec(total_train_epochs=epoch_num, dataset_size=step_num * batch_size ,train_batch_size=batch_size))
-    stats_logger.info(f"total_epochs={epoch_num} step_per_epoch={step_num}")
+    ), FinetuneSpec(total_train_epochs=epoch_num, dataset_size=step_num * batch_size, train_batch_size=batch_size))
+    stats_logger.info(f"[Trainer] total_epochs={epoch_num} step_per_epoch={step_num}")
 
     rollout = DistributedRolloutController(
-        RemoteHybridInferenceWorker(RemoteHybridInferenceConfig(experiment_name=experiment_name, trial_name=trial_name, model_path=MODEL_PATH, storage_path=storage_path,
-                                                                dp_size=allocate_mode.gen_dp_size, tp_size=allocate_mode.gen_tp_size, pp_size=allocate_mode.gen_pp_size, engine_config=engine_config)),
-        RolloutControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
+        RemoteHybridInferenceWorker(
+            RemoteHybridInferenceConfig(experiment_name=experiment_name, trial_name=trial_name, model_path=model_path,
+                                        storage_path=storage_path,
+                                        dp_size=allocate_mode.gen_dp_size, tp_size=allocate_mode.gen_tp_size,
+                                        pp_size=allocate_mode.gen_pp_size, engine_config=engine_config)),
+        RolloutControllerConfig(experiment_name=experiment_name, trial_name=trial_name,
+                                allocation_mode=allocation_mode),
         scheduler,
     )
     actor = DistributedTrainController(
         RemoteHypridTrainWorker(RemoteMegatronEngineConfig(experiment_name=experiment_name, trial_name=trial_name,
-                                                           loss_configs=loss_configs, remote_megatron_config=remote_megatron_config)),
+                                                           loss_configs=loss_configs,
+                                                           remote_megatron_config=remote_megatron_config)),
         TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
         scheduler,
     )
@@ -256,7 +302,6 @@ def main_grpo():
     rollout.initialize()
     actor.initialize(colocation_with=rollout if deploy_mode == "colocation" else None)
 
-    tokenizer = load_hf_tokenizer(MODEL_PATH)
     gconfig = GenerationHyperparameters(
         max_new_tokens=max_new_tokens, greedy=False, n_samples=group_size
     )
@@ -265,28 +310,25 @@ def main_grpo():
         reward_fn=reward_fn,
         gconfig=gconfig,
         # tokenizer=tokenizer,
-        tokenizer_path=MODEL_PATH
+        tokenizer_path=model_path,
     )
 
-    for epoch in range(epoch_num):
+    for epoch in range(recover_epoch, epoch_num):
         data_generator = iter(dataloader)
-        for step in range(step_num):
+        start_step = recover_step + 1 if can_recover and epoch == recover_epoch else 0
+        for step in range(start_step, step_num):
             with (
                 stats_tracker.record_timing("e2e"),
                 stats_tracker.scope("grpo_actor"),
             ):
                 batch_data = []
-                while len(batch_data) < batch_size:
-                    batch = next(data_generator)
-                    prompt = batch["prompt"] if isinstance(batch, dict) else batch[0]["prompt"]
-                    tokenized = tokenizer(prompt, truncation=False, return_length=True)
-                    if tokenized["length"][0] <= max_prompt_len:
-                        batch_data.append(batch)
-                    else:
-                        logger.warning(f"Ignored prompt with length {tokenized['length'][0]} > {max_prompt_len}")
-
-                if len(batch_data) < batch_size:
-                    break
+                for _ in range(batch_size):
+                    try:
+                        batch = next(data_generator)
+                    except StopIteration:
+                        data_generator = iter(dataloader)
+                        batch = next(data_generator)
+                    batch_data.append(batch)
 
                 weight_update_config = WeightUpdateMeta(
                     type="disk",
@@ -356,6 +398,16 @@ def main_grpo():
                     actor.train_distributed_batch(dis_batch)
                     logger.info(f"train succeeded, step: {step}, epoch: {epoch}")
 
+                    with stats_tracker.record_timing("recover_save"):
+                        if recover.freq_ctl.check(
+                            epochs=int(step == recover.ft_spec.steps_per_epoch - 1), steps=1
+                        ):
+                            logger.info(
+                                f"[Trainer] start save recover info, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}")
+                            recover.save(actor, epoch, step, global_step, dataloader.state_dict())
+                            logger.info(
+                                f"[Trainer] recover save success, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}")
+
                     with (
                         stats_tracker.record_timing("notify_train_end_event"),
                         stats_tracker.scope("train"),
@@ -369,12 +421,8 @@ def main_grpo():
 
             global_step += 1
 
-
     stats_logger.close()
-
 
 
 if __name__ == "__main__":
     main_grpo()
-
-
