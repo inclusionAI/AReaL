@@ -157,7 +157,7 @@ class RemoteHypridTrainWorker(TrainEngine):
                 target_url = f"http://{self.megatron_addr}/update_weights"
                 headers = {"Content-Type": "application/json"}
                 response = requests.post(
-                    target_url, data=json.dumps({}), headers=headers, timeout=7200
+                        target_url, data=json.dumps({"path": meta.path}), headers=headers, timeout=7200
                 )
                 if response.status_code == 200:
                     logger.info(

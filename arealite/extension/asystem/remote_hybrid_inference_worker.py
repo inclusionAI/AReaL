@@ -418,7 +418,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 try:
                     response = requests.post(
                         f"http://{addr}/update_weights",
-                        json={},
+                        json={"path": str(meta.path)},
                         timeout=self.config.request_timeout
                     )
                     if response.status_code == 200:

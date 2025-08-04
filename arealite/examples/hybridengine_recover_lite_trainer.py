@@ -41,6 +41,21 @@ def clear_dir(path):
 
 logger = logging.getLogger("Trainer")
 
+weight_update_type = "disk"  # nccl
+
+if weight_update_type == "nccl":
+    from asystem_runtime.weights_exchange.meta_server import start_meta_server
+    host, port = start_meta_server()
+    meta_server_addr = f"{host}:{port}"
+    print(f'meta_server_addr {meta_server_addr}')
+
+    asystem_hybrid_config = {
+        "meta_server_addr": meta_server_addr,
+        "weights_exchange_comm_backend": "nccl",
+        "weights_validation_steps": 0,
+        "enable_debug_mode": True,
+    }
+
 engine_config = {
     "attention_backend": "triton",
     "disable_custom_all_reduce": True,
@@ -49,6 +64,9 @@ engine_config = {
     "triton_attention_num_kv_splits": 16,
     "disable_shared_experts_fusion": True,
 }
+if weight_update_type == "nccl":
+    engine_config['asystem_hybrid_config'] = asystem_hybrid_config
+
 
 loss_configs = {
     "kl_ctl": 0.0,
@@ -186,6 +204,10 @@ megatron_wrap_policy = {
     "reward_output_scaling": 0.5,
     "reward_output_bias": -1.0
 }
+if weight_update_type == "nccl":
+    remote_megatron_config['asystem_train_config'] = asystem_hybrid_config
+
+
 
 def main_grpo():
     experiment_name = "arealite-lite"
@@ -370,7 +392,7 @@ def main_grpo():
                     batch_data.append(batch)
 
                 weight_update_config = WeightUpdateMeta(
-                    type="disk",
+                    type=weight_update_type,
                     path=f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}",
                     alloc_mode=None,
                     comm_backend=None,
@@ -381,9 +403,9 @@ def main_grpo():
                     stats_tracker.scope("weights_update"),
                 ):
                     logger.info(f"start to update weight, step: {step}, epoch: {epoch}")
+                    weight_update_config.path = f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}/{step}"
                     if weight_update_config.type == "disk":
                         actor.upload_weights(weight_update_config)
-                        weight_update_config.path = f"/storage/openpsi/checkpoints/{experiment_name}/{trial_name}/{step}"
                         rollout.update_weights(weight_update_config)
                         logger.info(f"disk mode update weight succeeded, step: {step}, epoch: {epoch}")
                         clear_dir(weight_update_config.path)
