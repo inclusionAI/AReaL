@@ -150,9 +150,28 @@ class RemoteHypridTrainWorker(TrainEngine):
 
     def upload_weights(self, meta: WeightUpdateMeta):
         if meta.type == "nccl":
-            if not self.weight_update_group_initialized:
-                self.init_distributed_weight_update(meta)
-            self.update_weights_from_distributed()
+            try:
+                logger.info(
+                    f"[RemoteHypridTrainWorker] upload_weights begin send request to megatron server, "
+                    f"target_url: http://{self.megatron_addr}/update_weights")
+                target_url = f"http://{self.megatron_addr}/update_weights"
+                headers = {"Content-Type": "application/json"}
+                response = requests.post(
+                    target_url, data=json.dumps({}), headers=headers, timeout=7200
+                )
+                if response.status_code == 200:
+                    logger.info(
+                        f"[RemoteHypridTrainWorker] upload_weights success")
+                else:
+                    raise ValueError(
+                        f"[RemoteHypridTrainWorker] Failed to upload weights. "
+                        f"Status code: {response.status_code}, Response: {response.text}"
+                    )
+            except requests.exceptions.Timeout:
+                raise ValueError("[RemoteHypridTrainWorker] Upload weights request timeout!")
+            except requests.exceptions.RequestException as e:
+                raise ValueError(
+                    f"[RemoteHypridTrainWorker] Send upload weights request, an error occurred: {e}")
         elif meta.type == "disk":
             logger.info(
                 f"[RemoteHypridTrainWorker] upload_weights save hf model to disk, path: {meta.path}, step: {self.global_step}.")
@@ -708,122 +727,3 @@ def pack_prompt_mask(prompt_mask: torch.Tensor, seqlen: torch.Tensor) -> torch.T
         valid_len = seqlen[i].item()
         packed.append(prompt_mask[i, :valid_len])
     return torch.cat(packed, dim=0)
-
-
-remote_megatron_config = {
-    "adam_beta1": 0.9,
-    "adam_beta2": 0.95,
-    "adam_eps": 1.0e-08,
-    "adaptive_layer_bias_update_strategy": "sqrt",
-    "add_bias_linear": False,
-    "apply_rope_fusion": True,
-    "async_save": False,
-    "attention_backend": "flash",
-    "attention_dropout": 0.0,
-    "attention_softmax_in_fp32": True,
-    "auto_detect_ckpt_format": True,
-    "bf16": True,
-    "clip_grad": 1.0,
-    "context_parallel_size": 1,
-    "cp_comm_type": "p2p",
-    "cross_entropy_loss_fusion": False,
-    "distributed_backend": "nccl",
-    "distributed_timeout_minutes": 600,
-    "enable_one_logger": False,
-    "expert_model_parallel_size": 8,
-    "expert_tensor_parallel_size": 1,
-    "ffn_hidden_size": 5120,
-    "first_k_dense_replace": 1,
-    "global_batch_size": 512,
-    "global_step": 1,
-    "gradient_accumulation_fusion": True,
-    "group_query_attention": True,
-    "hidden_dropout": 0.0,
-    "hidden_size": 2048,
-    "init_method_std": 0.006,
-    "load": "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe-mini-v2-e256-0627-fp8-32k-constant-merge-pack-merge-mean_w8",
-    "log_loss_scale_to_tensorboard": False,
-    "log_num_zeros_in_grad": True,
-    "log_params_norm": True,
-    "log_throughput": True,
-    "log_timers_to_tensorboard": True,
-    "log_validation_ppl_to_tensorboard": True,
-    "lr": 3.0e-06,
-    "lr_decay_style": "constant",
-    "lr_warmup_iters": 10,
-    "make_vocab_size_divisible_by": 128,
-    "masked_softmax_fusion": True,
-    "max_position_embeddings": 16384,
-    "micro_batch_size": 1,
-    "moe_ffn_hidden_size": 512,
-    "moe_grouped_gemm": True,
-    "moe_layer_freq": [
-        0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    ],
-    "moe_per_layer_logging": True,
-    "moe_permute_fusion": True,
-    "moe_router_bias_update_rate": 0.001,
-    "moe_router_dtype": "fp32",
-    "moe_router_enable_expert_bias": True,
-    "moe_router_group_topk": 4,
-    "moe_router_num_groups": 8,
-    "moe_router_score_function": "sigmoid",
-    "moe_router_topk": 8,
-    "moe_router_topk_scaling_factor": 2.5,
-    "moe_shared_expert_intermediate_size": 512,
-    "moe_shared_expert_overlap": True,
-    "moe_token_dispatcher_type": "alltoall",
-    "norm_epsilon": 1.0e-06,
-    "normalization": "RMSNorm",
-    "num_attention_heads": 16,
-    "num_experts": 256,
-    "num_layers": 20,
-    "num_query_groups": 4,
-    "optim_normhead_fwd_alltoall": True,
-    "optimizer": "adam",
-    "overlap_grad_reduce": True,
-    "overlap_p2p_comm": True,
-    "overlap_param_gather": False,
-    "pipeline_model_parallel_size": 4,
-    "position_embedding_type": "rope",
-    "qk_layernorm": True,
-    "recompute_granularity": "full",
-    "recompute_method": "uniform",
-    "recompute_num_layers": 5,
-    "rotary_base": 600000,
-    "rotary_percent": 0.5,
-    "save": "/mnt/asystem-s3/common/users/senlin.zsl/experiments/2025-07-19_14-32-43/experiments/models/mcore_ckpt_32/asystem_moe_mini",
-    "save_interval": 1,
-    "seed": 42,
-    "seq_length": 16384,
-    "sequence_parallel": True,
-    "skip_casting_dtype_for_param_pattern": "^expert_bias$|.+\\.expert_bias$",
-    "swiglu": True,
-    "tensor_model_parallel_size": 1,
-    "tensorboard_log_interval": 1,
-    "tokenizer_model": "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/moe-mini-v2-e256-0627-fp8-32k-constant-merge-pack-merge-mean_w8/sglang_iter_0011770",
-    "tokenizer_type": "HuggingFaceTokenizer",
-    "train_iters": 100000,
-    "transformer_xl": False,
-    "unidirectional": True,
-    "untie_embeddings_and_output_weights": True,
-    "use_distributed_optimizer": True,
-    "use_flash_attn": True,
-    "use_init_chunk": True,
-    "use_mcore_models": True,
-    "use_norm_head": False,
-    "use_pack_lazy_loader": True,
-    "use_random_logits": True,
-    "use_rotary_position_embeddings": True,
-    "vocab_size": 157184,
-    "weight_decay": 0.01,
-}
-
-loss_configs = {
-    "kl_ctl": 0.0,
-    "adaptive_kl_target": 6,
-    "adaptive_kl_horizon": 10000,
-    "eps_clip": 0.2,
-    "temperature": 1,
-    "token_normalize_scope": "dp"
-}

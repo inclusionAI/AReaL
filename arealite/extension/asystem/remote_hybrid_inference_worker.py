@@ -412,16 +412,19 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             self.set_version(meta.model_version)
         else:
             load_timestamp = time.time_ns()
-            logger.info(f"[RemoteHybridInferenceWorkerer] Begin update weights from {meta.path}")
+            logger.info(f"[RemoteHybridInferenceWorkerer] Begin update weights.")
 
             def update_single_server(addr):
                 try:
                     response = requests.post(
                         f"http://{addr}/update_weights",
-                        json={"model_path": str(meta.path)},
+                        json={},
                         timeout=self.config.request_timeout
                     )
-                    response.raise_for_status()
+                    if response.status_code == 200:
+                        logger.info(f"[RemoteHybridInferenceWorker] Successfully updated weights on {addr}")
+                    else:
+                        raise ValueError(f"Unexpected status code: {response.status_code}")
                     res = response.json()
                     assert res["success"]
                 except Exception as e:
