@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from typing import Any, Optional
 
@@ -7,6 +8,7 @@ from litellm import completion, completion_cost
 from litellm.caching.caching import Cache
 from litellm.main import ModelResponse, Usage
 from loguru import logger
+from dotenv import load_dotenv
 
 from tau2.config import (
     DEFAULT_LLM_CACHE_TYPE,
@@ -31,7 +33,17 @@ from tau2.data_model.message import (
 from tau2.environment.tool import Tool
 from tau2.utils.display import MarkdownDisplay
 
-# litellm._turn_on_debug()
+res = load_dotenv()
+if not res:
+    logger.warning("No .env file found")
+
+
+VLLM_API_BASE = os.getenv("HOSTED_VLLM_API_BASE", "http://127.0.0.1:8000/v1")
+OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434")
+print(f"VLLM_API_BASE: {VLLM_API_BASE}")
+print(f"OLLAMA_API_BASE: {OLLAMA_API_BASE}")
+
+litellm._turn_on_debug()
 
 if USE_LANGFUSE:
     # set callbacks
@@ -178,6 +190,34 @@ def to_litellm_messages(messages: list[Message]) -> list[dict]:
     return litellm_messages
 
 
+def check_self_hosted_model(model: str) -> tuple[bool, Optional[str], Optional[str]]:
+    """
+    Checks if the model is run on vLLM or ollama.
+    Those require base_api to be set as an environment variable.
+    Model name format:
+    vLLM:
+    - hosted_vllm/<model_name>
+    Ollama:
+    - ollama/<model_name>
+
+    Returns:
+        is_self_hosted: True if the model is self-hosted, False otherwise.
+        platform: The platform of the model.
+        api_base: The API base of the model.
+    """
+    vllm_prefix = "hosted_vllm"
+    ollama_prefix = "ollama"
+    if model.startswith(vllm_prefix):
+        if VLLM_API_BASE is None:
+            raise ValueError("HOSTED_VLLM_API_BASE is not set. Set to 127.0.0.1:8000/v1 if you are running vLLM locally with default settings.")
+        return True, "vllm", VLLM_API_BASE
+    elif model.startswith(ollama_prefix):
+        if OLLAMA_API_BASE is None:
+            raise ValueError("OLLAMA_API_BASE is not set. Set to http://127.0.0.1:11434 if you are running ollama locally with default settings.")
+        return True, "ollama", OLLAMA_API_BASE
+    else:
+        return False, None, None
+
 def generate(
     model: str,
     messages: list[Message],
@@ -202,6 +242,9 @@ def generate(
 
     if model.startswith("claude") and not ALLOW_SONNET_THINKING:
         kwargs["thinking"] = {"type": "disabled"}
+
+    _, _, api_base = check_self_hosted_model(model)
+
     litellm_messages = to_litellm_messages(messages)
     tools = [tool.openai_schema for tool in tools] if tools else None
     if not tools:
@@ -215,10 +258,11 @@ def generate(
             messages=litellm_messages,
             tools=tools,
             tool_choice=tool_choice,
+            api_base=api_base,
             **kwargs,
         )
     except Exception as e:
-        print(MarkdownDisplay.display_messages(messages))
+        # print(MarkdownDisplay.display_messages(messages))
         logger.error(e)
         raise e
     cost = get_response_cost(response)

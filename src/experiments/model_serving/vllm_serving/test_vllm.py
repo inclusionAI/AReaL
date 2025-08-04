@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
 vLLM test script using litellm
-Usage: python test_vllm.py [MODEL_NAME]
+Usage: python test_vllm.py [--debug] [MODEL_NAME]
 """
 
+import argparse
+import os
 import sys
 from typing import Optional
 
@@ -17,10 +19,43 @@ from rich.text import Text
 # Configuration
 HOST = "127.0.0.1"
 PORT = 8000
-DEFAULT_MODEL = "Qwen/Qwen2.5-7B"
+VLLM_PREFIX = "hosted_vllm"
+DEFAULT_MODEL = "Qwen/Qwen2.5-7B-instruct"
+API_BASE = f"http://{HOST}:{PORT}"
+API_BASE_V1 = f"{API_BASE}/v1"
 
 # Initialize Rich console
 console = Console()
+
+
+def parse_arguments():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(
+        description="Test vLLM server with litellm",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python test_vllm.py                           # Use default model
+  python test_vllm.py Qwen/Qwen2.5-14B         # Test specific model
+  python test_vllm.py --debug                   # Enable debug mode with default model
+  python test_vllm.py --debug Qwen/Qwen2.5-14B  # Enable debug mode with specific model
+        """
+    )
+    
+    parser.add_argument(
+        "model_name",
+        nargs="?",
+        default=DEFAULT_MODEL,
+        help=f"Name of the model to test (default: {DEFAULT_MODEL})"
+    )
+    
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode for litellm"
+    )
+    
+    return parser.parse_args()
 
 
 def test_health_endpoint() -> bool:
@@ -28,7 +63,7 @@ def test_health_endpoint() -> bool:
     try:
         import requests
 
-        response = requests.get(f"http://{HOST}:{PORT}/health", timeout=5)
+        response = requests.get(f"{API_BASE}/health", timeout=5)
         return response.status_code == 200
     except Exception as e:
         console.print(f"[yellow]Health check failed: {e}[/yellow]")
@@ -40,12 +75,9 @@ def test_completion(
 ) -> Optional[dict]:
     """Test completion endpoint using litellm"""
     try:
-        # Configure litellm to use vLLM server
-        litellm.set_verbose = True
 
         # Create the model name for litellm
-        # Format: vllm/model_name@host:port
-        litellm_model_name = f"vllm/{model_name}@{HOST}:{PORT}"
+        litellm_model_name = f"{VLLM_PREFIX}/{model_name}"
 
         console.print(
             f"[blue]Testing completion with model:[/blue] {litellm_model_name}"
@@ -54,6 +86,7 @@ def test_completion(
         # Make the completion request
         response = completion(
             model=litellm_model_name,
+            # api_base=API_BASE_V1,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=50,
             temperature=0.7,
@@ -73,7 +106,7 @@ def test_chat_completion(
     """Test chat completion endpoint using litellm"""
     try:
         # Configure litellm to use vLLM server
-        litellm_model_name = f"vllm/{model_name}@{HOST}:{PORT}"
+        litellm_model_name = f"{VLLM_PREFIX}/{model_name}"
 
         console.print(
             f"[blue]Testing chat completion with model:[/blue] {litellm_model_name}"
@@ -82,6 +115,7 @@ def test_chat_completion(
         # Make the chat completion request
         response = completion(
             model=litellm_model_name,
+            api_base=API_BASE_V1,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": prompt},
@@ -104,7 +138,7 @@ def test_streaming_completion(
     """Test streaming completion endpoint using litellm"""
     try:
         # Configure litellm to use vLLM server
-        litellm_model_name = f"vllm/{model_name}@{HOST}:{PORT}"
+        litellm_model_name = f"{VLLM_PREFIX}/{model_name}"
 
         console.print(
             f"[blue]Testing streaming completion with model:[/blue] {litellm_model_name}"
@@ -113,6 +147,7 @@ def test_streaming_completion(
         # Make the streaming completion request
         response = completion(
             model=litellm_model_name,
+            api_base=API_BASE_V1,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=100,
             temperature=0.7,
@@ -135,12 +170,19 @@ def test_streaming_completion(
 
 def main():
     """Main function to run all tests"""
-    # Get model name from command line argument or use default
-    model_name = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
+    # Parse command line arguments
+    args = parse_arguments()
+    
+    if args.debug:
+        litellm._turn_on_debug()
+        console.print("[yellow]Debug mode enabled[/yellow]")
+
+    # Get model name from parsed arguments
+    model_name = args.model_name
 
     # Print header
     title = Text("vLLM Server Test Suite", style="bold blue")
-    subtitle = Text(f"Testing model: {model_name} at http://{HOST}:{PORT}", style="dim")
+    subtitle = Text(f"Testing model: {model_name} at {API_BASE}", style="dim")
     console.print(Panel(title + "\n" + subtitle, border_style="blue"))
     console.print()
 

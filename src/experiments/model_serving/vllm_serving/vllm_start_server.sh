@@ -12,7 +12,7 @@ LOG_FILE="$SCRIPT_DIR/.vllm_server.log"
 VENV_DIR="$SCRIPT_DIR/.venv"
 HOST=127.0.0.1
 PORT=8000
-DEFAULT_MODEL="Qwen/Qwen2.5-7B"
+DEFAULT_MODEL="Qwen/Qwen2.5-7B-instruct"
 
 # Get number of available GPUs
 get_gpu_count() {
@@ -27,6 +27,10 @@ get_gpu_count() {
 DEFAULT_TENSOR_PARALLEL_SIZE=$(get_gpu_count)
 DEFAULT_PIPELINE_PARALLEL_SIZE=1
 DEFAULT_DATA_PARALLEL_SIZE=1
+
+# Default tool settings
+DEFAULT_ENABLE_AUTO_TOOL_CHOICE=true
+DEFAULT_TOOL_CALL_PARSER="hermes"
 
 # Colors for output
 RED='\033[0;31m'
@@ -110,6 +114,8 @@ start_server() {
     local tensor_parallel_size=${2:-$DEFAULT_TENSOR_PARALLEL_SIZE}
     local pipeline_parallel_size=${3:-$DEFAULT_PIPELINE_PARALLEL_SIZE}
     local data_parallel_size=${4:-$DEFAULT_DATA_PARALLEL_SIZE}
+    local enable_auto_tool_choice=${5:-$DEFAULT_ENABLE_AUTO_TOOL_CHOICE}
+    local tool_call_parser=${6:-$DEFAULT_TOOL_CALL_PARSER}
     
     print_header "Starting vLLM server..."
     
@@ -141,10 +147,22 @@ start_server() {
     print_status "Tensor parallel size: $tensor_parallel_size"
     print_status "Pipeline parallel size: $pipeline_parallel_size"
     print_status "Data parallel size: $data_parallel_size"
+    print_status "Auto tool choice: $enable_auto_tool_choice"
+    print_status "Tool call parser: $tool_call_parser"
     print_status "Server will be available at: http://$HOST:$PORT"
     
     # Build vllm command with optional data parallelism
     local vllm_cmd="vllm serve $model_name --host $HOST --port $PORT --dtype auto --tensor-parallel-size $tensor_parallel_size --pipeline-parallel-size $pipeline_parallel_size"
+    
+    # Add tool choice options
+    if [ "$enable_auto_tool_choice" = "true" ]; then
+        vllm_cmd="$vllm_cmd --enable-auto-tool-choice"
+    fi
+    
+    # Add tool call parser
+    if [ -n "$tool_call_parser" ]; then
+        vllm_cmd="$vllm_cmd --tool-call-parser $tool_call_parser"
+    fi
     
     # Add data parallelism if specified and greater than 1
     if [ "$data_parallel_size" -gt 1 ]; then
@@ -222,11 +240,13 @@ restart_server() {
     local tensor_parallel_size=${2:-$DEFAULT_TENSOR_PARALLEL_SIZE}
     local pipeline_parallel_size=${3:-$DEFAULT_PIPELINE_PARALLEL_SIZE}
     local data_parallel_size=${4:-$DEFAULT_DATA_PARALLEL_SIZE}
+    local enable_auto_tool_choice=${5:-$DEFAULT_ENABLE_AUTO_TOOL_CHOICE}
+    local tool_call_parser=${6:-$DEFAULT_TOOL_CALL_PARSER}
     
     print_header "Restarting vLLM server..."
     stop_server
     sleep 2
-    start_server "$model_name" "$tensor_parallel_size" "$pipeline_parallel_size" "$data_parallel_size"
+    start_server "$model_name" "$tensor_parallel_size" "$pipeline_parallel_size" "$data_parallel_size" "$enable_auto_tool_choice" "$tool_call_parser"
 }
 
 # Function to show GPU information
@@ -261,6 +281,37 @@ check_status() {
             # Test health endpoint
             if curl -s "http://$HOST:$PORT/health" > /dev/null 2>&1; then
                 print_status "Server is responding to health checks"
+                
+                # Get running models
+                print_status "Checking running models..."
+                local models_response=$(curl -s "http://$HOST:$PORT/v1/models" 2>/dev/null)
+                if [ $? -eq 0 ] && [ -n "$models_response" ]; then
+                    # Extract model IDs using jq if available, otherwise use grep/sed
+                    if command -v jq &> /dev/null; then
+                        local model_ids=$(echo "$models_response" | jq -r '.data[].id' 2>/dev/null)
+                        if [ $? -eq 0 ] && [ -n "$model_ids" ]; then
+                            print_status "Running models:"
+                            echo "$model_ids" | while read -r model_id; do
+                                print_status "  - $model_id"
+                            done
+                        else
+                            print_warning "Failed to parse models response or no models found"
+                        fi
+                    else
+                        # Fallback to grep/sed if jq is not available
+                        local model_ids=$(echo "$models_response" | grep -o '"id":"[^"]*"' | sed 's/"id":"//g' | sed 's/"//g')
+                        if [ -n "$model_ids" ]; then
+                            print_status "Running models:"
+                            echo "$model_ids" | while read -r model_id; do
+                                print_status "  - $model_id"
+                            done
+                        else
+                            print_warning "Failed to parse models response or no models found"
+                        fi
+                    fi
+                else
+                    print_warning "Failed to retrieve models information"
+                fi
             else
                 print_warning "Server is running but not responding to health checks"
             fi
@@ -288,7 +339,7 @@ check_status() {
 show_usage() {
     echo "vLLM Server Management Script"
     echo ""
-    echo "Usage: $0 [COMMAND] [MODEL_NAME] [TENSOR_PARALLEL_SIZE] [PIPELINE_PARALLEL_SIZE] [DATA_PARALLEL_SIZE]"
+    echo "Usage: $0 [COMMAND] [MODEL_NAME] [TENSOR_PARALLEL_SIZE] [PIPELINE_PARALLEL_SIZE] [DATA_PARALLEL_SIZE] [ENABLE_AUTO_TOOL_CHOICE] [TOOL_CALL_PARSER]"
     echo ""
     echo "Commands:"
     echo "  start     Start the vLLM server"
@@ -303,16 +354,24 @@ show_usage() {
     echo "  TENSOR_PARALLEL_SIZE    Number of GPUs for tensor parallelism (default: $DEFAULT_TENSOR_PARALLEL_SIZE)"
     echo "  PIPELINE_PARALLEL_SIZE  Number of GPUs for pipeline parallelism (default: $DEFAULT_PIPELINE_PARALLEL_SIZE)"
     echo "  DATA_PARALLEL_SIZE      Number of GPUs for data parallelism (default: $DEFAULT_DATA_PARALLEL_SIZE)"
+    echo "  ENABLE_AUTO_TOOL_CHOICE Enable auto tool choice (true/false, default: $DEFAULT_ENABLE_AUTO_TOOL_CHOICE)"
+    echo "  TOOL_CALL_PARSER        Tool call parser to use (default: $DEFAULT_TOOL_CALL_PARSER)"
     echo ""
     echo "Examples:"
     echo "  $0 start"
     echo "  $0 start Qwen/Qwen2.5-7B"
     echo "  $0 start Qwen/Qwen2.5-7B 2 1 1"
     echo "  $0 start Qwen/Qwen2.5-7B 2 1 2"
-    echo "  $0 restart meta-llama/Llama-2-7b-chat-hf 4 2 1"
+    echo "  $0 start Qwen/Qwen3-8B 2 1 1 true hermes"
+    echo "  $0 start Qwen/Qwen3-8B 2 1 1 false json"
+    echo "  $0 restart meta-llama/Llama-2-7b-chat-hf 4 2 1 true hermes"
     echo "  $0 status"
     echo "  $0 gpu-info"
     echo "  $0 stop"
+    echo ""
+    echo "Tool Settings:"
+    echo "  Default auto tool choice: $DEFAULT_ENABLE_AUTO_TOOL_CHOICE"
+    echo "  Default tool call parser: $DEFAULT_TOOL_CALL_PARSER"
     echo ""
     echo "GPU Information:"
     echo "  Available GPUs: $(get_gpu_count)"
@@ -331,13 +390,13 @@ install_deps() {
 # Main script logic
 case "${1:-}" in
     start)
-        start_server "$2" "$3" "$4" "$5"
+        start_server "$2" "$3" "$4" "$5" "$6" "$7"
         ;;
     stop)
         stop_server
         ;;
     restart)
-        restart_server "$2" "$3" "$4" "$5"
+        restart_server "$2" "$3" "$4" "$5" "$6" "$7"
         ;;
     status)
         check_status
