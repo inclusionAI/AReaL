@@ -1,12 +1,14 @@
+import os
+from functools import partial
 from typing import List, Dict, Any
 from tensordict import TensorDict, stack
-from torch.compiler.config import job_id
 
 from arealite.api.engine_api import InferenceEngine
 from arealite.api.io_struct import WeightUpdateMeta, AllocationMode
 
 from arealite.api.cli_args import RolloutControllerConfig, RemoteHybridInferenceConfig
 from arealite.api.workflow_api import RolloutWorkflow
+from arealite.controller.utils import create_engine_with_retry
 from arealite.extension.asystem.remote_hybrid_inference_worker import RemoteHybridInferenceWorker, \
     RemoteHypidInferenceInitConfig
 from arealite.utils.data import concat_padded_tensors
@@ -14,8 +16,7 @@ from arealite.api.controller_api import RolloutController
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec, ScheduleStrategy
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangInitConfig, RemoteSGLangEngine
-from realhf.base import stats_tracker
-import logging
+from realhf.base import stats_tracker, logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
@@ -32,10 +33,13 @@ class DistributedRolloutController(RolloutController):
         inf_engine: InferenceEngine,
         config: RolloutControllerConfig,
         scheduler: Scheduler,
+        *args,
+        **kwargs
     ):
         super().__init__(inf_engine, config, scheduler)
         self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
         self.dp_world_size = self.allocate_mode.gen_world_size // self.allocate_mode.gen_dp_size
+        self.role = kwargs.get("role", "rollout")
 
     def _rpc_call(self, method, batches=None, *args, **kwargs):
         """
@@ -89,6 +93,7 @@ class DistributedRolloutController(RolloutController):
         return results
 
 
+
     def initialize(self, *args, **kwargs):
         """Initialize environments for distributed inference and load models."""
 
@@ -103,15 +108,17 @@ class DistributedRolloutController(RolloutController):
         target = kwargs.get("colocation_with")
         scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
 
+        arealite_path = os.environ["REAL_PACKAGE_PATH"]
+        engine_path = os.environ["ENGINE_PATH"]
         workerSpec = ContainerSpec(
             cpu=0,
             mem=0,
             gpu=scheduling.gpu,
-            cmd="bash /storage/openpsi/codes/dh183333/arealite-test-bugfix/AReaL/arealite/scheduler/scripts/launch-worker.sh",
+            cmd=f"bash {arealite_path}/arealite/scheduler/scripts/launch-worker.sh".format(arealite_path=arealite_path),
             env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
             portCount=1
         )
-        workerSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/dh183333/arealite-test-bugfix/AReaL"
+        workerSpec.env_vars["REAL_PACKAGE_PATH"] = arealite_path
         workerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
         workerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         workerSpec.env_vars["WORKER_TYPE"] = "rollout-worker"
@@ -121,11 +128,11 @@ class DistributedRolloutController(RolloutController):
             cpu=0,
             mem=0,
             gpu=0,
-            cmd="bash /storage/openpsi/codes/dh183333/arealite-test-bugfix/AReaL/arealite/scheduler/scripts/launch-hybrid-server.sh",
+            cmd=f"bash {arealite_path}/arealite/scheduler/scripts/launch-hybrid-server.sh".format(arealite_path=arealite_path),
             env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
             portCount=3
         )
-        engineSpec.env_vars["REAL_PACKAGE_PATH"] = "/storage/openpsi/codes/Asystem-HybridEngine"
+        engineSpec.env_vars["ENGINE_PACKAGE_PATH"] = engine_path
         engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13060133-20250724003115.sif"
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         engineSpec.env_vars["WORKER_TYPE"] = "rollout-engine"
@@ -142,7 +149,7 @@ class DistributedRolloutController(RolloutController):
 
         self.uid = self.scheduler.create_workers("rollout", scheduling_config)
 
-        self.workers = self.scheduler.get_workers("rollout", timeout=5 * 60)
+        self.workers = self.scheduler.get_workers("rollout", timeout=1800)
         # 如果1个实例跨机部署，返回的server_addrs是engine实例数的整数倍;e.g. dp2tp8pp2, 需要2个engine，返回了4个server_addrs， 只有index==0|2的才是真正的服务地址
         # 如果多个实例同机部署，返回的server_addrs和engine实例数等长
         worker_addrs = [
@@ -152,7 +159,6 @@ class DistributedRolloutController(RolloutController):
 
         futures = []
 
-        time.sleep(100)
         master_addr = ""
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             # for i in range(self.allocate_mode.gen_dp_size):
@@ -182,10 +188,13 @@ class DistributedRolloutController(RolloutController):
                     )
 
                 futures.append(executor.submit(
-                    self.scheduler.create_engine,
-                    master_worker.id,
-                    self.inf_engine,
-                    init_config,
+                    partial(
+                        create_engine_with_retry,
+                        self.scheduler.create_engine,
+                        master_worker.id,
+                        self.inf_engine,
+                        init_config,
+                            )
                 ))
             try:
                 for future in as_completed(futures):

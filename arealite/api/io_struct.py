@@ -67,6 +67,7 @@ class FinetuneSpec:
 class AllocationType(enum.Enum):
     DECOUPLED_vLLM = 1
     DECOUPLED_SGLANG = 2
+    CUSTOM = 3
 
 
 @dataclass
@@ -92,27 +93,55 @@ class AllocationMode:
 
     @property
     def train_tp_size(self) -> int:
+        if self.parallel_strat["train"]:
+            return self.parallel_strat["train"]["t"]
         return self.parallel_strat["*"]["t"]
 
     @property
     def train_pp_size(self) -> int:
+        if self.parallel_strat["train"]:
+            return self.parallel_strat["train"]["p"]
         return self.parallel_strat["*"]["p"]
 
     @property
     def train_dp_size(self) -> int:
+        if self.parallel_strat["train"]:
+            return self.parallel_strat["train"]["d"]
         return self.parallel_strat["*"]["d"]
 
     @property
     def train_world_size(self) -> int:
         return self.train_dp_size * self.train_pp_size * self.train_tp_size
 
+
+    @property
+    def reference_tp_size(self) -> int:
+        return self.parallel_strat["ref"]["t"]
+
+    @property
+    def reference_pp_size(self) -> int:
+        return self.parallel_strat["ref"]["p"]
+
+    @property
+    def reference_dp_size(self) -> int:
+        return self.parallel_strat["ref"]["d"]
+
+    @property
+    def reference_world_size(self) -> int:
+        return self.reference_dp_size * self.reference_pp_size * self.reference_tp_size
+
     @classmethod
     def from_str(cls, allocation_mode: str):
         alloc_decoupled = AllocationMode.extract_decoupled_alloc(allocation_mode)
-        if "vllm" in allocation_mode:
-            return cls(AllocationType.DECOUPLED_vLLM, alloc_decoupled)
-        elif "sglang" in allocation_mode:
-            return cls(AllocationType.DECOUPLED_SGLANG, alloc_decoupled)
+        alloc_key_value_custom_alloc = AllocationMode.extract_key_value_alloc(allocation_mode)
+        if alloc_decoupled:
+            if "vllm" in allocation_mode:
+                return cls(AllocationType.DECOUPLED_vLLM, alloc_decoupled)
+            elif "sglang" in allocation_mode:
+                return cls(AllocationType.DECOUPLED_SGLANG, alloc_decoupled)
+        if alloc_key_value_custom_alloc:
+            return cls(AllocationType.CUSTOM, alloc_key_value_custom_alloc)
+
         raise NotImplementedError(f"Failed to parse allocation: {allocation_mode}")
 
     @staticmethod
@@ -131,6 +160,27 @@ class AllocationMode:
                     z: c,
                 }
             }
+
+    @staticmethod
+    def extract_key_value_alloc(
+            allocation_mode: str,
+    ) -> Dict[str, Dict[str, int]] | None:
+        def parse_key_value_pairs(s: str):
+            pattern = re.compile(r"([^:,]+):([^:,]+)")
+            matches = pattern.findall(s)
+            if not matches:
+                return None
+            return {key: value for key, value in matches}
+
+        allocs = parse_key_value_pairs(allocation_mode)
+        if not allocs:
+            return
+        for k, v in allocs.items():
+            v = AllocationMode.extract_3d_alloc(v)
+            if not v:
+                return
+            allocs[k] = v["*"]
+        return allocs
 
     @staticmethod
     def extract_decoupled_alloc(allocation_mode: str) -> Dict | None:

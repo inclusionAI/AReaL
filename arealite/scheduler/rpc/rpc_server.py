@@ -9,6 +9,8 @@ from arealite.scheduler.utils import deserialize_with_metadata
 import cloudpickle
 
 
+logger = logging.getLogger("RPCServer")
+
 class EngineRPCServer(BaseHTTPRequestHandler):
     engine = None
 
@@ -21,7 +23,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 engine_obj, init_args = cloudpickle.loads(decompressed_data)
                 EngineRPCServer.engine = engine_obj
                 EngineRPCServer.engine.initialize(init_args)
-                print("Engine created and initialized on RPC server.")
+                logger.info("Engine created and initialized on RPC server.")
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"OK")
@@ -51,7 +53,6 @@ class EngineRPCServer(BaseHTTPRequestHandler):
         except Exception as e:
             import traceback
             logging.error(f"Exception in do_POST: {e}\n{traceback.format_exc()}")
-            print(f"Exception in do_POST: {e}\n{traceback.format_exc()}")
             self.send_response(500)
             self.end_headers()
             self.wfile.write(
