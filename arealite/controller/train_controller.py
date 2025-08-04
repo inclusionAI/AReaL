@@ -95,6 +95,8 @@ class DistributedTrainController(TrainController):
         self.workers = self.scheduler.get_workers(self.role, timeout=1800)
 
         server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
+        # FIXME: @chucai
+        time.sleep(60)
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             futures = [
                 executor.submit(

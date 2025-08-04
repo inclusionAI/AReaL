@@ -160,6 +160,8 @@ class DistributedRolloutController(RolloutController):
         futures = []
 
         master_addr = ""
+        # FIXME: @chucai
+        time.sleep(60)
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             # for i in range(self.allocate_mode.gen_dp_size):
             for index, worker in enumerate(self.workers):
