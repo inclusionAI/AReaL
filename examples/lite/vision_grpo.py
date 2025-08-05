@@ -18,7 +18,7 @@ from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
-from AReaL.areal.workflow.vision_rlvr import VisionRLVRWorkflow
+from areal.workflow.vision_rlvr import VisionRLVRWorkflow
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import stats_tracker
 
@@ -47,13 +47,6 @@ def main(args):
         processor=processor,
     )
 
-    train_size = len(train_dataset)
-    subset_size = int(1.0 * train_size)
-
-    random_indices = torch.randperm(train_size).tolist()[:subset_size]
-
-    subset_train_dataset = Subset(train_dataset, random_indices)
-
     valid_dataset = get_custom_dataset(
         path=config.valid_dataset.path,
         rank=rank,
@@ -64,7 +57,7 @@ def main(args):
     )
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
-        subset_train_dataset,
+        train_dataset,
         batch_size=config.train_dataset.batch_size // world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,

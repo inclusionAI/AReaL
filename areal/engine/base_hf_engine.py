@@ -22,6 +22,7 @@ from areal.api.engine_api import FinetuneSpec, TrainEngine
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
+    amend_position_ids_3d,
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
     pad_mb_list,
@@ -256,7 +257,11 @@ class BaseHFEngine(TrainEngine):
 
         if isinstance(input_, dict):
             input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
-        input_ = amend_position_ids(input_)
+        if self.is_vision_model:
+            rope_fn=self.model.model.get_rope_index
+            input_=amend_position_ids_3d(input_,rope_fn) 
+        else:
+            input_ = amend_position_ids(input_)
 
         mb_list = split_padded_tensor_dict_into_mb_list(input_, self.config.mb_spec)
         logger.info(

@@ -245,13 +245,11 @@ def pack_tensor_dict(data: TensorDict):
     total_length = int(cu_seqlens[-1].item())
     # Pack tensors
     packed_data = {}
-    packed_data["cu_seqlens"] = cu_seqlens
-    packed_data["max_seqlen"] = max_seqlen
     for key, value in data.items():
-        # if key == "attention_mask":
-        #     packed_data["cu_seqlens"] = cu_seqlens
-        #     packed_data["max_seqlen"] = max_seqlen
-        # # tensor and of shape [B, S, ...]
+        if key == "attention_mask":
+            packed_data["cu_seqlens"] = cu_seqlens
+            packed_data["max_seqlen"] = max_seqlen
+        # tensor and of shape [B, S, ...]
         if (
             torch.is_tensor(value)
             and value.ndim >= 2
@@ -439,17 +437,19 @@ def pad_packed_tensor_dict(
             padded_data[key] = new_cu_seqlens
         elif key == "max_seqlen":
             padded_data[key] = new_max_seqlen
-        elif torch.is_tensor(value) and value.numel() == total_length:
-            # Pad the tensor to the new total length
-            if key == "position_ids":
-                # transformers will compute flash-attn arguments (e.g., cu_seqlens_q)
-                # according to this position ids.
-                pad = torch.arange(pad_length, dtype=torch.long, device=value.device)
+        elif key == "position_ids":
+            if len(value.shape)==2 and value.shape[1]==3:
+                pad = torch.arange(pad_length, dtype=torch.long, device=value.device).unsqueeze(1).expand(-1, 3)
                 padded_tensor = torch.cat([value, pad])
             else:
-                padded_tensor = torch.nn.functional.pad(
-                    value, (0, pad_length), value=pad_value
-                )
+                pad = torch.arange(pad_length, dtype=torch.long, device=value.device)
+                padded_tensor = torch.cat([value, pad])
+            padded_data[key] = padded_tensor
+        elif torch.is_tensor(value) and value.numel() == total_length:
+            # Pad the tensor to the new total length
+            padded_tensor = torch.nn.functional.pad(
+                value, (0, pad_length), value=pad_value
+            )
             padded_data[key] = padded_tensor
         else:
             padded_data[key] = value
@@ -459,25 +459,35 @@ def pad_packed_tensor_dict(
 def pad_mb_list(
     mb_list: MicroBatchList,
     pad_value: float = 0.0,
+    pad_to_maximum: bool = False,
 ) -> MicroBatchList:
     padded_mb_inputs, pad_lengths = [], []
     pad_to_lengths = []
-    for mb, l in zip(mb_list.mbs, mb_list.group_lens):
+    if (
+        pad_to_maximum
+        and mb_list.mb_spec.max_tokens_per_mb is not None
+        and mb_list.mb_spec.max_tokens_per_mb < DEFAULT_MAX_TOKENS_PER_MB
+    ):
+        pad_to_length = mb_list.mb_spec.max_tokens_per_mb
+    else:
+        if pad_to_maximum:
+            logger.warning(
+                f"Cannot pad to upper bound since mb_spec.max_tokens_per_mb is not set."
+            )
         # NOTE: GPU page size is 2MB
         # Take hidden size 4096 with bf16 dtype as an example,
         # the batch size of a page is 256
-        pad_to_length = (int(l) + 255) // 256 * 256
+        pad_to_length = (int(max(mb_list.group_lens)) + 255) // 256 * 256
+    for mb, l in zip(mb_list.mbs, mb_list.group_lens):
         padded_mb, pad_len = pad_packed_tensor_dict(
             mb, pad_to_length, pad_value=pad_value
         )
         padded_mb_inputs.append(padded_mb)
         pad_lengths.append(pad_len)
         pad_to_lengths.append(pad_to_length)
-    logger.debug(
-        f"Microbatch original lengths: {mb_list.group_lens}, padded to {pad_to_lengths}."
-    )
     mb_list.padded_mbs = padded_mb_inputs
     mb_list.padding_lengths = pad_lengths
+    mb_list.padded_to_lengths = pad_to_lengths
     return mb_list
 
 
@@ -498,6 +508,12 @@ def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
             and value.numel() == total_length
         ):
             new_data[key] = value.unsqueeze(dim=0)
+        elif key == "position_ids":
+            value=value.unsqueeze(dim=0)
+            if len(value.shape)==3 and value.shape[2]==3:
+                value=torch.einsum("ijk->kij", value)
+            
+            new_data[key] = value
         else:
             new_data[key] = value
     return TensorDict(new_data, batch_size=data.batch_size)
@@ -519,6 +535,7 @@ def unsqueeze_mb_list(
 
 def amend_position_ids(data: TensorDict) -> TensorDict:
     assert "attention_mask" in data, "Input data must contain 'attention_mask' key."
+
     attn_mask = data["attention_mask"]
     bs, seqlen = attn_mask.shape[:2]
     position_ids = (
@@ -527,5 +544,23 @@ def amend_position_ids(data: TensorDict) -> TensorDict:
         .expand(bs, -1)
     )
     position_ids.masked_fill(~attn_mask.bool(), 0)
+    data["position_ids"] = position_ids
+    return data
+
+def amend_position_ids_3d(data: TensorDict, rope_fn) -> TensorDict:
+    assert "attention_mask" in data, "Input data must contain 'attention_mask' key."
+    torch.set_printoptions(threshold=float("inf"))
+    attn_mask = data["attention_mask"]
+    input_ids=data['input_ids']
+    image_grid_thw=data.get('image_grid_thw',None)
+    video_grid_thw=data.get('video_grid_thw',None)
+    print(input_ids)
+    print(image_grid_thw)
+    breakpoint()
+    if image_grid_thw!=None:
+        image_grid_thw=image_grid_thw.squeeze(1)
+    position_ids, rope_deltas = rope_fn(input_ids, image_grid_thw, video_grid_thw, attn_mask)
+
+    position_ids=torch.einsum("ijk->jki", position_ids)
     data["position_ids"] = position_ids
     return data

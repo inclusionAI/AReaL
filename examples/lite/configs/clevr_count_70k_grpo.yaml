@@ -99,6 +99,8 @@ train_dataset:
   num_workers: 4
   path: /storage/openpsi/data/clevr_count_70k/
   type: rl
+  reward_fn: ${train_dataset.path}
+
 
 valid_dataset: 
   batch_size: 32
@@ -107,9 +109,6 @@ valid_dataset:
   num_workers: 4
   path: ${train_dataset.path}
   type: rl
-
-reward_fn:
-  path: ${train_dataset.path}
 
 # Utilities
 saver:
@@ -140,6 +139,5 @@ stats_logger:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-
-wandb:
-  project: clevr_count_70k-grpo
+  wandb:
+    project: clevr_count_70k-grpo
