@@ -88,10 +88,10 @@ def make_run_name(config: RunConfig) -> str:
     """
     Make a run name from the run config
     """
-    clean_llm_agent_name = config.llm_agent.split("/")[-1]
+    clean_llm_agent_name = [x for x in config.llm_agent.split("/") if x][-1]
     agent_name = f"{config.agent}_{clean_llm_agent_name}"
 
-    clean_llm_user_name = config.llm_user.split("/")[-1]
+    clean_llm_user_name = [x for x in config.llm_user.split("/") if x][-1]
     user_name = f"{config.user}_{clean_llm_user_name}"
 
     return f"{get_now()}_{config.domain}_{agent_name}_{user_name}"

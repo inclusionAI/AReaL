@@ -174,23 +174,35 @@ start_server() {
     local server_pid=$!
     echo $server_pid > "$PID_FILE"
     
-    # Wait a moment for server to start
-    sleep 3
+    # Wait for server to start and become ready
+    print_status "Waiting for server to become ready..."
+    local max_attempts=30
+    local attempt=1
+    local server_ready=false
     
-    if is_server_running; then
+    while [ $attempt -le $max_attempts ] && ! $server_ready; do
+        if is_server_running; then
+            # Test the server health endpoint
+            if curl -s "http://$HOST:$PORT/health" > /dev/null 2>&1; then
+                server_ready=true
+                print_status "Server is responding to health checks"
+            else
+                print_status "Health check attempt $attempt/$max_attempts failed, retrying in 5 seconds..."
+                sleep 5
+                ((attempt++))
+            fi
+        else
+            print_error "Server process died during startup. Check logs at: $LOG_FILE"
+            exit 1
+        fi
+    done
+    
+    if $server_ready; then
         print_status "Server started successfully (PID: $server_pid)"
         print_status "Logs are available at: $LOG_FILE"
-        
-        # Test the server
-        print_status "Testing server connection..."
-        if curl -s "http://$HOST:$PORT/health" > /dev/null 2>&1; then
-            print_status "Server is responding to health checks"
-        else
-            print_warning "Server started but health check failed. Check logs at: $LOG_FILE"
-        fi
     else
-        print_error "Failed to start server. Check logs at: $LOG_FILE"
-        exit 1
+        print_warning "Server started but health check failed after $max_attempts attempts. Check logs at: $LOG_FILE"
+        print_warning "The server may still be initializing. You can check status with: $0 status"
     fi
 }
 
