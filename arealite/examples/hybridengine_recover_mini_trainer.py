@@ -128,7 +128,7 @@ remote_megatron_config = {
     ],
     "moe_per_layer_logging": True,
     "moe_permute_fusion": True,
-    "moe_router_bias_update_rate": 0.001,
+    "moe_router_bias_update_rate": 0.00,
     "moe_router_dtype": "fp32",
     "moe_router_enable_expert_bias": True,
     "moe_router_group_topk": 4,
