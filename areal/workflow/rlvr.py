@@ -91,7 +91,7 @@ class RLVRWorkflow(RolloutWorkflow):
                 )
             except asyncio.TimeoutError:
                 logger.warning(
-                    f"Computing reward timeout after {REWARD_TIMEOUT_SECONDS}s. Set reward to 0."
+                    f"Computing reward timeout after {REWARD_TIMEOUT_SECONDS}s. Set reward to 0.\n\nGenerated sequence is:\n{completions_str}\n\nAnswer is:\n{data["answer"]}\n\n"
                 )
                 reward = 0
             rewards.append(reward)

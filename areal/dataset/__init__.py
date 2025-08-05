@@ -2,7 +2,7 @@ from typing import Optional
 
 import transformers
 
-VALID_DATASETS = ["gsm8k", "clevr_count_70k"]
+VALID_DATASETS = ["gsm8k", "clevr_count_70k", "MATH"]
 
 
 def get_custom_dataset(
@@ -36,6 +36,14 @@ def get_custom_dataset(
         return get_clevr_count_70k_rl_dataset(
             path, split, processor, rank, world_size, **kwargs
         )
+    elif ("math" in path.lower() or "MATH" in path) and type == "sft":
+        from areal.dataset.math import get_math_sft_dataset
+
+        return get_math_sft_dataset(path, split, tokenizer, rank, world_size, **kwargs)
+    elif ("math" in path.lower() or "MATH" in path) and type == "rl":
+        from areal.dataset.math import get_math_rl_dataset
+
+        return get_math_rl_dataset(path, split, rank, world_size, **kwargs)
     else:
         raise ValueError(
             f"Dataset {path} with split {split} and training type {type} is not supported. "

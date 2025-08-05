@@ -1,4 +1,5 @@
 import asyncio
+import os
 import itertools
 import queue
 import threading
@@ -203,6 +204,7 @@ class WorkflowExecutor:
                 if should_accept is None or should_accept(result):
                     self.result_cache.append(result)
                     accepted += 1
+                    logger.info(f">>>>> [rank {int(os.getenv("RANK"))}/{int(os.getenv("WORLD_SIZE"))}] accept {accepted}/{count}")
                 else:
                     with self.lock:
                         self.rollout_stat.accepted -= 1

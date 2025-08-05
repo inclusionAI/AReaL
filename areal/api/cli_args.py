@@ -82,6 +82,46 @@ class GenerationHyperparameters:
         return GenerationHyperparameters(**args)
 
 
+@dataclass
+class ValidGenerationHyperparameters:
+    """Controls text generation behavior for RL evaluation."""
+
+    n_samples: int = field(
+        default=1, metadata={"help": "Number of sequences to generate per prompt."}
+    )
+    max_new_tokens: int = field(
+        default=16384, metadata={"help": "Maximum number of tokens to generate."}
+    )
+    min_new_tokens: int = field(
+        default=0, metadata={"help": "Minimum number of tokens to generate."}
+    )
+    greedy: bool = field(
+        default=False,
+        metadata={"help": "Whether to use greedy decoding (max probability)."},
+    )
+    top_p: float = field(
+        default=1.0,
+        metadata={"help": "Nucleus sampling probability threshold (0.0, 1.0]."},
+    )
+    top_k: int = field(
+        default=int(1e8),
+        metadata={"help": "Number of highest probability tokens to consider."},
+    )
+    temperature: float = field(
+        default=1.0,
+        metadata={"help": "Sampling temperature. Higher values increase diversity."},
+    )
+    stop_token_ids: List[int] = field(
+        default_factory=list,
+        metadata={"help": "Stop generation when encoutering these token ids."},
+    )
+
+    def new(self, **kwargs):
+        args = asdict(self)
+        args.update(kwargs)
+        return ValidGenerationHyperparameters(**args)
+
+
 # Train Engine Configs
 
 
@@ -628,6 +668,9 @@ class DatasetConfig:
         default=0, metadata={"help": "Number of worker processes for data loading"}
     )
     drop_last: bool = field(default=True)
+    max_prompt_length: Optional[int] = field(
+        default=None, metadata={"help": "Maximum prompt length for filtering data"}
+    )
 
 
 @dataclass
@@ -763,6 +806,9 @@ class GRPOConfig(BaseExperimentConfig):
     async_training: bool = field(default=True)
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
+    )
+    valid_gconfig: ValidGenerationHyperparameters = field(
+        default_factory=ValidGenerationHyperparameters
     )
     rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
