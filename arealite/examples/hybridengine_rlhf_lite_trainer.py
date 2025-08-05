@@ -49,14 +49,23 @@ def clear_dir(path):
                 shutil.rmtree(file_path)
 
 
+def custom_collate_fn(batch):
+    all_keys = set().union(*(d.keys() for d in batch))
+    collated_batch = {}
+    for key in all_keys:
+        collated_batch[key] = [d.get(key) for d in batch]
+    return collated_batch
+
+
 logger = logging.getLogger("Trainer")
 weight_update_type = "nccl"  # nccl
 
 if weight_update_type == "nccl":
     from asystem_runtime.weights_exchange.meta_server import start_meta_server
+
     host, port = start_meta_server()
     meta_server_addr = f"{host}:{port}"
-    print(f'meta_server_addr {meta_server_addr}')
+    print(f"meta_server_addr {meta_server_addr}")
 
     asystem_hybrid_config = {
         "meta_server_addr": meta_server_addr,
@@ -74,7 +83,7 @@ engine_config = {
     "disable_shared_experts_fusion": True,
 }
 if weight_update_type == "nccl":
-    engine_config['asystem_hybrid_config'] = asystem_hybrid_config
+    engine_config["asystem_hybrid_config"] = asystem_hybrid_config
 
 loss_configs = {
     "kl_ctl": 0.0,
@@ -210,10 +219,11 @@ megatron_wrap_policy = {
     "sample_reuse": 1,
     "temperature": 1.0,
     "reward_output_scaling": 0.5,
-    "reward_output_bias": -1.0
+    "reward_output_bias": -1.0,
 }
 if weight_update_type == "nccl":
-    remote_megatron_config['asystem_train_config'] = asystem_hybrid_config
+    remote_megatron_config["asystem_train_config"] = asystem_hybrid_config
+
 
 def main_grpo():
     experiment_name = "arealite-lite"
@@ -228,7 +238,7 @@ def main_grpo():
             "extra_envs": {
                 "FUNCTIONCALL_SERVICE_DOMAIN": "http://110.75.237.19:8080",
                 "REWARD_MODEL_PATH": "/storage/jiulin.jl/Skywork-Reward-V2-Qwen3-8B",
-                "REWARD_MODEL_SERVICE_URL": "http://reward-model-service.asystem-test.svc.sigma-my001.ml01.sgp-ml.local:30000/classify"
+                "REWARD_MODEL_SERVICE_URL": "http://reward-model-service.asystem-test.svc.sigma-my001.ml01.sgp-ml.local:30000/classify",
             },
         }
     )
@@ -270,13 +280,10 @@ def main_grpo():
         lambda x: len(tokenizer.encode(x["prompt"])) <= max_prompt_len
     )
 
-    def clean_data(data):
-        return {key: value for key, value in data.items() if value is not None}
-
-    train_dataset = Dataset.from_list(
-        [clean_data(data) for data in list(train_dataset)]
+    train_dataset.set_format(type="torch")
+    dataloader = StatefulDataLoader(
+        train_dataset, batch_size=1, collate_fn=custom_collate_fn
     )
-    dataloader = StatefulDataLoader(train_dataset, batch_size=1)
 
     ############################## recover #########################################
     recover_meta_info_path = ""
@@ -432,19 +439,30 @@ def main_grpo():
                     if weight_update_config.type == "disk":
                         actor.upload_weights(weight_update_config)
                         rollout.update_weights(weight_update_config)
-                        logger.info(f"disk mode update weight succeeded, step: {step}, epoch: {epoch}")
+                        logger.info(
+                            f"disk mode update weight succeeded, step: {step}, epoch: {epoch}"
+                        )
                         clear_dir(weight_update_config.path)
                     elif weight_update_config.type == "nccl":
                         import concurrent.futures
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                            upload_future = executor.submit(actor.upload_weights, weight_update_config)
-                            update_future = executor.submit(rollout.update_weights, weight_update_config)
+
+                        with concurrent.futures.ThreadPoolExecutor(
+                            max_workers=2
+                        ) as executor:
+                            upload_future = executor.submit(
+                                actor.upload_weights, weight_update_config
+                            )
+                            update_future = executor.submit(
+                                rollout.update_weights, weight_update_config
+                            )
                             concurrent.futures.wait([upload_future, update_future])
                             # Check for exceptions
                             for future in [upload_future, update_future]:
                                 if future.exception() is not None:
                                     raise future.exception()
-                        logger.info(f"nccl mode update weight succeeded (parallel), step: {step}, epoch: {epoch}")
+                        logger.info(
+                            f"nccl mode update weight succeeded (parallel), step: {step}, epoch: {epoch}"
+                        )
 
                 with (
                     stats_tracker.record_timing("rollout_step"),
