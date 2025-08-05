@@ -9,7 +9,7 @@ def custom_reward_fn(
     **kwargs,
 ):
     if "clevr_count_70k" in path:
-        from .clevr_count_70k import clevr_count_70k_reward_fn
+        from .clevr_count_70k import clevr_count_70k_reward_fn  
         return clevr_count_70k_reward_fn   
     elif "geometry3k" in path:
         from .geometry3k import geometry3k_reward_fn
