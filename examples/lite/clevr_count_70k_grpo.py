@@ -4,13 +4,12 @@ import sys
 
 import torch
 import torch.distributed as dist
-import wandb
 from torch.utils.data import Subset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, WeightUpdateMeta
-from areal.dataset.__init__ import get_custom_dataset
+from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.utils.device import log_gpu_stats
@@ -49,8 +48,6 @@ def clevr_count_70k_reward_fn(
 
 
 def main(args):
-
-    wandb.init(project="clevr_70k")
 
     config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
@@ -197,8 +194,6 @@ def main(args):
             stats_tracker.scope("grpo_actor"),
         ):
             stats = actor.ppo_update(batch)
-            wandb.log({"final_reward": stats[0]["grpo_actor/final_reward/avg"]})
-            wandb.log({"task_reward": stats[0]["grpo_actor/task_reward/avg"]})
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
@@ -229,7 +224,6 @@ def main(args):
                         cnt += 1
                 batch = eval_rollout.wait(cnt, timeout=None)
                 rewards = batch["rewards"].float().to(actor.device)
-                wandb.log({"eval_reward": rewards.mean().item()})
                 with stats_tracker.scope("grpo-eval"):
                     stats_tracker.denominator(
                         n_seqs=torch.ones(
@@ -256,7 +250,6 @@ def main(args):
     if ref is not None:
         ref.destroy()
     actor.destroy()
-    wandb.finish()
 
 
 if __name__ == "__main__":

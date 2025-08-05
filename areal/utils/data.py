@@ -248,10 +248,9 @@ def pack_tensor_dict(data: TensorDict):
     packed_data["cu_seqlens"] = cu_seqlens
     packed_data["max_seqlen"] = max_seqlen
     for key, value in data.items():
-        # if key == "attention_mask":
-        #     packed_data["cu_seqlens"] = cu_seqlens
-        #     packed_data["max_seqlen"] = max_seqlen
-        # # tensor and of shape [B, S, ...]
+        if key == "attention_mask":
+            continue
+        # tensor and of shape [B, S, ...]
         if (
             torch.is_tensor(value)
             and value.ndim >= 2
@@ -518,10 +517,8 @@ def unsqueeze_mb_list(
     mb_list: MicroBatchList,
 ) -> MicroBatchList:
     """Unsqueeze the packed tensordict in the micro-batch list."""
-    new_mbs = []
     new_padded_mbs = []
     for i, mb in enumerate(mb_list.mbs):
-        new_mbs.append(unsqueeze_packed_tensor_dict(mb))
         if mb_list.padded_mbs is not None:
             new_padded_mbs.append(unsqueeze_packed_tensor_dict(mb_list.padded_mbs[i]))
     mb_list.padded_mbs = new_padded_mbs if mb_list.padded_mbs is not None else None

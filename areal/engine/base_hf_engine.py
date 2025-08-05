@@ -274,12 +274,21 @@ class BaseHFEngine(TrainEngine):
         mb_list = unsqueeze_mb_list(mb_list)
 
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
+        # TODO: remove the usage of tensordict
+        # Modern model implementations takes a dict as the input.
+        # This eliminates a bug of Qwen2.5-VL for transformers<=4.53.1
+        for i, mb in enumerate(mb_list.mbs):
+            mb_list.mbs[i] = dict(**mb)
+        for i, mb in enumerate(mb_list.padded_mbs):
+            mb_list.padded_mbs[i] = dict(**mb)
         for mb in mb_list.mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
             mb["use_cache"] = False
+            mb["attention_mask"] = dict(full_attention=None)
         for mb in mb_list.padded_mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
             mb["use_cache"] = False
+            mb["attention_mask"] = dict(full_attention=None)
 
         return mb_list
 

@@ -137,3 +137,5 @@ stats_logger:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
+  wandb:
+    mode: disabled

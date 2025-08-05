@@ -330,8 +330,7 @@ class SGLangConfig:
     num_continuous_decode_steps: int = 1
     enable_memory_saver: bool = False
     allow_auto_truncate: bool = False
-    # NOTE: to avoid the illegal memory access error
-    attention_backend: Optional[str] = "flashinfer"
+    attention_backend: Optional[str] = "fa3"
     sampling_backend: Optional[str] = None
     context_length: Optional[int] = 32768
     mem_fraction_static: Optional[float] = 0.9

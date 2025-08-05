@@ -8,7 +8,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
-from areal.dataset.__init__ import get_custom_dataset
+from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.utils.device import log_gpu_stats
