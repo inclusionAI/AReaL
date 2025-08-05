@@ -431,7 +431,14 @@ class RemoteHypridTrainWorker(TrainEngine):
             prompt_lens.append(prompt_mask[s:e].sum())
         prompt_lens = torch.tensor(prompt_lens, device="cpu")
         reward_score = input_["rewards"].float()
-        reward_score = (reward_score - self.config.wrap_policy.reward_output_bias) * self.config.wrap_policy.reward_output_scaling
+        task_mask = input_["task_ids"] != RL_TASKS.index("general")
+        reward_score[torch.logical_and(reward_score == 0, task_mask)] = -1
+        reward_score = torch.where(
+            task_mask,
+            (reward_score - self.config.wrap_policy.reward_output_bias) * self.config.wrap_policy.reward_output_scaling,
+            reward_score
+        )
+
         logger.info(f"[RemoteHypridTrainWorker] process_training_data reward_score: {reward_score}")
         task_ids = input_["task_ids"]
         # task_ids = task_ids.repeat(self.config.group_size, 1).transpose(0, 1).reshape(-1)
