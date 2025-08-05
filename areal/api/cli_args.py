@@ -640,7 +640,7 @@ class SlurmLauncherConfig:
     """Configuration for launching the SGLang server with Slurm."""
 
     srun_additional_args: str = field(
-        default="--overlap --mpi=pmi2 -K --chdir $PWD",
+        default="--mpi=pmi2 -K --chdir $PWD",
         metadata={"help": "Additional arguments to pass to the srun command."},
     )
     container_type: str = field(

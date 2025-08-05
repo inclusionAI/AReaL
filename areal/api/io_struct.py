@@ -102,6 +102,10 @@ class AllocationMode:
         return self.parallel_strat["gen"]["d"]
 
     @property
+    def gen_instance_size(self):
+        return self.gen_tp_size * self.gen_pp_size
+
+    @property
     def gen_world_size(self) -> int:
         return self.gen_dp_size * self.gen_pp_size * self.gen_tp_size
 
