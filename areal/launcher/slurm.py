@@ -7,20 +7,20 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import realhf.base.logging as logging
-from arealite.api.cli_args import (
+from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
     SGLangConfig,
     parse_cli_args,
     to_structured_cfg,
 )
-from arealite.api.io_struct import AllocationMode, AllocationType
-from arealite.utils.launcher import (
+from areal.api.io_struct import AllocationMode, AllocationType
+from areal.utils.launcher import (
     get_env_vars,
     validate_config_for_distributed_launcher,
     wait_sglang_server_addrs,
 )
-from arealite.utils.slurm import (
+from areal.utils.slurm import (
     APPTAINER_CMD_TEMPLATE,
     SBATCH_SCRIPT_TEMPLATE,
     SRUN_CMD_TEMPLATE,
@@ -428,7 +428,7 @@ def slurm_main():
         n_sglang_nodes = allocation_mode.gen_world_size // n_gpus_per_node
 
         base_seed = config.sglang.random_seed
-        sglang_server_cmd_template = f"python3 -m arealite.launcher.sglang_server {' '.join(sys.argv[2:])} sglang.random_seed={{seed}}"
+        sglang_server_cmd_template = f"python3 -m areal.launcher.sglang_server {' '.join(sys.argv[2:])} sglang.random_seed={{seed}}"
         for i in range(n_sglang_servers):
             sglang_cmd = sglang_server_cmd_template.format(
                 seed=base_seed + i,
@@ -523,6 +523,6 @@ def slurm_main():
 
 
 if __name__ == "__main__":
-    # usage: python -m arealite.launcher.slurm <entry_point> \
+    # usage: python -m areal.launcher.slurm <entry_point> \
     #  --config <config_path> [<additional_args>]
     slurm_main()

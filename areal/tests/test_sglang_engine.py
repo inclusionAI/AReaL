@@ -8,13 +8,13 @@ import requests
 import torch
 from tensordict import TensorDict
 
-from arealite.api.cli_args import (
+from areal.api.cli_args import (
     GenerationHyperparameters,
     InferenceEngineConfig,
     SGLangConfig,
 )
-from arealite.api.io_struct import WeightUpdateMeta
-from arealite.utils import network
+from areal.api.io_struct import WeightUpdateMeta
+from areal.utils import network
 from realhf.api.core.data_api import load_hf_tokenizer
 
 EXPR_NAME = "test_sglang_engine"
@@ -75,8 +75,8 @@ def sglang_server():
 
 @pytest.mark.parametrize("n_samples", [1, 2, 4])
 def test_remote_sglang_rollout(sglang_server, n_samples):
-    from arealite.engine.sglang_remote import RemoteSGLangEngine
-    from arealite.workflow.rlvr import RLVRWorkflow
+    from areal.engine.sglang_remote import RemoteSGLangEngine
+    from areal.workflow.rlvr import RLVRWorkflow
 
     config = InferenceEngineConfig(
         experiment_name=EXPR_NAME,
@@ -114,8 +114,8 @@ def test_remote_sglang_rollout(sglang_server, n_samples):
 @pytest.mark.parametrize("bs", [2, 4])
 @pytest.mark.parametrize("n_samples", [2, 1])
 def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
-    from arealite.engine.sglang_remote import RemoteSGLangEngine
-    from arealite.workflow.rlvr import RLVRWorkflow
+    from areal.engine.sglang_remote import RemoteSGLangEngine
+    from areal.workflow.rlvr import RLVRWorkflow
 
     config = InferenceEngineConfig(
         experiment_name=EXPR_NAME,
@@ -165,9 +165,9 @@ def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
 
 def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
     # setup FSDP engine
-    from arealite.api.cli_args import OptimizerConfig, TrainEngineConfig
-    from arealite.api.io_struct import FinetuneSpec
-    from arealite.engine.fsdp_engine import FSDPEngine
+    from areal.api.cli_args import OptimizerConfig, TrainEngineConfig
+    from areal.api.io_struct import FinetuneSpec
+    from areal.engine.fsdp_engine import FSDPEngine
 
     os.environ["WORLD_SIZE"] = "1"
     os.environ["RANK"] = "0"
@@ -194,8 +194,8 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
     name_resolve_config = NameResolveConfig(type="nfs", nfs_record_root=nfs_record_root)
     name_resolve.reconfigure(name_resolve_config)
     # initialize SGLang remote engine
-    from arealite.api.cli_args import InferenceEngineConfig
-    from arealite.engine.sglang_remote import RemoteSGLangEngine
+    from areal.api.cli_args import InferenceEngineConfig
+    from areal.engine.sglang_remote import RemoteSGLangEngine
 
     config = InferenceEngineConfig(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
     os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"

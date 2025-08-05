@@ -4,12 +4,12 @@ import pathlib
 import time
 from typing import Dict, Optional
 
-from arealite.api.io_struct import AllocationMode, AllocationType
+from areal.api.io_struct import AllocationMode, AllocationType
 from realhf.base import logging, name_resolve, names
 
 logger = logging.getLogger("Launcher Utils")
 
-LOCAL_CACHE_DIR = "/tmp/arealite"
+LOCAL_CACHE_DIR = "/tmp/areal"
 PYTORCH_KERNEL_CACHE_PATH = (
     f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/torch/kernels/"
 )

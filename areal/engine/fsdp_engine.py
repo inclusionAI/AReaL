@@ -13,12 +13,12 @@ from torch.distributed.checkpoint.state_dict import (
 )
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
-from arealite.api.cli_args import TrainEngineConfig
-from arealite.api.engine_api import FinetuneSpec
-from arealite.api.io_struct import ParamSpec, SaveLoadMeta, WeightUpdateMeta
-from arealite.engine.base_hf_engine import BaseHFEngine
-from arealite.utils.distributed import init_custom_process_group
-from arealite.utils.fsdp import (
+from areal.api.cli_args import TrainEngineConfig
+from areal.api.engine_api import FinetuneSpec
+from areal.api.io_struct import ParamSpec, SaveLoadMeta, WeightUpdateMeta
+from areal.engine.base_hf_engine import BaseHFEngine
+from areal.utils.distributed import init_custom_process_group
+from areal.utils.fsdp import (
     CPUOffloadPolicy,
     MixedPrecisionPolicy,
     apply_fsdp2,
@@ -26,7 +26,7 @@ from arealite.utils.fsdp import (
     fsdp2_clip_grad_norm_,
     fsdp2_load_full_state_dict,
 )
-from arealite.utils.save_load import get_state_dict_from_repo_id_or_path
+from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import logging, name_resolve, names, pkg_version
 
@@ -46,7 +46,7 @@ class FSDPEngine(BaseHFEngine):
         assert addr is None, "FSDPEngine does not support remote initialization."
         assert pkg_version.is_version_greater_or_equal(
             "torch", "2.4.0"
-        ), f"arealite only supports FSDP2, which requires torch>=2.4.0"
+        ), f"areal only supports FSDP2, which requires torch>=2.4.0"
 
         self.create_process_group()
         self.create_device_model()

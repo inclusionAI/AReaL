@@ -2,8 +2,8 @@ import pytest
 import torch
 from tensordict import TensorDict
 
-from arealite.api.cli_args import MicroBatchSpec
-from arealite.utils.data import (
+from areal.api.cli_args import MicroBatchSpec
+from areal.utils.data import (
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
     pad_sequences_to_tensors,

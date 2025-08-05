@@ -7,8 +7,8 @@ import torch.distributed as dist
 import wandb
 from tensorboardX import SummaryWriter
 
-from arealite.api.cli_args import StatsLoggerConfig
-from arealite.api.io_struct import FinetuneSpec
+from areal.api.cli_args import StatsLoggerConfig
+from areal.api.io_struct import FinetuneSpec
 from realhf.api.core.data_api import tabulate_stats
 from realhf.base import logging
 

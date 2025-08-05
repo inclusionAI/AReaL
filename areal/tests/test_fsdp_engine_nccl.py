@@ -6,15 +6,15 @@ import time
 import pytest
 import requests
 
-from arealite.api.cli_args import (
+from areal.api.cli_args import (
     InferenceEngineConfig,
     OptimizerConfig,
     SGLangConfig,
     TrainEngineConfig,
 )
-from arealite.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
-from arealite.engine.fsdp_engine import FSDPEngine
-from arealite.engine.sglang_remote import RemoteSGLangEngine
+from areal.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
+from areal.engine.fsdp_engine import FSDPEngine
+from areal.engine.sglang_remote import RemoteSGLangEngine
 from realhf.base import network
 
 EXPR_NAME = "test_fsdp_engine_nccl"

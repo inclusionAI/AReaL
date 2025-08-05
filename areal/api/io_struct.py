@@ -13,11 +13,11 @@ from gymnasium.core import ActType, ObsType
 from PIL.Image import Image as ImageObject
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
-from arealite.api.cli_args import GenerationHyperparameters, SaverConfig
-from arealite.utils.network import find_free_ports, gethostip
+from areal.api.cli_args import GenerationHyperparameters, SaverConfig
+from areal.utils.network import find_free_ports, gethostip
 
 if TYPE_CHECKING:
-    from arealite.api.engine_api import TrainEngine
+    from areal.api.engine_api import TrainEngine
 
 
 @dataclass
@@ -196,7 +196,7 @@ class WeightUpdateMeta:
         cls,
         saver_config: SaverConfig,
     ) -> "WeightUpdateMeta":
-        from arealite.utils.saver import Saver
+        from areal.utils.saver import Saver
 
         path = os.path.join(
             Saver.get_save_checkpoint_root(saver_config),

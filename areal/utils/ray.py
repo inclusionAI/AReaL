@@ -2,7 +2,7 @@ import ray
 from ray.util.placement_group import PlacementGroup
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
-from arealite.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports, gethostip
 
 
 def get_placement_group_master_ip_and_port(placement_group: PlacementGroup):

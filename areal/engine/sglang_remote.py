@@ -17,9 +17,9 @@ import uvloop
 from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from arealite.api.cli_args import InferenceEngineConfig
-from arealite.api.engine_api import InferenceEngine
-from arealite.api.io_struct import (
+from areal.api.cli_args import InferenceEngineConfig
+from areal.api.engine_api import InferenceEngine
+from areal.api.io_struct import (
     FinetuneSpec,
     LLMRequest,
     LLMResponse,
@@ -28,12 +28,12 @@ from arealite.api.io_struct import (
     VLMResponse,
     WeightUpdateMeta,
 )
-from arealite.utils.data import concat_padded_tensors
-from arealite.utils.http import arequest_with_retry, get_default_connector
+from areal.utils.data import concat_padded_tensors
+from areal.utils.http import arequest_with_retry, get_default_connector
 from realhf.base import logging, name_resolve, names
 
 if TYPE_CHECKING:
-    from arealite.api.workflow_api import RolloutWorkflow
+    from areal.api.workflow_api import RolloutWorkflow
 logger = logging.getLogger(__name__)
 
 

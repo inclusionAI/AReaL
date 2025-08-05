@@ -7,16 +7,16 @@ from typing import Optional
 
 import requests
 
-from arealite.api.cli_args import (
+from areal.api.cli_args import (
     ClusterSpecConfig,
     NameResolveConfig,
     SGLangConfig,
     parse_cli_args,
     to_structured_cfg,
 )
-from arealite.api.io_struct import AllocationMode, AllocationType
-from arealite.utils.launcher import TRITON_CACHE_PATH
-from arealite.utils.network import find_free_ports, gethostip
+from areal.api.io_struct import AllocationMode, AllocationType
+from areal.utils.launcher import TRITON_CACHE_PATH
+from areal.utils.network import find_free_ports, gethostip
 from realhf.base import logging, name_resolve, names
 
 logger = logging.getLogger("SGLangServer Wrapper")

@@ -13,20 +13,20 @@ from ray.util.placement_group import PlacementGroup
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 import realhf.base.logging as logging
-from arealite.api.cli_args import (
+from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
     SGLangConfig,
     parse_cli_args,
     to_structured_cfg,
 )
-from arealite.api.io_struct import AllocationMode, AllocationType
-from arealite.utils.launcher import (
+from areal.api.io_struct import AllocationMode, AllocationType
+from areal.utils.launcher import (
     get_env_vars,
     validate_config_for_distributed_launcher,
     wait_sglang_server_addrs,
 )
-from arealite.utils.ray import get_placement_group_master_ip_and_port
+from areal.utils.ray import get_placement_group_master_ip_and_port
 from realhf.base import logging, name_resolve, names
 from realhf.scheduler.client import JobException, JobState
 
@@ -300,7 +300,7 @@ class RayLauncher:
 
 
 def ray_main():
-    # usage: python -m arealite.launcher.ray <entry_point> --config <config_path> [<additional_args>]
+    # usage: python -m areal.launcher.ray <entry_point> --config <config_path> [<additional_args>]
     ray.init()
     config, config_file = parse_cli_args(sys.argv[2:])
     config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
@@ -404,7 +404,7 @@ def ray_main():
 
 
 if __name__ == "__main__":
-    # usage: python -m arealite.launcher.ray \
+    # usage: python -m areal.launcher.ray \
     #   <entry_point> --config <config_path> [<additional_args>] \
     #   launcher.ray.main_func_name=<main_func_name_in_entry_point>
     ray_main()

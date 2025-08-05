@@ -3,11 +3,11 @@ import uuid
 import torch
 from transformers import PreTrainedTokenizerFast
 
-from arealite.api.cli_args import GenerationHyperparameters
-from arealite.api.engine_api import InferenceEngine
-from arealite.api.io_struct import LLMRequest
-from arealite.api.workflow_api import RolloutWorkflow
-from arealite.utils.data import concat_padded_tensors
+from areal.api.cli_args import GenerationHyperparameters
+from areal.api.engine_api import InferenceEngine
+from areal.api.io_struct import LLMRequest
+from areal.api.workflow_api import RolloutWorkflow
+from areal.utils.data import concat_padded_tensors
 
 
 class MultiTurnWorkflow(RolloutWorkflow):

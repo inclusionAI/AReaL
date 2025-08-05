@@ -8,7 +8,7 @@ import torch.distributed as dist
 from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from arealite.api.io_struct import (
+from areal.api.io_struct import (
     FinetuneSpec,
     LLMRequest,
     LLMResponse,
@@ -18,7 +18,7 @@ from arealite.api.io_struct import (
 )
 
 if TYPE_CHECKING:
-    from arealite.api.workflow_api import RolloutWorkflow
+    from areal.api.workflow_api import RolloutWorkflow
 
 
 @dataclass

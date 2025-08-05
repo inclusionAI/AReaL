@@ -11,8 +11,8 @@ import torch
 from tensordict import TensorDict
 from transformers import AutoTokenizer
 
-from arealite.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
-from arealite.api.io_struct import FinetuneSpec, SaveLoadMeta
+from areal.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
+from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 
 VOCAB_SIZE = 100
 MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
@@ -52,8 +52,8 @@ def mock_input(
 
 
 def get_engine(engine_type: str, model_path: str):
-    from arealite.engine.fsdp_engine import FSDPEngine
-    from arealite.experimental.autotp_engine import DeepSpeedAutoTPEngine
+    from areal.engine.fsdp_engine import FSDPEngine
+    from areal.experimental.autotp_engine import DeepSpeedAutoTPEngine
 
     engine_cls = {"auto_tp": DeepSpeedAutoTPEngine, "fsdp": FSDPEngine}[engine_type]
 
@@ -135,7 +135,7 @@ def test_train_batch(engine, mock_input):
 
 @torch.no_grad()
 def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
-    from arealite.experimental.autotp_engine import DeepSpeedAutoTPEngine
+    from areal.experimental.autotp_engine import DeepSpeedAutoTPEngine
 
     if isinstance(engine, DeepSpeedAutoTPEngine):
         print("AutoTP engine does not support HF save/load for now.")

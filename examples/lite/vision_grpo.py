@@ -8,16 +8,16 @@ import wandb
 from torch.utils.data import Subset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from arealite.api.cli_args import GRPOConfig, load_expr_config
-from arealite.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
-from arealite.dataset.__init__ import get_custom_dataset
-from arealite.reward.__init__ import custom_reward_fn
-from arealite.engine.ppo.actor import FSDPPPOActor
-from arealite.engine.sglang_remote import RemoteSGLangEngine
-from arealite.utils.device import log_gpu_stats
-from arealite.utils.evaluator import Evaluator
-from arealite.utils.saver import Saver
-from arealite.utils.stats_logger import StatsLogger
+from areal.api.cli_args import GRPOConfig, load_expr_config
+from areal.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
+from areal.dataset.__init__ import get_custom_dataset
+from areal.reward.__init__ import custom_reward_fn
+from areal.engine.ppo.actor import FSDPPPOActor
+from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.utils.device import log_gpu_stats
+from areal.utils.evaluator import Evaluator
+from areal.utils.saver import Saver
+from areal.utils.stats_logger import StatsLogger
 from AReaL.areal.workflow.vision_rlvr import VisionRLVRWorkflow
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import stats_tracker

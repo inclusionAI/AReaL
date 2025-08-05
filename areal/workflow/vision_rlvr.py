@@ -1,16 +1,18 @@
 import os
 import uuid
+import functools
+import asyncio
 
 import colorama
 import torch
 from tensordict import TensorDict
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
-from arealite.api.cli_args import GenerationHyperparameters
-from arealite.api.io_struct import VLMRequest
-from arealite.utils.data import concat_padded_tensors
-from arealite.utils.image import image2base64, pad_images_batch_to_max_size
-from arealite.workflow.rlvr import RLVRWorkflow
+from areal.api.cli_args import GenerationHyperparameters
+from areal.api.io_struct import VLMRequest
+from areal.utils.data import concat_padded_tensors
+from areal.utils.image import image2base64, pad_images_batch_to_max_size
+from areal.workflow.rlvr import RLVRWorkflow
 
 
 class VisionRLVRWorkflow(RLVRWorkflow):
@@ -56,6 +58,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         seqlens = []
 
         results = []
+        loop = asyncio.get_event_loop()
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
@@ -67,13 +70,26 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             prompt_strs.append(prompt_str)
             completions_strs.append(completions_str)
             seqlens.append(len(seq))
-            reward = self.reward_fn(
-                prompt=prompt_str,
-                completions=completions_str,
-                prompt_ids=resp.input_tokens,
-                completion_ids=resp.output_tokens,
-                **data,
-            )
+            try:
+                reward = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        self.rw_executor,
+                        functools.partial(
+                            self.reward_fn,
+                            prompt_str,
+                            completions_str,
+                            resp.input_tokens,
+                            resp.output_tokens,
+                            **data,
+                        ),
+                    ),
+                    timeout=REWARD_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Computing reward timeout after {REWARD_TIMEOUT_SECONDS}s. Set reward to 0."
+                )
+                reward = 0
             rewards.append(reward)
             res = dict(
                 # unsqueeze to add an additional batch dimension

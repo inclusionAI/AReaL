@@ -1,7 +1,7 @@
 from typing import Callable
 
-from arealite.api.cli_args import EvaluatorConfig
-from arealite.api.io_struct import FinetuneSpec
+from areal.api.cli_args import EvaluatorConfig
+from areal.api.io_struct import FinetuneSpec
 from realhf.base import timeutil
 
 

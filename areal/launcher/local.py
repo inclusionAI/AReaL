@@ -10,9 +10,9 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import psutil
 
-from arealite.api.cli_args import SGLangConfig, parse_cli_args, to_structured_cfg
-from arealite.api.io_struct import AllocationMode, AllocationType
-from arealite.utils.network import find_free_ports, gethostip
+from areal.api.cli_args import SGLangConfig, parse_cli_args, to_structured_cfg
+from areal.api.io_struct import AllocationMode, AllocationType
+from areal.utils.network import find_free_ports, gethostip
 from realhf.base import gpu_utils, logging, name_resolve, names
 from realhf.scheduler.client import JobException, JobInfo, JobState
 

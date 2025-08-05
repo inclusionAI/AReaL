@@ -17,9 +17,9 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-from arealite.api.cli_args import TrainEngineConfig
-from arealite.api.engine_api import FinetuneSpec, TrainEngine
-from arealite.utils.data import (
+from areal.api.cli_args import TrainEngineConfig
+from areal.api.engine_api import FinetuneSpec, TrainEngine
+from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
     pack_tensor_dict,
@@ -30,8 +30,8 @@ from arealite.utils.data import (
     unpack_sequence,
     unsqueeze_mb_list,
 )
-from arealite.utils.fsdp import get_cosine_schedule_with_warmup
-from arealite.utils.model import VALID_VISION_MODELS, disable_dropout_in_model
+from areal.utils.fsdp import get_cosine_schedule_with_warmup
+from areal.utils.model import VALID_VISION_MODELS, disable_dropout_in_model
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from realhf.base import constants, logging
 

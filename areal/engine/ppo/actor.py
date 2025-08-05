@@ -4,11 +4,11 @@ from typing import Dict, List, Optional
 import torch
 from tensordict import TensorDict
 
-from arealite.api.cli_args import MicroBatchSpec, PPOActorConfig
-from arealite.api.engine_api import TrainEngine
-from arealite.engine.fsdp_engine import FSDPEngine
-from arealite.utils.data import split_padded_tensor_dict_into_mb_list
-from arealite.utils.functional import (
+from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
+from areal.api.engine_api import TrainEngine
+from areal.engine.fsdp_engine import FSDPEngine
+from areal.utils.data import split_padded_tensor_dict_into_mb_list
+from areal.utils.functional import (
     gather_logprobs,
     gather_logprobs_entropy,
     masked_normalization,

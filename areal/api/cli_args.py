@@ -11,7 +11,7 @@ from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
 from omegaconf import MISSING, OmegaConf
 
-from arealite.utils.fs import get_user_tmp
+from areal.utils.fs import get_user_tmp
 
 
 @dataclass

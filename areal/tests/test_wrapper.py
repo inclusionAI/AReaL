@@ -1,4 +1,4 @@
-from arealite.utils.wrapper import (
+from areal.utils.wrapper import (
     wrap,
     wrap_get_method,
     wrap_get_method_name,

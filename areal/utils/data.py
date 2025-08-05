@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from tensordict import TensorDict
 
-from arealite.api.cli_args import MicroBatchSpec
+from areal.api.cli_args import MicroBatchSpec
 from realhf.base import datapack, logging
 
 logger = logging.getLogger("data utils")

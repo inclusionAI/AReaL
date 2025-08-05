@@ -3,14 +3,14 @@ import sys
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from arealite.api.cli_args import SFTConfig, load_expr_config
-from arealite.api.io_struct import FinetuneSpec
-from arealite.dataset.__init__ import get_custom_dataset
-from arealite.engine.sft.lm_engine import FSDPLMEngine
-from arealite.utils.data import pad_sequences_to_tensors
-from arealite.utils.evaluator import Evaluator
-from arealite.utils.saver import Saver
-from arealite.utils.stats_logger import StatsLogger
+from areal.api.cli_args import SFTConfig, load_expr_config
+from areal.api.io_struct import FinetuneSpec
+from areal.dataset.__init__ import get_custom_dataset
+from areal.engine.sft.lm_engine import FSDPLMEngine
+from areal.utils.data import pad_sequences_to_tensors
+from areal.utils.evaluator import Evaluator
+from areal.utils.saver import Saver
+from areal.utils.stats_logger import StatsLogger
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import stats_tracker
 

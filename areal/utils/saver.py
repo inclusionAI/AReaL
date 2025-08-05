@@ -3,9 +3,9 @@ import os
 
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
-from arealite.api.cli_args import SaverConfig
-from arealite.api.engine_api import TrainEngine
-from arealite.api.io_struct import FinetuneSpec, SaveLoadMeta
+from areal.api.cli_args import SaverConfig
+from areal.api.engine_api import TrainEngine
+from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 from realhf.base import timeutil
 
 
