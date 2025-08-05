@@ -18,7 +18,7 @@ from arealite.utils.device import log_gpu_stats
 from arealite.utils.evaluator import Evaluator
 from arealite.utils.saver import Saver
 from arealite.utils.stats_logger import StatsLogger
-from arealite.workflow.vision_rlvr import VisionRLVRWorkflow
+from AReaL.areal.workflow.vision_rlvr import VisionRLVRWorkflow
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import stats_tracker
 

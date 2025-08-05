@@ -2,28 +2,46 @@
 
 set -e
 
-GIT_COMMIT_SHA=${GIT_COMMIT_SHA:?"GIT_COMMIT_SHA is not set"}
+RUN_ID="test-arealite-$(openssl rand -hex 6)"
 
-echo "GIT_COMMIT_SHA: $GIT_COMMIT_SHA"
+# Calculate environment hash from pyproject.toml
+ENV_SHA=$(sha256sum pyproject.toml | awk '{print $1}')
 
-RUN_ID="areal-$GIT_COMMIT_SHA"
-cd "/tmp/$RUN_ID"
+# Build environment image if it doesn't exist
+if ! docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "areal-env:$ENV_SHA"; then
+    echo "Building image areal-env:$ENV_SHA..."
 
-if docker ps -a --format '{{.Names}}' | grep -q "$RUN_ID"; then
+    # Build the environment image
+    docker run \
+        --name $RUN_ID \
+        -v $(pwd):/workspace \
+        -w /workspace \
+        nvcr.io/nvidia/pytorch:25.01-py3 \
+        bash -c "
+            pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+            pip config unset global.extra-index-url
+            pip uninstall -y --ignore-installed transformer-engine
+            pip uninstall -y --ignore-installed torch-tensorrt
+            pip uninstall -y --ignore-installed nvidia-dali-cuda120
+            bash examples/env/scripts/setup-pip-deps.sh
+        " || { docker rm -f $RUN_ID; exit 1; }
+
+    # Commit the container as the environment image
+    docker commit $RUN_ID areal-env:$ENV_SHA
     docker rm -f $RUN_ID
+else
+    echo "Image areal-env:$ENV_SHA already exists, skipping build."
 fi
 
-ENV_SHA=$(sha256sum pyproject.toml | awk '{print $1}')
+# Run tests using the environment image
+echo "Running tests on image areal-env:$ENV_SHA..."
 docker run \
+    -e HF_ENDPOINT=https://hf-mirror.com \
     --name $RUN_ID \
     --gpus all \
     --shm-size=8g \
+    --rm \
     -v $(pwd):/workspace \
     -w /workspace \
-    "areal-env:$ENV_SHA" \
-    bash -c "
-        mv /sglang ./sglang
-        HF_ENDPOINT=https://hf-mirror.com python -m pytest -s arealite/
-    " || { docker rm -f $RUN_ID; exit 1; }
-
-docker rm -f $RUN_ID
+    areal-env:$ENV_SHA \
+    python -m pytest -s arealite/tests/

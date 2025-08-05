@@ -1,48 +1,50 @@
-import asyncio
 import os
 import uuid
 
 import colorama
 import torch
 from tensordict import TensorDict
-from transformers import PreTrainedTokenizerFast
+from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from arealite.api.cli_args import GenerationHyperparameters
-from arealite.api.engine_api import InferenceEngine
-from arealite.api.io_struct import LLMRequest
-from arealite.api.workflow_api import RolloutWorkflow
+from arealite.api.io_struct import VLMRequest
 from arealite.utils.data import concat_padded_tensors
+from arealite.utils.image import image2base64, pad_images_batch_to_max_size
+from arealite.workflow.rlvr import RLVRWorkflow
 
 
-class RLVRWorkflow(RolloutWorkflow):
+class VisionRLVRWorkflow(RLVRWorkflow):
     def __init__(
         self,
         reward_fn,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
+        processor: AutoProcessor,
         enable_thinking: bool,
         dump_dir: str | None = None,
     ):
-        self.reward_fn = reward_fn
-        self.gconfig = gconfig
-        self.tokenizer = tokenizer
-        self.enable_thinking = enable_thinking
-        self.dump_dir = dump_dir
-        if self.dump_dir is not None and not os.path.exists(self.dump_dir):
-            os.makedirs(self.dump_dir, exist_ok=True)
+        super().__init__(reward_fn, gconfig, tokenizer, enable_thinking, dump_dir)
+        self.processor = processor
 
-    async def arun_episode(self, engine: InferenceEngine, data):
-        input_ids = self.tokenizer.apply_chat_template(
-            data["messages"],
-            tokenize=True,
-            add_generation_prompt=True,
-            enable_thinking=self.enable_thinking,
+    async def arun_episode(self, engine, data):
+
+        processed_input = self.processor(
+            images=data["images"],
+            text=data["messages"],
+            padding=False,
+            return_tensors="pt",
         )
 
+        input_ids = processed_input["input_ids"].tolist()[0]
+
         n_samples = self.gconfig.n_samples
-        req = LLMRequest(
+
+        byte_images = image2base64(data["images"])
+
+        req = VLMRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
+            image_data=byte_images,
             gconfig=self.gconfig.new(n_samples=1),
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
@@ -77,14 +79,15 @@ class RLVRWorkflow(RolloutWorkflow):
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),
                 loss_mask=torch.tensor(loss_mask).unsqueeze(0),
+                pixel_values=processed_input["pixel_values"].unsqueeze(0),
+                image_grid_thw=processed_input["image_grid_thw"].unsqueeze(0),
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
                 versions=torch.tensor(versions).unsqueeze(0),
                 attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
                 # reward
-                rewards=torch.tensor([float(reward)]),
+                rewards=torch.tensor([reward]),
             )
             results.append(TensorDict(res, batch_size=[1]))
-
         if self.dump_dir is not None:
             os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
             # Get the unique identifier for this prompt
