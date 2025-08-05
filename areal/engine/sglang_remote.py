@@ -117,6 +117,7 @@ class RemoteSGLangEngine(InferenceEngine):
         # Prepare request payload
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
+        stop = gconfig.stop
 
         if gconfig.n_samples != 1:
             raise ValueError(
@@ -130,6 +131,9 @@ class RemoteSGLangEngine(InferenceEngine):
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
         }
+        if stop is not None:
+            sample_params["stop"] = stop
+
         if isinstance(req, VLMRequest):
             # VLMRequest has image_data
             payload = {
@@ -210,7 +214,7 @@ class RemoteSGLangEngine(InferenceEngine):
             # FIXME: Update with actual server versions
             accumulated_versions.extend([-1] * len(output_tokens))
 
-            payload["input_ids"] += result["output_ids"]
+            payload["input_ids"] += output_tokens
             sample_params["max_new_tokens"] -= len(output_tokens)
 
         latency = time.perf_counter() - start_time
@@ -309,8 +313,9 @@ class RemoteSGLangEngine(InferenceEngine):
         self,
         dataloader: StatefulDataLoader,
         workflow: RolloutWorkflow,
+        should_accept: Callable | None = None,
     ):
-        return self.workflow_executor.prepare_batch(dataloader, workflow)
+        return self.workflow_executor.prepare_batch(dataloader, workflow, should_accept)
 
     def pause(self):
         """Pause request submission for async rollout. Used during evaluation to prevent data over generation."""

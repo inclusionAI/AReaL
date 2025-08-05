@@ -30,8 +30,10 @@ class RolloutWorkflow:
 
     async def arun_episode(
         self, engine: "InferenceEngine", data: Dict[str, Any]
-    ) -> TensorDict:
+    ) -> TensorDict | None:
         """Run a single episode of the workflow.
+
+        `None` implies that this trajectory is rejected and will not be used for training.
 
         See concrete example implementations under the `areal/workflow` directory.
         """
@@ -200,10 +202,18 @@ class WorkflowExecutor:
         ):
             try:
                 result = self.output_queue.get(timeout=ROLLOUT_POLL_WAIT_TIME)
-                if should_accept is None or should_accept(result):
+                if result is not None and (
+                    should_accept is None or should_accept(result)
+                ):
+                    if self.config.enable_rollout_tracing:
+                        logger.info(
+                            f"Accept rollout result. accepted/count = {accepted}/{count}"
+                        )
                     self.result_cache.append(result)
                     accepted += 1
                 else:
+                    if self.config.enable_rollout_tracing:
+                        logger.info(f"Rollout is rejected.")
                     with self.lock:
                         self.rollout_stat.accepted -= 1
             except queue.Empty:
@@ -213,6 +223,10 @@ class WorkflowExecutor:
         if accepted < count:
             raise TimeoutError(
                 f"Timed out waiting for {count} rollouts, " f"only received {accepted}."
+            )
+        if self.config.enable_rollout_tracing:
+            logger.info(
+                f"Rollout results are ready! accepted/count = {accepted}/{count}"
             )
         results, self.result_cache = (
             self.result_cache[:count],

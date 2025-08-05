@@ -175,7 +175,7 @@ class InferenceEngine(abc.ABC):
         dataloader: StatefulDataLoader,
         workflow: "RolloutWorkflow",
         should_accept: Callable | None = None,
-    ):
+    ) -> TensorDict:
         """Asynchronously submit and wait until a full batch is ready."""
         raise NotImplementedError()
 

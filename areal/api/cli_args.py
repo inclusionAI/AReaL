@@ -75,6 +75,12 @@ class GenerationHyperparameters:
         default_factory=list,
         metadata={"help": "Stop generation when encoutering these token ids."},
     )
+    stop: Optional[List[str]] = field(
+        default=None,
+        metadata={
+            "help": "One or multiple stop words. Generation will stop if one of these words is sampled."
+        },
+    )
 
     def new(self, **kwargs):
         args = asdict(self)
