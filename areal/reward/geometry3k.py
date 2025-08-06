@@ -24,6 +24,6 @@ def geometry3k_reward_fn(
     from realhf.impl.dataset.math_parser import math_equal
 
     if math_equal(sol, ans):
-        print(f"completions: {completions}, answer: {answer}")
+        # print(f"completions: {completions}, answer: {answer}")
         return 1
     return 0

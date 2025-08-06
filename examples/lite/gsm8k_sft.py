@@ -1,8 +1,6 @@
 import os
 import sys
 
-from datasets import Dataset, load_dataset
-from datasets.distributed import split_dataset_by_node
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import SFTConfig, load_expr_config
@@ -14,7 +12,7 @@ from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import stats_tracker
+from realhf.base import seeding, stats_tracker
 
 
 def main(args):
@@ -24,6 +22,8 @@ def main(args):
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
+
+    seeding.set_random_seed(config.seed, f"trainer{rank}")
 
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
@@ -71,13 +71,12 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec, for_recover=False)
-    logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config.stats_logger, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     total_epochs = config.total_train_epochs
-    steps_per_epoch = len(train_dataloader)
+    len(train_dataloader)
 
-    logger.info(f"total_epochs={total_epochs} step_per_epoch={steps_per_epoch}")
     global_step = 0
     for epoch in range(total_epochs):
         for step, data in enumerate(train_dataloader):
@@ -107,7 +106,7 @@ def main(args):
                     global_step,
                 )
 
-            logger.commit(
+            stats_logger.commit(
                 epoch,
                 step,
                 global_step,
@@ -115,7 +114,7 @@ def main(args):
             )
             global_step += 1
 
-    logger.close()
+    stats_logger.close()
     engine.destroy()
 
 

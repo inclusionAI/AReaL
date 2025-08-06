@@ -1,3 +1,4 @@
+import itertools
 import os
 import sys
 
@@ -16,9 +17,7 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import logging, seeding, stats_tracker
-
-logger = logging.getLogger("GSM8K grpo")
+from realhf.base import seeding, stats_tracker
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
@@ -36,6 +35,7 @@ def main(args):
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
+
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
         rank=rank,
@@ -121,15 +121,14 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec, for_recover=False)
-    logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config.stats_logger, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     total_epochs = config.total_train_epochs
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    logger.info(f"total_epochs={total_epochs} step_per_epoch={steps_per_epoch}")
-    data_generator = iter(train_dataloader)
+    data_generator = itertools.cycle(train_dataloader)
     for global_step in range(max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -138,12 +137,7 @@ def main(args):
             if config.async_training:
                 batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
             else:
-                try:
-                    data = next(data_generator)
-                except StopIteration:
-                    data_generator = iter(train_dataloader)
-                    data = next(data_generator)
-                batch = rollout.rollout_batch(data, workflow=workflow)
+                batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
 
         batch = batch.to(actor.device)
         # Create barrier to synchronize all rollout processes.
@@ -218,9 +212,9 @@ def main(args):
                 global_step,
             )
 
-        logger.commit(epoch, step, global_step, stats)
+        stats_logger.commit(epoch, step, global_step, stats)
 
-    logger.close()
+    stats_logger.close()
     eval_rollout.destroy()
     rollout.destroy()
     if ref is not None:

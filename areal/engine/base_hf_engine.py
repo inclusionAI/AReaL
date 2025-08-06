@@ -322,7 +322,8 @@ class BaseHFEngine(TrainEngine):
         for i, (pad_length, padded_mb_input, mb_input) in enumerate(
             zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
         ):
-
+            print(padded_mb_input)
+            breakpoint()
             outputs = self.model(**padded_mb_input)
 
             logits = outputs.logits.squeeze(0)
@@ -412,7 +413,7 @@ class BaseHFEngine(TrainEngine):
         results = []
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
-        ):
+        ):  
             outputs = self.model(**padded_mb_input)
             logits = outputs.logits.squeeze(0)
             logits = logits[:-pad_length] if pad_length > 0 else logits

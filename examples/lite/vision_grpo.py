@@ -5,11 +5,10 @@ import sys
 import torch
 import torch.distributed as dist
 import wandb
-from torch.utils.data import Subset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
+from areal.api.io_struct import FinetuneSpec, WeightUpdateMeta
 from areal.dataset.__init__ import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
@@ -20,7 +19,7 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.vision_rlvr import VisionRLVRWorkflow
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
-from realhf.base import stats_tracker
+from realhf.base import seeding, stats_tracker
 
 
 def main(args):
@@ -33,6 +32,9 @@ def main(args):
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
+
+    seeding.set_random_seed(config.seed, key=f"trainer{rank}")
+
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
         rank=rank,
@@ -113,18 +115,20 @@ def main(args):
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
     )
 
     # Run training.
     saver = Saver(config.saver, ft_spec, for_recover=False)
-    logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config.stats_logger, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     total_epochs = config.total_train_epochs
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    logger.info(f"total_epochs={total_epochs} step_per_epoch={steps_per_epoch}")
     data_generator = iter(train_dataloader)
     for global_step in range(max_steps):
         epoch = global_step // steps_per_epoch
@@ -218,9 +222,9 @@ def main(args):
                 global_step,
             )
 
-        logger.commit(epoch, step, global_step, stats)
+        stats_logger.commit(epoch, step, global_step, stats)
 
-    logger.close()
+    stats_logger.close()
     eval_rollout.destroy()
     rollout.destroy()
     if ref is not None:

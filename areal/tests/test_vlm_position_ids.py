@@ -115,8 +115,8 @@ def main():
         from torch.testing import assert_close
 
         assert_close(y1, y2)
-        diff = (y1 - y2).abs()
-        print(diff)
+        # diff = (y1 - y2).abs()
+
 
         # print(res.logits.shape)
         break

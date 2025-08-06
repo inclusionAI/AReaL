@@ -249,6 +249,7 @@ def pack_tensor_dict(data: TensorDict):
         if key == "attention_mask":
             packed_data["cu_seqlens"] = cu_seqlens
             packed_data["max_seqlen"] = max_seqlen
+            continue
         # tensor and of shape [B, S, ...]
         if (
             torch.is_tensor(value)
