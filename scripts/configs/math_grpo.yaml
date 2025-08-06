@@ -92,6 +92,10 @@ train_dataset:
   pin_memory: true
   num_workers: 4
   path: xDAN2099/lighteval-MATHq
+  type: rl
+
+valid_dataset:
+  batch_size: 256
   shuffle: true
   pin_memory: true
   num_workers: 4
@@ -128,4 +132,4 @@ stats_logger:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   wandb:
-    mode: offline
+    mode: disabled
