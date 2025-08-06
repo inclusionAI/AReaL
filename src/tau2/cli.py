@@ -1,4 +1,5 @@
 import argparse
+import json
 
 from tau2.config import (
     DEFAULT_AGENT_IMPLEMENTATION,
@@ -49,9 +50,9 @@ def add_run_args(parser):
     )
     parser.add_argument(
         "--agent-llm-args",
-        type=dict,
+        type=json.loads,
         default={"temperature": DEFAULT_LLM_TEMPERATURE_AGENT},
-        help=f"The arguments to pass to the LLM for the agent. Default is temperature={DEFAULT_LLM_TEMPERATURE_AGENT}.",
+        help=f"The arguments to pass to the LLM for the agent. Default is '{\"temperature\": {DEFAULT_LLM_TEMPERATURE_AGENT}}'.",
     )
     parser.add_argument(
         "--user",
@@ -68,9 +69,9 @@ def add_run_args(parser):
     )
     parser.add_argument(
         "--user-llm-args",
-        type=dict,
+        type=json.loads,
         default={"temperature": DEFAULT_LLM_TEMPERATURE_USER},
-        help=f"The arguments to pass to the LLM for the user. Default is temperature={DEFAULT_LLM_TEMPERATURE_USER}.",
+        help=f"The arguments to pass to the LLM for the user. Default is '{\"temperature\": {DEFAULT_LLM_TEMPERATURE_USER}}'.",
     )
     parser.add_argument(
         "--task-set-name",
