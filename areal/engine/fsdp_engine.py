@@ -27,7 +27,6 @@ from areal.utils.fsdp import (
     fsdp2_load_full_state_dict,
 )
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
-from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import logging, name_resolve, names, pkg_version
 
 logger = logging.getLogger("FSDPEngine")
@@ -55,7 +54,7 @@ class FSDPEngine(BaseHFEngine):
         # Simple auto wrap policy
         self.mixed_precision_policy = MixedPrecisionPolicy(
             param_dtype=getattr(torch, self.config.dtype),
-            reduce_dtype=torch.float32,
+            reduce_dtype=getattr(torch, self.config.grad_reduce_dtype),
             cast_forward_inputs=True,
         )
         self.device_mesh = create_fsdp_device_mesh(self.world_size, self.world_size)

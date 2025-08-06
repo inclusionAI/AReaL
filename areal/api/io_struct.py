@@ -81,6 +81,7 @@ class FinetuneSpec:
 
 
 class AllocationType(enum.Enum):
+    COLOCATE = 0
     DECOUPLED_vLLM = 1
     DECOUPLED_SGLANG = 2
 
@@ -128,11 +129,17 @@ class AllocationMode:
 
     @classmethod
     def from_str(cls, allocation_mode: str):
-        alloc_decoupled = AllocationMode.extract_decoupled_alloc(allocation_mode)
         if "vllm" in allocation_mode:
+            alloc_decoupled = AllocationMode.extract_decoupled_alloc(allocation_mode)
             return cls(AllocationType.DECOUPLED_vLLM, alloc_decoupled)
         elif "sglang" in allocation_mode:
+            alloc_decoupled = AllocationMode.extract_decoupled_alloc(allocation_mode)
             return cls(AllocationType.DECOUPLED_SGLANG, alloc_decoupled)
+        else:
+            return cls(
+                AllocationType.COLOCATE,
+                AllocationMode.extract_parallelism_strategy(allocation_mode),
+            )
         raise NotImplementedError(f"Failed to parse allocation: {allocation_mode}")
 
     @staticmethod
