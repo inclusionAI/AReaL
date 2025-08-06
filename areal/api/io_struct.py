@@ -8,8 +8,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
 
-import torch
-from gymnasium.core import ActType, ObsType
 from PIL.Image import Image as ImageObject
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 

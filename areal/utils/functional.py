@@ -151,9 +151,7 @@ def ppo_actor_loss_fn(
         pg_loss = torch.min(pg_loss, pg_loss3)
     else:
         dual_clip_mask = torch.zeros_like(clip_mask)
-
     behav_kl = proximal_logprobs - old_logprobs
-
     behav_imp_weight = behav_kl.exp()
     behav_mask = (
         (behav_imp_weight <= behav_imp_weight_cap).logical_and(loss_mask)

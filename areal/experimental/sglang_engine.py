@@ -10,18 +10,13 @@ import sglang as sgl
 import torch.distributed as dist
 from tensordict import TensorDict
 
-from arealite.api.cli_args import InferenceEngineConfig
-from arealite.api.engine_api import InferenceEngine
-from arealite.api.io_struct import (
-    LLMRequest,
-    LLMResponse,
-    RolloutStat,
-    WeightUpdateMeta,
-)
+from areal.api.cli_args import InferenceEngineConfig
+from areal.api.engine_api import InferenceEngine
+from areal.api.io_struct import LLMRequest, LLMResponse, RolloutStat, WeightUpdateMeta
 from realhf.base import logging, name_resolve, names, pkg_version
 
 if TYPE_CHECKING:
-    from arealite.api.workflow_api import RolloutWorkflow
+    from areal.api.workflow_api import RolloutWorkflow
 logger = logging.getLogger(__name__)
 
 if pkg_version.is_available("sglang"):
@@ -94,6 +89,7 @@ class SGLangEngine(InferenceEngine):
             asyncio.run(self._rollout_thread_async())
         except Exception as e:
             traceback.print_exc()
+            raise e
 
     async def _rollout_thread_async(self):
         data = None

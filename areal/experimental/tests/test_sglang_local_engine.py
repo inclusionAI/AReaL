@@ -17,7 +17,7 @@ import pytest
 import torch
 from tensordict import TensorDict
 
-from arealite.api.cli_args import (
+from areal.api.cli_args import (
     GenerationHyperparameters,
     InferenceEngineConfig,
     SGLangConfig,

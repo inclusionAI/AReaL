@@ -61,6 +61,7 @@ async def arequest_with_retry(
                 ctx = _session.delete(url, timeout=timeo)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
+            
             async with ctx as response:
                 if verbose:
                     logger.info("http requests return")
