@@ -3,7 +3,7 @@ from transformers import EarlyStoppingCallback
 from peft import LoraConfig, TaskType, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import time
-from experiments.model_training.prepare_dataset import OpenAICompletionDataPoint
+from experiments.model_training.prepare_dataset import OpenAICompletionDataPoint, load_as_hf_dataset
 from datasets import Dataset
 import os
 import dotenv
@@ -46,19 +46,6 @@ def get_model_and_tokenizer(model_name, torch_dtype="auto", device_map="auto") -
     return model, tokenizer
 
 
-def load_dataset(dataset_path, max_datapoints=None) -> Dataset:
-    """
-    Loads a dataset from a JSONL file and returns a list of OpenAICompletionDataPoint objects.
-    """
-    dataset = []
-    with open(dataset_path, "r") as f:
-        for line in f:
-            datapoint = OpenAICompletionDataPoint.model_validate_json(line)
-            dataset.append(datapoint)
-    if max_datapoints is not None:
-        dataset = dataset[:max_datapoints]
-    dataset = Dataset.from_list([dp.model_dump() for dp in dataset])
-    return dataset
 
 DEFAULT_QWEN_MODEL = "/home/ubuntu/victor-north-tx/models/Qwen2.5-0.5B-instruct"
 DEFAULT_TRAIN_DATASET_PATH = "data/train_full-v1.jsonl"
@@ -75,8 +62,8 @@ def train(qwen_model: str = DEFAULT_QWEN_MODEL, train_dataset_path: str = DEFAUL
     model_name = qwen_model
 
 
-    train_dataset = load_dataset(train_dataset_path, max_datapoints=max_train_datapoints)
-    test_dataset = load_dataset(test_dataset_path, max_datapoints=max_test_datapoints)
+    train_dataset = load_as_hf_dataset(train_dataset_path, max_datapoints=max_train_datapoints)
+    test_dataset = load_as_hf_dataset(test_dataset_path, max_datapoints=max_test_datapoints)
 
     print(f"Train dataset length: {len(train_dataset)}")
     print(f"Test dataset length: {len(test_dataset)}")

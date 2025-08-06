@@ -5,6 +5,7 @@ from typing import Callable, Iterable, Mapping, Optional, TypeVar, Union
 
 from pydantic import Field
 from rich.console import Console
+from datasets import Dataset
 
 from tau2.agent.base import is_valid_agent_history_message
 from tau2.agent.llm_agent import LLMAgent, LLMSoloAgent
@@ -117,6 +118,31 @@ class SFTDataset(BaseModelNoExtra):
 
     def get_info(self) -> dict:
         return {split: len(self[split]) for split in self.splits.keys()}
+
+
+
+def load_as_hf_dataset(dataset_path, max_datapoints=None, save_to_path=None) -> Dataset:
+    """
+    Loads a dataset from a JSONL file of OpenAICompletionDataPoint objects and returns a HuggingFace Dataset.
+    If save_to_path is provided, the dataset is saved to a HuggingFace Dataset.
+    Args:
+        dataset_path: Path to the dataset.
+        max_datapoints: Maximum number of datapoints to load.
+        save_to_path: Path to save the dataset.
+    Returns:
+        Dataset: A HuggingFace Dataset.
+    """
+    dataset = []
+    with open(dataset_path, "r") as f:
+        for line in f:
+            datapoint = OpenAICompletionDataPoint.model_validate_json(line)
+            dataset.append(datapoint)
+    if max_datapoints is not None:
+        dataset = dataset[:max_datapoints]
+    dataset = Dataset.from_list([dp.model_dump() for dp in dataset])
+    if save_to_path is not None:
+        dataset.save_to_disk(save_to_path)
+    return dataset
 
 
 def make_sft_dataset(
