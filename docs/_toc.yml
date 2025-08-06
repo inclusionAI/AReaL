@@ -14,9 +14,6 @@ parts:
     - file: tutorial/quickstart_legacy
     - file: tutorial/eval
     - file: tutorial/troubleshooting
-  - caption: Getting Started with AReaLite
-    chapters:
-    - file: arealite/gsm8k_grpo
   - caption: References
     chapters:
     - file: references/benchmark

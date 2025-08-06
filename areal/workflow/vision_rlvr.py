@@ -17,6 +17,7 @@ from realhf.base import logging
 
 logger = logging.getLogger("RLVR workflow")
 
+
 class VisionRLVRWorkflow(RLVRWorkflow):
     def __init__(
         self,

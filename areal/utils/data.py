@@ -256,7 +256,7 @@ def pack_tensor_dict(data: TensorDict):
             and value.ndim >= 2
             and value.shape[0] == bs
             and value.shape[1] == seq_len
-        ):  
+        ):
             packed_tensor = torch.empty(
                 (total_length, *value.shape[2:]), dtype=value.dtype, device=value.device
             )
@@ -333,7 +333,8 @@ def split_padded_tensor_dict_into_mb_list(
         if key == "image_grid_thw" or key == "pixel_values":
             continue
         if key == "position_ids" or (
-                torch.is_tensor(value) and value.numel() == bs * max_seqlen):
+            torch.is_tensor(value) and value.numel() == bs * max_seqlen
+        ):
             to_split[key] = value
         else:
             not_to_split[key] = value
@@ -565,8 +566,8 @@ def amend_position_ids_3d(data: TensorDict, rope_fn) -> TensorDict:
         image_grid_thw = image_grid_thw.squeeze(1)
     position_ids, rope_deltas = rope_fn(
         input_ids, image_grid_thw, video_grid_thw, attn_mask
-    ) # [channel=3,bs,seqlen]
+    )  # [channel=3,bs,seqlen]
 
-    position_ids = torch.einsum("ijk->jki", position_ids) # [bs,seqlen,channel=3]
+    position_ids = torch.einsum("ijk->jki", position_ids)  # [bs,seqlen,channel=3]
     data["position_ids"] = position_ids
     return data
