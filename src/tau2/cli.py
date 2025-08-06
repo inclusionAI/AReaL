@@ -52,7 +52,7 @@ def add_run_args(parser):
         "--agent-llm-args",
         type=json.loads,
         default={"temperature": DEFAULT_LLM_TEMPERATURE_AGENT},
-        help=f"The arguments to pass to the LLM for the agent. Default is '{\"temperature\": {DEFAULT_LLM_TEMPERATURE_AGENT}}'.",
+        help=f"The arguments to pass to the LLM for the agent. Default is '{{\"temperature\": {DEFAULT_LLM_TEMPERATURE_AGENT}}}'.",
     )
     parser.add_argument(
         "--user",
@@ -71,7 +71,7 @@ def add_run_args(parser):
         "--user-llm-args",
         type=json.loads,
         default={"temperature": DEFAULT_LLM_TEMPERATURE_USER},
-        help=f"The arguments to pass to the LLM for the user. Default is '{\"temperature\": {DEFAULT_LLM_TEMPERATURE_USER}}'.",
+        help=f"The arguments to pass to the LLM for the user. Default is '{{\"temperature\": {DEFAULT_LLM_TEMPERATURE_USER}}}'.",
     )
     parser.add_argument(
         "--task-set-name",
