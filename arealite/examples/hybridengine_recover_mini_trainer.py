@@ -225,7 +225,7 @@ megatron_wrap_policy = {
 
 def main_grpo():
     experiment_name = "arealite-mini"
-    trial_name = "align-64x8"
+    trial_name = "upup-64x8"
 
     # init scheduler
     scheduler = AsystemScheduler(
@@ -274,7 +274,7 @@ def main_grpo():
                            data_files="/storage/dataset/nlp/areal/moe_lite_math_0527_merge_train_areal.jsonl")
     train_dataset = dataset['train']
     train_dataset = train_dataset.filter(lambda x: len(tokenizer.encode(x["prompt"])) <= max_prompt_len)
-    dataloader = StatefulDataLoader(train_dataset, batch_size=1)
+    dataloader = StatefulDataLoader(train_dataset, batch_size=1, shuffle=True)
 
     ############################## recover #########################################
     recover_meta_info_path = ""

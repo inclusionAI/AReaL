@@ -188,13 +188,13 @@ class DistributedTrainController(TrainController):
         """Update the model with a batch of data and a loss function."""
         logger.info(f"start to train_distributed_batch")
         batches = input_.split(self.dp_size)
-        dp_world_size = self.tp_size * self.pp_size
-        assert len(self.workers) % dp_world_size == 0
+        # dp_world_size = self.tp_size * self.pp_size
+        # assert len(self.workers) % dp_world_size == 0
         futures = []
         results = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             for index, worker in enumerate(self.workers):
-                batch_index = index // dp_world_size
+                batch_index = index % self.dp_size
                 batch_data = batches[batch_index]
                 futures.append(executor.submit(
                     self.scheduler.call_engine,
