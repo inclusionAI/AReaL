@@ -13,9 +13,9 @@ from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
-from realhf.base import seeding, stats_tracker
-torch.set_printoptions(threshold=float("inf"))
-tokenizer_path = "/storage/openpsi/models/Qwen2-VL-7B"
+
+tokenizer_path = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
+# tokenizer_path = "/storage/openpsi/models/Qwen2-VL-7B"
 data_path = "/storage/openpsi/data/geometry3k/"
 def main():
     os.environ["RANK"] = str(0)
@@ -108,6 +108,9 @@ def main():
         y2 = res2.logits.squeeze(0)[:-pad_len]
         from torch.testing import assert_close
         assert_close(y1,y2)
+        diff = (y1 - y2).abs()
+        print(diff)
+
         # print(res.logits.shape)
         break
     print('finish')

@@ -554,9 +554,7 @@ def amend_position_ids_3d(data: TensorDict, rope_fn) -> TensorDict:
     input_ids=data['input_ids']
     image_grid_thw=data.get('image_grid_thw',None)
     video_grid_thw=data.get('video_grid_thw',None)
-    print(input_ids)
-    print(image_grid_thw)
-    breakpoint()
+
     if image_grid_thw!=None:
         image_grid_thw=image_grid_thw.squeeze(1)
     position_ids, rope_deltas = rope_fn(input_ids, image_grid_thw, video_grid_thw, attn_mask)
