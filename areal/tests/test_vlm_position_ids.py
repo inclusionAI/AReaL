@@ -1,27 +1,24 @@
 import os
-import sys
 
+import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import AutoModelForImageTextToText
-import torch
-from areal.api.cli_args import SFTConfig, load_expr_config
+
 from areal.api.io_struct import FinetuneSpec
 from areal.dataset import get_custom_dataset
-from areal.engine.sft.lm_engine import FSDPLMEngine
 from areal.utils.data import pad_sequences_to_tensors
-from areal.utils.evaluator import Evaluator
-from areal.utils.saver import Saver
-from areal.utils.stats_logger import StatsLogger
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 
 tokenizer_path = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
 # tokenizer_path = "/storage/openpsi/models/Qwen2-VL-7B"
 data_path = "/storage/openpsi/data/geometry3k/"
+
+
 def main():
     os.environ["RANK"] = str(0)
-    os.environ['WORLD_SIZE'] = str(1)
-    os.environ['MASTER_ADDR'] = "localhost"
-    os.environ['MASTER_PORT'] = str(7777)
+    os.environ["WORLD_SIZE"] = str(1)
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = str(7777)
     processor, tokenizer = load_hf_processor_and_tokenizer(tokenizer_path)
     train_dataset = get_custom_dataset(
         path=data_path,
@@ -44,7 +41,6 @@ def main():
         drop_last=True,
     )
 
-
     # Initialize engine
     ft_spec = FinetuneSpec(
         total_train_epochs=1,
@@ -64,19 +60,29 @@ def main():
         for k, v in data.items():
             # print(k, v.shape)
             data[k] = v.cuda()
-        data['image_grid_thw']=data['image_grid_thw'].squeeze(1)
+        data["image_grid_thw"] = data["image_grid_thw"].squeeze(1)
         # breakpoint()
         res = model.forward(**data)
         from areal.utils.data import unpad_input
-        y1=unpad_input(res.logits, data['attention_mask'])[0]
 
-        from areal.utils.data import unsqueeze_mb_list,amend_position_ids_3d, split_padded_tensor_dict_into_mb_list, pack_tensor_dict, pad_mb_list,amend_position_ids
+        y1 = unpad_input(res.logits, data["attention_mask"])[0]
+
         from tensordict import TensorDict
+
         from areal.api.cli_args import MicroBatchSpec
+        from areal.utils.data import (
+            amend_position_ids,
+            amend_position_ids_3d,
+            pack_tensor_dict,
+            pad_mb_list,
+            split_padded_tensor_dict_into_mb_list,
+            unsqueeze_mb_list,
+        )
+
         mb_spec = MicroBatchSpec(1, int(1e12))
         input_ = TensorDict({k: v.clone() for k, v in data.items()})
         # input_ = amend_position_ids(input_)
-        input_ = amend_position_ids_3d(input_,model.model.get_rope_index)
+        input_ = amend_position_ids_3d(input_, model.model.get_rope_index)
         mb_list = split_padded_tensor_dict_into_mb_list(input_, mb_spec)
         mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
         mb_list = pad_mb_list(
@@ -103,16 +109,18 @@ def main():
         for k, v in x.items():
             if isinstance(v, torch.Tensor):
                 print(k, v.shape)
-        print(x['position_ids'])
+        print(x["position_ids"])
         res2 = model(**x)
         y2 = res2.logits.squeeze(0)[:-pad_len]
         from torch.testing import assert_close
-        assert_close(y1,y2)
+
+        assert_close(y1, y2)
         diff = (y1 - y2).abs()
         print(diff)
 
         # print(res.logits.shape)
         break
-    print('finish')
+    print("finish")
+
 
 main()

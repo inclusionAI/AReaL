@@ -258,8 +258,8 @@ class BaseHFEngine(TrainEngine):
         if isinstance(input_, dict):
             input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
         if self.is_vision_model:
-            rope_fn=self.model.model.get_rope_index
-            input_=amend_position_ids_3d(input_,rope_fn) 
+            rope_fn = self.model.model.get_rope_index
+            input_ = amend_position_ids_3d(input_, rope_fn)
         else:
             input_ = amend_position_ids(input_)
 

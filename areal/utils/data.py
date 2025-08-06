@@ -438,8 +438,12 @@ def pad_packed_tensor_dict(
         elif key == "max_seqlen":
             padded_data[key] = new_max_seqlen
         elif key == "position_ids":
-            if len(value.shape)==2 and value.shape[1]==3:
-                pad = torch.arange(pad_length, dtype=torch.long, device=value.device).unsqueeze(1).expand(-1, 3)
+            if len(value.shape) == 2 and value.shape[1] == 3:
+                pad = (
+                    torch.arange(pad_length, dtype=torch.long, device=value.device)
+                    .unsqueeze(1)
+                    .expand(-1, 3)
+                )
                 padded_tensor = torch.cat([value, pad])
             else:
                 pad = torch.arange(pad_length, dtype=torch.long, device=value.device)
@@ -509,10 +513,10 @@ def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
         ):
             new_data[key] = value.unsqueeze(dim=0)
         elif key == "position_ids":
-            value=value.unsqueeze(dim=0)
-            if len(value.shape)==3 and value.shape[2]==3:
-                value=torch.einsum("ijk->kij", value)
-            
+            value = value.unsqueeze(dim=0)
+            if len(value.shape) == 3 and value.shape[2] == 3:
+                value = torch.einsum("ijk->kij", value)
+
             new_data[key] = value
         else:
             new_data[key] = value
@@ -545,18 +549,21 @@ def amend_position_ids(data: TensorDict) -> TensorDict:
     data["position_ids"] = position_ids
     return data
 
+
 def amend_position_ids_3d(data: TensorDict, rope_fn) -> TensorDict:
     assert "attention_mask" in data, "Input data must contain 'attention_mask' key."
     torch.set_printoptions(threshold=float("inf"))
     attn_mask = data["attention_mask"]
-    input_ids=data['input_ids']
-    image_grid_thw=data.get('image_grid_thw',None)
-    video_grid_thw=data.get('video_grid_thw',None)
+    input_ids = data["input_ids"]
+    image_grid_thw = data.get("image_grid_thw", None)
+    video_grid_thw = data.get("video_grid_thw", None)
 
-    if image_grid_thw!=None:
-        image_grid_thw=image_grid_thw.squeeze(1)
-    position_ids, rope_deltas = rope_fn(input_ids, image_grid_thw, video_grid_thw, attn_mask)
+    if image_grid_thw != None:
+        image_grid_thw = image_grid_thw.squeeze(1)
+    position_ids, rope_deltas = rope_fn(
+        input_ids, image_grid_thw, video_grid_thw, attn_mask
+    )
 
-    position_ids=torch.einsum("ijk->jki", position_ids)
+    position_ids = torch.einsum("ijk->jki", position_ids)
     data["position_ids"] = position_ids
     return data

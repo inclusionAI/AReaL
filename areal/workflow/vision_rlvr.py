@@ -1,7 +1,7 @@
+import asyncio
+import functools
 import os
 import uuid
-import functools
-import asyncio
 
 import colorama
 import torch
@@ -12,7 +12,7 @@ from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import VLMRequest
 from areal.utils.data import concat_padded_tensors
 from areal.utils.image import image2base64, pad_images_batch_to_max_size
-from areal.workflow.rlvr import RLVRWorkflow, REWARD_TIMEOUT_SECONDS 
+from areal.workflow.rlvr import REWARD_TIMEOUT_SECONDS, RLVRWorkflow
 
 
 class VisionRLVRWorkflow(RLVRWorkflow):

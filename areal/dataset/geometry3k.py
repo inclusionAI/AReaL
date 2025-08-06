@@ -1,12 +1,12 @@
 import math
 from io import BytesIO
 from typing import Any, Dict, Optional, Union
-from torchvision import transforms
+
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 from PIL import Image
 from PIL.Image import Image as ImageObject
-
+from torchvision import transforms
 
 
 def pad_to_square(img: Image.Image, fill=(0, 0, 0)) -> Image.Image:
@@ -18,21 +18,29 @@ def pad_to_square(img: Image.Image, fill=(0, 0, 0)) -> Image.Image:
     new_img.paste(img, offset)
     return new_img
 
+
 def convert_image(
     image: Union[Dict[str, Any], ImageObject, str],
     fixed_width: Optional[int] = None,
     fixed_height: Optional[int] = None,
 ) -> ImageObject:
-    if fixed_width is not None and fixed_height is not None and (image.width != fixed_width or image.height != fixed_height):
-        preprocess = transforms.Compose([
-            transforms.CenterCrop((fixed_width, fixed_height)),  # <─ 核心操作
-        ])
-        image=preprocess(image)
+    if (
+        fixed_width is not None
+        and fixed_height is not None
+        and (image.width != fixed_width or image.height != fixed_height)
+    ):
+        preprocess = transforms.Compose(
+            [
+                transforms.CenterCrop((fixed_width, fixed_height)),  # <─ 核心操作
+            ]
+        )
+        image = preprocess(image)
     if image.mode != "RGB":
         image = image.convert("RGB")
     with BytesIO() as output:
         image.save(output, format="JPEG")
         return output.getvalue()
+
 
 def get_geometry3k_sft_dataset(path, split, processor, rank, world_size):
     """

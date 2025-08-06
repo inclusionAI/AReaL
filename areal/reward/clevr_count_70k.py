@@ -1,5 +1,6 @@
 import re
 
+
 def extract_answer(pred_str, data_name, use_last_number=True):
     match = re.findall(r"\[([0-9\.]+)\]", pred_str)
     if match:
