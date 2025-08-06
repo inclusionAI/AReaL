@@ -11,9 +11,11 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import VLMRequest
 from areal.utils.data import concat_padded_tensors
-from areal.utils.image import image2base64, pad_images_batch_to_max_size
+from areal.utils.image import image2base64
 from areal.workflow.rlvr import REWARD_TIMEOUT_SECONDS, RLVRWorkflow
+from realhf.base import logging
 
+logger = logging.getLogger("RLVR workflow")
 
 class VisionRLVRWorkflow(RLVRWorkflow):
     def __init__(

@@ -254,7 +254,6 @@ class BaseHFEngine(TrainEngine):
             assert (
                 "pixel_values" in input_ and "image_grid_thw" in input_
             ), "For vision-language models, pixel_values and image_grid_thw must be present in input_"
-
         if isinstance(input_, dict):
             input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
         if self.is_vision_model:
@@ -322,8 +321,6 @@ class BaseHFEngine(TrainEngine):
         for i, (pad_length, padded_mb_input, mb_input) in enumerate(
             zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
         ):
-            print(padded_mb_input)
-            breakpoint()
             outputs = self.model(**padded_mb_input)
 
             logits = outputs.logits.squeeze(0)
@@ -414,6 +411,7 @@ class BaseHFEngine(TrainEngine):
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):  
+
             outputs = self.model(**padded_mb_input)
             logits = outputs.logits.squeeze(0)
             logits = logits[:-pad_length] if pad_length > 0 else logits
