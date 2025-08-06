@@ -26,6 +26,7 @@ from areal.api.io_struct import (
 from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
 from areal.utils.http import arequest_with_retry, get_default_connector
 from realhf.base import logging, name_resolve, names
+from areal.platforms import current_platform
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +248,7 @@ class RemoteSGLangEngine(InferenceEngine):
             res = requests.post(f"http://{addr}/pause_generation")
             res.raise_for_status()
         fut = Future()
-        if meta.type == "nccl":
+        if meta.type == "nccl" or "hccl":
             fut = self.executor.submit(
                 update_weights_from_distributed,
                 meta,
@@ -431,7 +432,7 @@ async def ainit_weights_update_group(
         "master_port": str(meta.nccl_master_port),
         "rank_offset": rank_offset,
         "world_size": meta.alloc_mode.gen_world_size + 1,
-        "backend": "nccl",
+        "backend": current_platform.communication_backend,
         "group_name": meta.nccl_group_name,
     }
     res = await arequest_with_retry(

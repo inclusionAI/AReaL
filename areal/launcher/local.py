@@ -15,6 +15,7 @@ from areal.api.io_struct import AllocationMode, AllocationType
 from areal.utils.network import find_free_ports, gethostip
 from realhf.base import gpu_utils, logging, name_resolve, names
 from realhf.scheduler.client import JobException, JobInfo, JobState
+from areal.platforms import current_platform
 
 logger = logging.getLogger("Local Scheduler")
 JOB_STATE_TO_PROCESS_STATUS = {
@@ -71,13 +72,19 @@ class LocalLauncher:
         self._job_states = {}
 
         self._gpu_counter = 0
-        self._cuda_devices: List[str] = os.environ.get(
-            "CUDA_VISIBLE_DEVICES", ",".join(map(str, range(gpu_utils.gpu_count())))
-        ).split(",")
+        if current_platform.device_type =="cuda":
+            self._cuda_devices: List[str] = os.environ.get(
+                "CUDA_VISIBLE_DEVICES", ",".join(map(str, range(gpu_utils.gpu_count())))
+            ).split(",")
+        elif current_platform.device_type =="npu":
+            import torch_npu
+            self._cuda_devices: List[str] = os.environ.get(
+                "ASCEND_RT_VISIBLE_DEVICES", ",".join(map(str, range(torch_npu.npu.device_count())))
+            ).split(",")
         if len(self._cuda_devices) < 1:
             raise RuntimeError(
                 f"Local mode can only run when there is at least one GPU. "
-                f"CUDA_VISIBLE_DEVICES is currently set to {os.environ['CUDA_VISIBLE_DEVICES']}."
+                f"CUDA_VISIBLE_DEVICES is currently set to {os.environ['CUDA_VISIBLE_DEVICES'] or os.environ['ASCEND_RT_VISIBLE_DEVICES']}."
             )
 
     @property
@@ -113,9 +120,13 @@ class LocalLauncher:
                     available_device_id = self._gpu_counter % len(self._cuda_devices)
                     self._gpu_counter += 1
                     visible_devices.append(available_device_id)
-                env_vars["CUDA_VISIBLE_DEVICES"] = ",".join(
+                visible_devices_str = ",".join(
                     str(self._cuda_devices[j]) for j in visible_devices
                 )
+                if current_platform.device_type == "cuda":
+                    env_vars["CUDA_VISIBLE_DEVICES"] = visible_devices_str
+                elif current_platform.device_type == "npu":
+                    env_vars["ASCEND_RT_VISIBLE_DEVICES"] = visible_devices_str
             c = (
                 " ".join(str(k) + "=" + str(v) for k, v in env_vars.items())
                 + " stdbuf -oL "

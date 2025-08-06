@@ -13,6 +13,7 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters, SaverConfig
 from areal.utils.network import find_free_ports, gethostip
+from areal.platforms import current_platform
 
 if TYPE_CHECKING:
     from areal.api.engine_api import TrainEngine
@@ -191,7 +192,7 @@ class ParamSpec:
 
 @dataclass
 class WeightUpdateMeta:
-    type: Literal["disk", "nccl"]
+    type: Literal["disk", "nccl", "hccl"]
     path: str | None = None
     alloc_mode: AllocationMode | None = None
 
@@ -224,7 +225,7 @@ class WeightUpdateMeta:
         nccl_group_name: str = "update_weight_group",
     ):
         return cls(
-            type="nccl",
+            type=current_platform.communication_backend,
             alloc_mode=allocation_mode,
             nccl_master_address=gethostip(),
             nccl_master_port=find_free_ports(1)[0],

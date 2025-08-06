@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple, Type, Union
 from omegaconf import MISSING
 
 from realhf.base import logging, pkg_version
+from areal.platforms import current_platform
 
 logger = logging.getLogger("CLI args")
 
@@ -345,7 +346,7 @@ class SGLangConfig:
             tokenizer_mode="auto",
             load_format="auto",
             trust_remote_code=True,
-            device="cuda",
+            device=current_platform,
             served_model_name=f"{constants.experiment_name()}/{constants.trial_name()}/{model_path}",
             is_embedding=False,
             skip_tokenizer_init=True,
