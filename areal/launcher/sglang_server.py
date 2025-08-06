@@ -3,6 +3,7 @@ import subprocess
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import requests
@@ -73,58 +74,95 @@ class SGLangServerWrapper:
         experiment_name: str,
         trial_name: str,
         sglang_config: SGLangConfig,
-        tp_size: int,
+        allocation_mode: AllocationMode,
         n_gpus_per_node: int,
     ):
         self.experiment_name = experiment_name
         self.trial_name = trial_name
         self.config = sglang_config
-        self.tp_size = tp_size
+        self.allocation_mode = allocation_mode
         self.server_process = None
         self.n_gpus_per_node = n_gpus_per_node
 
     def run(self):
-        gpus_per_server = len(os.getenv("CUDA_VISIBLE_DEVICES").split(","))
-        server_local_idx = (
-            int(os.getenv("CUDA_VISIBLE_DEVICES").split(",")[0]) // gpus_per_server
-        )
+        gpus_per_server = self.allocation_mode.gen_instance_size
+        if gpus_per_server > self.n_gpus_per_node:
+            raise NotImplementedError("Cross-node SGLang is not supported")
+
         n_servers_per_node = max(1, self.n_gpus_per_node // gpus_per_server)
+        if "CUDA_VISIBLE_DEVICES" in os.environ:
+            visible = os.getenv("CUDA_VISIBLE_DEVICES").split(",")
+            n_visible_devices = len(visible)
+            n_servers_per_proc = max(1, n_visible_devices // gpus_per_server)
+            server_idx_offset = int(visible[0]) // gpus_per_server
+        else:
+            n_visible_devices = self.n_gpus_per_node
+            n_servers_per_proc = n_servers_per_node
+            server_idx_offset = 0
+
+        # Separate ports used by each server in the same node
+        # ports range (10000, 50000)
         ports_per_server = 40000 // n_servers_per_node
-        port_range = (
-            server_local_idx * ports_per_server + 10000,
-            (server_local_idx + 1) * ports_per_server + 10000,
-        )
-        server_port, dist_init_port = find_free_ports(2, port_range)
+        launch_server_args = []
+        server_addresses = []
+        for server_local_idx in range(
+            server_idx_offset, server_idx_offset + n_servers_per_proc
+        ):
+            port_range = (
+                server_local_idx * ports_per_server + 10000,
+                (server_local_idx + 1) * ports_per_server + 10000,
+            )
+            server_port, dist_init_port = find_free_ports(2, port_range)
 
-        dist_init_addr = f"localhost:{dist_init_port}"
-        host_ip = gethostip()
+            dist_init_addr = f"localhost:{dist_init_port}"
+            host_ip = gethostip()
 
-        cmd = SGLangConfig.build_cmd(
-            self.config,
-            tp_size=self.tp_size,
-            base_gpu_id=0,
-            host=host_ip,
-            port=server_port,
-            dist_init_addr=dist_init_addr,
-        )
-        self.server_process = launch_server_cmd(cmd)
+            base_gpu_id = (server_local_idx - server_idx_offset) * gpus_per_server
+            cmd = SGLangConfig.build_cmd(
+                self.config,
+                tp_size=self.allocation_mode.gen_tp_size,
+                base_gpu_id=base_gpu_id,
+                host=host_ip,
+                port=server_port,
+                dist_init_addr=dist_init_addr,
+            )
+            launch_server_args.append((cmd, host_ip, server_port))
+            server_addresses.append(f"http://{host_ip}:{server_port}")
+
+        with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
+            server_processes = executor.map(
+                lambda args: self.launch_one_server(*args), launch_server_args
+            )
+
+        while True:
+            all_alive = True
+            for i, process in enumerate(server_processes):
+                return_code = process.poll()
+                if return_code is not None:
+                    logger.info(
+                        f"SGLang server {server_addresses[i]} exits, returncode={return_code}"
+                    )
+                    all_alive = False
+                    break
+
+            if not all_alive:
+                for i, process in enumerate(server_processes):
+                    if process.poll() is None:
+                        process.terminate()
+                        process.wait()
+                        logger.info(
+                            f"SGLang server process{server_addresses[i]} terminated."
+                        )
+
+            time.sleep(1)
+
+    def launch_one_server(self, cmd, host_ip, server_port):
+        server_process = launch_server_cmd(cmd)
         wait_for_server(f"http://{host_ip}:{server_port}")
-
         name = names.gen_servers(self.experiment_name, self.trial_name)
         name_resolve.add_subentry(name, f"{host_ip}:{server_port}")
-
         logger.info(f"SGLang server launched at: http://{host_ip}:{server_port}")
-        return_code = self.server_process.wait()
-        logger.info(
-            f"SGLang server at http://{host_ip}:{server_port} exits, returncode={return_code}"
-        )
-
-    def __del__(self):
-        if self.server_process and self.server_process.poll() is None:
-            logger.info("Terminating SGLang server process...")
-            self.server_process.terminate()
-            self.server_process.wait()
-            logger.info("SGLang server process terminated.")
+        return server_process
 
 
 def main(argv):
@@ -139,13 +177,12 @@ def main(argv):
     allocation_mode = config.allocation_mode
     allocation_mode = AllocationMode.from_str(allocation_mode)
     assert allocation_mode.type_ == AllocationType.DECOUPLED_SGLANG
-    tp_size = allocation_mode.gen_tp_size
 
     sglang_server = SGLangServerWrapper(
         config.experiment_name,
         config.trial_name,
         config.sglang,
-        tp_size,
+        allocation_mode,
         n_gpus_per_node=config.cluster.n_gpus_per_node,
     )
     sglang_server.run()

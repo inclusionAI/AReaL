@@ -22,9 +22,10 @@ from arealite.api.cli_args import (
     InferenceEngineConfig,
     SGLangConfig,
 )
-from arealite.api.io_struct import LLMRequest, LLMResponse
-from arealite.experimental.sglang_engine import SGLangEngine
-from arealite.workflow.rlvr import RLVRWorkflow
+from areal.api.io_struct import LLMRequest, LLMResponse
+from areal.experimental.sglang_engine import SGLangEngine
+from areal.utils.network import find_free_ports
+from areal.workflow.rlvr import RLVRWorkflow
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import seeding
 
@@ -45,12 +46,16 @@ def build_engine_config(**kwargs):
 
 def build_engine_args():
     return SGLangConfig.build_args(
-        sglang_config=SGLangConfig(mem_fraction_static=0.3, enable_metrics=False),
-        model_path=MODEL_PATH,
+        sglang_config=SGLangConfig(
+            model_path=MODEL_PATH,
+            mem_fraction_static=0.3,
+            enable_metrics=False,
+            skip_tokenizer_init=False,
+        ),
         tp_size=1,
         base_gpu_id=0,
-        served_model_name=MODEL_PATH,
-        skip_tokenizer_init=False,
+        host="localhost",
+        port=find_free_ports(1)[0],
     )
 
 

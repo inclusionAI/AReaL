@@ -523,10 +523,8 @@ def unsqueeze_mb_list(
     mb_list: MicroBatchList,
 ) -> MicroBatchList:
     """Unsqueeze the packed tensordict in the micro-batch list."""
-    new_mbs = []
     new_padded_mbs = []
     for i, mb in enumerate(mb_list.mbs):
-        new_mbs.append(unsqueeze_packed_tensor_dict(mb))
         if mb_list.padded_mbs is not None:
             new_padded_mbs.append(unsqueeze_packed_tensor_dict(mb_list.padded_mbs[i]))
     mb_list.padded_mbs = new_padded_mbs if mb_list.padded_mbs is not None else None

@@ -228,6 +228,7 @@ class RemoteSGLangEngine(InferenceEngine):
         # Prepare request payload
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
+        stop = gconfig.stop
 
         if gconfig.n_samples != 1:
             raise ValueError(
@@ -241,6 +242,9 @@ class RemoteSGLangEngine(InferenceEngine):
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
         }
+        if stop is not None:
+            sample_params["stop"] = stop
+
         if isinstance(req, VLMRequest):
             # VLMRequest has image_data
             payload = {
@@ -321,7 +325,7 @@ class RemoteSGLangEngine(InferenceEngine):
             # FIXME: Update with actual server versions
             accumulated_versions.extend([-1] * len(output_tokens))
 
-            payload["input_ids"] += result["output_ids"]
+            payload["input_ids"] += output_tokens
             sample_params["max_new_tokens"] -= len(output_tokens)
 
         latency = time.perf_counter() - start_time
@@ -468,30 +472,10 @@ class RemoteSGLangEngine(InferenceEngine):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: "RolloutWorkflow",
+        workflow: RolloutWorkflow,
+        should_accept: Callable | None = None,
     ):
-        if not hasattr(self, "data_generator"):
-            self.data_generator = iter(dataloader)
-        assert dataloader.batch_size is not None
-        while True:
-            # Submit at least two batches to allow maximum overlap
-            if (
-                self.get_capacity() + dataloader.batch_size > 0
-                and self.input_queue.qsize() + dataloader.batch_size
-                < self.input_queue.maxsize
-            ):
-                try:
-                    data = next(self.data_generator)
-
-                except StopIteration:
-                    self.data_generator = iter(dataloader)
-                    data = next(self.data_generator)
-                for item in data:
-                    self.submit(item, workflow=workflow)
-            try:
-                return self.wait(dataloader.batch_size, timeout=1)
-            except TimeoutError:
-                pass
+        return self.workflow_executor.prepare_batch(dataloader, workflow, should_accept)
 
     def pause(self):
         self.paused.set()

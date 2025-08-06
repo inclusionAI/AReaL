@@ -75,6 +75,12 @@ class GenerationHyperparameters:
         default_factory=list,
         metadata={"help": "Stop generation when encoutering these token ids."},
     )
+    stop: Optional[List[str]] = field(
+        default=None,
+        metadata={
+            "help": "One or multiple stop words. Generation will stop if one of these words is sampled."
+        },
+    )
 
     def new(self, **kwargs):
         args = asdict(self)
@@ -316,8 +322,7 @@ class SGLangConfig:
     num_continuous_decode_steps: int = 1
     enable_memory_saver: bool = False
     allow_auto_truncate: bool = False
-    # NOTE: to avoid the illegal memory access error
-    attention_backend: Optional[str] = "flashinfer"
+    attention_backend: Optional[str] = "fa3"
     sampling_backend: Optional[str] = None
     context_length: Optional[int] = 32768
     mem_fraction_static: Optional[float] = 0.9
@@ -647,7 +652,7 @@ class SlurmLauncherConfig:
     """Configuration for launching the SGLang server with Slurm."""
 
     srun_additional_args: str = field(
-        default="--overlap --mpi=pmi2 -K --chdir $PWD",
+        default="--mpi=pmi2 -K --chdir $PWD",
         metadata={"help": "Additional arguments to pass to the srun command."},
     )
     container_type: str = field(

@@ -5,7 +5,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec
-from areal.dataset.__init__ import get_custom_dataset
+from areal.dataset import get_custom_dataset
 from areal.engine.sft.lm_engine import FSDPLMEngine
 from areal.utils.data import pad_sequences_to_tensors
 from areal.utils.evaluator import Evaluator
