@@ -2,7 +2,7 @@ experiment_name: gsm8k-grpo
 trial_name: trial0
 allocation_mode: sglang.d4p1t1+d4p1t1
 cluster:
-  fileroot: /tmp/arealite/experiments
+  fileroot: /tmp/areal/experiments
   n_nodes: 1
   n_gpus_per_node: 8
   name_resolve:
@@ -68,6 +68,7 @@ ref:
   trial_name: ${trial_name}
   path: ${actor.path}
   init_from_scratch: false
+  disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
     max_tokens_per_mb: 10240
@@ -81,9 +82,9 @@ sglang:
   random_seed: ${seed}
   skip_tokenizer_init: true
   dtype: ${actor.dtype}
-  max_running_requests: null 
+  max_running_requests: null
   context_length: 32768
-  mem_fraction_static: 0.9
+  mem_fraction_static: 0.8
 
 # datasets
 train_dataset:
@@ -94,7 +95,7 @@ train_dataset:
   path: openai/gsm8k
   type: rl
 
-valid_dataset: 
+valid_dataset:
   batch_size: 256
   shuffle: true
   pin_memory: true
@@ -131,4 +132,5 @@ stats_logger:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-
+  wandb:
+    mode: disabled

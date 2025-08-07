@@ -31,7 +31,7 @@ dependencies = [
     "huggingface_hub",
     "datasets",
     "accelerate",
-    "transformers==4.54.0",
+    "transformers==4.53.1",
     
     # Scientific computing
     "scipy",
@@ -56,6 +56,8 @@ dependencies = [
     "torchdata",
     "autoflake",
     "tensordict",
+    "pybase64",
+    "msgspec",
     
     # Monitoring and logging
     "wandb",

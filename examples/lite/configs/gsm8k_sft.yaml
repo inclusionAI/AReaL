@@ -1,7 +1,9 @@
 experiment_name: gsm8k-sft
 trial_name: trial0
 
+allocation_mode: d8p1t1
 cluster:
+  fileroot: /tmp/areal/experiments
   n_nodes: 1
   n_gpus_per_node: 8
   name_resolve:
@@ -39,7 +41,7 @@ train_dataset:
   path: openai/gsm8k
   type: sft
 
-valid_dataset: 
+valid_dataset:
   batch_size: 128
   shuffle: true
   pin_memory: true
@@ -76,3 +78,5 @@ stats_logger:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
+  wandb:
+    mode: online

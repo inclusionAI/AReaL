@@ -12,7 +12,7 @@ from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
-from realhf.base import stats_tracker
+from realhf.base import seeding, stats_tracker
 
 
 def main_sft():
@@ -21,6 +21,9 @@ def main_sft():
 
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
+
+    seeding.set_random_seed(config.seed, f"trainer{rank}")
+
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
@@ -75,7 +78,7 @@ def main_sft():
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     total_epochs = config.total_train_epochs
-    steps_per_epoch = len(train_dataloader)
+    len(train_dataloader)
 
     global_step = 0
     for epoch in range(total_epochs):
