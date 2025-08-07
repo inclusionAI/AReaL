@@ -2,14 +2,8 @@ name: Test AReaL
 
 on:
   pull_request:
-    branches: [ main ]
-    paths:
-      - .github/workflows/test-areal.yml
-      - areal/**
-      - ci/test_areal.sh
-      - evaluation/latex2sympy/**
-      - examples/env/scripts/setup-pip-deps.sh
-      - pyproject.toml
+    branches:
+      - main
   workflow_dispatch:
 
 concurrency:
@@ -24,4 +18,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - run: bash ./ci/test_areal.sh
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Set up environment
+        run: |
+          uv venv --clear
+          source .venv/bin/activate
+          source examples/env/scripts/setup-pip-deps.sh
+
+      - name: Run tests
+        run: |
+          source .venv/bin/activate
+          pytest areal/tests
