@@ -295,7 +295,6 @@ class BaseHFEngine(TrainEngine):
         if is_qwen2_vl_model(self.model_config.model_type):
             for mb in mb_list.padded_mbs:
                 # [1, total_seqlen, 3] -> [3, 1, total_seqlen]
-                print(">>>>>>", mb["position_ids"].shape)
                 mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
 
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
@@ -308,12 +307,12 @@ class BaseHFEngine(TrainEngine):
             mb_list.padded_mbs[i] = dict(**mb)
         for mb in mb_list.mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
-            mb["cu_seqlens_q"] = mb["cu_seqlens_k"] = mb['cu_seqlens']
+            mb["cu_seqlens_q"] = mb["cu_seqlens_k"] = mb["cu_seqlens"]
             mb["use_cache"] = False
             mb["attention_mask"] = dict(full_attention=None)
         for mb in mb_list.padded_mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
-            mb["cu_seqlens_q"] = mb["cu_seqlens_k"] = mb['cu_seqlens']
+            mb["cu_seqlens_q"] = mb["cu_seqlens_k"] = mb["cu_seqlens"]
             mb["use_cache"] = False
             mb["attention_mask"] = dict(full_attention=None)
 
