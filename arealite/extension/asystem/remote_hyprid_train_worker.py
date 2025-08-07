@@ -284,23 +284,9 @@ class RemoteHypridTrainWorker(TrainEngine):
                  "packed_input_ids": train_datas["packed_input_ids"],
                  "kl_rewards": train_datas["kl_rewards"],
                  "seqlen": batch_data["seqlen"]}
-        logger.info(f"[RemoteHypridTrainWorker] train_distributed_batch input train_batch'data: {batch}")
         train_stats = self.train_batch(batch, loss_fn, loss_weight_fn)
         logger.info(f"[RemoteHypridTrainWorker] Train batch exec success, global_step: {self.global_step}.")
 
-        # 3、保存模型
-        # TODO: hardcode, remove this dave logic to trainer
-        # self.save(SaveLoadMeta(
-        #     path=f"/storage/openpsi/checkpoints/{self.config.experiment_name}/{self.config.trial_name}",
-        #     weight_format="huggingface",
-        #     global_step=self.global_step,
-        #     with_optim=True,
-        #     tokenizer=None,
-        #     base_model_path=None,
-        # ))
-        # logger.info(f"[RemoteHypridTrainWorker] Train save hf exec success, global_step: {self.global_step}.")
-
-        # 4. 更新global_step
         self.global_step += 1
         return train_stats
 

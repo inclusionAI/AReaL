@@ -107,11 +107,6 @@ class Recover:
         base_model_path: str | None = None,
         disable_save_hf: bool = False,
     ):
-        if not self.freq_ctl.check(
-            epochs=int(step == self.ft_spec.steps_per_epoch - 1), steps=1
-        ):
-            return
-
         # save hf model
         if not disable_save_hf:
             path = Recover.get_save_checkpoint_path(
