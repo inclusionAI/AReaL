@@ -420,7 +420,7 @@ def slurm_main():
 
         base_seed = config.sglang.random_seed
         sglang_server_cmd_template = f"python3 -m areal.launcher.sglang_server {' '.join(sys.argv[2:])} sglang.random_seed={{seed}}"
-        for i in range(n_sglang_servers):
+        for i in range(n_sglang_nodes):
             sglang_cmd = sglang_server_cmd_template.format(
                 seed=base_seed + i * n_servers_per_node
             )
