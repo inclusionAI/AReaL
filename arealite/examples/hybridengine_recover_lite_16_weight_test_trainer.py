@@ -41,7 +41,7 @@ def clear_dir(path):
 
 logger = logging.getLogger("Trainer")
 
-from asystem_runtime.weights_exchange.meta_server import start_meta_server
+from arealite.extension.asystem.meta_server import start_meta_server
 host, port = start_meta_server()
 meta_server_addr = f"{host}:{port}"
 print(f'meta_server_addr {meta_server_addr}')
