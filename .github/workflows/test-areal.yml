@@ -24,7 +24,7 @@ jobs:
         run: |
           uv venv --clear
           source .venv/bin/activate
-          uv pip install pip
+          alias pip='uv pip'
           source examples/env/scripts/setup-pip-deps.sh
 
       - name: Run tests
