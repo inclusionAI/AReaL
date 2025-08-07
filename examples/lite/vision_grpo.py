@@ -1,5 +1,4 @@
 import os
-import re
 import sys
 
 import torch
@@ -9,10 +8,10 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, WeightUpdateMeta
-from areal.dataset.__init__ import get_custom_dataset
+from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.reward.__init__ import custom_reward_fn
+from areal.reward import get_custom_reward_fn
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
@@ -105,7 +104,7 @@ def main(args):
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
 
-    reward_fn = custom_reward_fn(
+    reward_fn = get_custom_reward_fn(
         path=config.train_dataset.reward_fn,
     )
 

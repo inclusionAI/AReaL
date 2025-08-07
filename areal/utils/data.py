@@ -297,6 +297,7 @@ class MicroBatchList:
     group_lens: List[int]
     padded_mbs: Optional[List[TensorDict]] = None
     padding_lengths: Optional[List[int]] = None
+    padded_to_lengths: Optional[List[int]] = None
 
 
 DEFAULT_MAX_TOKENS_PER_MB = int(1e12)
@@ -335,6 +336,7 @@ def split_padded_tensor_dict_into_mb_list(
         if key == "position_ids" or (
             torch.is_tensor(value) and value.numel() == bs * max_seqlen
         ):
+            # NOTE: qwen2.5-vl position_ids.numel() == bs * max_seqlen * 3
             to_split[key] = value
         else:
             not_to_split[key] = value
@@ -441,7 +443,7 @@ def pad_packed_tensor_dict(
         elif key == "max_seqlen":
             padded_data[key] = new_max_seqlen
         elif key == "position_ids":
-            # [bs*seqlen, channel]
+            # [bs*seqlen, channel] for qwen2.5 vl, channel==3 for t,h,w
             if len(value.shape) == 2 and value.shape[1] == 3:
                 pad = (
                     torch.arange(pad_length, dtype=torch.long, device=value.device)
@@ -516,12 +518,6 @@ def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
             and value.numel() == total_length
         ):
             new_data[key] = value.unsqueeze(dim=0)
-        elif key == "position_ids":
-            value = value.unsqueeze(dim=0)
-            if len(value.shape) == 3 and value.shape[2] == 3:
-                value = torch.einsum("ijk->kij", value)
-
-            new_data[key] = value
         else:
             new_data[key] = value
     return TensorDict(new_data, batch_size=data.batch_size)
@@ -550,24 +546,5 @@ def amend_position_ids(data: TensorDict) -> TensorDict:
         .expand(bs, -1)
     )
     position_ids.masked_fill(~attn_mask.bool(), 0)
-    data["position_ids"] = position_ids
-    return data
-
-
-def amend_position_ids_3d(data: TensorDict, rope_fn) -> TensorDict:
-    assert "attention_mask" in data, "Input data must contain 'attention_mask' key."
-    torch.set_printoptions(threshold=float("inf"))
-    attn_mask = data["attention_mask"]
-    input_ids = data["input_ids"]
-    image_grid_thw = data.get("image_grid_thw", None)
-    video_grid_thw = data.get("video_grid_thw", None)
-
-    if image_grid_thw != None:
-        image_grid_thw = image_grid_thw.squeeze(1)
-    position_ids, rope_deltas = rope_fn(
-        input_ids, image_grid_thw, video_grid_thw, attn_mask
-    )  # [channel=3,bs,seqlen]
-
-    position_ids = torch.einsum("ijk->jki", position_ids)  # [bs,seqlen,channel=3]
     data["position_ids"] = position_ids
     return data
