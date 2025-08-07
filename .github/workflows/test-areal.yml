@@ -6,7 +6,10 @@ on:
     paths:
       - .github/workflows/test-areal.yml
       - areal/**
-      - ci/**
+      - ci/test_areal.sh
+      - evaluation/latex2sympy/**
+      - examples/env/scripts/setup-pip-deps.sh
+      - pyproject.toml
   workflow_dispatch:
 
 concurrency:
