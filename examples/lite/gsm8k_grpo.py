@@ -18,6 +18,7 @@ from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import seeding, stats_tracker
+from areal.platforms import current_platform
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
@@ -142,7 +143,7 @@ def main(args):
         batch = batch.to(actor.device)
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -175,7 +176,7 @@ def main(args):
             if dist.get_rank() == 0:
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
             rollout.resume()
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)

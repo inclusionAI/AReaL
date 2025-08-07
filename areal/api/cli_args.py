@@ -12,6 +12,7 @@ from hydra import initialize as hydra_init
 from omegaconf import MISSING, OmegaConf
 
 from areal.utils.fs import get_user_tmp
+from areal.platforms import current_platform 
 
 
 @dataclass
@@ -414,7 +415,7 @@ class SGLangConfig:
             tokenizer_mode="auto",
             load_format="auto",
             trust_remote_code=True,
-            device="cuda",
+            device=current_platform.device_type,
             is_embedding=False,
             # Other runtime options
             tp_size=tp_size,

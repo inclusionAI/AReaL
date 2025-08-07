@@ -12,6 +12,7 @@ from areal.utils.save_load import (
     is_existing_local_path,
 )
 from realhf.base import constants, logging
+from areal.platforms import current_platform
 
 logger = logging.getLogger("DeepSpeedAutoTPEngine")
 
@@ -31,7 +32,7 @@ class DeepSpeedAutoTPEngine(BaseHFEngine):
 
         world_size = int(os.environ.get("WORLD_SIZE"))
         deepspeed.init_distributed(
-            dist_backend="nccl",
+            dist_backend=current_platform.communication_backend,
             world_size=world_size,
             timeout=constants.NCCL_DEFAULT_TIMEOUT,
         )

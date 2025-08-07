@@ -28,6 +28,7 @@ from areal.utils.fsdp import (
 )
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from realhf.base import logging, name_resolve, names, pkg_version
+from areal.platforms import current_platform
 
 logger = logging.getLogger("FSDPEngine")
 
@@ -142,7 +143,7 @@ class FSDPEngine(BaseHFEngine):
         )
 
     def upload_weights(self, meta: WeightUpdateMeta):
-        if meta.type == "nccl":
+        if meta.type == "nccl" or "hccl":
             if not self.weight_update_group_initialized:
                 self._init_distributed_weight_update(meta)
             self._update_weights_from_distributed()
@@ -169,7 +170,7 @@ class FSDPEngine(BaseHFEngine):
         os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
         if dist.get_rank() == 0:
             self.weight_update_group = init_custom_process_group(
-                backend="nccl",
+                backend=current_platform.communication_backend,
                 world_size=meta.alloc_mode.gen_world_size + 1,
                 init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
                 rank=0,
@@ -192,7 +193,7 @@ class FSDPEngine(BaseHFEngine):
                 )
                 dist.broadcast(tensor, src=0, group=self.weight_update_group)
             del tensor  # optional, for memory hygiene
-        torch.cuda.empty_cache()
+        current_platform.empty_cache()
 
     def get_param_specs(self) -> List[ParamSpec]:
         param_specs = []
