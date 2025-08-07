@@ -265,6 +265,10 @@ class BaseHFEngine(TrainEngine):
             input_ids = input_["input_ids"]
             image_grid_thw = input_.get("image_grid_thw", None)
             video_grid_thw = input_.get("video_grid_thw", None)
+            if image_grid_thw is not None:
+                image_grid_thw = image_grid_thw.squeeze(1)
+            if video_grid_thw is not None:
+                video_grid_thw = video_grid_thw.squeeze(1)
             position_ids, _ = self.model.model.get_rope_index(
                 input_ids, image_grid_thw, video_grid_thw, attn_mask
             )
@@ -289,10 +293,9 @@ class BaseHFEngine(TrainEngine):
         # packed input to be of shape [1, total_seqlen].
         mb_list = unsqueeze_mb_list(mb_list)
         if is_qwen2_vl_model(self.model_config.model_type):
-            # [1, total_seqlen, 3] -> [3, 1, total_seqlen]
-            for mb in mb_list.mbs:
-                mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
             for mb in mb_list.padded_mbs:
+                # [1, total_seqlen, 3] -> [3, 1, total_seqlen]
+                print(">>>>>>", mb["position_ids"].shape)
                 mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
 
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
@@ -305,10 +308,12 @@ class BaseHFEngine(TrainEngine):
             mb_list.padded_mbs[i] = dict(**mb)
         for mb in mb_list.mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
+            mb["cu_seqlens_q"] = mb["cu_seqlens_k"] = mb['cu_seqlens']
             mb["use_cache"] = False
             mb["attention_mask"] = dict(full_attention=None)
         for mb in mb_list.padded_mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
+            mb["cu_seqlens_q"] = mb["cu_seqlens_k"] = mb['cu_seqlens']
             mb["use_cache"] = False
             mb["attention_mask"] = dict(full_attention=None)
 

@@ -508,7 +508,7 @@ def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
     total_length = data["cu_seqlens"][-1].item()
     new_data = {}
     for key, value in data.items():
-        if (
+        if key == "position_ids" or (
             key
             not in [
                 "cu_seqlens",
