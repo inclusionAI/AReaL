@@ -20,6 +20,15 @@ More information can be found in the [quickstart section](../tutorial/quickstart
   - Dataset:
     [AReaL-boba-106k](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-106k.jsonl)
 
+<span style="color:red">[Warning]: The configurations in `examples/configs/v0.2-qwen2-math` were originally designed for synchronous training. To run them asynchronously, please adjust the following parameters: </span>
+
+```yaml
+  ppo.recompute_logprob=true
+  ppo.use_decoupled_loss=true
+  new_tokens_per_chunk=1024
+  max_head_offpolicyness=4
+```
+
 **Code:**
 
 - [`examples/configs/v0.3-qwen3-code`](https://github.com/inclusionAI/AReaL/tree/main/examples/configs/v0.3-qwen3-code):
