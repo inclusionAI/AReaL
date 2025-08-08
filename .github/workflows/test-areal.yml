@@ -20,12 +20,14 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      - run: |
+      - name: Setup environment
+        run: |
           uv venv --clear
           source .venv/bin/activate
           uv pip install pip
           source examples/env/scripts/setup-pip-deps.sh
 
-      - run: |
+      - name: Run tests
+        run: |
           source .venv/bin/activate
           pytest areal/tests
