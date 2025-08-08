@@ -28,4 +28,4 @@ jobs:
           source examples/env/scripts/setup-pip-deps.sh
 
       - run: |
-          pytest areal/tests
+          pytest -s -vv areal/tests
