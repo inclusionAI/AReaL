@@ -8,6 +8,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
 
+import numpy as np
+import torch
 from PIL.Image import Image as ImageObject
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
@@ -188,6 +190,11 @@ class ParamSpec:
     shape: Tuple
     dtype: str
 
+    @property
+    def size(self) -> int:
+        """Param bytes"""
+        return getattr(torch, self.dtype).itemsize * np.prod(self.shape)
+
 
 @dataclass
 class WeightUpdateMeta:
@@ -197,7 +204,7 @@ class WeightUpdateMeta:
 
     nccl_master_address: str = "127.0.0.1"
     nccl_master_port: int = 29500
-    nccl_param_specs: List[ParamSpec] = field(default_factory=list)
+    nccl_param_specs: List[List[ParamSpec]] = field(default_factory=list)
     nccl_group_name: str = "update_weight_group"
 
     @classmethod
@@ -222,13 +229,15 @@ class WeightUpdateMeta:
         allocation_mode: AllocationMode,
         fsdp_engine: "TrainEngine",
         nccl_group_name: str = "update_weight_group",
+        weight_chunked_mem_mb: int = 1024,
     ):
+        param_specs = fsdp_engine.get_param_specs(weight_chunked_mem_mb)
         return cls(
             type="nccl",
             alloc_mode=allocation_mode,
             nccl_master_address=gethostip(),
             nccl_master_port=find_free_ports(1)[0],
-            nccl_param_specs=fsdp_engine.get_param_specs(),
+            nccl_param_specs=param_specs,
             nccl_group_name=nccl_group_name,
         )
 

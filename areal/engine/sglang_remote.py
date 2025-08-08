@@ -381,6 +381,7 @@ def update_weights_from_distributed(
     request_timeout,
     init_group: bool,
 ):
+    nccl_param_specs = [spec for param_specs in meta.nccl_param_specs for spec in param_specs]
     async def _fn():
         tik = time.perf_counter()
         if init_group:
@@ -396,9 +397,9 @@ def update_weights_from_distributed(
                     addr=addr,
                     endpoint="/update_weights_from_distributed",
                     payload={
-                        "names": [pspec.name for pspec in meta.nccl_param_specs],
-                        "dtypes": [pspec.dtype for pspec in meta.nccl_param_specs],
-                        "shapes": [pspec.shape for pspec in meta.nccl_param_specs],
+                        "names": [pspec.name for pspec in nccl_param_specs],
+                        "dtypes": [pspec.dtype for pspec in nccl_param_specs],
+                        "shapes": [pspec.shape for pspec in nccl_param_specs],
                         "group_name": meta.nccl_group_name,
                     },
                     method="POST",

@@ -1,7 +1,7 @@
 import abc
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -67,7 +67,9 @@ class TrainEngine(abc.ABC):
         """Upload weights to the inference engine (in a blocking manner)."""
         raise NotImplementedError()
 
-    def get_param_specs(self) -> List[ParamSpec]:
+    def get_param_specs(
+        self, weight_chunked_mem_mb: int = 1024
+    ) -> List[List[ParamSpec]]:
         """Get the parameter specifications for the model."""
         raise NotImplementedError()
 
