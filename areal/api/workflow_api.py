@@ -225,6 +225,8 @@ class WorkflowExecutor:
                         self.rollout_stat.accepted -= 1
             except queue.Empty:
                 pass
+            if not self.rollout_thread.is_alive():
+                raise RuntimeError(f"Rollout thread is not alive.")
         if self.exiting.is_set():
             raise RuntimeError("Rollout engine is exiting, cannot wait for results.")
         if accepted < count:

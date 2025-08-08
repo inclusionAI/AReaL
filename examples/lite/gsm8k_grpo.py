@@ -118,6 +118,15 @@ def main(args):
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
     )
+    eval_workflow = RLVRWorkflow(
+        reward_fn=gsm8k_reward_fn,
+        gconfig=config.gconfig.new(n_samples=1, temperature=0.6),
+        tokenizer=tokenizer,
+        enable_thinking=False,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "eval-generated"
+        ),
+    )
 
     # Run training.
     saver = Saver(config.saver, ft_spec, for_recover=False)
@@ -190,7 +199,7 @@ def main(args):
                 cnt = 0
                 for data in valid_dataloader:
                     for item in data:
-                        eval_rollout.submit(item, workflow)
+                        eval_rollout.submit(item, eval_workflow)
                         cnt += 1
                 batch = eval_rollout.wait(cnt, timeout=None)
                 rewards = batch["rewards"].float().to(actor.device)
