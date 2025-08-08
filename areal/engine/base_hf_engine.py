@@ -299,6 +299,34 @@ class BaseHFEngine(TrainEngine):
                 # [1, total_seqlen, 3] -> [3, 1, total_seqlen]
                 mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
 
+                # BUG: pixel_value sometimes cannot div by vision encoder in spatial merge stage when applying multinode training, which might lead by   
+                # pixel_values:mb, image_token_num, vision_dim
+                # image_grid_thw: mb,M, 3 (1, H, W)
+                pv = mb["pixel_values"]         # [M, S, D]
+                grid = mb["image_grid_thw"]     # [M, 3 (1, H, W)]
+
+                assert pv.dim() == 3, f"pixel_values must be [M,S,D], got {tuple(pv.shape)}"
+                assert grid.dim() == 2 and grid.size(1) == 3, \
+                    f"image_grid_thw must be [M,3], got {tuple(grid.shape)}"
+
+                M, S, _ = pv.shape
+                Mg, _   = grid.shape
+                assert M == Mg, f"M mismatch: pixel_values={M}, image_grid_thw={Mg}"
+
+                t = grid[:, 0].to(torch.int64)
+                h = grid[:, 1].to(torch.int64)
+                w = grid[:, 2].to(torch.int64)
+
+                # t== 1
+                assert torch.all(t == 1), f"t must be 1; got {t.unique().tolist()}"
+
+                # S == H*W
+                assert torch.all((h * w) == S), f"S must equal H*W; got S={S}, H*W samples={((h*w)[:8]).tolist()}"
+
+                # 2×2 spatial merge
+                assert torch.all(h % 2 == 0) and torch.all(w % 2 == 0), \
+                    f"H,W must be even; samples H[:8]={h[:8].tolist()}, W[:8]={w[:8].tolist()}"
+
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
         # TODO: remove the usage of tensordict
         # Modern model implementations takes a dict as the input.
@@ -427,6 +455,7 @@ class BaseHFEngine(TrainEngine):
         input_ = input_.to(self.device)
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
         mb_list = self.prepare_mb_list(input_)
+
 
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()

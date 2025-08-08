@@ -28,15 +28,14 @@ def convert_image(
         fixed_width is not None
         and fixed_height is not None
         and (image.width != fixed_width or image.height != fixed_height)
-    ):
-        preprocess = transforms.Compose(
-            [
-                transforms.CenterCrop((fixed_width, fixed_height)),  # <─ 核心操作
-            ]
-        )
+    ):  
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        image = pad_to_square(image, fill=(0, 0, 0))
+
+        preprocess = transforms.Resize((fixed_height, fixed_width))
         image = preprocess(image)
-    if image.mode != "RGB":
-        image = image.convert("RGB")
+
     with BytesIO() as output:
         image.save(output, format="JPEG")
         return output.getvalue()
@@ -66,7 +65,7 @@ def get_geometry3k_sft_dataset(path, split, processor, rank, world_size):
         )
         processed_images = []
         for image in images:
-            processed_images.append(convert_image(image, 512, 512))
+            processed_images.append(convert_image(image, 448, 448))
         example["images"] = processed_images
         example["seq"] = example["problem"] + example["answer"] + tokenizer.eos_token
 

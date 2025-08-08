@@ -30,6 +30,10 @@ def main(args):
     wandb.init(project=config.stats_logger.wandb.project)
 
     rank = int(os.getenv("RANK"))
+    torch.cuda.memory._record_memory_history(
+        enabled=True,
+        trace_alloc_max_entries=200000  # 可按需调大/调小
+    )
     world_size = int(os.getenv("WORLD_SIZE"))
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
 
@@ -231,6 +235,7 @@ def main(args):
         ref.destroy()
     actor.destroy()
     wandb.finish()
+    torch.cuda.memory._dump_snapshot(f"cuda_memory_snapshot_rank{rank}.pkl")
 
 
 if __name__ == "__main__":

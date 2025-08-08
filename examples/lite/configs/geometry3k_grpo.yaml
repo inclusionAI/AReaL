@@ -3,7 +3,7 @@ trial_name: trial1
 
 
 seed: 1
-total_train_epochs: 3
+total_train_epochs: 1
 tokenizer_path: ${actor.path}
 async_training: true
 
@@ -97,7 +97,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: hiyouga/geometry3k
+  path: /storage/openpsi/data/geometry3k
   type: rl
   reward_fn: ${train_dataset.path}
 
