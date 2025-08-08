@@ -14,21 +14,18 @@ jobs:
   test-areal:
     environment:
       name: AReaL-unittests
+    permissions:
+      contents: read
     runs-on: gpu
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
         with:
-          activate-environment: true
           python-version: "3.12"
 
-      - name: Setup environment
-        run: |
-          uv pip install pip
+      - run: |
           source examples/env/scripts/setup-pip-deps.sh
 
-      - name: Run tests
-        run: |
-          source .venv/bin/activate
+      - run: |
           pytest areal/tests
