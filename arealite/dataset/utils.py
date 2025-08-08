@@ -11,7 +11,7 @@ def process_rl_dataset(dataset: Dataset):
     return dataset
 
 
-def get_shuffle_indices(seed: int, size: int):
+def get_shuffle_indices(size: int, seed: int):
     """Generate shuffled indices given seed and (dataset) size."""
     g = torch.Generator()
     g.manual_seed(seed)
@@ -20,10 +20,10 @@ def get_shuffle_indices(seed: int, size: int):
 
 
 class ShuffleSampler(Sampler):
-    def __init__(self, data_source):
+    def __init__(self, data_source, seed=42):
         self.data_source = data_source
-        self.shuffle_indices = get_shuffle_indices(len(data_source), seed=42)
-        
+        self.shuffle_indices = get_shuffle_indices(size=len(data_source), seed=seed)
+
     def __iter__(self):
         for idx in self.shuffle_indices:
             yield idx
