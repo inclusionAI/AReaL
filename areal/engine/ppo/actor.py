@@ -131,7 +131,7 @@ class PPOActor:
         if self.adv_norm or self.group_adv_norm:
             if self.group_adv_norm:
                 adv_list = []
-                for i in range(0, bs, self.group_size):
+                for i in range(0, bs // self.group_size):
                     s = slice(i * self.group_size, (i + 1) * self.group_size)
                     adv = advantages[s]
                     m = loss_mask[s]
