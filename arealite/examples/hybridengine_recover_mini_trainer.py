@@ -1,6 +1,7 @@
 import resource
 import sys
 import time
+import json
 import os
 import shutil
 
@@ -25,6 +26,7 @@ from arealite.api.engine_api import WeightUpdateMeta
 from arealite.extension.asystem.math_reward import reward_fn
 from arealite.scheduler.asystem import AsystemScheduler
 from arealite.utils.recover import Recover
+from arealite.dataset.utils import ShuffleSampler
 
 from realhf.base import logging, stats_tracker
 
@@ -223,6 +225,7 @@ megatron_wrap_policy = {
     "reward_output_bias": -1.0
 }
 
+
 def main_grpo():
     experiment_name = "arealite-mini"
     trial_name = "upup-64x8"
@@ -274,7 +277,8 @@ def main_grpo():
                            data_files="/storage/dataset/nlp/areal/moe_lite_math_0527_merge_train_areal.jsonl")
     train_dataset = dataset['train']
     train_dataset = train_dataset.filter(lambda x: len(tokenizer.encode(x["prompt"])) <= max_prompt_len)
-    dataloader = StatefulDataLoader(train_dataset, batch_size=1, shuffle=True)
+    dataloader = StatefulDataLoader(train_dataset, batch_size=1, sampler=ShuffleSampler(train_dataset))
+
 
     ############################## recover #########################################
     recover_meta_info_path = ""
