@@ -72,7 +72,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             prompt_strs.append(prompt_str)
             completions_strs.append(completions_str)
             seqlens.append(len(seq))
-            reward = self.reward_fn(
+            reward = await self.async_reward_fn(
                 prompt=prompt_str,
                 completions=completions_str,
                 prompt_ids=resp.input_tokens,
