@@ -2,19 +2,30 @@ name: Test AReaL
 
 on:
   pull_request:
-    branches: [ main ]
-    paths:
-      - .github/workflows/test-areal.yml
-      - areal/**
-      - ci/**
+    branches:
+      - main
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test-areal:
     environment:
       name: AReaL-unittests
+    permissions:
+      contents: read
     runs-on: gpu
     steps:
       - uses: actions/checkout@v4
 
-      - run: bash ./ci/test_areal.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: |
+          source examples/env/scripts/setup-pip-deps.sh
+
+      - run: |
+          pytest -s -vv areal/tests
