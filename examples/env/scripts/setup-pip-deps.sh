@@ -1,10 +1,7 @@
 #!/bin/bash
-
-which uv && alias pip='uv pip'
-
 # basic dependencies
 pip install -U pip
-pip uninstall pynvml cugraph-dgl dask-cuda cugraph-service-server raft-dask cugraph cuml cugraph-pyg
+pip uninstall pynvml cugraph-dgl dask-cuda cugraph-service-server raft-dask cugraph cuml cugraph-pyg -y
 pip install torch==2.7.1 torchaudio==2.7.1 torchvision==0.22.1 "deepspeed>=0.17.2" pynvml
 pip install "sglang[all]==0.4.9.post2" 
 pip install megatron-core==0.11.0 nvidia-ml-py
