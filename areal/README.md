@@ -493,11 +493,18 @@ asynchronous thread pool using `submit`, then waits for completion using `wait`.
 `prepare_batch` method separates submission and waiting to enable asynchronous rollout:
 
 ```python
-def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:
+def submit(
+    self,
+    data: Dict[str, Any],
+    workflow: Optional["RolloutWorkflow"] = None,
+    workflow_builder: Optional[Callable] = None,
+) -> None:
     try:
+        if workflow is None:
+            workflow = workflow_builder()
         self.input_queue.put_nowait((data, workflow))
-    except Full:
-        raise RuntimeError("Input queue full. Consider increasing queue_size.")
+    except queue.Full:
+        raise RuntimeError("Input queue full. Please increase queue_size.")
 
 def wait(
     self,
@@ -510,11 +517,14 @@ def wait(
     pass
 
 def rollout_batch(
-    self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+    self,
+    data: List[Dict[str, Any]],
+    workflow: Optional["RolloutWorkflow"] = None,
+    workflow_builder: Optional[Callable] = None,
 ) -> TensorDict:
-    """Submit batch requests and wait for all results."""
+    """Submit a batch of requests to the inference engine and wait for the results."""
     for item in data:
-        self.submit(item, workflow)
+        self.submit(item, workflow, workflow_builder)
     return self.wait(count=len(data))
 
 def prepare_batch(

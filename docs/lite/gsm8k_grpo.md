@@ -322,7 +322,9 @@ following code shows the implementation of `prepare_batch`:
 def prepare_batch(
     self,
     dataloader: StatefulDataLoader,
-    workflow: "RolloutWorkflow",
+    workflow: Optional["RolloutWorkflow"] = None,
+    workflow_builder: Optional[Callable] = None,
+    should_accept: Callable | None = None,
 ):
     if not hasattr(self, "data_generator"):
         self.data_generator = itertools.cycle(dataloader)
@@ -336,11 +338,11 @@ def prepare_batch(
         ):
             data = next(self.data_generator)
             for item in data:
-                # submit data into input_queue
-                self.submit(item, workflow=workflow)
+                self.submit(item, workflow=workflow, workflow_builder=workflow_builder)
         try:
-            # wait for dataloader.batch_size data from output_queue
-            return self.wait(dataloader.batch_size, timeout=1)
+            return self.wait(
+                dataloader.batch_size, timeout=1, should_accept=should_accept
+            )
         except TimeoutError:
             pass
 ```

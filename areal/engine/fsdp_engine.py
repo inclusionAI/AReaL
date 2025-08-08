@@ -1,7 +1,7 @@
 import os
 import time
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional
 
 import torch
 import torch.distributed as dist

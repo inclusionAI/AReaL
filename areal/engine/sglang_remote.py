@@ -5,7 +5,7 @@ import shutil
 import time
 from concurrent.futures import Future, ProcessPoolExecutor
 from datetime import datetime
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
 import requests
@@ -266,8 +266,13 @@ class RemoteSGLangEngine(InferenceEngine):
         fut.add_done_callback(callback)
         return fut
 
-    def submit(self, data: Dict[str, Any], workflow: RolloutWorkflow) -> None:
-        return self.workflow_executor.submit(data, workflow)
+    def submit(
+        self,
+        data: Dict[str, Any],
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
+    ) -> None:
+        return self.workflow_executor.submit(data, workflow, workflow_builder)
 
     def wait(
         self,
@@ -282,17 +287,23 @@ class RemoteSGLangEngine(InferenceEngine):
         )
 
     def rollout_batch(
-        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+        self,
+        data: List[Dict[str, Any]],
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
     ) -> TensorDict:
-        return self.workflow_executor.rollout_batch(data, workflow)
+        return self.workflow_executor.rollout_batch(data, workflow, workflow_builder)
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow,
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ):
-        return self.workflow_executor.prepare_batch(dataloader, workflow, should_accept)
+        return self.workflow_executor.prepare_batch(
+            dataloader, workflow, workflow_builder, should_accept
+        )
 
     def pause(self):
         """Pause request submission for async rollout. Used during evaluation to prevent data over generation."""
@@ -358,7 +369,10 @@ def update_weights_from_distributed(
     request_timeout,
     init_group: bool,
 ):
-    nccl_param_specs = [spec for param_specs in meta.nccl_param_specs for spec in param_specs]
+    nccl_param_specs = [
+        spec for param_specs in meta.nccl_param_specs for spec in param_specs
+    ]
+
     async def _fn():
         tik = time.perf_counter()
         if init_group:

@@ -1,7 +1,7 @@
 import abc
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -153,7 +153,12 @@ class InferenceEngine(abc.ABC):
         """Get the current weight version in the inference engine."""
         raise NotImplementedError()
 
-    def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:
+    def submit(
+        self,
+        data: Dict[str, Any],
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
+    ) -> None:
         """Asynchronously submit a request to the inference engine. Exits immediately."""
         raise NotImplementedError()
 
@@ -167,7 +172,10 @@ class InferenceEngine(abc.ABC):
         raise NotImplementedError()
 
     def rollout_batch(
-        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+        self,
+        data: List[Dict[str, Any]],
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
     ) -> TensorDict:
         """Submit a batch of requests to the inference engine and wait for the results."""
         raise NotImplementedError()
@@ -175,7 +183,8 @@ class InferenceEngine(abc.ABC):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: "RolloutWorkflow",
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ) -> TensorDict:
         """Asynchronously submit and wait until a full batch is ready."""

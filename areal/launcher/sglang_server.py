@@ -4,8 +4,7 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from threading import Thread
-from typing import List, Optional, Tuple
+from typing import Optional
 
 import requests
 
