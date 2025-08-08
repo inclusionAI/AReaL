@@ -18,12 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
 
       - run: |
+          uv venv --clear
+          source .venv/bin/activate
+          uv pip install pip
           source examples/env/scripts/setup-pip-deps.sh
 
       - run: |
+          source .venv/bin/activate
           pytest areal/tests
