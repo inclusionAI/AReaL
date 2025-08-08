@@ -11,7 +11,7 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import LLMRequest
+from areal.api.io_struct import ModelRequest
 from areal.api.workflow_api import RolloutWorkflow
 from areal.utils.data import concat_padded_tensors
 from realhf.base import logging
@@ -72,10 +72,11 @@ class MultiTurnWorkflow(RolloutWorkflow):
         discount = 1
         while reward == 0 and t < self.max_turns:
             # Send generate request to get the response.
-            req = LLMRequest(
+            req = ModelRequest(
                 rid=rid,
                 input_ids=input_ids,
                 gconfig=self.gconfig.new(n_samples=1),
+                tokenizer=self.tokenizer,
             )
             resp = await engine.agenerate(req)
             # compute reward: 1 for correct and 0 otherwise

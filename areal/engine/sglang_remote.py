@@ -17,10 +17,8 @@ from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     FinetuneSpec,
-    LLMRequest,
-    LLMResponse,
-    VLMRequest,
-    VLMResponse,
+    ModelRequest,
+    ModelResponse,
     WeightUpdateMeta,
 )
 from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
@@ -98,9 +96,7 @@ class RemoteSGLangEngine(InferenceEngine):
             return server
         raise NotImplementedError("Only round-robin scheduling is implemented.")
 
-    async def agenerate(
-        self, req: LLMRequest | VLMRequest
-    ) -> LLMResponse | VLMResponse:
+    async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Async version of generate using aiohttp."""
         if self.session is None:
             # NOTE: Lazily initialize aiohttp.ClientSession since it needs to be initialized
@@ -134,23 +130,13 @@ class RemoteSGLangEngine(InferenceEngine):
         if stop is not None:
             sample_params["stop"] = stop
 
-        if isinstance(req, VLMRequest):
-            # VLMRequest has image_data
-            payload = {
-                "input_ids": req.input_ids.copy(),
-                "image_data": req.image_data,  # ImageObject or str
-                "sampling_params": sample_params,
-                "return_logprob": True,
-                "stream": False,
-            }
-        else:
-            # NOTE: rid should NOT be passed in payload
-            payload = {
-                "input_ids": req.input_ids.copy(),
-                "sampling_params": sample_params,
-                "return_logprob": True,
-                "stream": False,
-            }
+        payload = {
+            "input_ids": req.input_ids.copy(),
+            "image_data": req.image_data,  # ImageObject or str
+            "sampling_params": sample_params,
+            "return_logprob": True,
+            "stream": False,
+        }
 
         # Make request
         start_time = time.perf_counter()
@@ -219,27 +205,18 @@ class RemoteSGLangEngine(InferenceEngine):
 
         latency = time.perf_counter() - start_time
 
-        if isinstance(req, VLMRequest):
-            response = VLMResponse(
-                input_tokens=req.input_ids,
-                input_images=req.image_data,
-                output_tokens=accumulated_output_tokens,
-                output_logprobs=accumulated_output_logprobs,
-                output_versions=accumulated_versions,
-                stop_reason=stop_reason,
-                latency=latency,
-                ttft=latency,  # Simplified for non-streaming
-            )
-        else:
-            response = LLMResponse(
-                input_tokens=req.input_ids,
-                output_tokens=accumulated_output_tokens,
-                output_logprobs=accumulated_output_logprobs,
-                output_versions=accumulated_versions,
-                stop_reason=stop_reason,
-                latency=latency,
-                ttft=latency,  # Simplified for non-streaming
-            )
+        response = ModelResponse(
+            input_tokens=req.input_ids,
+            input_images=req.image_data,
+            output_tokens=accumulated_output_tokens,
+            output_logprobs=accumulated_output_logprobs,
+            output_versions=accumulated_versions,
+            stop_reason=stop_reason,
+            latency=latency,
+            ttft=latency,  # Simplified for non-streaming
+            tokenizer=req.tokenizer,
+            processor=req.processor,
+        )
         return response
 
     def update_weights(self, meta: WeightUpdateMeta):

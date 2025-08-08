@@ -11,7 +11,7 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import LLMRequest
+from areal.api.io_struct import ModelRequest
 from areal.api.workflow_api import RolloutWorkflow
 from areal.utils.data import concat_padded_tensors
 from realhf.base import logging
@@ -48,10 +48,11 @@ class RLVRWorkflow(RolloutWorkflow):
         )
 
         n_samples = self.gconfig.n_samples
-        req = LLMRequest(
+        req = ModelRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
             gconfig=self.gconfig.new(n_samples=1),
+            tokenizer=self.tokenizer,
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
 

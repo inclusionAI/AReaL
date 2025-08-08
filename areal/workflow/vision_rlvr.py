@@ -8,7 +8,7 @@ from tensordict import TensorDict
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
-from areal.api.io_struct import VLMRequest
+from areal.api.io_struct import ModelRequest
 from areal.utils.data import concat_padded_tensors
 from areal.utils.image import image2base64, pad_images_batch_to_max_size
 from areal.workflow.rlvr import RLVRWorkflow
@@ -44,11 +44,13 @@ class VisionRLVRWorkflow(RLVRWorkflow):
 
         byte_images = image2base64(padded_images)
 
-        req = VLMRequest(
+        req = ModelRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
             image_data=byte_images,
             gconfig=self.gconfig.new(n_samples=1),
+            tokenizer=self.tokenizer,
+            processor=self.processor,
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
 

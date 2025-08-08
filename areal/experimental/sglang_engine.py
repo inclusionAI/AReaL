@@ -12,7 +12,12 @@ from tensordict import TensorDict
 
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import LLMRequest, LLMResponse, RolloutStat, WeightUpdateMeta
+from areal.api.io_struct import (
+    ModelRequest,
+    ModelResponse,
+    RolloutStat,
+    WeightUpdateMeta,
+)
 from realhf.base import logging, name_resolve, names, pkg_version
 
 if TYPE_CHECKING:
@@ -208,7 +213,7 @@ class SGLangEngine(InferenceEngine):
                     except asyncio.CancelledError:
                         pass
 
-    async def agenerate(self, req: LLMRequest) -> LLMResponse:
+    async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Async version of generate using local sglang engine."""
         if not hasattr(self, "engine") or self.engine is None:
             raise RuntimeError(
@@ -277,7 +282,7 @@ class SGLangEngine(InferenceEngine):
 
         latency = time.perf_counter() - start_time
 
-        return LLMResponse(
+        return ModelResponse(
             completions=completions,
             input_tokens=req.input_ids if req.input_ids else [],
             output_tokens=accumulated_output_tokens,

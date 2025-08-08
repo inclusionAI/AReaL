@@ -11,34 +11,47 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
 import numpy as np
 import torch
 from PIL.Image import Image as ImageObject
-from transformers import AutoProcessor, PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters, SaverConfig
 from areal.utils.network import find_free_ports, gethostip
 
 if TYPE_CHECKING:
+    from transformers import AutoProcessor
+
     from areal.api.engine_api import TrainEngine
 
 
 @dataclass
-class LLMRequest:
+class ModelRequest:
     rid: str = field(default_factory=lambda: str(uuid.uuid4()))
     input_ids: List[int] = field(default_factory=list)
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
     metadata: Dict[str, Any] = field(default_factory=dict)
-    model_id: Optional[str] = None
+    # tokenizer is used for encode-decode in the inference engine
+    tokenizer: Optional[PreTrainedTokenizerFast] = None
+
+    # vlm
+    image_data: Optional[List[ImageObject | str]] = field(default_factory=list)
+    processor: Optional["AutoProcessor"] = None
 
 
 @dataclass
-class LLMResponse:
+class ModelResponse:
     # outputs
     input_tokens: List[int] = field(default_factory=list)
     output_tokens: List[int] = field(default_factory=list)
     output_logprobs: List[float] = field(default_factory=list)
     output_versions: List[int] = field(default_factory=list)
     stop_reason: Literal["length", "stop", "interrupt"] = "stop"
+    # tokenizer is used for encode-decode in the inference engine
+    tokenizer: Optional[PreTrainedTokenizerFast] = None
+
+    # vlm
+    input_images: List[ImageObject | str] = field(default_factory=list)
+    processor: Optional["AutoProcessor"] = None
 
     # statistics
     latency: float = float("inf")
@@ -52,16 +65,6 @@ class LLMResponse:
     @property
     def output_len(self) -> int:
         return len(self.output_tokens)
-
-
-@dataclass
-class VLMRequest(LLMRequest):
-    image_data: Optional[List[ImageObject | str]] = field(default_factory=list)
-
-
-@dataclass
-class VLMResponse(LLMResponse):
-    input_images: List[ImageObject | str] = field(default_factory=list)
 
 
 @dataclass
@@ -247,8 +250,8 @@ class SaveLoadMeta:
     path: str
     weight_format: str
     with_optim: bool
-    tokenizer: PreTrainedTokenizerFast | None
-    processor: AutoProcessor | None
+    tokenizer: Optional[PreTrainedTokenizerFast]
+    processor: Optional["AutoProcessor"]
     base_model_path: str | None
     naive_distributed: bool = False
 

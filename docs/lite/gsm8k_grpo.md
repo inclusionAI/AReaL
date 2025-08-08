@@ -157,8 +157,8 @@ class RemoteSGLangEngine:
         return future
 ```
 
-`agenerate` takes an `LLMRequest` with `input_ids` of **a single prompt** and generation
-hyperparameters, and returns the final generation result, an `LLMResponse` with
+`agenerate` takes an `ModelRequest` with `input_ids` of **a single prompt** and generation
+hyperparameters, and returns the final generation result, an `ModelResponse` with
 `output_tokens` and other outputs. Since the generation could be interrupted,
 `agenerate` iteratively prepares payload, sends requests and receives responses until
 the generation finishes.
@@ -166,7 +166,7 @@ the generation finishes.
 ```python
 class RemoteSGLangEngine:
     ...
-    async def agenerate(self, req: LLMRequest):
+    async def agenerate(self, req: ModelRequest):
         payload = ... # prepare payload for request
         # If request is from the same workflow, choose old server
         # to allow KVCache reuse. Otherwise choose server in a round
@@ -190,7 +190,7 @@ class RemoteSGLangEngine:
             # prepare payload for the next request
             payload["input_ids"] += results["output_ids"]
             payload["sample_params"]["max_new_tokens"] -= len(results["output_ids"])
-        return LLMResponse(
+        return ModelResponse(
             input_tokens=req.input_ids,
             output_tokens=output_tokens,
             ...
@@ -224,7 +224,7 @@ class RLVRWorkflow(RolloutWorkflow):
     async def arun_episode(self, engine, data):
         # rollout data with inference engine
         input_ids = self.tokenizer.apply_chat_template(data["message"], ...)
-        req = LLMRequest(rid=..., input_ids=input_ids, gconfig=self.gconfig.new(n_samples=1))
+        req = ModelRequest(rid=..., input_ids=input_ids, gconfig=self.gconfig.new(n_samples=1))
         resps = await asyncio.gather(
             *[engine.agenerate(req) for _ in range(self.gconfig.n_samples)]
         )

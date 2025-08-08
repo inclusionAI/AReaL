@@ -197,7 +197,7 @@ class MyRolloutWorkflow:
 
         for _ in range(self.config.num_turns):
             text = tokenizer.apply_chat_template(message, tools=self.env.list_tools())
-            req = LLMRequest(text=text, ...)
+            req = ModelRequest(text=text, ...)
             resp = await engine.agenerate(req)
             tool_name, tool_args = parse_tool(resp)
             cur_time = await self.env.aexecute(tool_name, tool_args)
@@ -431,7 +431,7 @@ class InferenceEngine(abc.ABC):
         """Clean up engine resources and release GPU memory."""
         pass
 
-    async def agenerate(self, req: LLMRequest) -> LLMResponse:
+    async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Generate response asynchronously for the given request."""
         raise NotImplementedError()
 
@@ -458,7 +458,7 @@ class RLVRWorkflow(RolloutWorkflow):
         )
 
         n_samples = self.gconfig.n_samples
-        req = LLMRequest(
+        req = ModelRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
             gconfig=self.gconfig.new(n_samples=1),
@@ -541,7 +541,7 @@ class MyRolloutWorkflow:
 
     async def arun_episode(self, engine: InferenceEngine,
                            data: Dict[str, Any]) -> Dict[str, Tensor]:
-        req = LLMRequest(input_ids=data['input_ids'], ...)
+        req = ModelRequest(input_ids=data['input_ids'], ...)
 
         for _ in range(self.config.num_turns):
             resp = await engine.agenerate(req)

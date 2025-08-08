@@ -10,8 +10,8 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.io_struct import (
     FinetuneSpec,
-    LLMRequest,
-    LLMResponse,
+    ModelRequest,
+    ModelResponse,
     ParamSpec,
     SaveLoadMeta,
     WeightUpdateMeta,
@@ -137,7 +137,7 @@ class InferenceEngine(abc.ABC):
     def destroy(self):
         """Destroy the engine and release GPU memory."""
 
-    async def agenerate(self, req: LLMRequest) -> LLMResponse:
+    async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request."""
         raise NotImplementedError()
 
