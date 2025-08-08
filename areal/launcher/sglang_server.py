@@ -4,7 +4,8 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from threading import Thread
+from typing import List, Optional, Tuple
 
 import requests
 
@@ -130,9 +131,7 @@ class SGLangServerWrapper:
             server_addresses.append(f"http://{host_ip}:{server_port}")
 
         with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
-            server_processes = executor.map(
-                lambda args: self.launch_one_server(*args), launch_server_args
-            )
+            server_processes = executor.map(lambda args: self.launch_one_server(*args), launch_server_args)
 
         while True:
             all_alive = True
