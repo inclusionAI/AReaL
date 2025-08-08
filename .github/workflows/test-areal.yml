@@ -19,11 +19,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v6
+        with:
+          activate-environment: true
+          python-version: "3.12"
 
       - name: Setup environment
         run: |
-          uv venv --clear
-          source .venv/bin/activate
           uv pip install pip
           source examples/env/scripts/setup-pip-deps.sh
 
