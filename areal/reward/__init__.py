@@ -1,14 +1,7 @@
-from typing import Optional
-
-import transformers
-
 VALID_REWARD_FN = ["clevr_count_70k", "geometry3k"]
 
 
-def custom_reward_fn(
-    path: str,
-    **kwargs,
-):
+def get_custom_reward_fn(path: str, **kwargs):
     if "clevr_count_70k" in path:
         from .clevr_count_70k import clevr_count_70k_reward_fn
 

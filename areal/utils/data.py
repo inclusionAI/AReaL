@@ -335,6 +335,7 @@ def split_padded_tensor_dict_into_mb_list(
         if key == "position_ids" or (
             torch.is_tensor(value) and value.numel() == bs * max_seqlen
         ):
+            # NOTE: qwen2.5-vl position_ids.numel() == bs * max_seqlen * 3
             to_split[key] = value
         else:
             not_to_split[key] = value
@@ -441,7 +442,7 @@ def pad_packed_tensor_dict(
         elif key == "max_seqlen":
             padded_data[key] = new_max_seqlen
         elif key == "position_ids":
-            # [bs*seqlen, channel]
+            # [bs*seqlen, channel] for qwen2.5 vl, channel==3 for t,h,w
             if len(value.shape) == 2 and value.shape[1] == 3:
                 pad = (
                     torch.arange(pad_length, dtype=torch.long, device=value.device)
@@ -506,7 +507,7 @@ def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
     total_length = data["cu_seqlens"][-1].item()
     new_data = {}
     for key, value in data.items():
-        if (
+        if key == "position_ids" or (
             key
             not in [
                 "cu_seqlens",

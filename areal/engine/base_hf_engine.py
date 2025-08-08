@@ -32,7 +32,11 @@ from areal.utils.data import (
     unsqueeze_mb_list,
 )
 from areal.utils.fsdp import get_cosine_schedule_with_warmup
-from areal.utils.model import VALID_VISION_MODELS, disable_dropout_in_model
+from areal.utils.model import (
+    VALID_VISION_MODELS,
+    disable_dropout_in_model,
+    is_qwen2_vl_model,
+)
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from realhf.base import constants, logging
 
@@ -256,9 +260,23 @@ class BaseHFEngine(TrainEngine):
             ), "For vision-language models, pixel_values and image_grid_thw must be present in input_"
         if isinstance(input_, dict):
             input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
-        if self.is_vision_model:
-            rope_fn = self.model.model.get_rope_index
-            input_ = amend_position_ids_3d(input_, rope_fn)
+            
+        if is_qwen2_vl_model(self.model_config.model_type):
+            # Create the special t,h,w position IDs for qwen 2.5 VL
+            attn_mask = input_["attention_mask"]
+            input_ids = input_["input_ids"]
+            image_grid_thw = input_.get("image_grid_thw", None)
+            video_grid_thw = input_.get("video_grid_thw", None)
+            if image_grid_thw is not None:
+                image_grid_thw = image_grid_thw.squeeze(1)
+            if video_grid_thw is not None:
+                video_grid_thw = video_grid_thw.squeeze(1)
+            position_ids, _ = self.model.model.get_rope_index(
+                input_ids, image_grid_thw, video_grid_thw, attn_mask
+            )
+            # [3, bs, seqlen] -> [bs, seqlen, 3]
+            position_ids = torch.einsum("ijk->jki", position_ids)
+            input_["position_ids"] = position_ids
         else:
             input_ = amend_position_ids(input_)
 
@@ -276,6 +294,10 @@ class BaseHFEngine(TrainEngine):
         # NOTE: We unsqueeze here because huggingface transformer models requires
         # packed input to be of shape [1, total_seqlen].
         mb_list = unsqueeze_mb_list(mb_list)
+        if is_qwen2_vl_model(self.model_config.model_type):
+            for mb in mb_list.padded_mbs:
+                # [1, total_seqlen, 3] -> [3, 1, total_seqlen]
+                mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
 
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
         # TODO: remove the usage of tensordict
@@ -287,10 +309,12 @@ class BaseHFEngine(TrainEngine):
             mb_list.padded_mbs[i] = dict(**mb)
         for mb in mb_list.mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
+            mb["cu_seqlens_q"] = mb["cu_seqlens_k"] = mb["cu_seqlens"]
             mb["use_cache"] = False
             mb["attention_mask"] = dict(full_attention=None)
         for mb in mb_list.padded_mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
+            mb["cu_seqlens_q"] = mb["cu_seqlens_k"] = mb["cu_seqlens"]
             mb["use_cache"] = False
             mb["attention_mask"] = dict(full_attention=None)
 
