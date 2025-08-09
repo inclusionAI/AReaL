@@ -11,7 +11,15 @@ The hyperparameters given in gsm8k_grpo.yaml is the set that we found to achieve
 | 1.00E-05   | 0.02        | 4         | 0.78311 |
 | 1.00E-05   | 0.01        | 8         | 0.78066 |
 
-See also the training curve run on 8 Nvidia L20Y GPUs:
+See also the training curve below:
 ![Training curve](../../../assets/gsm8k_2.5-1.5b-ins_training_curve.png)
 
-The experiments are run in lcoal mode, using `Adam` optimizer and `10` training epochs. It takes around *35 minutes* for an experiment with batchsize 4, and *65 minutes* for batchsize 8.
+### Other Training Details 
+ - Devices: 8 Nvidia L20Y GPUs
+ - Optimizer: Adam
+ - Epochs: 10
+ - LR Scheduler: Constant
+ - Gradient Clipping: 1.0
+ - Max_new_tokens: 1024
+ - Max_head_offpolicyness: 2
+ - Training Time: ~35 minutes (batchsize 4), ~65 minutes (batchsize 8)
