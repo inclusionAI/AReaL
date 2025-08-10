@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from typing import Optional
+
 from loguru import logger
 from rich import box
 from rich.console import Console
@@ -8,7 +10,7 @@ from rich.table import Table
 from rich.text import Text
 
 from tau2.gym.gym_agent import AgentGymEnv
-from tau2.run import get_options, load_tasks
+from tau2.run import get_options, load_task_splits, load_tasks
 from tau2.utils.tools import is_functional_tool_call, parse_functional_tool_call
 
 # Initialize Rich console
@@ -63,11 +65,47 @@ def display_domains():
             console.print("[red]Please enter a valid number[/red]")
 
 
-def display_tasks(domain: str):
+def display_task_split_set(domain: str) -> Optional[str]:
+    """Display available task split sets for the domain and let user choose one."""
+    task_splits = load_task_splits(domain)
+    if task_splits is None:
+        console.print(
+            f"[red]No task splits found for domain '{domain}', using full task set[/red]"
+        )
+        return None
+
+    # Create a table for task splits
+    table = Table(title="🔧 Available Task Splits", box=box.ROUNDED)
+    table.add_column("Number", style="cyan", justify="center")
+    table.add_column("Task Split", style="green", justify="left")
+
+    for i, task_split in enumerate(task_splits, 1):
+        table.add_row(str(i), task_split)
+
+    console.print(table)
+
+    while True:
+        try:
+            choice = Prompt.ask(
+                f"\n[bold blue]Select a task split set[/bold blue] (1-{len(task_splits)})",
+                default="1",
+            )
+            choice_idx = int(choice) - 1
+            if 0 <= choice_idx < len(task_splits):
+                return list(task_splits.keys())[choice_idx]
+            else:
+                console.print(
+                    f"[red]Please enter a number between 1 and {len(task_splits)}[/red]"
+                )
+        except ValueError:
+            console.print("[red]Please enter a valid number[/red]")
+
+
+def display_tasks(domain: str, task_split_set: Optional[str] = None):
     """Display available tasks for the domain and let user choose one."""
     # Try to load tasks for the domain
     try:
-        tasks = load_tasks(domain)
+        tasks = load_tasks(domain, task_split_set)
     except Exception as e:
         console.print(f"[red]Error loading tasks for domain '{domain}': {e}[/red]")
         # Try alternative task sets
@@ -79,7 +117,7 @@ def display_tasks(domain: str):
             )
             task_set = task_sets[0]  # Use first available task set
             console.print(f"[green]Using task set: {task_set}[/green]")
-            tasks = load_tasks(task_set)
+            tasks = load_tasks(task_set, task_split_set)
         else:
             raise ValueError(f"No task sets found for domain '{domain}'")
 
@@ -380,8 +418,14 @@ This allows you to interact with the simulation as if you were the AI agent.
         domain = display_domains()
         console.print(f"\n[green]✅ Selected domain:[/green] [bold]{domain}[/bold]")
 
-        # Step 2: Choose task
-        task = display_tasks(domain)
+        # Step 2: Choose a task split set
+        task_split_set = display_task_split_set(domain)
+        console.print(
+            f"\n[green]✅ Selected task split set:[/green] [bold]{task_split_set}[/bold]"
+        )
+
+        # Step 3: Choose task
+        task = display_tasks(domain, task_split_set)
         console.print(f"\n[green]✅ Selected task:[/green] [bold]{task.id}[/bold]")
         if task.description:
             try:
@@ -395,13 +439,13 @@ This allows you to interact with the simulation as if you were the AI agent.
                     "[dim]📝 Task description: [red]Unable to display[/red][/dim]"
                 )
 
-        # Step 3: Choose mode (solo or normal)
+        # Step 4: Choose mode (solo or normal)
         solo_mode = display_mode_selection()
         console.print(
             f"\n[green]✅ Selected mode:[/green] [bold]{'Solo' if solo_mode else 'Normal'}[/bold]"
         )
 
-        # Step 4: Get user LLM configuration (only for normal mode)
+        # Step 5: Get user LLM configuration (only for normal mode)
         user_llm = None
         if not solo_mode:
             user_llm = get_user_llm_config()
@@ -410,13 +454,13 @@ This allows you to interact with the simulation as if you were the AI agent.
             else:
                 console.print(f"\n[green]✅ User LLM:[/green] [bold]Default[/bold]")
 
-        # Step 5: Create TauGymEnv instance
+        # Step 6: Create TauGymEnv instance
         with console.status("[bold green]Initializing environment...", spinner="dots"):
             env = AgentGymEnv(
                 domain=domain, task_id=task.id, solo_mode=solo_mode, user_llm=user_llm
             )
 
-        # Step 6: Reset environment and get initial observation
+        # Step 7: Reset environment and get initial observation
         console.print("\n[bold green]🚀 Starting simulation...[/bold green]")
         observation, info = env.reset()
 
@@ -426,7 +470,7 @@ This allows you to interact with the simulation as if you were the AI agent.
         display_tools(tools)
         display_policy(policy)
 
-        # Step 7: Display ticket if in solo mode
+        # Step 8: Display ticket if in solo mode
         if solo_mode:
             display_ticket(task)
 
