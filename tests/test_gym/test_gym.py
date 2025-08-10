@@ -1,7 +1,7 @@
 import pytest
 
 from tau2.gym.gym_agent import AgentGymEnv, GymAgent, TauSpace
-from tests.utils import timeout
+from .utils import timeout
 
 
 class TestTauGymEnv:

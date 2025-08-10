@@ -6,7 +6,7 @@ import pytest
 from tau2.data_model.message import AssistantMessage, ToolCall, UserMessage
 from tau2.environment.tool import Tool
 from tau2.gym.gym_agent import GymAgent, GymAgentState
-from tests.utils import timeout
+from .utils import timeout
 
 
 def make_dummy_tool() -> Tool:
