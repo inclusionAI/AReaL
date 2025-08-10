@@ -700,6 +700,7 @@ def pack_logprobs(logprobs: torch.Tensor, seqlen: torch.Tensor) -> torch.Tensor:
     """
     将logprobs按seqlen拼接成packed_logprobs。
     每个样本的有效logprobs长度为seqlen[i]-1。
+    处理逻辑：对于每个样本i，跳过第一个元素，取logprobs[i, 1:seqlen[i]]
     Args:
         logprobs: shape [batch, seq_len]
         seqlen: shape [batch], 每个样本的有效长度
@@ -708,9 +709,8 @@ def pack_logprobs(logprobs: torch.Tensor, seqlen: torch.Tensor) -> torch.Tensor:
     """
     packed = []
     for i in range(logprobs.shape[0]):
-        valid_len = seqlen[i].item() - 1
-        packed.append(logprobs[i, :valid_len])
-
+        # 跳过第一个元素，取seqlen[i]-1个元素
+        packed.append(logprobs[i, 1:seqlen[i].item()])
     return torch.cat(packed, dim=0)
 
 
