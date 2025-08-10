@@ -241,7 +241,11 @@ class Orchestrator:
                     self.from_role = Role.AGENT
                     self.to_role = Role.USER
                     self.done = True
-                    self.termination_reason = TerminationReason.AGENT_ERROR
+                    if self.agent.is_stop(first_message):
+                        # If the agent is stopping (###STOP###)
+                        self.termination_reason = TerminationReason.AGENT_STOP
+                    else:
+                        self.termination_reason = TerminationReason.AGENT_ERROR
                 else:
                     self.from_role = Role.AGENT
                     self.to_role = Role.ENV
@@ -329,7 +333,8 @@ class Orchestrator:
         self.initialize()
         while not self.done:
             self.step()
-            if self.to_role == Role.ENV:  # We don't want to terminate if the last message is to the environment
+            # We don't want to terminate if the last message is to the environment
+            if self.to_role == Role.ENV:
                 continue
             if self.step_count >= self.max_steps:
                 self.done = True

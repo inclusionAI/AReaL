@@ -33,6 +33,7 @@ def evaluate_simulation(
     }:
         return RewardInfo(
             reward=0.0,
+            reward_basis=None,
             info={
                 "note": f"Simulation terminated prematurely. Termination reason: {simulation.termination_reason.value}"
             },
@@ -40,6 +41,7 @@ def evaluate_simulation(
     if task.evaluation_criteria is None:
         return RewardInfo(
             reward=1.0,
+            reward_basis=None,
             info={"note": "No evaluation criteria"},
         )
     if evaluation_type == EvaluationType.ENV:

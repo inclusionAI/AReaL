@@ -533,7 +533,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         elif not valid and not self.allow_format_retry:
             logger.warning(f"Format error: {error_msg}. Format retry is disabled.")
             assistant_message.errors = [error_msg]
-        message = self._check_if_stop_toolcall(assistant_message)
+        assistant_message = self._check_if_stop_toolcall(assistant_message)
         state.messages.append(assistant_message)
         return assistant_message, state
 

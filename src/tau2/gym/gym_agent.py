@@ -18,7 +18,7 @@ from tau2.data_model.message import (
 )
 from tau2.data_model.simulation import SimulationRun, Task
 from tau2.environment.environment import Environment
-from tau2.environment.tool import Tool
+from tau2.environment.tool import Tool, as_tool
 from tau2.evaluator.evaluator import EvaluationType, evaluate_simulation
 from tau2.orchestrator.orchestrator import Orchestrator
 from tau2.registry import registry
@@ -82,6 +82,10 @@ class GymAgent(LocalAgent):
     3. The agent waits for the next set_action() call
     """
 
+    TRANSFER_TOOL_NAME = "transfer_to_human_agents"
+    STOP_FUNCTION_NAME = "done"
+    STOP_TOKEN = "###STOP###"
+
     def __init__(self, tools: List[Tool], domain_policy: str):
         """
         Initialize the gym agent with tools and domain policy.
@@ -96,6 +100,27 @@ class GymAgent(LocalAgent):
         self._agent_turn_finished = threading.Event()
         self._lock = threading.Lock()
         self._agent_turn_finished.set()
+        self.add_stop_tool()
+        self.validate_tools()
+
+    def add_stop_tool(self) -> None:
+        """Add the stop tool to the tools."""
+
+        def done() -> str:
+            """Call this function when you are done with the task."""
+            return self.STOP_TOKEN
+
+        self.tools.append(as_tool(done))
+
+    def validate_tools(self) -> None:
+        """Check if the tools are valid."""
+        tool_names = {tool.name for tool in self.tools}
+        if self.TRANSFER_TOOL_NAME not in tool_names:
+            logger.warning(
+                f"Tool {self.TRANSFER_TOOL_NAME} not found in tools. This tool is required for the agent to transfer the user to a human agent."
+            )
+        if self.STOP_FUNCTION_NAME not in tool_names:
+            raise ValueError(f"Tool {self.STOP_FUNCTION_NAME} not found in tools.")
 
     @property
     def observation(self) -> list[Message]:
@@ -155,6 +180,34 @@ class GymAgent(LocalAgent):
             self._next_action = action_msg
             self._agent_turn_finished.set()
 
+    def _check_if_stop_toolcall(self, message: AssistantMessage) -> AssistantMessage:
+        """Check if the message is a stop message.
+        If the message contains a tool call with the name STOP_FUNCTION_NAME, then the message is a stop message.
+        Replace the tool call with a content message containing the STOP_TOKEN.
+        """
+        if message.tool_calls is None:
+            return message
+        is_stop = False
+        for tool_call in message.tool_calls:
+            if tool_call.name == self.STOP_FUNCTION_NAME:
+                is_stop = True
+                break
+        if is_stop:
+            message.content = self.STOP_TOKEN
+            message.tool_calls = None
+        return message
+
+    @classmethod
+    def is_stop(cls, message: AssistantMessage) -> bool:
+        """Check if the message is a stop message."""
+        if message.tool_calls is not None:
+            for tool_call in message.tool_calls:
+                if tool_call.name == cls.STOP_FUNCTION_NAME:
+                    return True
+        if message.content is not None:
+            return cls.STOP_TOKEN in message.content
+        return False
+
     def generate_next_message(
         self, message: ValidAgentInputMessage, state: GymAgentState
     ) -> tuple[AssistantMessage, GymAgentState]:
@@ -211,6 +264,7 @@ class GymAgent(LocalAgent):
             # Reset for next iteration
             self._next_action = None
 
+        response_message = self._check_if_stop_toolcall(response_message)
         state.messages.append(response_message)
         return response_message, state
 
@@ -335,13 +389,9 @@ class AgentGymEnv(gym.Env):
         """
         Get the tools for the environment.
         """
-        if self._orchestrator is None:
-            raise ValueError("Orchestrator not initialized. Call reset() first.")
-        tools = self._orchestrator.environment.get_tools()
-        if self.solo_mode:
-            # extend user tools to the tools list in solo mode
-            tools.extend(self._orchestrator.environment.get_user_tools())
-        return tools
+        if self._agent is None:
+            raise ValueError("Agent not initialized. Call reset() first.")
+        return self._agent.tools
 
     def _get_policy(self) -> str:
         """
@@ -546,7 +596,7 @@ class AgentGymEnv(gym.Env):
             simulation=self._simulation_run,
             task=self._get_task(),
             evaluation_type=evaluation_type,
-            solo_mode=False,
+            solo_mode=self.solo_mode,
             domain=self.domain,
         )
         logger.info(f"Evaluation result: {evaluation_result}")
@@ -701,9 +751,12 @@ class AgentGymEnv(gym.Env):
             step-by-step control.
         """
         environment = self._get_environment()
+        tools = environment.get_tools()
         user_tools = environment.get_user_tools() if environment.user_tools else []
+        if self.solo_mode:
+            tools = tools + user_tools
         return GymAgent(
-            tools=environment.get_tools() + user_tools,
+            tools=tools,
             domain_policy=environment.get_policy(),
         )
 
