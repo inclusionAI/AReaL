@@ -322,6 +322,7 @@ def main_grpo():
                                                            remote_megatron_config=remote_megatron_config,wrap_policy=RemoteMegatronEngineConfig.assign_wrap_policy(megatron_wrap_policy))),
         TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
         scheduler,
+        group_size=group_size
     )
     # engine initialize
     rollout.initialize()

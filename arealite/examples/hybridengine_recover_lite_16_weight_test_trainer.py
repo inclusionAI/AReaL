@@ -298,6 +298,7 @@ def main_grpo():
                                                            remote_megatron_config=remote_megatron_config)),
         TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
         scheduler,
+        group_size=group_size
     )
     # engine initialize
     rollout.initialize()

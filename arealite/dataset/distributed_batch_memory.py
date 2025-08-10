@@ -46,6 +46,38 @@ class DistributedBatchMemory:
             batches.append(DistributedBatchMemory(split_data))
         return batches
 
+    def split_by_groups(self, group_size: int, n: int) -> list:
+        """
+        split data into n parts, each parts containing group_size continuous elements
+        examples:
+        tensor = [0,1,...,510,511], n=32， group_size = 8
+        index=0 => [0,1,...,6,7,256,257,...,262,263]
+        index=1 => [8,9,...,14,15, 264,265,...,270,271]
+        index=31 => [248,249,...,254,255,504,505,...,510,511]
+
+        returns:
+            List[DistributedBatchMemory]
+        """
+        total = next(iter(self.dataset.values())).shape[0]
+        assert total % group_size == 0, "tensor length must be devided by group_size"
+        total_chunks = total // group_size
+        assert total_chunks % n == 0, "chunk size must be devided by n"
+
+        k = total_chunks // n  # num of groups of each part
+        batches = []
+        for i in range(n):
+            indices = []
+            for j in range(k):
+                chunk_idx = i + j * n
+                start = chunk_idx * group_size
+                end = start + group_size
+                indices.extend(range(start, end))
+
+            split_data = {k: v[indices] for k, v in self.dataset.items()}
+            batches.append(DistributedBatchMemory(split_data))
+
+        return batches
+
     def merge(self, other):
         """合并另一个批次的数据"""
         merged_data = {k: v for k, v in self.dataset.items()}
@@ -114,3 +146,27 @@ class DistributedBatchMemory:
             sample = {k: v[i] for k, v in dict_dataset.items()}
             list_dataset.append(sample)
         return list_dataset
+
+
+    def __str__(self):
+        if not self.dataset:
+            return "DistributedBatchMemory<empty>"
+
+        batch_size = next(iter(self.dataset.values())).shape[0]
+        keys = list(self.dataset.keys())
+        shapes = {k: v.shape for k, v in self.dataset.items()}
+        return f"DistributedBatchMemory<batch_size={batch_size}, keys={keys}, shapes={shapes}, values={self.dataset.items()}>"
+
+
+    def __repr__(self):
+        return self.__str__()
+
+if __name__ == "__main__":
+    # 示例：创建一个长度为 512 的张量
+    x = torch.arange(512)
+    input_ = {"input": x}
+    data = DistributedBatchMemory(input_)
+    batches = data.split_by_groups(group_size=8, n=32)
+
+    print(batches)
+    # 输出: tensor([  0,   1,   2,   3,   4,   5,   6,   7, 256, 257, 258, 259, 260, 261, 262, 263]) ....

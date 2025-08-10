@@ -36,6 +36,7 @@ class DistributedTrainController(TrainController):
         super().__init__(train_engine, config, scheduler)
         self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
         self.role = kwargs.get("role", "train")
+        self.group_size = kwargs.get("group_size")
         self.world_size = self.allocate_mode.train_world_size
         self.dp_size = self.allocate_mode.train_dp_size
         self.tp_size = self.allocate_mode.train_tp_size
@@ -187,9 +188,7 @@ class DistributedTrainController(TrainController):
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function."""
         logger.info(f"start to train_distributed_batch")
-        batches = input_.split(self.dp_size)
-        # dp_world_size = self.tp_size * self.pp_size
-        # assert len(self.workers) % dp_world_size == 0
+        batches = input_.split_by_groups(self.group_size, self.dp_size)
         futures = []
         results = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
