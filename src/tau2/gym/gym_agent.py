@@ -67,6 +67,10 @@ class GymAgentState(BaseModel):
 
     messages: list[APICompatibleMessage]
 
+def done() -> str:
+    """Call this function when you are done with the task."""
+    return GymAgent.STOP_TOKEN
+
 
 class GymAgent(LocalAgent):
     """
@@ -105,11 +109,6 @@ class GymAgent(LocalAgent):
 
     def add_stop_tool(self) -> None:
         """Add the stop tool to the tools."""
-
-        def done() -> str:
-            """Call this function when you are done with the task."""
-            return self.STOP_TOKEN
-
         self.tools.append(as_tool(done))
 
     def validate_tools(self) -> None:
