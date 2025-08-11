@@ -27,5 +27,7 @@ jobs:
       - run: |
           source examples/env/scripts/setup-pip-deps.sh
 
-      - run: |
-          pytest -s -vv areal/tests
+      - env:
+          CI: true
+        run: |
+          pytest areal/tests
