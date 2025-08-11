@@ -13,7 +13,7 @@ import torch
 from PIL.Image import Image as ImageObject
 from transformers import PreTrainedTokenizerFast
 
-from areal.api.cli_args import GenerationHyperparameters, SaverConfig
+from areal.api.cli_args import GenerationHyperparameters
 from areal.utils.network import find_free_ports, gethostip
 
 if TYPE_CHECKING:
@@ -213,12 +213,15 @@ class WeightUpdateMeta:
     @classmethod
     def from_disk(
         cls,
-        saver_config: SaverConfig,
+        experiment_name: str,
+        trial_name: str,
+        file_root: str,
+        name: str = "default",
     ) -> "WeightUpdateMeta":
         from areal.utils.saver import Saver
 
         path = os.path.join(
-            Saver.get_save_checkpoint_root(saver_config),
+            Saver.get_model_save_root(experiment_name, trial_name, file_root, name),
             "weight_update",
         )
         return cls(
@@ -261,3 +264,23 @@ class RolloutStat:
     submitted: int = 0
     accepted: int = 0
     running: int = 0
+
+
+@dataclass
+class StepInfo:
+    epoch: int
+    epoch_step: int
+    global_step: int
+    steps_per_epoch: int
+
+    def next(self):
+        return StepInfo(
+            epoch=self.epoch + (self.epoch_step == self.steps_per_epoch - 1),
+            epoch_step=(
+                0
+                if self.epoch_step == self.steps_per_epoch - 1
+                else self.epoch_step + 1
+            ),
+            global_step=self.global_step + 1,
+            steps_per_epoch=self.steps_per_epoch,
+        )

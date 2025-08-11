@@ -1,6 +1,4 @@
-import getpass
 import importlib.util
-import os
 import pathlib
 import sys
 import time
@@ -12,9 +10,11 @@ from ray.runtime_env import RuntimeEnv
 from ray.util.placement_group import PlacementGroup
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
+import realhf.base.logging as logging
 from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
+    RecoverConfig,
     SGLangConfig,
     parse_cli_args,
     to_structured_cfg,
@@ -26,6 +26,7 @@ from areal.utils.launcher import (
     wait_sglang_server_addrs,
 )
 from areal.utils.ray import get_placement_group_master_ip_and_port
+from areal.utils.recover import check_if_recover
 from realhf.base import logging, name_resolve, names
 from realhf.scheduler.client import JobException, JobState
 
@@ -33,6 +34,8 @@ logger = logging.getLogger("RayLauncher")
 
 RAY_WAIT_CHECK_TIME_INTERVAL = 5  # seconds
 DEFAULT_MAIN_FUNC_NAME = "main"
+RAY_LAUNCHER = None
+RECOVER_TIME_INTERVAL = 10  # seconds
 
 
 def run_func(file_path, function_name, *args, **kwargs):
@@ -65,15 +68,11 @@ class RayLauncher:
 
         # job_name to ray future
         self.jobs = {}
+        self.placement_groups = {}
 
     @property
     def run_name(self):
         return f"{self.experiment_name}_{self.trial_name}"
-
-    def log_path_of(self, job_name: str) -> str:
-        log_path = f"{self.fileroot}/logs/{getpass.getuser()}/{self.experiment_name}/{self.trial_name}"
-        os.makedirs(log_path, exist_ok=True)
-        return os.path.join(log_path, f"{job_name}.log")
 
     def submit(
         self,
@@ -155,29 +154,34 @@ class RayLauncher:
         cpus_per_node = cpus_per_task * tasks_per_node
         mem_per_node = mem_per_task * tasks_per_node
 
-        placement_group = ray.util.placement_group(
-            bundles=[
-                {
-                    "CPU": cpus_per_node,
-                    "GPU": gpus_per_node,
-                    "memory": mem_per_node * 1024 * 1024,  # Convert MB to bytes
-                }
-            ]
-            * nodes,
-            strategy="STRICT_SPREAD",
-        )
-        try:
-            ray.get(placement_group.ready(), timeout=30)
-        except ray.exceptions.GetTimeoutError as e:
-            logger.error(
-                "Ray placement group timeout, please check if the resource requirement "
-                "for your experiment exceeds the available resources in the cluster. \n"
-                f"ray.nodes(): {ray.nodes()} \n"
-                f"Placement Group bundles: "
-                f"cpus_per_node={cpus_per_node}, gpus_per_node={gpus_per_node}, "
-                f"mem_per_node={mem_per_node}MB, nodes={nodes}"
+        if job_name not in self.placement_groups:
+            placement_group = ray.util.placement_group(
+                bundles=[
+                    {
+                        "CPU": cpus_per_node,
+                        "GPU": gpus_per_node,
+                        "memory": mem_per_node * 1024 * 1024,  # Convert MB to bytes
+                    }
+                ]
+                * nodes,
+                strategy="STRICT_SPREAD",
             )
-            raise e
+            try:
+                ray.get(placement_group.ready(), timeout=30)
+            except ray.exceptions.GetTimeoutError as e:
+                logger.error(
+                    "Ray placement group timeout, please check if the resource requirement "
+                    "for your experiment exceeds the available resources in the cluster. \n"
+                    f"ray.nodes(): {ray.nodes()} \n"
+                    f"Placement Group bundles: "
+                    f"cpus_per_node={cpus_per_node}, gpus_per_node={gpus_per_node}, "
+                    f"mem_per_node={mem_per_node}MB, nodes={nodes}"
+                )
+                raise e
+            self.placement_groups[job_name] = placement_group
+        else:
+            # Reuse placement group in recover runs
+            placement_group = self.placement_groups[job_name]
 
         if amend_torch_dist_env:
             host_ip, port = get_placement_group_master_ip_and_port(placement_group)
@@ -289,8 +293,12 @@ class RayLauncher:
             for job_name, status in job_status.items():
                 if status in check_status:
                     logger.info(f"Job {job_name} is {status}, stopping all jobs.")
-                    self.stop_all(force=True)
-                    return
+                    raise JobException(
+                        run_name=self.run_name,
+                        worker_type=job_name.split(":")[0],
+                        host="ray",
+                        reason=status,
+                    )
                 if status in remove_status:
                     logger.info(f"Job {job_name} is {status}, removed.")
                     self.jobs.pop(job_name)
@@ -298,13 +306,18 @@ class RayLauncher:
             time.sleep(RAY_WAIT_CHECK_TIME_INTERVAL)
 
 
-def ray_main():
-    # usage: python -m areal.launcher.ray <entry_point> --config <config_path> [<additional_args>]
+def main():
     ray.init()
-    config, config_file = parse_cli_args(sys.argv[2:])
+    config, _ = parse_cli_args(sys.argv[2:])
+    ray_main(config, run_id=0)
+
+
+def ray_main(config, run_id: int = 0):
     config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
+    config.recover = to_structured_cfg(config.recover, RecoverConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
+    is_recover_run = check_if_recover(config.recover, run_id)
     validate_config_for_distributed_launcher(config)
 
     name_resolve.reconfigure(config.cluster.name_resolve)
@@ -316,11 +329,20 @@ def ray_main():
 
     n_nodes = config.cluster.n_nodes
     n_gpus_per_node = config.cluster.n_gpus_per_node
-    launcher = RayLauncher(
-        experiment_name=config.experiment_name,
-        trial_name=config.trial_name,
-        fileroot=config.cluster.fileroot,
-    )
+
+    # To reuse ray placement groups in recover runs.
+    global RAY_LAUNCHER
+    if RAY_LAUNCHER is None:
+        assert run_id == 0
+        launcher = RayLauncher(
+            experiment_name=config.experiment_name,
+            trial_name=config.trial_name,
+            fileroot=config.cluster.fileroot,
+        )
+        RAY_LAUNCHER = launcher
+    else:
+        launcher = RAY_LAUNCHER
+
     allocation_mode = config.allocation_mode
     allocation_mode = AllocationMode.from_str(allocation_mode)
     sglang_addrs = []
@@ -362,7 +384,7 @@ def ray_main():
                 config.trial_name,
                 n_sglang_servers,
             )
-        except TimeoutError as e:
+        except (TimeoutError, KeyboardInterrupt) as e:
             launcher.stop_all(force=True)
             raise e
 
@@ -390,6 +412,7 @@ def ray_main():
                     config.launcher.trainer_env_vars,
                 ),
                 AREAL_LLM_SERVER_ADDRS=",".join(sglang_addrs),
+                AREAL_RECOVER_RUN=str(int(is_recover_run)),
             ),
             amend_torch_dist_env=True,
         )
@@ -398,11 +421,24 @@ def ray_main():
         launcher.wait(check_status=(JobState.COMPLETED, JobState.FAILED))
     except (KeyboardInterrupt, JobException, TimeoutError) as e:
         launcher.stop_all(force=True)
-        raise e
+        recover_states = [JobState.FAILED]
+        if isinstance(e, JobException):
+            recover_this = (
+                e.reason in recover_states
+                and run_id < config.recover.retries
+                and config.recover.mode in ["auto", "fault"]
+            )
+            if recover_this:
+                time.sleep(RECOVER_TIME_INTERVAL)
+                ray_main(config, run_id=run_id + 1)
+            else:
+                raise e
+        else:
+            raise e
 
 
 if __name__ == "__main__":
     # usage: python -m areal.launcher.ray \
     #   <entry_point> --config <config_path> [<additional_args>] \
     #   launcher.ray.main_func_name=<main_func_name_in_entry_point>
-    ray_main()
+    main()

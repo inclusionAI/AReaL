@@ -10,6 +10,7 @@ import realhf.base.logging as logging
 from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
+    RecoverConfig,
     SGLangConfig,
     parse_cli_args,
     to_structured_cfg,
@@ -20,6 +21,7 @@ from areal.utils.launcher import (
     validate_config_for_distributed_launcher,
     wait_sglang_server_addrs,
 )
+from areal.utils.recover import check_if_recover
 from areal.utils.slurm import (
     APPTAINER_CMD_TEMPLATE,
     SBATCH_SCRIPT_TEMPLATE,
@@ -32,7 +34,8 @@ from realhf.scheduler.client import JobException, JobInfo, JobState
 
 logger = logging.getLogger("SlurmLauncher")
 
-SLURM_WAIT_CHECK_TIME_INTERVAL = 5
+SLURM_WAIT_CHECK_TIME_INTERVAL = 5  # seconds
+RECOVER_TIME_INTERVAL = 10  # seconds
 
 
 class SlurmLauncher:
@@ -384,12 +387,30 @@ class SlurmLauncher:
             )
 
 
-def slurm_main():
+def main():
     config, _ = parse_cli_args(sys.argv[2:])
+    slurm_main(config, run_id=0)
+
+
+def slurm_main(config, run_id: int = 0):
     config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
+    config.recover = to_structured_cfg(config.recover, RecoverConfig)
     validate_config_for_distributed_launcher(config)
+    is_recover_run = check_if_recover(config.recover, run_id)
+    logger.info(
+        f"SlurmLauncher: experiment_name={config.experiment_name}, "
+        f"trial_name={config.trial_name}, fileroot={config.cluster.fileroot}, "
+        f"run_id={run_id}, is_recover_run={is_recover_run}"
+    )
+
+    launcher = SlurmLauncher(
+        experiment_name=config.experiment_name,
+        trial_name=config.trial_name,
+        fileroot=config.cluster.fileroot,
+        container_type=config.launcher.slurm.container_type,
+    )
 
     name_resolve.reconfigure(config.cluster.name_resolve)
     name_resolve.clear_subtree(
@@ -400,13 +421,6 @@ def slurm_main():
 
     n_nodes = config.cluster.n_nodes
     n_gpus_per_node = config.cluster.n_gpus_per_node
-
-    launcher = SlurmLauncher(
-        experiment_name=config.experiment_name,
-        trial_name=config.trial_name,
-        fileroot=config.cluster.fileroot,
-        container_type=config.launcher.slurm.container_type,
-    )
     allocation_mode = config.allocation_mode
     allocation_mode = AllocationMode.from_str(allocation_mode)
     sglang_cmds = []
@@ -450,7 +464,7 @@ def slurm_main():
                 config.trial_name,
                 n_sglang_servers,
             )
-        except TimeoutError as e:
+        except (TimeoutError, KeyboardInterrupt) as e:
             launcher.stop_all(force=True)
             raise e
 
@@ -495,6 +509,7 @@ def slurm_main():
                     config.launcher.trainer_env_vars,
                 ),
                 AREAL_LLM_SERVER_ADDRS=",".join(sglang_addrs),
+                AREAL_RECOVER_RUN=str(int(is_recover_run)),
             ),
         )
 
@@ -510,10 +525,23 @@ def slurm_main():
         )
     except (KeyboardInterrupt, JobException, TimeoutError) as e:
         launcher.stop_all(force=True)
-        raise e
+        recover_states = [JobState.FAILED, JobState.NOT_FOUND]
+        if isinstance(e, JobException):
+            recover_this = (
+                e.reason in recover_states
+                and run_id < config.recover.retries
+                and config.recover.mode in ["auto", "fault"]
+            )
+            if recover_this:
+                time.sleep(RECOVER_TIME_INTERVAL)
+                slurm_main(config, run_id=run_id + 1)
+            else:
+                raise e
+        else:
+            raise e
 
 
 if __name__ == "__main__":
     # usage: python -m areal.launcher.slurm <entry_point> \
     #  --config <config_path> [<additional_args>]
-    slurm_main()
+    main()

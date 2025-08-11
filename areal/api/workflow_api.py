@@ -70,7 +70,9 @@ class WorkflowExecutor:
 
     def initialize(self):
         self.rollout_tasks: Dict[str, asyncio.Task] = {}
-        self.rollout_thread = threading.Thread(target=self._rollout_thread, daemon=True)
+        self.rollout_thread = threading.Thread(
+            target=self._rollout_thread, daemon=True
+        )  # set daemon=True to automatically exit when error occurs
         self.rollout_thread.start()
 
     def destroy(self):
@@ -167,7 +169,6 @@ class WorkflowExecutor:
                     with self.lock:
                         rollout_tasks.pop(task_rid)
                         self.rollout_stat.accepted += 1
-
                         self.rollout_stat.running -= 1
                         if self.config.enable_rollout_tracing:
                             logger.info(

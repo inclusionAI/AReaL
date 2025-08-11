@@ -58,7 +58,8 @@ saver:
   freq_steps: null
   freq_secs: null
 
-checkpointer:
+recover:
+  mode: auto
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
