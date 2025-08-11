@@ -6,7 +6,6 @@ import time
 import pytest
 import requests
 import torch
-import torch.distributed as dist
 from tensordict import TensorDict
 
 from areal.api.cli_args import (

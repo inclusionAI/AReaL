@@ -8,7 +8,6 @@ from typing import Dict
 
 import pytest
 import torch
-import torch.distributed as dist
 from tensordict import TensorDict
 from transformers import AutoTokenizer
 

@@ -60,7 +60,6 @@ class RLVRWorkflow(RolloutWorkflow):
         seqlens = []
 
         results = []
-        loop = asyncio.get_event_loop()
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
