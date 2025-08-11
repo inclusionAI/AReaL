@@ -775,7 +775,6 @@ class BaseExperimentConfig:
     stats_logger: StatsLoggerConfig = field(default_factory=StatsLoggerConfig)
     recover: RecoverConfig = field(default_factory=RecoverConfig)
 
-    server_only: bool = False
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
 

@@ -208,7 +208,6 @@ class RayLauncher:
             }
 
             if amend_torch_dist_env:
-                assert gpus_per_task == 1
                 # NOTE: Here we only provide environment variables for torch distributed
                 # initialization, and LOCAL_RANK for torch.device.
                 # Other environment variables automatically set by torchrun are not set, and
@@ -293,6 +292,8 @@ class RayLauncher:
             for job_name, status in job_status.items():
                 if status in check_status:
                     logger.info(f"Job {job_name} is {status}, stopping all jobs.")
+                    # raise exception to enter recover.
+                    # should not changed to stop_all
                     raise JobException(
                         run_name=self.run_name,
                         worker_type=job_name.split(":")[0],
@@ -347,7 +348,7 @@ def ray_main(config, run_id: int = 0):
     allocation_mode = AllocationMode.from_str(allocation_mode)
     sglang_addrs = []
     n_sglang_nodes = 0
-    if allocation_mode.type_ == AllocationType.DECOUPLED_SGLANG:
+    if allocation_mode.gen_backend == "sglang":
         # Launcher should launch SGLang servers according to allocation mode.
         sglang_tp_size = allocation_mode.gen_tp_size
         n_sglang_servers = allocation_mode.gen_dp_size
@@ -388,11 +389,16 @@ def ray_main(config, run_id: int = 0):
             launcher.stop_all(force=True)
             raise e
 
-    trainer_n_nodes = n_nodes - n_sglang_nodes
+    if allocation_mode.type_ == AllocationType.DECOUPLED_EVAL:
+        trainer_n_nodes = 1
+        gpus_per_task = 0
+    else:
+        trainer_n_nodes = n_nodes - n_sglang_nodes
+        gpus_per_task = 1
     trainer_entry_point = sys.argv[1]
     n_trainer_processes = trainer_n_nodes * config.cluster.n_gpus_per_node
     trainer_args_list = [[sys.argv[2:]] for _ in range(n_trainer_processes)]
-    if not config.server_only:
+    if allocation_mode.type_ != AllocationType.LLM_SERVER_ONLY:
         # In ray, we launch trainer in the granularity of processes (1 GPU per process)
         # We amend environment variable similar to torchrun to ensure correct initialization of
         # torch distributed.
@@ -403,7 +409,7 @@ def ray_main(config, run_id: int = 0):
             count=trainer_n_nodes * config.cluster.n_gpus_per_node,
             nodes=trainer_n_nodes,
             list_args=trainer_args_list,
-            gpus_per_task=1,
+            gpus_per_task=gpus_per_task,
             cpus_per_task=config.launcher.trainer_cpus_per_gpu,
             mem_per_task=config.launcher.trainer_mem_per_gpu,
             env_vars=dict(

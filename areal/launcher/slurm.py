@@ -426,7 +426,7 @@ def slurm_main(config, run_id: int = 0):
     sglang_cmds = []
     sglang_addrs = []
     n_sglang_nodes = 0
-    if allocation_mode.type_ == AllocationType.DECOUPLED_SGLANG:
+    if allocation_mode.gen_backend == "sglang":
         # Launcher should launch SGLang servers according to allocation mode.
         n_sglang_servers = allocation_mode.gen_dp_size
         n_sglang_nodes = allocation_mode.gen_world_size // n_gpus_per_node
@@ -468,7 +468,13 @@ def slurm_main(config, run_id: int = 0):
             launcher.stop_all(force=True)
             raise e
 
-    trainer_n_nodes = n_nodes - n_sglang_nodes
+    if allocation_mode.type_ == AllocationType.DECOUPLED_EVAL:
+        trainer_n_nodes = 1
+        gpus_per_node = 0
+    else:
+        trainer_n_nodes = n_nodes - n_sglang_nodes
+        gpus_per_node = 1
+
     # Here $head_node_ip is the IP address of the first node in the job array.
     # $trainer_port is a free port on the head node.
     # Both of them are obtained in by the SBATCH script.
@@ -488,14 +494,14 @@ def slurm_main(config, run_id: int = 0):
             )
         )
 
-    if not config.server_only:
+    if allocation_mode.type_ != AllocationType.LLM_SERVER_ONLY:
         # launch trainers
         launcher.submit_array(
             job_name="trainer",
             cmd=trainer_cmds,
             count=trainer_n_nodes,
             nodes=trainer_n_nodes,
-            n_gpus_per_node=config.cluster.n_gpus_per_node,
+            n_gpus_per_node=gpus_per_node,
             cpus_per_task=config.launcher.trainer_cpus_per_gpu
             * config.cluster.n_gpus_per_node,
             mem_per_task=config.launcher.trainer_mem_per_gpu

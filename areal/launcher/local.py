@@ -274,7 +274,7 @@ def local_main(config, run_id: int = 0):
 
     server_cmd = []
     server_addrs = []
-    if alloc_mode.type_ == AllocationType.DECOUPLED_SGLANG:
+    if alloc_mode.gen_backend == "sglang":
         base_seed = config.sglang.random_seed
         config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
         ports = find_free_ports(alloc_mode.gen_dp_size * 2, port_range=(10000, 50000))
@@ -309,11 +309,16 @@ def local_main(config, run_id: int = 0):
         )
 
     # Launch trainer entrypoint
-    if alloc_mode.type_ == AllocationType.COLOCATE or not config.server_only:
+    if alloc_mode.type_ != AllocationType.LLM_SERVER_ONLY:
+        if alloc_mode.type_ == AllocationType.DECOUPLED_EVAL:
+            gpu = 0
+            nprocs = 1
+        else:
+            gpu = nprocs = alloc_mode.train_world_size
         launcher.submit(
             job_name="trainer",
-            cmd=f"torchrun --nnodes 1 --nproc-per-node {alloc_mode.train_world_size} --master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} {' '.join(sys.argv[1:])}",
-            gpu=alloc_mode.train_world_size,
+            cmd=f"torchrun --nnodes 1 --nproc-per-node {nprocs} --master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} {' '.join(sys.argv[1:])}",
+            gpu=gpu,
             env_vars=dict(
                 **get_env_vars(
                     config.cluster.cluster_name,
