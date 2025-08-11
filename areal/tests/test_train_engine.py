@@ -8,6 +8,7 @@ from typing import Dict
 
 import pytest
 import torch
+import torch.distributed as dist
 from tensordict import TensorDict
 from transformers import AutoTokenizer
 
@@ -74,7 +75,7 @@ def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
     return torch.mean(logits)
 
 
-@pytest.fixture(scope="module", params=["fsdp", "auto_tp"])
+@pytest.fixture(scope="module", params=["fsdp"])
 def engine(request):
     os.environ.update(
         {

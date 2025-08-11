@@ -250,9 +250,9 @@ class SaveLoadMeta:
     path: str
     weight_format: str
     with_optim: bool
-    tokenizer: Optional[PreTrainedTokenizerFast]
-    processor: Optional["AutoProcessor"]
-    base_model_path: str | None
+    tokenizer: Optional[PreTrainedTokenizerFast] = None
+    processor: Optional["AutoProcessor"] = None
+    base_model_path: str | None = None
     naive_distributed: bool = False
 
 
