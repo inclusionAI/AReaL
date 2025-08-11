@@ -8,35 +8,50 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
 
+import numpy as np
+import torch
 from PIL.Image import Image as ImageObject
-from transformers import AutoProcessor, PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters, SaverConfig
 from areal.utils.network import find_free_ports, gethostip
 
 if TYPE_CHECKING:
+    from transformers import AutoProcessor
+
     from areal.api.engine_api import TrainEngine
 
 
 @dataclass
-class LLMRequest:
+class ModelRequest:
     rid: str = field(default_factory=lambda: str(uuid.uuid4()))
     input_ids: List[int] = field(default_factory=list)
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
     metadata: Dict[str, Any] = field(default_factory=dict)
-    model_id: Optional[str] = None
+    # tokenizer is used for encode-decode in the inference engine
+    tokenizer: Optional[PreTrainedTokenizerFast] = None
+
+    # vlm
+    image_data: Optional[List[ImageObject | str]] = field(default_factory=list)
+    processor: Optional["AutoProcessor"] = None
 
 
 @dataclass
-class LLMResponse:
+class ModelResponse:
     # outputs
     input_tokens: List[int] = field(default_factory=list)
     output_tokens: List[int] = field(default_factory=list)
     output_logprobs: List[float] = field(default_factory=list)
     output_versions: List[int] = field(default_factory=list)
     stop_reason: Literal["length", "stop", "interrupt"] = "stop"
+    # tokenizer is used for encode-decode in the inference engine
+    tokenizer: Optional[PreTrainedTokenizerFast] = None
+
+    # vlm
+    input_images: List[ImageObject | str] = field(default_factory=list)
+    processor: Optional["AutoProcessor"] = None
 
     # statistics
     latency: float = float("inf")
@@ -50,16 +65,6 @@ class LLMResponse:
     @property
     def output_len(self) -> int:
         return len(self.output_tokens)
-
-
-@dataclass
-class VLMRequest(LLMRequest):
-    image_data: Optional[List[ImageObject | str]] = field(default_factory=list)
-
-
-@dataclass
-class VLMResponse(LLMResponse):
-    input_images: List[ImageObject | str] = field(default_factory=list)
 
 
 @dataclass
@@ -188,6 +193,11 @@ class ParamSpec:
     shape: Tuple
     dtype: str
 
+    @property
+    def size(self) -> int:
+        """Param bytes"""
+        return getattr(torch, self.dtype).itemsize * np.prod(self.shape)
+
 
 @dataclass
 class WeightUpdateMeta:
@@ -197,7 +207,7 @@ class WeightUpdateMeta:
 
     nccl_master_address: str = "127.0.0.1"
     nccl_master_port: int = 29500
-    nccl_param_specs: List[ParamSpec] = field(default_factory=list)
+    nccl_param_specs: List[List[ParamSpec]] = field(default_factory=list)
     nccl_group_name: str = "update_weight_group"
 
     @classmethod
@@ -222,13 +232,15 @@ class WeightUpdateMeta:
         allocation_mode: AllocationMode,
         fsdp_engine: "TrainEngine",
         nccl_group_name: str = "update_weight_group",
+        weight_chunked_mem_mb: int = 1024,
     ):
+        param_specs = fsdp_engine.get_param_specs(weight_chunked_mem_mb)
         return cls(
             type="nccl",
             alloc_mode=allocation_mode,
             nccl_master_address=gethostip(),
             nccl_master_port=find_free_ports(1)[0],
-            nccl_param_specs=fsdp_engine.get_param_specs(),
+            nccl_param_specs=param_specs,
             nccl_group_name=nccl_group_name,
         )
 
@@ -238,9 +250,9 @@ class SaveLoadMeta:
     path: str
     weight_format: str
     with_optim: bool
-    tokenizer: PreTrainedTokenizerFast | None
-    processor: AutoProcessor | None
-    base_model_path: str | None
+    tokenizer: Optional[PreTrainedTokenizerFast] = None
+    processor: Optional["AutoProcessor"] = None
+    base_model_path: str | None = None
     naive_distributed: bool = False
 
 

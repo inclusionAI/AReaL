@@ -1,4 +1,11 @@
-from typing import List
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+from functools import lru_cache, partial
+from typing import Callable, List, Optional
+
+from realhf.base import logging
+
+logger = logging.getLogger("Reward API")
 
 
 def reward_fn(
@@ -21,3 +28,41 @@ def reward_fn(
         Any other attributes in the dataset will be passed as keyword arguments to this function.
     :rtype: float
     """
+
+
+@lru_cache(maxsize=1)
+def get_rw_executor(max_workers):
+    return ProcessPoolExecutor(max_workers=max_workers)
+
+
+class AsyncRewardWrapper:
+    """
+    Wraps a synchronous reward function to make it async with timeout handling.
+    """
+
+    def __init__(
+        self,
+        reward_fn: Callable,
+        timeout_seconds: float = 15,
+        max_workers: Optional[int] = None,
+    ):
+        self.reward_fn = reward_fn
+        self.timeout_seconds = timeout_seconds
+        self.max_workers = max_workers
+
+    async def __call__(self, *args, **kwargs) -> float:
+        rw_executor = get_rw_executor(self.max_workers)
+        loop = asyncio.get_event_loop()
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(
+                    rw_executor,
+                    partial(self.reward_fn, *args, **kwargs),
+                ),
+                timeout=self.timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Computing reward timeout after {self.timeout_seconds}s. Set reward to 0."
+            )
+            return 0

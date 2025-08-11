@@ -1,5 +1,4 @@
 import asyncio
-import functools
 import os
 import uuid
 
@@ -9,10 +8,10 @@ from tensordict import TensorDict
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
-from areal.api.io_struct import VLMRequest
+from areal.api.io_struct import ModelRequest
 from areal.utils.data import concat_padded_tensors
 from areal.utils.image import image2base64
-from areal.workflow.rlvr import REWARD_TIMEOUT_SECONDS, RLVRWorkflow
+from areal.workflow.rlvr import RLVRWorkflow
 from realhf.base import logging
 
 logger = logging.getLogger("RLVR workflow")
@@ -46,11 +45,13 @@ class VisionRLVRWorkflow(RLVRWorkflow):
 
         byte_images = image2base64(data["images"])
 
-        req = VLMRequest(
+        req = ModelRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
             image_data=byte_images,
             gconfig=self.gconfig.new(n_samples=1),
+            tokenizer=self.tokenizer,
+            processor=self.processor,
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
 
@@ -61,7 +62,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         seqlens = []
 
         results = []
-        loop = asyncio.get_event_loop()
+        asyncio.get_event_loop()
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
@@ -73,26 +74,13 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             prompt_strs.append(prompt_str)
             completions_strs.append(completions_str)
             seqlens.append(len(seq))
-            try:
-                reward = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        self.rw_executor,
-                        functools.partial(
-                            self.reward_fn,
-                            prompt_str,
-                            completions_str,
-                            resp.input_tokens,
-                            resp.output_tokens,
-                            **data,
-                        ),
-                    ),
-                    timeout=REWARD_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"Computing reward timeout after {REWARD_TIMEOUT_SECONDS}s. Set reward to 0."
-                )
-                reward = 0
+            reward = await self.async_reward_fn(
+                prompt=prompt_str,
+                completions=completions_str,
+                prompt_ids=resp.input_tokens,
+                completion_ids=resp.output_tokens,
+                **data,
+            )
             rewards.append(reward)
             res = dict(
                 # unsqueeze to add an additional batch dimension

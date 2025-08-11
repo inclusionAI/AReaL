@@ -13,7 +13,7 @@ parts:
     - file: tutorial/quickstart
     - file: tutorial/quickstart_legacy
     - file: tutorial/eval
-    - file: tutorial/troubleshooting
+    # - file: tutorial/troubleshooting
   - caption: References
     chapters:
     - file: references/benchmark
