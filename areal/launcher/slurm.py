@@ -160,22 +160,13 @@ class SlurmLauncher:
 
         srun_cmds = []
         for i in range(count):
-            # resolve CUDA_VISIBLE_DEVICES for each task
-            gpu_id_start = (i % ntasks_per_node) * n_gpus_per_task
-            gpu_id_end = ((i % ntasks_per_node) + 1) * n_gpus_per_task
             node_id = i // ntasks_per_node
-            _env_vars = {
-                **env_vars,
-                "CUDA_VISIBLE_DEVICES": ",".join(
-                    str(x) for x in range(gpu_id_start, gpu_id_end)
-                ),
-            }
             # Prepare the command for each job in the array
             job_cmd = cmd[i]
 
             if self.container_type == "apptainer":
                 env_string = " ".join(
-                    "--env {}={}".format(k, v) for k, v in _env_vars.items()
+                    "--env {}={}".format(k, v) for k, v in env_vars.items()
                 )
                 apptainer_cmd = APPTAINER_CMD_TEMPLATE.format(
                     container_mounts=container_mounts or "",
@@ -195,7 +186,7 @@ class SlurmLauncher:
                 )
             elif self.container_type == "none":
                 env_string = "--export=" + ",".join(
-                    "{}={}".format(k, v) for k, v in _env_vars.items()
+                    "{}={}".format(k, v) for k, v in env_vars.items()
                 )
                 srun_additional_args = srun_additional_args + " " + env_string
                 srun_cmd = SRUN_CMD_TEMPLATE.format(
@@ -423,27 +414,27 @@ def slurm_main():
     n_sglang_nodes = 0
     if allocation_mode.type_ == AllocationType.DECOUPLED_SGLANG:
         # Launcher should launch SGLang servers according to allocation mode.
-        sglang_tp_size = allocation_mode.gen_tp_size
         n_sglang_servers = allocation_mode.gen_dp_size
         n_sglang_nodes = allocation_mode.gen_world_size // n_gpus_per_node
+        n_servers_per_node = max(n_sglang_servers // n_sglang_nodes, 1)
 
         base_seed = config.sglang.random_seed
         sglang_server_cmd_template = f"python3 -m areal.launcher.sglang_server {' '.join(sys.argv[2:])} sglang.random_seed={{seed}}"
-        for i in range(n_sglang_servers):
+        for i in range(n_sglang_nodes):
             sglang_cmd = sglang_server_cmd_template.format(
-                seed=base_seed + i,
+                seed=base_seed + i * n_servers_per_node
             )
             sglang_cmds.append(sglang_cmd)
 
         launcher.submit_array(
             job_name="llm_server",
             cmd=sglang_cmds,
-            count=n_sglang_servers,
+            count=n_sglang_nodes,
             nodes=n_sglang_nodes,
             n_gpus_per_node=config.cluster.n_gpus_per_node,
             cpus_per_task=config.launcher.inference_server_cpus_per_gpu
-            * sglang_tp_size,
-            mem_per_task=config.launcher.inference_server_mem_per_gpu * sglang_tp_size,
+            * n_gpus_per_node,
+            mem_per_task=config.launcher.inference_server_mem_per_gpu * n_gpus_per_node,
             srun_additional_args=config.launcher.slurm.srun_additional_args,
             container_image=config.launcher.slurm.inference_server_image,
             container_mounts=config.launcher.slurm.mount,

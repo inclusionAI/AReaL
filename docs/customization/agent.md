@@ -73,7 +73,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
 ### Implementing the Episode Logic
 
 Now let's implement the `arun_episode` method. We'll start by tokenizing the prompt data
-and converting it into an `LLMRequest` object for the inference engine:
+and converting it into an `ModelRequest` object for the inference engine:
 
 ```python
 class MultiTurnWorkflow(RolloutWorkflow):
@@ -96,7 +96,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
                 add_generation_prompt=True,
             )
             # Generate response from the model
-            req = LLMRequest(
+            req = ModelRequest(
                 rid=rid,
                 input_ids=input_ids,
                 gconfig=self.gconfig.new(n_samples=1),
@@ -111,7 +111,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
 > in a "prompt" column, you could get input token IDs with
 > `self.tokenizer.encode(data["prompt"])`.
 
-> **Note**: The `rid` field in `LLMRequest` is the request ID. Requests with the same ID
+> **Note**: The `rid` field in `ModelRequest` is the request ID. Requests with the same ID
 > will reuse the LLM inference server's KV caches for better efficiency.
 
 ### Handling Multi-turn Conversations

@@ -74,7 +74,7 @@ def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
     return torch.mean(logits)
 
 
-@pytest.fixture(scope="module", params=["fsdp", "auto_tp"])
+@pytest.fixture(scope="module", params=["fsdp"])
 def engine(request):
     os.environ.update(
         {

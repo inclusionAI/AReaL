@@ -245,13 +245,12 @@ def pack_tensor_dict(data: TensorDict):
     total_length = int(cu_seqlens[-1].item())
     # Pack tensors
     packed_data = {}
-    packed_data["cu_seqlens"] = cu_seqlens
-    packed_data["max_seqlen"] = max_seqlen
     for key, value in data.items():
-        # if key == "attention_mask":
-        #     packed_data["cu_seqlens"] = cu_seqlens
-        #     packed_data["max_seqlen"] = max_seqlen
-        # # tensor and of shape [B, S, ...]
+        if key == "attention_mask":
+            packed_data["cu_seqlens"] = cu_seqlens
+            packed_data["max_seqlen"] = max_seqlen
+            continue
+        # tensor and of shape [B, S, ...]
         if (
             torch.is_tensor(value)
             and value.ndim >= 2
@@ -334,10 +333,13 @@ def split_padded_tensor_dict_into_mb_list(
     for key, value in data.items():
         if key == "image_grid_thw" or key == "pixel_values":
             continue
-        if not torch.is_tensor(value) or value.numel() != bs * max_seqlen:
-            not_to_split[key] = value
-        else:
+        if key == "position_ids" or (
+            torch.is_tensor(value) and value.numel() == bs * max_seqlen
+        ):
+            # NOTE: qwen2.5-vl position_ids.numel() == bs * max_seqlen * 3
             to_split[key] = value
+        else:
+            not_to_split[key] = value
 
     # split
     group_indices = allocate_balanced_mbs_synced(mb_spec, input_lens, group=group)
@@ -440,17 +442,24 @@ def pad_packed_tensor_dict(
             padded_data[key] = new_cu_seqlens
         elif key == "max_seqlen":
             padded_data[key] = new_max_seqlen
-        elif torch.is_tensor(value) and value.numel() == total_length:
-            # Pad the tensor to the new total length
-            if key == "position_ids":
-                # transformers will compute flash-attn arguments (e.g., cu_seqlens_q)
-                # according to this position ids.
-                pad = torch.arange(pad_length, dtype=torch.long, device=value.device)
+        elif key == "position_ids":
+            # [bs*seqlen, channel] for qwen2.5 vl, channel==3 for t,h,w
+            if len(value.shape) == 2 and value.shape[1] == 3:
+                pad = (
+                    torch.arange(pad_length, dtype=torch.long, device=value.device)
+                    .unsqueeze(1)
+                    .expand(-1, 3)
+                )
                 padded_tensor = torch.cat([value, pad])
             else:
-                padded_tensor = torch.nn.functional.pad(
-                    value, (0, pad_length), value=pad_value
-                )
+                pad = torch.arange(pad_length, dtype=torch.long, device=value.device)
+                padded_tensor = torch.cat([value, pad])
+            padded_data[key] = padded_tensor
+        elif torch.is_tensor(value) and value.numel() == total_length:
+            # Pad the tensor to the new total length
+            padded_tensor = torch.nn.functional.pad(
+                value, (0, pad_length), value=pad_value
+            )
             padded_data[key] = padded_tensor
         else:
             padded_data[key] = value
@@ -499,7 +508,7 @@ def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
     total_length = data["cu_seqlens"][-1].item()
     new_data = {}
     for key, value in data.items():
-        if (
+        if key == "position_ids" or (
             key
             not in [
                 "cu_seqlens",
@@ -518,10 +527,8 @@ def unsqueeze_mb_list(
     mb_list: MicroBatchList,
 ) -> MicroBatchList:
     """Unsqueeze the packed tensordict in the micro-batch list."""
-    new_mbs = []
     new_padded_mbs = []
     for i, mb in enumerate(mb_list.mbs):
-        new_mbs.append(unsqueeze_packed_tensor_dict(mb))
         if mb_list.padded_mbs is not None:
             new_padded_mbs.append(unsqueeze_packed_tensor_dict(mb_list.padded_mbs[i]))
     mb_list.padded_mbs = new_padded_mbs if mb_list.padded_mbs is not None else None
@@ -530,6 +537,7 @@ def unsqueeze_mb_list(
 
 def amend_position_ids(data: TensorDict) -> TensorDict:
     assert "attention_mask" in data, "Input data must contain 'attention_mask' key."
+
     attn_mask = data["attention_mask"]
     bs, seqlen = attn_mask.shape[:2]
     position_ids = (
