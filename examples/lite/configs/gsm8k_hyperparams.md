@@ -15,9 +15,8 @@ See also the training curve below:
 ![Training curve](../../../assets/gsm8k_2.5-1.5b-ins_training_curve.png)
 
 ### Other Training Details 
- - Devices: 8 Nvidia L20Y GPUs
+ - Devices: 8 Nvidia H800 GPUs
  - Optimizer: Adam
- - Epochs: 10
  - LR Scheduler: Constant
  - Gradient Clipping: 1.0
  - Max_new_tokens: 1024
