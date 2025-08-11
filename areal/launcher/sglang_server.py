@@ -121,6 +121,7 @@ class SGLangServerWrapper:
             cmd = SGLangConfig.build_cmd(
                 self.config,
                 tp_size=self.allocation_mode.gen_tp_size,
+                pp_size=self.allocation_mode.gen_pp_size,
                 base_gpu_id=base_gpu_id,
                 host=host_ip,
                 port=server_port,

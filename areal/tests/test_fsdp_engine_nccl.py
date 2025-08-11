@@ -51,6 +51,7 @@ def sglang_server_nccl():
             log_level="info",
         ),
         tp_size=1,
+        pp_size=1,
         base_gpu_id=1,
         host=HOST,
         port=PORT,
