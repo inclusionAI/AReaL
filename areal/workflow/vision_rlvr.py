@@ -10,8 +10,11 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import ModelRequest
 from areal.utils.data import concat_padded_tensors
-from areal.utils.image import image2base64, pad_images_batch_to_max_size
+from areal.utils.image import image2base64
 from areal.workflow.rlvr import RLVRWorkflow
+from realhf.base import logging
+
+logger = logging.getLogger("RLVR workflow")
 
 
 class VisionRLVRWorkflow(RLVRWorkflow):
@@ -29,10 +32,8 @@ class VisionRLVRWorkflow(RLVRWorkflow):
 
     async def arun_episode(self, engine, data):
 
-        padded_images = pad_images_batch_to_max_size(data["images"])
-
         processed_input = self.processor(
-            images=padded_images,
+            images=data["images"],
             text=data["messages"],
             padding=False,
             return_tensors="pt",
@@ -42,7 +43,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
 
         n_samples = self.gconfig.n_samples
 
-        byte_images = image2base64(padded_images)
+        byte_images = image2base64(data["images"])
 
         req = ModelRequest(
             rid=uuid.uuid4().hex,
@@ -61,6 +62,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         seqlens = []
 
         results = []
+        asyncio.get_event_loop()
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
