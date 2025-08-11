@@ -10,8 +10,8 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.io_struct import (
     FinetuneSpec,
-    LLMRequest,
-    LLMResponse,
+    ModelRequest,
+    ModelResponse,
     ParamSpec,
     SaveLoadMeta,
     WeightUpdateMeta,
@@ -67,7 +67,9 @@ class TrainEngine(abc.ABC):
         """Upload weights to the inference engine (in a blocking manner)."""
         raise NotImplementedError()
 
-    def get_param_specs(self) -> List[ParamSpec]:
+    def get_param_specs(
+        self, weight_chunked_mem_mb: int = 1024
+    ) -> List[List[ParamSpec]]:
         """Get the parameter specifications for the model."""
         raise NotImplementedError()
 
@@ -135,7 +137,7 @@ class InferenceEngine(abc.ABC):
     def destroy(self):
         """Destroy the engine and release GPU memory."""
 
-    async def agenerate(self, req: LLMRequest) -> LLMResponse:
+    async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request."""
         raise NotImplementedError()
 
@@ -151,7 +153,12 @@ class InferenceEngine(abc.ABC):
         """Get the current weight version in the inference engine."""
         raise NotImplementedError()
 
-    def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:
+    def submit(
+        self,
+        data: Dict[str, Any],
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
+    ) -> None:
         """Asynchronously submit a request to the inference engine. Exits immediately."""
         raise NotImplementedError()
 
@@ -165,7 +172,10 @@ class InferenceEngine(abc.ABC):
         raise NotImplementedError()
 
     def rollout_batch(
-        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+        self,
+        data: List[Dict[str, Any]],
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
     ) -> TensorDict:
         """Submit a batch of requests to the inference engine and wait for the results."""
         raise NotImplementedError()
@@ -173,7 +183,8 @@ class InferenceEngine(abc.ABC):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: "RolloutWorkflow",
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ) -> TensorDict:
         """Asynchronously submit and wait until a full batch is ready."""

@@ -4,7 +4,7 @@ import queue
 import threading
 import time
 import traceback
-from typing import TYPE_CHECKING, Any, Callable, Dict, List
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import torch.distributed as dist
 import uvloop
@@ -180,8 +180,15 @@ class WorkflowExecutor:
                         except asyncio.CancelledError:
                             pass
 
-    def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:
+    def submit(
+        self,
+        data: Dict[str, Any],
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
+    ) -> None:
         try:
+            if workflow is None:
+                workflow = workflow_builder()
             self.input_queue.put_nowait((data, workflow))
         except queue.Full:
             raise RuntimeError("Input queue full. Please increase queue_size.")
@@ -235,17 +242,21 @@ class WorkflowExecutor:
         return concat_padded_tensors(results)
 
     def rollout_batch(
-        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+        self,
+        data: List[Dict[str, Any]],
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
     ) -> TensorDict:
         """Submit a batch of requests to the inference engine and wait for the results."""
         for item in data:
-            self.submit(item, workflow)
+            self.submit(item, workflow, workflow_builder)
         return self.wait(count=len(data))
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: "RolloutWorkflow",
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ):
         if not hasattr(self, "data_generator"):
@@ -260,7 +271,11 @@ class WorkflowExecutor:
             ):
                 data = next(self.data_generator)
                 for item in data:
-                    self.submit(item, workflow=workflow)
+                    self.submit(
+                        item,
+                        workflow=workflow,
+                        workflow_builder=workflow_builder,
+                    )
             try:
                 return self.wait(
                     dataloader.batch_size, timeout=1, should_accept=should_accept
