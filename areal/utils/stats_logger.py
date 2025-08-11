@@ -54,6 +54,14 @@ class StatsLogger:
         if self.config.tensorboard.path is not None:
             self.summary_writer = SummaryWriter(log_dir=self.config.tensorboard.path)
 
+    def state_dict(self):
+        return {
+            "last_commit_step": self._last_commit_step,
+        }
+
+    def load_state_dict(self, state_dict):
+        self._last_commit_step = state_dict["last_commit_step"]
+
     def close(self):
         if dist.is_initialized() and dist.get_rank() != 0:
             return

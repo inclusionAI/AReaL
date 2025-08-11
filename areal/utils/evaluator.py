@@ -16,6 +16,12 @@ class Evaluator:
             freq_sec=config.freq_secs,
         )
 
+    def state_dict(self):
+        return self.freq_ctl.state_dict()
+
+    def load_state_dict(self, state_dict):
+        self.freq_ctl.load_state_dict(state_dict)
+
     def evaluate(
         self,
         evaluate_fn: Callable,
