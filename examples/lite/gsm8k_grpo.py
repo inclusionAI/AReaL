@@ -7,12 +7,13 @@ import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
+from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
+from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
@@ -120,18 +121,40 @@ def main(args):
     )
 
     # Run training.
-    saver = Saver(config.saver, ft_spec, for_recover=False)
+    saver = Saver(config.saver, ft_spec)
     stats_logger = StatsLogger(config.stats_logger, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
+
+    recover_handler = RecoverHandler(config.recover, ft_spec)
+    recover_info = recover_handler.load(
+        actor,
+        saver,
+        evaluator,
+        stats_logger,
+        train_dataloader,
+        inference_engine=rollout,
+        weight_update_meta=weight_update_meta,
+    )
+    start_step = (
+        recover_info.last_step_info.next().global_step
+        if recover_info is not None
+        else 0
+    )
 
     total_epochs = config.total_train_epochs
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
     data_generator = itertools.cycle(train_dataloader)
-    for global_step in range(max_steps):
+    for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
+        step_info = StepInfo(
+            global_step=global_step,
+            epoch=epoch,
+            epoch_step=step,
+            steps_per_epoch=steps_per_epoch,
+        )
 
         with stats_tracker.record_timing("rollout"):
             if config.async_training:
@@ -181,7 +204,7 @@ def main(args):
             rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
-            saver.save(actor, epoch, step, global_step)
+            saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
 
         with stats_tracker.record_timing("eval"):
 
@@ -210,6 +233,17 @@ def main(args):
                 epoch,
                 step,
                 global_step,
+            )
+
+        with stats_tracker.record_timing("checkpoint_for_recover"):
+            recover_handler.dump(
+                actor,
+                step_info,
+                saver,
+                evaluator,
+                stats_logger,
+                train_dataloader,
+                tokenizer=tokenizer,
             )
 
         stats_logger.commit(epoch, step, global_step, stats)

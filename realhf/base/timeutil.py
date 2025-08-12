@@ -45,9 +45,9 @@ class FrequencyControl:
         return dict(
             frequence_seconds=self.frequency_seconds,
             frequency_steps=self.frequency_steps,
-            start_time=self.__start_time,
+            start_time=self.__start_time.timestamp(),
             steps=self.__steps,
-            last_time=self.__last_time,
+            last_time=self.__last_time.timestamp(),
             last_steps=self.__last_steps,
             interval_steps=self.__interval_steps,
             interval_seconds=self.__interval_seconds,
@@ -57,9 +57,9 @@ class FrequencyControl:
     def load_state_dict(self, state_dict):
         self.frequency_seconds = state_dict["frequence_seconds"]
         self.frequency_steps = state_dict["frequency_steps"]
-        self.__start_time = state_dict["start_time"]
+        self.__start_time = datetime.fromtimestamp(state_dict["start_time"])
         self.__steps = state_dict["steps"]
-        self.__last_time = state_dict["last_time"]
+        self.__last_time = datetime.fromtimestamp(state_dict["last_time"])
         self.__last_steps = state_dict["last_steps"]
         self.__interval_steps = state_dict["interval_steps"]
         self.__interval_seconds = state_dict["interval_seconds"]
