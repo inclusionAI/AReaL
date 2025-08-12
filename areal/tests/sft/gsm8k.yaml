@@ -11,7 +11,7 @@ cluster:
 allocation_mode: d1p1t1
 
 total_train_epochs: 1
-tokenizer_path: Qwen/Qwen2-0.5B
+tokenizer_path: Qwen/Qwen3-0.6B
 train_dataset:
   path: openai/gsm8k
   batch_size: 128

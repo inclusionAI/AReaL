@@ -4,12 +4,11 @@ import sys
 from typing import Dict, List
 
 from torchdata.stateful_dataloader import StatefulDataLoader
-from transformers import AutoTokenizer
-from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
 import areal.api.cli_args as cli_args
 import areal.dataset
 import areal.utils.data
+import realhf.api.core.data_api as data_api
 import realhf.base.stats_tracker as stats_tracker
 from areal.api.cli_args import SFTConfig
 from areal.api.io_struct import FinetuneSpec
@@ -24,10 +23,8 @@ def main() -> None:
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     rank = int(os.environ.get("RANK", "0"))
 
-    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(
-        config.tokenizer_path,
-        trust_remote_code=True,
-        use_fast=True,
+    processor, tokenizer = data_api.load_hf_processor_and_tokenizer(
+        config.tokenizer_path
     )
 
     train_dataset = areal.dataset.get_custom_dataset(
@@ -37,6 +34,7 @@ def main() -> None:
         type="sft",
         split="train",
         tokenizer=tokenizer,
+        processor=processor,
     )
 
     train_dataloader = StatefulDataLoader(
