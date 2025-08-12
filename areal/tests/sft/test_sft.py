@@ -3,7 +3,6 @@ import os
 import sys
 from typing import Dict, List
 
-import numpy as np
 import pytest
 import sympy
 import torch
@@ -69,7 +68,7 @@ def test_sft(config_path: str):
         _err=sys.stderr,
         _out=sys.stdout,
         _env=os.environ,
-        _ok_code=1,
+        _ok_code=1,  # AReaL exits with code 1 even when successful.
     )
 
     with open(
@@ -81,9 +80,4 @@ def test_sft(config_path: str):
     ) as f:
         stats: List[Dict[str, float]] = json.load(f)
 
-    loss_slope, _ = np.polyfit(
-        list(range(len(stats))),
-        [stat["loss/avg"] for stat in stats],
-        1,
-    )
-    assert loss_slope < 0, f"Loss should be decreasing, but slope is {loss_slope}"
+    assert all(stat["loss/avg"] >= stats[-1]["loss/avg"] for stat in stats[:20])
