@@ -17,6 +17,7 @@ jobs:
     permissions:
       contents: read
     runs-on: gpu
+    timeout-minutes: 7200
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +29,7 @@ jobs:
           source examples/env/scripts/setup-pip-deps.sh
 
       - name: Wait for GPU
+        timeout-minutes: 7200
         run: |
           until CUDA_VISIBLE_DEVICES="$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits | awk -F',' '$2/$3 >= 0.90 {print $1}' | tr '\n' ',' | sed 's/,$//')" && [[ -n "$CUDA_VISIBLE_DEVICES" ]]; do
             sleep 1
