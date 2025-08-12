@@ -20,15 +20,15 @@ saver:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-checkpointer:
-  experiment_name: ${experiment_name}
-  trial_name: ${trial_name}
-  fileroot: ${cluster.fileroot}
 evaluator:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
 stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+recover:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
@@ -38,3 +38,5 @@ model:
   trial_name: ${trial_name}
   path: Qwen/Qwen2-0.5B
   optimizer: {}
+
+launcher: {}
