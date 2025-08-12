@@ -787,6 +787,7 @@ class SFTConfig(BaseExperimentConfig):
 @dataclass
 class GRPOConfig(BaseExperimentConfig):
     async_training: bool = field(default=True)
+    role: str = field(default="villager")
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )

@@ -62,21 +62,21 @@ class WerewolfEnv(EnvironmentService):
         self.rules = (
             "You are playing the werewolf game."
             "Roles in the game are villager, witch, foreseer, werewolf, and hunter. "
-            "Werewolves kill at night. The witch can heal or poison once each. "
-            "The foreseer checks roles each night. The hunter shoots one player "
-            "when killed. Players vote during the day to eliminate suspects. "
+            "Werewolves kill at night. The witch can heal or poison once each every game. "
+            "The foreseer checks one role each night. The hunter shoots one player "
+            "when killed. Players vote during the day to eliminate one suspect. "
             "Villagers win if all werewolves die; werewolves win if they kill "
             "everyone else."
         )
         self.role_prompts = {
             "villager": "You are a villager. Find out the werewolves and vote them out.",
             "werewolf": "You are a werewolf. Work with the other werewolves to kill the rest.",
-            "witch": "You are the witch. You may heal once and poison once during the night.",
+            "witch": "You are the witch. You may heal or poison during the night. You can do each action only once in a single game.",
             "foreseer": "You are the foreseer. Each night you can check one player's role.",
             "hunter": "You are the hunter. When killed, you may shoot one player.",
         }
         self.guide = (
-            "Decide your action for this round. Format your response in the following way: "
+            "Decide your action for this round. Format your response in the following format: "
             "\"<think>your reasoning</think> <answer>action + target</answer>\""
             # " Example: <think>I am a werewolf. I suspect player0 is a villager, I shall kill him to win.</think> <answer>kill player0</answer>"
             "Your valid actions are: {actions}. Perform one action only. Do not say anything else."

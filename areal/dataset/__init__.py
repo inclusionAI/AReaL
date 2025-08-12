@@ -2,7 +2,7 @@ from typing import Optional
 
 import transformers
 
-VALID_DATASETS = ["gsm8k", "clevr_count_70k", "geometry3k"]
+VALID_DATASETS = ["gsm8k", "clevr_count_70k", "geometry3k", "Werewolf"]
 
 
 def get_custom_dataset(
@@ -48,6 +48,10 @@ def get_custom_dataset(
         return get_geometry3k_rl_dataset(
             path, split, processor, rank, world_size, **kwargs
         )
+    elif "Werewolf" in path and type == "rl":
+        from .werewolf import get_werewolf_rl_dataset
+
+        return get_werewolf_rl_dataset(path, split, rank, world_size)
     else:
         raise ValueError(
             f"Dataset {path} with split {split} and training type {type} is not supported. "
