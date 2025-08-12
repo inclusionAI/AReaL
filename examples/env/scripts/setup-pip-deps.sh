@@ -12,4 +12,4 @@ pip install "flash-attn<=2.8.2" --no-build-isolation
 # Package used for calculating math reward
 pip install -e evaluation/latex2sympy
 # Install AReaL
-pip install -e .
+pip install -e .[dev]
