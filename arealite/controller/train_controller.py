@@ -4,7 +4,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import torch
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 from torch import Tensor
 

@@ -17,7 +17,7 @@ from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec, ScheduleStrategy
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangInitConfig, RemoteSGLangEngine
 from realhf.base import stats_tracker, logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 import time
 
 logger = logging.getLogger("DistributedRolloutController")
@@ -81,7 +81,7 @@ class DistributedRolloutController(RolloutController):
                     ))
 
             try:
-                for future in as_completed(futures):
+                for future in futures:
                     result = future.result()  # 可加异常处理
                     results.append(result)
             except KeyboardInterrupt:
