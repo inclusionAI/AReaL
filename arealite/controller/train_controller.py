@@ -114,7 +114,7 @@ class DistributedTrainController(TrainController):
                 for index, worker in enumerate(self.workers)
             ]
             try:
-                for future in as_completed(futures):
+                for future in futures:
                     future.result()
             except KeyboardInterrupt:
                 for f in futures:
@@ -142,7 +142,7 @@ class DistributedTrainController(TrainController):
 
             results = []
             try:
-                for future in as_completed(futures):
+                for future in futures:
                     result = future.result()  # 可加异常处理
                     results.append(result)
             except KeyboardInterrupt:
@@ -202,7 +202,7 @@ class DistributedTrainController(TrainController):
                     batch_data
                 ))
             try:
-                for future in as_completed(futures):
+                for future in futures:
                     result = future.result()
                     results.append(result)
             except KeyboardInterrupt:

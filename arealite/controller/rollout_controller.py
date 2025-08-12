@@ -198,7 +198,7 @@ class DistributedRolloutController(RolloutController):
                             )
                 ))
             try:
-                for future in as_completed(futures):
+                for future in futures:
                     future.result()  # 可加异常处理
             except KeyboardInterrupt:
                 logger.info("receive ctrl+c, terminating all initialization tasks...")

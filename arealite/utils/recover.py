@@ -110,7 +110,7 @@ class Recover:
         # save hf model
         if not disable_save_hf:
             path = Recover.get_save_checkpoint_path(
-                self.config, epoch, step, global_step, name
+                self.config, epoch, step, global_step, f"{name}/huggingface"
             )
             weight_format = "huggingface"
             with_optim = False
