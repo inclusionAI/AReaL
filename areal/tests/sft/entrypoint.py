@@ -1,0 +1,94 @@
+import json
+import os
+import sys
+from typing import Dict, List
+
+from torchdata.stateful_dataloader import StatefulDataLoader
+from transformers import AutoTokenizer
+from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
+
+import areal.api.cli_args as cli_args
+import areal.dataset
+import areal.utils.data
+import realhf.base.stats_tracker as stats_tracker
+from areal.api.cli_args import SFTConfig
+from areal.api.io_struct import FinetuneSpec
+from areal.engine.sft.lm_engine import FSDPLMEngine
+from areal.utils.stats_logger import StatsLogger
+
+
+def main() -> None:
+    config, _ = cli_args.load_expr_config(sys.argv[1:], SFTConfig)
+    assert isinstance(config, SFTConfig)
+
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    rank = int(os.environ.get("RANK", "0"))
+
+    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(
+        config.tokenizer_path,
+        trust_remote_code=True,
+        use_fast=True,
+    )
+
+    train_dataset = areal.dataset.get_custom_dataset(
+        path=config.train_dataset.path,
+        rank=rank,
+        world_size=world_size,
+        type="sft",
+        split="train",
+        tokenizer=tokenizer,
+    )
+
+    train_dataloader = StatefulDataLoader(
+        train_dataset,
+        batch_size=config.train_dataset.batch_size // world_size,
+        collate_fn=areal.utils.data.pad_sequences_to_tensors,
+    )
+    assert train_dataloader.batch_size is not None
+
+    ft_spec = FinetuneSpec(
+        total_train_epochs=config.total_train_epochs,
+        dataset_size=len(train_dataloader) * train_dataloader.batch_size,
+        train_batch_size=train_dataloader.batch_size,
+    )
+    engine = FSDPLMEngine(config=config.model)
+    engine.initialize(
+        addr=None,
+        ft_spec=ft_spec,
+    )
+
+    stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    stats: List[Dict[str, float]] = []
+
+    global_step = 0
+    for epoch in range(config.total_train_epochs):
+        for step, data in enumerate(train_dataloader):
+            engine.train_lm(data)
+            engine.step_lr_scheduler()
+
+            stat = stats_tracker.export(reduce_group=engine.parallelism_group)
+            stats_logger.commit(
+                epoch,
+                step,
+                global_step,
+                stat,
+            )
+            stats.append(stat)
+
+            global_step += 1
+
+    with open(
+        os.path.join(
+            StatsLogger.get_log_path(config.stats_logger),
+            "stats.json",
+        ),
+        "w",
+    ) as f:
+        json.dump(stats, f)
+
+    stats_logger.close()
+    engine.destroy()
+
+
+if __name__ == "__main__":
+    main()
