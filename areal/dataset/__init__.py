@@ -11,9 +11,7 @@ def get_custom_dataset(
     world_size: int,
     type: str = "sft",
     split: Optional[str] = None,
-    tokenizer: Optional[
-        "transformers.tokenization_utils_fast.PreTrainedTokenizerFast"
-    ] = None,
+    tokenizer: Optional[transformers.PreTrainedTokenizerFast] = None,
     processor: Optional[transformers.AutoProcessor] = None,
     **kwargs,
 ):
