@@ -263,10 +263,9 @@ class DistributedRolloutController(RolloutController):
 
         results = self._rpc_call("rollout", batches,workflow)
 
-        group_size = 1
-        if len(results) > 0:
-            group_size = int(results[0]["input_ids"].shape[0])
-        bs = group_size * len(results)
+        assert len(results) > 0
+        size = int(results[0]["input_ids"].shape[0])
+        bs = size * len(results)
 
         padded = concat_padded_tensors(results)
         if isinstance(padded, dict):

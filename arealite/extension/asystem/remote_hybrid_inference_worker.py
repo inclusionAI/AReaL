@@ -85,12 +85,13 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 if index == 0:
                     self.addresses = [server_ip + ":" + server_port]
 
+                dp_rank = global_rank // (self.config.pp_size * self.config.tp_size)
                 asystem_hybrid_config = self.config.engine_config.get('asystem_hybrid_config', {})
                 # http body data
                 body = dict(self.config.engine_config)
                 body["model_path"] = self.config.model_path
                 body["storage_path"] = self.config.storage_path
-                body["random_seed"] = seeding.get_seed()
+                body["random_seed"] = seeding.get_seed() + dp_rank
                 body["engine_config"] = self.config.engine_config
                 body["engine_config"].update(asystem_hybrid_config)
 

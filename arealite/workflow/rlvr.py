@@ -54,13 +54,13 @@ class RLVRWorkflow(RolloutWorkflow):
             temperature=self.gconfig.temperature,
             stop_token_ids=self.gconfig.stop_token_ids,
         )
+
         req = LLMRequest(
             rid=uuid.uuid4().hex,
             input_ids=prompt_encodings["input_ids"],
             gconfig=new_gconfig,
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
-
         results = []
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
