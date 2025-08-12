@@ -30,15 +30,13 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.utils.data
+import transformers
 
 # NOTE: We only use pandatic dataclasses for SequenceSample
 # such that it will perform automatic checks.
 from pydantic import Field
 from pydantic import dataclasses as pdclasses
 from pydantic import field_validator, model_validator
-from transformers import AutoProcessor, AutoTokenizer
-from transformers.processing_utils import ProcessorMixin
-from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
 from realhf.api.cli_args import MicroBatchSpec
 from realhf.api.core import config as config_api
@@ -55,11 +53,11 @@ def load_hf_tokenizer(
     model_name_or_path: str,
     fast_tokenizer=True,
     padding_side: Optional[str] = None,
-) -> PreTrainedTokenizerFast:
+) -> "transformers.tokenization_utils_fast.PreTrainedTokenizerFast":
     kwargs = {}
     if padding_side is not None:
         kwargs["padding_side"] = padding_side
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_name_or_path,
         fast_tokenizer=fast_tokenizer,
         trust_remote_code=True,
@@ -76,12 +74,15 @@ def load_hf_processor_and_tokenizer(
     model_name_or_path: str,
     fast_tokenizer=True,
     padding_side: Optional[str] = None,
-) -> Tuple[Optional[ProcessorMixin], PreTrainedTokenizerFast]:
+) -> Tuple[
+    Optional["transformers.processing_utils.ProcessorMixin"],
+    "transformers.tokenization_utils_fast.PreTrainedTokenizerFast",
+]:
     """Load a tokenizer and processor from Hugging Face."""
     # NOTE: use the raw type annoation will trigger cuda initialization
     tokenizer = load_hf_tokenizer(model_name_or_path, fast_tokenizer, padding_side)
     try:
-        processor = AutoProcessor.from_pretrained(
+        processor = transformers.AutoProcessor.from_pretrained(
             model_name_or_path, trust_remote_code=True, force_download=True
         )
     except Exception:
@@ -757,7 +758,7 @@ class DatasetUtility:
     seed: int
     dp_rank: int
     world_size: int
-    tokenizer: PreTrainedTokenizerFast
+    tokenizer: transformers.tokenization_utils_fast.PreTrainedTokenizerFast
 
     def __post_init__(self):
         if self.tokenizer.pad_token_id is None:
@@ -832,7 +833,9 @@ def make_dataset(
     seed: int,
     dp_rank: int,
     world_size: int,
-    tokenizer_or_tokenizer_name: Union[PreTrainedTokenizerFast, str],
+    tokenizer_or_tokenizer_name: Union[
+        transformers.tokenization_utils_fast.PreTrainedTokenizerFast, str
+    ],
 ) -> torch.utils.data.Dataset:
     if isinstance(cfg, str):
         cfg = config_api.DatasetAbstraction(type_=cfg)
