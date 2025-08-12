@@ -1,6 +1,7 @@
 from typing import Optional
 
-import transformers
+from transformers.processing_utils import ProcessorMixin
+from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
 VALID_DATASETS = ["gsm8k", "clevr_count_70k", "geometry3k"]
 
@@ -11,8 +12,8 @@ def get_custom_dataset(
     world_size: int,
     type: str = "sft",
     split: Optional[str] = None,
-    tokenizer: Optional[transformers.PreTrainedTokenizerFast] = None,
-    processor: Optional[transformers.AutoProcessor] = None,
+    tokenizer: Optional[PreTrainedTokenizerFast] = None,
+    processor: Optional[ProcessorMixin] = None,
     **kwargs,
 ):
 
