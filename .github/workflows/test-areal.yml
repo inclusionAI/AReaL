@@ -29,16 +29,16 @@ jobs:
 
       - name: Wait for GPU
         run: |
-            while true; do
-              CUDA_VISIBLE_DEVICES="$(seq 0 $(($(nvidia-smi --list-gpus | wc -l)-1)) | grep -v -F -x -f <(echo "$(nvidia-smi pmon -c 1 | awk 'NR>2 && $3=="C" {print $1}')") | tr '\n' ',' | sed 's/,$//')"
-              
-              if [ -n "$CUDA_VISIBLE_DEVICES" ]; then
-                echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> $GITHUB_ENV
-                break
-              fi
+          while true; do
+            CUDA_VISIBLE_DEVICES="$(seq 0 $(($(nvidia-smi --list-gpus | wc -l)-1)) | grep -v -F -x -f <(echo "$(nvidia-smi pmon -c 1 | awk 'NR>2 && $3=="C" {print $1}')") | tr '\n' ',' | sed 's/,$//')"
+            
+            if [ -n "$CUDA_VISIBLE_DEVICES" ]; then
+              echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> $GITHUB_ENV
+              break
+            fi
 
-              sleep 1
-            done
+            sleep 1
+          done
 
       - env:
           CI: true
