@@ -158,18 +158,13 @@ def main(args):
             with stats_tracker.record_timing("recompute_logp"):
                 logp = actor.compute_logp(batch)
                 batch["prox_logp"] = logp
-                log_gpu_stats("recompute logp")
 
         if ref is not None:
             with stats_tracker.record_timing("ref_logp"):
                 batch["ref_logp"] = ref.compute_logp(batch)
 
-                log_gpu_stats("ref logp")
-
         with stats_tracker.record_timing("compute_advantage"):
             actor.compute_advantages(batch)
-            log_gpu_stats("compute advantages")
-
         with (
             stats_tracker.record_timing("train_step"),
             stats_tracker.scope("grpo_actor"),
@@ -178,7 +173,6 @@ def main(args):
             wandb.log({"final_reward": stats[0]["grpo_actor/final_reward/avg"]})
             wandb.log({"task_reward": stats[0]["grpo_actor/task_reward/avg"]})
             actor.step_lr_scheduler()
-            log_gpu_stats("ppo update")
 
         with stats_tracker.record_timing("update_weights"):
             rollout.pause()
