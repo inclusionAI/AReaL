@@ -1,3 +1,4 @@
+import asyncio
 import os
 import subprocess
 import sys
@@ -431,7 +432,10 @@ async def test_multi_round_conversation_with_thinking(openai_client):
     cleaned_assistant_content = strip_thinking_tags(c1.choices[0].message.content)
     messages += [
         {"role": "assistant", "content": cleaned_assistant_content},
-        {"role": "user", "content": "Now what is 360 divided by 12? Please think step-by-step."},
+        {
+            "role": "user",
+            "content": "Now what is 360 divided by 12? Please think step-by-step.",
+        },
     ]
     c2 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
 
@@ -562,3 +566,95 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
     assert completions[c2.id].reward == 2.0 + 0.9 * 2.3
     # c1 gets explicit reward + discounted reward from c2
     assert completions[c1.id].reward == 1.0 + 0.9 * (2.0 + 0.9 * 2.3)
+
+
+@pytest.mark.asyncio
+async def test_parallel_responses_with_merged_results(openai_client):
+    """Test collecting parallel LLM responses with same history but different questions, then merging them."""
+
+    # Base conversation history
+    base_messages = [
+        {"role": "system", "content": "You are a helpful research assistant."},
+        {
+            "role": "user",
+            "content": "I'm planning a trip to Japan. Can you help me with some information?",
+        },
+    ]
+
+    c0 = await openai_client.chat.completions.create(messages=base_messages)
+
+    base_messages = base_messages + [
+        {
+            "role": "assistant",
+            "content": "I'd be happy to help you plan your trip to Japan! What specific information would you like to know?",
+        }
+    ]
+
+    # Different parallel questions about the trip
+    parallel_questions = [
+        "What are the best months to visit for cherry blossoms?",
+        "What are some must-try traditional Japanese foods?",
+        "What cultural etiquette should I be aware of?",
+        "What are the most popular tourist destinations?",
+    ]
+
+    # Create parallel completion tasks with the same history but different questions
+    async def create_completion_with_question(question):
+        messages = base_messages + [{"role": "user", "content": question}]
+        return await openai_client.chat.completions.create(
+            messages=messages, temperature=0.7, max_tokens=256
+        )
+
+    # Execute all completions in parallel
+    parallel_tasks = [create_completion_with_question(q) for q in parallel_questions]
+    parallel_completions = await asyncio.gather(*parallel_tasks)
+
+    # Verify we got responses for all questions
+    assert len(parallel_completions) == 4
+    for i, completion in enumerate(parallel_completions):
+        assert completion.id is not None
+        assert completion.choices[0].message.role == "assistant"
+        assert len(completion.choices[0].message.content) > 0
+        # Set individual rewards for each parallel response
+        openai_client.set_reward(completion.id, reward=1.0 + i * 0.5)
+
+    # Now create a final completion that merges the insights from parallel responses
+    merged_messages = base_messages
+    for q, c in zip(parallel_questions, parallel_completions):
+        merged_messages += [
+            {"role": "user", "content": q},
+            {"role": "assistant", "content": c.choices[0].message.content},
+        ]
+    merged_messages = merged_messages + [
+        {
+            "role": "user",
+            "content": "Based on all the information about visiting Japan, please provide a comprehensive summary covering: cherry blossom timing, food recommendations, cultural etiquette, and top destinations.",
+        }
+    ]
+
+    final_completion = await openai_client.chat.completions.create(
+        messages=merged_messages, temperature=0.3, max_tokens=512
+    )
+
+    # Set reward for the final merged response
+    openai_client.set_reward(final_completion.id, reward=3.0)
+
+    # Export completions to verify the reward structure
+    completions = openai_client.export_completions(final_reward=2.0, turn_discount=0.8)
+
+    # Verify we have all completions (1 base + 4 parallel + 1 final)
+    assert len(completions) == 6
+
+    # Verify final completion gets its reward + final reward
+    assert completions[final_completion.id].reward == 5.0  # 3.0 + 2.0
+
+    # Verify parallel completions have their individual rewards + final reward
+    expected_rewards = [1.0, 1.5, 2.0, 2.5]  # individual rewards
+    r = 0.0
+    for i, completion in enumerate(parallel_completions):
+        assert completions[completion.id].reward == expected_rewards[i] + 5.0 * 0.8
+        r += completions[completion.id].reward
+
+    assert completions[c0.id].reward == 0.8 * r / len(
+        parallel_completions
+    )  # discounted from final completion

@@ -1,11 +1,9 @@
-import asyncio
 import time
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Tuple, Union
 
-import httpx
 from openai import AsyncOpenAI as BaseAsyncOpenAI
 from openai._types import NOT_GIVEN, Body, NotGiven
 from openai.resources.chat.completions.completions import (
@@ -69,6 +67,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         *,
         messages: Iterable[ChatCompletionMessageParam],
         frequency_penalty: Optional[float] | NotGiven = NOT_GIVEN,
+        max_completion_tokens: Optional[int] | NotGiven = NOT_GIVEN,
         max_tokens: Optional[int] | NotGiven = NOT_GIVEN,
         metadata: Optional[Metadata] | NotGiven = NOT_GIVEN,
         stop: Union[Optional[str], List[str], None] | NotGiven = NOT_GIVEN,
@@ -99,7 +98,13 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         temp = 1.0 if temperature is NOT_GIVEN else (temperature or 0.0)
         max_new_tokens = 512
         if max_tokens is not NOT_GIVEN and max_tokens is not None:
-            max_new_tokens = max_tokens
+            max_new_tokens = max_tokens - len(prompt_token_ids)
+            if max_new_tokens <= 0:
+                raise RuntimeError(
+                    "max_tokens must be greater than the number of prompt tokens"
+                )
+        if max_completion_tokens is not NOT_GIVEN and max_completion_tokens is not None:
+            max_new_tokens = min(max_new_tokens, max_completion_tokens)
 
         top_p_val = 1.0 if top_p is NOT_GIVEN else (top_p or 1.0)
         stop_tokens = None if stop is NOT_GIVEN else stop
@@ -220,7 +225,7 @@ class AsyncOpenAI(BaseAsyncOpenAI):
 
     def export_completions(
         self,
-        final_reward,
+        final_reward: float = 0.0,
         turn_discount: float = 1.0,
     ) -> Dict[str, CompletionWithTokenLogpReward]:
         """Export all completions with rewards after backpropagation."""
@@ -322,8 +327,10 @@ class AsyncOpenAI(BaseAsyncOpenAI):
                 completion_data.reward = 0.0
             # Find the highest level/the minimum reward
             # Do not overwrite the existing reward if explicitly set
-            completion_data.reward += turn_discount * min(
-                filter(lambda x: x is not None, child_rewards)
-            )
+            child_non_none_rewards = filter(lambda x: x is not None, child_rewards)
+            if len(child_non_none_rewards) > 0:
+                completion_data.reward += turn_discount * np.mean(
+                    child_non_none_rewards
+                )
 
         return self._completion_cache.copy()
