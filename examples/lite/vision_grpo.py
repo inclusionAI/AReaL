@@ -46,6 +46,7 @@ def main(args):
         split="train",
         type=config.train_dataset.type,
         processor=processor,
+        video_dir=config.train_dataset.video_dir if config.train_dataset.video_dir else None
     )
 
     valid_dataset = get_custom_dataset(
@@ -55,6 +56,7 @@ def main(args):
         split="test",
         type=config.valid_dataset.type,
         processor=processor,
+        video_dir=config.valid_dataset.video_dir if config.valid_dataset.video_dir else None
     )
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(

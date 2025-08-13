@@ -10,6 +10,10 @@ def get_custom_reward_fn(path: str, **kwargs):
         from .geometry3k import geometry3k_reward_fn
 
         return geometry3k_reward_fn
+    elif "longvideo-reason" in path:
+        from .longvideo_reason import longvideo_reason_reward_fn
+
+        return longvideo_reason_reward_fn
     else:
         raise ValueError(
             f"Reward function {path} is not supported. "

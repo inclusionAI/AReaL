@@ -1,4 +1,4 @@
-experiment_name: clevr_count_70k-grpo
+experiment_name: longvideo-reason-grpo
 trial_name: trial1
 
 
@@ -9,15 +9,15 @@ async_training: true
 
 cluster:
   n_nodes: 1
-  n_gpus_per_node: 1
+  n_gpus_per_node: 2
   cluster_name: na132
   fileroot: /storage/openpsi/experiments
   name_resolve:
     type: nfs
-    nfs_record_root: /storage/openpsi/experiments/name_resolve/geometry3k-grpo
+    nfs_record_root: /storage/openpsi/experiments/name_resolve/longvideo-reason-grpo
     etcd3_addr: etcd-client.openpsi-etcd.svc.sigma-na130-lingbo.na130.wl-robby.local:2379
 
-allocation_mode: sglang.d1p1t1+d7p1t1
+allocation_mode: sglang.d1p1t1+d1p1t1
 
 rollout:
   experiment_name: ${experiment_name}
@@ -31,7 +31,7 @@ rollout:
 gconfig:
   n_samples: 8
   min_new_tokens: 0
-  max_new_tokens: 8192
+  max_new_tokens: 10
   greedy: false
   temperature: 1.0
 
@@ -44,7 +44,7 @@ actor:
   gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_mb: 12800
+    max_tokens_per_mb: 1024
   optimizer:
     type: adam
     lr: 2e-6
@@ -76,7 +76,7 @@ ref:
   init_from_scratch: false
   dtype: ${actor.dtype}
   mb_spec:
-    max_tokens_per_mb: 10240
+    max_tokens_per_mb: 1024
   optimizer: null
   backend: fsdp
 
@@ -97,9 +97,10 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/data/geometry3k
+  path: /storage/openpsi/data/longvideo-reason
   type: rl
   reward_fn: ${train_dataset.path}
+  video_dir: /storage/openpsi/data/longvila_videos
 
 valid_dataset: 
   batch_size: 64
@@ -108,6 +109,7 @@ valid_dataset:
   num_workers: 4
   path: ${train_dataset.path}
   type: rl
+  video_dir: ${train_dataset.video_dir}
 
 
   
@@ -142,4 +144,4 @@ stats_logger:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   wandb:
-    project: geometry3k-grpo
+    project: ${experiment_name}
