@@ -61,7 +61,7 @@ def main() -> None:
     )
 
     stats_logger = StatsLogger(config.stats_logger, ft_spec)
-    stats: List[Dict[str, float]] = []
+    loss_avg_list: List[float] = []
 
     global_step = 0
     for epoch in range(config.total_train_epochs):
@@ -76,18 +76,18 @@ def main() -> None:
                 global_step,
                 stat,
             )
-            stats.append(stat)
+            loss_avg_list.append(stat["loss/avg"])
 
             global_step += 1
 
     with open(
         os.path.join(
             StatsLogger.get_log_path(config.stats_logger),
-            "stats.json",
+            "loss_avg_list.json",
         ),
         "w",
     ) as f:
-        json.dump(stats, f)
+        json.dump(loss_avg_list, f)
 
     stats_logger.close()
     engine.destroy()

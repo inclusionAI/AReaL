@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from typing import Dict, List
+from typing import List
 
 import pytest
 import sympy
@@ -37,33 +37,33 @@ def build_alloc_mode(device_count: int) -> str:
     return f"d{d}p{p}t{t}"
 
 
-@pytest.mark.parametrize(
-    "config_path",
-    [
-        "areal/tests/sft/gsm8k.yaml",
-    ],
-)
-def test_sft(config_path: str):
+@pytest.mark.parametrize("config_name", ["gsm8k"])
+def test_sft(config_name: str):
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
     cmd = (
         Command("python")
         .bake(m="areal.launcher.local")
-        .bake("areal/tests/sft/entrypoint.py")
+        .bake(os.path.join(base_dir, "entrypoint.py"))
     )
 
+    config_path = os.path.join(base_dir, f"{config_name}.yaml")
     config, _ = cli_args.load_expr_config(
         ["--config", config_path],
         SFTConfig,
     )
-    stats_path = os.path.join(
-        StatsLogger.get_log_path(config.stats_logger),
-        "stats.json",
-    )
-    if os.path.exists(stats_path):
-        os.remove(stats_path)
 
+    loss_avg_list_path = os.path.join(
+        StatsLogger.get_log_path(config.stats_logger),
+        "loss_avg_list.json",
+    )
+    if os.path.exists(loss_avg_list_path):
+        os.remove(loss_avg_list_path)
+
+    device_count = torch.cuda.device_count()
     cmd(
-        f"cluster.n_gpus_per_node={torch.cuda.device_count()}",
-        f"allocation_mode={build_alloc_mode(torch.cuda.device_count())}",
+        f"cluster.n_gpus_per_node={device_count}",
+        f"allocation_mode={build_alloc_mode(device_count)}",
         config=config_path,
         _err=sys.stderr,
         _out=sys.stdout,
@@ -71,13 +71,15 @@ def test_sft(config_path: str):
         _ok_code=1,  # AReaL exits with code 1 even when successful.
     )
 
-    with open(
-        os.path.join(
-            StatsLogger.get_log_path(config.stats_logger),
-            "stats.json",
-        ),
-        "r",
-    ) as f:
-        stats: List[Dict[str, float]] = json.load(f)
+    with open(loss_avg_list_path) as f:
+        loss_avg_list: List[float] = json.load(f)
 
-    assert all(stat["loss/avg"] >= stats[-1]["loss/avg"] for stat in stats[:20])
+    with open(os.path.join(base_dir, "loss_avg_list_ref.json")) as f:
+        loss_avg_list_ref: List[float] = json.load(f)
+
+    # Compare the first 20 loss/avg elements.
+    # Refer to https://docs.pytorch.org/docs/stable/testing.html#torch.testing.assert_close
+    assert all(
+        loss_avg == pytest.approx(loss_avg_ref, rel=1.6e-2, abs=1e-5)
+        for loss_avg, loss_avg_ref in zip(loss_avg_list[:20], loss_avg_list_ref[:20])
+    )
