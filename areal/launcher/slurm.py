@@ -473,7 +473,7 @@ def slurm_main(config, run_id: int = 0):
         gpus_per_node = 0
     else:
         trainer_n_nodes = n_nodes - n_sglang_nodes
-        gpus_per_node = 1
+        gpus_per_node = config.cluster.n_gpus_per_node
 
     # Here $head_node_ip is the IP address of the first node in the job array.
     # $trainer_port is a free port on the head node.
