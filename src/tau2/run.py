@@ -45,6 +45,17 @@ def get_environment_info(
     return env_constructor().get_info(include_tool_info=include_tool_info)
 
 
+def load_task_splits(task_set_name: str) -> Optional[dict[str, list[str]]]:
+    """
+    Loads the task splits for the given domain.
+    """
+    global registry
+    task_split_loader = registry.get_task_splits_loader(task_set_name)
+    if task_split_loader is None:
+        return None
+    return task_split_loader()
+
+
 def load_tasks(task_set_name: str, task_split_name: Optional[str] = None) -> list[Task]:
     """
     Loads the tasks for the given domain.
