@@ -14,7 +14,7 @@ total_train_epochs: 1
 tokenizer_path: Qwen/Qwen3-0.6B
 train_dataset:
   path: openai/gsm8k
-  batch_size: 128
+  batch_size: 16
 
 saver:
   experiment_name: ${experiment_name}
