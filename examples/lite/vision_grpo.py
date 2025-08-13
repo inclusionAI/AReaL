@@ -17,7 +17,7 @@ from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
-from .areal.workflow.vision_rlvr import VisionRLVRWorkflow
+from areal.workflow.vision_rlvr import VisionRLVRWorkflow
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import seeding, stats_tracker
 
@@ -160,13 +160,16 @@ def main(args):
             with stats_tracker.record_timing("recompute_logp"):
                 logp = actor.compute_logp(batch)
                 batch["prox_logp"] = logp
+                log_gpu_stats("recompute_logp")
 
         if ref is not None:
             with stats_tracker.record_timing("ref_logp"):
                 batch["ref_logp"] = ref.compute_logp(batch)
+                log_gpu_stats("ref_logp")
 
         with stats_tracker.record_timing("compute_advantage"):
             actor.compute_advantages(batch)
+            log_gpu_stats("compute_advantage")
         with (
             stats_tracker.record_timing("train_step"),
             stats_tracker.scope("grpo_actor"),
@@ -175,6 +178,7 @@ def main(args):
             wandb.log({"final_reward": stats[0]["grpo_actor/final_reward/avg"]})
             wandb.log({"task_reward": stats[0]["grpo_actor/task_reward/avg"]})
             actor.step_lr_scheduler()
+            log_gpu_stats("grpo_actor")
 
         with stats_tracker.record_timing("update_weights"):
             rollout.pause()
