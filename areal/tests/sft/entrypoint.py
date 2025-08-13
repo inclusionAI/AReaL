@@ -10,6 +10,7 @@ import areal.api.cli_args as cli_args
 import areal.dataset
 import areal.utils.data
 import realhf.api.core.data_api as data_api
+import realhf.base.seeding as seeding
 import realhf.base.stats_tracker as stats_tracker
 from areal.api.cli_args import SFTConfig
 from areal.api.io_struct import FinetuneSpec
@@ -23,6 +24,8 @@ def main() -> None:
 
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     rank = int(os.environ.get("RANK", "0"))
+
+    seeding.set_random_seed(config.seed, f"trainer{rank}")
 
     processor, tokenizer = data_api.load_hf_processor_and_tokenizer(
         config.tokenizer_path
