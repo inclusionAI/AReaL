@@ -353,6 +353,7 @@ class AgentGymEnv(gym.Env):
         self,
         domain: str,
         task_id: str,
+        max_steps: int = 100,
         solo_mode: bool = False,
         user_llm: Optional[str] = None,
         user_llm_args: Optional[dict] = None,
@@ -367,6 +368,7 @@ class AgentGymEnv(gym.Env):
         """
         self.domain = domain
         self.task_id = task_id
+        self.max_steps = max_steps
         self.solo_mode = solo_mode
         self.user_llm = user_llm if user_llm else DEFAULT_LLM_USER
         self.user_llm_args = (
@@ -824,5 +826,6 @@ class AgentGymEnv(gym.Env):
             user=self._get_user(),
             environment=self._get_environment(),
             task=self._get_task(),
+            max_steps=self.max_steps,
             solo_mode=self.solo_mode,
         )
