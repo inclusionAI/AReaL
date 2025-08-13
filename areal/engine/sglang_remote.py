@@ -144,6 +144,18 @@ class RemoteSGLangEngine(InferenceEngine):
             self.rid_to_address[req.rid] = server_addr
             self.rid_queue.append(req.rid)
 
+        # Create a new session because we don't know whether this method
+        # is called in the workflow thread or the main thread.
+        session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(
+                total=self.config.request_timeout,
+                sock_connect=self.config.request_timeout,
+                connect=self.config.request_timeout,
+            ),
+            read_bufsize=1024 * 1024 * 10,
+            connector=get_default_connector(),
+        )
+
         # Deal with rollout interruption
         # "abort" is the stop reason for later v0.4.9.post2 after
         # we call the pause_generation endpoint
@@ -159,7 +171,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
             # loop until the generation is complete
             result = await arequest_with_retry(
-                session=self.workflow_executor.session,
+                session=session,
                 addr=server_addr,
                 endpoint="/generate",
                 payload=payload,
@@ -191,6 +203,7 @@ class RemoteSGLangEngine(InferenceEngine):
             payload["input_ids"] += output_tokens
             sample_params["max_new_tokens"] -= len(output_tokens)
 
+        await session.close()
         latency = time.perf_counter() - start_time
 
         response = ModelResponse(

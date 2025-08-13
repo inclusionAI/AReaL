@@ -25,7 +25,7 @@ from openai.types.completion_usage import CompletionUsage
 from openai.types.shared_params.metadata import Metadata
 
 from areal.api.cli_args import GenerationHyperparameters
-from areal.api.io_struct import ModelRequest
+from areal.api.io_struct import ModelRequest, ModelResponse
 from areal.experimental.openai.tool_call_parser import process_tool_calls
 
 if TYPE_CHECKING:
@@ -35,10 +35,11 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class CompletionWithReward:
+class CompletionWithTokenLogpReward:
     """Internal structure to store completion with its reward."""
 
     completion: ChatCompletion
+    response: ModelResponse
     messages: List[dict] = field(default_factory=list)
     reward: Optional[float] = None
 
@@ -54,7 +55,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         client,
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
-        cache: Dict[str, CompletionWithReward],
+        cache: Dict[str, CompletionWithTokenLogpReward],
         tool_call_parser: Optional[str] = None,
     ):
         super().__init__(client)
@@ -77,7 +78,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
         top_p: Optional[float] | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
-        timeout: float | httpx.Timeout | None | NotGiven = NOT_GIVEN,
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
         # Extract and validate supported parameters
@@ -87,6 +87,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         if extra_body is None:
             extra_body = {}
         # Convert messages to prompt format
+        tools = tools if tools is not NOT_GIVEN else None
         prompt_token_ids = self.tokenizer.apply_chat_template(
             messages_list,
             tools=tools,
@@ -125,12 +126,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         )
 
         # Call inference engine
-        try:
-            response = await asyncio.wait_for(
-                self.engine.agenerate(model_request), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            raise TimeoutError(f"OpenAI generation client timeout after {timeout}s.")
+        response = await self.engine.agenerate(model_request)
 
         # Convert response to OpenAI format
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
@@ -141,8 +137,11 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         # Parse tool calls.
         tool_calls = None
         if tool_choice != "none" and tools:
-            tool_calls, text, finish_reason = process_tool_calls(
-                text, tools, self.tool_call_parser, finish_reason
+            tool_calls, output_text, response.stop_reason = process_tool_calls(
+                output_text,
+                tools,
+                self.tool_call_parser,
+                response.stop_reason,
             )
 
         # Create proper ChatCompletion object with all required fields
@@ -152,7 +151,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 Choice(
                     finish_reason=response.stop_reason,
                     index=0,
-                    logprobs=response.output_logprobs,
+                    logprobs=None,  # For simplicity
                     message=ChatCompletionMessage(
                         content=output_text,
                         role="assistant",
@@ -174,8 +173,9 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         if store is NOT_GIVEN or store:
             # Cache the completion with its input messages
-            self._cache[completion_id] = CompletionWithReward(
+            self._cache[completion_id] = CompletionWithTokenLogpReward(
                 completion=chat_completion,
+                response=response,
                 messages=list(messages_list),  # Store a copy of the input messages
             )
         return chat_completion
@@ -195,7 +195,7 @@ class AsyncOpenAI(BaseAsyncOpenAI):
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
-        self._completion_cache: Dict[str, CompletionWithReward] = {}
+        self._completion_cache: Dict[str, CompletionWithTokenLogpReward] = {}
 
         # Override chat.completions with our extended implementation
         self.chat.completions = AsyncCompletionsWithReward(
@@ -206,7 +206,9 @@ class AsyncOpenAI(BaseAsyncOpenAI):
             tool_call_parser=self.tool_call_parser,
         )
 
-    def get_completions(self, completion_id: str) -> Optional[CompletionWithReward]:
+    def get_completions(
+        self, completion_id: str
+    ) -> Optional[CompletionWithTokenLogpReward]:
         """Get completion with its reward from cache."""
         return self._completion_cache.get(completion_id)
 
@@ -217,8 +219,10 @@ class AsyncOpenAI(BaseAsyncOpenAI):
         self._completion_cache[completion_id].reward = reward
 
     def export_completions(
-        self, turn_discount: float = 1.0
-    ) -> Dict[str, CompletionWithReward]:
+        self,
+        final_reward,
+        turn_discount: float = 1.0,
+    ) -> Dict[str, CompletionWithTokenLogpReward]:
         """Export all completions with rewards after backpropagation."""
 
         # Step 1: Build tree structure based on role prefix relationships
@@ -305,9 +309,8 @@ class AsyncOpenAI(BaseAsyncOpenAI):
             if len(children[completion_id]) == 0:
                 # This is a leaf - its reward should already be set
                 if completion_data.reward is None:
-                    raise ValueError(
-                        f"Leaf node {completion_id} must have a reward set"
-                    )
+                    completion_data.reward = 0
+                completion_data.reward += final_reward
                 continue
 
             # Calculate reward as discounted sum from children

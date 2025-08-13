@@ -66,8 +66,6 @@ class WorkflowExecutor:
 
         self.rollout_stat = RolloutStat()
 
-        self.session = None
-
     def initialize(self):
         self.rollout_tasks: Dict[str, asyncio.Task] = {}
         self.rollout_thread = threading.Thread(
@@ -106,19 +104,6 @@ class WorkflowExecutor:
             traceback.print_exc()
 
     async def _rollout_thread_async(self):
-        if self.session is None:
-            # NOTE: Lazily initialize aiohttp.ClientSession since it needs to be initialized
-            # inside asyncio loop in WorkflowExecutor
-            self.session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(
-                    total=self.config.request_timeout,
-                    sock_connect=self.config.request_timeout,
-                    connect=self.config.request_timeout,
-                ),
-                read_bufsize=1024 * 1024 * 10,
-                connector=get_default_connector(),
-            )
-
         rollout_tasks = self.rollout_tasks
         rid = 0
         try:
@@ -197,7 +182,6 @@ class WorkflowExecutor:
                             await task
                         except asyncio.CancelledError:
                             pass
-            await self.session.close()
 
     def submit(
         self,
