@@ -49,7 +49,7 @@ def get_custom_dataset(
             path, split, processor, rank, world_size, **kwargs
         )
     elif "longvideo-reason" in path and type == "rl":
-        from .longvideo_reason import get_longvideo_reason_grpo_dataset
+        from .longvideo_reason import get_longvideo_reason_rl_dataset
 
         return get_longvideo_reason_rl_dataset(
             path, split, processor, rank, world_size, **kwargs

@@ -13,7 +13,7 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import VLMRequest
 from areal.utils.data import concat_padded_tensors
-from areal.utils.multimodal import image2base64
+from areal.utils.multimodal import image2base64, process_video
 from areal.workflow.rlvr import REWARD_TIMEOUT_SECONDS, RLVRWorkflow
 from realhf.base import logging
 
@@ -34,21 +34,17 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         self.processor = processor
 
     async def arun_episode(self, engine, data):
+        breakpoint()
         
         if data.get("videos", None) is not None:
-            videos=torch.load(data["videos"]).float()
-            video_frames=videos.size(0)
-            if self.processor.num_video_frames != video_frames:
-                raise ValueError(
-                    f"Number of video frames {video_frames} does not match the expected number {self.processor.num_video_frames}."
-                )
-            input_videos = videos
+            videos=[process_video(video) for videos in data["videos"]:
+           
         else:
             videos = None
 
         processed_input = self.processor(
                 images=data.get("images", None),
-                videos=[videos],
+                videos=videos,
                 text=data["messages"],
                 padding=False,
                 return_tensors="pt",

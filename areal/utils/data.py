@@ -585,21 +585,3 @@ def amend_position_ids(data: TensorDict) -> TensorDict:
     data["position_ids"] = position_ids
     return data
 
-
-def amend_position_ids_3d(data: TensorDict, rope_fn) -> TensorDict:
-    assert "attention_mask" in data, "Input data must contain 'attention_mask' key."
-    torch.set_printoptions(threshold=float("inf"))
-    attn_mask = data["attention_mask"]
-    input_ids = data["input_ids"]
-    image_grid_thw = data.get("image_grid_thw", None)
-    video_grid_thw = data.get("video_grid_thw", None)
-
-    if image_grid_thw != None:
-        image_grid_thw = image_grid_thw.squeeze(1)
-    position_ids, rope_deltas = rope_fn(
-        input_ids, image_grid_thw, video_grid_thw, attn_mask
-    )  # [channel=3,bs,seqlen]
-
-    position_ids = torch.einsum("ijk->jki", position_ids)  # [bs,seqlen,channel=3]
-    data["position_ids"] = position_ids
-    return data

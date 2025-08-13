@@ -22,7 +22,6 @@ from areal.api.engine_api import FinetuneSpec, TrainEngine
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
-    amend_position_ids_3d,
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
     pad_mb_list,

@@ -3,10 +3,9 @@ import re
 
 
 def extract_answer(pred_str, data_name, use_last_number=True):
-    # 匹配 <answer>...</answer> 中间的内容
     match = re.search(r"<answer>\s*([A-D])\s*</answer>", pred_str, re.IGNORECASE)
     if match:
-        return match.group(1).upper()  # 返回大写 A/B/C/D
+        return match.group(1).upper() 
     return ""
 
 def longvideo_reason_reward_fn(

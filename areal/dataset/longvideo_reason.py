@@ -24,7 +24,7 @@ def get_longvideo_reason_rl_dataset(path, split, processor, rank, world_size, vi
         assert isinstance(sample["videos"], str), "video path should be a string"
         video_path=os.path.join(video_dir, sample["videos"])
         question= QUESTION_TEMPLATE_VIDEO_QWEN.format(question=sample["problem"])
-        content = [{"type": "video", "video": video_path, "nframes": self.processor.num_video_frames}, {"type": "text", "text": question}]
+        content = [{"type": "video", "video": video_path}, {"type": "text", "text": question}]
         messages = [
             {
                 "role": "user",

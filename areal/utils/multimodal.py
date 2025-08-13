@@ -8,10 +8,12 @@
 
 import base64
 from io import BytesIO
-from typing import List, Union
+from typing import List, Optional
+import torch
 
 from PIL import Image
 from PIL.Image import Image as ImageObject
+from qwen_vl_utils import  fetch_video
 
 
 QUESTION_TEMPLATE_VIDEO_QWEN = "You are a helpful assistant. The user asks a question, and then you solves it.\n\nPlease first think deeply about the question based on the given video, and then provide the final answer. The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> the letter of your choice (A, B, C, or D) </answer>.\n\n Question: {question}"
@@ -52,3 +54,65 @@ def pad_images_batch_to_max_size(images):
         padded_images.append(padded_image)
 
     return padded_images
+
+VIDEO_FORMAT_HELP = """Currently, we only support the video formats introduced in qwen2-vl.
+Refer to https://github.com/QwenLM/Qwen2.5-VL?tab=readme-ov-file#using---transformers-to-chat.
+
+eg.
+{
+    "type": "video",
+    "video": [
+        "file:///path/to/frame1.jpg",
+        "file:///path/to/frame2.jpg"
+    ]
+}
+
+{
+    "type": "video",
+    "video": "file:///path/to/video.mp4"
+}
+# Defaults to fps=2, min_frames=4, max_frames=768
+
+{
+    "type": "video",
+    "video": "file:///path/to/video.mp4",
+    "fps": 2,
+    "min_frames": 1,
+    "max_frames": 32
+}
+"""
+
+
+def process_video(
+    video: str,
+    nframes: Optional[int] = None,
+    fps: Optional[float] = None,
+    fps_min_frames: Optional[int] = None,
+    fps_max_frames: Optional[int] = None,
+) -> torch.Tensor:
+    """Converts a video dict into a [n_frames, 3, H, W] tensor
+
+    Add video sample FPS in a future MR
+    """
+
+
+    assert nframes is None or fps is None, "Can't use both `nframes` or `fps`"
+
+    # Shallow copy... since we might want to add some keys
+    video = {
+        "video":video,
+        "type":"video",
+    }
+
+    contains_sampling_rules = "nframes" in video or "fps" in video
+    if not contains_sampling_rules:
+        if nframes is not None:
+            video["nframes"] = nframes
+        elif fps is not None:
+            video["fps"] = fps
+            if fps_min_frames is not None:
+                video["min_frames"] = fps_min_frames
+            if fps_max_frames is not None:
+                video["max_frames"] = fps_max_frames
+
+    return fetch_video(video)
