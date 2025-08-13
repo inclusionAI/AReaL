@@ -227,9 +227,9 @@ export HF_ENDPOINT="https://hf-mirror.com"
 export WANDB_API_KEY=local-667d8d7f101dad4eb9597d718d0c68f40e3792f9
 export WANDB_BASE_URL=http://8.150.1.98:8080
 
-python -m areal.launcher.local examples/lite/werewolf_grpo.py \
+python -m areal.launcher.slurm examples/lite/werewolf_grpo.py \
     --config examples/lite/configs/werewolf_grpo.yaml \
     stats_logger.wandb.mode=online \
     experiment_name=xmy-werewolf-lite1 \
-    trial_name=trial1
+    trial_name=trial10
 """
