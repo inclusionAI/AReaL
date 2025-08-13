@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from typing import Dict, List, cast
+from typing import List, cast
 
 import torch.utils.data
 from torchdata.stateful_dataloader import StatefulDataLoader

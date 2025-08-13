@@ -228,6 +228,10 @@ class RemoteSGLangEngine(InferenceEngine):
         elif meta.type == "disk":
             # Update weights from disk
             # Use ProcessPool to bypass python GIL for running async coroutines
+            if self.config.experiment_name is None or self.config.trial_name is None:
+                raise RuntimeError(
+                    f"Experiment and trial names must be set for disk-based weight updates."
+                )
             fut = self.executor.submit(
                 update_weights_from_disk,
                 self.config.experiment_name,
