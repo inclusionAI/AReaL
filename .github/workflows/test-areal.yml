@@ -31,7 +31,10 @@ jobs:
       - name: Wait for GPU
         timeout-minutes: 7200
         run: |
-          until CUDA_VISIBLE_DEVICES="$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits | awk -F',' '$2/$3 >= 0.90 {print $1}' | tr '\n' ',' | sed 's/,$//')" && [[ -n "$CUDA_VISIBLE_DEVICES" ]]; do
+          ALL_DEVICES="$(nvidia-smi --query-gpu=index --format=csv,noheader,nounits | tr '\n' ',' | sed 's/,$//')"
+            
+          until [[ "$CUDA_VISIBLE_DEVICES" == "$ALL_DEVICES" ]]; do
+            CUDA_VISIBLE_DEVICES="$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits | awk -F',' '$2/$3 >= 0.90 {print $1}' | tr '\n' ',' | sed 's/,$//')"
             sleep 1
           done
           
