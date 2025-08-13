@@ -317,7 +317,6 @@ def ray_main(config, run_id: int = 0):
     config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
-    config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
     is_recover_run = check_if_recover(config.recover, run_id)
     validate_config_for_distributed_launcher(config)
 
@@ -350,6 +349,7 @@ def ray_main(config, run_id: int = 0):
     n_sglang_nodes = 0
     if allocation_mode.gen_backend == "sglang":
         # Launcher should launch SGLang servers according to allocation mode.
+        config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
         sglang_tp_size = allocation_mode.gen_tp_size
         n_sglang_servers = allocation_mode.gen_dp_size
         n_sglang_nodes = allocation_mode.gen_world_size // n_gpus_per_node

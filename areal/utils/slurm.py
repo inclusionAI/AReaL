@@ -85,24 +85,28 @@ echo trainer_port=$trainer_port
 {srun_cmds}
 
 ##### Monitor all processes #####
+declare -a still_running=()
 while [ ${{#bg_pids[@]}} -gt 0 ]; do
+    unset still_running
     for i in "${{!bg_pids[@]}}"; do
         pid=${{bg_pids[$i]}}
         if ! kill -0 "$pid" 2>/dev/null; then
             # Process has terminated, check its exit code
             if wait "$pid"; then
-                # Process completed successfully, remove from array
-                unset bg_pids[$i]
-                bg_pids=("${{bg_pids[@]}}")  # Reindex array
+                # Process completed successfully
                 echo "Process $pid completed successfully"
             else
                 echo "Process $pid failed, terminating remaining jobs"
 
                 exit 1  # This will trigger cleanup via trap
             fi
+        else
+            still_running+=("$pid")
         fi
     done
     
+    bg_pids=("${{still_running[@]}}")
+
     # Break if no processes left
     if [ ${{#bg_pids[@]}} -eq 0 ]; then
         break
