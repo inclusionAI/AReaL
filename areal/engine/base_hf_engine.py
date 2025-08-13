@@ -256,8 +256,8 @@ class BaseHFEngine(TrainEngine):
         assert "attention_mask" in input_ and "input_ids" in input_
         if self.is_vision_model:
             assert (
-                "pixel_values" in input_ and "image_grid_thw" in input_
-            ), "For vision-language models, pixel_values and image_grid_thw must be present in input_"
+                ("pixel_values" in input_ and "image_grid_thw" in input_) or ("pixel_values_videos" in input_ and "video_grid_thw" in input_)
+            ), "Vision model input must contain pixel_values and image_grid_thw or pixel_values_videos and video_grid_thw."
         if isinstance(input_, dict):
             input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
             
@@ -298,34 +298,34 @@ class BaseHFEngine(TrainEngine):
             for mb in mb_list.padded_mbs:
                 # [1, total_seqlen, 3] -> [3, 1, total_seqlen]
                 mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
+                
+                if "pixel_values" in mb and "image_grid_thw" in mb:
+                    # pixel_values:mb, image_token_num, vision_dim
+                    # image_grid_thw: mb,M, 3 (1, H, W)
+                    pv = mb["pixel_values"]         # [M, S, D]
+                    grid = mb["image_grid_thw"]     # [M, 3 (1, H, W)]
 
-                # BUG: pixel_value sometimes cannot div by vision encoder in spatial merge stage when applying multinode training, which might lead by   
-                # pixel_values:mb, image_token_num, vision_dim
-                # image_grid_thw: mb,M, 3 (1, H, W)
-                pv = mb["pixel_values"]         # [M, S, D]
-                grid = mb["image_grid_thw"]     # [M, 3 (1, H, W)]
+                    assert pv.dim() == 3, f"pixel_values must be [M,S,D], got {tuple(pv.shape)}"
+                    assert grid.dim() == 2 and grid.size(1) == 3, \
+                        f"image_grid_thw must be [M,3], got {tuple(grid.shape)}"
 
-                assert pv.dim() == 3, f"pixel_values must be [M,S,D], got {tuple(pv.shape)}"
-                assert grid.dim() == 2 and grid.size(1) == 3, \
-                    f"image_grid_thw must be [M,3], got {tuple(grid.shape)}"
+                    M, S, _ = pv.shape
+                    Mg, _   = grid.shape
+                    assert M == Mg, f"M mismatch: pixel_values={M}, image_grid_thw={Mg}"
 
-                M, S, _ = pv.shape
-                Mg, _   = grid.shape
-                assert M == Mg, f"M mismatch: pixel_values={M}, image_grid_thw={Mg}"
+                    t = grid[:, 0].to(torch.int64)
+                    h = grid[:, 1].to(torch.int64)
+                    w = grid[:, 2].to(torch.int64)
 
-                t = grid[:, 0].to(torch.int64)
-                h = grid[:, 1].to(torch.int64)
-                w = grid[:, 2].to(torch.int64)
+                    # t== 1
+                    assert torch.all(t == 1), f"t must be 1; got {t.unique().tolist()}"
 
-                # t== 1
-                assert torch.all(t == 1), f"t must be 1; got {t.unique().tolist()}"
+                    # S == H*W
+                    assert torch.all((h * w) == S), f"S must equal H*W; got S={S}, H*W samples={((h*w)[:8]).tolist()}"
 
-                # S == H*W
-                assert torch.all((h * w) == S), f"S must equal H*W; got S={S}, H*W samples={((h*w)[:8]).tolist()}"
-
-                # 2×2 spatial merge
-                assert torch.all(h % 2 == 0) and torch.all(w % 2 == 0), \
-                    f"H,W must be even; samples H[:8]={h[:8].tolist()}, W[:8]={w[:8].tolist()}"
+                    # 2×2 spatial merge
+                    assert torch.all(h % 2 == 0) and torch.all(w % 2 == 0), \
+                        f"H,W must be even; samples H[:8]={h[:8].tolist()}, W[:8]={w[:8].tolist()}"
 
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
         # TODO: remove the usage of tensordict

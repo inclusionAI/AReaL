@@ -63,7 +63,7 @@ def pad_sequences_to_tensors(
 ) -> TensorDict:
     if not sequence_list:
         return TensorDict()
-    skip_keys = {"pixel_values", "image_grid_thw"}
+    skip_keys = {"pixel_values", "image_grid_thw","pixel_values_video","video_grid_thw"}
     max_length = max(
         len(seq)
         for item in sequence_list
@@ -145,7 +145,7 @@ def concat_padded_tensors(
                 tensors_to_concat.append(tensor)
                 continue
             current_length = tensor.shape[1]
-            if key == "pixel_values" or key == "image_grid_thw":
+            if key == "pixel_values" or key == "image_grid_thw" or key == "pixel_values_videos" or key == "video_grid_thw":
                 tensors_to_concat.append(tensor)
                 continue
             if current_length < max_length:
@@ -254,6 +254,9 @@ def pack_tensor_dict(data: TensorDict):
         elif key == "pixel_values":
             assert value.dim() == 3, f"pixel_values must be [B,S,D], got {tuple(value.shape)}"
             packed_data[key] = value
+        elif key == "pixel_values_videos":
+            assert value.dim() == 4, f"pixel_values_videos must be [B,T,S,D], got {tuple(value.shape)}"
+            packed_data[key] = value
         elif (
             torch.is_tensor(value)
             and value.ndim >= 2
@@ -333,7 +336,7 @@ def split_padded_tensor_dict_into_mb_list(
     to_split = {}
     not_to_split = {}
     for key, value in data.items():
-        if key == "image_grid_thw" or key == "pixel_values":
+        if key == "image_grid_thw" or key == "pixel_values" or key == "video_grid_thw" or key == "pixel_values_videos":
             continue
         if key == "position_ids" or (
             torch.is_tensor(value) and value.numel() == bs * max_seqlen
@@ -390,6 +393,25 @@ def split_padded_tensor_dict_into_mb_list(
         # Pack the split pixel_values and image_grid_thw back into the data
         to_split["pixel_values"] = pixel_values_split
         to_split["image_grid_thw"] = image_grid_thw_split
+    elif data.get("pixel_values_videos", None) is not None:
+        pixel_values_videos = data.get("pixel_values_videos", [])
+        video_grid_thw = data.get("video_grid_thw", [])
+
+        # Prepare the pixel_values_videos and video_grid_thw for each group
+        pixel_values_videos_split = []
+        video_grid_thw_split = []
+
+        for group_index in group_indices:
+            group_pixel_values_videos = [pixel_values_videos[i] for i in group_index]
+            group_video_grid_thw = [video_grid_thw[i].squeeze() for i in group_index]
+
+            # Stack pixel_values_videos for each group (assuming pixel_values_videos is a list of tensors)
+            pixel_values_videos_split.append(torch.stack(group_pixel_values_videos))
+            video_grid_thw_split.append(torch.stack(group_video_grid_thw))
+
+        # Pack the split pixel_values_videos and video_grid_thw back into the data
+        to_split["pixel_values_videos"] = pixel_values_videos_split
+        to_split["video_grid_thw"] = video_grid_thw_split
     mbs = dict_of_list2list_of_dict(to_split)
 
     results = []
@@ -459,6 +481,9 @@ def pad_packed_tensor_dict(
             padded_data[key] = padded_tensor
         elif key == "pixel_values":
             assert value.dim() == 3, f"pixel_values must be [M,S,D], got {tuple(value.shape)}"
+            padded_data[key] = value
+        elif key == "pixel_values_videos":
+            assert value.dim() == 4, f"pixel_values_videos must be [M,T,S,D], got {tuple(value.shape)}"
             padded_data[key] = value
         elif torch.is_tensor(value) and value.numel() == total_length:
             # Pad the tensor to the new total length

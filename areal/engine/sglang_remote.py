@@ -135,14 +135,26 @@ class RemoteSGLangEngine(InferenceEngine):
             sample_params["stop"] = stop
 
         if isinstance(req, VLMRequest):
-            # VLMRequest has image_data
-            payload = {
-                "input_ids": req.input_ids.copy(),
-                "image_data": req.image_data,  # ImageObject or str
-                "sampling_params": sample_params,
-                "return_logprob": True,
-                "stream": False,
-            }
+            if req.image_data is not None:
+                payload = {
+                    "input_ids": req.input_ids.copy(),
+                    "image_data": req.image_data,  # ImageObject or str
+                    "sampling_params": sample_params,
+                    "return_logprob": True,
+                    "stream": False,
+                }
+            elif req.video_data is not None:
+                payload = {
+                    "input_ids": req.input_ids.copy(),
+                    "video_data": req.video_data,  # VideoObject or str
+                    "sampling_params": sample_params,
+                    "return_logprob": True,
+                    "stream": False,
+                }
+            else:
+                raise ValueError(
+                    "VLMRequest must have either image_data or video_data."
+                )
         else:
             # NOTE: rid should NOT be passed in payload
             payload = {
@@ -220,16 +232,32 @@ class RemoteSGLangEngine(InferenceEngine):
         latency = time.perf_counter() - start_time
 
         if isinstance(req, VLMRequest):
-            response = VLMResponse(
-                input_tokens=req.input_ids,
-                input_images=req.image_data,
-                output_tokens=accumulated_output_tokens,
-                output_logprobs=accumulated_output_logprobs,
-                output_versions=accumulated_versions,
-                stop_reason=stop_reason,
-                latency=latency,
-                ttft=latency,  # Simplified for non-streaming
-            )
+            if req.image_data is not None:
+                response = VLMResponse(
+                    input_tokens=req.input_ids,
+                    input_images=req.image_data,
+                    output_tokens=accumulated_output_tokens,
+                    output_logprobs=accumulated_output_logprobs,
+                    output_versions=accumulated_versions,
+                    stop_reason=stop_reason,
+                    latency=latency,
+                    ttft=latency,  # Simplified for non-streaming
+                )
+            elif req.video_data is not None:
+                response = VLMResponse(
+                    input_tokens=req.input_ids,
+                    input_videos=req.video_data,
+                    output_tokens=accumulated_output_tokens,
+                    output_logprobs=accumulated_output_logprobs,
+                    output_versions=accumulated_versions,
+                    stop_reason=stop_reason,
+                    latency=latency,
+                    ttft=latency,  # Simplified for non-streaming
+                )
+            else:
+                raise ValueError(
+                    "VLMRequest must have either image_data or video_data."
+                )
         else:
             response = LLMResponse(
                 input_tokens=req.input_ids,

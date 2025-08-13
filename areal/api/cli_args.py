@@ -636,6 +636,10 @@ class DatasetConfig:
     reward_fn: Optional[str] = field(
         default=None,
     )
+    video_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to the directory containing video files."}
+    )
 
 
 @dataclass
