@@ -19,7 +19,7 @@ def _seed_from_key(key: str) -> int:
     return int(hashlib.sha256(key.encode()).hexdigest(), 16) & 0xFFFFFFFF
 
 
-def set_random_seed(base_seed, key):
+def set_random_seed(base_seed: int, key: str) -> None:
     global _SEED, _BASE_SEED
     _BASE_SEED = base_seed
     seed = base_seed + _seed_from_key(key)
