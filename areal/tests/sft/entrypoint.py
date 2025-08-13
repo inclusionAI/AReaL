@@ -1,8 +1,9 @@
 import json
 import os
 import sys
-from typing import Dict, List
+from typing import Dict, List, cast
 
+import torch.utils.data
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 import areal.api.cli_args as cli_args
@@ -36,9 +37,10 @@ def main() -> None:
         tokenizer=tokenizer,
         processor=processor,
     )
+    train_dataset = train_dataset.select(range(256))
 
     train_dataloader = StatefulDataLoader(
-        train_dataset,
+        cast(torch.utils.data.Dataset, train_dataset),
         batch_size=config.train_dataset.batch_size // world_size,
         collate_fn=areal.utils.data.pad_sequences_to_tensors,
     )
