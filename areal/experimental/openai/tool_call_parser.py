@@ -1,9 +1,9 @@
 import uuid
 from typing import Any, Dict, List, Optional
+import traceback
 
-from openai.types.chat.chat_completion_message_tool_call import (
-    ChatCompletionMessageToolCall,
-    Function,
+from openai.types.chat.chat_completion_message_function_tool_call import (
+    ChatCompletionMessageFunctionToolCall,Function,
 )
 
 from realhf.base import logging
@@ -11,25 +11,30 @@ from realhf.base import logging
 logger = logging.getLogger("Tool Call Parser")
 
 
-# Copied from sglang
+# Modified from sglang
 def process_tool_calls(
     text: str,
     tools: List[Any],
     tool_call_parser: Optional[str],
-    finish_reason: Dict[str, Any],
-) -> tuple[Optional[List[ChatCompletionMessageToolCall]], str, Dict[str, Any]]:
+    finish_reason: str,
+) -> tuple[Optional[List[ChatCompletionMessageFunctionToolCall]], str, str]:
     """Process tool calls in the response"""
     from sglang.srt.function_call.function_call_parser import FunctionCallParser
+    from sglang.srt.entrypoints.openai.protocol import Function as SglFunction, Tool as SglTool
+
+    tools = [
+        SglTool(type=tool['type'], function=SglFunction(**tool['function'])) for tool in tools
+    ]
 
     parser = FunctionCallParser(tools, tool_call_parser)
     if parser.has_tool_call(text):
-        if finish_reason["type"] == "stop":
-            finish_reason["type"] = "tool_calls"
-            finish_reason["matched"] = None
+        if finish_reason == "stop":
+            finish_reason = "tool_calls"
         try:
             text, call_info_list = parser.parse_non_stream(text)
             tool_calls = [
-                ChatCompletionMessageToolCall(
+                ChatCompletionMessageFunctionToolCall(
+                    type="function",
                     id=f"call_{uuid.uuid4().hex[:24]}",
                     function=Function(
                         name=call_info.name, arguments=call_info.parameters
@@ -40,6 +45,7 @@ def process_tool_calls(
             return tool_calls, text, finish_reason
         except Exception as e:
             logger.error(f"Tool call parsing error: {e}")
+            traceback.print_exc()
             # Return error but don't fail the whole request
             return None, text, finish_reason
 

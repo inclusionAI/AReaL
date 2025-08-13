@@ -58,7 +58,7 @@ dependencies = [
     "tensordict",
     "pybase64",
     "msgspec",
-    "openai",
+    "openai==1.99.6",
     
     # Monitoring and logging
     "wandb",

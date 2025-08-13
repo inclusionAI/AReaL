@@ -74,7 +74,7 @@ def tokenizer():
     return load_hf_tokenizer(MODEL_PATH)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def openai_client(sglang_server, tokenizer):
     from areal.api.cli_args import InferenceEngineConfig
     from areal.engine.sglang_remote import RemoteSGLangEngine
@@ -124,7 +124,7 @@ async def test_multi_round_conversation(openai_client):
     c2 = await openai_client.chat.completions.create(messages=messages)
 
     # Round 3 - further extends the conversation
-    messsages += [
+    messages += [
         {"role": "assistant", "content": c2.choices[0].message.content},
         {"role": "user", "content": "And Italy?"},
     ]
@@ -261,6 +261,7 @@ async def test_single_round_tool_calling(openai_client):
     assert c.id is not None
     assert c.choices[0].message.role == "assistant"
     assert c.choices[0].message.tool_calls is not None
+    assert c.choices[0].finish_reason == "tool_calls"
 
     openai_client.set_reward(c.id, reward=1.5)
     completions = openai_client.export_completions(final_reward=0.5)
@@ -420,59 +421,42 @@ async def test_multi_round_conversation_with_thinking(openai_client):
     messages = [
         {
             "role": "system",
-            "content": "You are a helpful assistant. When reasoning, use <think></think> tags for your internal thoughts.",
+            "content": "You are a helpful assistant. Use <think></think> tags for your internal thoughts.",
         },
-        {"role": "user", "content": "What is 15 * 24? Please show your thinking."},
+        {"role": "user", "content": "What is 15 * 24? Please think step-by-step."},
     ]
-    c1 = await openai_client.chat.completions.create(messages=messages)
-
-    # Simulate response with thinking content
-    c1.choices[0].message.content
-    # For testing, let's assume the model generated content with thinking
-    thinking_content = "Let me work this out step by step. <think>15 * 24 = 15 * 20 + 15 * 4 = 300 + 60 = 360</think> The answer is 15 * 24 = 360."
-
-    # Update the cached completion to simulate thinking content
-    completion_data = openai_client.get_completions(c1.id)
-    completion_data.completion.choices[0].message.content = thinking_content
+    c1 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
 
     # Round 2 - Strip thinking from previous response
-    cleaned_assistant_content = strip_thinking_tags(thinking_content)
+    cleaned_assistant_content = strip_thinking_tags(c1.choices[0].message.content)
     messages += [
         {"role": "assistant", "content": cleaned_assistant_content},
-        {"role": "user", "content": "Now what is 360 divided by 12?"},
+        {"role": "user", "content": "Now what is 360 divided by 12? Please think step-by-step."},
     ]
-    c2 = await openai_client.chat.completions.create(messages=messages)
-
-    # Simulate another response with thinking
-    thinking_content_2 = "Let me calculate this. <think>360 ÷ 12 = 30 because 12 * 30 = 360</think> The answer is 360 ÷ 12 = 30."
-    completion_data_2 = openai_client.get_completions(c2.id)
-    completion_data_2.completion.choices[0].message.content = thinking_content_2
+    c2 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
 
     # Round 3 - Continue conversation, stripping thinking from previous response
-    cleaned_assistant_content_2 = strip_thinking_tags(thinking_content_2)
+    cleaned_assistant_content_2 = strip_thinking_tags(c2.choices[0].message.content)
     messages += [
         {"role": "assistant", "content": cleaned_assistant_content_2},
         {
             "role": "user",
-            "content": "Great! Can you explain why division by 12 gave us 30?",
+            "content": "Great! Can you explain why division by 12 gave us 30?  Please think step-by-step.",
         },
     ]
-    c3 = await openai_client.chat.completions.create(messages=messages)
+    c3 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
 
-    # Verify the messages don't contain thinking tags in the conversation history
+    # Verify conversation history
     stored_messages_c2 = openai_client.get_completions(c2.id).messages
     stored_messages_c3 = openai_client.get_completions(c3.id).messages
 
-    # Check that assistant messages in stored history don't contain thinking tags
-    for msg in stored_messages_c2:
-        if msg.get("role") == "assistant":
-            assert "<think>" not in msg.get("content", "")
-            assert "</think>" not in msg.get("content", "")
-
-    for msg in stored_messages_c3:
-        if msg.get("role") == "assistant":
-            assert "<think>" not in msg.get("content", "")
-            assert "</think>" not in msg.get("content", "")
+    # Verify thinking tags are stripped from assistant messages
+    for msg_list in [stored_messages_c2, stored_messages_c3]:
+        for msg in msg_list:
+            if msg.get("role") == "assistant":
+                content = msg.get("content", "")
+                assert "<think>" not in content
+                assert "</think>" not in content
 
     # Test reward system
     openai_client.set_reward(c2.id, reward=1.5)
@@ -497,24 +481,19 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
     messages = [
         {
             "role": "system",
-            "content": "You are a helpful assistant with calculation abilities. Use <think></think> for internal reasoning before tool calls.",
+            "content": "You are a helpful assistant with calculation abilities. Use <think></think> tags for your internal thoughts.",
         },
         {
             "role": "user",
-            "content": "I need to calculate the area of a rectangle that is 25 meters long and 18 meters wide.",
+            "content": "I need to calculate the area of a rectangle that is 25 meters long and 18 meters wide. Please think step-by-step.",
         },
     ]
     c1 = await openai_client.chat.completions.create(
-        messages=messages, tools=tools, tool_choice="auto"
+        messages=messages, tools=tools, tool_choice="auto", max_tokens=1024
     )
 
-    # Simulate response with thinking before tool call
-    thinking_content_1 = "<think>I need to calculate area = length × width = 25 × 18. I'll use the calculator tool.</think>I'll calculate the area for you using length × width."
-    completion_data_1 = openai_client.get_completions(c1.id)
-    completion_data_1.completion.choices[0].message.content = thinking_content_1
-
     # Round 2 - Provide tool result and ask follow-up, stripping thinking from previous response
-    cleaned_content_1 = strip_thinking_tags(thinking_content_1)
+    cleaned_content_1 = strip_thinking_tags(c1.choices[0].message.content)
     messages += [
         {
             "role": "assistant",
@@ -524,20 +503,15 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
         {"role": "tool", "content": "450", "tool_call_id": "calc_call_1"},
         {
             "role": "user",
-            "content": "Perfect! Now what if I want to carpet this room and carpet costs $15 per square meter?",
+            "content": "Perfect! Now what if I want to carpet this room and carpet costs $15 per square meter? Please think step-by-step.",
         },
     ]
     c2 = await openai_client.chat.completions.create(
-        messages=messages, tools=tools, tool_choice="auto"
+        messages=messages, tools=tools, tool_choice="auto", max_tokens=1024
     )
 
-    # Simulate another response with thinking before tool call
-    thinking_content_2 = "<think>I need to multiply the area (450 sq m) by the cost per square meter ($15). So 450 × 15.</think>I'll calculate the total carpet cost by multiplying the area by the price per square meter."
-    completion_data_2 = openai_client.get_completions(c2.id)
-    completion_data_2.completion.choices[0].message.content = thinking_content_2
-
     # Round 3 - Continue with tool result
-    cleaned_content_2 = strip_thinking_tags(thinking_content_2)
+    cleaned_content_2 = strip_thinking_tags(c2.choices[0].message.content)
     messages += [
         {
             "role": "assistant",
@@ -547,10 +521,10 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
         {"role": "tool", "content": "6750", "tool_call_id": "calc_call_2"},
         {
             "role": "user",
-            "content": "That's quite expensive! What would be the cost per square foot instead?",
+            "content": "That's quite expensive! What would be the cost per square foot instead?  Please think step-by-step.",
         },
     ]
-    c3 = await openai_client.chat.completions.create(messages=messages)
+    c3 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
 
     # Verify conversation history
     stored_messages_c2 = openai_client.get_completions(c2.id).messages
