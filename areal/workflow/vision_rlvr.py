@@ -4,6 +4,8 @@ import os
 import uuid
 
 import colorama
+from requests import get
+from sglang import video
 import torch
 from tensordict import TensorDict
 from transformers import AutoProcessor, PreTrainedTokenizerFast
@@ -11,7 +13,7 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import VLMRequest
 from areal.utils.data import concat_padded_tensors
-from areal.utils.image import image2base64
+from areal.utils.multimodal import image2base64
 from areal.workflow.rlvr import REWARD_TIMEOUT_SECONDS, RLVRWorkflow
 from realhf.base import logging
 
@@ -32,24 +34,37 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         self.processor = processor
 
     async def arun_episode(self, engine, data):
+        
+        if data.get("videos", None) is not None:
+            videos=torch.load(data["videos"]).float()
+            video_frames=videos.size(0)
+            if self.processor.num_video_frames != video_frames:
+                raise ValueError(
+                    f"Number of video frames {video_frames} does not match the expected number {self.processor.num_video_frames}."
+                )
+            input_videos = videos
+        else:
+            videos = None
 
         processed_input = self.processor(
-            images=data["images"],
-            text=data["messages"],
-            padding=False,
-            return_tensors="pt",
+                images=data.get("images", None),
+                videos=[videos],
+                text=data["messages"],
+                padding=False,
+                return_tensors="pt",
         )
 
         input_ids = processed_input["input_ids"].tolist()[0]
 
         n_samples = self.gconfig.n_samples
-
-        byte_images = image2base64(data["images"])
-
+        
+        byte_images= image2base64(data["images"]) if data.get("images", None) is not None else None
+            
         req = VLMRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
             image_data=byte_images,
+            video_data=input_videos,
             gconfig=self.gconfig.new(n_samples=1),
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
@@ -98,8 +113,10 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),
                 loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                pixel_values=processed_input["pixel_values"].unsqueeze(0),
-                image_grid_thw=processed_input["image_grid_thw"].unsqueeze(0),
+                pixel_values=processed_input["pixel_values"].unsqueeze(0) if "pixel_values" in processed_input else None,
+                pixel_values_videos=processed_input["pixel_values_videos"].unsqueeze(0) if "pixel_values_videos" in processed_input else None,
+                image_grid_thw=processed_input["image_grid_thw"].unsqueeze(0) if "image_grid_thw" in processed_input else None,
+                video_grid_thw= processed_input["video_grid_thw"].unsqueeze(0) if "video_grid_thw" in processed_input else None,
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
                 versions=torch.tensor(versions).unsqueeze(0),
                 attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),

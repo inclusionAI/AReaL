@@ -1,9 +1,20 @@
+# Copyright 2025 Ant Group Inc.
+# Licensed under the Apache License, Version 2.0
+
+# Video processing and template are modified from verl under Apache license.
+# Copyright (c) 2025, ByteDance.
+
+
+
 import base64
 from io import BytesIO
-from typing import List
+from typing import List, Union
 
 from PIL import Image
 from PIL.Image import Image as ImageObject
+
+
+QUESTION_TEMPLATE_VIDEO_QWEN = "You are a helpful assistant. The user asks a question, and then you solves it.\n\nPlease first think deeply about the question based on the given video, and then provide the final answer. The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> the letter of your choice (A, B, C, or D) </answer>.\n\n Question: {question}"
 
 
 def image2base64(images: List[ImageObject] | ImageObject) -> List[str] | str:

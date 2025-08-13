@@ -6,7 +6,7 @@ import os
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 
 from PIL.Image import Image as ImageObject
 from transformers import AutoProcessor, PreTrainedTokenizerFast
@@ -55,11 +55,13 @@ class LLMResponse:
 @dataclass
 class VLMRequest(LLMRequest):
     image_data: Optional[List[ImageObject | str]] = field(default_factory=list)
+    video_data: Optional[List[Union[str, Dict] | str]] = None
 
 
 @dataclass
 class VLMResponse(LLMResponse):
     input_images: List[ImageObject | str] = field(default_factory=list)
+    input_videos: List[Union[str, Dict] | str] = field(default_factory=list)
 
 
 @dataclass

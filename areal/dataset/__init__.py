@@ -48,6 +48,12 @@ def get_custom_dataset(
         return get_geometry3k_rl_dataset(
             path, split, processor, rank, world_size, **kwargs
         )
+    elif "longvideo-reason" in path and type == "rl":
+        from .longvideo_reason import get_longvideo_reason_grpo_dataset
+
+        return get_longvideo_reason_rl_dataset(
+            path, split, processor, rank, world_size, **kwargs
+        )
     else:
         raise ValueError(
             f"Dataset {path} with split {split} and training type {type} is not supported. "
