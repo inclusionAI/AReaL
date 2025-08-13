@@ -166,7 +166,7 @@ def main(args):
             log_gpu_stats("ppo update")
         
         if "logging" in batch:
-            vals = batch["loggging"].float().cpu()
+            vals = batch["logging"].float().cpu()
             mask = vals[:, 0] > 0
             if mask.any():
                 avg = vals[mask].mean(0).tolist()
@@ -181,6 +181,10 @@ def main(args):
             if dist.get_rank() == 0:
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
+            torch.cuda.synchronize()
+            rollout.resume()
+            actor.set_version(global_step + 1)
+            rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)

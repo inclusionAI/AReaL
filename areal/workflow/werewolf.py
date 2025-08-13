@@ -27,7 +27,7 @@ class WerewolfWorkflow(RolloutWorkflow):
         self, 
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
-        max_turns: int = 50,
+        max_turns: int = 60,
         turn_discount: float = 1.0,
         dump_dir: str | None = None,
         env_kwargs: dict | None = None,
@@ -59,7 +59,7 @@ class WerewolfWorkflow(RolloutWorkflow):
         were_total = 0.0
         traj_len = 0
 
-        for _ in range(self.max_turns):
+        for turn in range(self.max_turns):
             input_ids = self.tokenizer.apply_chat_template(
                 [{"role": "user", "content": obs}],
                 tokenize=True,
@@ -82,7 +82,6 @@ class WerewolfWorkflow(RolloutWorkflow):
             prompt_str = self.tokenizer.decode(input_ids)
             completion_str = self.tokenizer.decode(resp.output_tokens)
 
-            role = env.agent_role
             next_obs, reward_list, done, _, _ = await env.step(
                 (data.get("query_id", ""), [completion_str])
             )
@@ -110,7 +109,8 @@ class WerewolfWorkflow(RolloutWorkflow):
             rewards.append(reward)
             seqlens.append(len(seq))
 
-            if done:
+            if done or (turn == self.max_turns - 1):
+                logger.info(f"Trajectory ended with {turn + 1} turns, total reward: {sum(rewards)}.")
                 break
             obs = next_obs
         
