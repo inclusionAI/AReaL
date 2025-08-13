@@ -1,0 +1,43 @@
+experiment_name: tests-sft-gsm8k
+trial_name: trail0
+
+cluster:
+  name_resolve:
+    type: nfs
+    nfs_record_root: /tmp/areal/name_resolve
+  fileroot: /tmp/areal/experiments
+  n_nodes: 1
+  n_gpus_per_node: 1
+allocation_mode: d1p1t1
+
+total_train_epochs: 1
+tokenizer_path: Qwen/Qwen3-0.6B
+train_dataset:
+  path: openai/gsm8k
+  batch_size: 16
+
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+recover:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+
+model:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: Qwen/Qwen2-0.5B
+  optimizer:
+    lr_scheduler_type: cosine
+
+launcher: {}
