@@ -41,7 +41,6 @@ def main() -> None:
         tokenizer=tokenizer,
         processor=processor,
     )
-    train_dataset = train_dataset.select(range(256))
 
     train_dataloader = StatefulDataLoader(
         cast(torch.utils.data.Dataset, train_dataset),
@@ -66,6 +65,12 @@ def main() -> None:
     global_step = 0
     for epoch in range(config.total_train_epochs):
         for step, data in enumerate(train_dataloader):
+            if (
+                config.total_train_steps is not None
+                and global_step >= config.total_train_steps
+            ):
+                break
+
             engine.train_lm(data)
             engine.step_lr_scheduler()
 

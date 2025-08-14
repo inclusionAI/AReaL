@@ -7,10 +7,11 @@ cluster:
 allocation_mode: sglang.d1p1t1+d1p1t1
 seed: 1
 total_train_epochs: 1
+total_train_steps: 16
 tokenizer_path: ${actor.path}
 train_dataset:
   path: openai/gsm8k
-  batch_size: 16
+  batch_size: 64
 saver:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
@@ -33,7 +34,7 @@ sglang:
 launcher: {}
 
 gconfig:
-  n_samples: 16
+  n_samples: 8
   
 rollout:
   experiment_name: ${experiment_name}
@@ -43,6 +44,8 @@ actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: Qwen/Qwen3-0.6B
+  mb_spec:
+    max_tokens_per_mb: 4096
   optimizer: {}
 
   group_size: ${gconfig.n_samples}
@@ -50,4 +53,6 @@ ref:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: ${actor.path}
+  mb_spec:
+    max_tokens_per_mb: 4096
   optimizer: {}

@@ -7,6 +7,7 @@ cluster:
 allocation_mode: d1p1t1
 seed: 1
 total_train_epochs: 1
+total_train_steps: 16
 tokenizer_path: ${model.path}
 train_dataset:
   path: openai/gsm8k
