@@ -32,7 +32,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen2-1.5B-Instruct
+  path: Qwen/Qwen2.5-1.5B-Instruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: false

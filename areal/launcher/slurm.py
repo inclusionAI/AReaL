@@ -395,7 +395,6 @@ def main():
 def slurm_main(config, run_id: int = 0):
     config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
-    config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
     validate_config_for_distributed_launcher(config)
     is_recover_run = check_if_recover(config.recover, run_id)
@@ -428,6 +427,7 @@ def slurm_main(config, run_id: int = 0):
     n_sglang_nodes = 0
     if allocation_mode.gen_backend == "sglang":
         # Launcher should launch SGLang servers according to allocation mode.
+        config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
         n_sglang_servers = allocation_mode.gen_dp_size
         n_sglang_nodes = allocation_mode.gen_world_size // n_gpus_per_node
         n_servers_per_node = max(n_sglang_servers // n_sglang_nodes, 1)
@@ -473,7 +473,7 @@ def slurm_main(config, run_id: int = 0):
         gpus_per_node = 0
     else:
         trainer_n_nodes = n_nodes - n_sglang_nodes
-        gpus_per_node = 1
+        gpus_per_node = config.cluster.n_gpus_per_node
 
     # Here $head_node_ip is the IP address of the first node in the job array.
     # $trainer_port is a free port on the head node.
