@@ -32,6 +32,9 @@ sglang:
   random_seed: ${seed}
 launcher: {}
 
+gconfig:
+  n_samples: 16
+  
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
@@ -41,6 +44,8 @@ actor:
   trial_name: ${trial_name}
   path: Qwen/Qwen3-0.6B
   optimizer: {}
+
+  group_size: ${gconfig.n_samples}
 ref:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
