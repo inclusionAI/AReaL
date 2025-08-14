@@ -60,7 +60,6 @@ def main() -> None:
         ft_spec=ft_spec,
     )
 
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
     losses: List[float] = []
 
     global_step = 0
@@ -70,12 +69,6 @@ def main() -> None:
             engine.step_lr_scheduler()
 
             stat = stats_tracker.export(reduce_group=engine.parallelism_group)
-            stats_logger.commit(
-                epoch,
-                step,
-                global_step,
-                stat,
-            )
             losses.append(stat["loss/avg"])
 
             global_step += 1
@@ -83,7 +76,6 @@ def main() -> None:
     with open(os.path.join(config.cluster.fileroot, "losses.json"), "w") as f:
         json.dump(losses, f)
 
-    stats_logger.close()
     engine.destroy()
 
 

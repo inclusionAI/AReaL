@@ -94,7 +94,6 @@ def main() -> None:
         ),
     )
 
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
     rewards: List[float] = []
 
     global_step = 0
@@ -127,12 +126,6 @@ def main() -> None:
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
 
-            stats_logger.commit(
-                epoch,
-                step,
-                global_step,
-                stats,
-            )
             rewards.append(stats[0]["task_reward/avg"])
 
             global_step += 1
@@ -140,7 +133,6 @@ def main() -> None:
     with open(os.path.join(config.cluster.fileroot, "rewards.json"), "w") as f:
         json.dump(rewards, f)
 
-    stats_logger.close()
     rollout.destroy()
     ref.destroy()
     actor.destroy()
