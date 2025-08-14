@@ -34,11 +34,9 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         self.processor = processor
 
     async def arun_episode(self, engine, data):
-        breakpoint()
         
         if data.get("videos", None) is not None:
-            videos=[process_video(video) for videos in data["videos"]:
-           
+            videos=[process_video(video, fps_min_frames=self.processor.video_processor.min_frames, fps_max_frames=self.processor.video_processor.max_frames) ]
         else:
             videos = None
 

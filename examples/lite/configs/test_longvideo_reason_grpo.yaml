@@ -100,7 +100,7 @@ train_dataset:
   path: /storage/openpsi/data/longvideo-reason
   type: rl
   reward_fn: ${train_dataset.path}
-  video_dir: /storage/openpsi/data/longvila_videos
+  video_dir: /storage/openpsi/data/
 
 valid_dataset: 
   batch_size: 64
