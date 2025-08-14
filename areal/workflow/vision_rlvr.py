@@ -9,11 +9,12 @@ from sglang import video
 import torch
 from tensordict import TensorDict
 from transformers import AutoProcessor, PreTrainedTokenizerFast
+from qwen_vl_utils import process_vision_info
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import VLMRequest
 from areal.utils.data import concat_padded_tensors
-from areal.utils.multimodal import image2base64, process_video
+from areal.utils.multimodal import image2base64
 from areal.workflow.rlvr import REWARD_TIMEOUT_SECONDS, RLVRWorkflow
 from realhf.base import logging
 
@@ -36,7 +37,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
     async def arun_episode(self, engine, data):
         
         if data.get("videos", None) is not None:
-            videos=[process_video(video, fps_min_frames=self.processor.video_processor.min_frames, fps_max_frames=self.processor.video_processor.max_frames) ]
+            _, videos=process_vision_info(data["messages"])
         else:
             videos = None
 
