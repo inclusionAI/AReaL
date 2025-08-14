@@ -13,11 +13,11 @@ from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import VLMRequest
 from areal.utils.data import concat_padded_tensors
 from areal.utils.multimodal import image2base64
-from areal.workflow.rlvr import REWARD_TIMEOUT_SECONDS, RLVRWorkflow
+from areal.workflow.rlvr import RLVRWorkflow
 from realhf.base import logging
 
 logger = logging.getLogger("RLVR workflow")
-
+REWARD_TIMEOUT_SECONDS = 30
 
 class VisionRLVRWorkflow(RLVRWorkflow):
     def __init__(
@@ -45,9 +45,9 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 padding=False,
                 return_tensors="pt",
             )
-            input_ids =processor.tokenizer(data["messages"],padding=False, return_tensors="pt")
-            
-            # Special extension and padding are applied for image but not video. Thus video input has to use text string. Ref to https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/managers/scheduler.py#L1295
+            input_ids =self.processor.tokenizer(data["messages"],padding=False, return_tensors="pt")['input_ids'].tolist()[0]
+
+            # Special extension and padding are applied for image but not video. Thus video input has to use tokenizer tokenized input_ids. Ref to https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/managers/scheduler.py#L1295
             req = VLMRequest(
                 rid=uuid.uuid4().hex,
                 input_ids=input_ids,
@@ -73,7 +73,6 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             )
 
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
-
         version = engine.get_version()
         prompt_strs = []
         completions_strs = []

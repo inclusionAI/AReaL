@@ -93,7 +93,7 @@ sglang:
 
 # datasets
 train_dataset:
-  batch_size: 4
+  batch_size: 2
   shuffle: true
   pin_memory: true
   num_workers: 4
@@ -103,7 +103,7 @@ train_dataset:
   video_dir: /storage/openpsi/data/
 
 valid_dataset: 
-  batch_size: 4
+  batch_size: 2
   shuffle: true
   pin_memory: true
   num_workers: 4

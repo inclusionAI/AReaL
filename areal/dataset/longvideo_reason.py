@@ -35,7 +35,8 @@ def get_longvideo_reason_rl_dataset(path, split, processor, rank, world_size, vi
         
         return {
             "messages": messages,
-             "conversation":conversation
+            "conversation":conversation,
+            "videos":video_path,
         }
     dataset = dataset.map(process).remove_columns(["problem", "reasoning"])
     return dataset

@@ -165,8 +165,7 @@ def concat_padded_tensors(
 
                 tensor = torch.cat([tensor, padding], dim=1)
             tensors_to_concat.append(tensor)
-
-        result[key] = torch.cat(tensors_to_concat, dim=0)
+            result[key] = torch.cat(tensors_to_concat, dim=0)
     return TensorDict(result, batch_size=new_batch_size)
 
 
