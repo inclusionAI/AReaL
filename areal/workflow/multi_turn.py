@@ -2,6 +2,8 @@ import asyncio
 import os
 import uuid
 
+import aiofiles
+import aiofiles.os
 import colorama
 import torch
 from tensordict import TensorDict
@@ -136,7 +138,8 @@ class MultiTurnWorkflow(RolloutWorkflow):
 
         if self.dump_dir is not None:
             version = engine.get_version()
-            os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
+            dump_path = os.path.join(self.dump_dir, str(version))
+            await aiofiles.os.makedirs(dump_path, exist_ok=True)
             # Get the unique identifier for this prompt
             qid = None
             for key in ["query_id", "id", "qid"]:
@@ -146,9 +149,8 @@ class MultiTurnWorkflow(RolloutWorkflow):
             qid = qid or uuid.uuid4().hex
 
             # Dump rollout to file
-            with open(
-                os.path.join(self.dump_dir, str(version), f"{qid}.txt"), "a"
-            ) as f:
+            file_path = os.path.join(dump_path, f"{qid}.txt")
+            async with aiofiles.open(file_path, "a") as f:
                 n_samples = self.gconfig.n_samples
                 for i, (_, p, c, r, sl) in enumerate(results):
                     info = "\n".join(
@@ -158,7 +160,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
                             f"sequence is: \n{colorama.Fore.YELLOW + colorama.Style.DIM}{c}{colorama.Style.RESET_ALL}",
                         ]
                     )
-                    f.write(info + "\n")
+                    await f.write(info + "\n")
 
         data = [res[0] for res in results]
         return concat_padded_tensors(data)
