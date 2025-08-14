@@ -3,6 +3,7 @@ import os
 import sys
 from typing import List, cast
 
+import torch.distributed as dist
 import torch.utils.data
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -73,8 +74,9 @@ def main() -> None:
 
             global_step += 1
 
-    with open(os.path.join(config.cluster.fileroot, "losses.json"), "w") as f:
-        json.dump(losses, f)
+    if dist.get_rank() == 0:
+        with open(os.path.join(config.cluster.fileroot, "losses.json"), "w") as f:
+            json.dump(losses, f)
 
     engine.destroy()
 

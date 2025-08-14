@@ -130,8 +130,9 @@ def main() -> None:
 
             global_step += 1
 
-    with open(os.path.join(config.cluster.fileroot, "rewards.json"), "w") as f:
-        json.dump(rewards, f)
+    if dist.get_rank() == 0:
+        with open(os.path.join(config.cluster.fileroot, "rewards.json"), "w") as f:
+            json.dump(rewards, f)
 
     rollout.destroy()
     ref.destroy()
