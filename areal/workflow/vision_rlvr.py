@@ -34,34 +34,44 @@ class VisionRLVRWorkflow(RLVRWorkflow):
 
     async def arun_episode(self, engine, data):
         
+        n_samples = self.gconfig.n_samples
+        
         if data.get("videos", None) is not None:
             _, videos=process_vision_info(data["conversation"])
-            video_dir=data["videos"]
-        else:
-            videos = None
-            video_dir=None
 
-        processed_input = self.processor(
-                images=data.get("images", None),
+            processed_input = self.processor(
                 videos=videos,
                 text=data["messages"],
                 padding=False,
                 return_tensors="pt",
-        )
-
-        input_ids = processed_input["input_ids"].tolist()[0]
-
-        n_samples = self.gconfig.n_samples
-        
-        byte_images= image2base64(data["images"]) if data.get("images", None) is not None else None
+            )
+            input_ids =processor.tokenizer(data["messages"],padding=False, return_tensors="pt")
             
-        req = VLMRequest(
-            rid=uuid.uuid4().hex,
-            input_ids=input_ids,
-            image_data=byte_images,
-            video_data=[video_dir],
-            gconfig=self.gconfig.new(n_samples=1),
-        )
+            # Special extension and padding are applied for image but not video. Thus video input has to use text string. Ref to https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/managers/scheduler.py#L1295
+            req = VLMRequest(
+                rid=uuid.uuid4().hex,
+                input_ids=input_ids,
+                video_data=data["videos"],
+                gconfig=self.gconfig.new(n_samples=1),
+            )
+            
+        elif data.get("images", None) is not None:
+            processed_input=self.processor(
+                images=data["images"],
+                text=data["messages"],
+                padding=False,
+                return_tensors="pt",
+            )
+            input_ids = processed_input["input_ids"].tolist()[0]
+            byte_images= image2base64(data["images"]) 
+            
+            req = VLMRequest(
+                rid=uuid.uuid4().hex,
+                input_ids=input_ids,
+                image_data=byte_images,
+                gconfig=self.gconfig.new(n_samples=1),
+            )
+
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
 
         version = engine.get_version()

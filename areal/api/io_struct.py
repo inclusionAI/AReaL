@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 @dataclass
 class LLMRequest:
     rid: str = field(default_factory=lambda: str(uuid.uuid4()))
-    input_ids: List[int] = field(default_factory=list)
+    input_ids: Optional[List[int]] = field(default_factory=list)
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
@@ -56,6 +56,7 @@ class LLMResponse:
 class VLMRequest(LLMRequest):
     image_data: Optional[List[ImageObject | str]] = field(default_factory=list)
     video_data: Optional[List[Union[str, Dict] | str]] = None
+    
 
 
 @dataclass
