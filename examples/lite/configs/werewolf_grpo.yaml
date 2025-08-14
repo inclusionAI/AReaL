@@ -119,12 +119,12 @@ stats_logger:
     mode: online
 
 launcher:
-  inference_server_cpus_per_gpu: 8
-  inference_server_mem_per_gpu: 65536
-  trainer_cpus_per_gpu: 8
-  trainer_mem_per_gpu: 65536
+  inference_server_cpus_per_gpu: 4
+  inference_server_mem_per_gpu: 32768
+  trainer_cpus_per_gpu: 4
+  trainer_mem_per_gpu: 32768
   slurm:
     mount: /storage:/storage
     trainer_image: /storage/openpsi/images/sglang-v0.4.9.post2-cu126-v2.sif
     inference_server_image: /storage/openpsi/images/sglang-v0.4.9.post2-cu126-v2.sif
-  trainer_env_vars: WANDB_API_KEY=local-667d8d7f101dad4eb9597d718d0c68f40e3792f9, WANDB_BASE_URL=http://8.150.1.98:8080
+  trainer_env_vars: WANDB_API_KEY=local-667d8d7f101dad4eb9597d718d0c68f40e3792f9,WANDB_BASE_URL=http://8.150.1.98:8080

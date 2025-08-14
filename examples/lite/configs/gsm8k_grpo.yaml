@@ -1,13 +1,13 @@
 experiment_name: gsm8k-grpo
 trial_name: trial0
-allocation_mode: sglang.d4p1t1+d4p1t1
+allocation_mode: sglang.d8p1t1+d8p1t1
 cluster:
-  fileroot: /tmp/areal/experiments
-  n_nodes: 1
+  fileroot: /storage/openpsi/experiments
+  n_nodes: 2
   n_gpus_per_node: 8
   name_resolve:
     type: nfs
-    nfs_record_root: /tmp/areal/name_resolve
+    nfs_record_root: /storage/openpsi/name_resolve
 seed: 1
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
@@ -140,3 +140,10 @@ launcher:
   inference_server_mem_per_gpu: 32768
   trainer_cpus_per_gpu: 4
   trainer_mem_per_gpu: 32768
+  slurm:
+    mount: /storage:/storage
+    trainer_image: /storage/openpsi/images/sglang-v0.4.9.post2-cu126-v2.sif
+    inference_server_image: /storage/openpsi/images/sglang-v0.4.9.post2-cu126-v2.sif
+  inference_server_env_vars: HF_ENDPOINT="https://hf-mirror.com"
+  trainer_env_vars: HF_ENDPOINT="https://hf-mirror.com",WANDB_API_KEY=local-667d8d7f101dad4eb9597d718d0c68f40e3792f9,WANDB_BASE_URL="http://8.150.1.98:8080"
+

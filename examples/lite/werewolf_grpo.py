@@ -232,4 +232,10 @@ python -m areal.launcher.slurm examples/lite/werewolf_grpo.py \
     stats_logger.wandb.mode=online \
     experiment_name=xmy-werewolf-lite1 \
     trial_name=trial10
+
+python -m areal.launcher.slurm examples/lite/gsm8k_grpo.py \
+    --config examples/lite/configs/gsm8k_grpo.yaml \
+    stats_logger.wandb.mode=online \
+    experiment_name=xmy-gsm8k-slurm \
+    trial_name=trial1
 """
