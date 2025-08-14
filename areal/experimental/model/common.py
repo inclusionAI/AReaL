@@ -13,12 +13,13 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=TransformerConfig)
 
 
+# Modified from verl:
+# https://github.com/volcengine/verl/blob/ea885f32f04d86c3a81de18083db7eef0d781421/verl/models/mcore/config_converter.py
 def hf_to_mcore_base_args(
     hf_config: PretrainedConfig,
     dtype: torch.dtype,
     **override_transformer_config_kwargs,
 ) -> dict:
-
     # TODO: add parallel configs for transformer configs
     # Common parallel state parameters
     # overlap_p2p_comm = (
@@ -70,6 +71,8 @@ def hf_to_mcore_base_args(
     return base_config
 
 
+# Modified from verl:
+# https://github.com/volcengine/verl/blob/ea885f32f04d86c3a81de18083db7eef0d781421/verl/models/mcore/config_converter.py
 def check_and_construct_configs(original_config: dict, cls: type[T]) -> T:
     """
     Check and disable incompatible configurations for older Megatron version.

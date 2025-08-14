@@ -9,6 +9,8 @@ from areal.experimental.model.common import (
 )
 
 
+# Modified from verl:
+# https://github.com/volcengine/verl/blob/ea885f32f04d86c3a81de18083db7eef0d781421/verl/models/mcore/config_converter.py
 def hf_to_mcore_config_qwen3_dense(
     hf_config: PretrainedConfig, dtype: torch.dtype
 ) -> TransformerConfig:

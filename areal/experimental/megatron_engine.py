@@ -1,16 +1,26 @@
+import dataclasses
 import os
 from typing import Any, Callable, Dict, List
 
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state, tensor_parallel
+from megatron.core.distributed import DistributedDataParallel as DDP
+from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
+from megatron.core.optimizer import get_megatron_optimizer
+from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from tensordict import TensorDict
 from transformers import AutoConfig
 
-from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import FinetuneSpec, TrainEngine
 from areal.api.io_struct import ParamSpec, SaveLoadMeta, WeightUpdateMeta
+from areal.experimental.api.cli_args import (
+    ExperimentalTrainEngineConfig as TrainEngineConfig,
+)
 from areal.experimental.model.registry import hf_to_mcore_config, make_mcore_model
+from areal.utils.data import amend_position_ids
+from areal.utils.model import disable_dropout_in_model
 from realhf.base import constants, logging
 
 logger = logging.getLogger("MegatronEngine")
@@ -24,6 +34,76 @@ class MegatronEngine(TrainEngine):
         self.model = None
         self.dtype = getattr(torch, self.config.dtype)
         self.device = None
+        self.optimizer_config = config.optimizer
+        self.mcore_config = config.megatron
+
+    def create_optimizer(self, ft_spec: FinetuneSpec):
+        if self.optimizer_config is None:
+            return
+        assert self.model is not None
+
+        assert (
+            self.optimizer_config.type == "adam"
+        ), "Only AdamW optimizer is supported in this engine."
+
+        # Make megatron optimizer config, from legacy MegatronEngine
+        # TODO: add DDP options
+        # TODO: check if there is more options in mcore v0.13.1
+        mcore_opt_config = MCoreOptimizerConfig(
+            optimizer="adam",
+            lr=self.optimizer_config.lr,
+            weight_decay=self.optimizer_config.weight_decay,
+            bf16=self.dtype is torch.bfloat16,
+            fp16=self.dtype is torch.float16,
+            adam_beta1=self.optimizer_config.beta1,
+            adam_beta2=self.optimizer_config.beta2,
+            adam_eps=self.optimizer_config.eps,
+            use_distributed_optimizer=True,
+            params_dtype=self.dtype,
+        )
+        mcore_opt_config.overlap_param_gather_with_optimizer_step = (
+            self.mcore_config.overlap_param_gather_with_optimizer_step
+        )
+        mcore_opt_config.use_precision_aware_optimizer = (
+            self.mcore_config.use_precision_aware_optimizer
+        )
+        mcore_opt_config.main_grads_dtype = getattr(
+            torch, self.mcore_config.main_grads_dtype
+        )
+        mcore_opt_config.main_params_dtype = getattr(
+            torch, self.mcore_config.main_params_dtype
+        )
+        mcore_opt_config.exp_avg_dtype = getattr(torch, self.mcore_config.exp_avg_dtype)
+        mcore_opt_config.exp_avg_sq_dtype = getattr(
+            torch, self.mcore_config.exp_avg_sq_dtype
+        )
+
+        self.optimizer = get_megatron_optimizer(
+            mcore_opt_config,
+            [self.model],
+            no_weight_decay_cond=lambda n, p: any(
+                k in n for k in ["bias", "ln.weight", "ln_f.weight"]
+            ),
+            scale_lr_cond=None,
+            lr_mult=1.0,
+        )
+
+        warmup_steps_proportion = self.optimizer_config.warmup_steps_proportion
+        warmup_steps = int(warmup_steps_proportion * ft_spec.total_train_steps)
+        lr_scheduler = OptimizerParamScheduler(
+            self.optimizer,
+            init_lr=0.0 if warmup_steps_proportion > 0 else self.optimizer_config.lr,
+            max_lr=self.optimizer_config.lr,
+            min_lr=self.optimizer_config.min_lr_ratio * self.optimizer_config.lr,
+            lr_warmup_steps=warmup_steps,
+            lr_decay_steps=ft_spec.total_train_steps - warmup_steps,
+            lr_decay_style=self.optimizer_config.lr_scheduler_type,
+            start_wd=self.optimizer_config.weight_decay,
+            end_wd=self.optimizer_config.weight_decay,
+            wd_incr_steps=ft_spec.total_train_steps,
+            wd_incr_style="constant",
+        )
+        self.lr_scheduler = lr_scheduler
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
@@ -72,11 +152,25 @@ class MegatronEngine(TrainEngine):
         )
         self.tf_config = hf_to_mcore_config(hf_config=self.hf_config, dtype=self.dtype)
         # initialize mcore GPTModel
-        self.model = make_mcore_model(
+        model = make_mcore_model(
             hf_config=self.hf_config,
             tf_config=self.tf_config,
         )
-        self.model.to(self.device)
+        model.to(self.device)
+        if self.config.disable_dropout:
+            disable_dropout_in_model(model)
+
+        ddp_config = DistributedDataParallelConfig(
+            **dataclasses.asdict(self.mcore_config.ddp)
+        )
+        self.model = DDP(
+            config=self.tf_config,
+            ddp_config=ddp_config,
+            module=model,
+            disable_bucketing=False,
+        )
+
+        self.create_optimizer(ft_spec)
 
     @property
     def parallelism_group(self) -> dist.ProcessGroup:
@@ -86,7 +180,8 @@ class MegatronEngine(TrainEngine):
         raise NotImplementedError()
 
     def train(self, mode: bool = True):
-        raise NotImplementedError()
+        self.model.train(mode=mode)
+        return self
 
     def upload_weights(self, meta: WeightUpdateMeta):
         raise NotImplementedError()
@@ -109,7 +204,8 @@ class MegatronEngine(TrainEngine):
         raise NotImplementedError()
 
     def step_lr_scheduler(self):
-        raise NotImplementedError()
+        assert self.lr_scheduler is not None, "LR Scheduler is not initialized."
+        self.lr_scheduler.step(1)
 
     def train_batch(
         self,
@@ -117,7 +213,24 @@ class MegatronEngine(TrainEngine):
         loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
         loss_weight_fn: Callable[[TensorDict], float],
     ) -> Dict[str, float]:
-        raise NotImplementedError()
+        # TODO: simple training for testing, no parallelism and packing
+        assert self.model is not None, "Model is not initialized."
+        assert self.optimizer is not None, "Optimizer is not initialized."
+        input_ = amend_position_ids(input_)
+        self.model.train()
+        self.optimizer.zero_grad()
+
+        output = self.model(**input_)
+        loss = loss_fn(output, input_)
+        loss.backward()
+
+        # Update optimizer
+        update_successful, grad_norm, num_zeros_in_grad = self.optimizer.step()
+        return {
+            "loss": loss.item(),
+            "grad_norm": grad_norm,
+            "update_successful": update_successful,
+        }
 
     @torch.no_grad()
     def eval_batch(
@@ -136,4 +249,7 @@ class MegatronEngine(TrainEngine):
         post_hook: Callable[[torch.Tensor, TensorDict], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
-        raise NotImplementedError()
+        # TODO: simple forward for testing, no parallelism and packing
+        assert self.model is not None, "Model is not initialized."
+        input_ = amend_position_ids(input_)
+        return self.model(**input_)
