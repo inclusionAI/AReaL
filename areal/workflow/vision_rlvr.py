@@ -4,12 +4,10 @@ import os
 import uuid
 
 import colorama
-from requests import get
-from sglang import video
 import torch
 from tensordict import TensorDict
 from transformers import AutoProcessor, PreTrainedTokenizerFast
-from qwen_vl_utils import process_vision_info
+from areal.utils.qwen_vl_utils import process_vision_info
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import VLMRequest
@@ -37,9 +35,11 @@ class VisionRLVRWorkflow(RLVRWorkflow):
     async def arun_episode(self, engine, data):
         
         if data.get("videos", None) is not None:
-            _, videos=process_vision_info(data["messages"])
+            _, videos=process_vision_info(data["conversation"])
+            video_dir=data["videos"]
         else:
             videos = None
+            video_dir=None
 
         processed_input = self.processor(
                 images=data.get("images", None),
@@ -59,7 +59,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
             image_data=byte_images,
-            video_data=input_videos,
+            video_data=[video_dir],
             gconfig=self.gconfig.new(n_samples=1),
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
@@ -108,16 +108,18 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),
                 loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                pixel_values=processed_input["pixel_values"].unsqueeze(0) if "pixel_values" in processed_input else None,
-                pixel_values_videos=processed_input["pixel_values_videos"].unsqueeze(0) if "pixel_values_videos" in processed_input else None,
-                image_grid_thw=processed_input["image_grid_thw"].unsqueeze(0) if "image_grid_thw" in processed_input else None,
-                video_grid_thw= processed_input["video_grid_thw"].unsqueeze(0) if "video_grid_thw" in processed_input else None,
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
                 versions=torch.tensor(versions).unsqueeze(0),
                 attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
                 # reward
                 rewards=torch.tensor([reward]),
             )
+            if "pixel_values" in processed_input and "image_grid_thw" in processed_input:
+                res["pixel_values"]=processed_input["pixel_values"].unsqueeze(0)
+                res["image_grid_thw"]=processed_input["image_grid_thw"].unsqueeze(0)
+            if "pixel_values_videos" in processed_input and "video_grid_thw" in processed_input:
+                res["pixel_values_videos"]=processed_input["pixel_values_videos"].unsqueeze(0)
+                res["video_grid_thw"]=processed_input["video_grid_thw"].unsqueeze(0)
             results.append(TensorDict(res, batch_size=[1]))
         if self.dump_dir is not None:
             os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)

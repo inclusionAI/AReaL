@@ -43,7 +43,7 @@ def main(args):
         path=config.train_dataset.path,
         rank=rank,
         world_size=world_size,
-        split="train",
+        split="test",
         type=config.train_dataset.type,
         processor=processor,
         video_dir=config.train_dataset.video_dir if config.train_dataset.video_dir else None

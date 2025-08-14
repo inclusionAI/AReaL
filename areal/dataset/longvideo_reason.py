@@ -24,18 +24,18 @@ def get_longvideo_reason_rl_dataset(path, split, processor, rank, world_size, vi
         assert isinstance(sample["videos"], str), "video path should be a string"
         video_path=os.path.join(video_dir, sample["videos"])
         question= QUESTION_TEMPLATE_VIDEO_QWEN.format(question=sample["problem"])
-        content = [{"type": "video", "video": video_path}, {"type": "text", "text": question}]
-        messages = [
+        content = [{"type": "video", "video": video_path, "max_pixels": processor.video_processor.max_pixels, "min_pixels": processor.video_processor.min_pixels, "min_frames": processor.video_processor.min_frames, "max_frames": processor.video_processor.max_frames}, {"type": "text", "text": question}]
+        conversation = [
             {
                 "role": "user",
                 "content":content
             }
         ]
-        messages = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        messages = processor.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
         
         return {
             "messages": messages,
-             "videos":video_path
+             "conversation":conversation
         }
     dataset = dataset.map(process).remove_columns(["problem", "reasoning"])
     return dataset
