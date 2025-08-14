@@ -80,10 +80,7 @@ def main() -> None:
 
             global_step += 1
 
-    with open(
-        os.path.join(StatsLogger.get_log_path(config.stats_logger), "losses.json"),
-        "w",
-    ) as f:
+    with open(os.path.join(config.cluster.fileroot, "losses.json"), "w") as f:
         json.dump(losses, f)
 
     stats_logger.close()

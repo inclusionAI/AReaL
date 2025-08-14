@@ -6,12 +6,8 @@ from typing import List
 import pytest
 from sh import Command
 
-import areal.api.cli_args as cli_args
-from areal.api.cli_args import SFTConfig
-from areal.utils.stats_logger import StatsLogger
 
-
-def test_sft():
+def test_sft(tmp_path: str):
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
     cmd = (
@@ -20,27 +16,16 @@ def test_sft():
         .bake(os.path.join(base_dir, "entrypoint.py"))
     )
 
-    config_path = os.path.join(base_dir, f"config.yaml")
-    config, _ = cli_args.load_expr_config(
-        ["--config", config_path],
-        SFTConfig,
-    )
-
-    losses_path = os.path.join(
-        StatsLogger.get_log_path(config.stats_logger), "losses.json"
-    )
-    if os.path.exists(losses_path):
-        os.remove(losses_path)
-
     cmd(
-        config=config_path,
+        f"cluster.fileroot={tmp_path}",
+        config=os.path.join(base_dir, f"config.yaml"),
         _err=sys.stderr,
         _out=sys.stdout,
         _env=os.environ,
         _ok_code=1,  # AReaL exits with code 1 even when successful.
     )
 
-    with open(losses_path) as f:
+    with open(os.path.join(tmp_path, "losses.json")) as f:
         losses: List[float] = json.load(f)
 
     with open(os.path.join(base_dir, "ref_losses.json")) as f:
