@@ -55,4 +55,3 @@ ref:
   path: ${actor.path}
   mb_spec:
     max_tokens_per_mb: 4096
-  optimizer: {}
