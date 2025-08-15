@@ -6,7 +6,7 @@ from datasets.distributed import split_dataset_by_node
 from typing import Union
 from areal.utils.multimodal import QUESTION_TEMPLATE_VIDEO_QWEN
 
-def get_longvideo_reason_rl_dataset(path, split, processor, rank, world_size, video_dir=None):
+def get_longvideo_reason_rl_dataset(path, split, processor, rank, world_size, **kwargs):
     """
     longvideo:{
         problem: str
@@ -15,6 +15,9 @@ def get_longvideo_reason_rl_dataset(path, split, processor, rank, world_size, vi
         answer:str
     }
     """
+    assert kwargs.get("video_dir") is not None, "video_dir must be provided in kwargs" 
+    video_dir = kwargs["video_dir"]
+
     dataset = load_dataset(path=path, split=split)
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
 
