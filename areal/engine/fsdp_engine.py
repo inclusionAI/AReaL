@@ -183,7 +183,7 @@ class FSDPEngine(BaseHFEngine):
     ):
         """Broadcast parameters (chunked) from rank 0 (FSDP2 compatible)."""
 
-        named_parameters = dict(self.model.named_parameters())
+        named_parameters = dict(self.get_model_name_parameters())
         for param_specs in grouped_param_specs:
             for param_spec in param_specs:
                 name = param_spec.name
@@ -216,7 +216,7 @@ class FSDPEngine(BaseHFEngine):
         self, weight_chunked_mem_mb: int = 1024
     ) -> List[List[ParamSpec]]:
         param_specs = []
-        for name, param in self.model.named_parameters():
+        for name, param in self.get_model_name_parameters():
             if isinstance(param.data, DTensor):
                 tensor = param.data.full_tensor()
             else:
