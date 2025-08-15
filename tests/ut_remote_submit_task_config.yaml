@@ -1,0 +1,77 @@
+# config for UT on GPU
+
+task_type: PythonJobBuilder
+
+task_submitter: 
+ - '074583'
+
+
+PythonJobBuildConfig:
+  exec_conf: 
+    cpu: 16
+    num: 1
+    gpu_num: 1
+    memory: 196608 
+    disk_m: 204800 
+    gpu_type: h20
+
+  km_conf: 
+    image: ${UT_IMAGE}
+
+  other_conf: 
+    k8s_priority: "high"
+    k8s_app_name: ${K8S_APP_NAME}
+    runtime: 'pytorch'
+    rdma: True
+    host_network: True
+    tag: "asystem-AReaL-ut" 
+
+  pre_custom_command: 
+    - 'export OSS_TEST_ACCESS_KEY_ID=${OSS_TEST_ACCESS_KEY_ID}'
+    - 'export OSS_TEST_ACCESS_KEY_SECRET=${OSS_TEST_ACCESS_KEY_SECRET}'
+    - 'export DD_APP_SECRET=${DD_APP_SECRET}'
+    - 'git clone https://git:${GIT_TOKEN}@code.alipay.com/inclusionAI/AReaL.git'
+    - 'cd AReaL'
+    - 'git checkout ${COMMIT_ID}'
+    - 'pip install -r requirements.txt -i https://pypi.antfin-inc.com/simple'
+    - 'cd ..'
+    - 'pwd'
+    - 'nvidia-smi'
+
+  post_custom_command: 
+    - 'cd /'
+    - 'ls'
+    - 'wget -nv http://antsys-oss-tools-dev.cn-hangzhou-alipay-b.oss-cdn.aliyun-inc.com/ossutil64'
+    - 'chmod 755 ossutil64'
+    - './ossutil64 --access-key-secret ${OSS_TEST_ACCESS_KEY_SECRET} --access-key-id ${OSS_TEST_ACCESS_KEY_ID} --endpoint http://cn-hangzhou.alipay.aliyun-inc.com  cp -f /coverage.xml oss://cmps-model/ACI_Asystem_AReaL/${PIPELINE_ID}/UT/coverage.xml'
+    - './ossutil64 --access-key-secret ${OSS_TEST_ACCESS_KEY_SECRET} --access-key-id ${OSS_TEST_ACCESS_KEY_ID} --endpoint http://cn-hangzhou.alipay.aliyun-inc.com  cp -f /result-report.xml oss://cmps-model/ACI_Asystem_AReaL/${PIPELINE_ID}/UT/result-report.xml'
+
+
+cases_type: ut
+is_isolated: True
+
+cases_parent_path: ${CASE_DIR}
+cases_sub_path:   
+  - tests/agent # skip failed cases
+  - tests/comm # skip failed cases
+  - tests/cpp_extensions # skip failed cases
+  - tests/data # skip failed cases
+  - tests/distributed # skip failed cases
+#  - tests/experiments # may it cases
+  - tests/generation # skip failed cases
+  - tests/interfaces # skip failed cases
+#  - tests/legacy # may it cases
+#  - tests/model # may it cases
+  - tests/system
+
+
+pytest_args:
+  - -sv
+  - --continue-on-collection-errors
+  - --junit-xml=/result-report.xml
+  - --cov-report=xml:/coverage.xml
+  - --cov=${CASE_DIR}
+  - --cov-append
+  - --cov-report=term-missing
+  - --alluredir=/allure-results
+  - --timeout=300
