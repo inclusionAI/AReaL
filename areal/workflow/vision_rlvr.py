@@ -1,8 +1,9 @@
 import asyncio
-import functools
 import os
 import uuid
 
+import aiofiles
+import aiofiles.os
 import colorama
 import torch
 from tensordict import TensorDict
@@ -10,7 +11,7 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.utils.qwen_vl_utils import process_vision_info
 
 from areal.api.cli_args import GenerationHyperparameters
-from areal.api.io_struct import VLMRequest
+from areal.api.io_struct import ModelRequest
 from areal.utils.data import concat_padded_tensors
 from areal.utils.multimodal import image2base64
 from areal.workflow.rlvr import RLVRWorkflow
@@ -79,7 +80,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         seqlens = []
 
         results = []
-        loop = asyncio.get_event_loop()
+        asyncio.get_event_loop()
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
@@ -91,26 +92,13 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             prompt_strs.append(prompt_str)
             completions_strs.append(completions_str)
             seqlens.append(len(seq))
-            try:
-                reward = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        self.rw_executor,
-                        functools.partial(
-                            self.reward_fn,
-                            prompt_str,
-                            completions_str,
-                            resp.input_tokens,
-                            resp.output_tokens,
-                            **data,
-                        ),
-                    ),
-                    timeout=REWARD_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"Computing reward timeout after {REWARD_TIMEOUT_SECONDS}s. Set reward to 0."
-                )
-                reward = 0
+            reward = await self.async_reward_fn(
+                prompt=prompt_str,
+                completions=completions_str,
+                prompt_ids=resp.input_tokens,
+                completion_ids=resp.output_tokens,
+                **data,
+            )
             rewards.append(reward)
             res = dict(
                 # unsqueeze to add an additional batch dimension
@@ -130,7 +118,8 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 res["video_grid_thw"]=data["video_grid_thw"].unsqueeze(0)
             results.append(TensorDict(res, batch_size=[1]))
         if self.dump_dir is not None:
-            os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
+            dump_path = os.path.join(self.dump_dir, str(version))
+            await aiofiles.os.makedirs(dump_path, exist_ok=True)
             # Get the unique identifier for this prompt
             qid = None
             for key in ["query_id", "id", "qid"]:
@@ -140,9 +129,8 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             qid = qid or uuid.uuid4().hex
 
             # Dump rollout to file
-            with open(
-                os.path.join(self.dump_dir, str(version), f"{qid}.txt"), "a"
-            ) as f:
+            file_path = os.path.join(dump_path, f"{qid}.txt")
+            async with aiofiles.open(file_path, "a") as f:
                 n_samples = self.gconfig.n_samples
                 for i, (p, c, r, sl) in enumerate(
                     zip(prompt_strs, completions_strs, rewards, seqlens)
@@ -154,6 +142,6 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                             f"sequence is: \n{colorama.Fore.YELLOW + colorama.Style.DIM}{c}{colorama.Style.RESET_ALL}",
                         ]
                     )
-                    f.write(info + "\n")
+                    await f.write(info + "\n")
 
         return concat_padded_tensors(results)

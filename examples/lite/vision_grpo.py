@@ -8,13 +8,14 @@ import wandb
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.api.io_struct import FinetuneSpec, WeightUpdateMeta
-from areal.dataset.__init__ import get_custom_dataset
+from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo, WeightUpdateMeta
+from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.reward.__init__ import get_custom_reward_fn
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
+from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.utils.multimodal import VisionCollator
@@ -31,10 +32,6 @@ def main(args):
     wandb.init(project=config.stats_logger.wandb.project)
 
     rank = int(os.getenv("RANK"))
-    torch.cuda.memory._record_memory_history(
-        enabled=True,
-        trace_alloc_max_entries=200000  # 可按需调大/调小
-    )
     world_size = int(os.getenv("WORLD_SIZE"))
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
     collator = VisionCollator(processor=processor, tokenizer=tokenizer)
@@ -102,7 +99,12 @@ def main(args):
     # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
-    weight_update_meta = [WeightUpdateMeta.from_disk(config.saver)]
+    weight_update_meta = [
+        WeightUpdateMeta.from_fsdp_nccl(
+            AllocationMode.from_str(config.allocation_mode), actor
+        )
+    ]
+    # weight_update_meta = [WeightUpdateMeta.from_disk(config.saver)]
     dist.broadcast_object_list(weight_update_meta, src=0)
     weight_update_meta = weight_update_meta[0]
 
@@ -128,18 +130,40 @@ def main(args):
     )
 
     # Run training.
-    saver = Saver(config.saver, ft_spec, for_recover=False)
+    saver = Saver(config.saver, ft_spec)
     stats_logger = StatsLogger(config.stats_logger, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
+
+    recover_handler = RecoverHandler(config.recover, ft_spec)
+    recover_info = recover_handler.load(
+        actor,
+        saver,
+        evaluator,
+        stats_logger,
+        train_dataloader,
+        inference_engine=rollout,
+        weight_update_meta=weight_update_meta,
+    )
+    start_step = (
+        recover_info.last_step_info.next().global_step
+        if recover_info is not None
+        else 0
+    )
 
     total_epochs = config.total_train_epochs
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
     data_generator = iter(train_dataloader)
-    for global_step in range(max_steps):
+    for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
+        step_info = StepInfo(
+            global_step=global_step,
+            epoch=epoch,
+            epoch_step=step,
+            steps_per_epoch=steps_per_epoch,
+        )
 
         with stats_tracker.record_timing("rollout"):
             if config.async_training:
@@ -195,7 +219,14 @@ def main(args):
             rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
-            saver.save(actor, epoch, step, global_step)
+            saver.save(
+                actor,
+                epoch,
+                step,
+                global_step,
+                tokenizer=tokenizer,
+                processor=processor,
+            )
 
         with stats_tracker.record_timing("eval"):
 
@@ -227,6 +258,18 @@ def main(args):
                 global_step,
             )
 
+        with stats_tracker.record_timing("checkpoint_for_recover"):
+            recover_handler.dump(
+                actor,
+                step_info,
+                saver,
+                evaluator,
+                stats_logger,
+                train_dataloader,
+                tokenizer=tokenizer,
+                processor=processor,
+            )
+
         stats_logger.commit(epoch, step, global_step, stats)
 
     stats_logger.close()
@@ -236,7 +279,6 @@ def main(args):
         ref.destroy()
     actor.destroy()
     wandb.finish()
-    torch.cuda.memory._dump_snapshot(f"cuda_memory_snapshot_rank{rank}.pkl")
 
 
 if __name__ == "__main__":

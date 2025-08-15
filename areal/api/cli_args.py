@@ -507,6 +507,25 @@ class SaverConfig(_Timer):
 
 
 @dataclass
+class RecoverConfig(_Timer):
+    mode: str = field(
+        default="disabled",
+        metadata={
+            "help": "Recovery mode for the launcher. "
+            "Options: "
+            "'disabled': Never recover from previous runs. "
+            "'auto': Automatically recover from previous runs if recover info and checkpoints are available. "
+            "'fault': Only recover from previous runs if the new run fails. "
+            "'resume': Force to resume, raise an error if no recover info was found. Never resume if failed again."
+        },
+    )
+    retries: int = field(
+        default=3,
+        metadata={"help": "Number of recovery retries (auto/fault modes only)."},
+    )
+
+
+@dataclass
 class WandBConfig:
     mode: str = "disabled"
     entity: Optional[str] = None
@@ -756,11 +775,10 @@ class BaseExperimentConfig:
     valid_dataset: Optional[DatasetConfig] = field(default=None)
 
     saver: SaverConfig = field(default_factory=SaverConfig)
-    checkpointer: SaverConfig = field(default_factory=SaverConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
     stats_logger: StatsLoggerConfig = field(default_factory=StatsLoggerConfig)
+    recover: RecoverConfig = field(default_factory=RecoverConfig)
 
-    server_only: bool = False
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
 

@@ -1,9 +1,9 @@
 import asyncio
-import functools
 import os
 import uuid
-from concurrent.futures import ProcessPoolExecutor
 
+import aiofiles
+import aiofiles.os
 import colorama
 import torch
 from tensordict import TensorDict
@@ -11,14 +11,13 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import LLMRequest
+from areal.api.io_struct import ModelRequest
+from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.utils.data import concat_padded_tensors
 from realhf.base import logging
 
 logger = logging.getLogger("RLVR workflow")
-
-REWARD_TIMEOUT_SECONDS = 15
 
 
 class RLVRWorkflow(RolloutWorkflow):
@@ -35,7 +34,7 @@ class RLVRWorkflow(RolloutWorkflow):
         self.tokenizer = tokenizer
         self.enable_thinking = enable_thinking
         self.dump_dir = dump_dir
-        self.rw_executor = ProcessPoolExecutor(max_workers=4)
+        self.async_reward_fn = AsyncRewardWrapper(reward_fn)
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
@@ -48,10 +47,11 @@ class RLVRWorkflow(RolloutWorkflow):
         )
 
         n_samples = self.gconfig.n_samples
-        req = LLMRequest(
+        req = ModelRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
             gconfig=self.gconfig.new(n_samples=1),
+            tokenizer=self.tokenizer,
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
 
@@ -62,7 +62,6 @@ class RLVRWorkflow(RolloutWorkflow):
         seqlens = []
 
         results = []
-        loop = asyncio.get_event_loop()
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
@@ -74,26 +73,13 @@ class RLVRWorkflow(RolloutWorkflow):
             prompt_strs.append(prompt_str)
             completions_strs.append(completions_str)
             seqlens.append(len(seq))
-            try:
-                reward = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        self.rw_executor,
-                        functools.partial(
-                            self.reward_fn,
-                            prompt_str,
-                            completions_str,
-                            resp.input_tokens,
-                            resp.output_tokens,
-                            **data,
-                        ),
-                    ),
-                    timeout=REWARD_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"Computing reward timeout after {REWARD_TIMEOUT_SECONDS}s. Set reward to 0."
-                )
-                reward = 0
+            reward = await self.async_reward_fn(
+                prompt_str,
+                completions_str,
+                resp.input_tokens,
+                resp.output_tokens,
+                **data,
+            )
             rewards.append(reward)
             res = dict(
                 # unsqueeze to add an additional batch dimension
@@ -108,7 +94,8 @@ class RLVRWorkflow(RolloutWorkflow):
             results.append(TensorDict(res, batch_size=[1]))
 
         if self.dump_dir is not None:
-            os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
+            dump_path = os.path.join(self.dump_dir, str(version))
+            await aiofiles.os.makedirs(dump_path, exist_ok=True)
             # Get the unique identifier for this prompt
             qid = None
             for key in ["query_id", "id", "qid"]:
@@ -118,9 +105,8 @@ class RLVRWorkflow(RolloutWorkflow):
             qid = qid or uuid.uuid4().hex
 
             # Dump rollout to file
-            with open(
-                os.path.join(self.dump_dir, str(version), f"{qid}.txt"), "a"
-            ) as f:
+            file_path = os.path.join(dump_path, f"{qid}.txt")
+            async with aiofiles.open(file_path, "a") as f:
                 n_samples = self.gconfig.n_samples
                 for i, (p, c, r, sl) in enumerate(
                     zip(prompt_strs, completions_strs, rewards, seqlens)
@@ -132,6 +118,6 @@ class RLVRWorkflow(RolloutWorkflow):
                             f"sequence is: \n{colorama.Fore.YELLOW + colorama.Style.DIM}{c}{colorama.Style.RESET_ALL}",
                         ]
                     )
-                    f.write(info + "\n")
+                    await f.write(info + "\n")
 
         return concat_padded_tensors(results)

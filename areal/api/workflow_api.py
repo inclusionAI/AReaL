@@ -4,8 +4,9 @@ import queue
 import threading
 import time
 import traceback
-from typing import TYPE_CHECKING, Any, Callable, Dict, List
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
+import aiohttp
 import torch.distributed as dist
 import uvloop
 from tensordict import TensorDict
@@ -15,6 +16,7 @@ from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import RolloutStat
 from areal.utils.data import concat_padded_tensors
+from areal.utils.http import get_default_connector
 from realhf.base import logging
 
 if TYPE_CHECKING:
@@ -64,9 +66,13 @@ class WorkflowExecutor:
 
         self.rollout_stat = RolloutStat()
 
+        self.session = None
+
     def initialize(self):
         self.rollout_tasks: Dict[str, asyncio.Task] = {}
-        self.rollout_thread = threading.Thread(target=self._rollout_thread)
+        self.rollout_thread = threading.Thread(
+            target=self._rollout_thread, daemon=True
+        )  # set daemon=True to automatically exit when error occurs
         self.rollout_thread.start()
 
     def destroy(self):
@@ -100,6 +106,19 @@ class WorkflowExecutor:
             traceback.print_exc()
 
     async def _rollout_thread_async(self):
+        if self.session is None:
+            # NOTE: Lazily initialize aiohttp.ClientSession since it needs to be initialized
+            # inside asyncio loop in WorkflowExecutor
+            self.session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(
+                    total=self.config.request_timeout,
+                    sock_connect=self.config.request_timeout,
+                    connect=self.config.request_timeout,
+                ),
+                read_bufsize=1024 * 1024 * 10,
+                connector=get_default_connector(),
+            )
+
         rollout_tasks = self.rollout_tasks
         rid = 0
         try:
@@ -150,7 +169,6 @@ class WorkflowExecutor:
                     with self.lock:
                         rollout_tasks.pop(task_rid)
                         self.rollout_stat.accepted += 1
-
                         self.rollout_stat.running -= 1
                         if self.config.enable_rollout_tracing:
                             logger.info(
@@ -179,9 +197,17 @@ class WorkflowExecutor:
                             await task
                         except asyncio.CancelledError:
                             pass
+            await self.session.close()
 
-    def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:
+    def submit(
+        self,
+        data: Dict[str, Any],
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
+    ) -> None:
         try:
+            if workflow is None:
+                workflow = workflow_builder()
             self.input_queue.put_nowait((data, workflow))
         except queue.Full:
             raise RuntimeError("Input queue full. Please increase queue_size.")
@@ -235,17 +261,21 @@ class WorkflowExecutor:
         return concat_padded_tensors(results)
 
     def rollout_batch(
-        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+        self,
+        data: List[Dict[str, Any]],
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
     ) -> TensorDict:
         """Submit a batch of requests to the inference engine and wait for the results."""
         for item in data:
-            self.submit(item, workflow)
+            self.submit(item, workflow, workflow_builder)
         return self.wait(count=len(data))
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: "RolloutWorkflow",
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ):
         if not hasattr(self, "data_generator"):
@@ -260,7 +290,11 @@ class WorkflowExecutor:
             ):
                 data = next(self.data_generator)
                 for item in data:
-                    self.submit(item, workflow=workflow)
+                    self.submit(
+                        item,
+                        workflow=workflow,
+                        workflow_builder=workflow_builder,
+                    )
             try:
                 return self.wait(
                     dataloader.batch_size, timeout=1, should_accept=should_accept

@@ -103,7 +103,7 @@ class RLVRWorkflow(RolloutWorkflow):
             add_generation_prompt=True,
             enable_thinking=self.enable_thinking,
         )
-        req = LLMRequest(
+        req = ModelRequest(
             input_ids=input_ids,
             ...
         )

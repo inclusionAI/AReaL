@@ -35,6 +35,33 @@ STATUS_MAPPING = {
 SBATCH_SCRIPT_TEMPLATE = """#!/bin/bash
 {sbatch_options}
 
+##### Setup failure capture and clean up ##### 
+# Array to track background PIDs
+declare -a bg_pids=()
+
+# Function to clean up background processes
+cleanup_bg_jobs() {{
+    for pid in "${{bg_pids[@]}}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "Killing background job $pid"
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+    # Wait a bit for processes to terminate
+    sleep 0.5
+    # Force kill if still running
+    for pid in "${{bg_pids[@]}}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+}}
+
+# Trap to ensure cleanup on exit
+trap cleanup_bg_jobs EXIT
+
+##### Get IP addresses and submit jobs #####
+
 # Getting the node names
 nodes=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
 echo nodes=$nodes
@@ -57,13 +84,40 @@ echo trainer_port=$trainer_port
 # srun commands
 {srun_cmds}
 
-wait
+##### Monitor all processes #####
+while [ ${{#bg_pids[@]}} -gt 0 ]; do
+    for i in "${{!bg_pids[@]}}"; do
+        pid=${{bg_pids[$i]}}
+        if ! kill -0 "$pid" 2>/dev/null; then
+            # Process has terminated, check its exit code
+            if wait "$pid"; then
+                # Process completed successfully, remove from array
+                unset bg_pids[$i]
+                bg_pids=("${{bg_pids[@]}}")  # Reindex array
+                echo "Process $pid completed successfully"
+            else
+                echo "Process $pid failed, terminating remaining jobs"
+
+                exit 1  # This will trigger cleanup via trap
+            fi
+        fi
+    done
+    
+    # Break if no processes left
+    if [ ${{#bg_pids[@]}} -eq 0 ]; then
+        break
+    fi
+    
+    sleep 0.1  # Small delay to avoid busy waiting
+done
 """
 
 SRUN_CMD_TEMPLATE: str = """srun {additional_args} \\
     --nodelist=${{nodes_array[{node_id}]}} --nodes={nodes} --ntasks={ntasks} \\
     --gres=gpu:{n_gpus_per_node} --cpus-per-task={cpus_per_task} --mem-per-cpu={mem_per_cpu}M \\
     {cmd} &
+bg_pids+=($!)
+
 """
 
 APPTAINER_CMD_TEMPLATE: str = """singularity exec --no-home --writable-tmpfs --nv --pid \\
@@ -89,11 +143,14 @@ def cancel_jobs(
         cmd += ["-n", ",".join(slurm_names)]
     elif slurm_ids is not None:
         cmd += [",".join(str(s) for s in slurm_ids)]
-    subprocess.check_call(cmd)
-    logger.info(
-        f"Cancelled Slurm job with signal {signal}: "
-        f"slurm identifiers {slurm_names if slurm_ids is None else slurm_ids}. CMD: {cmd}"
-    )
+    try:
+        subprocess.check_call(cmd)
+        logger.info(
+            f"Cancelled Slurm job with signal {signal}: "
+            f"slurm identifiers {slurm_names if slurm_ids is None else slurm_ids}. CMD: {cmd}"
+        )
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"Cancel slurm job failed, reason: {e}")
 
 
 def query_jobs(
