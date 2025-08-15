@@ -32,6 +32,8 @@ dependencies = [
     "datasets",
     "accelerate",
     "transformers==4.54.0",
+    "megatron-core==0.13.1",
+    "mbridge==0.13.0",
     
     # Scientific computing
     "scipy",

@@ -44,6 +44,8 @@ isort==5.13.2
 clang-format==19.1.7
 ninja
 paramiko
+megatron-core==0.13.1
+mbridge==0.13.0
 # To eliminate security risks
 torch>2.0.0
 black==25.1.0
