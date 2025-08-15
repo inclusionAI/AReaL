@@ -54,7 +54,7 @@ class LLMResponse:
 
 @dataclass
 class VLMRequest(LLMRequest):
-    image_data: Optional[List[ImageObject | str]] = field(default_factory=list)
+    image_data: Optional[List[ImageObject | str]] = None
     video_data: Optional[List[Union[str, Dict] | str]] = None
     
 

@@ -65,7 +65,7 @@ def main(args):
         batch_size=config.train_dataset.batch_size // world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
-        collate_fn=lambda x: x,
+        collate_fn=collator,
         drop_last=config.train_dataset.drop_last,
     )
     valid_dataloader = StatefulDataLoader(
@@ -73,7 +73,7 @@ def main(args):
         batch_size=config.valid_dataset.batch_size // world_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
-        collate_fn=lambda x: x,
+        collate_fn=collator,
         drop_last=config.valid_dataset.drop_last,
     )
     ft_spec = FinetuneSpec(

@@ -33,11 +33,8 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         self.processor = processor
 
     async def arun_episode(self, engine, data):
-        
+
         n_samples = self.gconfig.n_samples
-        input_ids=data["input_ids"]
-        breakpoint()
-        
         if data.get("videos", None) is not None:
             # _, videos=process_vision_info(data["conversation"])
 
@@ -52,7 +49,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             # Special extension and padding are applied for image but not video. Thus video input has to use tokenizer tokenized input_ids. Ref to https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/managers/scheduler.py#L1295
             req = VLMRequest(
                 rid=uuid.uuid4().hex,
-                input_ids=input_ids,
+                input_ids=data["input_ids"],
                 video_data=data["videos"],
                 gconfig=self.gconfig.new(n_samples=1),
             )
@@ -69,7 +66,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             
             req = VLMRequest(
                 rid=uuid.uuid4().hex,
-                input_ids=input_ids,
+                input_ids=data["input_ids"],
                 image_data=data["images"],
                 gconfig=self.gconfig.new(n_samples=1),
             )
