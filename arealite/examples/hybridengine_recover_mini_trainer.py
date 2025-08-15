@@ -315,7 +315,8 @@ def main_grpo():
     if can_recover:
         recover.load_ctl_states(recover_meta_info)
         dataloader.load_state_dict(recover_meta_info.dataloader_state)
-        remote_megatron_config["load"] = recover_meta_info.checkpoint_path
+        # remote_megatron_config["load"] = recover_meta_info.checkpoint_path
+        remote_megatron_config["recover_dir"] = recover_meta_info.checkpoint_path
     ##################################################################################
 
     stats_logger = StatsLogger(StatsLoggerConfig(
