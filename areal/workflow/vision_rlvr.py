@@ -35,17 +35,19 @@ class VisionRLVRWorkflow(RLVRWorkflow):
     async def arun_episode(self, engine, data):
         
         n_samples = self.gconfig.n_samples
+        input_ids=data["input_ids"]
+        breakpoint()
         
         if data.get("videos", None) is not None:
-            _, videos=process_vision_info(data["conversation"])
+            # _, videos=process_vision_info(data["conversation"])
 
-            processed_input = self.processor(
-                videos=videos,
-                text=data["messages"],
-                padding=False,
-                return_tensors="pt",
-            )
-            input_ids =self.processor.tokenizer(data["messages"],padding=False, return_tensors="pt")['input_ids'].tolist()[0]
+            # processed_input = self.processor(
+            #     videos=videos,
+            #     text=data["messages"],
+            #     padding=False,
+            #     return_tensors="pt",
+            # )
+            # input_ids =self.processor.tokenizer(data["messages"],padding=False, return_tensors="pt")['input_ids'].tolist()[0]
 
             # Special extension and padding are applied for image but not video. Thus video input has to use tokenizer tokenized input_ids. Ref to https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/managers/scheduler.py#L1295
             req = VLMRequest(
@@ -56,19 +58,19 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             )
             
         elif data.get("images", None) is not None:
-            processed_input=self.processor(
-                images=data["images"],
-                text=data["messages"],
-                padding=False,
-                return_tensors="pt",
-            )
-            input_ids = processed_input["input_ids"].tolist()[0]
-            byte_images= image2base64(data["images"]) 
+            # processed_input=self.processor(
+            #     images=data["images"],
+            #     text=data["messages"],
+            #     padding=False,
+            #     return_tensors="pt",
+            # )
+            # input_ids = processed_input["input_ids"].tolist()[0]
+            # byte_images= image2base64(data["images"]) 
             
             req = VLMRequest(
                 rid=uuid.uuid4().hex,
                 input_ids=input_ids,
-                image_data=byte_images,
+                image_data=data["images"],
                 gconfig=self.gconfig.new(n_samples=1),
             )
 
@@ -123,12 +125,12 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 # reward
                 rewards=torch.tensor([reward]),
             )
-            if "pixel_values" in processed_input and "image_grid_thw" in processed_input:
-                res["pixel_values"]=processed_input["pixel_values"].unsqueeze(0)
-                res["image_grid_thw"]=processed_input["image_grid_thw"].unsqueeze(0)
-            if "pixel_values_videos" in processed_input and "video_grid_thw" in processed_input:
-                res["pixel_values_videos"]=processed_input["pixel_values_videos"].unsqueeze(0)
-                res["video_grid_thw"]=processed_input["video_grid_thw"].unsqueeze(0)
+            if "pixel_values" in data and "image_grid_thw" in data:
+                res["pixel_values"]=data["pixel_values"].unsqueeze(0)
+                res["image_grid_thw"]=data["image_grid_thw"].unsqueeze(0)
+            if "pixel_values_videos" in data and "video_grid_thw" in data:
+                res["pixel_values_videos"]=data["pixel_values_videos"].unsqueeze(0)
+                res["video_grid_thw"]=data["video_grid_thw"].unsqueeze(0)
             results.append(TensorDict(res, batch_size=[1]))
         if self.dump_dir is not None:
             os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)

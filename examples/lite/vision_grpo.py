@@ -17,6 +17,7 @@ from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
+from areal.utils.multimodal import VisionCollator
 from areal.workflow.vision_rlvr import VisionRLVRWorkflow
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import seeding, stats_tracker
@@ -36,7 +37,7 @@ def main(args):
     )
     world_size = int(os.getenv("WORLD_SIZE"))
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
-
+    collator = VisionCollator(processor=processor, tokenizer=tokenizer)
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
 
     train_dataset = get_custom_dataset(
