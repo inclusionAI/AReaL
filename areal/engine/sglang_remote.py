@@ -33,14 +33,17 @@ RID_CACHE_SIZE = 128
 
 class RemoteSGLangEngine(InferenceEngine):
 
-    def __init__(self, config: InferenceEngineConfig):
+    def __init__(self, config: InferenceEngineConfig, opp_server_addrs=""):
         self.config = config
 
         self.rid_to_address = {}
         # Maintain the addresses for the recent 128 requests
         self.rid_queue = []
 
-        self.addresses = os.getenv("AREAL_LLM_SERVER_ADDRS").split(",")
+        if opp_server_addrs !="":
+            self.addresses = opp_server_addrs.split(",")
+        else:
+            self.addresses = os.getenv("AREAL_LLM_SERVER_ADDRS").split(",")
 
         if not self.addresses:
             raise RuntimeError("No configured SGLang servers.")

@@ -31,7 +31,8 @@ class WerewolfWorkflow(RolloutWorkflow):
         turn_discount: float = 1.0,
         dump_dir: str | None = None,
         env_kwargs: dict | None = None,
-        role: str = "villager"
+        role: str = "villager",
+        opp_rollout: InferenceEngine | None = None,
     ):
         self.gconfig = gconfig
         self.tokenizer = tokenizer
@@ -40,6 +41,7 @@ class WerewolfWorkflow(RolloutWorkflow):
         self.dump_dir = dump_dir
         self.env_kwargs = env_kwargs
         self.role = role
+        self.opp_rollout = opp_rollout
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
@@ -66,13 +68,26 @@ class WerewolfWorkflow(RolloutWorkflow):
                 add_generation_prompt=True,
             )
 
-            req = ModelRequest(
-                rid=rid,
-                input_ids=input_ids,
-                gconfig=self.gconfig.new(n_samples=1),
-                tokenizer=self.tokenizer,
-            )
-            resp = await engine.agenerate(req)
+            if (((env.agent_role != "werewolf" and self.role == "werewolf")
+                or (env.agent_role == "werewolf" and self.role == "villager"))
+                and self.opp_rollout):
+                req = ModelRequest(
+                    rid=rid,
+                    input_ids=input_ids,
+                    gconfig=self.gconfig.new(n_samples=1),
+                    tokenizer=self.tokenizer,
+                )
+                resp = await self.opp_rollout.agenerate(req)
+
+                logger.warning(f"The OPP generation is: {self.tokenizer.decode(resp.output_tokens)}.")
+            else:
+                req = ModelRequest(
+                    rid=rid,
+                    input_ids=input_ids,
+                    gconfig=self.gconfig.new(n_samples=1),
+                    tokenizer=self.tokenizer,
+                )
+                resp = await engine.agenerate(req)
 
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
@@ -108,6 +123,7 @@ class WerewolfWorkflow(RolloutWorkflow):
             completions_strs.append(completion_str)
             rewards.append(reward)
             seqlens.append(len(seq))
+            traj_len += (resp.input_len + resp.output_len)
 
             if done or (turn == self.max_turns - 1):
                 logger.info(f"Trajectory ended with {turn + 1} turns, total reward: {sum(rewards)}.")
@@ -126,12 +142,18 @@ class WerewolfWorkflow(RolloutWorkflow):
             traj_len,
             vill_total,
             were_total,
+            stats.get("vill_wins", 0),
+            stats.get("were_wins", 0),
             stats.get("werewolf_kills", 0),
+            stats.get("werewolf_correct_kills", 0),
             stats.get("villager_correct_votes", 0),
             stats.get("villager_wrong_votes", 0),
             stats.get("witch_heals", 0),
+            stats.get("witch_correct_heals", 0),
             stats.get("witch_poisons", 0),
+            stats.get("witch_correct_poisons", 0),
             stats.get("hunter_shots", 0),
+            stats.get("hunter_correct_shots", 0),
         ]
         log_tensor = torch.tensor(logging_vals, dtype=torch.float32).unsqueeze(0)
         if results:

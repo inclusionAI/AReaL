@@ -495,6 +495,7 @@ def slurm_main(config, run_id: int = 0):
         )
 
     if allocation_mode.type_ != AllocationType.LLM_SERVER_ONLY:
+        logger.warning(f"Lauching trainer with gpus_per_node: {gpus_per_node}")
         # launch trainers
         launcher.submit_array(
             job_name="trainer",

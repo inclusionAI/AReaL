@@ -83,12 +83,18 @@ class WerewolfEnv(EnvironmentService):
         )
         # Stats for RL training
         self.stats: Dict[str, int] = {
+            "vill_wins": 0,
+            "were_wins": 0,
             "werewolf_kills": 0,
+            "werewolf_correct_kills": 0,
             "villager_correct_votes": 0,
             "villager_wrong_votes": 0,
             "witch_heals": 0,
+            "witch_correct_heals": 0,
             "witch_poisons": 0,
+            "witch_correct_poisons": 0,
             "hunter_shots": 0,
+            "hunter_correct_shots": 0,
         }
 
         logutil(f"Game initialized with roles: {self.num_players}.")
@@ -117,12 +123,18 @@ class WerewolfEnv(EnvironmentService):
         self.hunter_player = None
         self.player_memory = {p: [] for p in self.roles}
         self.stats: Dict[str, int] = {
+            "vill_wins": 0,
+            "were_wins": 0,
             "werewolf_kills": 0,
+            "werewolf_correct_kills": 0,
             "villager_correct_votes": 0,
             "villager_wrong_votes": 0,
             "witch_heals": 0,
+            "witch_correct_heals": 0,
             "witch_poisons": 0,
+            "witch_correct_poisons": 0,
             "hunter_shots": 0,
+            "hunter_correct_shots": 0,
         }
 
         # game always starts at night with werewolves acting first
@@ -342,8 +354,10 @@ class WerewolfEnv(EnvironmentService):
             if winner:
                 done = True
                 if winner == "werewolf":
+                    self.stats["were_wins"] += 1
                     reward[1] += 3.0
                 else:
+                    self.stats["vill_wins"] += 1
                     reward[0] += 3.0
                 info += f"Game over. {winner} win."
             else:
@@ -358,16 +372,20 @@ class WerewolfEnv(EnvironmentService):
         elif self.phase == "hunter":
             shoot_act = actions.get(players[0], "") if players else ""
             if shoot_act.startswith("shoot "):
-                self.stats["hunter_shots"] += 1
+                self.stats["hunter_shots"] += 1 
                 target = shoot_act.split("shoot ")[1].strip()
+                if self.alive.get(target, False) and self.role_type[target] == "werewolf":
+                    self.stats["hunter_correct_shots"] += 1
                 info += self._apply_kill(target, "shot")
             self.await_hunter = False
             winner = self._check_win()
             if winner:
                 done = True
                 if winner == "werewolf":
+                    self.stats["were_wins"] += 1
                     reward[1] += 3.0
                 else:
+                    self.stats["vill_wins"] += 1
                     reward[0] += 3.0
                 info += f"Game over. {winner} win."
             else:
@@ -459,6 +477,8 @@ class WerewolfEnv(EnvironmentService):
                         self.witch_poison = False # The witch can only poison once per game.
                         self.stats["witch_poisons"] += 1
                         self._add_memory(p, f"You poisoned {target}.")
+                        if self.role_type[target] == "werewolf":
+                            self.stats["witch_correct_poisons"] += 1
                 elif act.startswith("save ") and self.witch_heal:
                     heal_target = act.split("save ")[1].strip()
                     self.witch_heal = False
@@ -468,12 +488,16 @@ class WerewolfEnv(EnvironmentService):
                             self.alive[heal_target] = True
                             msg += f"Witch used heal on {heal_target}."
                             self._add_memory(p, f"You healed {heal_target}.")
+                            if self.role_type[heal_target] != "werewolf":
+                                self.stats["witch_correct_heals"] += 1
                         else:
                             self._add_memory(p, f"You used heal potion on {heal_target}, to no effect.")
                             msg += "Witch used heal potion, to no effect."
 
         if kill_target:
             self.stats["werewolf_kills"] += 1
+            if self.role_type[kill_target] != "werewolf":
+                self.stats["werewolf_correct_kills"] += 1
             msg += self._apply_kill(kill_target, "killed")
             for p in players:
                 if self.role_type[p] == "werewolf" and actions.get(p, "").startswith("kill "):

@@ -1,9 +1,9 @@
-experiment_name: werewolf-grpo
+experiment_name: infer-only
 trial_name: trial0
-allocation_mode: sglang.d8p1t1+d8p1t1
+allocation_mode: sglang.d6p1t1+d2p1t1
 cluster:
   fileroot: /storage/openpsi/experiments
-  n_nodes: 2
+  n_nodes: 1
   n_gpus_per_node: 8
   name_resolve:
     type: nfs
@@ -12,8 +12,6 @@ seed: 1
 total_train_epochs: 1
 tokenizer_path: ${actor.path}
 async_training: true
-opp_server_addrs: 33.215.20.167:12998,33.215.20.167:20862,33.215.20.167:31347,33.215.20.167:42281,33.215.20.167:43284,33.215.20.167:45247
-role: villager
 
 rollout:
   experiment_name: ${experiment_name}
@@ -34,8 +32,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  # path: /storage/openpsi/models/Qwen__Qwen2.5-3B-Instruct
-  path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-lite-final/werewolf1/default/epoch0epochstep186globalstep186
+  path: /storage/openpsi/models/Qwen__Qwen2.5-3B-Instruct
   init_from_scratch: false
   disable_dropout: true
   dtype: bfloat16
@@ -105,8 +102,7 @@ evaluator:
   freq_secs: null
 
 recover:
-  mode: auto
-  retries: 5
+  mode: disabled
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
@@ -126,8 +122,3 @@ launcher:
   inference_server_mem_per_gpu: 32768
   trainer_cpus_per_gpu: 4
   trainer_mem_per_gpu: 32768
-  slurm:
-    mount: /storage:/storage
-    trainer_image: /storage/openpsi/images/sglang-v0.4.9.post2-cu126-v2.sif
-    inference_server_image: /storage/openpsi/images/sglang-v0.4.9.post2-cu126-v2.sif
-  trainer_env_vars: WANDB_API_KEY=local-667d8d7f101dad4eb9597d718d0c68f40e3792f9,WANDB_BASE_URL=http://8.150.1.98:8080

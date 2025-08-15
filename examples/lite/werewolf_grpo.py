@@ -20,18 +20,26 @@ from areal.workflow.werewolf import WerewolfWorkflow
 from realhf.api.core.data_api import load_hf_tokenizer
 from realhf.base import seeding, stats_tracker
 
+from realhf.base import logging
+logger = logging.getLogger("Werewolf GRPO Exp")
 
 LOGGING_KEYS = [
     "traj_steps",
     "traj_len",
     "vill_rewards",
     "were_rewards",
+    "vill_wins",
+    "were_wins",
     "werewolf_kills",
+    "werewolf_correct_kills",
     "villager_correct_votes",
     "villager_wrong_votes",
     "witch_heals",
+    "witch_correct_heals",
     "witch_poisons",
+    "witch_correct_poisons",
     "hunter_shots",
+    "hunter_correct_shots",
 ]
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
@@ -69,6 +77,13 @@ def main(args):
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(None, ft_spec)
 
+    opp_server_addrs = config.opp_server_addrs
+    if opp_server_addrs != "":
+        opp_rollout = RemoteSGLangEngine(config.rollout, opp_server_addrs)
+        opp_rollout.initialize(None, ft_spec)
+    else:
+        opp_rollout = None
+
     actor = FSDPPPOActor(config=config.actor)
     actor.initialize(None, ft_spec)
     ref = None
@@ -77,9 +92,14 @@ def main(args):
         ref.initialize(None, ft_spec)
 
     weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
-            AllocationMode.from_str(config.allocation_mode), actor
+        WeightUpdateMeta.from_disk(
+            config.saver.experiment_name,
+            config.saver.trial_name,
+            config.saver.fileroot
         )
+        # WeightUpdateMeta.from_fsdp_nccl(
+        #     AllocationMode.from_str(config.allocation_mode), actor
+        # )
     ]
     dist.broadcast_object_list(weight_update_meta, src=0)
     weight_update_meta = weight_update_meta[0]
@@ -94,7 +114,8 @@ def main(args):
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
-        role=config.role
+        role=config.role,
+        opp_rollout=opp_rollout,
     )
 
     saver = Saver(config.saver, ft_spec)
@@ -169,9 +190,22 @@ def main(args):
             vals = batch["logging"].float().cpu()
             mask = vals[:, 0] > 0
             if mask.any():
-                avg = vals[mask].mean(0).tolist()
+                filtered = vals[mask]
+                
+                # Average values (existing behavior)
+                avg = filtered.mean(0).tolist()
                 extra = dict(zip(LOGGING_KEYS, avg))
+
+                # Min and Max values
+                mins = filtered.min(0).values.tolist()
+                maxs = filtered.max(0).values.tolist()
+
+                for key, min_val, max_val in zip(LOGGING_KEYS, mins, maxs):
+                    extra[f"{key}/min"] = min_val
+                    extra[f"{key}/max"] = max_val
+
                 stats[0].update(extra)
+
 
         with stats_tracker.record_timing("update_weights"):
             rollout.pause()
@@ -230,8 +264,8 @@ export WANDB_BASE_URL=http://8.150.1.98:8080
 python -m areal.launcher.slurm examples/lite/werewolf_grpo.py \
     --config examples/lite/configs/werewolf_grpo.yaml \
     stats_logger.wandb.mode=online \
-    experiment_name=xmy-werewolf-lite1 \
-    trial_name=trial10
+    experiment_name=xmy-werewolf-double \
+    trial_name=trial1
 
 python -m areal.launcher.slurm examples/lite/gsm8k_grpo.py \
     --config examples/lite/configs/gsm8k_grpo.yaml \

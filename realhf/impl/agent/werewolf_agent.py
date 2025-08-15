@@ -193,6 +193,8 @@ class WerewolfAgent(Agent):
             "traj_len", 
             "vill_rewards", 
             "were_rewards",
+            "vill_wins",
+            "were_wins",
             "werewolf_kills",
             "villager_correct_votes",
             "villager_wrong_votes",

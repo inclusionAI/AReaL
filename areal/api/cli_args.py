@@ -791,6 +791,7 @@ class GRPOConfig(BaseExperimentConfig):
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
+    opp_server_addrs: str = ""
     rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
     ref: PPOActorConfig = field(default_factory=PPOActorConfig)
