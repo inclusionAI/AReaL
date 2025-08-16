@@ -79,7 +79,7 @@ class WerewolfWorkflow(RolloutWorkflow):
                 )
                 resp = await self.opp_rollout.agenerate(req)
 
-                logger.warning(f"The OPP generation is: {self.tokenizer.decode(resp.output_tokens)}.")
+                # logger.warning(f"The OPP generation is: {self.tokenizer.decode(resp.output_tokens)}.")
             else:
                 req = ModelRequest(
                     rid=rid,

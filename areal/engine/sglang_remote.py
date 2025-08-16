@@ -57,6 +57,14 @@ class RemoteSGLangEngine(InferenceEngine):
             inference_engine=self,
         )
 
+        # Client session used for HTTP requests. The session shall be created in
+        # the same event loop as the coroutine that issues the request. When
+        # ``agenerate`` is invoked from the training workflow, it runs in a 
+        # different loop from ``self.workflow_executor``. Reusing the workflow
+        # session across loops causes ``Timeout context`` error. We therefore 
+        # lazily create a session in the ``agenerate`` bound to the current loop.
+        self.session: aiohttp.ClientSession | None = None
+
     def _wait_for_server(self, address):
         base_url = f"http://{address}"
         tik = time.time()
@@ -85,6 +93,16 @@ class RemoteSGLangEngine(InferenceEngine):
     def destroy(self):
         self.workflow_executor.destroy()
         self.executor.shutdown()
+        # Close the http session if created
+        if self.session and not self.session.closed:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self.session.close())
+                else:
+                    loop.run_until_complete(self.session.close())
+            except RuntimeError:
+                asyncio.run(self.session.close())
 
     def set_version(self, version):
         self._version = version
@@ -160,9 +178,23 @@ class RemoteSGLangEngine(InferenceEngine):
             if stop_reason is not None:
                 await asyncio.sleep(0.5)
 
+            # Lazily create the HTTP session in the current loop to avoid using
+            # a session created in another loop.
+            if self.session is None or self.session.closed:
+                self.session = aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(
+                        total=self.config.request_timeout,
+                        sock_connect=self.config.request_timeout,
+                        connect=self.config.request_timeout,
+                    ),
+                    read_bufsize=1024 * 1024 * 10,
+                    connector=get_default_connector(),
+                )
+
             # loop until the generation is complete
             result = await arequest_with_retry(
-                session=self.workflow_executor.session,
+                # session=self.workflow_executor.session,
+                session=self.session,
                 addr=server_addr,
                 endpoint="/generate",
                 payload=payload,

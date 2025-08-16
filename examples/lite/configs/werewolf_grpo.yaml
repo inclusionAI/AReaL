@@ -12,8 +12,8 @@ seed: 1
 total_train_epochs: 1
 tokenizer_path: ${actor.path}
 async_training: true
-opp_server_addrs: 33.215.20.167:12998,33.215.20.167:20862,33.215.20.167:31347,33.215.20.167:42281,33.215.20.167:43284,33.215.20.167:45247
-role: villager
+opp_server_addrs: 33.215.20.167:11422,33.215.20.167:22395,33.215.20.167:35065,33.215.20.167:37863,33.215.20.167:42543,33.215.20.167:46727
+role: werewolf
 
 rollout:
   experiment_name: ${experiment_name}
@@ -35,7 +35,7 @@ actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   # path: /storage/openpsi/models/Qwen__Qwen2.5-3B-Instruct
-  path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-lite-final/werewolf1/default/epoch0epochstep186globalstep186
+  path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-double/werewolf1/default/epoch0epochstep186globalstep186
   init_from_scratch: false
   disable_dropout: true
   dtype: bfloat16
