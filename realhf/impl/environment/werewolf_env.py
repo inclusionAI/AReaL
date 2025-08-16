@@ -83,6 +83,13 @@ class WerewolfEnv(EnvironmentService):
             # " Example: <think>I am a werewolf. I suspect player0 is a villager, I shall kill him to win.</think> <answer>kill player0</answer>"
             "Your valid actions are: {actions}. Perform one action only. Do not say anything else."
         )
+        self.guide_discussion = (
+            "Decide what you want to say to all other players for this round. Limit your discussion to within 40 words."
+            "If you are a werewolf, think of a strategy to deceive others."
+            # " Example: <think>I am a werewolf. I suspect player0 is a villager, I shall kill him to win.</think> <answer>kill player0</answer>"
+            "If you are a villager, share information and try to find out the werewolves. Format your response in the following format:"
+            "\"<think>your reasoning</think> <answer>what you want to say</answer>\" Do not say anything else."
+        )
         # Stats for RL training
         self.stats: Dict[str, int] = {
             "vill_wins": 0,
@@ -116,6 +123,9 @@ class WerewolfEnv(EnvironmentService):
             self.roles.append(name)
             self.role_type[name] = role
             logutil(f"Initialized a player {name} with role {role}.")
+        
+        werewolves_list = [name for name in self.roles if self.role_type[name] == "werewolf"]
+        self.role_prompts["werewolf"] += f"The werewolves of this round are: {', '.join(werewolves_list)}."
 
     async def reset(self, seed=None, options=None):
         if seed is not None:
@@ -182,7 +192,7 @@ class WerewolfEnv(EnvironmentService):
 
         if action.startswith("vote "):
             target = action.split("vote ")[1].strip()
-            if self.role_type.get(target) == "werewolf" and role == "villager":
+            if self.role_type.get(target) == "werewolf" and role != "werewolf":
                 reward[0] += 1.0
             elif self.role_type.get(target) != "werewolf" and role == "werewolf":
                 reward[1] += 0.5
@@ -332,10 +342,7 @@ class WerewolfEnv(EnvironmentService):
             content = actions.get(p, "nothing")
             if content.startswith("say "):
                 content = content[4:]
-            if i == 0:
-                msg += f"{p} says: {content}."
-            else:
-                msg += f"{p} says {content}."
+            msg += f"{p} says: {content}."
         return msg
 
     async def _change_phase(self):
@@ -451,7 +458,10 @@ class WerewolfEnv(EnvironmentService):
             info = f"{self.phase_info} It is now phase {self.phase} round {self.round}."
             self._next_agent()
 
-        guide = self.guide.format(actions=', '.join(self._get_valid_actions()))
+        if self.phase == "discussion":
+            guide = self.guide_discussion
+        else:
+            guide = self.guide.format(actions=', '.join(self._get_valid_actions()))
         role_prompt = self.role_prompts.get(self.agent_role, "")
         memory = "; ".join(self.player_memory.get(self.agent_player, []))
 
@@ -500,11 +510,11 @@ class WerewolfEnv(EnvironmentService):
                     self._add_memory(p, f"{kill_target} is killed during the night on {self.phase} {self.round}.")
 
         for p in players:
-            if kill_target and p == kill_target:
-                msg += "Witch is already killed, so he can not act anymore."
-                continue
-
             if self.role_type[p] == "witch":
+                if kill_target and p == kill_target:
+                    msg += "Witch is already killed, so he can not act anymore."
+                    continue
+
                 act = actions.get(p, "")
                 if act.startswith("poison ") and self.witch_poison:
                     target = act.split("poison ")[1].strip()
@@ -531,11 +541,11 @@ class WerewolfEnv(EnvironmentService):
                             msg += "Witch used heal potion, to no effect."
 
         for p in players:
-            if kill_target and p == kill_target and (not self.alive[p]):
-                msg += "Forseer is already killed, so he can not act anymore."
-                continue
-
             if self.role_type[p] == "foreseer" and actions.get(p, "").startswith("check "):
+                if kill_target and p == kill_target and (not self.alive[p]):
+                    msg += "Forseer is already killed, so he can not act anymore."
+                    continue
+
                 target = actions.get(p, "").split("check ")[1].strip()
                 if target in self.alive:
                     role = self.role_type.get(target)
