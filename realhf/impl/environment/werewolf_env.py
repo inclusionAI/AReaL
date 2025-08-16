@@ -29,7 +29,7 @@ class WerewolfEnv(EnvironmentService):
         num_villagers: int = 2,
         num_witches: int = 1,
         num_foreseers: int = 1,
-        num_werewolves: int = 2,
+        num_werewolves: int = 3,
         num_hunters: int = 1,
     ):
         self.num_players = {
@@ -43,12 +43,13 @@ class WerewolfEnv(EnvironmentService):
 
         self.roles: List[str] = []
         self.role_type: Dict[str, str] = {}
-        self.agent_player = "player1"
-        self.agent_role = "villager"
+        self.agent_player: str = ""
+        self.agent_role: str = ""
         self.turn_order: List[str] = []
         self.current_agent_idx = 0
         self.phase_player_list: List[str] = []  # Records the players who shall act in current phase
         self.phase_actions: Dict[str, str] = {}  # Records the actions performed in one phase
+        self.phase_info: str = "" # Holds the info from last phase, to be distributed to all agents
         self.hunter_player = None  # Records who is the hunter
 
         self.alive: Dict[str, bool] = {}
@@ -59,6 +60,7 @@ class WerewolfEnv(EnvironmentService):
         self.await_hunter = False
         self.player_memory: Dict[str, List[str]] = {}
         self.repeat_rules = repeat_rules
+        self.trajectory: List[str] = []
         self.rules = (
             "You are playing the werewolf game."
             "Roles in the game are villager, witch, foreseer, werewolf, and hunter. "
@@ -100,18 +102,20 @@ class WerewolfEnv(EnvironmentService):
         logutil(f"Game initialized with roles: {self.num_players}.")
 
     def _setup_players(self) -> None:
-        """Create player names and role mapping based on ``self.num_players``."""
+        """Create player names and randomly assign roles based on ``self.num_players``."""
         self.roles = []
         self.role_type = {}
+        roles_pool = []
         idx = 1
         for role, num in self.num_players.items():
-            for _ in range(num):
-                name = f"player{idx}"
-                idx += 1
-                self.roles.append(name)
-                self.role_type[name] = role
+            roles_pool.extend([role] * num)
+        random.shuffle(roles_pool)
 
-                logutil(f"Initialized a player {name} with role {role}.")
+        for idx, role in enumerate(roles_pool, start=1): 
+            name = f"player{idx}"
+            self.roles.append(name)
+            self.role_type[name] = role
+            logutil(f"Initialized a player {name} with role {role}.")
 
     async def reset(self, seed=None, options=None):
         if seed is not None:
@@ -120,8 +124,10 @@ class WerewolfEnv(EnvironmentService):
         self.alive = {r: True for r in self.roles}
         self.turn_order = self.roles[:]
         self.phase_actions = {}
+        self.phase_info = ""
         self.hunter_player = None
         self.player_memory = {p: [] for p in self.roles}
+        self.trajectory = []
         self.stats: Dict[str, int] = {
             "vill_wins": 0,
             "were_wins": 0,
@@ -157,6 +163,8 @@ class WerewolfEnv(EnvironmentService):
             f"{self.rules} You are the {self.agent_player} ({self.agent_role}). {role_prompt} {guide}"
             f" Game start. Night {self.round}. Alive players: {', '.join(self.roles)}."
         )
+        setup_info = ", ".join([f"{p}: {self.role_type[p]}" for p in self.roles])
+        self.trajectory.append(f"Initial setup -> {setup_info}")
         return obs, {}
 
     def _format_reward(self, text: str) -> float:
@@ -330,7 +338,7 @@ class WerewolfEnv(EnvironmentService):
                 msg += f"{p} says {content}."
         return msg
 
-    async def _change_phase(self, last_role: str):
+    async def _change_phase(self):
         """Process allocated actions and change to next pahse"""
         info = ""
         reward = [0.0, 0.0]
@@ -403,7 +411,7 @@ class WerewolfEnv(EnvironmentService):
                 self.agent_player = self.phase_player_list[0]
                 self.agent_role = self.role_type[self.agent_player]
             else:
-                logger.error(f"Game ends abruptly with no winners and no players." , exc_info=True)
+                logger.error(f"Game ends abruptly with no winners and no players.", exc_info=True)
                 done = True
 
         logutil(info)
@@ -427,15 +435,20 @@ class WerewolfEnv(EnvironmentService):
         else:
             logutil(f"{self.agent_player} ({self.agent_role}) sended an invalid action, skipping this turn.")
             self.phase_actions[self.agent_player] = f"wait"
+        self.trajectory.append(f"{self.agent_player} ({self.agent_role}) -> {self.phase_actions[self.agent_player]}: {text}")
         info = ""
         done = False
 
         # check if phase finished
         if len(self.phase_actions) >= len(self.phase_player_list):
-            info, extra_reward, done = await self._change_phase(self.agent_role)
+            last_phase = self.phase
+            info, extra_reward, done = await self._change_phase()
+            self.phase_info = f"In last {last_phase} phase: " + info
+            self.trajectory.append(self.phase_info)
+
             reward = [reward[i] + extra_reward[i] for i in range(2)]
         else:
-            info = f"It is now phase {self.phase} round {self.round}."
+            info = f"{self.phase_info} It is now phase {self.phase} round {self.round}."
             self._next_agent()
 
         guide = self.guide.format(actions=', '.join(self._get_valid_actions()))
@@ -451,6 +464,10 @@ class WerewolfEnv(EnvironmentService):
         
         return obs, reward, done, False, {}
 
+    def get_trajectory(self) -> List[str]:
+        """Returns a copy of the trajectory history."""
+        return list(self.trajectory)
+
     def _night_phase(self, actions: Dict[str, str], players: List[str]) -> str:
         msg = ""
 
@@ -464,35 +481,8 @@ class WerewolfEnv(EnvironmentService):
 
         if kill_target is None and any(self.alive[p] for p in players if self.role_type[p] == "werewolf"):
             candidates = [r for r in players if self.role_type[r] != "werewolf" and self.alive[r]]
-            if candidates:
+            if candidates and self.round > 5:
                 kill_target = random.choice(candidates)
-
-        for p in players:
-            if self.role_type[p] == "witch":
-                act = actions.get(p, "")
-                if act.startswith("poison ") and self.witch_poison:
-                    target = act.split("poison ")[1].strip()
-                    if target in self.alive and self.alive[target]:
-                        msg += self._apply_kill(target, "poisoned")
-                        self.witch_poison = False # The witch can only poison once per game.
-                        self.stats["witch_poisons"] += 1
-                        self._add_memory(p, f"You poisoned {target}.")
-                        if self.role_type[target] == "werewolf":
-                            self.stats["witch_correct_poisons"] += 1
-                elif act.startswith("save ") and self.witch_heal:
-                    heal_target = act.split("save ")[1].strip()
-                    self.witch_heal = False
-                    self.stats["witch_heals"] += 1
-                    if heal_target in self.alive:
-                        if not self.alive[heal_target]:
-                            self.alive[heal_target] = True
-                            msg += f"Witch used heal on {heal_target}."
-                            self._add_memory(p, f"You healed {heal_target}.")
-                            if self.role_type[heal_target] != "werewolf":
-                                self.stats["witch_correct_heals"] += 1
-                        else:
-                            self._add_memory(p, f"You used heal potion on {heal_target}, to no effect.")
-                            msg += "Witch used heal potion, to no effect."
 
         if kill_target:
             self.stats["werewolf_kills"] += 1
@@ -503,21 +493,53 @@ class WerewolfEnv(EnvironmentService):
                 if self.role_type[p] == "werewolf" and actions.get(p, "").startswith("kill "):
                     target = actions.get(p, "").split("kill ")[1].strip()
                     if target == kill_target:
-                        self._add_memory(p, f"You killed {kill_target}.")
+                        self._add_memory(p, f"You killed {kill_target} on {self.phase} {self.round}.")
                 elif self.role_type[p] == "werewolf":
-                    self._add_memory(p, f"{kill_target} is killed by another werewolf.")
+                    self._add_memory(p, f"{kill_target} is killed by another werewolf on {self.phase} {self.round}.")
                 else:
-                    self._add_memory(p, f"{kill_target} is killed during the night.")
+                    self._add_memory(p, f"{kill_target} is killed during the night on {self.phase} {self.round}.")
 
         for p in players:
+            if kill_target and p == kill_target:
+                msg += "Witch is already killed, so he can not act anymore."
+                continue
+
+            if self.role_type[p] == "witch":
+                act = actions.get(p, "")
+                if act.startswith("poison ") and self.witch_poison:
+                    target = act.split("poison ")[1].strip()
+                    if target in self.alive and self.alive[target]:
+                        msg += self._apply_kill(target, "poisoned")
+                        self.witch_poison = False # The witch can only poison once per game.
+                        self.stats["witch_poisons"] += 1
+                        self._add_memory(p, f"You poisoned {target} on {self.phase} {self.round}.")
+                        if self.role_type[target] == "werewolf":
+                            self.stats["witch_correct_poisons"] += 1
+                elif act.startswith("save ") and self.witch_heal:
+                    heal_target = act.split("save ")[1].strip()
+                    self.witch_heal = False
+                    self.stats["witch_heals"] += 1
+                    if heal_target in self.alive:
+                        if not self.alive[heal_target]:
+                            self.alive[heal_target] = True
+                            msg += f"Witch used heal on {heal_target}."
+                            self._add_memory(p, f"You healed {heal_target} on {self.phase} {self.round}.")
+                            if self.role_type[heal_target] != "werewolf":
+                                self.stats["witch_correct_heals"] += 1
+                        else:
+                            self._add_memory(p, f"You used heal potion on {heal_target} on {self.phase} {self.round}, to no effect.")
+                            msg += "Witch used heal potion, to no effect."
+
+        for p in players:
+            if kill_target and p == kill_target and (not self.alive[p]):
+                msg += "Forseer is already killed, so he can not act anymore."
+                continue
+
             if self.role_type[p] == "foreseer" and actions.get(p, "").startswith("check "):
                 target = actions.get(p, "").split("check ")[1].strip()
                 if target in self.alive:
                     role = self.role_type.get(target)
-                    if role == "werewolf":
-                        msg += f"{target} is werewolf. "
-                    else:
-                        msg += f"{target} is not werewolf. "
+                    msg += f"Forseer checked the role of {target}."
                     self._add_memory(p, f"You checked {target}, who is a {role}.")
 
         logutil(msg)

@@ -2,6 +2,8 @@ import asyncio
 import os
 import uuid
 
+import aiofiles
+import aiofiles.os
 import colorama
 import torch
 from realhf.impl.environment import werewolf_env
@@ -162,7 +164,14 @@ class WerewolfWorkflow(RolloutWorkflow):
             for i in range(1, len(results)):
                 results[i]["logging"] = zero_log
 
-        return results, prompt_strs, completions_strs, rewards, seqlens
+        trajectory = []
+        if hasattr(env, "get_trajectory"):
+            try:
+                trajectory = env.get_trajectory()
+            except Exception:
+                logger.error("Failed to get trajectory from env.")
+
+        return results, prompt_strs, completions_strs, rewards, seqlens, trajectory
 
     async def arun_episode(self, engine: InferenceEngine, data):
         rid = uuid.uuid4().hex
@@ -173,20 +182,13 @@ class WerewolfWorkflow(RolloutWorkflow):
         episodes = await asyncio.gather(*tasks)
 
         results = []
-        prompt_strs = []
-        completions_strs = []
-        rewards = []
-        seqlens = []
-        for res_list, p_list, c_list, r_list, sl_list in episodes:
+        for res_list, *_ in episodes:
             results.extend(res_list)
-            prompt_strs.extend(p_list)
-            completions_strs.extend(c_list)
-            rewards.extend(r_list)
-            seqlens.extend(sl_list)
 
         if self.dump_dir is not None and results:
             version = engine.get_version()
-            os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
+            dump_path = os.path.join(self.dump_dir, str(version))
+            await aiofiles.os.makedirs(dump_path, exist_ok=True)
             qid = None
             for key in ["query_id", "id", "qid"]:
                 qid = data.get(key, None)
@@ -194,19 +196,20 @@ class WerewolfWorkflow(RolloutWorkflow):
                     break
             qid = qid or uuid.uuid4().hex
 
-            with open(
-                os.path.join(self.dump_dir, str(version), f"{qid}.txt"), "a"
-            ) as f:
-                for i, (p, c, r, sl) in enumerate(
-                    zip(prompt_strs, completions_strs, rewards, seqlens)
-                ):
-                    info = "\n".join(
-                        [
-                            f"idx: {i + 1}, seqlen: {sl}, reward is {r}.",
-                            f"prompt is \n{colorama.Fore.YELLOW + colorama.Style.DIM}{p}{colorama.Style.RESET_ALL}",
-                            f"sequence is: \n{colorama.Fore.YELLOW + colorama.Style.DIM}{c}{colorama.Style.RESET_ALL}",
-                        ]
-                    )
-                    f.write(info + "\n")
+            file_path = os.path.join(dump_path, f"{qid}.txt")
+            async with aiofiles.open(file_path, "a") as f:
+                for i, (_, p_list, c_list, r_list, sl_list, traj) in enumerate(episodes):
+                    for p, c, r, sl in zip(p_list, c_list, r_list, sl_list):
+                        info = "\n".join(
+                            [
+                                f"idx: {i + 1}, seqlen: {sl}, reward is {r}.",
+                                f"prompt is \n{colorama.Fore.YELLOW + colorama.Style.DIM}{p}{colorama.Style.RESET_ALL}",
+                                f"sequence is: \n{colorama.Fore.YELLOW + colorama.Style.DIM}{c}{colorama.Style.RESET_ALL}",
+                            ]
+                        )
+                        await f.write(info + "\n")
+                    if traj:
+                        traj_info = "\n".join(traj)
+                        await f.write("Trajectory:\n\n" + traj_info + "\n")
 
         return concat_padded_tensors(results)
