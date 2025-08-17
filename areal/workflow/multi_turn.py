@@ -42,7 +42,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
 
         # Create tokens that should be amended if the answer is incorrect.
         # This method eliminates the encode-decode inconsistency issue and cancels system prompts.
-        messages = [{"role": "asistant", "content": "some random message."}]
+        messages = [{"role": "assistant", "content": "some random message."}]
         s1 = self.tokenizer.apply_chat_template(messages, tokenize=True)
         messages += [
             {

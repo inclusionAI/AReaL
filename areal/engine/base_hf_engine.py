@@ -342,6 +342,13 @@ class BaseHFEngine(TrainEngine):
                     if "pixel_values" in item
                 ]
                 if pixel_values_list:
+                    # Individual pixel_values shape: [#patches_per_sample, patch_size]
+                    # Concatenate along dim=0 to get shape: [#total_patches, patch_size]
+                    # For Qwen:
+                    # - image_grid_thw shape: (#total_images, 3) where 3 -> [grid_t, grid_h, grid_w]
+                    # - pixel_values shape: (#total_patches, patch_size)
+                    # - total_patches = torch.sum(torch.prod(image_grid_thw, dim=1))
+                    # - total_image_pad_tokens = total_patches // (merge_size**2)
                     mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
                     padded_mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
                 video_grid_thw_list = [
