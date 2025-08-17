@@ -88,8 +88,14 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),
                 loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                pixel_values=processed_input["pixel_values"].unsqueeze(0),
-                image_grid_thw=processed_input["image_grid_thw"].unsqueeze(0),
+                # We store multi-modal data for each data point as a dict,
+                # This is a non-tensor-data stored in tensor dict
+                multi_modal_data=[
+                    {
+                        "pixel_values": processed_input["pixel_values"],
+                        "image_grid_thw": processed_input["image_grid_thw"],
+                    }
+                ],
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
                 versions=torch.tensor(versions).unsqueeze(0),
                 attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
