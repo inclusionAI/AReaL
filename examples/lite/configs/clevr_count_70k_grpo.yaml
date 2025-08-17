@@ -81,13 +81,12 @@ ref:
   backend: fsdp
 
 # SGLang
-server_only: false
 sglang:
   model_path: ${actor.path}
   random_seed: ${seed}
   skip_tokenizer_init: true
   dtype: ${actor.dtype}
-  max_running_requests: null
+  max_running_requests: 64
   context_length: 32768
   mem_fraction_static: 0.8
 
@@ -117,7 +116,8 @@ saver:
   freq_steps: null
   freq_secs: null
 
-checkpointer:
+recover:
+  mode: disabled
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
@@ -139,3 +139,9 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
+
+launcher:
+  inference_server_cpus_per_gpu: 4
+  inference_server_mem_per_gpu: 32768
+  trainer_cpus_per_gpu: 4
+  trainer_mem_per_gpu: 32768

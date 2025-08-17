@@ -41,7 +41,6 @@ class RemoteSGLangEngine(InferenceEngine):
         self.rid_queue = []
 
         self.addresses = os.getenv("AREAL_LLM_SERVER_ADDRS").split(",")
-        self.session = None
 
         if not self.addresses:
             raise RuntimeError("No configured SGLang servers.")
@@ -81,6 +80,7 @@ class RemoteSGLangEngine(InferenceEngine):
         self.workflow_executor.initialize()
 
     def destroy(self):
+        self.workflow_executor.destroy()
         self.executor.shutdown()
 
     def set_version(self, version):
@@ -98,18 +98,6 @@ class RemoteSGLangEngine(InferenceEngine):
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Async version of generate using aiohttp."""
-        if self.session is None:
-            # NOTE: Lazily initialize aiohttp.ClientSession since it needs to be initialized
-            # inside asyncio loop in WorkflowExecutor
-            self.session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(
-                    total=self.config.request_timeout,
-                    sock_connect=self.config.request_timeout,
-                    connect=self.config.request_timeout,
-                ),
-                read_bufsize=1024 * 1024 * 10,
-                connector=get_default_connector(),
-            )
         # Prepare request payload
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
@@ -171,7 +159,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
             # loop until the generation is complete
             result = await arequest_with_retry(
-                session=self.session,
+                session=self.workflow_executor.session,
                 addr=server_addr,
                 endpoint="/generate",
                 payload=payload,

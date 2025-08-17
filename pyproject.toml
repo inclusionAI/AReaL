@@ -129,6 +129,7 @@ dev = [
     "black==25.1.0",
     "isort==5.13.2",
     "clang-format==19.1.7",
+    "sh~=2.2",
 ]
 
 docs = [

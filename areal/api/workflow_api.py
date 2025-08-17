@@ -6,6 +6,7 @@ import time
 import traceback
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
+import aiohttp
 import torch.distributed as dist
 import uvloop
 from tensordict import TensorDict
@@ -15,6 +16,7 @@ from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import RolloutStat
 from areal.utils.data import concat_padded_tensors
+from areal.utils.http import get_default_connector
 from realhf.base import logging
 
 if TYPE_CHECKING:
@@ -64,9 +66,13 @@ class WorkflowExecutor:
 
         self.rollout_stat = RolloutStat()
 
+        self.session = None
+
     def initialize(self):
         self.rollout_tasks: Dict[str, asyncio.Task] = {}
-        self.rollout_thread = threading.Thread(target=self._rollout_thread)
+        self.rollout_thread = threading.Thread(
+            target=self._rollout_thread, daemon=True
+        )  # set daemon=True to automatically exit when error occurs
         self.rollout_thread.start()
 
     def destroy(self):
@@ -100,6 +106,19 @@ class WorkflowExecutor:
             traceback.print_exc()
 
     async def _rollout_thread_async(self):
+        if self.session is None:
+            # NOTE: Lazily initialize aiohttp.ClientSession since it needs to be initialized
+            # inside asyncio loop in WorkflowExecutor
+            self.session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(
+                    total=self.config.request_timeout,
+                    sock_connect=self.config.request_timeout,
+                    connect=self.config.request_timeout,
+                ),
+                read_bufsize=1024 * 1024 * 10,
+                connector=get_default_connector(),
+            )
+
         rollout_tasks = self.rollout_tasks
         rid = 0
         try:
@@ -150,7 +169,6 @@ class WorkflowExecutor:
                     with self.lock:
                         rollout_tasks.pop(task_rid)
                         self.rollout_stat.accepted += 1
-
                         self.rollout_stat.running -= 1
                         if self.config.enable_rollout_tracing:
                             logger.info(
@@ -179,6 +197,7 @@ class WorkflowExecutor:
                             await task
                         except asyncio.CancelledError:
                             pass
+            await self.session.close()
 
     def submit(
         self,

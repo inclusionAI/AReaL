@@ -15,7 +15,7 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
-from areal.api.io_struct import AllocationMode, AllocationType
+from areal.api.io_struct import AllocationMode
 from areal.utils.launcher import TRITON_CACHE_PATH
 from areal.utils.network import find_free_ports, gethostip
 from realhf.base import logging, name_resolve, names
@@ -177,7 +177,7 @@ def main(argv):
 
     allocation_mode = config.allocation_mode
     allocation_mode = AllocationMode.from_str(allocation_mode)
-    assert allocation_mode.type_ == AllocationType.DECOUPLED_SGLANG
+    assert allocation_mode.gen_backend == "sglang"
 
     sglang_server = SGLangServerWrapper(
         config.experiment_name,

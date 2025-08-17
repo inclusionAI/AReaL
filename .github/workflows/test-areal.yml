@@ -2,19 +2,43 @@ name: Test AReaL
 
 on:
   pull_request:
-    branches: [ main ]
-    paths:
-      - .github/workflows/test-areal.yml
-      - areal/**
-      - ci/**
+    branches:
+      - main
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test-areal:
     environment:
       name: AReaL-unittests
+    permissions:
+      contents: read
     runs-on: gpu
+    timeout-minutes: 7200
     steps:
       - uses: actions/checkout@v4
 
-      - run: bash ./ci/test_areal.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: |
+          source examples/env/scripts/setup-pip-deps.sh
+
+      - name: Wait for 2 free GPUs
+        timeout-minutes: 7200
+        run: |            
+          until [[ $(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | wc -l) -ge 2 ]]; do
+            CUDA_VISIBLE_DEVICES="$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits | awk -F',' '$2/$3 >= 0.90 {print $1}' | tr '\n' ',' | sed 's/,$//')"
+            sleep 1
+          done
+          
+          echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "$GITHUB_ENV"
+
+      - env:
+          CI: true
+        run: |
+          pytest areal/tests

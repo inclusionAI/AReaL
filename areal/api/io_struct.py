@@ -13,7 +13,7 @@ import torch
 from PIL.Image import Image as ImageObject
 from transformers import PreTrainedTokenizerFast
 
-from areal.api.cli_args import GenerationHyperparameters, SaverConfig
+from areal.api.cli_args import GenerationHyperparameters
 from areal.utils.network import find_free_ports, gethostip
 
 if TYPE_CHECKING:
@@ -85,14 +85,16 @@ class FinetuneSpec:
 
 class AllocationType(enum.Enum):
     COLOCATE = 0
-    DECOUPLED_vLLM = 1
-    DECOUPLED_SGLANG = 2
+    DECOUPLED_TRAIN = 1
+    LLM_SERVER_ONLY = 2
+    DECOUPLED_EVAL = 3
 
 
 @dataclass
 class AllocationMode:
     type_: AllocationType
     parallel_strat: Dict[str, Dict[str, int]]
+    gen_backend: Optional[str] = None
 
     @property
     def gen_tp_size(self) -> int:
@@ -132,16 +134,42 @@ class AllocationMode:
 
     @classmethod
     def from_str(cls, allocation_mode: str):
-        if "vllm" in allocation_mode:
-            alloc_decoupled = AllocationMode.extract_decoupled_alloc(allocation_mode)
-            return cls(AllocationType.DECOUPLED_vLLM, alloc_decoupled)
-        elif "sglang" in allocation_mode:
-            alloc_decoupled = AllocationMode.extract_decoupled_alloc(allocation_mode)
-            return cls(AllocationType.DECOUPLED_SGLANG, alloc_decoupled)
-        else:
+        # 1. A string like "d2p2t1", representing the N-d parallelism strategy
+        para = AllocationMode.extract_parallelism_strategy(allocation_mode)
+        if para:
             return cls(
                 AllocationType.COLOCATE,
-                AllocationMode.extract_parallelism_strategy(allocation_mode),
+                para,
+                AllocationMode.get_gen_backend(allocation_mode),
+            )
+        para = AllocationMode.extract_decoupled_alloc(allocation_mode)
+        # 2. A string like "sglang.d4p1t1+d2pm2", representing a decoupled
+        # allocation with 4 GPUs dedicated for SGLang inference and
+        # other 4 GPUs dedicated for training
+        if "*" in para:
+            return cls(
+                AllocationType.DECOUPLED_TRAIN,
+                para,
+                AllocationMode.get_gen_backend(allocation_mode),
+            )
+        # 3. A string like "sglang.d4p1t1+eval" or "sglang.d4p1t1+cpu",
+        # representing a decoupled allocation with 4 GPUs for SGLang server
+        # and several CPU client processes to send requests.
+        # The number of CPU processes depend on the launcher type.
+        # One process for local launcher and `n_gpus_per_node` processes for Ray/SLURM.
+        if para:
+            return cls(
+                AllocationType.DECOUPLED_EVAL,
+                para,
+                AllocationMode.get_gen_backend(allocation_mode),
+            )
+        # 4. A string like "sglang.d4p1t1"", representing SGLang server-only allocation.
+        para = AllocationMode.extract_gen_alloc(allocation_mode)
+        if para:
+            return cls(
+                AllocationType.LLM_SERVER_ONLY,
+                dict(gen=para),
+                AllocationMode.get_gen_backend(allocation_mode),
             )
         raise NotImplementedError(f"Failed to parse allocation: {allocation_mode}")
 
@@ -161,9 +189,15 @@ class AllocationMode:
                     z: c,
                 }
             }
-        raise ValueError(
-            f"Unknown how to resolve parallelism strategy: {allocation_mode}"
-        )
+        return {}
+
+    @staticmethod
+    def extract_gen_alloc(allocation_mode: str) -> Dict:
+        pattern = re.compile(r"(?:vllm|sglang)\.(.+?)")
+        m = pattern.match(allocation_mode)
+        if not m:
+            return {}
+        return AllocationMode.extract_parallelism_strategy(m.group(1))
 
     @staticmethod
     def extract_decoupled_alloc(allocation_mode: str) -> Dict:
@@ -172,9 +206,7 @@ class AllocationMode:
         )
         m = pattern.match(allocation_mode)
         if not m:
-            raise ValueError(
-                f"Unknown how to resolve decoupled allocation: {allocation_mode}"
-            )
+            return {}
         if m.group(1):
             gen_alloc = m.group(1)
             other_alloc = m.group(2)
@@ -185,6 +217,14 @@ class AllocationMode:
         other_alloc = AllocationMode.extract_parallelism_strategy(other_alloc)
         other_alloc.update({"gen": gen_alloc["*"]})
         return other_alloc
+
+    @staticmethod
+    def get_gen_backend(allocation_mode: str) -> Optional[str]:
+        if "vllm" in allocation_mode:
+            return "vllm"
+        if "sglang" in allocation_mode:
+            return "sglang"
+        return None
 
 
 @dataclass
@@ -213,12 +253,15 @@ class WeightUpdateMeta:
     @classmethod
     def from_disk(
         cls,
-        saver_config: SaverConfig,
+        experiment_name: str,
+        trial_name: str,
+        file_root: str,
+        name: str = "default",
     ) -> "WeightUpdateMeta":
         from areal.utils.saver import Saver
 
         path = os.path.join(
-            Saver.get_save_checkpoint_root(saver_config),
+            Saver.get_model_save_root(experiment_name, trial_name, file_root, name),
             "weight_update",
         )
         return cls(
@@ -250,9 +293,9 @@ class SaveLoadMeta:
     path: str
     weight_format: str
     with_optim: bool
-    tokenizer: Optional[PreTrainedTokenizerFast]
-    processor: Optional["AutoProcessor"]
-    base_model_path: str | None
+    tokenizer: Optional[PreTrainedTokenizerFast] = None
+    processor: Optional["AutoProcessor"] = None
+    base_model_path: str | None = None
     naive_distributed: bool = False
 
 
@@ -261,3 +304,23 @@ class RolloutStat:
     submitted: int = 0
     accepted: int = 0
     running: int = 0
+
+
+@dataclass
+class StepInfo:
+    epoch: int
+    epoch_step: int
+    global_step: int
+    steps_per_epoch: int
+
+    def next(self):
+        return StepInfo(
+            epoch=self.epoch + (self.epoch_step == self.steps_per_epoch - 1),
+            epoch_step=(
+                0
+                if self.epoch_step == self.steps_per_epoch - 1
+                else self.epoch_step + 1
+            ),
+            global_step=self.global_step + 1,
+            steps_per_epoch=self.steps_per_epoch,
+        )
