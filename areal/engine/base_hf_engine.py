@@ -1,4 +1,3 @@
-import functools
 import gc
 import os
 import time

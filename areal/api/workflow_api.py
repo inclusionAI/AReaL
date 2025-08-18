@@ -6,7 +6,7 @@ import threading
 import time
 import traceback
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import torch.distributed as dist
 import uvloop
