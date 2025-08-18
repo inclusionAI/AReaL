@@ -105,7 +105,7 @@ VISION_H = 336
 
 QWEN25_VL_PATH = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
 if not os.path.exists(QWEN25_VL_PATH):
-    QWEN25_VL_PATH = "Qwen2.5-VL-3B-Instruct"
+    QWEN25_VL_PATH = "Qwen/Qwen2.5-VL-3B-Instruct"
 
 
 @pytest.fixture(params=[QWEN25_VL_PATH])

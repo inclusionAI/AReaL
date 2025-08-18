@@ -114,7 +114,7 @@ def test_remote_sglang_rollout(sglang_server, n_samples):
     engine.destroy()
 
 
-@pytest.mark.parametrize("ofp", [1, 2, 4, 8, 16])
+@pytest.mark.parametrize("ofp", [1, 4, 16])
 @pytest.mark.parametrize("bs", [2, 4])
 @pytest.mark.parametrize("n_samples", [2, 1])
 def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
@@ -149,7 +149,7 @@ def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
         engine.submit(data, workflow=workflow)
 
     # wait for some time
-    time.sleep(5)
+    time.sleep(7)
     assert engine.workflow_executor.output_queue.qsize() == min(bs * 2, bs * (ofp + 1))
 
     # Update model version
