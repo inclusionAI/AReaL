@@ -160,7 +160,6 @@ class WorkflowExecutor:
                 # Collect done results
                 for task in done:
                     traj = await task
-
                     if isinstance(traj, dict) and all(
                         isinstance(v, CompletionWithTokenLogpReward)
                         for v in traj.values()
