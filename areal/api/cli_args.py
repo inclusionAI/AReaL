@@ -433,8 +433,8 @@ class SGLangConfig:
 
 @dataclass
 class InferenceEngineConfig:
-    experiment_name: str = MISSING
-    trial_name: str = MISSING
+    experiment_name: Optional[str] = None
+    trial_name: Optional[str] = None
     max_concurrent_rollouts: None | int = field(
         default=None,
         metadata={

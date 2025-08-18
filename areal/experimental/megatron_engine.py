@@ -172,7 +172,7 @@ class MegatronEngine(TrainEngine):
                 hf_config=self.hf_config,
                 tf_config=self.tf_config,
                 mcore_config=self.mcore_config,
-                bridge=self.bridge
+                bridge=self.bridge,
             )
         if self.config.disable_dropout:
             disable_dropout_in_model(self.model)
@@ -226,7 +226,7 @@ class MegatronEngine(TrainEngine):
             hf_config=self.hf_config,
             save_path=path,
             model=self.model,
-            bridge=self.bridge
+            bridge=self.bridge,
         )
 
         if dist.get_rank() == 0:
@@ -254,7 +254,7 @@ class MegatronEngine(TrainEngine):
             hf_config=self.hf_config,
             load_path=path,
             model=self.model,
-            bridge=self.bridge
+            bridge=self.bridge,
         )
 
     def step_lr_scheduler(self):
