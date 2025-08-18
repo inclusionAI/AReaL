@@ -16,12 +16,14 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import RolloutStat
+from areal.experimental.openai.types import (
+    CompletionWithTokenLogpReward,
+)
 from areal.utils.data import concat_padded_tensors
 from realhf.base import logging
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
-    from areal.experimental.openai.client import CompletionWithTokenLogpReward
 
 logger = logging.getLogger("areal.workflow_api")
 
@@ -33,7 +35,7 @@ class RolloutWorkflow:
 
     async def arun_episode(
         self, engine: "InferenceEngine", data: Dict[str, Any]
-    ) -> Union[TensorDict, None, Dict[str, "CompletionWithTokenLogpReward"]]:
+    ) -> Union[TensorDict, None, Dict[str, CompletionWithTokenLogpReward]]:
         """Run a single episode of the workflow.
 
         `None` implies that this trajectory is rejected and will not be used for training.
@@ -158,10 +160,6 @@ class WorkflowExecutor:
                 # Collect done results
                 for task in done:
                     traj = await task
-                    from areal.experimental.openai.client import (
-                        CompletionWithTokenLogpReward,
-                    )
-                    from areal.utils.data import concat_padded_tensors
 
                     if isinstance(traj, dict) and all(
                         isinstance(v, CompletionWithTokenLogpReward)
