@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: areal-tests-${{ github.ref }}
+  group: areal-unit-tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
