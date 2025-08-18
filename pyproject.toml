@@ -157,3 +157,9 @@ pythonpath = ["."]
 
 [tool.black]
 line-length = 88
+
+[tool.autoflake]
+in-place = true
+recursive = true
+remove-all-unused-imports = true
+remove-unused-variables = true

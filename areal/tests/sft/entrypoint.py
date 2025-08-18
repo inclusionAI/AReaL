@@ -3,6 +3,7 @@ import os
 import sys
 from typing import List, cast
 
+import torch.distributed as dist
 import torch.utils.data
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -15,7 +16,6 @@ import realhf.base.stats_tracker as stats_tracker
 from areal.api.cli_args import SFTConfig
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.sft.lm_engine import FSDPLMEngine
-from areal.utils.stats_logger import StatsLogger
 
 
 def main() -> None:
@@ -25,7 +25,7 @@ def main() -> None:
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     rank = int(os.environ.get("RANK", "0"))
 
-    seeding.set_random_seed(config.seed, f"trainer{rank}")
+    seeding.set_random_seed(config.seed, str(rank))
 
     processor, tokenizer = data_api.load_hf_processor_and_tokenizer(
         config.tokenizer_path
@@ -40,7 +40,6 @@ def main() -> None:
         tokenizer=tokenizer,
         processor=processor,
     )
-    train_dataset = train_dataset.select(range(256))
 
     train_dataloader = StatefulDataLoader(
         cast(torch.utils.data.Dataset, train_dataset),
@@ -60,36 +59,29 @@ def main() -> None:
         ft_spec=ft_spec,
     )
 
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
-    loss_avg_list: List[float] = []
+    losses: List[float] = []
 
     global_step = 0
     for epoch in range(config.total_train_epochs):
         for step, data in enumerate(train_dataloader):
+            if (
+                config.total_train_steps is not None
+                and global_step >= config.total_train_steps
+            ):
+                break
+
             engine.train_lm(data)
             engine.step_lr_scheduler()
 
             stat = stats_tracker.export(reduce_group=engine.parallelism_group)
-            stats_logger.commit(
-                epoch,
-                step,
-                global_step,
-                stat,
-            )
-            loss_avg_list.append(stat["loss/avg"])
+            losses.append(stat["loss/avg"])
 
             global_step += 1
 
-    with open(
-        os.path.join(
-            StatsLogger.get_log_path(config.stats_logger),
-            "loss_avg_list.json",
-        ),
-        "w",
-    ) as f:
-        json.dump(loss_avg_list, f)
+    if dist.get_rank() == 0:
+        with open(os.path.join(config.cluster.fileroot, "losses.json"), "w") as f:
+            json.dump(losses, f)
 
-    stats_logger.close()
     engine.destroy()
 
 
