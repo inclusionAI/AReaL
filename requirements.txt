@@ -79,3 +79,4 @@ deepspeed>=0.17.2
 pybase64
 msgspec
 transformers==4.54.0
+openai==1.99.6
