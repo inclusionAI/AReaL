@@ -5,7 +5,7 @@ on: [pull_request]
 jobs:
   check_formatting:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -18,11 +18,16 @@ jobs:
       - name: Install Python dependencies
         run: |
           python3 -m pip install --upgrade pip
-          pip install isort black clang-format
+          pip install isort black clang-format autoflake
+
+      - name: Check autoflake formatting
+        run: |
+          autoflake --check areal/
+          autoflake --check examples/lite/
 
       - name: Check Python formatting with isort
         run: isort --check-only .
-      
+
       - name: Check Python formatting with black
         run: black --check .
 
