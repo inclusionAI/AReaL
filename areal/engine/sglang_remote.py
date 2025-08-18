@@ -57,14 +57,6 @@ class RemoteSGLangEngine(InferenceEngine):
             inference_engine=self,
         )
 
-        # Client session used for HTTP requests. The session shall be created in
-        # the same event loop as the coroutine that issues the request. When
-        # ``agenerate`` is invoked from the training workflow, it runs in a 
-        # different loop from ``self.workflow_executor``. Reusing the workflow
-        # session across loops causes ``Timeout context`` error. We therefore 
-        # lazily create a session in the ``agenerate`` bound to the current loop.
-        self.session: aiohttp.ClientSession | None = None
-
     def _wait_for_server(self, address):
         base_url = f"http://{address}"
         tik = time.time()
@@ -92,17 +84,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def destroy(self):
         self.workflow_executor.destroy()
-        self.executor.shutdown()
-        # Close the http session if created
-        if self.session and not self.session.closed:
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(self.session.close())
-                else:
-                    loop.run_until_complete(self.session.close())
-            except RuntimeError:
-                asyncio.run(self.session.close())
+        self.executor.shutdown() 
 
     def set_version(self, version):
         self._version = version
@@ -135,8 +117,9 @@ class RemoteSGLangEngine(InferenceEngine):
             "max_new_tokens": gconfig.max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
+            "frequency_penalty": gconfig.frequency_penalty,
         }
-        if stop is not None:
+        if stop:
             sample_params["stop"] = stop
 
         payload = {
@@ -165,36 +148,34 @@ class RemoteSGLangEngine(InferenceEngine):
             self.rid_to_address[req.rid] = server_addr
             self.rid_queue.append(req.rid)
 
+        # Create a new session because we don't know whether this method
+        # is called in the workflow thread or the main thread.
+        session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(
+                total=self.config.request_timeout,
+                sock_connect=self.config.request_timeout,
+                connect=self.config.request_timeout,
+            ),
+            read_bufsize=1024 * 1024 * 10,
+            connector=get_default_connector(),
+        )
+
         # Deal with rollout interruption
         # "abort" is the stop reason for later v0.4.9.post2 after
         # we call the pause_generation endpoint
         stop_reason = None
         while (
-            stop_reason != "stop"
+            stop_reason not in ["stop", "tool_calls", "length"]
             and len(accumulated_output_tokens) < gconfig.max_new_tokens
         ):
             # Request is interrupted, wait for some time to avoid interfering
             # with update weights requests
-            if stop_reason is not None:
+            while self.workflow_executor.paused.is_set():
                 await asyncio.sleep(0.5)
-
-            # Lazily create the HTTP session in the current loop to avoid using
-            # a session created in another loop.
-            if self.session is None or self.session.closed:
-                self.session = aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(
-                        total=self.config.request_timeout,
-                        sock_connect=self.config.request_timeout,
-                        connect=self.config.request_timeout,
-                    ),
-                    read_bufsize=1024 * 1024 * 10,
-                    connector=get_default_connector(),
-                )
 
             # loop until the generation is complete
             result = await arequest_with_retry(
-                # session=self.workflow_executor.session,
-                session=self.session,
+                session=session,
                 addr=server_addr,
                 endpoint="/generate",
                 payload=payload,
@@ -226,6 +207,12 @@ class RemoteSGLangEngine(InferenceEngine):
             payload["input_ids"] += output_tokens
             sample_params["max_new_tokens"] -= len(output_tokens)
 
+        if stop_reason == "abort":
+            # If stop_reason is "abort", the only reason we exit the loop is
+            # len(accumulated_output_tokens) >= gconfig.max_new_tokens
+            # so the actual reason is length
+            stop_reason = "length"
+        await session.close()
         latency = time.perf_counter() - start_time
 
         response = ModelResponse(
@@ -263,6 +250,10 @@ class RemoteSGLangEngine(InferenceEngine):
         elif meta.type == "disk":
             # Update weights from disk
             # Use ProcessPool to bypass python GIL for running async coroutines
+            if self.config.experiment_name is None or self.config.trial_name is None:
+                raise RuntimeError(
+                    f"Experiment and trial names must be set for disk-based weight updates."
+                )
             fut = self.executor.submit(
                 update_weights_from_disk,
                 self.config.experiment_name,

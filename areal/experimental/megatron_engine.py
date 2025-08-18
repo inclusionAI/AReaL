@@ -1,27 +1,37 @@
-import dataclasses
 import os
 from typing import Any, Callable, Dict, List
 
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state, tensor_parallel
-from megatron.core.distributed import DistributedDataParallel as DDP
-from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from tensordict import TensorDict
-from transformers import AutoConfig
 
 from areal.api.engine_api import FinetuneSpec, TrainEngine
 from areal.api.io_struct import ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.experimental.api.cli_args import (
     ExperimentalTrainEngineConfig as TrainEngineConfig,
 )
-from areal.experimental.model.registry import hf_to_mcore_config, make_mcore_model
+from areal.experimental.model.registry import (
+    load_from_hf,
+    make_hf_and_mcore_config,
+    make_mcore_model,
+    save_to_hf,
+)
 from areal.utils.data import amend_position_ids
 from areal.utils.model import disable_dropout_in_model
-from realhf.base import constants, logging
+from realhf.base import constants, logging, pkg_version
+
+USE_MBRIDGE = False
+if pkg_version.is_available("mbridge"):
+    import mbridge
+
+    USE_MBRIDGE = True
+else:
+    USE_MBRIDGE = False
+
 
 logger = logging.getLogger("MegatronEngine")
 
@@ -36,6 +46,7 @@ class MegatronEngine(TrainEngine):
         self.device = None
         self.optimizer_config = config.optimizer
         self.mcore_config = config.megatron
+        self.bridge = None
 
     def create_optimizer(self, ft_spec: FinetuneSpec):
         if self.optimizer_config is None:
@@ -146,30 +157,25 @@ class MegatronEngine(TrainEngine):
         # TODO: Fix rng seed
         tensor_parallel.model_parallel_cuda_manual_seed(0)
 
-        self.hf_config = AutoConfig.from_pretrained(
-            pretrained_model_name_or_path=self.config.path,
-            trust_remote_code=True,
+        if USE_MBRIDGE:
+            self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
+            logger.info(
+                "Using mbridge to create models and hf model save/load in MegatronEngine."
+            )
+
+        self.hf_config, self.tf_config = make_hf_and_mcore_config(
+            self.config.path, dtype=self.dtype, bridge=self.bridge
         )
-        self.tf_config = hf_to_mcore_config(hf_config=self.hf_config, dtype=self.dtype)
-        # initialize mcore GPTModel
-        model = make_mcore_model(
-            hf_config=self.hf_config,
-            tf_config=self.tf_config,
-        )
-        model.to(self.device)
+        # initialize mcore (DDP Wrapped) GPTModel
+        with torch.device("cuda"):
+            self.model = make_mcore_model(
+                hf_config=self.hf_config,
+                tf_config=self.tf_config,
+                mcore_config=self.mcore_config,
+                bridge=self.bridge,
+            )
         if self.config.disable_dropout:
-            disable_dropout_in_model(model)
-
-        ddp_config = DistributedDataParallelConfig(
-            **dataclasses.asdict(self.mcore_config.ddp)
-        )
-        self.model = DDP(
-            config=self.tf_config,
-            ddp_config=ddp_config,
-            module=model,
-            disable_bucketing=False,
-        )
-
+            disable_dropout_in_model(self.model)
         self.create_optimizer(ft_spec)
 
     @property
@@ -198,10 +204,58 @@ class MegatronEngine(TrainEngine):
         raise NotImplementedError()
 
     def save(self, meta: SaveLoadMeta):
-        raise NotImplementedError()
+        if meta.weight_format == "hf":
+            assert (
+                not meta.with_optim
+            ), "HF format does not support optimizer state saving, please use DCP format instead."
+            self._save_model_to_hf(meta.path, meta.tokenizer, meta.processor)
+        elif meta.weight_format == "dcp":
+            # TODO: implement DCP save/load for FSDP
+            raise NotImplementedError("DCP format saving is not implemented yet. ")
+        else:
+            raise ValueError(f"Unknown weight format {meta.weight_format}. ")
+
+    def _save_model_to_hf(
+        self, path: str, tokenizer: Any | None = None, processor: Any | None = None
+    ):
+        assert self.model is not None, "Model is not initialized."
+        os.makedirs(path, exist_ok=True)
+
+        # Save model weights
+        save_to_hf(
+            hf_config=self.hf_config,
+            save_path=path,
+            model=self.model,
+            bridge=self.bridge,
+        )
+
+        if dist.get_rank() == 0:
+            if tokenizer is not None:
+                tokenizer.save_pretrained(path)
+            if processor is not None:
+                processor.save_pretrained(path)
+        dist.barrier(device_ids=[self.device.index])
 
     def load(self, meta: SaveLoadMeta):
-        raise NotImplementedError()
+        if meta.weight_format == "hf":
+            assert (
+                not meta.with_optim
+            ), "HF format does not support optimizer state loading, please use DCP format instead."
+            self._load_model_from_hf(meta.path)
+        elif meta.weight_format == "dcp":
+            # TODO: implement DCP save/load for FSDP
+            raise NotImplementedError("DCP format loading is not implemented yet. ")
+        else:
+            raise ValueError(f"Unknown weight format {meta.weight_format}. ")
+
+    def _load_model_from_hf(self, path: str):
+        assert self.model is not None, "Model is not initialized."
+        load_from_hf(
+            hf_config=self.hf_config,
+            load_path=path,
+            model=self.model,
+            bridge=self.bridge,
+        )
 
     def step_lr_scheduler(self):
         assert self.lr_scheduler is not None, "LR Scheduler is not initialized."
