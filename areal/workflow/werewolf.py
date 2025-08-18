@@ -6,6 +6,9 @@ import aiofiles
 import aiofiles.os
 import colorama
 import torch
+import json
+import re
+from collections import defaultdict
 from realhf.impl.environment import werewolf_env
 from tensordict import TensorDict
 from transformers import PreTrainedTokenizerFast
@@ -29,12 +32,16 @@ class WerewolfWorkflow(RolloutWorkflow):
         self, 
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
-        max_turns: int = 60,
+        max_turns: int = 50,
         turn_discount: float = 1.0,
         dump_dir: str | None = None,
         env_kwargs: dict | None = None,
         role: str = "villager",
         opp_rollout: InferenceEngine | None = None,
+        opp_tokenizer: PreTrainedTokenizerFast | None = None,
+        teacher_rollout: InferenceEngine | None = None,
+        teacher_tokenizer: PreTrainedTokenizerFast | None = None,
+        questions: list[str] | None = None,
     ):
         self.gconfig = gconfig
         self.tokenizer = tokenizer
@@ -44,6 +51,15 @@ class WerewolfWorkflow(RolloutWorkflow):
         self.env_kwargs = env_kwargs
         self.role = role
         self.opp_rollout = opp_rollout
+        self.opp_tokenizer = opp_tokenizer
+        self.use_teacher = True
+        self.teacher_rollout = teacher_rollout
+        self.teacher_tokenizer = teacher_tokenizer
+        self.use_summary = True
+        self.answer_questions = True
+        self.questions = questions or [
+            "Who do you suspect is the werewolf?",
+        ]
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
@@ -52,7 +68,7 @@ class WerewolfWorkflow(RolloutWorkflow):
             env = WerewolfEnv(**self.env_kwargs)
         else:
             env = WerewolfEnv()
-        obs, _ = await env.reset()
+        obs, guide, _ = await env.sreset()
 
         results = []
         prompt_strs = []
@@ -61,45 +77,114 @@ class WerewolfWorkflow(RolloutWorkflow):
         seqlens = []
         vill_total = 0.0
         were_total = 0.0
-        traj_len = 0
+        traj_len = [0, 0] # input, output
+        summaries = defaultdict(list)
+        qa_logs = []
+        teacher_logs = []
 
         for turn in range(self.max_turns):
-            input_ids = self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": obs}],
+            # Store the current agent and get its summary
+            current_agent = env.agent_player
+            prev_summary = summaries[current_agent][-1] if summaries[current_agent] else "None yet."
+            
+            # Prepare all the questions for agents
+            if self.use_summary:
+                action_prompt = f"{obs} Your previous summary: {prev_summary} {guide}"
+            else:
+                action_prompt = f"{obs} {guide}"
+            action_ids = self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": action_prompt}],
                 tokenize=True,
                 add_generation_prompt=True,
             )
 
-            if (((env.agent_role != "werewolf" and self.role == "werewolf")
+            use_opp_generation = (((env.agent_role != "werewolf" and self.role == "werewolf")
                 or (env.agent_role == "werewolf" and self.role == "villager"))
-                and self.opp_rollout):
+                and self.opp_rollout)
+            if use_opp_generation:
                 req = ModelRequest(
                     rid=rid,
-                    input_ids=input_ids,
+                    input_ids=action_ids,
                     gconfig=self.gconfig.new(n_samples=1),
-                    tokenizer=self.tokenizer,
+                    tokenizer=self.opp_tokenizer or self.tokenizer,
                 )
-                resp = await self.opp_rollout.agenerate(req)
+                action_task = self.opp_rollout.agenerate(req)
 
                 # logger.warning(f"The OPP generation is: {self.tokenizer.decode(resp.output_tokens)}.")
             else:
                 req = ModelRequest(
                     rid=rid,
-                    input_ids=input_ids,
+                    input_ids=action_ids,
                     gconfig=self.gconfig.new(n_samples=1),
                     tokenizer=self.tokenizer,
                 )
-                resp = await engine.agenerate(req)
+                action_task = engine.agenerate(req)
+
+            question_tasks = []
+            teacher_question_tasks = []
+            if self.answer_questions:
+                for qi, q in enumerate(self.questions):
+                    q_prompt = f"{obs} Your previous summary: {prev_summary}. Based on this information, answer this question: {q}"
+                    q_ids = self.tokenizer.apply_chat_template(
+                        [{"role": "user", "content": q_prompt}],
+                        tokenize=True,
+                        add_generate_prompt=True,
+                    )
+                    q_req = ModelRequest(
+                        rid=rid,
+                        input_ids=q_ids,
+                        gconfig=self.gconfig.new(n_samples=1),
+                        tokenizer=self.tokenizer,
+                    )
+                    question_tasks.append(engine.agenerate(q_req))
+                    if self.teacher_rollout:
+                        tq_req = ModelRequest(
+                            rid=rid,
+                            input_ids=q_ids,
+                            gconfig=self.gconfig.new(n_samples=1),
+                            tokenizer=self.teacher_tokenizer or self.tokenizer,
+                        )
+                        teacher_question_tasks.append(
+                            self.teacher_rollout.agenerate(tq_req)
+                        )
+
+                responses = await asyncio.gather(
+                    action_task, *question_tasks, *teacher_question_tasks
+                )
+            else:
+                responses = await asyncio.gather(action_task)
+
+            resp = responses[0]
+            q_resps = responses[1 : 1 + len(question_tasks)]
+            tq_resps = responses[1 +len(question_tasks) : ]
+
+            # Decode all the answers
+            if use_opp_generation and self.opp_tokenizer:
+                completion_str = self.opp_tokenizer.decode(resp.output_tokens)
+            else:
+                completion_str = self.tokenizer.decode(resp.output_tokens)
+            agent_q_answers = [
+                self.tokenizer.decode(r.output_tokens) for r in q_resps
+            ]
+            if self.teacher_tokenizer:
+                teacher_q_answers = [
+                    self.teacher_tokenizer.decode(r.output_tokens) for r in tq_resps
+                ]
+            else:
+                teacher_q_answers = [
+                    self.tokenizer.decode(r.output_tokens) for r in tq_resps
+                ]
 
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
             loss_mask = [0] * resp.input_len + [1] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
 
-            prompt_str = self.tokenizer.decode(input_ids)
-            completion_str = self.tokenizer.decode(resp.output_tokens)
-
-            next_obs, reward_list, done, _, _ = await env.step(
+            prompt_str = self.tokenizer.decode(action_ids)
+            
+            # Get next env state
+            current_agent = env.agent_player
+            next_obs, next_guide, reward_list, done, _, _ = await env.step(
                 (data.get("query_id", ""), [completion_str])
             )
             vill_total += float(reward_list[0])
@@ -112,6 +197,7 @@ class WerewolfWorkflow(RolloutWorkflow):
             else:
                 reward = reward_list[0]
 
+            # Record the results for this step
             res = dict(
                 input_ids=torch.tensor(seq).unsqueeze(0),
                 loss_mask=torch.tensor(loss_mask).unsqueeze(0),
@@ -125,12 +211,83 @@ class WerewolfWorkflow(RolloutWorkflow):
             completions_strs.append(completion_str)
             rewards.append(reward)
             seqlens.append(len(seq))
-            traj_len += (resp.input_len + resp.output_len)
+            traj_len[0] += resp.input_len
+            traj_len[1] += resp.output_len
+
+            # Ask for agent summarization
+            if self.use_summary:
+                m = re.findall(r"<answer>(.*?)</answer>", completion_str, re.DOTALL)
+                action = m[-1].strip().lower() if m else ""
+                summary_prompt = (
+                    f"{obs} Your last actions: {action}. "
+                    f"Your previous summary: {prev_summary}. Provide a brief summary of your thoughts and current game state,"
+                    "to guide your future planning and next action."
+                )
+                summary_ids = self.tokenizer.apply_chat_template(
+                    [{"role": "user", "content": summary_prompt}],
+                    tokenize=True,
+                    add_generation_prompt=True,
+                )
+                summary_req = ModelRequest(
+                    rid=f"{rid}-s-{turn}",
+                    input_ids=summary_ids,
+                    gconfig=self.gconfig.new(n_samples=1),
+                    tokenizer=self.tokenizer,
+                )
+                summary_tasks = [engine.agenerate(summary_req)]
+                if self.teacher_rollout:
+                    t_summary_req = ModelRequest(
+                        rid=f"{rid}-ts-{turn}",
+                        input_ids=summary_ids,
+                        gconfig=self.gconfig.new(n_samples=1),
+                        tokenizer=self.teacher_tokenizer or self.tokenizer,
+                    )
+                    summary_tasks.append(self.teacher_rollout.agenerate(t_summary_req))
+                summary_resps = await asyncio.gather(*summary_tasks)
+                agent_summary = self.tokenizer.decode(summary_resps[0].output_tokens)
+                summaries[current_agent].append(agent_summary)
+                qa_logs.append(
+                    {
+                        "agent": current_agent,
+                        "QAs": agent_q_answers,
+                        "summary": agent_summary,
+                    }
+                )
+                if self.teacher_rollout:
+                    if self.teacher_tokenizer:
+                        teacher_summary = self.teacher_tokenizer.decode(
+                            summary_resps[1].output_tokens
+                        )
+                    else:
+                        teacher_summary = self.tokenizer.decode(
+                            summary_resps[1].output_tokens
+                        )
+                    teacher_logs.append(
+                        {
+                            "agent": current_agent,
+                            "QAs": teacher_q_answers,
+                            "summary": teacher_summary,
+                        }
+                    )
+            else: # Do not use summary
+                qa_logs.append(
+                    {
+                        "agent": current_agent,
+                        "QAs": agent_q_answers,
+                    }
+                )
+                teacher_logs.append(
+                    {
+                        "agent": current_agent,
+                        "QAs": teacher_q_answers,
+                    }
+                )
 
             if done or (turn == self.max_turns - 1):
                 logger.info(f"Trajectory ended with {turn + 1} turns, total reward: {sum(rewards)}.")
                 break
             obs = next_obs
+            guide = next_guide
         
         stats = {}
         if hasattr(env, "get_stats"):
@@ -141,7 +298,9 @@ class WerewolfWorkflow(RolloutWorkflow):
 
         logging_vals = [
             len(results),
-            traj_len,
+            traj_len[0] + traj_len[1],
+            traj_len[0],
+            traj_len[1],
             vill_total,
             were_total,
             stats.get("vill_wins", 0),
@@ -171,7 +330,7 @@ class WerewolfWorkflow(RolloutWorkflow):
             except Exception:
                 logger.error("Failed to get trajectory from env.")
 
-        return results, prompt_strs, completions_strs, rewards, seqlens, trajectory
+        return results, prompt_strs, completions_strs, rewards, seqlens, trajectory, qa_logs, teacher_logs
 
     async def arun_episode(self, engine: InferenceEngine, data):
         rid = uuid.uuid4().hex
@@ -198,7 +357,7 @@ class WerewolfWorkflow(RolloutWorkflow):
 
             file_path = os.path.join(dump_path, f"{qid}.txt")
             async with aiofiles.open(file_path, "a") as f:
-                for i, (_, p_list, c_list, r_list, sl_list, traj) in enumerate(episodes):
+                for i, (_, p_list, c_list, r_list, sl_list, traj, qa_logs, t_logs) in enumerate(episodes):
                     for p, c, r, sl in zip(p_list, c_list, r_list, sl_list):
                         info = "\n".join(
                             [
@@ -211,5 +370,14 @@ class WerewolfWorkflow(RolloutWorkflow):
                     if traj:
                         traj_info = "\n".join(traj)
                         await f.write("Trajectory:\n\n" + traj_info + "\n")
+
+                    # Log agent and teacher QAs and summaries
+                    async with aiofiles.open(os.path.join(dump_path, f"{qid}_qalogs.json"), "a") as jsonf:
+                        for item in qa_logs:
+                            await jsonf.write(json.dumps(item) + "\n")
+                    if self.teacher_rollout and t_logs:
+                        async with aiofiles.open(os.path.join(dump_path, f"{qid}_tlogs.json"), "a") as jsonf:
+                            for item in t_logs:
+                                await jsonf.write(json.dumps(item) + "\n")
 
         return concat_padded_tensors(results)

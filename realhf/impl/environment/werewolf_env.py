@@ -170,12 +170,63 @@ class WerewolfEnv(EnvironmentService):
         guide = self.guide.format(actions=', '.join(self._get_valid_actions()))
         role_prompt = self.role_prompts.get(self.agent_role, "")
         obs = (
-            f"{self.rules} You are the {self.agent_player} ({self.agent_role}). {role_prompt} {guide}"
+            f"{self.rules} You are the {self.agent_player} ({self.agent_role}). {role_prompt}"
             f" Game start. Night {self.round}. Alive players: {', '.join(self.roles)}."
         )
         setup_info = ", ".join([f"{p}: {self.role_type[p]}" for p in self.roles])
         self.trajectory.append(f"Initial setup -> {setup_info}")
-        return obs, {}
+        return f"{obs} {guide}", {}
+
+    async def sreset(self, seed=None, options=None):
+        """Resets the environment and return the observation and the guide seperately."""
+        if seed is not None:
+            random.seed(seed)
+        self._setup_players()
+        self.alive = {r: True for r in self.roles}
+        self.turn_order = self.roles[:]
+        self.phase_actions = {}
+        self.phase_info = ""
+        self.hunter_player = None
+        self.player_memory = {p: [] for p in self.roles}
+        self.trajectory = []
+        self.stats: Dict[str, int] = {
+            "vill_wins": 0,
+            "were_wins": 0,
+            "werewolf_kills": 0,
+            "werewolf_correct_kills": 0,
+            "villager_correct_votes": 0,
+            "villager_wrong_votes": 0,
+            "witch_heals": 0,
+            "witch_correct_heals": 0,
+            "witch_poisons": 0,
+            "witch_correct_poisons": 0,
+            "hunter_shots": 0,
+            "hunter_correct_shots": 0,
+        }
+
+        # game always starts at night with werewolves acting first
+        self.phase = "night"
+        self.phase_player_list = self._phase_players("night")
+        self.current_agent_idx = 0
+        self.agent_player = self.phase_player_list[0]
+        self.agent_role = self.role_type[self.agent_player]
+
+        logutil(f"Game reset with alive players {self.alive}, current agent is {self.agent_player} ({self.agent_role}).")
+
+        self.round = 1
+        self.phase = "night"
+        self.witch_heal = True
+        self.witch_poison = True
+        self.await_hunter = False
+        guide = self.guide.format(actions=', '.join(self._get_valid_actions()))
+        role_prompt = self.role_prompts.get(self.agent_role, "")
+        obs = (
+            f"{self.rules} You are the {self.agent_player} ({self.agent_role}). {role_prompt}"
+            f" Game start. Night {self.round}. Alive players: {', '.join(self.roles)}."
+        )
+        setup_info = ", ".join([f"{p}: {self.role_type[p]}" for p in self.roles])
+        self.trajectory.append(f"Initial setup -> {setup_info}")
+        return obs, guide, {}
 
     def _format_reward(self, text: str) -> float:
         has_think = "<think>" in text and "</think>" in text
@@ -302,21 +353,21 @@ class WerewolfEnv(EnvironmentService):
                 self.agent_role = role
                 return
             # skip witch with no potions
-            self.phase_actions[candidate] = "wait"
+            self.phase_actions[candidate] = "skip"
             idx += 1
 
         self.agent_player = None
         self.agent_role = None
 
     def _get_valid_actions(self) -> List[str]:
-        actions = []
+        actions = ["skip"]
         alive = self.alive.get(self.agent_player, False)
         all_players = self.roles
         players = self._alive_list()
         if self.phase == "night":
             if self.agent_role == "werewolf" and alive:
                 actions.extend(
-                    [f"kill {p}" for p in players if p != self.agent_player and self.role_type[p] != "werewolf"]
+                    [f"kill {p}" for p in players if p != self.agent_player]
                 )
             if self.agent_role == "witch" and alive:
                 if self.witch_poison:
@@ -325,12 +376,10 @@ class WerewolfEnv(EnvironmentService):
                     actions.extend([f"save {p}" for p in all_players if not self.alive[p]])
             if self.agent_role == "foreseer" and alive:
                 actions.extend([f"check {p}" for p in players if p != self.agent_player])
-            if not actions:
-                actions.append("wait")
         elif self.phase == "discussion":
             actions.append("say 'text'")
         elif self.phase == "day":
-            actions.extend([f"vote {p}" for p in players if p != self.agent_player])
+            actions.extend([f"vote {p}" for p in players])
         elif self.phase == "hunter":
             actions.extend([f"shoot {p}" for p in players if p != self.agent_player])
 
@@ -441,8 +490,8 @@ class WerewolfEnv(EnvironmentService):
             self.phase_actions[self.agent_player] = f"say {ans}"
         else:
             logutil(f"{self.agent_player} ({self.agent_role}) sended an invalid action, skipping this turn.")
-            self.phase_actions[self.agent_player] = f"wait"
-        self.trajectory.append(f"{self.agent_player} ({self.agent_role}) -> {self.phase_actions[self.agent_player]}: {text}")
+            self.phase_actions[self.agent_player] = "skip"
+        self.trajectory.append(f"{self.agent_player} ({self.agent_role}) -> {self.phase_actions[self.agent_player]}: \n{text}\n")
         info = ""
         done = False
 
@@ -470,9 +519,9 @@ class WerewolfEnv(EnvironmentService):
             obs += f"{self.rules} You are {self.agent_player} ({self.agent_role}). {role_prompt}"
         if memory:
             obs += f" You remember: {memory}"
-        obs += f" {info} {guide}"
+        obs += f" {info}"
         
-        return obs, reward, done, False, {}
+        return obs, guide, reward, done, False, {}
 
     def get_trajectory(self) -> List[str]:
         """Returns a copy of the trajectory history."""
@@ -491,7 +540,7 @@ class WerewolfEnv(EnvironmentService):
 
         if kill_target is None and any(self.alive[p] for p in players if self.role_type[p] == "werewolf"):
             candidates = [r for r in players if self.role_type[r] != "werewolf" and self.alive[r]]
-            if candidates and self.round > 5:
+            if candidates and self.round > 4:
                 kill_target = random.choice(candidates)
 
         if kill_target:

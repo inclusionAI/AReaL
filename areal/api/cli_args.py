@@ -792,6 +792,9 @@ class GRPOConfig(BaseExperimentConfig):
         default_factory=GenerationHyperparameters
     )
     opp_server_addrs: str = ""
+    opp_tokenizer_path: str = ""
+    teacher_server_addrs: str = ""
+    teacher_tokenizer_path: str = ""
     rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
     ref: PPOActorConfig = field(default_factory=PPOActorConfig)

@@ -26,6 +26,8 @@ logger = logging.getLogger("Werewolf GRPO Exp")
 LOGGING_KEYS = [
     "traj_steps",
     "traj_len",
+    "traj_input_len",
+    "traj_output_len",
     "vill_rewards",
     "were_rewards",
     "vill_wins",
@@ -48,6 +50,12 @@ def main(args):
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
+    opp_tokenizer = None
+    if config.opp_tokenizer_path:
+        opp_tokenizer = load_hf_tokenizer(config.opp_tokenizer_path)
+    teacher_tokenizer = None
+    if config.teacher_tokenizer_path:
+        teacher_tokenizer = load_hf_tokenizer(config.teacher_tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
 
@@ -78,11 +86,15 @@ def main(args):
     rollout.initialize(None, ft_spec)
 
     opp_server_addrs = config.opp_server_addrs
+    opp_rollout = None
     if opp_server_addrs != "":
         opp_rollout = RemoteSGLangEngine(config.rollout, opp_server_addrs)
         opp_rollout.initialize(None, ft_spec)
-    else:
-        opp_rollout = None
+    teacher_server_addrs = config.teacher_server_addrs
+    teacher_rollout = None
+    if teacher_server_addrs != "":
+        teacher_rollout = RemoteSGLangEngine(config.rollout, teacher_server_addrs)
+        teacher_rollout.initialize(None, ft_spec)
 
     actor = FSDPPPOActor(config=config.actor)
     actor.initialize(None, ft_spec)
@@ -108,6 +120,14 @@ def main(args):
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
+    if opp_tokenizer and (opp_tokenizer.pad_token_id not in config.gconfig.stop_token_ids):
+        config.gconfig.stop_token_ids.append(opp_tokenizer.pad_token_id)
+    if opp_tokenizer and (opp_tokenizer.eos_token_id not in config.gconfig.stop_token_ids):
+        config.gconfig.stop_token_ids.append(opp_tokenizer.eos_token_id)
+    if teacher_tokenizer and (teacher_tokenizer.pad_token_id not in config.gconfig.stop_token_ids):
+        config.gconfig.stop_token_ids.append(teacher_tokenizer.pad_token_id)
+    if teacher_tokenizer and (teacher_tokenizer.eos_token_id not in config.gconfig.stop_token_ids):
+        config.gconfig.stop_token_ids.append(teacher_tokenizer.eos_token_id)
     workflow = WerewolfWorkflow(
         gconfig=config.gconfig,
         tokenizer=tokenizer,
@@ -116,6 +136,9 @@ def main(args):
         ),
         role=config.role,
         opp_rollout=opp_rollout,
+        opp_tokenizer=opp_tokenizer,
+        teacher_rollout=teacher_rollout,
+        teacher_tokenizer=teacher_tokenizer,
     )
 
     saver = Saver(config.saver, ft_spec)
@@ -264,8 +287,8 @@ export WANDB_BASE_URL=http://8.150.1.98:8080
 python -m areal.launcher.slurm examples/lite/werewolf_grpo.py \
     --config examples/lite/configs/werewolf_grpo.yaml \
     stats_logger.wandb.mode=online \
-    experiment_name=xmy-werewolf-double \
-    trial_name=villager2
+    experiment_name=xmy-werewolf-double3 \
+    trial_name=villager1
 
 python -m areal.launcher.slurm examples/lite/gsm8k_grpo.py \
     --config examples/lite/configs/gsm8k_grpo.yaml \
