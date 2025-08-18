@@ -41,4 +41,4 @@ jobs:
       - env:
           CI: true
         run: |
-          TOKENIZERS_PARALLELISM=true pytest areal/tests
+          TOKENIZERS_PARALLELISM=true pytest -s -vv areal/tests
