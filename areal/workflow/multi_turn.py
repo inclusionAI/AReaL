@@ -47,7 +47,8 @@ class MultiTurnWorkflow(RolloutWorkflow):
         messages += [
             {
                 "role": "user",
-                "content": "\nYour answer is either wrong or not parsable to the reward function. Please try to answer it again.",
+                "content": "Your answer is either wrong or not parsable to the reward function. You may misunderstand the original question. "
+                "Please carefully read the original question, check the preivous errors, and try to answer it again.",
             }
         ]
         s2 = self.tokenizer.apply_chat_template(
