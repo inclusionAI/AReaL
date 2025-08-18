@@ -16,7 +16,6 @@ import realhf.base.stats_tracker as stats_tracker
 from areal.api.cli_args import SFTConfig
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.sft.lm_engine import FSDPLMEngine
-from areal.utils.stats_logger import StatsLogger
 
 
 def main() -> None:
