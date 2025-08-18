@@ -30,15 +30,15 @@ jobs:
 
       - name: Wait for 2 free GPUs
         timeout-minutes: 7200
-        run: |            
+        run: |
           until [[ $(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | wc -l) -ge 2 ]]; do
             CUDA_VISIBLE_DEVICES="$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits | awk -F',' '$2/$3 >= 0.90 {print $1}' | tr '\n' ',' | sed 's/,$//')"
             sleep 1
           done
-          
+
           echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "$GITHUB_ENV"
 
       - env:
           CI: true
         run: |
-          pytest areal/tests
+          TOKENIZERS_PARALLELISM=true pytest areal/tests
