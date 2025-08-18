@@ -16,6 +16,7 @@ from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import RolloutStat
 from areal.utils.data import concat_padded_tensors
+from areal.utils.http import get_default_connector
 from realhf.base import logging
 
 if TYPE_CHECKING:
