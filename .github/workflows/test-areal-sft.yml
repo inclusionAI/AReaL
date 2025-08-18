@@ -1,4 +1,4 @@
-name: Test AReaL
+name: SFT Integration Tests
 
 on:
   pull_request:
@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: areal-tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  test-areal:
+  sft-integration-tests:
     environment:
       name: AReaL-unittests
     permissions:
@@ -38,7 +38,8 @@ jobs:
 
           echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "$GITHUB_ENV"
 
-      - env:
+      - name: Run SFT integration tests
+        env:
           CI: true
         run: |
-          TOKENIZERS_PARALLELISM=false pytest -s -vv areal/tests
+          TOKENIZERS_PARALLELISM=false pytest -s -vv areal/tests/sft/
