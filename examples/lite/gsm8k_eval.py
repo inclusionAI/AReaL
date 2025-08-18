@@ -1,4 +1,3 @@
-import itertools
 import os
 import sys
 
@@ -7,13 +6,8 @@ import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
-from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.utils.device import log_gpu_stats
-from areal.utils.evaluator import Evaluator
-from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
