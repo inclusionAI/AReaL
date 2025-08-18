@@ -11,10 +11,7 @@ from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 from areal.experimental.api.cli_args import (
     ExperimentalTrainEngineConfig as TrainEngineConfig,
 )
-from areal.experimental.api.cli_args import (
-    MegatronEngineConfig,
-    OptimizerConfig,
-)
+from areal.experimental.api.cli_args import MegatronEngineConfig, OptimizerConfig
 from areal.experimental.megatron_engine import MegatronEngine
 from areal.utils.device import log_gpu_stats
 from realhf.base import logging
