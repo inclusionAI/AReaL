@@ -85,5 +85,5 @@ repos:
       - id: nbqa-isort
         name: nbqa-isort - Sort imports in notebooks
         description: Sort imports in notebook cells
-        additional_dependencies: [isort==5.13.2]
+        additional_dependencies: [isort==6.0.1]
         args: [--profile=black]

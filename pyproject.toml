@@ -56,7 +56,7 @@ dependencies = [
     "tabulate",
     "gymnasium>=1.1.1",
     "torchdata",
-    "autoflake",
+    "autoflake==2.3.1",
     "tensordict",
     "pybase64",
     "msgspec",
@@ -121,7 +121,7 @@ dependencies = [
     "sphinx",
     "sphinx-nefertiti",
     "black==25.1.0",
-    "isort==5.13.2",
+    "isort==6.0.1",
     "clang-format==19.1.7",
 ]
 
@@ -129,7 +129,7 @@ dependencies = [
 dev = [
     "pytest",
     "black==25.1.0",
-    "isort==5.13.2",
+    "isort==6.0.1",
     "clang-format==19.1.7",
     "sh~=2.2",
 ]
