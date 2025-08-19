@@ -286,14 +286,14 @@ def main(args):
             )
 
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
         stats[0].update(stats_tracker.export_all(reduce_group=actor.parallelism_group))
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         # Resume rollout
         rollout.resume()

@@ -2,7 +2,6 @@ import torch
 
 from .platform import Platform
 from .cuda import CudaPlatform
-from .npu import NpuPlatform
 from .unknown import UnknownPlatform
 from .cpu import CpuPlatform
 
@@ -30,14 +29,8 @@ def _init_platform() -> Platform:
         logger.warning("Unrecognized CUDA device. Falling back to UnknownPlatform.")
         return UnknownPlatform()
     else:
-        try:
-            import torch_npu  # noqa: F401
-
-            logger.info("Detected torch_npu. Initializing NPU platform.")
-            return NpuPlatform()
-        except ImportError:
-            logger.info("No supported accelerator detected. Initializing CPU platform.")
-            return CpuPlatform()
+        logger.info("No supported accelerator detected. Initializing CPU platform.")
+        return CpuPlatform()
 
 
 # Global singleton representing the current platform in use.

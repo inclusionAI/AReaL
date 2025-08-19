@@ -144,12 +144,12 @@ class FSDPEngine(BaseHFEngine):
         )
 
     def upload_weights(self, meta: WeightUpdateMeta):
-        if meta.type == "nccl" or "hccl":
+        if meta.type == "nccl":
             if not self.weight_update_group_initialized:
                 self._init_distributed_weight_update(meta)
             self._update_weights_from_distributed(meta.nccl_param_specs)
             dist.barrier(device_ids=[self.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
         elif meta.type == "disk":
             self._save_model_to_hf(meta.path, self.tokenizer, self.processor)
             # dist.barrier() are called when _save_model_to_hf finished
