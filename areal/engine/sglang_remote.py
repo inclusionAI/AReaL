@@ -114,6 +114,7 @@ class RemoteSGLangEngine(InferenceEngine):
             "max_new_tokens": gconfig.max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
+            "frequency_penalty": gconfig.frequency_penalty,
         }
         if stop:
             sample_params["stop"] = stop

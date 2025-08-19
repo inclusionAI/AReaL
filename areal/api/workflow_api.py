@@ -6,7 +6,7 @@ import threading
 import time
 import traceback
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 import torch.distributed as dist
 import uvloop
@@ -16,6 +16,9 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import RolloutStat
+from areal.experimental.openai.types import (
+    CompletionWithTokenLogpReward,
+)
 from areal.utils import logging
 from areal.utils.data import concat_padded_tensors
 
@@ -32,7 +35,7 @@ class RolloutWorkflow:
 
     async def arun_episode(
         self, engine: "InferenceEngine", data: Dict[str, Any]
-    ) -> TensorDict | None:
+    ) -> Union[TensorDict, None, Dict[str, CompletionWithTokenLogpReward]]:
         """Run a single episode of the workflow.
 
         `None` implies that this trajectory is rejected and will not be used for training.
@@ -157,7 +160,14 @@ class WorkflowExecutor:
                 # Collect done results
                 for task in done:
                     traj = await task
-                    traj: TensorDict
+                    if isinstance(traj, dict) and all(
+                        isinstance(v, CompletionWithTokenLogpReward)
+                        for v in traj.values()
+                    ):
+                        traj = concat_padded_tensors(
+                            [v.to_tensor_dict() for v in traj.values()]
+                        )
+                    assert traj is None or isinstance(traj, TensorDict), traj
                     task_rid = task.get_name()
                     with self.lock:
                         rollout_tasks.pop(task_rid)

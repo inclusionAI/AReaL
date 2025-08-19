@@ -82,6 +82,15 @@ class GenerationHyperparameters:
             "help": "One or multiple stop words. Generation will stop if one of these words is sampled."
         },
     )
+    frequency_penalty: float = field(
+        default=0.0,
+        metadata={
+            "help": (
+                "Penalizes tokens based on their frequency in generation so far. "
+                "Must be between -2 and 2 where negative numbers encourage repeatment."
+            )
+        },
+    )
 
     def new(self, **kwargs):
         args = asdict(self)

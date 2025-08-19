@@ -214,8 +214,10 @@ class BaseHFEngine(TrainEngine):
 
     def destroy(self):
         """Destroy the engine and release GPU memory."""
-        del self.optimizer
-        del self.model
+        if hasattr(self, "optimizer"):
+            del self.optimizer
+        if hasattr(self, "model"):
+            del self.model
         gc.collect()
         torch.cuda.empty_cache()
         gc.collect()

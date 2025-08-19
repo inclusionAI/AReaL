@@ -1,4 +1,4 @@
-name: Test AReaL
+name: Unit Tests
 
 on:
   pull_request:
@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: areal-unit-tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  test-areal:
+  unit-tests:
     environment:
       name: AReaL-unittests
     permissions:
@@ -38,7 +38,8 @@ jobs:
 
           echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "$GITHUB_ENV"
 
-      - env:
+      - name: Run unit tests
+        env:
           CI: true
         run: |
-          TOKENIZERS_PARALLELISM=true pytest -s -vv areal/tests
+          TOKENIZERS_PARALLELISM=false pytest -s -vv areal/tests/test_*.py
