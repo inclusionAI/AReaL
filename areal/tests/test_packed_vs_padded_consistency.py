@@ -2,7 +2,8 @@ import os
 
 import pytest
 import torch
-from tensordict import TensorDict
+import random
+from tensordict import TensorDict,NonTensorData
 from torch.testing import assert_close
 
 from areal.api.cli_args import TrainEngineConfig
@@ -149,19 +150,32 @@ def mock_padded_vlm_data(request):
         )
 
         pixel_values = processed_input["pixel_values"]
-        if pixel_values.dim() == 3:
-            pixel_values = pixel_values.unsqueeze(0)  
+
+        # if pixel_values.dim() == 2:
+        #     pixel_values = pixel_values.unsqueeze(0)  
             
+        
         seq = dict(
             input_ids=input_ids.unsqueeze(0),
-            pixel_values=pixel_values,
-            image_grid_thw=processed_input["image_grid_thw"],
             loss_mask=torch.tensor([0] * prompt_len + [1] * ans_len).unsqueeze(0),
             attention_mask=torch.tensor([1] * total_len).unsqueeze(0),
+            multi_modal_input=[{"pixel_values": pixel_values, "image_grid_thw": processed_input["image_grid_thw"]}]
         )
-        all_data.append(TensorDict(seq, batch_size=[1]))
 
-    return concat_padded_tensors(all_data).cuda()
+        td = TensorDict(seq, batch_size=[1])
+
+        all_data.append(td)
+    
+    padded_data = concat_padded_tensors(all_data).cuda()
+    if "multi_modal_input" in padded_data:
+        for item in padded_data["multi_modal_input"]:
+            if isinstance(item, dict):
+                for k, v in item.items():
+                    if torch.is_tensor(v):
+                        item[k] = v.cuda()
+    
+
+    return padded_data
 
 @pytest.mark.parametrize(
     "model_path",
@@ -197,10 +211,13 @@ def test_vlm_consistency(model_path, mock_padded_vlm_data):
 
     with torch.no_grad():
         # Padded logits
+        pixel_values = torch.cat([item["pixel_values"] for item in padded_input["multi_modal_input"]], dim=0)
+        image_grid_thw = torch.cat([item["image_grid_thw"] for item in padded_input["multi_modal_input"]], dim=0)
+
         padded_logits = engine.model(
             input_ids=padded_input["input_ids"],
-            pixel_values=padded_input["pixel_values"],
-            image_grid_thw=padded_input["image_grid_thw"],
+            pixel_values=pixel_values,
+            image_grid_thw=image_grid_thw,
             attention_mask=padded_input["attention_mask"],
         ).logits
 

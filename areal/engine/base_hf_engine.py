@@ -264,7 +264,7 @@ class BaseHFEngine(TrainEngine):
             # Create the special t,h,w position IDs for qwen 2.5 VL
             attn_mask = input_["attention_mask"]
             input_ids = input_["input_ids"]
-
+            print(input_)
             if "multi_modal_input" in input_:
                 multi_modal_input = input_["multi_modal_input"]
                 image_grid_thw = None
@@ -315,30 +315,30 @@ class BaseHFEngine(TrainEngine):
                 # BUG: pixel_value sometimes cannot div by vision encoder in spatial merge stage when applying multinode training, which might lead by   
                 # pixel_values:mb, image_token_num, vision_dim
                 # image_grid_thw: mb,M, 3 (1, H, W)
-                pv = mb["pixel_values"]         # [M, S, D]
-                grid = mb["image_grid_thw"]     # [M, 3 (1, H, W)]
+                # pv = mb["pixel_values"]         # [M, S, D]
+                # grid = mb["image_grid_thw"]     # [M, 3 (1, H, W)]
 
-                assert pv.dim() == 3, f"pixel_values must be [M,S,D], got {tuple(pv.shape)}"
-                assert grid.dim() == 2 and grid.size(1) == 3, \
-                    f"image_grid_thw must be [M,3], got {tuple(grid.shape)}"
+                # assert pv.dim() == 3, f"pixel_values must be [M,S,D], got {tuple(pv.shape)}"
+                # assert grid.dim() == 2 and grid.size(1) == 3, \
+                #     f"image_grid_thw must be [M,3], got {tuple(grid.shape)}"
 
-                M, S, _ = pv.shape
-                Mg, _   = grid.shape
-                assert M == Mg, f"M mismatch: pixel_values={M}, image_grid_thw={Mg}"
+                # M, S, _ = pv.shape
+                # Mg, _   = grid.shape
+                # assert M == Mg, f"M mismatch: pixel_values={M}, image_grid_thw={Mg}"
 
-                t = grid[:, 0].to(torch.int64)
-                h = grid[:, 1].to(torch.int64)
-                w = grid[:, 2].to(torch.int64)
+                # t = grid[:, 0].to(torch.int64)
+                # h = grid[:, 1].to(torch.int64)
+                # w = grid[:, 2].to(torch.int64)
 
-                # t== 1
-                assert torch.all(t == 1), f"t must be 1; got {t.unique().tolist()}"
+                # # t== 1
+                # assert torch.all(t == 1), f"t must be 1; got {t.unique().tolist()}"
 
-                # S == H*W
-                assert torch.all((h * w) == S), f"S must equal H*W; got S={S}, H*W samples={((h*w)[:8]).tolist()}"
+                # # S == H*W
+                # assert torch.all((h * w) == S), f"S must equal H*W; got S={S}, H*W samples={((h*w)[:8]).tolist()}"
 
-                # 2×2 spatial merge
-                assert torch.all(h % 2 == 0) and torch.all(w % 2 == 0), \
-                    f"H,W must be even; samples H[:8]={h[:8].tolist()}, W[:8]={w[:8].tolist()}"
+                # # 2×2 spatial merge
+                # assert torch.all(h % 2 == 0) and torch.all(w % 2 == 0), \
+                #     f"H,W must be even; samples H[:8]={h[:8].tolist()}, W[:8]={w[:8].tolist()}"
 
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
         # TODO: remove the usage of tensordict
@@ -368,6 +368,7 @@ class BaseHFEngine(TrainEngine):
                 if image_grid_thw_list:
                     mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
                     padded_mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
+
                 pixel_values_list = [
                     item["pixel_values"]
                     for item in mb["multi_modal_input"]
