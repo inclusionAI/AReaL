@@ -256,10 +256,7 @@ class BaseHFEngine(TrainEngine):
 
     def prepare_mb_list(self, input_: TensorDict) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
-        if self.is_vision_model:
-            assert (
-                "pixel_values" in input_ and "image_grid_thw" in input_
-            ), "For vision-language models, pixel_values and image_grid_thw must be present in input_"
+
         if isinstance(input_, dict):
             input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
             
@@ -267,12 +264,26 @@ class BaseHFEngine(TrainEngine):
             # Create the special t,h,w position IDs for qwen 2.5 VL
             attn_mask = input_["attention_mask"]
             input_ids = input_["input_ids"]
-            image_grid_thw = input_.get("image_grid_thw", None)
-            video_grid_thw = input_.get("video_grid_thw", None)
-            if image_grid_thw is not None:
-                image_grid_thw = image_grid_thw.squeeze(1)
-            if video_grid_thw is not None:
-                video_grid_thw = video_grid_thw.squeeze(1)
+
+            if "multi_modal_input" in input_:
+                multi_modal_input = input_["multi_modal_input"]
+                image_grid_thw = None
+                video_grid_thw = None
+                image_grid_thw_list = [
+                    m["image_grid_thw"]
+                    for m in multi_modal_input
+                    if "image_grid_thw" in m
+                ]
+                if image_grid_thw_list:
+                    image_grid_thw = torch.cat(image_grid_thw_list)
+                video_grid_thw_list = [
+                    m["video_grid_thw"]
+                    for m in multi_modal_input
+                    if "video_grid_thw" in m
+                ]
+                if video_grid_thw_list:
+                    video_grid_thw = torch.cat(video_grid_thw_list)
+
             position_ids, _ = self.model.model.get_rope_index(
                 input_ids, image_grid_thw, video_grid_thw, attn_mask
             )
@@ -337,17 +348,49 @@ class BaseHFEngine(TrainEngine):
             mb_list.mbs[i] = dict(**mb)
         for i, mb in enumerate(mb_list.padded_mbs):
             mb_list.padded_mbs[i] = dict(**mb)
-        for mb in mb_list.mbs:
+        for mb, padded_mb in zip(mb_list.mbs, mb_list.padded_mbs):
             mb["max_seqlen"] = int(mb["max_seqlen"])
+            padded_mb["max_seqlen"] = int(padded_mb["max_seqlen"])
             mb["cu_seqlens_q"] = mb["cu_seqlens_k"] = mb["cu_seqlens"]
+            padded_mb["cu_seqlens_q"] = padded_mb["cu_seqlens_k"] = padded_mb[
+                "cu_seqlens"
+            ]
             mb["use_cache"] = False
+            padded_mb["use_cache"] = False
             mb["attention_mask"] = dict(full_attention=None)
-        for mb in mb_list.padded_mbs:
-            mb["max_seqlen"] = int(mb["max_seqlen"])
-            mb["cu_seqlens_q"] = mb["cu_seqlens_k"] = mb["cu_seqlens"]
-            mb["use_cache"] = False
-            mb["attention_mask"] = dict(full_attention=None)
-
+            padded_mb["attention_mask"] = dict(full_attention=None)
+            if "multi_modal_input" in mb:
+                image_grid_thw_list = [
+                    item["image_grid_thw"]
+                    for item in mb["multi_modal_input"]
+                    if "image_grid_thw" in item
+                ]
+                if image_grid_thw_list:
+                    mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
+                    padded_mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
+                pixel_values_list = [
+                    item["pixel_values"]
+                    for item in mb["multi_modal_input"]
+                    if "pixel_values" in item
+                ]
+                if pixel_values_list:
+                    # Individual pixel_values shape: (#patches_per_sample, patch_size)
+                    # Concatenate along dim=0 to get shape: (#total_patches, patch_size)
+                    # For Qwen:
+                    # - image_grid_thw shape: (#total_images, 3) where 3 -> [grid_t, grid_h, grid_w]
+                    # - pixel_values shape: (#total_patches, patch_size)
+                    # - total_patches = torch.sum(torch.prod(image_grid_thw, dim=1))
+                    # - total_image_pad_tokens = total_patches // (merge_size**2)
+                    mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
+                    padded_mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
+                video_grid_thw_list = [
+                    item["video_grid_thw"]
+                    for item in mb["multi_modal_input"]
+                    if "video_grid_thw" in item
+                ]
+                if video_grid_thw_list:
+                    mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
+                    padded_mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
         return mb_list
 
     def get_model_name_parameters(self):

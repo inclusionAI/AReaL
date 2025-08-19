@@ -99,10 +99,6 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
 
         assert_close(x1, x2, atol=2e-1, rtol=2e-1)
 
-
-VISION_W = 336
-VISION_H = 336
-
 QWEN25_VL_PATH = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
 if not os.path.exists(QWEN25_VL_PATH):
     QWEN25_VL_PATH = "Qwen/Qwen2.5-VL-3B-Instruct"
@@ -120,15 +116,29 @@ def mock_padded_vlm_data(request):
     processor, tokenizer = load_hf_processor_and_tokenizer(model_path)
 
     for prompt_len, ans_len in zip(prompt_lens, answer_lens):
+        num_images = random.randint(1, 4)
+        images = []
+        image_tokens = []
+        
+        for _ in range(num_images):
 
-        image = torch.randint(0, 255, size=(1, 3, VISION_H, VISION_W)).float() / 255.0
-        image_token = "<|vision_start|><|image_pad|><|vision_end|>"
-        processed_input = processor(text=image_token, images=image, return_tensors="pt")
+            VISION_H = random.randint(4, 32) * 28  
+            VISION_W = random.randint(4, 32) * 28 
+            
+            image = torch.randint(0, 255, size=(3, VISION_H, VISION_W)).float() / 255.0
+            images.append(image)
+            image_tokens.append("<|vision_start|><|image_pad|><|vision_end|>")
+        
+        combined_image_token = "".join(image_tokens)
+        
+        processed_input = processor(text=combined_image_token, images=images, return_tensors="pt")
 
-        image_input_id = processed_input["input_ids"].squeeze(0)
+        image_input_id = processed_input["input_ids"].squeeze(0) if processed_input["input_ids"].dim() > 1 else processed_input["input_ids"]
 
         prompt_len = int(prompt_len) + int(image_input_id.shape[0])
         ans_len = int(ans_len)
+        total_len = prompt_len + ans_len
+        
         input_ids = torch.cat(
             [
                 torch.randint(
@@ -138,17 +148,20 @@ def mock_padded_vlm_data(request):
             ]
         )
 
+        pixel_values = processed_input["pixel_values"]
+        if pixel_values.dim() == 3:
+            pixel_values = pixel_values.unsqueeze(0)  
+            
         seq = dict(
             input_ids=input_ids.unsqueeze(0),
-            pixel_values=processed_input["pixel_values"].unsqueeze(0),
+            pixel_values=pixel_values,
             image_grid_thw=processed_input["image_grid_thw"],
             loss_mask=torch.tensor([0] * prompt_len + [1] * ans_len).unsqueeze(0),
-            attention_mask=torch.tensor([1] * (prompt_len + ans_len)).unsqueeze(0),
+            attention_mask=torch.tensor([1] * total_len).unsqueeze(0),
         )
         all_data.append(TensorDict(seq, batch_size=[1]))
 
     return concat_padded_tensors(all_data).cuda()
-
 
 @pytest.mark.parametrize(
     "model_path",
