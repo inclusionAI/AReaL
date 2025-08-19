@@ -122,14 +122,14 @@ def main(args):
     )
 
     workflow = VisionRLVRWorkflow(
-        reward_fn=clevr_count_70k_reward_fn,
+        reward_fn=reward_fn,
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
     )
     eval_workflow = VisionRLVRWorkflow(
-        reward_fn=clevr_count_70k_reward_fn,
+        reward_fn=reward_fn,
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,

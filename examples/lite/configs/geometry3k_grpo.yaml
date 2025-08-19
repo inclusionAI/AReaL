@@ -1,4 +1,4 @@
-experiment_name: clevr_count_70k-grpo
+experiment_name: geometry3k-grpo
 trial_name: trial1
 
 
@@ -44,7 +44,7 @@ actor:
   gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_mb: 12800
+    max_tokens_per_mb: 10240
   optimizer:
     type: adam
     lr: 2e-6
@@ -81,7 +81,6 @@ ref:
   backend: fsdp
 
 # SGLang
-server_only: false
 sglang:
   model_path: ${actor.path}
   random_seed: ${seed}
@@ -89,7 +88,7 @@ sglang:
   dtype: ${actor.dtype}
   max_running_requests: null 
   context_length: 32768
-  mem_fraction_static: 0.7
+  mem_fraction_static: 0.6
 
 # datasets
 train_dataset:
@@ -121,7 +120,8 @@ saver:
   freq_steps: null
   freq_secs: null
 
-checkpointer:
+recover:
+  mode: disabled
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
@@ -143,3 +143,9 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     project: geometry3k-grpo
+
+launcher:
+  inference_server_cpus_per_gpu: 4
+  inference_server_mem_per_gpu: 32768
+  trainer_cpus_per_gpu: 4
+  trainer_mem_per_gpu: 32768
