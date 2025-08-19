@@ -1,8 +1,6 @@
 import asyncio
-import threading
-import weakref
 from concurrent.futures import ProcessPoolExecutor
-from functools import partial
+from functools import lru_cache, partial
 from typing import Callable, List, Optional
 
 from realhf.base import logging
@@ -32,15 +30,15 @@ def reward_fn(
     """
 
 
+@lru_cache(maxsize=1)
+def get_rw_executor(max_workers):
+    return ProcessPoolExecutor(max_workers=max_workers)
+
+
 class AsyncRewardWrapper:
     """
     Wraps a synchronous reward function to make it async with timeout handling.
-    Automatically manages ProcessPoolExecutor lifecycle based on instance count.
     """
-
-    _executors = {}
-    _instance_counts = {}
-    _lock = threading.Lock()
 
     def __init__(
         self,
@@ -51,45 +49,14 @@ class AsyncRewardWrapper:
         self.reward_fn = reward_fn
         self.timeout_seconds = timeout_seconds
         self.max_workers = max_workers
-        self._executor_key = max_workers
-
-        with self._lock:
-            if self._executor_key not in self._executors:
-                self._executors[self._executor_key] = ProcessPoolExecutor(
-                    max_workers=max_workers
-                )
-                self._instance_counts[self._executor_key] = 0
-            self._instance_counts[self._executor_key] += 1
-
-        weakref.finalize(self, AsyncRewardWrapper._cleanup_executor, max_workers)
-
-    @classmethod
-    def _cleanup_executor(cls, executor_key):
-        """Called when an AsyncRewardWrapper instance is garbage collected"""
-        with cls._lock:
-            if executor_key in cls._instance_counts:
-                cls._instance_counts[executor_key] -= 1
-                if cls._instance_counts[executor_key] <= 0:
-                    if executor_key in cls._executors:
-                        executor = cls._executors.pop(executor_key)
-                        executor.shutdown(wait=True)
-                        logger.debug(
-                            f"ProcessPoolExecutor with {executor_key} workers shut down"
-                        )
-                    cls._instance_counts.pop(executor_key, None)
 
     async def __call__(self, *args, **kwargs) -> float:
-        with self._lock:
-            executor = self._executors.get(self._executor_key)
-
-        if executor is None:
-            raise RuntimeError("ProcessPoolExecutor has been shut down")
-
+        rw_executor = get_rw_executor(self.max_workers)
         loop = asyncio.get_event_loop()
         try:
             return await asyncio.wait_for(
                 loop.run_in_executor(
-                    executor,
+                    rw_executor,
                     partial(self.reward_fn, *args, **kwargs),
                 ),
                 timeout=self.timeout_seconds,

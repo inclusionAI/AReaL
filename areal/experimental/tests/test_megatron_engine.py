@@ -1,13 +1,11 @@
 import os
-import time
 from importlib.metadata import version as get_version
 
 import pytest
 import torch
 from tensordict import TensorDict
-from transformers import AutoTokenizer
 
-from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
+from areal.api.io_struct import FinetuneSpec
 from areal.experimental.api.cli_args import (
     ExperimentalTrainEngineConfig as TrainEngineConfig,
 )
@@ -98,29 +96,3 @@ def test_simple_train(engine, mock_input):
     )
     engine.step_lr_scheduler()
     logger.info(f"Train done, result={train_result}")
-
-
-@torch.no_grad()
-def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-    path = tmp_path_factory.mktemp("hf_engine_test")
-    save_load_meta = SaveLoadMeta(
-        path=path,
-        weight_format="hf",
-        tokenizer=tokenizer,
-        with_optim=False,
-        base_model_path=None,
-    )
-
-    old = engine.forward(input_=mock_input)
-    start = time.perf_counter()
-    engine.save(save_load_meta)
-    logger.info(f"Save done, time cost: {time.perf_counter() - start:.4f} seconds.")
-    for name, param in engine.model.named_parameters():
-        param.zero_()
-
-    start = time.perf_counter()
-    engine.load(save_load_meta)
-    logger.info(f"Load done, time cost: {time.perf_counter() - start:.4f} seconds.")
-    new = engine.forward(input_=mock_input)
-    assert torch.allclose(old, new)

@@ -15,7 +15,7 @@ from areal.api.io_struct import ModelRequest
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.utils.data import concat_padded_tensors
-from realhf.base import logging, stats_tracker
+from realhf.base import logging
 
 logger = logging.getLogger("RLVR workflow")
 
@@ -27,7 +27,6 @@ class RLVRWorkflow(RolloutWorkflow):
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
         enable_thinking: bool,
-        rollout_stat_scope: bool = "rollout",
         dump_dir: str | None = None,
     ):
         self.reward_fn = reward_fn
@@ -35,7 +34,6 @@ class RLVRWorkflow(RolloutWorkflow):
         self.tokenizer = tokenizer
         self.enable_thinking = enable_thinking
         self.dump_dir = dump_dir
-        self.rollout_stat_scope = rollout_stat_scope
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
@@ -82,10 +80,6 @@ class RLVRWorkflow(RolloutWorkflow):
                 resp.output_tokens,
                 **data,
             )
-
-            # Log reward.
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
-
             rewards.append(reward)
             res = dict(
                 # unsqueeze to add an additional batch dimension

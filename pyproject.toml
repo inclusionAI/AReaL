@@ -32,8 +32,6 @@ dependencies = [
     "datasets",
     "accelerate",
     "transformers==4.54.0",
-    "megatron-core==0.13.1",
-    "mbridge==0.13.0",
     
     # Scientific computing
     "scipy",
@@ -56,11 +54,10 @@ dependencies = [
     "tabulate",
     "gymnasium>=1.1.1",
     "torchdata",
-    "autoflake==2.3.1",
+    "autoflake",
     "tensordict",
     "pybase64",
     "msgspec",
-    "openai==1.99.6",
     
     # Monitoring and logging
     "wandb",
@@ -122,7 +119,7 @@ dependencies = [
     "sphinx",
     "sphinx-nefertiti",
     "black==25.1.0",
-    "isort==6.0.1",
+    "isort==5.13.2",
     "clang-format==19.1.7",
 ]
 
@@ -130,7 +127,7 @@ dependencies = [
 dev = [
     "pytest",
     "black==25.1.0",
-    "isort==6.0.1",
+    "isort==5.13.2",
     "clang-format==19.1.7",
     "sh~=2.2",
 ]
@@ -158,9 +155,3 @@ pythonpath = ["."]
 
 [tool.black]
 line-length = 88
-
-[tool.autoflake]
-in-place = true
-recursive = true
-remove-all-unused-imports = true
-remove-unused-variables = true

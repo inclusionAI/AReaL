@@ -46,7 +46,7 @@ repos:
         files: ^(areal/|examples/lite/).*\.py$
 
   - repo: https://github.com/pycqa/isort
-    rev: 6.0.1
+    rev: 5.13.2
     hooks:
       - id: isort
         args:
@@ -85,5 +85,5 @@ repos:
       - id: nbqa-isort
         name: nbqa-isort - Sort imports in notebooks
         description: Sort imports in notebook cells
-        additional_dependencies: [isort==6.0.1]
+        additional_dependencies: [isort==5.13.2]
         args: [--profile=black]

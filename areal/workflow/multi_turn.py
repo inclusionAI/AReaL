@@ -15,7 +15,7 @@ from areal.api.io_struct import ModelRequest
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.utils.data import concat_padded_tensors
-from realhf.base import logging, stats_tracker
+from realhf.base import logging
 
 logger = logging.getLogger("Multi-Turn workflow")
 
@@ -28,7 +28,6 @@ class MultiTurnWorkflow(RolloutWorkflow):
         tokenizer: PreTrainedTokenizerFast,
         max_turns: int,
         turn_discount: float,
-        rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
     ):
         self.reward_fn = reward_fn
@@ -36,7 +35,6 @@ class MultiTurnWorkflow(RolloutWorkflow):
         self.tokenizer = tokenizer
         self.max_turns = max_turns
         self.turn_discount = turn_discount
-        self.rollout_stat_scope = rollout_stat_scope
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
         self.dump_dir = dump_dir
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
@@ -49,8 +47,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
         messages += [
             {
                 "role": "user",
-                "content": "Your answer is either wrong or not parsable to the reward function. You may misunderstand the original question. "
-                "Please carefully read the original question, check the preivous errors, and try to answer it again.",
+                "content": "\nYour answer is either wrong or not parsable to the reward function. Please try to answer it again.",
             }
         ]
         s2 = self.tokenizer.apply_chat_template(
@@ -114,10 +111,6 @@ class MultiTurnWorkflow(RolloutWorkflow):
                 discount *= self.turn_discount
 
         reward = float(reward * discount)
-
-        # Log reward.
-        stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward, num_turns=t)
-
         res = dict(
             input_ids=torch.tensor(seq),
             logprobs=torch.tensor(logprobs),

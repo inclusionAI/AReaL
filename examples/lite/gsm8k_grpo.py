@@ -1,7 +1,6 @@
 import itertools
 import os
 import sys
-from copy import deepcopy
 
 import torch
 import torch.distributed as dist
@@ -81,10 +80,10 @@ def main(args):
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(None, ft_spec)
-    eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
-    # NOTE: eval does not have any offpolicyness control
-    eval_rollout.config.max_head_offpolicyness = int(1e12)
+    eval_rollout = RemoteSGLangEngine(config.rollout)
     eval_rollout.initialize(None, ft_spec)
+    # NOTE: set a large version such that eval does not have any offpolicyness control
+    eval_rollout.set_version(int(1e12))
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
@@ -118,16 +117,6 @@ def main(args):
         enable_thinking=False,
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
-    )
-    eval_workflow = RLVRWorkflow(
-        reward_fn=gsm8k_reward_fn,
-        gconfig=config.gconfig.new(temperature=0.6),
-        tokenizer=tokenizer,
-        enable_thinking=False,
-        rollout_stat_scope="eval-rollout",
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated-eval"
         ),
     )
 
@@ -201,10 +190,8 @@ def main(args):
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
-        # pause inference for updating weights, save, and evaluation
-        rollout.pause()
-
         with stats_tracker.record_timing("update_weights"):
+            rollout.pause()
             if dist.get_rank() == 0:
                 future = rollout.update_weights(weight_update_meta)
             actor.upload_weights(weight_update_meta)
@@ -212,10 +199,9 @@ def main(args):
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
             torch.cuda.synchronize()
-
+            rollout.resume()
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
-            eval_rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
@@ -223,14 +209,24 @@ def main(args):
         with stats_tracker.record_timing("eval"):
 
             def evaluate_fn():
-                # Stats are logged in the workflow
-                # and will be exported later
+                rollout.pause()
                 cnt = 0
                 for data in valid_dataloader:
                     for item in data:
-                        eval_rollout.submit(item, eval_workflow)
+                        eval_rollout.submit(item, workflow)
                         cnt += 1
-                eval_rollout.wait(cnt, timeout=None)
+                batch = eval_rollout.wait(cnt, timeout=None)
+                rewards = batch["rewards"].float().to(actor.device)
+                with stats_tracker.scope("grpo-eval"):
+                    stats_tracker.denominator(
+                        n_seqs=torch.ones(
+                            rewards.shape[0],
+                            device=rewards.device,
+                            dtype=torch.bool,
+                        )
+                    )
+                    stats_tracker.stat(task_reward=rewards, denominator="n_seqs")
+                rollout.resume()
 
             evaluator.evaluate(
                 evaluate_fn,
@@ -250,18 +246,7 @@ def main(args):
                 tokenizer=tokenizer,
             )
 
-        dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
-
-        # Upload statistics to the logger (e.g., wandb)
-        stats[0].update(stats_tracker.export_all(reduce_group=actor.parallelism_group))
         stats_logger.commit(epoch, step, global_step, stats)
-
-        dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
-
-        # Resume rollout
-        rollout.resume()
 
     stats_logger.close()
     eval_rollout.destroy()

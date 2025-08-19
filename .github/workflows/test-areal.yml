@@ -28,10 +28,12 @@ jobs:
       - run: |
           source examples/env/scripts/setup-pip-deps.sh
 
-      - name: Wait for 2 free GPUs
+      - name: Wait for GPU
         timeout-minutes: 7200
-        run: |            
-          until [[ $(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | wc -l) -ge 2 ]]; do
+        run: |
+          ALL_DEVICES="$(nvidia-smi --query-gpu=index --format=csv,noheader,nounits | tr '\n' ',' | sed 's/,$//')"
+            
+          until [[ "$CUDA_VISIBLE_DEVICES" == "$ALL_DEVICES" ]]; do
             CUDA_VISIBLE_DEVICES="$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits | awk -F',' '$2/$3 >= 0.90 {print $1}' | tr '\n' ',' | sed 's/,$//')"
             sleep 1
           done

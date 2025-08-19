@@ -40,12 +40,10 @@ matplotlib
 tabulate
 aiofiles
 pydantic
-isort==6.0.1
+isort==5.13.2
 clang-format==19.1.7
 ninja
 paramiko
-megatron-core==0.13.1
-mbridge==0.13.0
 # To eliminate security risks
 torch>2.0.0
 black==25.1.0
@@ -73,10 +71,9 @@ prettytable
 gymnasium>=1.1.1
 swanlab[dashboard]
 torchdata
-autoflake==2.3.1
+autoflake
 tensordict
 deepspeed>=0.17.2
 pybase64
 msgspec
-transformers==4.54.0
-openai==1.99.6
+transformers==4.53.1

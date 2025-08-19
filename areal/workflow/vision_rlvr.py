@@ -14,7 +14,7 @@ from areal.api.io_struct import ModelRequest
 from areal.utils.data import concat_padded_tensors
 from areal.utils.image import image2base64
 from areal.workflow.rlvr import RLVRWorkflow
-from realhf.base import logging, stats_tracker
+from realhf.base import logging
 
 logger = logging.getLogger("RLVR workflow")
 
@@ -27,17 +27,9 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         tokenizer: PreTrainedTokenizerFast,
         processor: AutoProcessor,
         enable_thinking: bool,
-        rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
     ):
-        super().__init__(
-            reward_fn,
-            gconfig,
-            tokenizer,
-            enable_thinking,
-            rollout_stat_scope=rollout_stat_scope,
-            dump_dir=dump_dir,
-        )
+        super().__init__(reward_fn, gconfig, tokenizer, enable_thinking, dump_dir)
         self.processor = processor
 
     async def arun_episode(self, engine, data):
@@ -72,6 +64,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         seqlens = []
 
         results = []
+        asyncio.get_event_loop()
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
@@ -90,10 +83,6 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 completion_ids=resp.output_tokens,
                 **data,
             )
-
-            # Log reward.
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
-
             rewards.append(reward)
             res = dict(
                 # unsqueeze to add an additional batch dimension

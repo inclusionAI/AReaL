@@ -1,13 +1,12 @@
 import asyncio
 import itertools
 import queue
-import random
 import threading
 import time
 import traceback
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
+import aiohttp
 import torch.distributed as dist
 import uvloop
 from tensordict import TensorDict
@@ -17,11 +16,11 @@ from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import RolloutStat
 from areal.utils.data import concat_padded_tensors
+from areal.utils.http import get_default_connector
 from realhf.base import logging
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
-    from areal.experimental.openai.client import CompletionWithTokenLogpReward
 
 logger = logging.getLogger("areal.workflow_api")
 
@@ -33,7 +32,7 @@ class RolloutWorkflow:
 
     async def arun_episode(
         self, engine: "InferenceEngine", data: Dict[str, Any]
-    ) -> Union[TensorDict, None, Dict[str, "CompletionWithTokenLogpReward"]]:
+    ) -> TensorDict | None:
         """Run a single episode of the workflow.
 
         `None` implies that this trajectory is rejected and will not be used for training.
@@ -41,12 +40,6 @@ class RolloutWorkflow:
         See concrete example implementations under the `areal/workflow` directory.
         """
         raise NotImplementedError()
-
-
-@dataclass
-class _TimedResult:
-    t: int
-    data: TensorDict
 
 
 class WorkflowExecutor:
@@ -69,9 +62,11 @@ class WorkflowExecutor:
         qsize = config.queue_size or config.max_concurrent_rollouts * 16
         self.input_queue = queue.Queue(maxsize=qsize)
         self.output_queue = queue.Queue(maxsize=qsize)
-        self.result_cache: List[_TimedResult] = []
+        self.result_cache: List[TensorDict] = []
 
         self.rollout_stat = RolloutStat()
+
+        self.session = None
 
     def initialize(self):
         self.rollout_tasks: Dict[str, asyncio.Task] = {}
@@ -111,8 +106,20 @@ class WorkflowExecutor:
             traceback.print_exc()
 
     async def _rollout_thread_async(self):
+        if self.session is None:
+            # NOTE: Lazily initialize aiohttp.ClientSession since it needs to be initialized
+            # inside asyncio loop in WorkflowExecutor
+            self.session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(
+                    total=self.config.request_timeout,
+                    sock_connect=self.config.request_timeout,
+                    connect=self.config.request_timeout,
+                ),
+                read_bufsize=1024 * 1024 * 10,
+                connector=get_default_connector(),
+            )
+
         rollout_tasks = self.rollout_tasks
-        task_create_time = {}
         rid = 0
         try:
             while not self.exiting.is_set():
@@ -132,7 +139,6 @@ class WorkflowExecutor:
                         name=str(rid),
                     )
                     rollout_tasks[str(rid)] = task
-                    task_create_time[str(rid)] = time.monotonic_ns()
                     self.rollout_stat.submitted += 1
                     self.rollout_stat.running += 1
                     if self.config.enable_rollout_tracing:
@@ -158,23 +164,10 @@ class WorkflowExecutor:
                 # Collect done results
                 for task in done:
                     traj = await task
-                    from areal.experimental.openai.client import (
-                        CompletionWithTokenLogpReward,
-                    )
-                    from areal.utils.data import concat_padded_tensors
-
-                    if isinstance(traj, dict) and all(
-                        isinstance(v, CompletionWithTokenLogpReward)
-                        for v in traj.values()
-                    ):
-                        traj = concat_padded_tensors(
-                            [v.to_tensor_dict() for v in traj.values()]
-                        )
-                    assert traj is None or isinstance(traj, TensorDict), traj
+                    traj: TensorDict
                     task_rid = task.get_name()
                     with self.lock:
                         rollout_tasks.pop(task_rid)
-                        create_time = task_create_time.pop(task_rid)
                         self.rollout_stat.accepted += 1
                         self.rollout_stat.running -= 1
                         if self.config.enable_rollout_tracing:
@@ -185,7 +178,7 @@ class WorkflowExecutor:
                                 f"accepted: {self.rollout_stat.accepted}."
                             )
                     try:
-                        self.output_queue.put_nowait(_TimedResult(create_time, traj))
+                        self.output_queue.put_nowait(traj)
                     except queue.Full:
                         raise RuntimeError(
                             "Output queue full. Please increase queue_size."
@@ -204,6 +197,7 @@ class WorkflowExecutor:
                             await task
                         except asyncio.CancelledError:
                             pass
+            await self.session.close()
 
     def submit(
         self,
@@ -225,32 +219,31 @@ class WorkflowExecutor:
         should_accept: Callable | None = None,
     ) -> TensorDict:
         tik = time.perf_counter()
-        timeout = timeout or float(7 * 24 * 3600)
-        while not self.exiting.is_set() and time.perf_counter() - tik < timeout:
-            while True:
-                # Drain all outputs.
-                try:
-                    timed_result = self.output_queue.get_nowait()
-                    if timed_result.data is not None and (
-                        should_accept is None or should_accept(timed_result.data)
-                    ):
-                        if self.config.enable_rollout_tracing:
-                            logger.info(
-                                f"Accept rollout result. accepted/count = {len(self.result_cache)}/{count}"
-                            )
-                        self.result_cache.append(timed_result)
-                    else:
-                        if self.config.enable_rollout_tracing:
-                            logger.info(f"Rollout is rejected.")
-                        with self.lock:
-                            self.rollout_stat.accepted -= 1
-                except queue.Empty:
-                    break
-            if len(self.result_cache) >= count:
-                break
-            else:
-                time.sleep(ROLLOUT_POLL_WAIT_TIME)
         accepted = len(self.result_cache)
+        timeout = timeout or float(7 * 24 * 3600)
+        while (
+            accepted < count
+            and not self.exiting.is_set()
+            and time.perf_counter() - tik < timeout
+        ):
+            try:
+                result = self.output_queue.get(timeout=ROLLOUT_POLL_WAIT_TIME)
+                if result is not None and (
+                    should_accept is None or should_accept(result)
+                ):
+                    if self.config.enable_rollout_tracing:
+                        logger.info(
+                            f"Accept rollout result. accepted/count = {accepted}/{count}"
+                        )
+                    self.result_cache.append(result)
+                    accepted += 1
+                else:
+                    if self.config.enable_rollout_tracing:
+                        logger.info(f"Rollout is rejected.")
+                    with self.lock:
+                        self.rollout_stat.accepted -= 1
+            except queue.Empty:
+                pass
         if self.exiting.is_set():
             raise RuntimeError("Rollout engine is exiting, cannot wait for results.")
         if accepted < count:
@@ -261,13 +254,11 @@ class WorkflowExecutor:
             logger.info(
                 f"Rollout results are ready! accepted/count = {accepted}/{count}"
             )
-        self.result_cache.sort(key=lambda x: x.t)
         results, self.result_cache = (
             self.result_cache[:count],
             self.result_cache[count:],
         )
-        random.shuffle(results)
-        return concat_padded_tensors([r.data for r in results])
+        return concat_padded_tensors(results)
 
     def rollout_batch(
         self,

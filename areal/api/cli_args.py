@@ -81,15 +81,6 @@ class GenerationHyperparameters:
             "help": "One or multiple stop words. Generation will stop if one of these words is sampled."
         },
     )
-    frequency_penalty: float = field(
-        default=0.0,
-        metadata={
-            "help": (
-                "Penalizes tokens based on their frequency in generation so far. "
-                "Must be between -2 and 2 where negative numbers encourage repeatment."
-            )
-        },
-    )
 
     def new(self, **kwargs):
         args = asdict(self)
@@ -442,8 +433,8 @@ class SGLangConfig:
 
 @dataclass
 class InferenceEngineConfig:
-    experiment_name: Optional[str] = None
-    trial_name: Optional[str] = None
+    experiment_name: str = MISSING
+    trial_name: str = MISSING
     max_concurrent_rollouts: None | int = field(
         default=None,
         metadata={
