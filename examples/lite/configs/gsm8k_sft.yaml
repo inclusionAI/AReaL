@@ -41,7 +41,7 @@ train_dataset:
   path: openai/gsm8k
   type: sft
 
-valid_dataset: 
+valid_dataset:
   batch_size: 128
   shuffle: true
   pin_memory: true

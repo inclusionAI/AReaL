@@ -27,7 +27,7 @@ def convert_image(
         fixed_width is not None
         and fixed_height is not None
         and (image.width != fixed_width or image.height != fixed_height)
-    ):  
+    ):
         if image.mode != "RGB":
             image = image.convert("RGB")
         image = pad_to_square(image, fill=(0, 0, 0))

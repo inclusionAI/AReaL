@@ -23,7 +23,6 @@ from areal.utils import logging
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
-    amend_position_ids_3d,
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
     pad_mb_list,
@@ -260,7 +259,7 @@ class BaseHFEngine(TrainEngine):
 
         if isinstance(input_, dict):
             input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
-            
+
         if is_qwen2_vl_model(self.model_config.model_type):
             # Create the special t,h,w position IDs for qwen 2.5 VL
             attn_mask = input_["attention_mask"]
@@ -312,7 +311,7 @@ class BaseHFEngine(TrainEngine):
                 # [1, total_seqlen, 3] -> [3, 1, total_seqlen]
                 mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
 
-                # BUG: pixel_value sometimes cannot div by vision encoder in spatial merge stage when applying multinode training, which might lead by   
+                # BUG: pixel_value sometimes cannot div by vision encoder in spatial merge stage when applying multinode training, which might lead by
                 # pixel_values:mb, image_token_num, vision_dim
                 # image_grid_thw: mb,M, 3 (1, H, W)
                 # pv = mb["pixel_values"]         # [M, S, D]
@@ -516,7 +515,6 @@ class BaseHFEngine(TrainEngine):
         input_ = input_.to(self.device)
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
         mb_list = self.prepare_mb_list(input_)
-
 
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()

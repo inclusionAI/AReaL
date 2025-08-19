@@ -268,7 +268,9 @@ def pack_tensor_dict(data: TensorDict):
             continue
         # tensor and of shape [B, S, ...]
         elif key == "pixel_values":
-            assert value.dim() == 3, f"pixel_values must be [B,S,D], got {tuple(value.shape)}"
+            assert (
+                value.dim() == 3
+            ), f"pixel_values must be [B,S,D], got {tuple(value.shape)}"
             packed_data[key] = value
         elif (
             torch.is_tensor(value)
@@ -468,7 +470,9 @@ def pad_packed_tensor_dict(
                 padded_tensor = torch.cat([value, pad])
             padded_data[key] = padded_tensor
         elif key == "pixel_values":
-            assert value.dim() == 3, f"pixel_values must be [M,S,D], got {tuple(value.shape)}"
+            assert (
+                value.dim() == 3
+            ), f"pixel_values must be [M,S,D], got {tuple(value.shape)}"
             padded_data[key] = value
         elif torch.is_tensor(value) and value.numel() == total_length:
             # Pad the tensor to the new total length
