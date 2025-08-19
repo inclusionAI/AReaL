@@ -1,4 +1,5 @@
 import os
+import random
 
 import pytest
 import torch
@@ -100,9 +101,6 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
         assert_close(x1, x2, atol=2e-1, rtol=2e-1)
 
 
-VISION_W = 336
-VISION_H = 336
-
 QWEN25_VL_PATH = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
 if not os.path.exists(QWEN25_VL_PATH):
     QWEN25_VL_PATH = "Qwen/Qwen2.5-VL-3B-Instruct"
@@ -120,15 +118,35 @@ def mock_padded_vlm_data(request):
     processor, tokenizer = load_hf_processor_and_tokenizer(model_path)
 
     for prompt_len, ans_len in zip(prompt_lens, answer_lens):
+        num_images = random.randint(1, 4)
+        images = []
+        image_tokens = []
 
-        image = torch.randint(0, 255, size=(1, 3, VISION_H, VISION_W)).float() / 255.0
-        image_token = "<|vision_start|><|image_pad|><|vision_end|>"
-        processed_input = processor(text=image_token, images=image, return_tensors="pt")
+        for _ in range(num_images):
 
-        image_input_id = processed_input["input_ids"].squeeze(0)
+            VISION_H = random.randint(4, 32) * 28
+            VISION_W = random.randint(4, 32) * 28
+
+            image = torch.randint(0, 255, size=(3, VISION_H, VISION_W)).float() / 255.0
+            images.append(image)
+            image_tokens.append("<|vision_start|><|image_pad|><|vision_end|>")
+
+        combined_image_token = "".join(image_tokens)
+
+        processed_input = processor(
+            text=combined_image_token, images=images, return_tensors="pt"
+        )
+
+        image_input_id = (
+            processed_input["input_ids"].squeeze(0)
+            if processed_input["input_ids"].dim() > 1
+            else processed_input["input_ids"]
+        )
 
         prompt_len = int(prompt_len) + int(image_input_id.shape[0])
         ans_len = int(ans_len)
+        total_len = prompt_len + ans_len
+
         input_ids = torch.cat(
             [
                 torch.randint(
@@ -138,16 +156,36 @@ def mock_padded_vlm_data(request):
             ]
         )
 
+        pixel_values = processed_input["pixel_values"]
+
+        # if pixel_values.dim() == 2:
+        #     pixel_values = pixel_values.unsqueeze(0)
+
         seq = dict(
             input_ids=input_ids.unsqueeze(0),
-            pixel_values=processed_input["pixel_values"].unsqueeze(0),
-            image_grid_thw=processed_input["image_grid_thw"],
             loss_mask=torch.tensor([0] * prompt_len + [1] * ans_len).unsqueeze(0),
-            attention_mask=torch.tensor([1] * (prompt_len + ans_len)).unsqueeze(0),
+            attention_mask=torch.tensor([1] * total_len).unsqueeze(0),
+            multi_modal_input=[
+                {
+                    "pixel_values": pixel_values,
+                    "image_grid_thw": processed_input["image_grid_thw"],
+                }
+            ],
         )
-        all_data.append(TensorDict(seq, batch_size=[1]))
 
-    return concat_padded_tensors(all_data).cuda()
+        td = TensorDict(seq, batch_size=[1])
+
+        all_data.append(td)
+
+    padded_data = concat_padded_tensors(all_data).cuda()
+    if "multi_modal_input" in padded_data:
+        for item in padded_data["multi_modal_input"]:
+            if isinstance(item, dict):
+                for k, v in item.items():
+                    if torch.is_tensor(v):
+                        item[k] = v.cuda()
+
+    return padded_data
 
 
 @pytest.mark.parametrize(
@@ -184,10 +222,18 @@ def test_vlm_consistency(model_path, mock_padded_vlm_data):
 
     with torch.no_grad():
         # Padded logits
+        pixel_values = torch.cat(
+            [item["pixel_values"] for item in padded_input["multi_modal_input"]], dim=0
+        )
+        image_grid_thw = torch.cat(
+            [item["image_grid_thw"] for item in padded_input["multi_modal_input"]],
+            dim=0,
+        )
+
         padded_logits = engine.model(
             input_ids=padded_input["input_ids"],
-            pixel_values=padded_input["pixel_values"],
-            image_grid_thw=padded_input["image_grid_thw"],
+            pixel_values=pixel_values,
+            image_grid_thw=image_grid_thw,
             attention_mask=padded_input["attention_mask"],
         ).logits
 

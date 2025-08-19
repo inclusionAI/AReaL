@@ -1,12 +1,10 @@
 import itertools
 import os
-import re
 import sys
 from copy import deepcopy
 
 import torch
 import torch.distributed as dist
-from torch.utils.data import Subset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
@@ -14,6 +12,7 @@ from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo, WeightUp
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.reward.__init__ import get_custom_reward_fn
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.recover import RecoverHandler
@@ -24,28 +23,6 @@ from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 from realhf.base import seeding, stats_tracker
 
 
-def extract_answer(pred_str, data_name, use_last_number=True):
-    match = re.findall(r"\[([0-9\.]+)\]", pred_str)
-    if match:
-        return match[-1]
-
-    return ""
-
-
-def clevr_count_70k_reward_fn(
-    prompt, completions, prompt_ids, completion_ids, answer, **kwargs
-):
-    sol = extract_answer(completions, data_name="")  # str number
-    ans = answer
-
-    if sol is None:
-        return 0
-    if ans is None:
-        return 0
-
-    return float(sol.strip() == ans.strip())
-
-
 def main(args):
 
     config, _ = load_expr_config(args, GRPOConfig)
@@ -53,10 +30,10 @@ def main(args):
 
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
+    processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, f"trainer{rank}")
 
-    processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
         rank=rank,
@@ -65,13 +42,6 @@ def main(args):
         type=config.train_dataset.type,
         processor=processor,
     )
-
-    train_size = len(train_dataset)
-    subset_size = int(1.0 * train_size)
-
-    random_indices = torch.randperm(train_size).tolist()[:subset_size]
-
-    subset_train_dataset = Subset(train_dataset, random_indices)
 
     valid_dataset = get_custom_dataset(
         path=config.valid_dataset.path,
@@ -83,7 +53,7 @@ def main(args):
     )
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
-        subset_train_dataset,
+        train_dataset,
         batch_size=config.train_dataset.batch_size // world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
@@ -139,15 +109,19 @@ def main(args):
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
 
+    reward_fn = get_custom_reward_fn(
+        path=config.train_dataset.reward_fn,
+    )
+
     workflow = VisionRLVRWorkflow(
-        reward_fn=clevr_count_70k_reward_fn,
+        reward_fn=reward_fn,
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
     )
     eval_workflow = VisionRLVRWorkflow(
-        reward_fn=clevr_count_70k_reward_fn,
+        reward_fn=reward_fn,
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,
