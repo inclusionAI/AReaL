@@ -263,11 +263,10 @@ class BaseHFEngine(TrainEngine):
             # Create the special t,h,w position IDs for qwen 2.5 VL
             attn_mask = input_["attention_mask"]
             input_ids = input_["input_ids"]
-
+            image_grid_thw = None
+            video_grid_thw = None
             if "multi_modal_input" in input_:
                 multi_modal_input = input_["multi_modal_input"]
-                image_grid_thw = None
-                video_grid_thw = None
                 image_grid_thw_list = [
                     m["image_grid_thw"]
                     for m in multi_modal_input
