@@ -13,7 +13,7 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
-from realhf.base import stats_tracker
+from realhf.base import seeding, stats_tracker
 
 
 def main_sft():
@@ -22,6 +22,9 @@ def main_sft():
 
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
+    
+    seeding.set_random_seed(config.seed, f"trainer{rank}")
+    
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
