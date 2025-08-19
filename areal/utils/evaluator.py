@@ -2,7 +2,7 @@ from typing import Callable
 
 from areal.api.cli_args import EvaluatorConfig
 from areal.api.io_struct import FinetuneSpec
-from realhf.base import timeutil
+from areal.utils import timeutil
 
 
 class Evaluator:

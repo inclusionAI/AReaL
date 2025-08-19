@@ -16,9 +16,9 @@ from areal.api.cli_args import (
     to_structured_cfg,
 )
 from areal.api.io_struct import AllocationMode
+from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import TRITON_CACHE_PATH
 from areal.utils.network import find_free_ports, gethostip
-from realhf.base import logging, name_resolve, names
 
 logger = logging.getLogger("SGLangServer Wrapper")
 

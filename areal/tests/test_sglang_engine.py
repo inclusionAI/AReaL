@@ -15,7 +15,7 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import WeightUpdateMeta
 from areal.utils import network
-from realhf.api.core.data_api import load_hf_tokenizer
+from areal.utils.hf_utils import load_hf_tokenizer
 
 EXPR_NAME = "test_sglang_engine"
 TRIAL_NAME = "trial_0"
@@ -38,7 +38,7 @@ def check_server_health(base_url):
 
 @pytest.fixture(scope="module")
 def sglang_server():
-    from realhf.base import seeding
+    from areal.utils import seeding
 
     seeding.set_random_seed(1, EXPR_NAME)
     cmd = SGLangConfig.build_cmd(
@@ -191,8 +191,8 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
     engine.model_version = 100
 
     # setup name resolve
-    import realhf.base.name_resolve as name_resolve
-    from realhf.api.cli_args import NameResolveConfig
+    import areal.utils.name_resolve as name_resolve
+    from areal.api.cli_args import NameResolveConfig
 
     nfs_record_root = tmp_path_factory.mktemp("nfs_record_path")
     name_resolve_config = NameResolveConfig(type="nfs", nfs_record_root=nfs_record_root)

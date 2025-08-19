@@ -14,8 +14,8 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
+from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
-from realhf.base import logging, stats_tracker
 
 logger = logging.getLogger("RLVR workflow")
 

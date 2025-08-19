@@ -6,7 +6,7 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.api.cli_args import SaverConfig
 from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
-from realhf.base import timeutil
+from areal.utils import timeutil
 
 
 class Saver:

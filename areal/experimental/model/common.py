@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from megatron.core.transformer import TransformerConfig
 from transformers import PretrainedConfig
 
-from realhf.base import logging
+from areal.utils import logging
 
 logger = logging.getLogger(__name__)
 
