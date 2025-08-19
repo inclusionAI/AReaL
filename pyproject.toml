@@ -58,12 +58,9 @@ dependencies = [
     "torchdata",
     "autoflake==2.3.1",
     "tensordict",
-<<<<<<< HEAD
-=======
     "pybase64",
     "msgspec",
     "openai==1.99.6",
->>>>>>> 2196d66c75e43a85ba63b141859451ee939f3c33
     
     # Monitoring and logging
     "wandb",
