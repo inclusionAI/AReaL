@@ -188,7 +188,7 @@ class WorkflowExecutor:
                             "Output queue full. Please increase queue_size."
                         )
 
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1)
         except Exception:
             traceback.print_exc()
         finally:
