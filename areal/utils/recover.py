@@ -12,10 +12,10 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.api.cli_args import RecoverConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta, StepInfo, WeightUpdateMeta
+from areal.utils import logging, timeutil
 from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
-from realhf.base import logging, timeutil
 
 logger = logging.getLogger("recover")
 

@@ -1,8 +1,8 @@
 import subprocess
 from typing import List, Literal, Optional
 
-from realhf.base import logging
-from realhf.scheduler.client import JobInfo, JobState
+from areal.utils import logging
+from areal.utils.launcher import JobInfo, JobState
 
 logger = logging.getLogger("Slurm Utils")
 
@@ -35,7 +35,7 @@ STATUS_MAPPING = {
 SBATCH_SCRIPT_TEMPLATE = """#!/bin/bash
 {sbatch_options}
 
-##### Setup failure capture and clean up ##### 
+##### Setup failure capture and clean up #####
 # Array to track background PIDs
 declare -a bg_pids=()
 
@@ -104,14 +104,14 @@ while [ ${{#bg_pids[@]}} -gt 0 ]; do
             still_running+=("$pid")
         fi
     done
-    
+
     bg_pids=("${{still_running[@]}}")
 
     # Break if no processes left
     if [ ${{#bg_pids[@]}} -eq 0 ]; then
         break
     fi
-    
+
     sleep 0.1  # Small delay to avoid busy waiting
 done
 """

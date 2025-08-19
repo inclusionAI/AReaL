@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.distributed.device_mesh import init_device_mesh
 from transformers import PreTrainedModel
 
-from realhf.base import logging, pkg_version
+from areal.utils import logging, pkg_version
 
 logger = logging.getLogger("FSDPEngine")
 

@@ -1,6 +1,3 @@
-# Copyright 2025 Ant Group Inc.
-# Licensed under the Apache License, Version 2.0
-
 # Pad/unpad operations are modified from flash-attention under BSD-3 license.
 # Copyright (c) 2023, Tri Dao.
 
@@ -15,7 +12,7 @@ from einops import rearrange
 from tensordict import TensorDict
 
 from areal.api.cli_args import MicroBatchSpec
-from realhf.base import datapack, logging
+from areal.utils import datapack, logging
 
 logger = logging.getLogger("data utils")
 

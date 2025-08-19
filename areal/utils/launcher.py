@@ -1,3 +1,5 @@
+import dataclasses
+import enum
 import getpass
 import os
 import pathlib
@@ -5,7 +7,7 @@ import time
 from typing import Dict, Optional
 
 from areal.api.io_struct import AllocationMode, AllocationType
-from realhf.base import logging, name_resolve, names
+from areal.utils import logging, name_resolve, names
 
 logger = logging.getLogger("Launcher Utils")
 
@@ -53,6 +55,40 @@ def get_env_vars(
         return {**BASE_ENVIRONS, **NA132_ENVIRONS, **_additional_env_vars}
     else:
         return {**BASE_ENVIRONS, **_additional_env_vars}
+
+
+class JobState(enum.Enum):
+    NOT_FOUND = 0
+    PENDING = 1
+    RUNNING = 2
+    COMPLETED = 3
+    FAILED = 4
+    CANCELLED = 5
+
+    def active(self):
+        return self == self.PENDING or self == self.RUNNING
+
+
+class JobException(Exception):
+
+    def __init__(self, run_name, worker_type, host, reason: JobState):
+        super().__init__(f"Job {run_name}:{worker_type} {reason} at node {host}")
+        self.run_name = run_name
+        self.worker_type = worker_type
+        self.host = host
+        self.reason = reason
+
+
+@dataclasses.dataclass
+class JobInfo:
+    name: str
+    state: JobState
+    host: Optional[str] = (
+        None  # The host on which the job is/was running. None if the job had not run.
+    )
+    submit_time: Optional[str] = None
+    start_time: Optional[str] = None
+    slurm_id: Optional[int] = None  # Slurm only. The Slurm id of the job.
 
 
 def wait_sglang_server_addrs(

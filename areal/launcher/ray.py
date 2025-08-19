@@ -10,7 +10,7 @@ from ray.runtime_env import RuntimeEnv
 from ray.util.placement_group import PlacementGroup
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
-import realhf.base.logging as logging
+import areal.utils.logging as logging
 from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
@@ -20,15 +20,16 @@ from areal.api.cli_args import (
     to_structured_cfg,
 )
 from areal.api.io_struct import AllocationMode, AllocationType
+from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import (
+    JobException,
+    JobState,
     get_env_vars,
     validate_config_for_distributed_launcher,
     wait_sglang_server_addrs,
 )
 from areal.utils.ray import get_placement_group_master_ip_and_port
 from areal.utils.recover import check_if_recover
-from realhf.base import logging, name_resolve, names
-from realhf.scheduler.client import JobException, JobState
 
 logger = logging.getLogger("RayLauncher")
 

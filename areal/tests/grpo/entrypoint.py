@@ -10,16 +10,16 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 import areal.api.cli_args as cli_args
 import areal.dataset
-import realhf.api.core.data_api as data_api
-import realhf.base.seeding as seeding
+import areal.utils.seeding as seeding
 from areal.api.cli_args import GRPOConfig
 from areal.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.reward.math_parser import process_results
+from areal.utils import seeding
+from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
-from realhf.base import seeding
-from realhf.impl.dataset.math_parser import process_results
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
@@ -35,9 +35,7 @@ def main() -> None:
 
     seeding.set_random_seed(config.seed, str(rank))
 
-    processor, tokenizer = data_api.load_hf_processor_and_tokenizer(
-        config.tokenizer_path
-    )
+    processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
 
     train_dataset = areal.dataset.get_custom_dataset(
         path=config.train_dataset.path,

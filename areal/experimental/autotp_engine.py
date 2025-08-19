@@ -7,11 +7,12 @@ from safetensors.torch import save_file
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import FinetuneSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.engine.base_hf_engine import BaseHFEngine
+from areal.utils import logging
+from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.save_load import (
     get_state_dict_from_repo_id_or_path,
     is_existing_local_path,
 )
-from realhf.base import constants, logging
 
 logger = logging.getLogger("DeepSpeedAutoTPEngine")
 
@@ -33,7 +34,7 @@ class DeepSpeedAutoTPEngine(BaseHFEngine):
         deepspeed.init_distributed(
             dist_backend="nccl",
             world_size=world_size,
-            timeout=constants.NCCL_DEFAULT_TIMEOUT,
+            timeout=NCCL_DEFAULT_TIMEOUT,
         )
         self.create_device_model()
         # NOTE: the device context manager does not work here.
