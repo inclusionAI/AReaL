@@ -1,5 +1,7 @@
 import torch
 
+from realhf.base.datapack import ffd_allocate
+
 
 class DistributedBatchMemory:
     def __init__(self, dataset):
@@ -76,6 +78,123 @@ class DistributedBatchMemory:
             split_data = {k: v[indices] for k, v in self.dataset.items()}
             batches.append(DistributedBatchMemory(split_data))
 
+        return batches
+
+    def split_by_groups_1(self, group_size: int, n: int) -> list:
+        total = next(iter(self.dataset.values())).shape[0]
+        assert total % n == 0, "tensor length must be devided by n"
+        # 512/4 = 128
+        count_of_each_part = total // n
+        # fixme
+        assert count_of_each_part % (group_size * n) == 0, "count of each part must be devided by (n * group_size)"
+        # 128/4 = 32
+        count_of_each_part_of_each_n =  count_of_each_part // n
+        indexes = [[] for _ in range(n)]
+        for part in range(n):
+            # [0, 128, 256, 384]
+            start_index = count_of_each_part * part
+            inner_indices = []
+            for i in range(n):
+                # [0, 128, 256, 384] + range(32..64..96..128)
+                tmp_inner_indices = list(range(count_of_each_part_of_each_n*i, count_of_each_part_of_each_n*(i+1)))
+                inner_indices.append(list(map(lambda item: item + start_index, tmp_inner_indices)))
+                indexes[i].extend(inner_indices[i])
+
+        batches = []
+        print(f"indexes: {indexes}")
+        for part in range(n):
+            split_data = {k: v[indexes[part]] for k, v in self.dataset.items()}
+            batches.append(DistributedBatchMemory(split_data))
+
+        return batches
+
+    def split_by_groups_2(self, group_size: int, n: int) -> list:
+        total = next(iter(self.dataset.values())).shape[0]
+        assert total % n == 0, "tensor length must be devided by n"
+        # 512/4
+        count_of_each_part = total // n
+        # fixme
+        assert count_of_each_part % (group_size * n) == 0, "count of each part must be devided by (n * group_size)"
+        indexes = [[] for _ in range(n)]
+        # 128/8 = 16
+        group_count_of_each_part =  count_of_each_part // group_size
+        print(f"group_count_of_each_part: {group_count_of_each_part}")
+        # group = 16, n=4
+        for group_num in range(group_count_of_each_part):
+            for i in range(n):
+                tmp_index = list(range(i * count_of_each_part + group_num * group_size,
+                i * count_of_each_part + (group_num + 1) * group_size))
+                indexes[group_num//n].extend(tmp_index)
+
+        batches = []
+        print(f"indexes: {indexes}")
+        for part in range(n):
+            split_data = {k: v[indexes[part]] for k, v in self.dataset.items()}
+            batches.append(DistributedBatchMemory(split_data))
+
+        return batches
+
+    def split_by_seqlen_ffd_2(self, group_size: int, n: int) -> list:
+        # 按推理组先将数据按顺序切成n份
+        batches = self.split_by_groups_2(group_size, n)
+        result = DistributedBatchMemory({})
+        for batch in batches:
+            result = result.merge(batch)
+        return result._split_by_seqlen_ffd_helper(group_size, n)
+
+    def split_by_seqlen_ffd_1(self, group_size: int, n: int) -> list:
+        # 按推理组先将数据按顺序切成n份
+        batches = self.split_by_groups_1(group_size, n)
+
+        results = [DistributedBatchMemory({}) for _ in range(n)]
+        for i, batch in enumerate(batches):
+            # 将推理组内的数据均分成n份
+            datas = batch._split_by_seqlen_ffd_helper(group_size, n)
+            for j, data in enumerate(datas):
+                results[j] = results[j].merge(data)
+
+        return results
+
+    def split_by_seqlen_ffd(self, group_size: int, n: int) -> list:
+        # 按推理组先将数据按顺序切成n份
+        batches = self.split(n)
+
+        results = [DistributedBatchMemory({}) for _ in range(n)]
+        for i, batch in enumerate(batches):
+            # 将推理组内的数据均分成n份
+            datas = batch._split_by_seqlen_ffd_helper(group_size, n)
+            for j, data in enumerate(datas):
+                results[j] = results[j].merge(data)
+
+        return results
+
+    def _split_by_seqlen_ffd_helper(self, group_size: int, n: int) -> list:
+        total = next(iter(self.dataset.values())).shape[0]
+        assert total % group_size == 0, "tensor length must be devided by group_size"
+
+        seqlen = self.dataset["seqlen"]
+        # 转二维，每行 group_size 个元素
+        reshaped = seqlen.view(-1, group_size)
+        # 对每行求和
+        # [10, 40, 60, 43, 90, 133,45, 65]
+        group_total_lens = reshaped.sum(dim=1)
+        print(f"group_total_lens: {group_total_lens}")
+        # 返回indexes
+        # [[0,4],[1,5],[2,6],[3,7]]
+        unsorted_group_rebalanced_indexs = ffd_allocate(group_total_lens.tolist(), int(1e12), n)
+        group_rebalanced_indexs = sorted([sorted(g) for g in unsorted_group_rebalanced_indexs])
+        print(f"group_rebalanced_indexs: {group_rebalanced_indexs}")
+        batches = []
+        for i in range(n):
+            indexes = []
+            # print(f"group_rebalanced_indexs[i]: {group_rebalanced_indexs[i]}")
+            for group_index in group_rebalanced_indexs[i]:
+                tmp_indexs = list(range(group_size*group_index, group_size*group_index + group_size))
+                # print(f"tmp_indexs: {tmp_indexs}")
+                indexes.extend(tmp_indexs)
+            # print(f"indexes: {indexes}")
+            split_data = {k: v[indexes] for k, v in self.dataset.items()}
+            batches.append(DistributedBatchMemory(split_data))
         return batches
 
     def merge(self, other):

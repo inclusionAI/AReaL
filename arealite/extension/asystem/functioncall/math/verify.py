@@ -53,7 +53,7 @@ def math_verify(
             "runtime": get_runtime_name(math_provider, str(Language.MATH)),
             "code": 'print("hello math!")',
             "testcases": [{}] * (end_idx - i),  # required filed
-            "timeout": 5,
+            "timeout": 30,
             "isFastFail": True,
             "extraInfo": batch_args,
         }

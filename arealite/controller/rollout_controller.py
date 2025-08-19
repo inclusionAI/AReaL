@@ -2,7 +2,7 @@ import os
 from functools import partial
 from typing import List, Dict, Any
 from tensordict import TensorDict, stack
-
+import torch
 from arealite.api.engine_api import InferenceEngine
 from arealite.api.io_struct import WeightUpdateMeta, AllocationMode
 
@@ -256,13 +256,20 @@ class DistributedRolloutController(RolloutController):
 
         return batchdata
 
+    def _calc_old_logp(self, tensordict):
+        prompt_mask = tensordict["prompt_mask"]
+        seqlen = tensordict["seqlen"]
+        idx = torch.arange(prompt_mask.size(1)).unsqueeze(0)
+        mask = idx >= seqlen.unsqueeze(1)
+        indices = torch.where(mask.flatten() == False)[0]
+        return tensordict["logprobs"].flatten()[indices]
+
     def rollout(
         self, data: List[Dict[str, Any]], workflow: RolloutWorkflow
     ) -> TensorDict:
         batches = self.split_list(data, self.allocate_mode.gen_dp_size)
 
         results = self._rpc_call("rollout", batches,workflow)
-
         assert len(results) > 0
         size = int(results[0]["input_ids"].shape[0])
         bs = size * len(results)
@@ -270,6 +277,15 @@ class DistributedRolloutController(RolloutController):
         padded = concat_padded_tensors(results)
         if isinstance(padded, dict):
             padded = TensorDict(padded, batch_size=[bs])
+
+        olg_logp = self._calc_old_logp(padded)
+
+
+        prompt_len = padded["prompt_mask"].sum(1)
+        logger.info(f"prompt_len: {prompt_len}")
+
+        stats_tracker.scalar(**{"prompt_len":prompt_len.float().mean(),
+                                "sglang_old_logp":olg_logp.mean()})
 
         keys = ["rewards", "seqlen"]
         for key in keys:

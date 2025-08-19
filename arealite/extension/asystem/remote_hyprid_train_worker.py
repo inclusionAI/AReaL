@@ -284,7 +284,19 @@ class RemoteHypridTrainWorker(TrainEngine):
                  "packed_input_ids": train_datas["packed_input_ids"],
                  "kl_rewards": train_datas["kl_rewards"],
                  "seqlen": batch_data["seqlen"]}
+
         train_stats = self.train_batch(batch, loss_fn, loss_weight_fn)
+        indices = torch.where(train_datas["ppo_loss_mask"]==1)[0]
+        adv = train_datas["advantages"]
+        train_stats["advantages"] = adv[indices].mean()
+        total_seqlen = batch["seqlen"].sum()
+        train_stats[f"rank{self.global_rank}_total_seqlen"] = total_seqlen
+
+
+        loss = train_stats.get("loss")
+        if loss is not None:
+            train_stats[f"rank{self.global_rank}_loss"] = loss
+
         logger.info(f"[RemoteHypridTrainWorker] Train batch exec success, global_step: {self.global_step}.")
 
         self.global_step += 1

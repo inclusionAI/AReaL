@@ -69,6 +69,21 @@ class Recover:
         return path
 
     @staticmethod
+    def get_save_huggingface_checkpoint_path(
+        config: SaverConfig,
+        epoch: int,
+        step: int,
+        globalstep: int,
+        name: str = "default",
+    ):
+        path = os.path.join(
+            Recover.get_save_checkpoint_root(config, name),
+            f"globalstep{globalstep}",
+        )
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    @staticmethod
     def get_save_meta_root(
         config: SaverConfig,
         name: str = "default",
@@ -109,7 +124,7 @@ class Recover:
     ):
         # save hf model
         if not disable_save_hf:
-            path = Recover.get_save_checkpoint_path(
+            path = Recover.get_save_huggingface_checkpoint_path(
                 self.config, epoch, step, global_step, f"{name}/huggingface"
             )
             weight_format = "huggingface"
