@@ -11,6 +11,7 @@ from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
 from omegaconf import MISSING, OmegaConf
 
+from areal.utils import name_resolve, pkg_version
 from areal.utils.fs import get_user_tmp
 
 
@@ -402,8 +403,6 @@ class SGLangConfig:
         port,
         dist_init_addr: Optional[str] = None,
     ):
-        from realhf.base import pkg_version
-        from realhf.experiments.common.utils import asdict as conf_as_dict
 
         args: Dict = conf_as_dict(sglang_config)
         args = dict(
@@ -828,8 +827,12 @@ def load_expr_config(argv: List[str], config_cls):
     cfg = OmegaConf.to_object(cfg)
     assert isinstance(cfg, BaseExperimentConfig)
     # Setup environment
-    from realhf.base import constants, name_resolve
 
-    constants.set_experiment_trial_names(cfg.experiment_name, cfg.trial_name)
     name_resolve.reconfigure(cfg.cluster.name_resolve)
     return cfg, str(config_file)
+
+
+def conf_as_dict(cfg):
+    if isinstance(cfg, (OmegaConf, DictConfig)):
+        return OmegaConf.to_container(cfg, resolve=True)
+    return dataclasses.asdict(cfg)

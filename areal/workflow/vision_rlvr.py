@@ -11,10 +11,10 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import ModelRequest
+from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
 from areal.utils.image import image2base64
 from areal.workflow.rlvr import RLVRWorkflow
-from realhf.base import logging, stats_tracker
 
 logger = logging.getLogger("RLVR workflow")
 

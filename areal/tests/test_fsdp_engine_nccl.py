@@ -15,7 +15,7 @@ from areal.api.cli_args import (
 from areal.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from realhf.base import network
+from areal.utils import network
 
 EXPR_NAME = "test_fsdp_engine_nccl"
 TRIAL_NAME = "trial_nccl"
@@ -40,7 +40,7 @@ def check_server_health(base_url):
 
 @pytest.fixture(scope="module")
 def sglang_server_nccl():
-    from realhf.base import seeding
+    from areal.utils import seeding
 
     seeding.set_random_seed(1, EXPR_NAME)
     cmd = SGLangConfig.build_cmd(

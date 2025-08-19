@@ -3,7 +3,7 @@ from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache, partial
 from typing import Callable, List, Optional
 
-from realhf.base import logging
+from areal.utils import logging
 
 logger = logging.getLogger("Reward API")
 

@@ -19,6 +19,7 @@ from transformers import (
 
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import FinetuneSpec, TrainEngine
+from areal.utils import logging
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
@@ -31,13 +32,13 @@ from areal.utils.data import (
     unsqueeze_mb_list,
 )
 from areal.utils.fsdp import get_cosine_schedule_with_warmup
+from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.model import (
     VALID_VISION_MODELS,
     disable_dropout_in_model,
     is_qwen2_vl_model,
 )
-from realhf.api.core.data_api import load_hf_processor_and_tokenizer, load_hf_tokenizer
-from realhf.base import constants, logging
+from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
 logger = logging.getLogger("Base HF Engine")
 
@@ -95,7 +96,7 @@ class BaseHFEngine(TrainEngine):
             # otherwise initializing the NCCL weight update group will be wrong!
             dist.init_process_group(
                 backend="nccl",
-                timeout=constants.NCCL_DEFAULT_TIMEOUT,
+                timeout=NCCL_DEFAULT_TIMEOUT,
             )
             self.own_global_group = True
         self._parallelism_group = dist.new_group()

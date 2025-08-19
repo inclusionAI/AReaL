@@ -17,6 +17,7 @@ from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import FinetuneSpec
 from areal.api.io_struct import ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.engine.base_hf_engine import BaseHFEngine
+from areal.utils import datapack, logging, name_resolve, names, pkg_version
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.fsdp import (
     CPUOffloadPolicy,
@@ -27,7 +28,6 @@ from areal.utils.fsdp import (
     fsdp2_load_full_state_dict,
 )
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
-from realhf.base import datapack, logging, name_resolve, names, pkg_version
 
 logger = logging.getLogger("FSDPEngine")
 
