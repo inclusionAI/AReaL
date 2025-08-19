@@ -9,7 +9,7 @@ import uvloop
 uvloop.install()
 from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
-from omegaconf import MISSING, OmegaConf
+from omegaconf import MISSING, DictConfig, OmegaConf
 
 from areal.utils import name_resolve, pkg_version
 from areal.utils.fs import get_user_tmp
@@ -844,4 +844,4 @@ def load_expr_config(argv: List[str], config_cls):
 def conf_as_dict(cfg):
     if isinstance(cfg, (OmegaConf, DictConfig)):
         return OmegaConf.to_container(cfg, resolve=True)
-    return dataclasses.asdict(cfg)
+    return asdict(cfg)
