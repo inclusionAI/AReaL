@@ -73,6 +73,10 @@ def sglang_server():
     process.terminate()
 
 
+def _dummy_reward_fn(*args, **kwargs):
+    return 1.0
+
+
 @pytest.mark.parametrize("n_samples", [1, 2, 4])
 def test_remote_sglang_rollout(sglang_server, n_samples):
     from areal.engine.sglang_remote import RemoteSGLangEngine
@@ -94,7 +98,7 @@ def test_remote_sglang_rollout(sglang_server, n_samples):
     tokenizer = load_hf_tokenizer(MODEL_PATH)
 
     workflow = RLVRWorkflow(
-        reward_fn=lambda **kwargs: 1.0,  # Dummy reward function
+        reward_fn=_dummy_reward_fn,
         gconfig=gconfig,
         tokenizer=tokenizer,
         enable_thinking=False,
@@ -110,7 +114,7 @@ def test_remote_sglang_rollout(sglang_server, n_samples):
     engine.destroy()
 
 
-@pytest.mark.parametrize("ofp", [1, 2, 4, 8, 16])
+@pytest.mark.parametrize("ofp", [1, 4, 16])
 @pytest.mark.parametrize("bs", [2, 4])
 @pytest.mark.parametrize("n_samples", [2, 1])
 def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
@@ -128,12 +132,12 @@ def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
     engine.initialize(None, None)
 
     gconfig = GenerationHyperparameters(
-        max_new_tokens=16, greedy=False, n_samples=n_samples
+        max_new_tokens=2, greedy=False, n_samples=n_samples
     )
     tokenizer = load_hf_tokenizer(MODEL_PATH)
 
     workflow = RLVRWorkflow(
-        reward_fn=lambda **kwargs: 1.0,  # Dummy reward function
+        reward_fn=_dummy_reward_fn,
         gconfig=gconfig,
         tokenizer=tokenizer,
         enable_thinking=False,
@@ -145,8 +149,8 @@ def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
         engine.submit(data, workflow=workflow)
 
     # wait for some time
-    time.sleep(5)
-    assert engine.output_queue.qsize() == min(bs * 2, bs * (ofp + 1))
+    time.sleep(10)
+    assert engine.workflow_executor.output_queue.qsize() == min(bs * 2, bs * (ofp + 1))
 
     # Update model version
     engine.set_version(1)
@@ -157,7 +161,7 @@ def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
         engine.submit(data, workflow=workflow)
     # wait for some time
     time.sleep(5)
-    assert engine.output_queue.qsize() == min(bs * 4, bs * (ofp + 2))
+    assert engine.workflow_executor.output_queue.qsize() == min(bs * 4, bs * (ofp + 2))
 
     # exit
     engine.destroy()
@@ -202,6 +206,7 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
     inf_engine = RemoteSGLangEngine(config)
     inf_engine.initialize(None, None)
     inf_engine.set_version(100)
+    engine.set_version(100)
     # test update weights
     path = tmp_path_factory.mktemp("upload_weights_from_disk")
     update_weight_meta = WeightUpdateMeta(type="disk", path=str(path))

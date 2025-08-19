@@ -1,9 +1,9 @@
 import asyncio
-import functools
 import os
 import uuid
-from concurrent.futures import ProcessPoolExecutor
 
+import aiofiles
+import aiofiles.os
 import colorama
 import torch
 from tensordict import TensorDict
@@ -11,14 +11,13 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import LLMRequest
+from areal.api.io_struct import ModelRequest
+from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.utils.data import concat_padded_tensors
-from realhf.base import logging
+from realhf.base import logging, stats_tracker
 
 logger = logging.getLogger("Multi-Turn workflow")
-
-REWARD_TIMEOUT_SECONDS = 15
 
 
 class MultiTurnWorkflow(RolloutWorkflow):
@@ -29,6 +28,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
         tokenizer: PreTrainedTokenizerFast,
         max_turns: int,
         turn_discount: float,
+        rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
     ):
         self.reward_fn = reward_fn
@@ -36,7 +36,8 @@ class MultiTurnWorkflow(RolloutWorkflow):
         self.tokenizer = tokenizer
         self.max_turns = max_turns
         self.turn_discount = turn_discount
-        self.rw_executor = ProcessPoolExecutor(max_workers=4)
+        self.rollout_stat_scope = rollout_stat_scope
+        self.async_reward_fn = AsyncRewardWrapper(reward_fn)
         self.dump_dir = dump_dir
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
@@ -48,7 +49,8 @@ class MultiTurnWorkflow(RolloutWorkflow):
         messages += [
             {
                 "role": "user",
-                "content": "\nYour answer is either wrong or not parsable to the reward function. Please try to answer it again.",
+                "content": "Your answer is either wrong or not parsable to the reward function. You may misunderstand the original question. "
+                "Please carefully read the original question, check the preivous errors, and try to answer it again.",
             }
         ]
         s2 = self.tokenizer.apply_chat_template(
@@ -72,36 +74,23 @@ class MultiTurnWorkflow(RolloutWorkflow):
         discount = 1
         while reward == 0 and t < self.max_turns:
             # Send generate request to get the response.
-            req = LLMRequest(
+            req = ModelRequest(
                 rid=rid,
                 input_ids=input_ids,
                 gconfig=self.gconfig.new(n_samples=1),
+                tokenizer=self.tokenizer,
             )
             resp = await engine.agenerate(req)
             # compute reward: 1 for correct and 0 otherwise
             prompt_str = self.tokenizer.decode(input_ids)
             completions_str = self.tokenizer.decode(resp.output_tokens)
-            loop = asyncio.get_event_loop()
-            try:
-                reward = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        self.rw_executor,
-                        functools.partial(
-                            self.reward_fn,
-                            prompt_str,
-                            completions_str,
-                            resp.input_tokens,
-                            resp.output_tokens,
-                            **data,
-                        ),
-                    ),
-                    timeout=REWARD_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"Computing reward timeout after {REWARD_TIMEOUT_SECONDS}s. Set reward to 0."
-                )
-                reward = 0
+            reward = await self.async_reward_fn(
+                prompt_str,
+                completions_str,
+                resp.input_tokens,
+                resp.output_tokens,
+                **data,
+            )
             # Amend results
             input_len = len(resp.input_tokens) - len(seq)
             assert len(seq) == 0 or resp.input_tokens[:-input_len] == seq, (
@@ -125,6 +114,10 @@ class MultiTurnWorkflow(RolloutWorkflow):
                 discount *= self.turn_discount
 
         reward = float(reward * discount)
+
+        # Log reward.
+        stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward, num_turns=t)
+
         res = dict(
             input_ids=torch.tensor(seq),
             logprobs=torch.tensor(logprobs),
@@ -152,7 +145,8 @@ class MultiTurnWorkflow(RolloutWorkflow):
 
         if self.dump_dir is not None:
             version = engine.get_version()
-            os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
+            dump_path = os.path.join(self.dump_dir, str(version))
+            await aiofiles.os.makedirs(dump_path, exist_ok=True)
             # Get the unique identifier for this prompt
             qid = None
             for key in ["query_id", "id", "qid"]:
@@ -162,9 +156,8 @@ class MultiTurnWorkflow(RolloutWorkflow):
             qid = qid or uuid.uuid4().hex
 
             # Dump rollout to file
-            with open(
-                os.path.join(self.dump_dir, str(version), f"{qid}.txt"), "a"
-            ) as f:
+            file_path = os.path.join(dump_path, f"{qid}.txt")
+            async with aiofiles.open(file_path, "a") as f:
                 n_samples = self.gconfig.n_samples
                 for i, (_, p, c, r, sl) in enumerate(results):
                     info = "\n".join(
@@ -174,7 +167,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
                             f"sequence is: \n{colorama.Fore.YELLOW + colorama.Style.DIM}{c}{colorama.Style.RESET_ALL}",
                         ]
                     )
-                    f.write(info + "\n")
+                    await f.write(info + "\n")
 
         data = [res[0] for res in results]
         return concat_padded_tensors(data)

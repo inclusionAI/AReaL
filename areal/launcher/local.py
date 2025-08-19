@@ -10,9 +10,18 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import psutil
 
-from areal.api.cli_args import SGLangConfig, parse_cli_args, to_structured_cfg
+from areal.api.cli_args import (
+    ClusterSpecConfig,
+    LauncherConfig,
+    RecoverConfig,
+    SGLangConfig,
+    parse_cli_args,
+    to_structured_cfg,
+)
 from areal.api.io_struct import AllocationMode, AllocationType
+from areal.utils.launcher import get_env_vars
 from areal.utils.network import find_free_ports, gethostip
+from areal.utils.recover import check_if_recover
 from realhf.base import gpu_utils, logging, name_resolve, names
 from realhf.scheduler.client import JobException, JobInfo, JobState
 
@@ -38,6 +47,7 @@ JOB_STATE_TO_PROCESS_STATUS = {
     JobState.FAILED: [],
     JobState.CANCELLED: [],
 }
+RECOVER_TIME_INTERVAL = 10  # seconds
 
 PROCESS_STATUS_TO_JOB_STATE = {}
 for job_state, process_statuses in JOB_STATE_TO_PROCESS_STATUS.items():
@@ -121,7 +131,7 @@ class LocalLauncher:
                 + " stdbuf -oL "
                 + cmd[i]
             )
-            c = f"{c} | tee -a {self.log_path_of(job_name)}"
+            c = f"{c} 2>&1 | tee -a {self.log_path_of(job_name)}"
             logger.info("Starting local process with command: %s", c)
             process = subprocess.Popen(c, shell=isinstance(c, str))
             self._jobs[f"{job_name}/{offset + i}"] = process
@@ -234,28 +244,46 @@ class LocalLauncher:
             time.sleep(2)
 
 
-def main_local():
-    cfg, _ = parse_cli_args(sys.argv[2:])
-    name_resolve.reconfigure(cfg.cluster.name_resolve)
-    name_resolve.clear_subtree(
-        names.trial_root(experiment_name=cfg.experiment_name, trial_name=cfg.trial_name)
-    )
-    alloc_mode = AllocationMode.from_str(cfg.allocation_mode)
+def main():
+    config, _ = parse_cli_args(sys.argv[2:])
+    local_main(config, run_id=0)
 
-    launcher = LocalLauncher(cfg.experiment_name, cfg.trial_name, cfg.cluster.fileroot)
+
+def local_main(config, run_id: int = 0):
+    config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
+    config.recover = to_structured_cfg(config.recover, RecoverConfig)
+    config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
+    is_recover_run = check_if_recover(config.recover, run_id)
+    launcher = LocalLauncher(
+        config.experiment_name, config.trial_name, config.cluster.fileroot
+    )
+
+    name_resolve.reconfigure(config.cluster.name_resolve)
+    name_resolve.clear_subtree(
+        names.trial_root(
+            experiment_name=config.experiment_name, trial_name=config.trial_name
+        )
+    )
+    alloc_mode = AllocationMode.from_str(config.allocation_mode)
+
+    logger.info(
+        f"LocalLauncher: experiment_name={config.experiment_name}, "
+        f"trial_name={config.trial_name}, fileroot={config.cluster.fileroot}, "
+        f"run_id={run_id}, is_recover_run={is_recover_run}"
+    )
 
     server_cmd = []
     server_addrs = []
-    if alloc_mode.type_ == AllocationType.DECOUPLED_SGLANG:
-        base_seed = cfg.sglang.random_seed
-        cfg.sglang = to_structured_cfg(cfg.sglang, SGLangConfig)
+    if alloc_mode.gen_backend == "sglang":
+        base_seed = config.sglang.random_seed
+        config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
         ports = find_free_ports(alloc_mode.gen_dp_size * 2, port_range=(10000, 50000))
         host_ip = gethostip()
-        host = "localhost" if not cfg.sglang.enable_metrics else host_ip
+        host = "localhost" if not config.sglang.enable_metrics else host_ip
         for i in range(alloc_mode.gen_dp_size):
-            cfg.sglang.random_seed = base_seed + i
+            config.sglang.random_seed = base_seed + i
             cmd = SGLangConfig.build_cmd(
-                cfg.sglang,
+                config.sglang,
                 host=host,
                 tp_size=alloc_mode.gen_tp_size,
                 base_gpu_id=0,
@@ -271,18 +299,34 @@ def main_local():
             cmd=server_cmd,
             count=alloc_mode.gen_dp_size,
             gpu=alloc_mode.gen_pp_size * alloc_mode.gen_tp_size,
+            env_vars=get_env_vars(
+                config.cluster.cluster_name,
+                config.launcher.inference_server_env_vars,
+            ),
         )
         logger.info(
             f"LLM inference server launched at: AREAL_LLM_SERVER_ADDRS={','.join(server_addrs)}"
         )
 
     # Launch trainer entrypoint
-    if alloc_mode.type_ == AllocationType.COLOCATE or not cfg.server_only:
+    if alloc_mode.type_ != AllocationType.LLM_SERVER_ONLY:
+        if alloc_mode.type_ == AllocationType.DECOUPLED_EVAL:
+            gpu = 0
+            nprocs = 1
+        else:
+            gpu = nprocs = alloc_mode.train_world_size
         launcher.submit(
             job_name="trainer",
-            cmd=f"torchrun --nnodes 1 --nproc-per-node {alloc_mode.train_world_size} --master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} {' '.join(sys.argv[1:])}",
-            gpu=alloc_mode.train_world_size,
-            env_vars=dict(AREAL_LLM_SERVER_ADDRS=",".join(server_addrs)),
+            cmd=f"torchrun --nnodes 1 --nproc-per-node {nprocs} --master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} {' '.join(sys.argv[1:])}",
+            gpu=gpu,
+            env_vars=dict(
+                **get_env_vars(
+                    config.cluster.cluster_name,
+                    config.launcher.trainer_env_vars,
+                ),
+                AREAL_LLM_SERVER_ADDRS=",".join(server_addrs),
+                AREAL_RECOVER_RUN=str(int(is_recover_run)),
+            ),
         )
 
     try:
@@ -297,8 +341,23 @@ def main_local():
         )
     except (KeyboardInterrupt, JobException, TimeoutError) as e:
         launcher.stop_all("SIGTERM")
-        raise e
+        # NOTE: For local launcher, We cannot distinguish between a completed job and a failed job.
+        # So we will always try to recover the job if it is finished or failed.
+        recover_states = [JobState.FAILED, JobState.NOT_FOUND, JobState.COMPLETED]
+        if isinstance(e, JobException):
+            recover_this = (
+                e.reason in recover_states
+                and run_id < config.recover.retries
+                and config.recover.mode in ["auto", "fault"]
+            )
+            if recover_this:
+                time.sleep(RECOVER_TIME_INTERVAL)
+                local_main(config, run_id=run_id + 1)
+            else:
+                raise e
+        else:
+            raise e
 
 
 if __name__ == "__main__":
-    main_local()
+    main()

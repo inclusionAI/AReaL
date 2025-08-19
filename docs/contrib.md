@@ -44,10 +44,13 @@ well-templated issue**. Your PR should:
 
 ### Code Formatting
 
-Please format your code before opening a PR:
+We use `pre-commit` to automatically do code formatting:
 
 ```bash
-isort . && black .
+# before commiting
+pip install pre-commit
+pre-commit install
+git commit -m 'my commit'  # this will automatically format your code
 ```
 
 ### Running Tests

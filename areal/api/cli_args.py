@@ -81,6 +81,15 @@ class GenerationHyperparameters:
             "help": "One or multiple stop words. Generation will stop if one of these words is sampled."
         },
     )
+    frequency_penalty: float = field(
+        default=0.0,
+        metadata={
+            "help": (
+                "Penalizes tokens based on their frequency in generation so far. "
+                "Must be between -2 and 2 where negative numbers encourage repeatment."
+            )
+        },
+    )
 
     def new(self, **kwargs):
         args = asdict(self)
@@ -433,8 +442,8 @@ class SGLangConfig:
 
 @dataclass
 class InferenceEngineConfig:
-    experiment_name: str = MISSING
-    trial_name: str = MISSING
+    experiment_name: Optional[str] = None
+    trial_name: Optional[str] = None
     max_concurrent_rollouts: None | int = field(
         default=None,
         metadata={
@@ -504,6 +513,25 @@ class EvaluatorConfig(_Timer):
 @dataclass
 class SaverConfig(_Timer):
     pass
+
+
+@dataclass
+class RecoverConfig(_Timer):
+    mode: str = field(
+        default="disabled",
+        metadata={
+            "help": "Recovery mode for the launcher. "
+            "Options: "
+            "'disabled': Never recover from previous runs. "
+            "'auto': Automatically recover from previous runs if recover info and checkpoints are available. "
+            "'fault': Only recover from previous runs if the new run fails. "
+            "'resume': Force to resume, raise an error if no recover info was found. Never resume if failed again."
+        },
+    )
+    retries: int = field(
+        default=3,
+        metadata={"help": "Number of recovery retries (auto/fault modes only)."},
+    )
 
 
 @dataclass
@@ -752,11 +780,10 @@ class BaseExperimentConfig:
     valid_dataset: Optional[DatasetConfig] = field(default=None)
 
     saver: SaverConfig = field(default_factory=SaverConfig)
-    checkpointer: SaverConfig = field(default_factory=SaverConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
     stats_logger: StatsLoggerConfig = field(default_factory=StatsLoggerConfig)
+    recover: RecoverConfig = field(default_factory=RecoverConfig)
 
-    server_only: bool = False
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
 

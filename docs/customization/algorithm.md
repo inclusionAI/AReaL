@@ -30,12 +30,12 @@ class ReMaxRLVRWorkflow(RolloutWorkflow):
         rid = uuid.uuid4().hex
 
         # Create requests for both sampled and greedy generation
-        sample_req = LLMRequest(
+        sample_req = ModelRequest(
             rid=rid,
             input_ids=input_ids,
             gconfig=self.gconfig,
         )
-        greedy_req = LLMRequest(
+        greedy_req = ModelRequest(
             rid=rid,
             input_ids=input_ids,
             gconfig=self.gconfig.new(greedy=True),

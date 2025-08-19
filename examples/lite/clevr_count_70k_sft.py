@@ -4,11 +4,12 @@ import sys
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import SFTConfig, load_expr_config
-from areal.api.io_struct import FinetuneSpec
+from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
 from areal.engine.sft.lm_engine import FSDPLMEngine
 from areal.utils.data import pad_sequences_to_tensors
 from areal.utils.evaluator import Evaluator
+from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from realhf.api.core.data_api import load_hf_processor_and_tokenizer
@@ -70,16 +71,37 @@ def main_sft():
     engine.initialize(None, ft_spec)
 
     # Run training.
-    saver = Saver(config.saver, ft_spec, for_recover=False)
+    saver = Saver(config.saver, ft_spec)
     stats_logger = StatsLogger(config.stats_logger, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
-    total_epochs = config.total_train_epochs
-    steps_per_epoch = len(train_dataloader)
+    recover_handler = RecoverHandler(config.recover, ft_spec)
+    recover_info = recover_handler.load(
+        engine,
+        saver,
+        evaluator,
+        stats_logger,
+        train_dataloader,
+    )
+    start_step = (
+        recover_info.last_step_info.next().global_step
+        if recover_info is not None
+        else 0
+    )
 
+    total_epochs = config.total_train_epochs
     global_step = 0
     for epoch in range(total_epochs):
         for step, data in enumerate(train_dataloader):
+            if global_step < start_step:
+                global_step += 1
+                continue
+            step_info = StepInfo(
+                global_step=global_step,
+                epoch=epoch,
+                epoch_step=step,
+                steps_per_epoch=len(train_dataloader),
+            )
 
             with (
                 stats_tracker.record_timing("train_step"),
@@ -90,7 +112,14 @@ def main_sft():
                 stats_tracker.scalar(**stats)
 
             with stats_tracker.record_timing("save"):
-                saver.save(engine, epoch, step, global_step)
+                saver.save(
+                    engine,
+                    epoch,
+                    step,
+                    global_step,
+                    tokenizer=tokenizer,
+                    processor=processor,
+                )
 
             with stats_tracker.record_timing("eval"):
                 # No need to log anything. Logging will be handled outside
@@ -105,6 +134,18 @@ def main_sft():
                     epoch,
                     step,
                     global_step,
+                )
+
+            with stats_tracker.record_timing("checkpoint_for_recover"):
+                recover_handler.dump(
+                    engine,
+                    step_info,
+                    saver,
+                    evaluator,
+                    stats_logger,
+                    train_dataloader,
+                    tokenizer=tokenizer,
+                    processor=processor,
                 )
 
             stats_logger.commit(

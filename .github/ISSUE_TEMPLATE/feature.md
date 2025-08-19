@@ -1,30 +1,31 @@
 ---
 name: Feature
 about: Suggest a new feature for this project
-title: "[Feature]"
+title: '[Feature]'
 labels: ''
 assignees: ''
-
 ---
 
-## Checklist  
+## Checklist
 
-- [ ] This feature will maintain backward compatibility with the current APIs in `realhf/api/`. If not, please raise a refactor issue first.  
+- [ ] This feature will maintain backward compatibility with the current APIs in
+  `areal/api/`. If not, please raise a refactor issue first.
 
-## Background  
+## Background
 
-Is your feature request related to an enhancement or a new use case? Please describe.  
+Is your feature request related to an enhancement or a new use case? Please describe.
 
-**Example 1:**  
-"I'd like to support zero-bubble pipeline parallelism, as it significantly improves training throughput."  
+**Example 1:** "I'd like to support zero-bubble pipeline parallelism, as it
+significantly improves training throughput."
 
-**Example 2:**  
-"I'd like to add expert parallelism to enable efficient training of large MoE models."  
+**Example 2:** "I'd like to add expert parallelism to enable efficient training of large
+MoE models."
 
-## Potential Solution  
+## Potential Solution
 
-A clear and concise description of the potential implementation or how similar features are handled in other frameworks.  
+A clear and concise description of the potential implementation or how similar features
+are handled in other frameworks.
 
-## Additional Information  
+## Additional Information
 
 (Add any relevant context, references, or supporting data here.)

@@ -1,18 +1,20 @@
 import itertools
 import os
 import sys
+from copy import deepcopy
 
 import torch
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
+from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
+from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
@@ -79,10 +81,10 @@ def main(args):
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(None, ft_spec)
-    eval_rollout = RemoteSGLangEngine(config.rollout)
+    eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
+    # NOTE: eval does not have any offpolicyness control
+    eval_rollout.config.max_head_offpolicyness = int(1e12)
     eval_rollout.initialize(None, ft_spec)
-    # NOTE: set a large version such that eval does not have any offpolicyness control
-    eval_rollout.set_version(int(1e12))
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
@@ -118,20 +120,52 @@ def main(args):
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
     )
+    eval_workflow = RLVRWorkflow(
+        reward_fn=gsm8k_reward_fn,
+        gconfig=config.gconfig.new(temperature=0.6),
+        tokenizer=tokenizer,
+        enable_thinking=False,
+        rollout_stat_scope="eval-rollout",
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated-eval"
+        ),
+    )
 
     # Run training.
-    saver = Saver(config.saver, ft_spec, for_recover=False)
+    saver = Saver(config.saver, ft_spec)
     stats_logger = StatsLogger(config.stats_logger, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
+
+    recover_handler = RecoverHandler(config.recover, ft_spec)
+    recover_info = recover_handler.load(
+        actor,
+        saver,
+        evaluator,
+        stats_logger,
+        train_dataloader,
+        inference_engine=rollout,
+        weight_update_meta=weight_update_meta,
+    )
+    start_step = (
+        recover_info.last_step_info.next().global_step
+        if recover_info is not None
+        else 0
+    )
 
     total_epochs = config.total_train_epochs
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
     data_generator = itertools.cycle(train_dataloader)
-    for global_step in range(max_steps):
+    for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
+        step_info = StepInfo(
+            global_step=global_step,
+            epoch=epoch,
+            epoch_step=step,
+            steps_per_epoch=steps_per_epoch,
+        )
 
         with stats_tracker.record_timing("rollout"):
             if config.async_training:
@@ -167,8 +201,10 @@ def main(args):
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
+        # pause inference for updating weights, save, and evaluation
+        rollout.pause()
+
         with stats_tracker.record_timing("update_weights"):
-            rollout.pause()
             if dist.get_rank() == 0:
                 future = rollout.update_weights(weight_update_meta)
             actor.upload_weights(weight_update_meta)
@@ -176,34 +212,25 @@ def main(args):
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
             torch.cuda.synchronize()
-            rollout.resume()
+
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
+            eval_rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
-            saver.save(actor, epoch, step, global_step)
+            saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
 
         with stats_tracker.record_timing("eval"):
 
             def evaluate_fn():
-                rollout.pause()
+                # Stats are logged in the workflow
+                # and will be exported later
                 cnt = 0
                 for data in valid_dataloader:
                     for item in data:
-                        eval_rollout.submit(item, workflow)
+                        eval_rollout.submit(item, eval_workflow)
                         cnt += 1
-                batch = eval_rollout.wait(cnt, timeout=None)
-                rewards = batch["rewards"].float().to(actor.device)
-                with stats_tracker.scope("grpo-eval"):
-                    stats_tracker.denominator(
-                        n_seqs=torch.ones(
-                            rewards.shape[0],
-                            device=rewards.device,
-                            dtype=torch.bool,
-                        )
-                    )
-                    stats_tracker.stat(task_reward=rewards, denominator="n_seqs")
-                rollout.resume()
+                eval_rollout.wait(cnt, timeout=None)
 
             evaluator.evaluate(
                 evaluate_fn,
@@ -212,7 +239,29 @@ def main(args):
                 global_step,
             )
 
+        with stats_tracker.record_timing("checkpoint_for_recover"):
+            recover_handler.dump(
+                actor,
+                step_info,
+                saver,
+                evaluator,
+                stats_logger,
+                train_dataloader,
+                tokenizer=tokenizer,
+            )
+
+        dist.barrier(device_ids=[actor.device.index])
+        torch.cuda.synchronize()
+
+        # Upload statistics to the logger (e.g., wandb)
+        stats[0].update(stats_tracker.export_all(reduce_group=actor.parallelism_group))
         stats_logger.commit(epoch, step, global_step, stats)
+
+        dist.barrier(device_ids=[actor.device.index])
+        torch.cuda.synchronize()
+
+        # Resume rollout
+        rollout.resume()
 
     stats_logger.close()
     eval_rollout.destroy()

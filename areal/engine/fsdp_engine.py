@@ -27,7 +27,7 @@ from areal.utils.fsdp import (
     fsdp2_load_full_state_dict,
 )
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
-from realhf.base import logging, name_resolve, names, pkg_version
+from realhf.base import datapack, logging, name_resolve, names, pkg_version
 
 logger = logging.getLogger("FSDPEngine")
 
@@ -145,7 +145,7 @@ class FSDPEngine(BaseHFEngine):
         if meta.type == "nccl":
             if not self.weight_update_group_initialized:
                 self._init_distributed_weight_update(meta)
-            self._update_weights_from_distributed()
+            self._update_weights_from_distributed(meta.nccl_param_specs)
             dist.barrier(device_ids=[self.device.index])
             torch.cuda.synchronize()
         elif meta.type == "disk":
@@ -178,25 +178,45 @@ class FSDPEngine(BaseHFEngine):
             # NOTE: sglang v0.4.9.post2 or later does not have the barrier call
         self.weight_update_group_initialized = True
 
-    def _update_weights_from_distributed(self):
-        """Broadcast parameters from rank 0 (FSDP2 compatible)."""
+    def _update_weights_from_distributed(
+        self, grouped_param_specs: List[List[ParamSpec]]
+    ):
+        """Broadcast parameters (chunked) from rank 0 (FSDP2 compatible)."""
 
-        for name, param in self.model.named_parameters():
-            if isinstance(param.data, DTensor):
-                tensor = param.data.full_tensor()
-            else:
-                tensor = param.data
-            if dist.get_rank() == 0:
-                logger.debug(
-                    f"Broadcasting {name} with shape {tensor.shape}", flush=True
-                )
-                dist.broadcast(tensor, src=0, group=self.weight_update_group)
-            del tensor  # optional, for memory hygiene
-        torch.cuda.empty_cache()
+        named_parameters = dict(self.get_model_name_parameters())
+        for param_specs in grouped_param_specs:
+            for param_spec in param_specs:
+                name = param_spec.name
+                param = named_parameters[name]
+                if isinstance(param.data, DTensor):
+                    tensor = param.data.full_tensor()
+                else:
+                    tensor = param.data
+                if dist.get_rank() == 0:
+                    logger.debug(
+                        f"Broadcasting {name} with shape {tensor.shape}", flush=True
+                    )
+                    dist.broadcast(tensor, src=0, group=self.weight_update_group)
+                del tensor
+            dist.barrier(device_ids=[self.device.index])
+            torch.cuda.synchronize()
 
-    def get_param_specs(self) -> List[ParamSpec]:
+    def _bin_pack_param_specs(
+        self, param_specs: List[ParamSpec], chunked_mem_mb=1024
+    ) -> List[List[ParamSpec]]:
+        sizes = [param_spec.size for param_spec in param_specs]
+        chunked_mem_bytes = max(chunked_mem_mb * 1024 * 1024, max(sizes) + 10)
+        group_indices = datapack.ffd_allocate(sizes, chunked_mem_bytes, 1)
+        grouped_param_specs = [
+            [param_specs[i] for i in group_index] for group_index in group_indices
+        ]
+        return grouped_param_specs
+
+    def get_param_specs(
+        self, weight_chunked_mem_mb: int = 1024
+    ) -> List[List[ParamSpec]]:
         param_specs = []
-        for name, param in self.model.named_parameters():
+        for name, param in self.get_model_name_parameters():
             if isinstance(param.data, DTensor):
                 tensor = param.data.full_tensor()
             else:
@@ -209,7 +229,9 @@ class FSDPEngine(BaseHFEngine):
                 )
             )
             del tensor  # free memory if full_tensor was created
-        return param_specs
+        return self._bin_pack_param_specs(
+            param_specs, chunked_mem_mb=weight_chunked_mem_mb
+        )
 
     def train_batch(
         self,

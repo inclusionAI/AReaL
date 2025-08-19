@@ -214,8 +214,10 @@ class BaseHFEngine(TrainEngine):
 
     def destroy(self):
         """Destroy the engine and release GPU memory."""
-        del self.optimizer
-        del self.model
+        if hasattr(self, "optimizer"):
+            del self.optimizer
+        if hasattr(self, "model"):
+            del self.model
         gc.collect()
         torch.cuda.empty_cache()
         gc.collect()
@@ -347,6 +349,21 @@ class BaseHFEngine(TrainEngine):
             mb["attention_mask"] = dict(full_attention=None)
 
         return mb_list
+
+    def get_model_name_parameters(self):
+        name_params_iterator = self.model.named_parameters()
+        if self.is_vision_model and is_qwen2_vl_model(self.model_config.model_type):
+
+            def name_remapping_generator():
+                for name, value in name_params_iterator:
+                    new_name = name.replace("model.", "", 1).replace(
+                        "language_model", "model"
+                    )
+                    yield new_name, value
+
+            yield from name_remapping_generator()
+        else:
+            yield from name_params_iterator
 
     def train_batch(
         self,

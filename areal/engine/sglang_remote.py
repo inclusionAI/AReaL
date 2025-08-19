@@ -5,7 +5,7 @@ import shutil
 import time
 from concurrent.futures import Future, ProcessPoolExecutor
 from datetime import datetime
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
 import requests
@@ -17,10 +17,8 @@ from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     FinetuneSpec,
-    LLMRequest,
-    LLMResponse,
-    VLMRequest,
-    VLMResponse,
+    ModelRequest,
+    ModelResponse,
     WeightUpdateMeta,
 )
 from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
@@ -43,7 +41,6 @@ class RemoteSGLangEngine(InferenceEngine):
         self.rid_queue = []
 
         self.addresses = os.getenv("AREAL_LLM_SERVER_ADDRS").split(",")
-        self.session = None
 
         if not self.addresses:
             raise RuntimeError("No configured SGLang servers.")
@@ -83,6 +80,7 @@ class RemoteSGLangEngine(InferenceEngine):
         self.workflow_executor.initialize()
 
     def destroy(self):
+        self.workflow_executor.destroy()
         self.executor.shutdown()
 
     def set_version(self, version):
@@ -98,22 +96,8 @@ class RemoteSGLangEngine(InferenceEngine):
             return server
         raise NotImplementedError("Only round-robin scheduling is implemented.")
 
-    async def agenerate(
-        self, req: LLMRequest | VLMRequest
-    ) -> LLMResponse | VLMResponse:
+    async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Async version of generate using aiohttp."""
-        if self.session is None:
-            # NOTE: Lazily initialize aiohttp.ClientSession since it needs to be initialized
-            # inside asyncio loop in WorkflowExecutor
-            self.session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(
-                    total=self.config.request_timeout,
-                    sock_connect=self.config.request_timeout,
-                    connect=self.config.request_timeout,
-                ),
-                read_bufsize=1024 * 1024 * 10,
-                connector=get_default_connector(),
-            )
         # Prepare request payload
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
@@ -130,27 +114,18 @@ class RemoteSGLangEngine(InferenceEngine):
             "max_new_tokens": gconfig.max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
+            "frequency_penalty": gconfig.frequency_penalty,
         }
-        if stop is not None:
+        if stop:
             sample_params["stop"] = stop
 
-        if isinstance(req, VLMRequest):
-            # VLMRequest has image_data
-            payload = {
-                "input_ids": req.input_ids.copy(),
-                "image_data": req.image_data,  # ImageObject or str
-                "sampling_params": sample_params,
-                "return_logprob": True,
-                "stream": False,
-            }
-        else:
-            # NOTE: rid should NOT be passed in payload
-            payload = {
-                "input_ids": req.input_ids.copy(),
-                "sampling_params": sample_params,
-                "return_logprob": True,
-                "stream": False,
-            }
+        payload = {
+            "input_ids": req.input_ids.copy(),
+            "image_data": req.image_data,  # ImageObject or str
+            "sampling_params": sample_params,
+            "return_logprob": True,
+            "stream": False,
+        }
 
         # Make request
         start_time = time.perf_counter()
@@ -170,22 +145,34 @@ class RemoteSGLangEngine(InferenceEngine):
             self.rid_to_address[req.rid] = server_addr
             self.rid_queue.append(req.rid)
 
+        # Create a new session because we don't know whether this method
+        # is called in the workflow thread or the main thread.
+        session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(
+                total=self.config.request_timeout,
+                sock_connect=self.config.request_timeout,
+                connect=self.config.request_timeout,
+            ),
+            read_bufsize=1024 * 1024 * 10,
+            connector=get_default_connector(),
+        )
+
         # Deal with rollout interruption
         # "abort" is the stop reason for later v0.4.9.post2 after
         # we call the pause_generation endpoint
         stop_reason = None
         while (
-            stop_reason != "stop"
+            stop_reason not in ["stop", "tool_calls", "length"]
             and len(accumulated_output_tokens) < gconfig.max_new_tokens
         ):
             # Request is interrupted, wait for some time to avoid interfering
             # with update weights requests
-            if stop_reason is not None:
+            while self.workflow_executor.paused.is_set():
                 await asyncio.sleep(0.5)
 
             # loop until the generation is complete
             result = await arequest_with_retry(
-                session=self.session,
+                session=session,
                 addr=server_addr,
                 endpoint="/generate",
                 payload=payload,
@@ -217,29 +204,26 @@ class RemoteSGLangEngine(InferenceEngine):
             payload["input_ids"] += output_tokens
             sample_params["max_new_tokens"] -= len(output_tokens)
 
+        if stop_reason == "abort":
+            # If stop_reason is "abort", the only reason we exit the loop is
+            # len(accumulated_output_tokens) >= gconfig.max_new_tokens
+            # so the actual reason is length
+            stop_reason = "length"
+        await session.close()
         latency = time.perf_counter() - start_time
 
-        if isinstance(req, VLMRequest):
-            response = VLMResponse(
-                input_tokens=req.input_ids,
-                input_images=req.image_data,
-                output_tokens=accumulated_output_tokens,
-                output_logprobs=accumulated_output_logprobs,
-                output_versions=accumulated_versions,
-                stop_reason=stop_reason,
-                latency=latency,
-                ttft=latency,  # Simplified for non-streaming
-            )
-        else:
-            response = LLMResponse(
-                input_tokens=req.input_ids,
-                output_tokens=accumulated_output_tokens,
-                output_logprobs=accumulated_output_logprobs,
-                output_versions=accumulated_versions,
-                stop_reason=stop_reason,
-                latency=latency,
-                ttft=latency,  # Simplified for non-streaming
-            )
+        response = ModelResponse(
+            input_tokens=req.input_ids,
+            input_images=req.image_data,
+            output_tokens=accumulated_output_tokens,
+            output_logprobs=accumulated_output_logprobs,
+            output_versions=accumulated_versions,
+            stop_reason=stop_reason,
+            latency=latency,
+            ttft=latency,  # Simplified for non-streaming
+            tokenizer=req.tokenizer,
+            processor=req.processor,
+        )
         return response
 
     def update_weights(self, meta: WeightUpdateMeta):
@@ -263,6 +247,10 @@ class RemoteSGLangEngine(InferenceEngine):
         elif meta.type == "disk":
             # Update weights from disk
             # Use ProcessPool to bypass python GIL for running async coroutines
+            if self.config.experiment_name is None or self.config.trial_name is None:
+                raise RuntimeError(
+                    f"Experiment and trial names must be set for disk-based weight updates."
+                )
             fut = self.executor.submit(
                 update_weights_from_disk,
                 self.config.experiment_name,
@@ -289,8 +277,13 @@ class RemoteSGLangEngine(InferenceEngine):
         fut.add_done_callback(callback)
         return fut
 
-    def submit(self, data: Dict[str, Any], workflow: RolloutWorkflow) -> None:
-        return self.workflow_executor.submit(data, workflow)
+    def submit(
+        self,
+        data: Dict[str, Any],
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
+    ) -> None:
+        return self.workflow_executor.submit(data, workflow, workflow_builder)
 
     def wait(
         self,
@@ -305,17 +298,23 @@ class RemoteSGLangEngine(InferenceEngine):
         )
 
     def rollout_batch(
-        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+        self,
+        data: List[Dict[str, Any]],
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
     ) -> TensorDict:
-        return self.workflow_executor.rollout_batch(data, workflow)
+        return self.workflow_executor.rollout_batch(data, workflow, workflow_builder)
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow,
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ):
-        return self.workflow_executor.prepare_batch(dataloader, workflow, should_accept)
+        return self.workflow_executor.prepare_batch(
+            dataloader, workflow, workflow_builder, should_accept
+        )
 
     def pause(self):
         """Pause request submission for async rollout. Used during evaluation to prevent data over generation."""
@@ -381,6 +380,10 @@ def update_weights_from_distributed(
     request_timeout,
     init_group: bool,
 ):
+    nccl_param_specs = [
+        spec for param_specs in meta.nccl_param_specs for spec in param_specs
+    ]
+
     async def _fn():
         tik = time.perf_counter()
         if init_group:
@@ -396,9 +399,9 @@ def update_weights_from_distributed(
                     addr=addr,
                     endpoint="/update_weights_from_distributed",
                     payload={
-                        "names": [pspec.name for pspec in meta.nccl_param_specs],
-                        "dtypes": [pspec.dtype for pspec in meta.nccl_param_specs],
-                        "shapes": [pspec.shape for pspec in meta.nccl_param_specs],
+                        "names": [pspec.name for pspec in nccl_param_specs],
+                        "dtypes": [pspec.dtype for pspec in nccl_param_specs],
+                        "shapes": [pspec.shape for pspec in nccl_param_specs],
                         "group_name": meta.nccl_group_name,
                     },
                     method="POST",

@@ -9,14 +9,19 @@ repos:
           - --fallback-style=Google
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+    rev: v4.5.0
     hooks:
       - id: check-yaml
         files: \.(yaml|yml)$
       - id: end-of-file-fixer
-        files: \.(py|md|yaml|yml|c|cc|cxx|cpp|h|hpp|hxx|cu|cuh)$
+        files: \.(py|md|yaml|yml|c|cc|cxx|cpp|h|hpp|hxx|cu|cuh|ipynb)$
       - id: trailing-whitespace
-        files: \.(py|md|yaml|yml|c|cc|cxx|cpp|h|hpp|hxx|cu|cuh)$
+        files: \.(py|md|yaml|yml|c|cc|cxx|cpp|h|hpp|hxx|cu|cuh|ipynb)$
+      - id: check-added-large-files
+        name: Check for large files
+        args: ['--maxkb=1000']
+      - id: check-json
+        name: Check JSON files
 
   - repo: https://github.com/executablebooks/mdformat
     rev: 0.7.17
@@ -41,7 +46,7 @@ repos:
         files: ^(areal/|examples/lite/).*\.py$
 
   - repo: https://github.com/pycqa/isort
-    rev: 5.13.2
+    rev: 6.0.1
     hooks:
       - id: isort
         args:
@@ -58,3 +63,27 @@ repos:
         args:
           - --line-length=88
         files: \.py$
+
+  # Clean notebook outputs and metadata
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.7.1
+    hooks:
+      - id: nbstripout
+        name: nbstripout - Strip notebook output
+        description: Strip output from Jupyter notebooks
+
+  # Format notebooks with nbqa + black
+  - repo: https://github.com/nbQA-dev/nbQA
+    rev: 1.7.1
+    hooks:
+      - id: nbqa-black
+        name: nbqa-black - Format notebook code
+        description: Format Python code in notebooks with black
+        additional_dependencies: [black==25.1.0]
+        args: [--line-length=88]
+
+      - id: nbqa-isort
+        name: nbqa-isort - Sort imports in notebooks
+        description: Sort imports in notebook cells
+        additional_dependencies: [isort==6.0.1]
+        args: [--profile=black]
