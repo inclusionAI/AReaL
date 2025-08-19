@@ -1,20 +1,18 @@
 import asyncio
 import os
 import uuid
+from copy import deepcopy
 
 import aiofiles
 import aiofiles.os
 import colorama
-import torch
-from tensordict import TensorDict
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import ModelRequest
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
-from areal.utils.data import concat_padded_tensors
+from areal.experimental.openai import ArealOpenAI
 from realhf.base import logging, stats_tracker
 
 logger = logging.getLogger("Multi-Turn workflow")
@@ -36,81 +34,60 @@ class MultiTurnWorkflow(RolloutWorkflow):
         self.tokenizer = tokenizer
         self.max_turns = max_turns
         self.turn_discount = turn_discount
-        self.rollout_stat_scope = rollout_stat_scope
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
         self.dump_dir = dump_dir
+        self.rollout_stat_scope = rollout_stat_scope
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
-        # Create tokens that should be amended if the answer is incorrect.
-        # This method eliminates the encode-decode inconsistency issue and cancels system prompts.
-        messages = [{"role": "assistant", "content": "some random message."}]
-        s1 = self.tokenizer.apply_chat_template(messages, tokenize=True)
-        messages += [
+        self.reflection_msg = [
             {
                 "role": "user",
                 "content": "Your answer is either wrong or not parsable to the reward function. You may misunderstand the original question. "
                 "Please carefully read the original question, check the preivous errors, and try to answer it again.",
             }
         ]
-        s2 = self.tokenizer.apply_chat_template(
-            messages, tokenize=True, add_generation_prompt=True
-        )
-        self.multi_turn_prompt_ids = s2[len(s1) :]
 
     async def _run_one_episode(self, engine: InferenceEngine, data, rid):
-        # Enforces `n_samples=1`
-        # Placeholders for the results
-        seq, logprobs, loss_mask, versions = [], [], [], []
-        messages = data["messages"]
-        # Convert the prompt into input_ids
-        input_ids = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-        )
+        client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
+        messages = deepcopy(data["messages"])
         # Run multi-turn rollout until correct
         t = reward = 0
         discount = 1
         while reward == 0 and t < self.max_turns:
             # Send generate request to get the response.
-            req = ModelRequest(
-                rid=rid,
-                input_ids=input_ids,
-                gconfig=self.gconfig.new(n_samples=1),
-                tokenizer=self.tokenizer,
+            _comp = await client.chat.completions.create(
+                messages=messages,
+                frequency_penalty=self.gconfig.frequency_penalty,
+                max_completion_tokens=self.gconfig.max_new_tokens,
+                stop=self.gconfig.stop,
+                store=True,
+                temperature=self.gconfig.temperature,
+                top_p=self.gconfig.top_p,
             )
-            resp = await engine.agenerate(req)
-            # compute reward: 1 for correct and 0 otherwise
-            prompt_str = self.tokenizer.decode(input_ids)
-            completions_str = self.tokenizer.decode(resp.output_tokens)
+            # _comp is an openai ChatCompletion object
+            # but we also need to fetch the saved token IDs
+            comp = client.get_completions(_comp.id)
             reward = await self.async_reward_fn(
-                prompt_str,
-                completions_str,
-                resp.input_tokens,
-                resp.output_tokens,
+                self.tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                ),
+                _comp.choices[0].message.content,
+                comp.response.input_tokens,
+                comp.response.output_tokens,
                 **data,
             )
-            # Amend results
-            input_len = len(resp.input_tokens) - len(seq)
-            assert len(seq) == 0 or resp.input_tokens[:-input_len] == seq, (
-                seq,
-                resp.input_tokens[:-input_len],
-                len(seq),
-                len(resp.input_tokens[:-input_len]),
-            )
-            seq += resp.input_tokens[-input_len:] + resp.output_tokens
-            logprobs += [0.0] * input_len + resp.output_logprobs
-            loss_mask += [0] * input_len + [1] * resp.output_len
-            versions += [-1] * input_len + resp.output_versions
             # Increase counter
             t += 1
             # Amend a prompt if the previous answer is incorrect
             if reward == 0 and t < self.max_turns:
-                input_ids = input_ids + resp.output_tokens
-                if resp.output_tokens[-1] != self.tokenizer.eos_token_id:
-                    input_ids += [self.tokenizer.eos_token_id]
-                input_ids += self.multi_turn_prompt_ids
+                messages += [
+                    {
+                        "role": "assistant",
+                        "content": _comp.choices[0].message.content,
+                    }
+                ]
+                messages += self.reflection_msg
                 discount *= self.turn_discount
 
         reward = float(reward * discount)
@@ -118,22 +95,8 @@ class MultiTurnWorkflow(RolloutWorkflow):
         # Log reward.
         stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward, num_turns=t)
 
-        res = dict(
-            input_ids=torch.tensor(seq),
-            logprobs=torch.tensor(logprobs),
-            loss_mask=torch.tensor(loss_mask),
-            versions=torch.tensor(versions),
-            rewards=torch.tensor(float(reward * discount)),
-            attention_mask=torch.ones(len(seq), dtype=torch.bool),
-        )
-        res = {k: v.unsqueeze(0) for k, v in res.items()}
-        return (
-            TensorDict(res, batch_size=[1]),
-            prompt_str,
-            completions_str,
-            reward,
-            len(seq),
-        )
+        client.set_reward(_comp.id, reward)
+        return client.export_completions(turn_discount=0.0), comp
 
     async def arun_episode(self, engine: InferenceEngine, data):
         rid = uuid.uuid4().hex
@@ -159,7 +122,11 @@ class MultiTurnWorkflow(RolloutWorkflow):
             file_path = os.path.join(dump_path, f"{qid}.txt")
             async with aiofiles.open(file_path, "a") as f:
                 n_samples = self.gconfig.n_samples
-                for i, (_, p, c, r, sl) in enumerate(results):
+                for i, (_, comp) in enumerate(results):
+                    sl = comp.response.input_len + comp.response.output_len
+                    r = comp.reward
+                    p = comp.messages
+                    c = comp.completion.choices[0].message.content
                     info = "\n".join(
                         [
                             f"idx: {i + 1} / {n_samples}, seqlen: {sl}, reward is {r}.",
@@ -170,4 +137,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
                     await f.write(info + "\n")
 
         data = [res[0] for res in results]
-        return concat_padded_tensors(data)
+        ret = {}
+        for d in data:
+            ret.update(d)
+        return ret

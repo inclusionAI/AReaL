@@ -23,7 +23,13 @@ def get_gsm8k_rl_dataset(path, split, rank, world_size):
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
 
     def process(sample):
-        messages = [{"role": "user", "content": sample["question"]}]
+        messages = [
+            {
+                "role": "user",
+                "content": sample["question"]
+                + "\nPlease put your final answer within \\boxed{}.",
+            }
+        ]
         return {"messages": messages}
 
     dataset = dataset.map(process).remove_columns(["question"])
