@@ -1,4 +1,4 @@
-experiment_name: clevr_count_70k-grpo-max_head_offpolicyness-8
+experiment_name: clevr_count_70k-grpo-max_head_offpolicyness-4
 trial_name: trial1
 
 
