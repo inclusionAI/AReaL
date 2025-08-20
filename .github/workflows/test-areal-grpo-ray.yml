@@ -1,0 +1,58 @@
+name: GRPO Ray Integration Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: areal-grpo-ray-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  grpo-ray-integration-tests:
+    environment:
+      name: AReaL-unittests
+    permissions:
+      contents: read
+    runs-on: gpu
+    timeout-minutes: 7200
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: |
+          source examples/env/scripts/setup-pip-deps.sh
+
+      - name: Wait for 2 free GPUs
+        timeout-minutes: 7200
+        run: |
+          until [[ $(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | wc -l) -ge 2 ]]; do
+            CUDA_VISIBLE_DEVICES="$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits | awk -F',' '$2/$3 >= 0.90 {print $1}' | tr '\n' ',' | sed 's/,$//')"
+            sleep 1
+          done
+
+          echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "$GITHUB_ENV"
+
+      - name: Install Ray
+        run: |
+          pip install ray[default]
+
+      - name: Start Ray cluster
+        run: |
+          ray start --head --port=6379 --object-manager-port=8076 --node-manager-port=8077 --dashboard-host=0.0.0.0 --dashboard-port=8265 --redis-password='' --disable-usage-stats
+
+      - name: Run GRPO Ray integration tests
+        env:
+          CI: true
+        run: |
+          TOKENIZERS_PARALLELISM=false pytest -s -vv areal/tests/grpo_ray/
+
+      - name: Stop Ray cluster
+        if: always()
+        run: |
+          ray stop
