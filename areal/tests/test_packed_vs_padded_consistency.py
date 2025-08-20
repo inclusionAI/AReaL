@@ -9,8 +9,8 @@ from torch.testing import assert_close
 from areal.api.cli_args import TrainEngineConfig
 from areal.engine.base_hf_engine import BaseHFEngine
 from areal.utils.data import concat_padded_tensors
+from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.network import find_free_ports
-from realhf.api.core.data_api import load_hf_processor_and_tokenizer
 
 BS = 4
 MAX_ANSWER_LEN = 16
