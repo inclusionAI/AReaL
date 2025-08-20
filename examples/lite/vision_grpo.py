@@ -33,10 +33,6 @@ def main(args):
     wandb.init(project=config.stats_logger.wandb.project)
 
     rank = int(os.getenv("RANK"))
-    torch.cuda.memory._record_memory_history(
-        enabled=True,
-        trace_alloc_max_entries=200000  # 可按需调大/调小
-    )
     world_size = int(os.getenv("WORLD_SIZE"))
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
 
@@ -102,12 +98,7 @@ def main(args):
     # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
-    weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
-            AllocationMode.from_str(config.allocation_mode), actor
-        )
-    ]
-    # weight_update_meta = [WeightUpdateMeta.from_disk(config.saver)]
+    weight_update_meta = [WeightUpdateMeta.from_disk(config.saver.experiment_name,config.saver.trial_name,config.saver.fileroot)]
     dist.broadcast_object_list(weight_update_meta, src=0)
     weight_update_meta = weight_update_meta[0]
 
@@ -214,6 +205,7 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
+            rollout.pause()
             if dist.get_rank() == 0:
                 future = rollout.update_weights(weight_update_meta)
             actor.upload_weights(weight_update_meta)
@@ -221,10 +213,9 @@ def main(args):
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
             torch.cuda.synchronize()
-
+            rollout.resume()
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
-            eval_rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
             saver.save(
@@ -287,7 +278,6 @@ def main(args):
         ref.destroy()
     actor.destroy()
     wandb.finish()
-    torch.cuda.memory._dump_snapshot(f"cuda_memory_snapshot_rank{rank}.pkl")
 
 
 if __name__ == "__main__":
