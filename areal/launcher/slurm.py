@@ -479,8 +479,7 @@ def slurm_main(config, run_id: int = 0):
     # $trainer_port is a free port on the head node.
     # Both of them are obtained in by the SBATCH script.
     trainer_cmd_template = (
-        f"torchrun --nnodes={{nnodes}} --nproc-per-node={{nproc_per_node}} --node-rank {{node_rank}} "
-        f"--master-addr $head_node_ip --master-port $trainer_port {' '.join(sys.argv[1:])}"
+        f"""bash -c "pip install transformers==4.54.0 && torchrun --nnodes={{nnodes}} --nproc-per-node={{nproc_per_node}} --node-rank {{node_rank}} --master-addr $head_node_ip --master-port $trainer_port {' '.join(sys.argv[1:])}" """
     )
 
     trainer_cmds = []

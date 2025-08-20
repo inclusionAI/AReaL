@@ -45,6 +45,7 @@ def get_clevr_count_70k_sft_dataset(path, split, processor, rank, world_size):
             image_token = "<|vision_start|><|image_pad|><|vision_end|>"
         else:
             image_token = processor.image_token if processor is not None else "<image>"
+
         example["problem"] = (
             example["problem"].replace("<image>", image_token).replace("different", "")
         )
@@ -103,16 +104,15 @@ def get_clevr_count_70k_rl_dataset(path, split, processor, rank, world_size):
         system_prompt = {
             "role": "system",
             "content": (
-                "Solve the following question: count the number of items in the image and provide the final answer in [ ] format, ensuring that only the number is inside the brackets without any additional text or explanations. "
+                "Provide the final answer in [ ] format, ensuring that only the number is inside the brackets without any additional text or explanations. "
             ),
         }
-
+        sample["problem"]="<image>How many items are there in the image?"
         messages = [
             {
                 "role": "user",
                 "content": sample["problem"]
-                .replace("<image>", image_token)
-                .replace("different", ""),
+                .replace("<image>", image_token),
             }
         ]
         messages.insert(0, system_prompt)

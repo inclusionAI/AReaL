@@ -168,7 +168,7 @@ class RemoteSGLangEngine(InferenceEngine):
             # Request is interrupted, wait for some time to avoid interfering
             # with update weights requests
             while self.workflow_executor.paused.is_set():
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1.0)
 
             # loop until the generation is complete
             result = await arequest_with_retry(
@@ -403,6 +403,7 @@ def update_weights_from_distributed(
                         "dtypes": [pspec.dtype for pspec in nccl_param_specs],
                         "shapes": [pspec.shape for pspec in nccl_param_specs],
                         "group_name": meta.nccl_group_name,
+                        "abort_all_request": True
                     },
                     method="POST",
                     max_retries=1,
