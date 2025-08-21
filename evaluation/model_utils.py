@@ -6,6 +6,8 @@ import torch
 import tqdm
 from transformers import StoppingCriteria, StoppingCriteriaList
 
+from areal.platforms import current_platform
+
 
 class KeywordsStoppingCriteria(StoppingCriteria):
     def __init__(self, keywords_str, tokenizer):
@@ -233,7 +235,7 @@ def load_hf_lm_and_tokenizer(
             trust_remote_code=True,
             use_safetensors=use_safetensors,
         )
-        if torch.cuda.is_available():
+        if current_platform.is_available():
             model = model.cuda()
         if load_in_half:
             model = model.half()

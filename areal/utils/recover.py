@@ -17,6 +17,8 @@ from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
+from areal.platforms import current_platform
+
 logger = logging.getLogger("recover")
 
 
@@ -240,7 +242,7 @@ class RecoverHandler:
                 if dist.get_rank() == 0:
                     future.result()
                 dist.barrier(device_ids=[update_engine.device.index])
-                torch.cuda.synchronize()
+                current_platform.synchronize()
                 inference_engine.resume()
                 update_engine.set_version(global_step + 1)
                 inference_engine.set_version(global_step + 1)

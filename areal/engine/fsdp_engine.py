@@ -29,6 +29,8 @@ from areal.utils.fsdp import (
 )
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 
+from areal.platforms import current_platform
+
 logger = logging.getLogger("FSDPEngine")
 
 
@@ -147,7 +149,7 @@ class FSDPEngine(BaseHFEngine):
                 self._init_distributed_weight_update(meta)
             self._update_weights_from_distributed(meta.nccl_param_specs)
             dist.barrier(device_ids=[self.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
         elif meta.type == "disk":
             self._save_model_to_hf(meta.path, self.tokenizer, self.processor)
             # dist.barrier() are called when _save_model_to_hf finished
@@ -169,7 +171,7 @@ class FSDPEngine(BaseHFEngine):
         os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
         if dist.get_rank() == 0:
             self.weight_update_group = init_custom_process_group(
-                backend="nccl",
+                backend=current_platform.communication_backend,
                 world_size=meta.alloc_mode.gen_world_size + 1,
                 init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
                 rank=0,
@@ -199,7 +201,7 @@ class FSDPEngine(BaseHFEngine):
                     dist.broadcast(tensor, src=0, group=self.weight_update_group)
                 del tensor
             dist.barrier(device_ids=[self.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
 
     def _bin_pack_param_specs(
         self, param_specs: List[ParamSpec], chunked_mem_mb=1024

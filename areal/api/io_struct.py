@@ -13,6 +13,7 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.utils.network import find_free_ports, gethostip
+from areal.platforms import current_platform
 
 if TYPE_CHECKING:
     from transformers import AutoProcessor
@@ -239,7 +240,7 @@ class ParamSpec:
 
 @dataclass
 class WeightUpdateMeta:
-    type: Literal["disk", "nccl"]
+    type: Literal["disk", "nccl", "hccl"]
     path: str | None = None
     alloc_mode: AllocationMode | None = None
 
@@ -277,7 +278,7 @@ class WeightUpdateMeta:
     ):
         param_specs = fsdp_engine.get_param_specs(weight_chunked_mem_mb)
         return cls(
-            type="nccl",
+            type=current_platform.communication_backend,
             alloc_mode=allocation_mode,
             nccl_master_address=gethostip(),
             nccl_master_port=find_free_ports(1)[0],

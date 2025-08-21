@@ -198,7 +198,7 @@ class RayLauncher:
 
             # manage environment variables
             env_vars = env_vars or {}
-            if "CUDA_VISIBLE_DEVICES" in env_vars:
+            if "CUDA_VISIBLE_DEVICES" or "ASCEND_RT_VISIBLE_DEVICES" in env_vars:
                 logger.warning(
                     "Setting CUDA_VISIBLE_DEVICES before running ray jobs may result in unexpected behavior."
                 )

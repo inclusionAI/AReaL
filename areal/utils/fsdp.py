@@ -6,7 +6,10 @@ import torch.nn as nn
 from torch.distributed.device_mesh import init_device_mesh
 from transformers import PreTrainedModel
 
+
 from areal.utils import logging, pkg_version
+
+from areal.platforms import current_platform
 
 logger = logging.getLogger("FSDPEngine")
 
@@ -37,7 +40,6 @@ def fsdp2_clip_grad_norm_(
 ):
     """torch.nn.utils.clip_grad_norm_ cann't run on cpu parameter DTensor"""
     from torch.nn.utils.clip_grad import _clip_grads_with_norm_, _get_total_norm
-
     if isinstance(parameters, torch.Tensor):
         parameters = [parameters]
     else:
@@ -45,7 +47,7 @@ def fsdp2_clip_grad_norm_(
         parameters = list(parameters)
     grads = [p.grad for p in parameters if p.grad is not None]
     total_norm = _get_total_norm(grads, norm_type, error_if_nonfinite, foreach)
-    total_norm = total_norm.to(torch.cuda.current_device(), non_blocking=True)
+    total_norm = total_norm.to(current_platform.current_device(), non_blocking=True)
 
     _clip_grads_with_norm_(parameters, max_norm, total_norm, foreach)
     return total_norm
@@ -54,11 +56,11 @@ def fsdp2_clip_grad_norm_(
 def create_fsdp_device_mesh(shard_size, world_size):
     if shard_size < 0 or shard_size >= world_size:
         device_mesh = init_device_mesh(
-            "cuda", mesh_shape=(world_size,), mesh_dim_names=("fsdp",)
+            current_platform.device_type, mesh_shape=(world_size,), mesh_dim_names=("fsdp",)
         )
     else:
         device_mesh = init_device_mesh(
-            "cuda",
+            current_platform.device_type,
             mesh_shape=(world_size // shard_size, shard_size),
             mesh_dim_names=("ddp", "fsdp"),
         )
@@ -119,7 +121,7 @@ def fsdp2_load_full_state_dict(
         set_model_state_dict,
     )
 
-    device = torch.cuda.current_device()
+    device = current_platform.current_device()
     model = model.to(device=device, non_blocking=True)
     cpu_offload = cpu_offload is not None
     options = StateDictOptions(

@@ -25,6 +25,8 @@ from areal.utils.data import amend_position_ids
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
+from areal.platforms import current_platform
+
 USE_MBRIDGE = False
 if pkg_version.is_available("mbridge"):
     import mbridge
@@ -118,7 +120,7 @@ class MegatronEngine(TrainEngine):
         self.lr_scheduler = lr_scheduler
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        current_platform.synchronize().set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
 
         # Required by NCCL weight update group for SGLang

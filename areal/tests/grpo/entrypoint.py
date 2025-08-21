@@ -21,6 +21,8 @@ from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 
+from areal.platforms import current_platform
+
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
     return int(process_results(completions, answer)[0])
@@ -106,7 +108,7 @@ def main() -> None:
             batch = batch.to(actor.device)
 
             dist.barrier(device_ids=[actor.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize().synchronize()
 
             batch["ref_logp"] = ref.compute_logp(batch)
 
@@ -124,7 +126,7 @@ def main() -> None:
             if future is not None:
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
             rollout.resume()
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)

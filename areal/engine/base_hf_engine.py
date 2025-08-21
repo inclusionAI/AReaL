@@ -39,8 +39,10 @@ from areal.utils.model import (
     is_qwen2_vl_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
+from areal.platforms import current_platform 
 
 logger = logging.getLogger("Base HF Engine")
+
 
 
 class BaseHFEngine(TrainEngine):
@@ -95,14 +97,14 @@ class BaseHFEngine(TrainEngine):
             # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
             # otherwise initializing the NCCL weight update group will be wrong!
             dist.init_process_group(
-                backend="nccl",
+                backend=current_platform.communication_backend,
                 timeout=NCCL_DEFAULT_TIMEOUT,
             )
             self.own_global_group = True
         self._parallelism_group = dist.new_group()
 
     def create_device_model(self):
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        current_platform.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
 
         dtype = getattr(torch, self.config.dtype)
@@ -121,7 +123,7 @@ class BaseHFEngine(TrainEngine):
             )
 
             tik = time.perf_counter()
-            with torch.device("cuda"):
+            with torch.device(current_platform.device_type):
                 model = AutoModelForImageTextToText.from_pretrained(
                     pretrained_model_name_or_path=self.config.path,
                     trust_remote_code=True,
@@ -133,7 +135,7 @@ class BaseHFEngine(TrainEngine):
         else:
             self.tokenizer = load_hf_tokenizer(self.config.path)
             tik = time.perf_counter()
-            with torch.device("cuda"):
+            with torch.device(current_platform.device_type):
                 if self.config.init_from_scratch:
                     # initialize scratch model from config
                     # NOTE: VLM cannot directly load state dict using this
@@ -219,7 +221,7 @@ class BaseHFEngine(TrainEngine):
         if hasattr(self, "model"):
             del self.model
         gc.collect()
-        torch.cuda.empty_cache()
+        current_platform.empty_cache()
         gc.collect()
         dist.destroy_process_group(self.parallelism_group)
         if self.own_global_group:
