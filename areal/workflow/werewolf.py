@@ -121,12 +121,14 @@ class WerewolfWorkflow(RolloutWorkflow):
                 )
                 action_task = engine.agenerate(req)
 
+            q_prompts = []
             question_tasks = []
             teacher_question_tasks = []
             if self.answer_questions:
                 # We can modify the questions here based on current role
                 for qi, q in enumerate(self.questions):
                     q_prompt = f"{obs} Your previous summary: {prev_summary}. Based on this information, answer this question: {q}"
+                    q_prompts.append(q_prompt)
                     q_ids = self.tokenizer.apply_chat_template(
                         [{"role": "user", "content": q_prompt}],
                         tokenize=True,
@@ -216,7 +218,7 @@ class WerewolfWorkflow(RolloutWorkflow):
             traj_len[0] += resp.input_len
             traj_len[1] += resp.output_len
 
-            # Ask for agent summarization
+            # Ask for agent summarization, then log all the asnwers
             if self.use_summary:
                 m = re.findall(r"<answer>(.*?)</answer>", completion_str, re.DOTALL)
                 action = m[-1].strip().lower() if m else ""
@@ -252,7 +254,8 @@ class WerewolfWorkflow(RolloutWorkflow):
                     {
                         "agent": current_agent,
                         "role": current_role,
-                        "QAs": [{"question": self.questions[i], "answer": agent_q_answers[i]} for i in range(len(self.questions))],
+                        "QAs": [{"question": q_prompts[i], "answer": agent_q_answers[i]} for i in range(len(self.questions))],
+                        "summary_prompt": summary_prompt,
                         "summary": agent_summary,
                     }
                 )
@@ -269,7 +272,8 @@ class WerewolfWorkflow(RolloutWorkflow):
                         {
                             "agent": current_agent,
                             "role": current_role,
-                            "QAs": [{"question": self.questions[i], "answer": teacher_q_answers[i]} for i in range(len(self.questions))],
+                            "QAs": [{"question": q_prompts[i], "answer": teacher_q_answers[i]} for i in range(len(self.questions))],
+                            "summary_prompt": summary_prompt,
                             "summary": teacher_summary,
                         }
                     )
@@ -278,14 +282,14 @@ class WerewolfWorkflow(RolloutWorkflow):
                     {
                         "agent": current_agent,
                         "role": current_role,
-                        "QAs": [{"question": self.questions[i], "answer": agent_q_answers[i]} for i in range(len(self.questions))],
+                        "QAs": [{"question": q_prompts[i], "answer": agent_q_answers[i]} for i in range(len(self.questions))],
                     }
                 )
                 teacher_logs.append(
                     {
                         "agent": current_agent,
                         "role": current_role,
-                        "QAs": [{"question": self.questions[i], "answer": teacher_q_answers[i]} for i in range(len(self.questions))],
+                        "QAs": [{"question": q_prompts[i], "answer": teacher_q_answers[i]} for i in range(len(self.questions))],
                     }
                 )
 
@@ -384,10 +388,10 @@ class WerewolfWorkflow(RolloutWorkflow):
                             await jsonf.write(json.dumps(qa_logs[i]) + (",\n" if i < len(qa_logs) - 1 else "\n"))
                         await jsonf.write("]")
                     if self.teacher_rollout and t_logs:
-                        await jsonf.write("[")
                         async with aiofiles.open(os.path.join(dump_path, f"{qid}_tlogs.json"), "a") as jsonf:
+                            await jsonf.write("[")
                             for i in range(len(t_logs)):
                                 await jsonf.write(json.dumps(t_logs[i]) + (",\n" if i < len(t_logs) - 1 else "\n"))
-                        await jsonf.write("]")
+                            await jsonf.write("]")
 
         return concat_padded_tensors(results)
