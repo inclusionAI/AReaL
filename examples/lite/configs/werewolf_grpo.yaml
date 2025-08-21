@@ -12,8 +12,11 @@ seed: 1
 total_train_epochs: 1
 tokenizer_path: ${actor.path}
 async_training: true
-opp_server_addrs: 33.215.20.167:11422,33.215.20.167:22395,33.215.20.167:35065,33.215.20.167:37863,33.215.20.167:42543,33.215.20.167:46727
-role: werewolf
+opp_server_addrs: 33.215.20.167:12593,33.215.20.167:18312,33.215.20.167:24080,33.215.20.167:28555,33.215.20.167:40264,33.215.20.167:46910,33.215.20.167:48067
+# opp_tokenizer_path: ""
+teacher_server_addrs: 33.215.20.208:11330,33.215.20.208:16242,33.215.20.208:20031,33.215.20.208:28899,33.215.20.208:40114,33.215.20.208:41873,33.215.20.208:48901
+# teacher_tokenizer_path: ""
+role: villager
 
 rollout:
   experiment_name: ${experiment_name}
@@ -35,15 +38,15 @@ actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   # path: /storage/openpsi/models/Qwen__Qwen2.5-3B-Instruct
-  path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-double/werewolf1/default/epoch0epochstep186globalstep186
+  path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-triple1/villager1.1/default/epoch0epochstep186globalstep186
   init_from_scratch: false
   disable_dropout: true
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_mb: 49152
+    max_tokens_per_mb: 10240
   optimizer:
     type: adam
-    lr: 2e-6
+    lr: 1.5e-6
     gradient_clipping: 1.0
     lr_scheduler_type: cosine
     min_lr_ratio: 0.2
@@ -68,7 +71,7 @@ ref:
   disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
-    max_tokens_per_mb: 49152
+    max_tokens_per_mb: 10240
   optimizer: null
   backend: fsdp
 

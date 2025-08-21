@@ -58,7 +58,7 @@ class WerewolfWorkflow(RolloutWorkflow):
         self.use_summary = True
         self.answer_questions = True
         self.questions = questions or [
-            "Who do you suspect is the werewolf?",
+            "Of the alive players, who do you think is(are) your biggest threat(s)?",
         ]
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
@@ -85,6 +85,7 @@ class WerewolfWorkflow(RolloutWorkflow):
         for turn in range(self.max_turns):
             # Store the current agent and get its summary
             current_agent = env.agent_player
+            current_role = env.agent_role
             prev_summary = summaries[current_agent][-1] if summaries[current_agent] else "None yet."
             
             # Prepare all the questions for agents
@@ -123,6 +124,7 @@ class WerewolfWorkflow(RolloutWorkflow):
             question_tasks = []
             teacher_question_tasks = []
             if self.answer_questions:
+                # We can modify the questions here based on current role
                 for qi, q in enumerate(self.questions):
                     q_prompt = f"{obs} Your previous summary: {prev_summary}. Based on this information, answer this question: {q}"
                     q_ids = self.tokenizer.apply_chat_template(
@@ -249,7 +251,8 @@ class WerewolfWorkflow(RolloutWorkflow):
                 qa_logs.append(
                     {
                         "agent": current_agent,
-                        "QAs": agent_q_answers,
+                        "role": current_role,
+                        "QAs": [{"question": self.questions[i], "answer": agent_q_answers[i]} for i in range(len(self.questions))],
                         "summary": agent_summary,
                     }
                 )
@@ -265,7 +268,8 @@ class WerewolfWorkflow(RolloutWorkflow):
                     teacher_logs.append(
                         {
                             "agent": current_agent,
-                            "QAs": teacher_q_answers,
+                            "role": current_role,
+                            "QAs": [{"question": self.questions[i], "answer": teacher_q_answers[i]} for i in range(len(self.questions))],
                             "summary": teacher_summary,
                         }
                     )
@@ -273,13 +277,15 @@ class WerewolfWorkflow(RolloutWorkflow):
                 qa_logs.append(
                     {
                         "agent": current_agent,
-                        "QAs": agent_q_answers,
+                        "role": current_role,
+                        "QAs": [{"question": self.questions[i], "answer": agent_q_answers[i]} for i in range(len(self.questions))],
                     }
                 )
                 teacher_logs.append(
                     {
                         "agent": current_agent,
-                        "QAs": teacher_q_answers,
+                        "role": current_role,
+                        "QAs": [{"question": self.questions[i], "answer": teacher_q_answers[i]} for i in range(len(self.questions))],
                     }
                 )
 

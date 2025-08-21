@@ -1,6 +1,6 @@
 experiment_name: infer-only
 trial_name: trial0
-allocation_mode: sglang.d6p1t1+d2p1t1
+allocation_mode: sglang.d7p1t1+d1p1t1
 cluster:
   fileroot: /storage/openpsi/experiments
   n_nodes: 1
@@ -16,7 +16,7 @@ async_training: true
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 16
+  max_concurrent_rollouts: 14
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
@@ -32,12 +32,13 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-double/werewolf2/default/epoch0epochstep186globalstep186
+  path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-triple1/werewolf2/default/epoch0epochstep186globalstep186
+  # path: /storage/openpsi/models/Qwen__Qwen2.5-7B-Instruct
   init_from_scratch: false
   disable_dropout: true
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_mb: 49152
+    max_tokens_per_mb: 10240
   optimizer:
     type: adam
     lr: 2e-6
@@ -65,7 +66,7 @@ ref:
   disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
-    max_tokens_per_mb: 49152
+    max_tokens_per_mb: 10240
   optimizer: null
   backend: fsdp
 
