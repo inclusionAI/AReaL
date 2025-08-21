@@ -11,8 +11,8 @@ import requests
 
 from areal.api.cli_args import SGLangConfig
 from areal.experimental.openai import ArealOpenAI
-from areal.utils import network
-from realhf.api.core.data_api import load_hf_tokenizer
+from areal.utils import network, seeding
+from areal.utils.hf_utils import load_hf_tokenizer
 
 EXPR_NAME = "test_openai"
 TRIAL_NAME = "trial_0"
@@ -35,7 +35,6 @@ def check_server_health(base_url):
 
 @pytest.fixture(scope="module")
 def sglang_server():
-    from realhf.base import seeding
 
     seeding.set_random_seed(1, EXPR_NAME)
     cmd = SGLangConfig.build_cmd(
