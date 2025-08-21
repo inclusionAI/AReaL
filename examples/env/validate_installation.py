@@ -9,10 +9,8 @@ the installation procedure described in docs/tutorial/installation.md.
 
 import importlib
 import sys
-import traceback
-import warnings
 from importlib.metadata import version as get_version
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 from packaging.version import Version
 
@@ -67,22 +65,22 @@ class InstallationValidator:
     def test_flash_attn_functionality(self, flash_attn_module):
         """Test flash attention functionality."""
         # Try to import key functions
-        import flash_attn_2_cuda
-        from flash_attn import flash_attn_func, flash_attn_varlen_func
+        import flash_attn_2_cuda  # noqa
+        from flash_attn import flash_attn_func, flash_attn_varlen_func  # noqa
         print("  - Flash attention functions imported successfully")
 
     def test_vllm_functionality(self, vllm_module):
         """Test vLLM basic functionality."""
-        from vllm import LLM, SamplingParams
+        from vllm import LLM, SamplingParams  # noqa
         print("  - vLLM core classes imported successfully")
 
     def test_sglang_functionality(self, sglang_module):
         """Test SGLang basic functionality."""
         # Basic import test is sufficient for CI
-        import sgl_kernel
-        from sglang import Engine, launch_server
+        import sgl_kernel  # noqa
+        from sglang import Engine, launch_server  # noqa
         # make sure that at least fa3 works well
-        from sgl_kernel.flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
+        from sgl_kernel.flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache  # noqa
         assert Version(get_version("sglang")) == Version("0.4.9.post2"), "SGLang version should be v0.4.9.post2"
         print("  - SGLang imported successfully")
     
@@ -193,7 +191,7 @@ class InstallationValidator:
                 device = torch.device("cuda:0")
                 x = torch.randn(10, device=device)
                 y = torch.randn(10, device=device)
-                z = x + y
+                x = x + y
                 print("✓ Basic CUDA operations working")
                 
                 # Test flash attention if available
@@ -210,7 +208,7 @@ class InstallationValidator:
                                   device=device, dtype=torch.float16)
                     
                     # Test flash attention call
-                    out = flash_attn_func(q, k, v)
+                    flash_attn_func(q, k, v)
                     print("✓ Flash attention CUDA operations working")
                     
                 except Exception as e:
