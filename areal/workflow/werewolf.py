@@ -379,11 +379,15 @@ class WerewolfWorkflow(RolloutWorkflow):
 
                     # Log agent and teacher QAs and summaries
                     async with aiofiles.open(os.path.join(dump_path, f"{qid}_qalogs.json"), "a") as jsonf:
-                        for item in qa_logs:
-                            await jsonf.write(json.dumps(item) + "\n")
+                        await jsonf.write("[")
+                        for i in range(len(qa_logs)):
+                            await jsonf.write(json.dumps(qa_logs[i]) + (",\n" if i < len(qa_logs) - 1 else "\n"))
+                        await jsonf.write("]")
                     if self.teacher_rollout and t_logs:
+                        await jsonf.write("[")
                         async with aiofiles.open(os.path.join(dump_path, f"{qid}_tlogs.json"), "a") as jsonf:
-                            for item in t_logs:
-                                await jsonf.write(json.dumps(item) + "\n")
+                            for i in range(len(t_logs)):
+                                await jsonf.write(json.dumps(t_logs[i]) + (",\n" if i < len(t_logs) - 1 else "\n"))
+                        await jsonf.write("]")
 
         return concat_padded_tensors(results)
