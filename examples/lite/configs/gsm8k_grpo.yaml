@@ -93,6 +93,7 @@ train_dataset:
   num_workers: 4
   path: openai/gsm8k
   type: rl
+  max_length: 1024
 
 valid_dataset:
   batch_size: 256
