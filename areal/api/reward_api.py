@@ -1,7 +1,9 @@
 import asyncio
 import threading
+import traceback
 import weakref
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from functools import partial
 from typing import Callable, List, Optional
 
@@ -36,6 +38,7 @@ class AsyncRewardWrapper:
     """
     Wraps a synchronous reward function to make it async with timeout handling.
     Automatically manages ProcessPoolExecutor lifecycle based on instance count.
+    Includes automatic recovery from broken process pools.
     """
 
     _executors = {}
@@ -47,10 +50,12 @@ class AsyncRewardWrapper:
         reward_fn: Callable,
         timeout_seconds: float = 15,
         max_workers: Optional[int] = None,
+        max_retries: int = 3,
     ):
         self.reward_fn = reward_fn
         self.timeout_seconds = timeout_seconds
         self.max_workers = max_workers
+        self.max_retries = max_retries
         self._executor_key = max_workers
 
         with self._lock:
@@ -78,24 +83,86 @@ class AsyncRewardWrapper:
                         )
                     cls._instance_counts.pop(executor_key, None)
 
+    @classmethod
+    def _recreate_executor(cls, executor_key, max_workers):
+        """Recreate a broken ProcessPoolExecutor"""
+        with cls._lock:
+            if executor_key in cls._executors:
+                # Clean up the broken executor
+                old_executor = cls._executors[executor_key]
+                try:
+                    old_executor.shutdown(wait=False)
+                except Exception as e:
+                    logger.warning(f"Error shutting down broken executor: {e}")
+
+                # Create a new executor
+                cls._executors[executor_key] = ProcessPoolExecutor(
+                    max_workers=max_workers
+                )
+                logger.info(f"Recreated ProcessPoolExecutor with {max_workers} workers")
+                return cls._executors[executor_key]
+        return None
+
     async def __call__(self, *args, **kwargs) -> float:
-        with self._lock:
-            executor = self._executors.get(self._executor_key)
+        last_exception = None
 
-        if executor is None:
-            raise RuntimeError("ProcessPoolExecutor has been shut down")
+        for attempt in range(self.max_retries + 1):
+            with self._lock:
+                executor = self._executors.get(self._executor_key)
 
-        loop = asyncio.get_event_loop()
-        try:
-            return await asyncio.wait_for(
-                loop.run_in_executor(
-                    executor,
-                    partial(self.reward_fn, *args, **kwargs),
-                ),
-                timeout=self.timeout_seconds,
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                f"Computing reward timeout after {self.timeout_seconds}s. Set reward to 0."
-            )
-            return 0
+            if executor is None:
+                raise RuntimeError("ProcessPoolExecutor has been shut down")
+
+            loop = asyncio.get_event_loop()
+            try:
+                return await asyncio.wait_for(
+                    loop.run_in_executor(
+                        executor,
+                        partial(self.reward_fn, *args, **kwargs),
+                    ),
+                    timeout=self.timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Computing reward timeout after {self.timeout_seconds}s. Set reward to 0."
+                )
+                return 0
+            except BrokenProcessPool as e:
+                last_exception = e
+                logger.warning(
+                    f"ProcessPoolExecutor broken (attempt {attempt + 1}/{self.max_retries + 1}). "
+                    "Attempting to recreate..."
+                )
+                if attempt < self.max_retries:
+                    # Try to recreate the executor
+                    new_executor = self._recreate_executor(
+                        self._executor_key, self.max_workers
+                    )
+                    if new_executor is None:
+                        logger.error("Failed to recreate ProcessPoolExecutor")
+                        break
+                    # Continue to next attempt
+                    continue
+                else:
+                    logger.error("Max retries exceeded for BrokenProcessPool.")
+                    traceback.print_exc()
+                    raise e
+            except Exception as e:
+                last_exception = e
+                logger.error(f"Unexpected error in reward computation: {e}")
+                if attempt < self.max_retries:
+                    logger.info(
+                        f"Retrying... (attempt {attempt + 1}/{self.max_retries + 1})"
+                    )
+                    continue
+                else:
+                    logger.error("Max retries exceeded for unexpected error.")
+                    traceback.print_exc()
+                    raise e
+
+        # If we get here, all retries failed
+        if last_exception:
+            traceback.print_exc()
+            raise last_exception
+        else:
+            raise RuntimeError("Reward computation failed after all retries.")
