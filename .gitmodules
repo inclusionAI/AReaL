@@ -1,0 +1,4 @@
+[submodule "modules/AReaL"]
+	path = modules/AReaL
+	url = https://github.com/eigen-ai-labs/AReaL.git
+	branch = main
