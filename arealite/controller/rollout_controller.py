@@ -109,7 +109,7 @@ class DistributedRolloutController(RolloutController):
         scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
 
         arealite_path = os.environ["REAL_PACKAGE_PATH"]
-        engine_path = os.environ["ENGINE_PATH"]
+        engine_path = os.environ.get("ENGINE_PATH","")
         workerSpec = ContainerSpec(
             cpu=0,
             mem=0,
@@ -132,7 +132,7 @@ class DistributedRolloutController(RolloutController):
             portCount=3
         )
         engineSpec.env_vars["ENGINE_PACKAGE_PATH"] = engine_path
-        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13370153-20250807145856.sif"
+        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13200124-20250815232101.sif"
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         engineSpec.env_vars["WORKER_TYPE"] = "rollout-engine"
         engineSpec.env_vars["WORK_MODE"] = "GENERATION"
@@ -140,6 +140,7 @@ class DistributedRolloutController(RolloutController):
         engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "eth0"
         engineSpec.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         engineSpec.env_vars["USE_MAX_V2"] = "1"
+        engineSpec.env_vars["DISCOVERY_CONFIG_CENTER_TYPE"] = "HTTP"
 
 
         scheduling_config.specs.append(workerSpec)

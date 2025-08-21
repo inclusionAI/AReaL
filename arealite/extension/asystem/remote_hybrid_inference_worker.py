@@ -68,7 +68,6 @@ class RemoteHybridInferenceWorker(InferenceEngine):
 
     def initialize(self, initialize_cfg: RemoteHypidInferenceInitConfig):
         logger.info(f"[RemoteHybridInferenceWorker] begin exec initialize, config: {initialize_cfg}")
-        seeding.set_random_seed(self.config.seed, self.config.experiment_name)
         master_addr_info = initialize_cfg.master_addr
         master_addr, master_port = master_addr_info.split(":")
         world_size = initialize_cfg.world_size
@@ -86,6 +85,8 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     self.addresses = [server_ip + ":" + server_port]
 
                 asystem_hybrid_config = self.config.engine_config.get('asystem_hybrid_config', {})
+
+                seeding.set_random_seed(self.config.seed, f"{global_rank}")
                 # http body data
                 body = dict(self.config.engine_config)
                 body["model_path"] = self.config.model_path
@@ -189,7 +190,8 @@ class RemoteHybridInferenceWorker(InferenceEngine):
 
                     logger.info(f"[RemoteHybridInferenceWorker] Get data from puller: {data}")
                     task = asyncio.create_task(
-                        workflow.arun_episode(self, data), name=str(rid)
+                        workflow.arun_episodes(self, data) if isinstance(data, list) else workflow.arun_episode(self,data),
+                        name = str(rid)
                     )
                     with self.lock:
                         rollout_tasks[str(rid)] = task
@@ -353,6 +355,73 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             ttft=latency,  # Simplified for non-streaming
         )
 
+    # examples: 输入16个prompt，group size = 8, 输出128个结果
+    async def agenerate_batch(self, reqs: List[LLMRequest]) -> List[LLMResponse]:
+        """Async version of generate using aiohttp."""
+        # Prepare request payload
+        gconfig = reqs[0].gconfig
+        stop_token_ids = gconfig.stop_token_ids
+
+        sample_params = {
+            "top_p": gconfig.top_p,
+            "top_k": gconfig.top_k,
+            "n": gconfig.n_samples,
+            "max_new_tokens": gconfig.max_new_tokens,
+            "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
+            "stop_token_ids": stop_token_ids,
+        }
+
+        input_ids_list = []
+        for req in reqs:
+            input_ids_list.append(req.input_ids)
+        # NOTE: rid should NOT be passed in payload
+        payload = {
+            "input_ids": input_ids_list,
+            "sampling_params": sample_params,
+            "return_logprob": True,
+            "stream": False,
+        }
+        logger.info(f"generate payload {payload}")
+        # Make request
+        start_time = time.perf_counter()
+        server_addr = self.choose_server()
+
+        # loop until the generation is complete
+        response = await arequest_with_retry(
+            session=self.session,
+            addr=server_addr,
+            endpoint="/async_generate_sequences",
+            payload=payload,
+            method="POST",
+            max_retries=3,
+            timeout=self.config.request_timeout,
+        )
+        resps = []
+        results = response['result']
+        for index, result in enumerate(results):
+            # Parse response
+            meta_info = result["meta_info"]
+            output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
+            output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
+
+            # Check if generation is complete
+            finish_reason = meta_info["finish_reason"]
+            stop_reason = finish_reason["type"]
+            sample_params["max_new_tokens"] -= len(output_tokens)
+            latency = time.perf_counter() - start_time
+
+            resps.append(LLMResponse(
+                input_tokens=payload["input_ids"][index//gconfig.n_samples],
+                output_tokens=output_tokens,
+                output_logprobs=output_logprobs,
+                output_versions=[-1] * len(output_tokens),
+                stop_reason=stop_reason,
+                latency=latency,
+                ttft=latency,  # Simplified for non-streaming
+            ))
+
+        return resps
+
     def get_capacity(self):
         if dist.is_initialized():
             world_size = dist.get_world_size()
@@ -463,6 +532,12 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         except Full:
             raise RuntimeError("Input queue full. Please increase queue_size.")
 
+    def submit_batch(self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow") -> None:
+        try:
+            self.input_queue.put_nowait((data, workflow))
+        except Full:
+            raise RuntimeError("Input queue full. Please increase queue_size.")
+
     def wait(
         self,
         count: int,
@@ -512,9 +587,13 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         return padded
 
     def rollout(  # only dp head accept this request
-        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow", *args, **kwargs
     ) -> TensorDict:
         """Submit a batch of requests to the inference engine and wait for the results."""
+        if self.config.batch_requests is True:
+            self.submit_batch(data, workflow)
+            return self.wait(count=1)
+
         for item in data:
             self.submit(item, workflow)
         return self.wait(count=len(data))

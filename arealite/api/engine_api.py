@@ -135,7 +135,15 @@ class InferenceEngine(abc.ABC):
         """Asynchronously generate a response for the given request."""
         raise NotImplementedError()
 
+    async def agenerate_batch(self, reqs: List[LLMRequest]) -> List[LLMResponse]:
+        """Asynchronously generate a response for the given request."""
+        raise NotImplementedError()
+
     def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:
+        """Asynchronously submit a request to the inference engine. Exits immediately."""
+        raise NotImplementedError()
+
+    def submit_batch(self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow") -> None:
         """Asynchronously submit a request to the inference engine. Exits immediately."""
         raise NotImplementedError()
 
@@ -158,3 +166,5 @@ class InferenceEngine(abc.ABC):
     def get_scheduling_config(self) -> Scheduling:
         """Get the scheduling configuration for the engine, e.g., image, cpu/gpu/memory size."""
         raise NotImplementedError()
+
+

@@ -105,47 +105,6 @@ class FSDPEngineConfig:
 
 
 @dataclass
-class TrainEngineConfig:
-    experiment_name: str = MISSING
-    trial_name: str = MISSING
-    path: str = field(default="", metadata={"help": "Path to HuggingFace checkpoint"})
-    attn_impl: str = field(
-        default="flash_attention_2",
-        metadata={
-            "help": "Attention implementation for huggingface transformers model.",
-            "choices": ["flash_attention_2"],
-        },
-    )
-    init_from_scratch: bool = field(
-        default=False, metadata={"help": "Initialize model weights randomly"}
-    )
-    init_critic_from_actor: bool = field(
-        default=False,
-        metadata={"help": "Initialize critic/reward model from LM checkpoint"},
-    )
-    # Runtime microbatch limit
-    mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
-
-    # Training Backend Configuration
-    pad_mbs_to_max_tokens: bool = field(
-        default=True,
-        metadata={
-            "help": "Pad micro-batches to configured max tokens per micro-batch"
-            "when running train_batch/forward/eval_batch."
-        },
-    )
-    gradient_checkpointing: bool = field(
-        default=True, metadata={"help": "Enable gradient checkpointing"}
-    )
-    bf16: bool = field(default=False, metadata={"help": "Use bf16 precision"})
-    optimizer: Optional[OptimizerConfig] = field(
-        default=None, metadata={"help": "Optimizer configuration"}
-    )
-    backend: str = ""
-    fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
-
-
-@dataclass
 class TrainControllerConfig:
     # train_engine_config: TrainEngineConfig = field(default_factory=TrainEngineConfig)
     allocation_mode: str = field(
@@ -282,11 +241,16 @@ class SGLangConfig:
         flags = " ".join(flags)
         return f"python3 -m sglang.launch_server {flags}"
 
-
 @dataclass
 class InferenceEngineConfig:
-    experiment_name: str
-    trial_name: str
+    experiment_name: str = field(
+        default=MISSING,
+        metadata={"help": "Name of the experiment (no '_' or '/'). Required."},
+    )
+    trial_name: str = field(
+        default=MISSING,
+        metadata={"help": "Name of the trial (no '-' or '/'). Required."},
+    )
     max_concurrent_rollouts: None | int = field(
         default=None,
         metadata={
@@ -328,6 +292,8 @@ class InferenceEngineConfig:
 
 @dataclass
 class RemoteHybridInferenceConfig(InferenceEngineConfig):
+    experiment_name: str = MISSING
+    trial_name: str = MISSING
     model_path: str = field(
         default=MISSING,
         metadata={"help": "model path"},
@@ -356,6 +322,13 @@ class RemoteHybridInferenceConfig(InferenceEngineConfig):
     seed: int = field(
         default=1,
         metadata={"help": "seed"},
+    )
+    batch_requests: bool = field(
+        default=False,
+        metadata={"help": "batch requests"},
+    )
+    request_timeout: float = field(
+        default=7200.0, metadata={"help": "Timeout for HTTP requests."}
     )
 
 @dataclass
@@ -415,6 +388,8 @@ class SaverConfig(_Timer):
 @dataclass
 class WandBConfig:
     mode: str = "disabled"
+    wandb_base_url: str = ""
+    wandb_api_key: str = ""
     entity: Optional[str] = None
     project: Optional[str] = None
     name: Optional[str] = None
@@ -526,27 +501,18 @@ class ClusterSpecConfig:
 
 
 @dataclass
-class DatasetConfig:
-    type: Optional[str] = field(
-        default=None, metadata={"help": "Type of implemented dataset"}
-    )
-    batch_size: int = field(
-        default=1, metadata={"help": "Batch size of the dataloader"}
-    )
-    shuffle: bool = field(
-        default=True, metadata={"help": "Whether to shuffle the dataset"}
-    )
-    pin_memory: bool = field(
-        default=False,
-        metadata={
-            "help": "Pin memory for faster data loading (set True for GPU training)"
-        },
-    )
-    num_workers: int = field(
-        default=0, metadata={"help": "Number of worker processes for data loading"}
-    )
-    drop_last: bool = field(default=True)
+class TrainDataset:
+    path: str = field(default="")
+    max_prompt_len: int = field(default=1024)
+    shuffle: bool = field(default=True)
 
+@dataclass
+class SchedulerConfig:
+    endpoint: str = field(default="http://localhost:8081")
+    deploy_mode: str = field(default="separation")
+    functioncall_service_domain: str = field(default="http://localhost:8080")
+    reward_model_path: str = field(default="")
+    reward_model_service_url: str = field(default="http://localhost:30000/classify")
 
 @dataclass
 class BaseExperimentConfig:
@@ -582,35 +548,16 @@ class BaseExperimentConfig:
     total_train_epochs: int = field(
         default=1, metadata={"help": "Total number of epochs to train the model."}
     )
-    total_train_steps: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "Terminate training after this number of steps. "
-                    "For benchmarking purposes only. None indicates normal training."
-        },
-    )
-    total_train_n_seqs: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "Terminate training after consuming this number of samples. "
-                    "For benchmarking purposes only. None indicates normal training."
-        },
-    )
+    total_train_steps: int = field(default=1000)
     tokenizer_path: str = field(default="")
-
-    train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
-    valid_dataset: DatasetConfig = field(default_factory=DatasetConfig)
-
-    saver: SaverConfig = field(default_factory=SaverConfig)
-    checkpointer: SaverConfig = field(default_factory=SaverConfig)
-    evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
+    train_dataset: TrainDataset = field(default_factory=TrainDataset)
     stats_logger: StatsLoggerConfig = field(default_factory=StatsLoggerConfig)
-
-
-@dataclass
-class SFTConfig(BaseExperimentConfig):
-    model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
-
+    weight_update_type: str = field(default="nccl", metadata={"help": "nccl/disk"})
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    train_bs_n_seqs: int = field(
+        default=64,
+        metadata={"help": "Training batch size in number of sequences"}
+    )
 
 # FSDP
 @dataclass
@@ -622,7 +569,7 @@ class FSDPWrapPolicy:
 
 
 @dataclass
-class FSDPEngineConfig(TrainEngineConfig):
+class FSDPEngineConfig:
     wrap_policy: Optional[FSDPWrapPolicy] = field(
         default=None,
         metadata={"help": "FSDP wrap policy, specifying model layers to wrap."},
@@ -673,7 +620,7 @@ class RemoteMegatronWrapPolicy:
 
 
 @dataclass
-class RemoteMegatronEngineConfig(TrainEngineConfig):
+class RemoteMegatronEngineConfig:
     wrap_policy: Optional[RemoteMegatronWrapPolicy] = field(
         default_factory=RemoteMegatronWrapPolicy,
         metadata={"help": "RemoteMegatron wrap policy."},
@@ -729,6 +676,72 @@ class RemoteMegatronEngineConfig(TrainEngineConfig):
             "help": "global step for recover",
         },
     )
+
+@dataclass
+class TrainEngineConfig:
+    experiment_name: str = field(default="default-experiment")
+    trial_name: str = field(default="trial0")
+    path: str = field(default="", metadata={"help": "Path to HuggingFace checkpoint"})
+    attn_impl: str = field(
+        default="flash_attention_2",
+        metadata={
+            "help": "Attention implementation for huggingface transformers model.",
+            "choices": ["flash_attention_2"],
+        },
+    )
+    init_from_scratch: bool = field(
+        default=False, metadata={"help": "Initialize model weights randomly"}
+    )
+    init_critic_from_actor: bool = field(
+        default=False,
+        metadata={"help": "Initialize critic/reward model from LM checkpoint"},
+    )
+    # Runtime microbatch limit
+    mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
+
+    # Training Backend Configuration
+    pad_mbs_to_max_tokens: bool = field(
+        default=True,
+        metadata={
+            "help": "Pad micro-batches to configured max tokens per micro-batch"
+            "when running train_batch/forward/eval_batch."
+        },
+    )
+    gradient_checkpointing: bool = field(
+        default=True, metadata={"help": "Enable gradient checkpointing"}
+    )
+    bf16: bool = field(default=False, metadata={"help": "Use bf16 precision"})
+    optimizer: Optional[OptimizerConfig] = field(
+        default=None, metadata={"help": "Optimizer configuration"}
+    )
+    backend: str = ""
+    fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
+    hybrid_engine: RemoteMegatronEngineConfig = field(default_factory=RemoteMegatronEngineConfig)
+
+@dataclass
+class SFTConfig(BaseExperimentConfig):
+    model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
+
+
+@dataclass
+class RecoverConfig:
+    fileroot: str = field(default="")
+    freq_epochs: int = field(default=0)
+    freq_steps: int = field(default=0)
+    freq_secs: Optional[int] = field(
+        default=None, metadata={"help": "freq_secs"}
+    )
+    recover_meta_info_path: str = field(default="")
+    enable_recover: bool = field(default=False)
+
+
+@dataclass
+class GRPOConfig(BaseExperimentConfig):
+    gconfig: GenerationHyperparameters = field(default_factory=GenerationHyperparameters)
+    rollout: RemoteHybridInferenceConfig = field(default_factory=RemoteHybridInferenceConfig)
+    actor: TrainEngineConfig = field(default_factory=TrainEngineConfig)
+    recover: RecoverConfig = field(default_factory=RecoverConfig)
+
 
 def load_expr_config(argv: List[str], config_cls) -> Tuple[BaseExperimentConfig, str]:
     parser = argparse.ArgumentParser()

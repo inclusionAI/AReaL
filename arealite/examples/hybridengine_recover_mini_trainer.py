@@ -53,7 +53,7 @@ if weight_update_type == "nccl":
 
     asystem_hybrid_config = {
         "meta_server_addr": meta_server_addr,
-        "weights_exchange_comm_backend": "nccl",
+        "weights_exchange_comm_backend": "astate",
         "weights_validation_steps": 0,
         "enable_debug_mode": True,
     }
@@ -64,8 +64,46 @@ engine_config = {
     "enable_metrics": True,
     "mem_fraction_static": 0.7,
     "triton_attention_num_kv_splits": 16,
-    "disable_shared_experts_fusion": True,
+    #----------------default value-----------------------------#,
+    'tokenizer_mode': 'auto',
+    'load_format': 'auto',
+    'is_embedding': False,
+    'kv_cache_dtype': 'auto',
+    'max_prefill_tokens': 32768,
+    'schedule_policy': 'fcfs',
+    'schedule_conservativeness': 1.0,
+    'disable_cuda_graph': False,
+    'disable_radix_cache': True,
+    'disable_cuda_graph_padding': False,
+    'enable_nccl_nvls': False,
+    'disable_outlines_disk_cache': False,
+    'disable_overlap_schedule': False,
+    'enable_mixed_chunk': False,
+    'enable_dp_attention': False,
+    'enable_ep_moe': False,
+    'enable_torch_compile': False,
+    'torch_compile_max_bs': 32,
+    'triton_attention_reduce_in_fp32': False,
+    'cuda_graph_bs': [1, 2, 4, 8, 16, 32, 64, 128, 256, 384, 512],
+    'num_continuous_decode_steps': 1,
+    'enable_nan_detection': False,
+    'allow_auto_truncate': False,
+    'enable_p2p_check': False,
+    'enable_memory_saver': False,
+    'chunked_prefill_size': None,
+    'context_length': None,
+    'cpu_offload_gb': 0,
+    'dp_size': 1,
+    'dtype': 'auto',
+    'sampling_backend': None,
+    'log_level': 'info',
+    'log_level_http': None,
+    'log_requests': False,
+    'log_requests_level': 0,
+    'max_running_requests': None,
+    'show_time_cost': False,
 }
+
 if weight_update_type == "nccl":
     engine_config['asystem_hybrid_config'] = asystem_hybrid_config
 
@@ -228,7 +266,7 @@ megatron_wrap_policy = {
 
 def main_grpo():
     experiment_name = "arealite-mini"
-    trial_name = "upup-64x8"
+    trial_name = "upup-64x8-onestep-0821-24"
 
     # init scheduler
     scheduler = AsystemScheduler(
@@ -249,7 +287,7 @@ def main_grpo():
     model_path = "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/ring-moe-v2-sft-general700w_longcot200w_0725/hf_ckpts/28869_kz"
     max_prompt_len = 1024
     seed = 42
-
+    batch_rollout = True
     ########### gconfig ####################
     force_no_logits_mask = True # asystem/0.1中已经废弃
     use_cuda_graph = True # asystem/0.1中已经废弃
@@ -278,7 +316,6 @@ def main_grpo():
     train_dataset = dataset['train']
     train_dataset = train_dataset.filter(lambda x: len(tokenizer.encode(x["prompt"])) <= max_prompt_len)
     dataloader = StatefulDataLoader(train_dataset, batch_size=1, sampler=ShuffleSampler(train_dataset))
-
 
     ############################## recover #########################################
     recover_meta_info_path = ""
@@ -333,7 +370,8 @@ def main_grpo():
             RemoteHybridInferenceConfig(experiment_name=experiment_name, trial_name=trial_name, model_path=model_path,
                                         storage_path=storage_path,
                                         dp_size=allocate_mode.gen_dp_size, tp_size=allocate_mode.gen_tp_size,
-                                        pp_size=allocate_mode.gen_pp_size, seed=seed, engine_config=engine_config)),
+                                        pp_size=allocate_mode.gen_pp_size, seed=seed, engine_config=engine_config,
+                                        batch_requests=batch_rollout)),
         RolloutControllerConfig(experiment_name=experiment_name, trial_name=trial_name,
                                 allocation_mode=allocation_mode),
         scheduler,

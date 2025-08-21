@@ -85,4 +85,4 @@ CMD="python -m asystem_runtime.engine_server"
 sync_copy
 WORKER_IMAGE="/tmp/image_hybrid_engine.sif"
 echo "before start." >> ${WORKER_LOG_FILE}
-singularity --debug exec --pid --nv --no-home --writable-tmpfs --bind /storage:/storage "${WORKER_IMAGE}" bash -c "export PATH=/opt/conda/bin:$PATH; export PYTHONPATH=${ENGINE_PACKAGE_PATH}:/home/admin/antllm:/home/admin/Megatron-LM:/home/admin/Megatron-LM/ant_utils/dcp_utils:$PYTHONPATH;$CMD" >> ${WORKER_LOG_FILE} 2>&1
+singularity --debug exec --nv --no-home --writable-tmpfs --bind /storage:/storage "${WORKER_IMAGE}" bash -c "export PATH=/opt/conda/bin:$PATH; export PYTHONPATH=${ENGINE_PACKAGE_PATH}:/home/admin/antllm:/home/admin/Megatron-LM:/home/admin/Megatron-LM/ant_utils/dcp_utils:/root/workdir/astra-build/Asystem-HybridEngine/astra_cache/astra-client/python:$PYTHONPATH;$CMD" >> ${WORKER_LOG_FILE} 2>&1
