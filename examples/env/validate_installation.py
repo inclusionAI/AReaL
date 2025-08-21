@@ -81,11 +81,13 @@ class InstallationValidator:
         # Basic import test is sufficient for CI
         import sgl_kernel
         from sglang import Engine, launch_server
+        # make sure that at least fa3 works well
+        from sgl_kernel.flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
         assert Version(get_version("sglang")) == Version("0.4.9.post2"), "SGLang version should be v0.4.9.post2"
         print("  - SGLang imported successfully")
     
     def test_transformers(self, transformers_module):
-        assert Version(get_version("transformers")) == Version("4.53.1"), "transformers version should be 4.53.1"
+        assert Version(get_version("transformers")) == Version("4.54.0"), "transformers version should be 4.54.0"
         print("  - transformers imported successfully")
 
     def validate_critical_dependencies(self):
@@ -137,6 +139,7 @@ class InstallationValidator:
         
         # CUDA extensions (may not be available in all environments)
         self.test_import("vllm", required=False, test_func=self.test_vllm_functionality)
+        self.test_import("transformer_engine", required=False, test_func=self.test_te_functionality)
         self.test_import("grouped_gemm", required=False)
         self.test_import("flashattn_hopper", required=False)
         
@@ -147,6 +150,37 @@ class InstallationValidator:
         self.test_import("seaborn", required=False)
         self.test_import("numba", required=False)
         self.test_import("nltk", required=False)
+    
+    def test_te_functionality(self, _):
+        try:
+            import torch
+            
+            if torch.cuda.is_available():
+                import transformer_engine.pytorch as te
+                from transformer_engine.common import recipe
+
+                # Set dimensions.
+                in_features = 768
+                out_features = 3072
+                hidden_size = 2048
+
+                # Initialize model and inputs.
+                model = te.Linear(in_features, out_features, bias=True)
+                inp = torch.randn(hidden_size, in_features, device="cuda")
+
+                # Create an FP8 recipe. Note: All input args are optional.
+                fp8_recipe = recipe.DelayedScaling(margin=0, fp8_format=recipe.Format.E4M3)
+
+                # Enable autocasting for the forward pass
+                with te.fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
+                    out = model(inp)
+
+                loss = out.sum()
+                loss.backward()
+                        
+        except Exception as e:
+            print(f"⚠ transformer engine test failed: {e}")
+        
 
     def validate_cuda_extensions(self):
         """Validate CUDA-specific functionality."""

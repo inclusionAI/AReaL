@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0", "build>=1.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "realhf"
-description = "ReaL: Efficient RLHF Training of Large Language Models with Parameter Reallocation"
+name = "areal"
+description = "AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning"
 readme = "README.md"
 requires-python = ">=3.10"
 dynamic = ["version"]
 keywords = [
     "distributed-systems",
-    "reinforcement-learning-from-human-feedback",
+    "reinforcement-learning",
     "large-language-models",
     "llm-training",
 ]
@@ -85,7 +85,6 @@ dependencies = [
     "pyzmq",
     "paramiko",
     "etcd3",
-    "protobuf<3.21",
     
     # Distributed computing
     "ray",
