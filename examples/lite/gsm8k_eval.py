@@ -7,14 +7,14 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.utils import seeding, stats_tracker
+from areal.utils.hf_utils import load_hf_tokenizer, tabulate_stats
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
-from realhf.api.core.data_api import load_hf_tokenizer, tabulate_stats
-from realhf.base import seeding, stats_tracker
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    from realhf.impl.dataset.math_parser import process_results
+    from areal.reward.math_parser import process_results
 
     return int(process_results(completions, answer)[0])
 

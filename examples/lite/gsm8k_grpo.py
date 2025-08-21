@@ -12,18 +12,18 @@ from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo, WeightUp
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.utils import seeding, stats_tracker
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
+from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
-from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import seeding, stats_tracker
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    from realhf.impl.dataset.math_parser import process_results
+    from areal.reward.math_parser import process_results
 
     return int(process_results(completions, answer)[0])
 

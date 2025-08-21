@@ -7,13 +7,13 @@ from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
 from areal.engine.sft.lm_engine import FSDPLMEngine
+from areal.utils import seeding, stats_tracker
 from areal.utils.data import pad_sequences_to_tensors
 from areal.utils.evaluator import Evaluator
+from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
-from realhf.api.core.data_api import load_hf_processor_and_tokenizer
-from realhf.base import seeding, stats_tracker
 
 
 def main_sft():

@@ -78,9 +78,13 @@ class InstallationValidator:
         """Test SGLang basic functionality."""
         # Basic import test is sufficient for CI
         import sgl_kernel  # noqa
-        from sglang import Engine, launch_server  # noqa
+
         # make sure that at least fa3 works well
-        from sgl_kernel.flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache  # noqa
+        from sgl_kernel.flash_attn import (  # noqa
+            flash_attn_varlen_func,
+            flash_attn_with_kvcache,
+        )
+        from sglang import Engine, launch_server  # noqa
         assert Version(get_version("sglang")) == Version("0.4.9.post2"), "SGLang version should be v0.4.9.post2"
         print("  - SGLang imported successfully")
     
@@ -152,6 +156,7 @@ class InstallationValidator:
     def test_te_functionality(self, _):
         try:
             import torch
+            assert Version(get_version("transformer_engine")) >= Version("2.3.0"), "transformer_engine version must be larger than 2.3.0"
             
             if torch.cuda.is_available():
                 import transformer_engine.pytorch as te
