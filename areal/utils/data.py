@@ -440,7 +440,7 @@ def pad_packed_tensor_dict(
         elif key == "max_seqlen":
             padded_data[key] = new_max_seqlen
         elif key == "position_ids":
-            # [bs*seqlen, channel] for qwen2.5 vl, channel==3 for t,h,w
+            # [total_seqlen, channel] for qwen2.5 vl, channel==3 for t,h,w
             if len(value.shape) == 2 and value.shape[1] == 3:
                 pad = (
                     torch.arange(pad_length, dtype=torch.long, device=value.device)
