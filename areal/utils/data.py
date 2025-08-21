@@ -192,6 +192,7 @@ def unpack_sequence(
 
 
 def allocate_balanced_mbs(mb_spec: MicroBatchSpec, lens: List[int]) -> List[List[int]]:
+    assert mb_spec.max_tokens_per_mb is not None
     group_indices = datapack.ffd_allocate(
         lens, mb_spec.max_tokens_per_mb, min_groups=mb_spec.n_mbs
     )
@@ -207,13 +208,12 @@ def allocate_balanced_mbs_synced(
     group_indices = allocate_balanced_mbs(mb_spec, lens)
     if not dist.is_initialized():
         return group_indices
-
     all_n_mbs = [None for _ in range(dist.get_world_size(group))]
     dist.all_gather_object(all_n_mbs, len(group_indices), group=group)
     if all(mbs == len(group_indices) for mbs in all_n_mbs):
         return group_indices
     return allocate_balanced_mbs_synced(
-        MicroBatchSpec.new(mb_spec, n_mbs=max(all_n_mbs)), lens
+        MicroBatchSpec.new(mb_spec, n_mbs=max(all_n_mbs)), lens, group=group
     )
 
 
@@ -284,6 +284,32 @@ def pad_and_stack_tensors_along_first_dim(tensor_list: List[torch.Tensor]):
     return torch.stack(padded_tensors, dim=0)
 
 
+def tensor_container_to(
+    d: Dict[str, Any] | torch.Tensor | List[torch.Tensor], *args, **kwargs
+):
+    """Apply `t.to(*args, **kwargs)` to all tensors in the dictionary.
+    Support nested dictionaries.
+    """
+    new_dict = {}
+    if torch.is_tensor(d):
+        return d.to(*args, **kwargs)
+    elif isinstance(d, list):
+        return [
+            tensor_container_to(*args, **kwargs) if torch.is_tensor(v) else v for v in d
+        ]
+    elif isinstance(d, dict):
+        for key, value in d.items():
+            if isinstance(value, dict) or isinstance(value, list):
+                new_dict[key] = tensor_container_to(value, *args, **kwargs)
+            elif torch.is_tensor(value):
+                new_dict[key] = value.to(*args, **kwargs)
+            else:
+                new_dict[key] = value
+        return new_dict
+    else:
+        raise ValueError(f"Unsupported type: {type(d)}")
+
+
 @dataclass
 class MicroBatchList:
     data: TensorDict
@@ -293,15 +319,64 @@ class MicroBatchList:
     backward_indices: List[int]
     group_lens: List[int]
     padded_mbs: Optional[List[TensorDict]] = None
+    # Batch-level padding information
     padding_lengths: Optional[List[int]] = None
     padded_to_lengths: Optional[List[int]] = None
+    # sequence-level padding information
+    align_to_lengths: Optional[List[int]] = None
+    old_cu_seqlens_list: Optional[List[torch.Tensor]] = None
+
+    def to(self, *args, **kwargs):
+        mbs = [
+            (
+                mb.to(*args, **kwargs)
+                if isinstance(mb, TensorDict)
+                else tensor_container_to(mb, *args, **kwargs)
+            )
+            for mb in self.mbs
+        ]
+        data = (
+            self.data.to(*args, **kwargs)
+            if isinstance(self.data, TensorDict)
+            else tensor_container_to(self.data, *args, **kwargs)
+        )
+        padded_mbs = None
+        if self.padded_mbs is not None:
+            padded_mbs = [
+                (
+                    mb.to(*args, **kwargs)
+                    if isinstance(mb, TensorDict)
+                    else tensor_container_to(mb, *args, **kwargs)
+                )
+                for mb in self.padded_mbs
+            ]
+        old_cu_seqlens_list = None
+        if self.old_cu_seqlens_list is not None:
+            old_cu_seqlens_list = [
+                t.to(*args, **kwargs) for t in self.old_cu_seqlens_list
+            ]
+        return MicroBatchList(
+            data=data,
+            mb_spec=self.mb_spec,
+            mbs=mbs,
+            forward_indices=self.forward_indices,
+            backward_indices=self.backward_indices,
+            group_lens=self.group_lens,
+            padded_mbs=padded_mbs,
+            padding_lengths=self.padding_lengths,
+            padded_to_lengths=self.padded_to_lengths,
+            old_cu_seqlens_list=old_cu_seqlens_list,
+            align_to_lengths=self.align_to_lengths,
+        )
 
 
-DEFAULT_MAX_TOKENS_PER_MB = int(1e12)
+DEFAULT_MAX_TOKENS_PER_GPU = int(1e12)
 
 
 def split_padded_tensor_dict_into_mb_list(
-    data: TensorDict, mb_spec: MicroBatchSpec, group: Optional[dist.ProcessGroup] = None
+    data: TensorDict,
+    mb_spec: MicroBatchSpec,
+    group: Optional[dist.ProcessGroup] = None,
 ) -> MicroBatchList:
     """Split a padded tensordict into micro-batches based on the attention mask.
 
@@ -313,12 +388,13 @@ def split_padded_tensor_dict_into_mb_list(
     Returns:
         MicroBatchList: A structure containing the split micro-batches and metadata.
     """
+    # TODO: should align sequences first and then split, needs refactor
     assert (
         "attention_mask" in data
     ), "Input data must be padded and contain 'attention_mask' key."
-    if mb_spec.max_tokens_per_mb is None:
+    if mb_spec.max_tokens_per_gpu is None:
         mb_spec = MicroBatchSpec.new(
-            mb_spec, max_tokens_per_mb=DEFAULT_MAX_TOKENS_PER_MB
+            mb_spec, max_tokens_per_gpu=DEFAULT_MAX_TOKENS_PER_GPU
         )
     bs = data["attention_mask"].shape[0]
     max_seqlen = data["attention_mask"].shape[1]
@@ -392,21 +468,27 @@ def split_padded_tensor_dict_into_mb_list(
     assert len(mbs) == len(splitted_lens), (len(mbs), len(splitted_lens))
     for i, (mb, lens) in enumerate(zip(mbs, splitted_lens)):
         results.append(TensorDict(**mb, **not_to_split))
+
     return MicroBatchList(
         data=data,
-        mbs=results,
         mb_spec=mb_spec,
+        mbs=results,
         forward_indices=forward_indices,
         backward_indices=backward_indices.tolist(),
         group_lens=group_lens,
     )
 
 
+N_TOKENS_PER_PAGE = 256
+
+
 def pad_packed_tensor_dict(
     data: TensorDict,
     pad_to_length: int,
     pad_value: float = 0.0,
-) -> Tuple[TensorDict, int]:
+    align_sequences: bool = False,
+    align_to_multiple_of: Optional[int] = None,
+) -> Tuple[TensorDict, int, torch.Tensor, int]:
     """Pad a packed tensor dict to a specified length.
     This function assumes that the input data contains "cu_seqlens" and "max_seqlen" key,
     and all other tensors of shape [total_length, ] will be padded to `pad_to_length`.
@@ -424,13 +506,106 @@ def pad_packed_tensor_dict(
     """
     assert "cu_seqlens" in data, "Input data must contain 'cu_seqlens' key."
     assert "max_seqlen" in data, "Input data must contain 'max_seqlen' key."
+    cu_seqlens = data["cu_seqlens"]
+    max_seqlen = data["max_seqlen"]
+    old_cu_seqlens = cu_seqlens.clone()
     total_length = data["cu_seqlens"][-1].item()
+    # First pad sequences
+    sequence_padded_data = {}
+    align_to_length = None
+    if align_sequences:
+        assert (
+            align_to_multiple_of is not None
+        ), "align_to_multiple_of must be specified when align_sequences is True."
+        input_lens = cu_seqlens[1:] - cu_seqlens[:-1]
+        batch_size = input_lens.shape[0]
+        # Align sequences to an integer multiple of align_to_multiple_of
+        pad_size = (
+            align_to_multiple_of - input_lens % align_to_multiple_of
+        ) % align_to_multiple_of
+        input_lens_padded = input_lens + pad_size
+        cu_seqlens_padded = torch.zeros(
+            batch_size + 1, dtype=torch.int32, device=cu_seqlens.device
+        )
+        cu_seqlens_padded[1:] = torch.cumsum(input_lens_padded, dim=0)
+        max_seqlens_padded = input_lens_padded.max().item()
+        padded_shape = (input_lens_padded.sum().item(),)
+        for key, value in data.items():
+            if key == "cu_seqlens":
+                sequence_padded_data["cu_seqlens"] = cu_seqlens_padded
+            elif key == "max_seqlen":
+                sequence_padded_data["max_seqlen"] = max_seqlens_padded
+            elif key == "position_ids":
+                if len(value.shape) == 2 and value.shape[1] == 3:
+                    # [total_seq_len, channel] for qwen2.5 vl, channel==3 for t,h,w
+                    new_value = torch.zeros(
+                        (padded_shape[0], 3), dtype=value.dtype, device=value.device
+                    )
+                    for i in range(batch_size):
+                        new_start = cu_seqlens_padded[i]
+                        new_end = cu_seqlens_padded[i + 1]
+                        old_start = cu_seqlens[i]
+                        old_end = cu_seqlens[i + 1]
+                        length = old_end - old_start
+                        pad_length = new_end - new_start - length
+                        new_value[new_start : new_start + length] = value[
+                            old_start:old_end
+                        ]
+                        new_value[new_start + length : new_end] = (
+                            torch.arange(
+                                pad_length, dtype=torch.long, device=value.device
+                            )
+                            .unsqueeze(1)
+                            .expand(-1, 3)
+                        )
+                else:
+                    new_value = torch.zeros(
+                        padded_shape, dtype=value.dtype, device=value.device
+                    )
+                    for i in range(batch_size):
+                        new_start = cu_seqlens_padded[i]
+                        new_end = cu_seqlens_padded[i + 1]
+                        new_value[new_start:new_end] = torch.arange(
+                            new_end - new_start, dtype=value.dtype, device=value.device
+                        )
+                sequence_padded_data[key] = new_value
+            elif torch.is_tensor(value) and value.numel() == total_length:
+                new_value = torch.full(
+                    padded_shape,
+                    fill_value=pad_value,
+                    dtype=value.dtype,
+                    device=value.device,
+                )
+                for i in range(batch_size):
+                    new_start = cu_seqlens_padded[i]
+                    start = cu_seqlens[i]
+                    end = cu_seqlens[i + 1]
+                    length = end - start
+                    new_value[new_start : new_start + length] = value[start:end]
+                sequence_padded_data[key] = new_value
+            else:
+                sequence_padded_data[key] = value
+
+        data = TensorDict(sequence_padded_data, batch_size=data.batch_size)
+        align_to_length = cu_seqlens_padded[-1].item()
+        # ensure pad_to_length is a integer multiple of both align_to_multiple_of and N_TOKENS_PER_PAGE
+        lcm = np.lcm(align_to_multiple_of, N_TOKENS_PER_PAGE).item()
+        pad_to_length = (pad_to_length + lcm - 1) // lcm * lcm
+
+        cu_seqlens = data["cu_seqlens"]
+        max_seqlen = data["max_seqlen"]
+        total_length = data["cu_seqlens"][-1].item()
+        if pad_to_length < total_length:
+            # NOTE: In some occasion where sequence lengths, sequence padding will make total length
+            # exceed expected `pad_to_length`. This happens more often when sequence lengths are small.
+            # In this case, we increase pad_to_length.
+            pad_to_length = (total_length + lcm - 1) // lcm * lcm
+
+    # Pad batch
     pad_length = pad_to_length - total_length
     assert (
         pad_length >= 0
     ), f"pad_to_length {pad_to_length} must be greater than or equal to total length {total_length}."
-    cu_seqlens = data["cu_seqlens"]
-    max_seqlen = data["max_seqlen"]
     new_cu_seqlens = F.pad(cu_seqlens, (0, 1), value=pad_to_length)
     new_max_seqlen = max(max_seqlen, pad_length)
     padded_data = {}
@@ -460,22 +635,50 @@ def pad_packed_tensor_dict(
             padded_data[key] = padded_tensor
         else:
             padded_data[key] = value
-    return TensorDict(padded_data, batch_size=data.batch_size), pad_length
+    return (
+        TensorDict(padded_data, batch_size=data.batch_size),
+        pad_length,
+        old_cu_seqlens,
+        align_to_length,
+    )
 
 
 def pad_mb_list(
     mb_list: MicroBatchList,
     pad_value: float = 0.0,
     pad_to_maximum: bool = False,
+    align_sequences: bool = False,
+    align_to_multiple_of: Optional[int] = None,
 ) -> MicroBatchList:
+    """Pad the micro-batch list to the maximum length or to a specific size to:
+        1. Reduce memory fragmentation.
+        2. Align sequences to an integer multiple of `align_to_multiple_of`
+        to be equally sliced into context and sequence parallel ranks.
+
+    Args:
+        mb_list (MicroBatchList): The micro-batch list to pad.
+        pad_value (float, optional): The value to pad the tensors with. Defaults to 0.0.
+        pad_to_maximum (bool, optional): Whether to pad to the maximum length specified in `mb_spec`. Defaults to False.
+        align_sequences (bool, optional): Whether to align sequences to an integer multiple of `align_to_multiple_of`. Defaults to False.
+        align_to_multiple_of (int, optional): The size to align sequences to. Defaults to None.
+
+    Returns:
+        MicroBatchList: The padded micro-batch list.
+    """
+    if align_sequences:
+        assert (
+            align_to_multiple_of is not None
+        ), "align_to_multiple_of must be specified when align_sequences is True."
     padded_mb_inputs, pad_lengths = [], []
     pad_to_lengths = []
+    old_cu_seqlens_list = []
+    align_to_lengths = []
     if pad_to_maximum and (
-        mb_list.mb_spec.max_tokens_per_mb is None
-        or mb_list.mb_spec.max_tokens_per_mb == DEFAULT_MAX_TOKENS_PER_MB
+        mb_list.mb_spec.max_tokens_per_gpu is None
+        or mb_list.mb_spec.max_tokens_per_gpu == DEFAULT_MAX_TOKENS_PER_GPU
     ):
         logger.warning(
-            f"Unable to pad to maximum because max_tokens_per_mb is not properly set."
+            f"Unable to pad to maximum because max_tokens_per_gpu is not properly set."
         )
         pad_to_maximum = False
     for mb, l in zip(mb_list.mbs, mb_list.group_lens):
@@ -485,17 +688,60 @@ def pad_mb_list(
             # NOTE: GPU page size is 2MB
             # Take hidden size 4096 with bf16 dtype as an example,
             # the batch size of a page is 256
-            pad_to_length = (int(l) + 255) // 256 * 256
-        padded_mb, pad_len = pad_packed_tensor_dict(
-            mb, pad_to_length, pad_value=pad_value
+            pad_to_length = (
+                (int(l) + N_TOKENS_PER_PAGE - 1)
+                // N_TOKENS_PER_PAGE
+                * N_TOKENS_PER_PAGE
+            )
+        padded_mb, pad_len, old_cu_seqlens, align_to_length = pad_packed_tensor_dict(
+            mb,
+            pad_to_length,
+            pad_value=pad_value,
+            align_sequences=align_sequences,
+            align_to_multiple_of=align_to_multiple_of,
         )
         padded_mb_inputs.append(padded_mb)
         pad_lengths.append(pad_len)
         pad_to_lengths.append(pad_to_length)
+        old_cu_seqlens_list.append(old_cu_seqlens)
+        align_to_lengths.append(align_to_length)
     mb_list.padded_mbs = padded_mb_inputs
     mb_list.padding_lengths = pad_lengths
     mb_list.padded_to_lengths = pad_to_lengths
+    if align_sequences:
+        mb_list.old_cu_seqlens_list = old_cu_seqlens_list
+        mb_list.align_to_lengths = align_to_lengths
     return mb_list
+
+
+def unpad_logits(
+    logits: torch.Tensor,
+    padding_length: int,
+    cu_seqlens: Optional[torch.Tensor] = None,
+    old_cu_seqlens: Optional[torch.Tensor] = None,
+):
+    # TODO: when using megatron, logits are in fp32,
+    # create new logits in bucket to reduce peak memory usage
+    # First unpad batch
+    if padding_length > 0:
+        logits = logits[:-padding_length]
+
+    # Then unpad according to old_cu_seqlens
+    if old_cu_seqlens is not None:
+        new_logits = torch.empty(
+            (old_cu_seqlens[-1].item(), *logits.shape[1:]),
+            dtype=logits.dtype,
+            device=logits.device,
+        )
+        batch_size = old_cu_seqlens.shape[0] - 1
+        for i in range(batch_size):
+            old_start = old_cu_seqlens[i].item()
+            old_end = old_cu_seqlens[i + 1].item()
+            start = cu_seqlens[i].item()
+            length = old_end - old_start
+            new_logits[old_start:old_end] = logits[start : start + length]
+
+    return new_logits
 
 
 def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
@@ -545,3 +791,56 @@ def amend_position_ids(data: TensorDict) -> TensorDict:
     position_ids.masked_fill(~attn_mask.bool(), 0)
     data["position_ids"] = position_ids
     return data
+
+
+def broadcast_tensor(tensor, src_rank=0, group=None, device=None):
+    """
+    Broadcast a tensor from source rank to all other ranks in the process group.
+
+    Args:
+        tensor: Tensor on source rank, None on non-source ranks
+        src_rank: The rank that holds the tensor to broadcast (default: 0)
+        group: The process group to use for broadcasting (default: None, uses the default group)
+        device: The device of the output tensor.
+
+    Returns:
+        Tensor: The broadcasted tensor on all ranks
+    """
+    if not dist.is_initialized():
+        raise RuntimeError("torch.distributed is not initialized")
+
+    current_rank = dist.get_rank()
+
+    # On source rank, prepare the tensor for broadcasting
+    if current_rank == src_rank:
+        if tensor is None:
+            raise ValueError(f"Tensor cannot be None on source rank {src_rank}")
+        assert tensor.device == device
+        # Prepare metadata as Python objects
+        metadata = {"shape": list(tensor.shape), "dtype": tensor.dtype}
+
+        # Broadcast metadata using broadcast_object_list
+        metadata_list = [metadata]
+        dist.broadcast_object_list(metadata_list, src=src_rank, group=group)
+
+        # Broadcast the actual tensor
+        dist.broadcast(tensor, src=src_rank, group=group)
+
+        return tensor
+
+    else:
+        # On non-source ranks, receive metadata
+        metadata_list = [None]
+        dist.broadcast_object_list(metadata_list, src=src_rank, group=group)
+
+        metadata = metadata_list[0]
+        tensor_shape = metadata["shape"]
+        dtype = metadata["dtype"]
+
+        # Create tensor with the received shape and dtype
+        tensor = torch.empty(tensor_shape, dtype=dtype, device=device)
+
+        # Receive the actual tensor data
+        dist.broadcast(tensor, src=src_rank, group=group)
+
+        return tensor

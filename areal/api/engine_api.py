@@ -127,6 +127,10 @@ class TrainEngine(abc.ABC):
         """Run the forward pass or inference on the model. Note that it is gradient-free."""
         raise NotImplementedError()
 
+    def is_data_parallel_head(self) -> bool:
+        """Check if the current rank is the data parallel head of current engine."""
+        raise NotImplementedError()
+
 
 class InferenceEngine(abc.ABC):
 

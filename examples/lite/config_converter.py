@@ -234,7 +234,7 @@ class OpenRLHFConverter(Converter):
         "micro_train_batch_size": ArgSpec(
             "actor.mb_spec.n_mbs",
             int,
-            "default to 1, try actor.mb_spec.max_tokens_per_mb",
+            "default to 1, try actor.mb_spec.max_tokens_per_gpu",
             lambda x: 1,
         ),
         "train_batch_size": ArgSpec("train_dataset.batch_size", int, ""),
@@ -697,7 +697,7 @@ class AReaLConverter(Converter):
         # MFC
         "actor_train.mb_spec.n_mbs": ArgSpec("actor.mb_spec.n_mbs", int, ""),
         "actor_train.mb_spec.max_tokens_per_mb": ArgSpec(
-            "actor.mb_spec.max_tokens_per_mb", int, ""
+            "actor.mb_spec.max_tokens_per_gpu", int, ""
         ),
         "actor_train.parallel": ArgSpec("", int, CVRT_WARNING),
         "actor_train.device_mesh": ArgSpec("", str, CVRT_WARNING),
@@ -711,7 +711,7 @@ class AReaLConverter(Converter):
         "actor_inf.device_mesh": ArgSpec("", str, CVRT_WARNING),
         "ref_inf.mb_spec.n_mbs": ArgSpec("ref.mb_spec.n_mbs", int, ""),
         "ref_inf.mb_spec.max_tokens_per_mb": ArgSpec(
-            "ref.mb_spec.max_tokens_per_mb", int, ""
+            "ref.mb_spec.max_tokens_per_gpu", int, ""
         ),
         "ref_inf.parallel": ArgSpec("", int, CVRT_WARNING),
         "ref_inf.device_mesh": ArgSpec("", str, CVRT_WARNING),
