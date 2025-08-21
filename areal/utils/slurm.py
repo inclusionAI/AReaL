@@ -104,7 +104,6 @@ while [ ${{#bg_pids[@]}} -gt 0 ]; do
             still_running+=("$pid")
         fi
     done
-
     bg_pids=("${{still_running[@]}}")
 
     # Break if no processes left

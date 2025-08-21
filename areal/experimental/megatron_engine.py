@@ -20,6 +20,7 @@ from areal.experimental.model.registry import (
     make_mcore_model,
     save_to_hf,
 )
+from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils import logging, pkg_version
 from areal.utils.data import amend_position_ids
 from areal.utils.model import disable_dropout_in_model
@@ -48,6 +49,7 @@ class MegatronEngine(TrainEngine):
         self.optimizer_config = config.optimizer
         self.mcore_config = config.megatron
         self.bridge = None
+        self.checkpointer = None
 
     def create_optimizer(self, ft_spec: FinetuneSpec):
         if self.optimizer_config is None:
@@ -70,7 +72,7 @@ class MegatronEngine(TrainEngine):
             adam_beta1=self.optimizer_config.beta1,
             adam_beta2=self.optimizer_config.beta2,
             adam_eps=self.optimizer_config.eps,
-            use_distributed_optimizer=True,
+            use_distributed_optimizer=self.mcore_config.ddp.use_distributed_optimizer,
             params_dtype=self.dtype,
         )
         mcore_opt_config.overlap_param_gather_with_optimizer_step = (
@@ -179,6 +181,15 @@ class MegatronEngine(TrainEngine):
             disable_dropout_in_model(self.model)
         self.create_optimizer(ft_spec)
 
+        self.checkpointer = MegatronCheckpointManager(
+            model=[self.model],
+            optimizer=self.optimizer,
+            lr_scheduler=self.lr_scheduler,
+            use_distributed_optimizer=self.mcore_config.ddp.use_distributed_optimizer,
+            use_checkpoint_opt_param_scheduler=self.mcore_config.use_checkpoint_opt_param_scheduler,
+            async_save=self.mcore_config.async_save,
+        )
+
     @property
     def parallelism_group(self) -> dist.ProcessGroup:
         raise NotImplementedError()
@@ -211,8 +222,7 @@ class MegatronEngine(TrainEngine):
             ), "HF format does not support optimizer state saving, please use DCP format instead."
             self._save_model_to_hf(meta.path, meta.tokenizer, meta.processor)
         elif meta.weight_format == "dcp":
-            # TODO: implement DCP save/load for FSDP
-            raise NotImplementedError("DCP format saving is not implemented yet. ")
+            self.checkpointer.save_checkpoint(meta.path, with_optimizer=meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 
@@ -244,8 +254,7 @@ class MegatronEngine(TrainEngine):
             ), "HF format does not support optimizer state loading, please use DCP format instead."
             self._load_model_from_hf(meta.path)
         elif meta.weight_format == "dcp":
-            # TODO: implement DCP save/load for FSDP
-            raise NotImplementedError("DCP format loading is not implemented yet. ")
+            self.checkpointer.load_checkpoint(meta.path, with_optimizer=meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 

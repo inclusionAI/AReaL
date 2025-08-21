@@ -39,6 +39,10 @@ class MegatronEngineConfig:
     exp_avg_dtype: str = "float32"
     exp_avg_sq_dtype: str = "float32"
 
+    # Checkpointing Configuration
+    async_save: bool = False
+    use_checkpoint_opt_param_scheduler: bool = True
+
 
 @dataclass
 class ExperimentalTrainEngineConfig(TrainEngineConfig):

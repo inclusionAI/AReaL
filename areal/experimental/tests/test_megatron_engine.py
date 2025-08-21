@@ -127,3 +127,29 @@ def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
     logger.info(f"Load done, time cost: {time.perf_counter() - start:.4f} seconds.")
     new = engine.forward(input_=mock_input)
     assert torch.allclose(old, new)
+
+
+@torch.no_grad()
+def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+    path = tmp_path_factory.mktemp("megatron_engine_dcp_test")
+    save_load_meta = SaveLoadMeta(
+        path=path,
+        weight_format="dcp",
+        tokenizer=tokenizer,
+        with_optim=True,
+        base_model_path=None,
+    )
+
+    old = engine.forward(input_=mock_input)
+    start = time.perf_counter()
+    engine.save(save_load_meta)
+    logger.info(f"Save done, time cost: {time.perf_counter() - start:.4f} seconds.")
+    for name, param in engine.model.named_parameters():
+        param.zero_()
+
+    start = time.perf_counter()
+    engine.load(save_load_meta)
+    logger.info(f"Load done, time cost: {time.perf_counter() - start:.4f} seconds.")
+    new = engine.forward(input_=mock_input)
+    assert torch.allclose(old, new)
