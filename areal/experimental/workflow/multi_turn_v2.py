@@ -13,7 +13,7 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.experimental.openai import ArealOpenAI
-from realhf.base import logging, stats_tracker
+from areal.utils import logging, stats_tracker
 
 logger = logging.getLogger("Multi-Turn workflow")
 
