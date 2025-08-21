@@ -29,7 +29,7 @@ logger = logging.getLogger("areal.experimental.model.registry")
 # Model registry for different architectures
 def make_hf_and_mcore_config(
     hf_path: str, dtype: torch.dtype, bridge=None
-) -> TransformerConfig:
+) -> Tuple[PretrainedConfig, TransformerConfig]:
     if bridge is not None:
         hf_config = bridge.hf_config
         hf_config._name_or_path = hf_path
@@ -68,7 +68,8 @@ def make_mcore_model(
 ) -> GPTModel:
     if bridge is not None:
         model = bridge.get_model(
-            wrap_with_ddp=True,
+            # TODO: Add DDP options when supporting training
+            wrap_with_ddp=False,
             ddp_config=dataclasses.asdict(mcore_config.ddp),
             fp16=tf_config.fp16,
             bf16=tf_config.bf16,

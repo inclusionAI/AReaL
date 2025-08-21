@@ -22,22 +22,39 @@ class MicroBatchSpec:
     n_mbs: Optional[int] = field(
         default=1,
         metadata={
-            "help": "Number of micro-batches (or minimum number if max_tokens_per_mb is set). Used when max_tokens_per_mb is None or as minimum count",
+            "help": "Number of micro-batches (or minimum number if max_tokens_per_gpu is set). Used when max_tokens_per_gpu is None or as minimum count",
         },
     )
-    max_tokens_per_mb: Optional[int] = field(
+    max_tokens_per_gpu: Optional[int] = field(
         default=None,
         metadata={
-            "help": "Maximum tokens per micro-batch. When set, n_mbs becomes the minimum number of micro-batches",
+            "help": "Maximum tokens per micro-batch for each forward pass in GPU. When set, n_mbs becomes the minimum number of micro-batches",
         },
     )
+    _context_parallel_size: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "The actual size for a micro-batch should be `max_tokens_per_gpu * _context_parallel_size`. This attribute should not be set manually.",
+        },
+    )
+
+    @property
+    def max_tokens_per_mb(self) -> int:
+        if self._context_parallel_size is None:
+            return self.max_tokens_per_gpu
+        return (
+            self._context_parallel_size * self.max_tokens_per_gpu
+            if self.max_tokens_per_gpu
+            else None
+        )
 
     @classmethod
     def new(cls, mb_spec: "MicroBatchSpec", **kwargs):
         """Create new spec with updated fields while maintaining Omegaconf compatibility."""
         fields = dict(
             n_mbs=mb_spec.n_mbs,
-            max_tokens_per_mb=mb_spec.max_tokens_per_mb,
+            max_tokens_per_gpu=mb_spec.max_tokens_per_gpu,
+            _context_parallel_size=mb_spec._context_parallel_size,
         )
         fields.update(kwargs)
         return cls(**fields)
