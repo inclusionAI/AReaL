@@ -12,6 +12,7 @@ tokenizer_path: ${actor.path}
 train_dataset:
   path: openai/gsm8k
   batch_size: 64
+  max_length: 512
 saver:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
@@ -35,6 +36,7 @@ launcher: {}
 
 gconfig:
   n_samples: 8
+  max_new_tokens: 1024
 
 rollout:
   experiment_name: ${experiment_name}
