@@ -11,8 +11,9 @@ parts:
     chapters:
     - file: tutorial/installation
     - file: tutorial/quickstart
-    - file: tutorial/quickstart_legacy
+    - file: tutorial/openai_workflows
     - file: tutorial/eval
+    - file: tutorial/quickstart_legacy
     # - file: tutorial/troubleshooting
   - caption: References
     chapters:
