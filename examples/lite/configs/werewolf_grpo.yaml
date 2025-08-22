@@ -12,19 +12,19 @@ seed: 1
 total_train_epochs: 1
 tokenizer_path: ${actor.path}
 async_training: true
-opp_server_addrs: 33.215.20.167:12593,33.215.20.167:18312,33.215.20.167:24080,33.215.20.167:28555,33.215.20.167:40264,33.215.20.167:46910,33.215.20.167:48067
+opp_server_addrs: 33.215.20.167:19535,33.215.20.167:26673,33.215.20.167:32080,33.215.20.167:35984,33.215.20.167:40038,33.215.20.167:45566,33.215.20.167:47297
 # opp_tokenizer_path: ""
-teacher_server_addrs: 33.215.20.208:11330,33.215.20.208:16242,33.215.20.208:20031,33.215.20.208:28899,33.215.20.208:40114,33.215.20.208:41873,33.215.20.208:48901
+teacher_server_addrs: 33.215.20.238:10934,33.215.20.238:11351,33.215.20.238:20676,33.215.20.238:22936,33.215.20.238:27888,33.215.20.238:35085,33.215.20.238:45307
 # teacher_tokenizer_path: ""
-role: villager
+role: werewolf
 
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 16
+  max_concurrent_rollouts: 64
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
-  max_head_offpolicyness: 2
+  max_head_offpolicyness: 4
   enable_rollout_tracing: false
 
 gconfig:
@@ -37,8 +37,8 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  # path: /storage/openpsi/models/Qwen__Qwen2.5-3B-Instruct
-  path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-triple1/villager1.1/default/epoch0epochstep186globalstep186
+  path: /storage/openpsi/models/Qwen__Qwen2.5-3B-Instruct
+  # path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-triple1/villager1.1/default/epoch0epochstep186globalstep186
   init_from_scratch: false
   disable_dropout: true
   dtype: bfloat16
@@ -114,7 +114,7 @@ recover:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   freq_epochs: 1
-  freq_steps: null
+  freq_steps: 10
   freq_secs: 3600
 
 stats_logger:

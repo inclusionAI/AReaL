@@ -24,7 +24,7 @@ from realhf.base import logging
 logger = logging.getLogger("Werewolf GRPO Exp")
 
 LOGGING_KEYS = [
-    "traj_steps",
+    "traj_steps", # 0
     "traj_len",
     "traj_input_len",
     "traj_output_len",
@@ -34,14 +34,19 @@ LOGGING_KEYS = [
     "were_wins",
     "werewolf_kills",
     "werewolf_correct_kills",
-    "villager_correct_votes",
+    "villager_correct_votes", # 10
     "villager_wrong_votes",
     "witch_heals",
     "witch_correct_heals",
     "witch_poisons",
     "witch_correct_poisons",
     "hunter_shots",
-    "hunter_correct_shots",
+    "hunter_correct_shots", # 17
+    "avgt_qgen",
+    "avgt_agent_ans",
+    "avgt_teacher_ans",
+    "avgt_action",
+    "avgt_summary"
 ]
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
@@ -287,8 +292,8 @@ export WANDB_BASE_URL=http://8.150.1.98:8080
 python -m areal.launcher.slurm examples/lite/werewolf_grpo.py \
     --config examples/lite/configs/werewolf_grpo.yaml \
     stats_logger.wandb.mode=online \
-    experiment_name=xmy-werewolf-triple1 \
-    trial_name=villager2
+    experiment_name=xmy-werewolf-triple2 \
+    trial_name=villager1
 
 python -m areal.launcher.slurm examples/lite/gsm8k_grpo.py \
     --config examples/lite/configs/gsm8k_grpo.yaml \
