@@ -1,6 +1,5 @@
 import itertools
 import os
-import re
 import sys
 from copy import deepcopy
 
@@ -11,7 +10,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from torch.utils.data import random_split
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo, WeightUpdateMeta
+from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
@@ -36,7 +35,7 @@ def main(args):
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
-
+    
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
 
     train_dataset = get_custom_dataset(
