@@ -1,4 +1,4 @@
-experiment_name: clevr_count_70k-grpo-max_head_offpolicyness-4
+experiment_name: clevr_count_70k-grpo
 trial_name: trial1
 
 
@@ -38,7 +38,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen2.5-VL-3B-Instruct
+  path: Efficient-Large-Model/NVILA-Lite-2B-hf-0626
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
