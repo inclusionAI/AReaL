@@ -28,7 +28,7 @@ jobs:
       - run: |
           source examples/env/scripts/setup-pip-deps.sh
 
-      - name: Wait for 2 free GPUs
+      - name: Wait for 1 free GPU
         timeout-minutes: 7200
         run: |
           until [[ $(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits | awk -F',' '$2/$3 >= 0.90 {print $1}' | wc -l) -ge 1 ]]; do
