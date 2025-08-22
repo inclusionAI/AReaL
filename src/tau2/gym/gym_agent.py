@@ -402,6 +402,12 @@ class AgentGymEnv(gym.Env):
             raise ValueError("Orchestrator not initialized. Call reset() first.")
         return self._orchestrator.environment.get_policy()
 
+    def _log(self, message: str, level: str = "INFO") -> None:
+        """
+        Log a message with the task ID.
+        """
+        logger.log(level, f"[{self.task_id}] {message}")
+
     def reset(
         self, seed: Optional[int] = None, options: Optional[dict] = None
     ) -> tuple[str, dict]:
@@ -459,7 +465,7 @@ class AgentGymEnv(gym.Env):
 
             if self._simulation_done.is_set():
                 # Simulation ended immediately, return empty observation
-                logger.warning("Simulation ended immediately")
+                self._log("Simulation ended immediately", "WARNING")
                 return "", self._get_info()
 
             # Get the initial observation from the agent
@@ -540,7 +546,7 @@ class AgentGymEnv(gym.Env):
 
         with self._lock:
             if self._simulation_done.is_set():
-                logger.warning("Simulation already terminated.")
+                self._log("Simulation already terminated.", "WARNING")
                 return "", 0.0, True, False, self._get_info()
                 # raise ValueError("Simulation already terminated.")
 
@@ -548,7 +554,7 @@ class AgentGymEnv(gym.Env):
             try:
                 action_msg = parse_action_string(action)
             except Exception as e:
-                logger.error(f"Error parsing action: {e}")
+                self._log(f"Error parsing action: {e}", "ERROR")
                 return (
                     f"Invalid action with error: {e}",
                     0.0,
@@ -567,7 +573,7 @@ class AgentGymEnv(gym.Env):
 
             # Check if simulation is done
             terminated = self._simulation_done.is_set()
-            logger.info(f"Simulation done: {terminated}")
+            self._log(f"Simulation done: {terminated}", "INFO")
             # Convert observation to string format
             observation_str = self._format_observation(self._agent.observation)
 
@@ -600,7 +606,7 @@ class AgentGymEnv(gym.Env):
             solo_mode=self.solo_mode,
             domain=self.domain,
         )
-        logger.info(f"Evaluation result: {evaluation_result}")
+        self._log(f"Evaluation result: {evaluation_result}", "INFO")
         return evaluation_result.reward
 
     def _run_orchestrator(self):
@@ -629,11 +635,11 @@ class AgentGymEnv(gym.Env):
         simulation_run = None
         try:
             if self._orchestrator:
-                logger.info("Starting orchestrator")
+                self._log("Starting orchestrator", "INFO")
                 simulation_run = self._orchestrator.run()
-                logger.info("Orchestrator finished")
+                self._log("Orchestrator finished", "INFO")
         except Exception as e:
-            logger.error(f"Orchestrator error: {e}")
+            self._log(f"Orchestrator error: {e}", "ERROR")
         finally:
             self._simulation_run = simulation_run
             self._simulation_done.set()
