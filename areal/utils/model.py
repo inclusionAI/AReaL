@@ -14,6 +14,8 @@ VALID_VISION_MODELS = [
 def is_qwen2_vl_model(model_type):
     return model_type in ["qwen2_vl", "qwen2_5_vl"]
 
+def is_vila_model(model_type):
+    return model_type in ["vila",]
 
 # Copied from trl
 def disable_dropout_in_model(model: torch.nn.Module) -> None:

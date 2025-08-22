@@ -37,6 +37,7 @@ from areal.utils.model import (
     VALID_VISION_MODELS,
     disable_dropout_in_model,
     is_qwen2_vl_model,
+    is_vila_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
@@ -356,15 +357,18 @@ class BaseHFEngine(TrainEngine):
             ]
             mb["use_cache"] = False
             padded_mb["use_cache"] = False
-            mb["attention_mask"] = dict(full_attention=None)
-            padded_mb["attention_mask"] = dict(full_attention=None)
+            if is_vila_model(self.model_config.model_type):
+                mb["attention_mask"]=tNone
+                padded_mb["attention_mask"]=None
+            else:
+                mb["attention_mask"] = dict(full_attention=None)
+                padded_mb["attention_mask"] = dict(full_attention=None)
             if "multi_modal_input" in mb:
-                if "image_grid_thw" in mb:
-                    image_grid_thw_list = [
-                        item["image_grid_thw"]
-                        for item in mb["multi_modal_input"]
-                        if "image_grid_thw" in item
-                    ]
+                image_grid_thw_list = [
+                    item["image_grid_thw"]
+                    for item in mb["multi_modal_input"]
+                    if "image_grid_thw" in item
+                ]
                 if image_grid_thw_list:
                     mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
                     padded_mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
@@ -432,7 +436,7 @@ class BaseHFEngine(TrainEngine):
         # Process microbatches with gradient accumulation
         for i, (pad_length, padded_mb_input, mb_input) in enumerate(
             zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
-        ):
+        ):  
             outputs = self.model(**padded_mb_input)
 
             logits = outputs.logits.squeeze(0)
