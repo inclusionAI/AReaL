@@ -493,7 +493,6 @@ class BaseHFEngine(TrainEngine):
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
-
             outputs = self.model(**padded_mb_input)
             logits = outputs.logits.squeeze(0)
             logits = logits[:-pad_length] if pad_length > 0 else logits
@@ -509,3 +508,6 @@ class BaseHFEngine(TrainEngine):
         unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
         reordered = reorder_list(unpacked, mb_list.backward_indices)
         return pad_and_stack_tensors_along_first_dim(reordered)
+
+    def is_data_parallel_head(self):
+        return True

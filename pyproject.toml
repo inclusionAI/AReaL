@@ -114,6 +114,7 @@ dependencies = [
     "Pebble",
     "timeout-decorator",
     "prettytable",
+    "sh",
     
     # Development tools (consider moving to optional dependencies)
     "pytest",

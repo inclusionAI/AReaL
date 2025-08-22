@@ -15,6 +15,7 @@ from areal.experimental.api.cli_args import (
     MegatronEngineConfig,
     OptimizerConfig,
 )
+from areal.experimental.api.io_struct import AllocationMode
 from areal.experimental.megatron_engine import MegatronEngine
 from areal.utils import logging
 from areal.utils.device import log_gpu_stats
@@ -80,9 +81,10 @@ def engine():
         optimizer=OptimizerConfig(),
         megatron=MegatronEngineConfig(),
     )
+    alloc_mode = AllocationMode.from_str("d1p1t1")
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
     engine = MegatronEngine(config)
-    engine.initialize(addr=None, ft_spec=ft_spec)
+    engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
     logger.info(f"mcore GPTModel initialized: {engine.model}")
     log_gpu_stats("initialize")
     yield engine

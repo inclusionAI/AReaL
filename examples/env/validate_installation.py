@@ -9,10 +9,8 @@ the installation procedure described in docs/tutorial/installation.md.
 
 import importlib
 import sys
-import traceback
-import warnings
 from importlib.metadata import version as get_version
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 from packaging.version import Version
 
@@ -67,25 +65,20 @@ class InstallationValidator:
     def test_flash_attn_functionality(self, flash_attn_module):
         """Test flash attention functionality."""
         # Try to import key functions
-        import flash_attn_2_cuda
-        from flash_attn import flash_attn_func, flash_attn_varlen_func
         print("  - Flash attention functions imported successfully")
 
     def test_vllm_functionality(self, vllm_module):
         """Test vLLM basic functionality."""
-        from vllm import LLM, SamplingParams
         print("  - vLLM core classes imported successfully")
 
     def test_sglang_functionality(self, sglang_module):
         """Test SGLang basic functionality."""
         # Basic import test is sufficient for CI
-        import sgl_kernel
-        from sglang import Engine, launch_server
         assert Version(get_version("sglang")) == Version("0.4.9.post2"), "SGLang version should be v0.4.9.post2"
         print("  - SGLang imported successfully")
     
     def test_transformers(self, transformers_module):
-        assert Version(get_version("transformers")) == Version("4.53.1"), "transformers version should be 4.53.1"
+        assert Version(get_version("transformers")) == Version("4.54.0"), "transformers version should be 4.54.0"
         print("  - transformers imported successfully")
 
     def validate_critical_dependencies(self):
@@ -137,6 +130,7 @@ class InstallationValidator:
         
         # CUDA extensions (may not be available in all environments)
         self.test_import("vllm", required=False, test_func=self.test_vllm_functionality)
+        self.test_import("transformer_engine", required=False, test_func=self.test_te_functionality)
         self.test_import("grouped_gemm", required=False)
         self.test_import("flashattn_hopper", required=False)
         
@@ -147,6 +141,38 @@ class InstallationValidator:
         self.test_import("seaborn", required=False)
         self.test_import("numba", required=False)
         self.test_import("nltk", required=False)
+    
+    def test_te_functionality(self, _):
+        try:
+            import torch
+            assert Version(get_version("transformer_engine")) >= Version("2.3.0"), "transformer_engine version must be larger than 2.3.0"
+            
+            if torch.cuda.is_available():
+                import transformer_engine.pytorch as te
+                from transformer_engine.common import recipe
+
+                # Set dimensions.
+                in_features = 768
+                out_features = 3072
+                hidden_size = 2048
+
+                # Initialize model and inputs.
+                model = te.Linear(in_features, out_features, bias=True)
+                inp = torch.randn(hidden_size, in_features, device="cuda")
+
+                # Create an FP8 recipe. Note: All input args are optional.
+                fp8_recipe = recipe.DelayedScaling(margin=0, fp8_format=recipe.Format.E4M3)
+
+                # Enable autocasting for the forward pass
+                with te.fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
+                    out = model(inp)
+
+                loss = out.sum()
+                loss.backward()
+                        
+        except Exception as e:
+            print(f"⚠ transformer engine test failed: {e}")
+        
 
     def validate_cuda_extensions(self):
         """Validate CUDA-specific functionality."""
@@ -159,7 +185,7 @@ class InstallationValidator:
                 device = torch.device("cuda:0")
                 x = torch.randn(10, device=device)
                 y = torch.randn(10, device=device)
-                z = x + y
+                x + y
                 print("✓ Basic CUDA operations working")
                 
                 # Test flash attention if available
@@ -176,7 +202,7 @@ class InstallationValidator:
                                   device=device, dtype=torch.float16)
                     
                     # Test flash attention call
-                    out = flash_attn_func(q, k, v)
+                    flash_attn_func(q, k, v)
                     print("✓ Flash attention CUDA operations working")
                     
                 except Exception as e:

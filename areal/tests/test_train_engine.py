@@ -91,9 +91,9 @@ def engine(request):
 @torch.no_grad()
 def test_forward_microbatch(engine, mock_input):
     engine.eval()
-    engine.config.mb_spec = MicroBatchSpec(n_mbs=2, max_tokens_per_mb=100)
+    engine.config.mb_spec = MicroBatchSpec(n_mbs=2, max_tokens_per_gpu=100)
     x2 = engine.forward(input_=mock_input).squeeze(0).mean(-1)
-    engine.config.mb_spec = MicroBatchSpec(n_mbs=1, max_tokens_per_mb=100)
+    engine.config.mb_spec = MicroBatchSpec(n_mbs=1, max_tokens_per_gpu=100)
     x1 = engine.forward(input_=mock_input).squeeze(0).mean(-1)
     input_ids = mock_input["input_ids"]
     assert x1.shape[:1] == input_ids.shape[:1]
@@ -104,7 +104,7 @@ def test_forward_microbatch(engine, mock_input):
 @torch.no_grad()
 def test_eval_batch(engine, mock_input):
     engine.eval()
-    engine.config.mb_spec = MicroBatchSpec(n_mbs=2, max_tokens_per_mb=100)
+    engine.config.mb_spec = MicroBatchSpec(n_mbs=2, max_tokens_per_gpu=100)
     eval_result = engine.eval_batch(
         input_=mock_input,
         loss_fn=mock_loss_fn,
@@ -118,7 +118,7 @@ def test_eval_batch(engine, mock_input):
 
 def test_train_batch(engine, mock_input):
     engine.train()
-    engine.config.mb_spec = MicroBatchSpec(n_mbs=2, max_tokens_per_mb=100)
+    engine.config.mb_spec = MicroBatchSpec(n_mbs=2, max_tokens_per_gpu=100)
     train_result = engine.train_batch(
         input_=mock_input,
         loss_fn=mock_loss_fn,
@@ -148,7 +148,7 @@ def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
         base_model_path=None,
     )
 
-    engine.config.mb_spec = MicroBatchSpec(n_mbs=1, max_tokens_per_mb=100)
+    engine.config.mb_spec = MicroBatchSpec(n_mbs=1, max_tokens_per_gpu=100)
     old = engine.forward(input_=mock_input)
     engine.save(save_load_meta)
 
