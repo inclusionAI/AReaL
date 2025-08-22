@@ -35,6 +35,7 @@ jobs:
             CUDA_VISIBLE_DEVICES="$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits | awk -F',' '$2/$3 >= 0.90 {print $1}' | tr '\n' ',' | sed 's/,$//')"
             sleep 1
           done
+          CUDA_VISIBLE_DEVICES="$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits | awk -F',' '$2/$3 >= 0.90 {print $1}' | tr '\n' ',' | sed 's/,$//')"
 
           echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "$GITHUB_ENV"
 
