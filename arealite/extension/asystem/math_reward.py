@@ -2,7 +2,7 @@
 
 import os
 import re
-
+import ast
 import requests
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Tuple
@@ -61,7 +61,7 @@ def reward_fn(
     )
 
     logger.info(
-            f"task: {task}, completion: {completion}, query_id: {query_id}, reward: {format_rewards}"
+        f"task: {task}, completion: {completion}, query_id: {query_id}, reward: {format_rewards}"
     )
     return format_rewards[0]
 
@@ -166,7 +166,7 @@ def general_verify(id2info, responses: List[str], query_ids: List) -> List[float
         raise e
 
 
-def extract_python_code(text, min_length=20, strict_syntax=True):
+def extract_python_code(text, min_length=20, strict_syntax=False):
     code_pattern = r"(?i)```(?:python|py)?\s*\n?(.*?)\n?```"
     code_blocks = re.findall(code_pattern, text, re.DOTALL)
     valid_blocks = []
@@ -196,17 +196,19 @@ if __name__ == "__main__":
     data = {
         "task": ["general"],
         "query_id": ["general-42941"],
-        "prompt": ["<role>HUMAN</role>33岁孩子不听话,如何处理父子之间矛盾?<role>ASSISTANT</role>"],
+        "prompt": [
+            "<role>HUMAN</role>33岁孩子不听话,如何处理父子之间矛盾?<role>ASSISTANT</role>"
+        ],
     }
 
     print(
         reward_fn(
-            "<role>HUMAN</role>33岁孩子不听话,如何处理父子之间矛盾?<role>ASSISTANT</role>", #data["prompt"][0],
+            "<role>HUMAN</role>33岁孩子不听话,如何处理父子之间矛盾?<role>ASSISTANT</role>",  # data["prompt"][0],
             answer,
             None,
             None,
             task=data["task"],
             query_id=data["query_id"],
-            #prompt=data["prompt"],
+            # prompt=data["prompt"],
         )
     )
