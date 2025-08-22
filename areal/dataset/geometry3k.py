@@ -55,10 +55,10 @@ def get_geometry3k_sft_dataset(path, split, processor, rank, world_size):
     def process_example(example, idx):
         # Add query_id column
         images = example["images"]
-        if "qwen" in processor.image_processor.image_processor_type.lower():
+        if '<|vision_start|>' in processor.tokenizer.all_special_tokens and '<|vision_end|>' in processor.tokenizer.all_special_tokens:
             image_token = "<|vision_start|><|image_pad|><|vision_end|>"
         else:
-            image_token = processor.image_token if processor is not None else "<image>"
+            image_token = processor.tokenizer.image_token if processor is not None else "<image>"
         example["problem"] = (
             example["problem"].replace("<image>", image_token).replace("different", "")
         )
@@ -110,10 +110,10 @@ def get_geometry3k_rl_dataset(path, split, processor, rank, world_size):
         processed_images = [
             convert_image(image, 448, 448) for image in sample["images"]
         ]
-        if "qwen" in processor.image_processor.image_processor_type.lower():
+        if '<|vision_start|>' in processor.tokenizer.all_special_tokens and '<|vision_end|>' in processor.tokenizer.all_special_tokens:
             image_token = "<|vision_start|><|image_pad|><|vision_end|>"
         else:
-            image_token = processor.image_token if processor is not None else "<image>"
+            image_token = processor.tokenizer.image_token if processor is not None else "<image>"
         system_prompt = {
             "role": "system",
             "content": (

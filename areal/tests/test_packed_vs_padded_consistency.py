@@ -106,9 +106,9 @@ VISION_H = 336
 QWEN25_VL_PATH = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
 if not os.path.exists(QWEN25_VL_PATH):
     QWEN25_VL_PATH = "Qwen/Qwen2.5-VL-3B-Instruct"
+NVILA_PATH="Efficient-Large-Model/NVILA-Lite-2B-hf-0626"
 
-
-@pytest.fixture(params=[QWEN25_VL_PATH])
+@pytest.fixture(params=[NVILA_PATH])
 def mock_padded_vlm_data(request):
     model_path = request.param
     # TODO: create mock vlm image data
@@ -118,11 +118,11 @@ def mock_padded_vlm_data(request):
     all_data = []
 
     processor, tokenizer = load_hf_processor_and_tokenizer(model_path)
-
+    breakpoint()
     for prompt_len, ans_len in zip(prompt_lens, answer_lens):
 
         image = torch.randint(0, 255, size=(1, 3, VISION_H, VISION_W)).float() / 255.0
-        image_token = "<|vision_start|><|image_pad|><|vision_end|>"
+        image_token = "<image>"
         processed_input = processor(text=image_token, images=image, return_tensors="pt")
 
         image_input_id = processed_input["input_ids"].squeeze(0)
