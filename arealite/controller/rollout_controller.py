@@ -8,7 +8,7 @@ from arealite.api.io_struct import WeightUpdateMeta, AllocationMode
 
 from arealite.api.cli_args import RolloutControllerConfig, RemoteHybridInferenceConfig
 from arealite.api.workflow_api import RolloutWorkflow
-from arealite.controller.utils import create_engine_with_retry
+from arealite.controller.utils import create_engine_with_retry, group_avg_torch
 from arealite.extension.asystem.remote_hybrid_inference_worker import RemoteHybridInferenceWorker, \
     RemoteHypidInferenceInitConfig
 from arealite.utils.data import concat_padded_tensors
@@ -16,6 +16,7 @@ from arealite.api.controller_api import RolloutController
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec, ScheduleStrategy
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangInitConfig, RemoteSGLangEngine
+from realhf.api.core.data_api import RL_TASKS
 from realhf.base import stats_tracker, logging
 from concurrent.futures import ThreadPoolExecutor
 import time
@@ -278,21 +279,7 @@ class DistributedRolloutController(RolloutController):
         padded = concat_padded_tensors(results)
         if isinstance(padded, dict):
             padded = TensorDict(padded, batch_size=[bs])
-
-        olg_logp = self._calc_old_logp(padded)
-
-
-        prompt_len = padded["prompt_mask"].sum(1)
-        logger.info(f"prompt_len: {prompt_len}")
-
-        stats_tracker.scalar(**{"prompt_len":prompt_len.float().mean(),
-                                "sglang_old_logp":olg_logp.mean()})
-
-        keys = ["rewards", "seqlen"]
-        for key in keys:
-            tensor = padded[key]
-            for value in tensor:
-                stats_tracker.scalar(**{key: value})
+        self._calc_metrics(padded)
         return padded
 
     def split_list(self, lst, n):
@@ -306,3 +293,25 @@ class DistributedRolloutController(RolloutController):
             result.append(lst[index:index + current_size])
             index += current_size
         return result
+
+    def _calc_metrics(self, padded):
+        olg_logp = self._calc_old_logp(padded)
+
+        prompt_len = padded["prompt_mask"].sum(1)
+        logger.info(f"prompt_len: {prompt_len}")
+
+        stats_tracker.scalar(**{"prompt_len": prompt_len.float().mean(),
+                                "sglang_old_logp": olg_logp.mean()})
+
+        # total reward
+        keys = ["rewards", "seqlen"]
+        for key in keys:
+            tensor = padded[key]
+            for value in tensor:
+                stats_tracker.scalar(**{key: value})
+
+        # task reward
+        groups, rewards = group_avg_torch(padded["rewards"], padded["task_ids"])
+        for group, reward in zip(groups, rewards):
+            task_name = RL_TASKS[int(group)]
+            stats_tracker.scalar(**{f"{task_name}_reward": float(reward)})

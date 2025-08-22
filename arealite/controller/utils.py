@@ -2,6 +2,7 @@ import time
 
 from realhf.base import logging
 from requests.exceptions import ConnectionError
+import torch
 logger = logging.getLogger("ControllerUtil")
 
 def create_engine_with_retry(
@@ -26,3 +27,12 @@ def create_engine_with_retry(
             raise e
 
     raise RuntimeError("Failed to connect to remote service after maximum retries.")
+
+# same as avg(origin_tensor) group by (group_tensor)
+def group_avg_torch(origin_tensor, group_tensor):
+    unique_groups, inverse_indices = torch.unique(group_tensor, sorted=True, return_inverse=True)
+    result = torch.zeros_like(unique_groups, dtype=torch.float)
+    sum_per_group = result.scatter_add(0, inverse_indices, origin_tensor.float())
+    counts = torch.bincount(inverse_indices, minlength=len(unique_groups)).float()
+    avgs = torch.where(counts > 0, sum_per_group / counts, torch.zeros_like(sum_per_group))
+    return unique_groups, avgs
