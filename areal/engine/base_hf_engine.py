@@ -360,11 +360,12 @@ class BaseHFEngine(TrainEngine):
             mb["attention_mask"] = dict(full_attention=None)
             padded_mb["attention_mask"] = dict(full_attention=None)
             if "multi_modal_input" in mb:
-                image_grid_thw_list = [
-                    item["image_grid_thw"]
-                    for item in mb["multi_modal_input"]
-                    if "image_grid_thw" in item
-                ]
+                if "image_grid_thw" in mb:
+                    image_grid_thw_list = [
+                        item["image_grid_thw"]
+                        for item in mb["multi_modal_input"]
+                        if "image_grid_thw" in item
+                    ]
                 if image_grid_thw_list:
                     mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
                     padded_mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
