@@ -57,7 +57,7 @@ def get_geometry3k_sft_dataset(
     },
     """
     dataset = load_dataset(path=path, split=split)
-    
+
     tokenizer = processor.tokenizer
 
     def process_example(example, idx):
@@ -125,7 +125,6 @@ def get_geometry3k_rl_dataset(
     max_length: Optional[int] = None,
 ):
     dataset = load_dataset(path=path, split=split)
-    
 
     def process(sample):
         processed_images = [
