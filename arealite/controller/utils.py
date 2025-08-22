@@ -8,7 +8,7 @@ def create_engine_with_retry(
         create_engine_func,
         *args,
         max_retries=60,
-        retry_delay=3,
+        retry_delay=10,
         **kwargs
 ):
     logger.info(f"create_engine_with_retry debug: {args}, {max_retries}, {retry_delay}, {kwargs}")

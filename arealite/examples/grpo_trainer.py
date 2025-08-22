@@ -30,6 +30,12 @@ from arealite.utils.util import clear_dir
 
 logger = logging.getLogger("Trainer")
 
+def custom_collate_fn(batch):
+    all_keys = set().union(*(d.keys() for d in batch))
+    collated_batch = {}
+    for key in all_keys:
+        collated_batch[key] = [d.get(key) for d in batch]
+    return collated_batch
 
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
@@ -59,7 +65,7 @@ def main(args):
 
         asystem_hybrid_config = {
             "meta_server_addr": meta_server_addr,
-            "weights_exchange_comm_backend": "astate",
+            "weights_exchange_comm_backend": "nccl",
             "weights_validation_steps": 0,
             "enable_debug_mode": True,
         }
@@ -79,7 +85,7 @@ def main(args):
     train_dataset = dataset['train']
     train_dataset = train_dataset.filter(
         lambda x: len(tokenizer.encode(x["prompt"])) <= config.train_dataset.max_prompt_len)
-    dataloader = StatefulDataLoader(train_dataset, batch_size=1, sampler=ShuffleSampler(train_dataset))
+    dataloader = StatefulDataLoader(train_dataset, batch_size=1, sampler=ShuffleSampler(train_dataset), collate_fn=custom_collate_fn)
 
     ############################## recover #########################################
     recover_meta_info_path = config.recover.recover_meta_info_path
@@ -297,3 +303,5 @@ def main(args):
 
 if __name__ == "__main__":
     main(sys.argv[1:])
+
+
