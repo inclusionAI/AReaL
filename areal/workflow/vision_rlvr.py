@@ -48,8 +48,9 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             padding=False,
             return_tensors="pt",
         )
-
-        input_ids = processed_input["input_ids"].tolist()[0]
+        print(processed_input.keys())
+        breakpoint()
+        input_ids = self.processor.tokenizer(data["messages"],padding=False, return_tensors="pt",)["input_ids"].tolist()[0]
 
         n_samples = self.gconfig.n_samples
 
