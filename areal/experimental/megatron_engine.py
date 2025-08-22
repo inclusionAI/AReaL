@@ -20,9 +20,10 @@ from areal.experimental.model.registry import (
     make_mcore_model,
     save_to_hf,
 )
+from areal.utils import logging, pkg_version
 from areal.utils.data import amend_position_ids
 from areal.utils.model import disable_dropout_in_model
-from realhf.base import constants, logging, pkg_version
+from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
 USE_MBRIDGE = False
 if pkg_version.is_available("mbridge"):
@@ -129,7 +130,7 @@ class MegatronEngine(TrainEngine):
             # otherwise initializing the NCCL weight update group will be wrong!
             dist.init_process_group(
                 backend="nccl",
-                timeout=constants.NCCL_DEFAULT_TIMEOUT,
+                timeout=NCCL_DEFAULT_TIMEOUT,
             )
             self.own_global_group = True
         self._parallelism_group = dist.new_group()

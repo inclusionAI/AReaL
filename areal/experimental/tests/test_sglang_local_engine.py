@@ -24,10 +24,10 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import ModelRequest, ModelResponse
 from areal.experimental.sglang_engine import SGLangEngine
+from areal.utils import seeding
+from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.network import find_free_ports
 from areal.workflow.rlvr import RLVRWorkflow
-from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import seeding
 
 EXPR_NAME = "test_sglang_local_engine"
 TRIAL_NAME = "trial_0"

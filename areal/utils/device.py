@@ -1,9 +1,12 @@
+import itertools
+import os
+import platform
 from typing import Tuple
 
 import torch
 import torch.distributed as dist
 
-from realhf.base import logging
+from areal.utils import logging
 
 logger = logging.getLogger(__file__)
 
@@ -29,3 +32,27 @@ def log_gpu_stats(head: str, rank: int = 0):
         mem_allocated, mem_reserved, mem_used, mem_total = _get_current_mem_info()
         message = f"{head}, memory allocated (GB): {mem_allocated}, memory reserved (GB): {mem_reserved}, device memory used/total (GB): {mem_used}/{mem_total}"
         logger.info(msg=message)
+
+
+def gpu_count():
+    """Returns the number of gpus on a node.
+
+    Ad-hoc to frl cluster.
+    """
+    if platform.system() == "Darwin":
+        return 0
+    elif platform.system() == "Windows":
+        try:
+            import torch
+
+            return torch.cuda.device_count()
+        except ImportError:
+            return 0
+    else:
+        dev_directories = list(os.listdir("/dev/"))
+        for cnt in itertools.count():
+            if "nvidia" + str(cnt) in dev_directories:
+                continue
+            else:
+                break
+        return cnt

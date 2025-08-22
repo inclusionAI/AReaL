@@ -11,10 +11,10 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import ModelRequest
+from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
 from areal.utils.image import image2base64
 from areal.workflow.rlvr import RLVRWorkflow
-from realhf.base import logging, stats_tracker
 
 logger = logging.getLogger("RLVR workflow")
 
@@ -99,8 +99,14 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),
                 loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                pixel_values=processed_input["pixel_values"].unsqueeze(0),
-                image_grid_thw=processed_input["image_grid_thw"].unsqueeze(0),
+                # We store multi_modal_input for each data point as a dict,
+                # This is a non-tensor-data stored in tensor dict
+                multi_modal_input=[
+                    {
+                        "pixel_values": processed_input["pixel_values"],
+                        "image_grid_thw": processed_input["image_grid_thw"],
+                    }
+                ],
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
                 versions=torch.tensor(versions).unsqueeze(0),
                 attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),

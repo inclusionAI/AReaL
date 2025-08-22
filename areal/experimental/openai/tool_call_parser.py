@@ -7,7 +7,7 @@ from openai.types.chat.chat_completion_message_function_tool_call import (
     Function,
 )
 
-from realhf.base import logging
+from areal.utils import logging
 
 logger = logging.getLogger("Tool Call Parser")
 

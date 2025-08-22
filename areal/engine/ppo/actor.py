@@ -7,6 +7,7 @@ from tensordict import TensorDict
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
+from areal.utils import stats_tracker
 from areal.utils.data import split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import (
     gather_logprobs,
@@ -14,7 +15,6 @@ from areal.utils.functional import (
     masked_normalization,
     ppo_actor_loss_fn,
 )
-from realhf.base import stats_tracker
 
 
 class PPOActor:

@@ -1,6 +1,3 @@
-# Copyright 2025 Ant Group Inc.
-# Licensed under the Apache License, Version 2.0
-
 """Test script for Engine implementation."""
 
 import os

@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 
 import aiohttp
 
-from realhf.base import logging
+from areal.utils import logging
 
 DEFAULT_RETRIES = 1
 DEFAULT_REQUEST_TIMEOUT = 3600

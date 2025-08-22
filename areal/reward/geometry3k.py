@@ -1,5 +1,7 @@
 import re
 
+from areal.reward.math_parser import math_equal
+
 
 def extract_answer(pred_str, data_name, use_last_number=True):
     matches = re.findall(r"\[([^\]]+)\]", pred_str)
@@ -20,8 +22,6 @@ def geometry3k_reward_fn(
         return 0
     if ans is None:
         return 0
-    # print(f"sol: {sol}, ans: {ans}")
-    from realhf.impl.dataset.math_parser import math_equal
 
     if math_equal(sol, ans):
         # print(f"completions: {completions}, answer: {answer}")

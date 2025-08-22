@@ -9,8 +9,8 @@ from tensorboardX import SummaryWriter
 
 from areal.api.cli_args import StatsLoggerConfig
 from areal.api.io_struct import FinetuneSpec
-from realhf.api.core.data_api import tabulate_stats
-from realhf.base import logging
+from areal.utils import logging
+from areal.utils.printing import tabulate_stats
 
 logger = logging.getLogger("StatsLogger", "system")
 

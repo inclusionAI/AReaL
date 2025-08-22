@@ -14,8 +14,8 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
+from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
-from realhf.base import logging, stats_tracker
 
 logger = logging.getLogger("Multi-Turn workflow")
 
@@ -44,7 +44,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
 
         # Create tokens that should be amended if the answer is incorrect.
         # This method eliminates the encode-decode inconsistency issue and cancels system prompts.
-        messages = [{"role": "asistant", "content": "some random message."}]
+        messages = [{"role": "assistant", "content": "some random message."}]
         s1 = self.tokenizer.apply_chat_template(messages, tokenize=True)
         messages += [
             {

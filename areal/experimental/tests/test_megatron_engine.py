@@ -16,8 +16,8 @@ from areal.experimental.api.cli_args import (
     OptimizerConfig,
 )
 from areal.experimental.megatron_engine import MegatronEngine
+from areal.utils import logging
 from areal.utils.device import log_gpu_stats
-from realhf.base import logging
 
 logger = logging.getLogger("MegatronEngine Test")
 

@@ -13,7 +13,7 @@ from areal.experimental.model.qwen3 import (
     hf_to_mcore_config_qwen3_dense,
     make_mcore_layer_specs_qwen3_dense,
 )
-from realhf.base import logging
+from areal.utils import logging
 
 logger = logging.getLogger("areal.experimental.model.registry")
 

@@ -6,7 +6,7 @@ import sys
 import time
 from typing import Dict, List, Optional, Tuple
 
-import realhf.base.logging as logging
+import areal.utils.logging as logging
 from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
@@ -16,7 +16,11 @@ from areal.api.cli_args import (
     to_structured_cfg,
 )
 from areal.api.io_struct import AllocationMode, AllocationType
+from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import (
+    JobException,
+    JobInfo,
+    JobState,
     get_env_vars,
     validate_config_for_distributed_launcher,
     wait_sglang_server_addrs,
@@ -29,8 +33,6 @@ from areal.utils.slurm import (
     cancel_jobs,
     query_jobs,
 )
-from realhf.base import logging, name_resolve, names
-from realhf.scheduler.client import JobException, JobInfo, JobState
 
 logger = logging.getLogger("SlurmLauncher")
 

@@ -18,7 +18,7 @@ from areal.api.io_struct import (
     RolloutStat,
     WeightUpdateMeta,
 )
-from realhf.base import logging, name_resolve, names, pkg_version
+from areal.utils import logging, name_resolve, names, pkg_version
 
 if TYPE_CHECKING:
     from areal.api.workflow_api import RolloutWorkflow

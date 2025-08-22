@@ -19,11 +19,11 @@ from areal.api.cli_args import (
     to_structured_cfg,
 )
 from areal.api.io_struct import AllocationMode, AllocationType
-from areal.utils.launcher import get_env_vars
+from areal.utils import logging, name_resolve, names
+from areal.utils.device import gpu_count
+from areal.utils.launcher import JobException, JobInfo, JobState, get_env_vars
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.recover import check_if_recover
-from realhf.base import gpu_utils, logging, name_resolve, names
-from realhf.scheduler.client import JobException, JobInfo, JobState
 
 logger = logging.getLogger("Local Scheduler")
 JOB_STATE_TO_PROCESS_STATUS = {
@@ -82,7 +82,7 @@ class LocalLauncher:
 
         self._gpu_counter = 0
         self._cuda_devices: List[str] = os.environ.get(
-            "CUDA_VISIBLE_DEVICES", ",".join(map(str, range(gpu_utils.gpu_count())))
+            "CUDA_VISIBLE_DEVICES", ",".join(map(str, range(gpu_count())))
         ).split(",")
         if len(self._cuda_devices) < 1:
             raise RuntimeError(

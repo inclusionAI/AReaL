@@ -22,8 +22,8 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
+from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
-from realhf.base import logging, name_resolve, names
 
 logger = logging.getLogger(__name__)
 

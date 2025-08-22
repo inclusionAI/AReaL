@@ -19,8 +19,8 @@ from areal.api.io_struct import RolloutStat
 from areal.experimental.openai.types import (
     CompletionWithTokenLogpReward,
 )
+from areal.utils import logging
 from areal.utils.data import concat_padded_tensors
-from realhf.base import logging
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine

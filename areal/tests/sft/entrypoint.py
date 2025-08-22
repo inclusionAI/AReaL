@@ -10,12 +10,12 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 import areal.api.cli_args as cli_args
 import areal.dataset
 import areal.utils.data
-import realhf.api.core.data_api as data_api
-import realhf.base.seeding as seeding
-import realhf.base.stats_tracker as stats_tracker
+import areal.utils.seeding as seeding
+import areal.utils.stats_tracker as stats_tracker
 from areal.api.cli_args import SFTConfig
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.sft.lm_engine import FSDPLMEngine
+from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 
 
 def main() -> None:
@@ -27,9 +27,7 @@ def main() -> None:
 
     seeding.set_random_seed(config.seed, str(rank))
 
-    processor, tokenizer = data_api.load_hf_processor_and_tokenizer(
-        config.tokenizer_path
-    )
+    processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
 
     train_dataset = areal.dataset.get_custom_dataset(
         path=config.train_dataset.path,
