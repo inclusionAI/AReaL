@@ -151,13 +151,18 @@ def concat_padded_tensors(
                 if key == "attention_mask":
                     # Pad attention mask with 0s
                     padding = torch.zeros(
-                        (tensor.shape[0], pad_width), dtype=tensor.dtype
+                        (tensor.shape[0], pad_width),
+                        dtype=tensor.dtype,
+                        device=tensor.device,
                     )
 
                 else:
                     # Pad feature tensors with pad_value
                     padding = torch.full(
-                        (tensor.shape[0], pad_width), pad_value, dtype=tensor.dtype
+                        (tensor.shape[0], pad_width),
+                        pad_value,
+                        dtype=tensor.dtype,
+                        device=tensor.device,
                     )
 
                 tensor = torch.cat([tensor, padding], dim=1)
@@ -844,3 +849,52 @@ def broadcast_tensor(tensor, src_rank=0, group=None, device=None):
         dist.broadcast(tensor, src=src_rank, group=group)
 
         return tensor
+
+
+def _unpad_unflatten(x, shape):
+    assert len(x.shape) == 1
+    pad_size = x.numel() - np.prod(shape)
+    assert pad_size >= 0, pad_size
+    return x[: x.numel() - pad_size].view(*shape)
+
+
+def _flatten_pad_to_max_numel(x, shapes):
+    pad_size = max(np.prod(shape) for shape in shapes) - x.numel()
+    assert pad_size >= 0, pad_size
+    return torch.nn.functional.pad(x.view(-1), (0, pad_size), value=0)
+
+
+def all_gather_tensor_container(data, group=None) -> List:
+    if torch.is_tensor(data):
+
+        local_shape = list(data.shape)
+        shapes = [None for _ in range(dist.get_world_size(group))]
+        dist.all_gather_object(shapes, local_shape, group=group)
+
+        y = _flatten_pad_to_max_numel(data, shapes)
+
+        ys = [torch.empty_like(y) for _ in range(dist.get_world_size(group=group))]
+        dist.all_gather(ys, y, group=group)
+
+        return [_unpad_unflatten(y, shape) for y, shape in zip(ys, shapes)]
+
+    if isinstance(data, list):
+        data = [all_gather_tensor_container(d) for d in data]
+        return list(zip(*data))
+
+    if isinstance(data, (dict, TensorDict)):
+        results = {k: all_gather_tensor_container(v) for k, v in data.items()}
+        results = [
+            {k: v[i] for k, v in results.items()}
+            for i in range(dist.get_world_size(group))
+        ]
+        if isinstance(data, TensorDict):
+            results = [
+                TensorDict(r, batch_size=[r["attention_mask"].shape[0]])
+                for r in results
+            ]
+        return results
+
+    results = [None for _ in range(dist.get_world_size(group))]
+    dist.all_gather_object(results, data, group=group)
+    return results
