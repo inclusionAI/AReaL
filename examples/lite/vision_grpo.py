@@ -8,6 +8,7 @@ import torch
 import torch.distributed as dist
 import wandb
 from torchdata.stateful_dataloader import StatefulDataLoader
+from torch.utils.data import random_split
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo, WeightUpdateMeta
@@ -46,6 +47,34 @@ def main(args):
         type=config.train_dataset.type,
         processor=processor,
     )
+
+    # total_size=len(train_dataset)
+    # valid_size = int(0.2 * total_size)  
+    # train_size = total_size - valid_size 
+
+    # train_split, valid_split = random_split(
+    #     train_dataset, 
+    #     [train_size, valid_size],
+    #     generator=torch.Generator().manual_seed(config.seed)
+    # )
+
+    # train_dataloader = StatefulDataLoader(
+    # train_split,
+    # batch_size=config.train_dataset.batch_size // world_size,
+    # shuffle=config.train_dataset.shuffle,
+    # num_workers=config.train_dataset.num_workers,
+    # collate_fn=lambda x: x,
+    # drop_last=config.train_dataset.drop_last,
+    # )
+
+    # valid_dataloader = StatefulDataLoader(
+    #     valid_split,
+    #     batch_size=config.valid_dataset.batch_size // world_size,
+    #     shuffle=False, 
+    #     num_workers=config.valid_dataset.num_workers,
+    #     collate_fn=lambda x: x,
+    #     drop_last=config.valid_dataset.drop_last,
+    # )
 
     valid_dataset = get_custom_dataset(
         path=config.valid_dataset.path,
@@ -216,6 +245,7 @@ def main(args):
             rollout.resume()
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
+            eval_rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
             saver.save(
@@ -237,8 +267,10 @@ def main(args):
                     for item in data:
                         eval_rollout.submit(item, eval_workflow)
                         cnt += 1
-                eval_rollout.wait(cnt, timeout=None)
-
+                batch=eval_rollout.wait(cnt, timeout=None)
+                rewards = batch["rewards"].float().to(actor.device)
+                wandb.log({"eval_reward": rewards.mean().item()})
+                
             evaluator.evaluate(
                 evaluate_fn,
                 epoch,
