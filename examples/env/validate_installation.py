@@ -65,15 +65,26 @@ class InstallationValidator:
     def test_flash_attn_functionality(self, flash_attn_module):
         """Test flash attention functionality."""
         # Try to import key functions
+        import flash_attn_2_cuda  # noqa
+        from flash_attn import flash_attn_func, flash_attn_varlen_func  # noqa
         print("  - Flash attention functions imported successfully")
 
     def test_vllm_functionality(self, vllm_module):
         """Test vLLM basic functionality."""
+        from vllm import LLM, SamplingParams  # noqa
         print("  - vLLM core classes imported successfully")
 
     def test_sglang_functionality(self, sglang_module):
         """Test SGLang basic functionality."""
         # Basic import test is sufficient for CI
+        import sgl_kernel  # noqa
+
+        # make sure that at least fa3 works well
+        from sgl_kernel.flash_attn import (  # noqa
+            flash_attn_varlen_func,
+            flash_attn_with_kvcache,
+        )
+        from sglang import Engine, launch_server  # noqa
         assert Version(get_version("sglang")) == Version("0.4.9.post2"), "SGLang version should be v0.4.9.post2"
         print("  - SGLang imported successfully")
     
@@ -185,7 +196,7 @@ class InstallationValidator:
                 device = torch.device("cuda:0")
                 x = torch.randn(10, device=device)
                 y = torch.randn(10, device=device)
-                x + y
+                x = x + y
                 print("✓ Basic CUDA operations working")
                 
                 # Test flash attention if available

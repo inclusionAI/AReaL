@@ -680,6 +680,7 @@ class DatasetConfig:
     reward_fn: Optional[str] = field(
         default=None,
     )
+    max_length: Optional[int] = None
 
 
 @dataclass
