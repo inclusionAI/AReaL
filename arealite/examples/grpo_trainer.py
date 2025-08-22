@@ -154,7 +154,10 @@ def main(args):
                 trial_name=config.trial_name,
                 loss_configs=config.actor.hybrid_engine.loss_configs,
                 remote_megatron_config=config.actor.hybrid_engine.remote_megatron_config,
-                wrap_policy=config.actor.hybrid_engine.wrap_policy)),
+                wrap_policy=config.actor.hybrid_engine.wrap_policy,
+                max_tokens_per_mb=config.actor.hybrid_engine.max_tokens_per_mb,
+                group_size=config.actor.hybrid_engine.group_size)
+        ),
         TrainControllerConfig(experiment_name=config.experiment_name,
                               trial_name=config.trial_name,
                               allocation_mode=config.allocation_mode),

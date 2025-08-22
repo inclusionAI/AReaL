@@ -189,7 +189,7 @@ class DistributedTrainController(TrainController):
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function."""
         logger.info(f"start to train_distributed_batch")
-        batches = input_.split_by_seqlen_ffd_2(self.group_size, self.dp_size)
+        batches = input_._split_by_seqlen_ffd_helper(self.group_size, self.dp_size)
         futures = []
         results = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:

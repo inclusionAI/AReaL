@@ -7,9 +7,21 @@ Update 20250710
 SFT example:
 
 ```bash
-torchrun --nnodes 1 --nproc-per-node 8 examples/arealite/gsm8k_sft.py --config examples/arealite/configs/gsm8k_sft.yaml
+torchrun --nnodes 1 --nproc-per-node 8 examples/arealite/gsm8k_sft.py --config examples/arealite/configs/gsm8k_sft.yaml 
 ```
 
+GRPO example:
+- <b>single controller mode</b>
+``` bash
+# step 1
+export PYTHONPATH=/usr/local/lib/python3.12/dist-packages:$PATH_TO_YOUR_CODE
+export REAL_PACKAGE_PATH=$PATH_TO_YOUR_CODE
+
+# step 2
+nohup python  -u arealite/examples/grpo_trainer.py --config $PATH_TO_YOUR_CONFIG trial_name=my_first_trial > my_first_trial.log 2>&1 &
+```
+
+```
 ---
 
 
