@@ -17,7 +17,7 @@ def main(args):
     torch.cuda.set_device(rank)
     device = f"cuda:{rank}"
 
-    bs = random.randint(1, 10)
+    bs = random.randint(1, 10) * args.granularity
     prompt_lens = [random.randint(1, 10) for _ in range(bs)]
     ans_lens = [random.randint(1, 10) for _ in range(bs)]
     seqlens = [x + y for x, y in zip(prompt_lens, ans_lens)]
@@ -43,7 +43,7 @@ def main(args):
         data.append(TensorDict(d, batch_size=1))
 
     data = concat_padded_tensors(data).to(device)
-    redistributed = redistribute(data)
+    redistributed = redistribute(data, granularity=args.granularity)
 
     redistributed.all_data = [x.to("cpu") for x in redistributed.all_data]
     redistributed.data = redistributed.data.to("cpu")
@@ -57,5 +57,6 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dump-path", type=str)
+    parser.add_argument("--granularity", type=int)
     args = parser.parse_args()
     main(args)

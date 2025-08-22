@@ -5,7 +5,7 @@ import torch.distributed as dist
 from tensordict import TensorDict
 
 from areal.utils.data import all_gather_tensor_container, concat_padded_tensors
-from areal.utils.datapack import ffd_allocate, flat2d
+from areal.utils.datapack import ffd_allocate
 
 
 @dataclass
@@ -16,29 +16,33 @@ class RedistributedData:
     group_indices: List[List[int]]
 
 
-def redistribute(data: TensorDict, group=None) -> RedistributedData:
+def redistribute(
+    data: TensorDict, granularity: int = 1, group=None
+) -> RedistributedData:
     """Redistribute a batch across a process group.
 
     This function only accepts padded data which must have an "attention_mask" field,
     Each tensor should have shape [bs, seqlen, *] or [bs].
 
-    This function does not respect the boundary of grouped responses (aka responses
-    with the same prompt).
+    This function will divide the global batch into segments each with consecutive
+    `granularity` sequences, and then redistribute the segments (e.g., for GRPO).
     """
-    all_data = all_gather_tensor_container(data, group=group)
-    all_data = flat2d(
-        [
-            [data[i : i + 1] for i in range(data["attention_mask"].shape[0])]
-            for data in all_data
-        ]
-    )
+    all_gathered = all_gather_tensor_container(data, group=group)
+
+    all_data = []
+    for data in all_gathered:
+        bs = data["attention_mask"].shape[0]
+        assert bs % granularity == 0
+        all_data += [data[i : i + granularity] for i in range(0, bs, granularity)]
+
     seqlens = [d["attention_mask"].sum().item() for d in all_data]
 
     # Remove pad positions
-    for d, seqlen in zip(all_data, seqlens):
+    for d in all_data:
+        l = d["attention_mask"].sum(-1).max().item()
         for k, v in d.items():
             if v.shape[:2] == d["attention_mask"].shape[:2]:
-                d[k] = v[:, :seqlen]
+                d[k] = v[:, :l]
 
     # No capacity limit leads to balanced partition across this group
     group_indices = ffd_allocate(

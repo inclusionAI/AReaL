@@ -27,7 +27,10 @@ def assert_tensor_container_close(x1, x2):
     assert x1 == x2
 
 
-def _run_redistribute(world_size, tmp_path):
+@pytest.mark.multi_gpu
+@pytest.mark.parametrize("world_size", [2, 4, 8])
+@pytest.mark.parametrize("granularity", [1, 2, 4])
+def test_redistribute(world_size, granularity, tmp_path):
     port = find_free_ports(1)[0]
     try:
         subprocess.run(
@@ -39,6 +42,7 @@ def _run_redistribute(world_size, tmp_path):
                 f"--master_port={port}",
                 "areal/tests/torchrun/redistribute.py",
                 f"--dump-path={str(tmp_path)}",
+                f"--granularity={granularity}",
             ],
             check=True,
         )
@@ -62,21 +66,3 @@ def _run_redistribute(world_size, tmp_path):
     for x, indices in zip(redistributed_data, group_indices):
         data = concat_padded_tensors([all_data[i] for i in indices])
         assert_tensor_container_close(x.data, data)
-
-
-@pytest.mark.multi_gpu
-@pytest.mark.parametrize("world_size", [2])
-def test_redistribute_two_gpu(world_size, tmp_path):
-    _run_redistribute(world_size, tmp_path)
-
-
-@pytest.mark.multi_gpu
-@pytest.mark.parametrize("world_size", [4])
-def test_redistribute_four_gpu(world_size, tmp_path):
-    _run_redistribute(world_size, tmp_path)
-
-
-@pytest.mark.multi_gpu
-@pytest.mark.parametrize("world_size", [8])
-def test_redistribute_eight_gpu(world_size, tmp_path):
-    _run_redistribute(world_size, tmp_path)
