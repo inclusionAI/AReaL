@@ -41,7 +41,7 @@ def get_clevr_count_70k_sft_dataset(
     },
     """
     dataset = load_dataset(path=path, split=split)
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+    
 
     tokenizer = processor.tokenizer
 
@@ -97,6 +97,7 @@ def get_clevr_count_70k_sft_dataset(
         # Filter out sequences longer than max_length
         dataset = dataset.filter(lambda x: len(x["input_ids"]) <= max_length)
 
+    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset
 
 
@@ -109,7 +110,7 @@ def get_clevr_count_70k_rl_dataset(
     max_length: Optional[int] = None,
 ):
     dataset = load_dataset(path=path, split=split)
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+    
 
     def process(sample):
         processed_images = [
@@ -160,4 +161,5 @@ def get_clevr_count_70k_rl_dataset(
 
         dataset = dataset.filter(filter_length)
 
+    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset
