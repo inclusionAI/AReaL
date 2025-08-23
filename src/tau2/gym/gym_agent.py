@@ -67,6 +67,7 @@ class GymAgentState(BaseModel):
 
     messages: list[APICompatibleMessage]
 
+
 def done() -> str:
     """Call this function when you are done with the task."""
     return GymAgent.STOP_TOKEN
@@ -253,7 +254,7 @@ class GymAgent(LocalAgent):
             logger.info(f"Setting observation: {self._observation}")
 
         # Wait for set_action() to provide the next action
-        logger.info(f"Waiting for action")
+        logger.info("Waiting for action")
         self._agent_turn_finished.wait()
 
         logger.info(f"Continuing with action: {str(self._next_action)}")
@@ -527,8 +528,8 @@ class AgentGymEnv(gym.Env):
 
         Returns:
             A tuple containing:
-            - observation: String representation of the current message history
-            - reward: Always 0.0 (not used in current implementation)
+            - observation: String representation of the current message
+            - reward: Based on the evaluation result of the simulation run
             - terminated: True if the simulation has ended, False otherwise
             - truncated: Always False (not used in current implementation)
             - info: Dictionary with additional information (currently empty)
