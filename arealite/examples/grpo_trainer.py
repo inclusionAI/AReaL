@@ -109,6 +109,7 @@ def main(args):
         recover_epoch = recover_meta_info.epoch
         recover_global_step = recover_meta_info.global_step + 1
         recover_step = recover_meta_info.epoch_step + 1
+        global_step = recover_meta_info.global_step + 1
         logger.info(
             f"🚀[Trainer] Recover success! global_step: {recover_meta_info.global_step}, epoch: {recover_meta_info.epoch}, step: {recover_meta_info.epoch_step}, "
             f"start new exp: global_step: {recover_global_step}, cur_step: {recover_step}")

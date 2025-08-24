@@ -296,7 +296,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         accumulated_versions = []
 
         # Deal with rollout interruption
-        stop_reason = "length"
+        stop_reason = ""
 
         if req.rid in self.rid_to_address:
             server_addr = self.rid_to_address[req.rid]
@@ -310,7 +310,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             self.rid_queue.append(req.rid)
 
         while (
-            stop_reason != "stop"
+            stop_reason != "stop" and stop_reason != "length"
             and len(accumulated_output_tokens) < gconfig.max_new_tokens
         ):
             # loop until the generation is complete
@@ -339,7 +339,6 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             # Check if generation is complete
             finish_reason = meta_info["finish_reason"]
             stop_reason = finish_reason["type"]
-
             payload["input_ids"] += result["output_ids"].copy()
             sample_params["max_new_tokens"] -= len(output_tokens)
 

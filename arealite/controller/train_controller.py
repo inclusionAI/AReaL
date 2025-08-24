@@ -190,6 +190,7 @@ class DistributedTrainController(TrainController):
         """Update the model with a batch of data and a loss function."""
         logger.info(f"start to train_distributed_batch")
         batches = input_._split_by_seqlen_ffd_helper(self.group_size, self.dp_size)
+        self._calc_metrics(batches)
         futures = []
         results = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
@@ -270,3 +271,8 @@ class DistributedTrainController(TrainController):
         """Run the forward pass or inference on the model. Note that it is gradient-free."""
         raise NotImplementedError()
 
+    def _calc_metrics(self, batch_inputs):
+        # seqlen std
+        seqlens = [td['seqlen'].sum().item() for td in batch_inputs]
+        seqlen_std = torch.tensor(seqlens).float().std().item()
+        stats_tracker.scalar(**{"seqlen_std": seqlen_std})

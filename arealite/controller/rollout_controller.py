@@ -258,13 +258,14 @@ class DistributedRolloutController(RolloutController):
 
         return batchdata
 
-    def _calc_old_logp(self, tensordict):
+    def get_old_logp(self, tensordict):
         prompt_mask = tensordict["prompt_mask"]
         seqlen = tensordict["seqlen"]
-        idx = torch.arange(prompt_mask.size(1)).unsqueeze(0)
-        mask = idx >= seqlen.unsqueeze(1)
-        indices = torch.where(mask.flatten() == False)[0]
-        return tensordict["logprobs"].flatten()[indices]
+        logprobs = tensordict["logprobs"]
+        batch, seq_len = logprobs.shape
+        idx = torch.arange(seq_len).unsqueeze(0).expand(batch, seq_len)
+        valid_mask = (idx < seqlen.unsqueeze(1)) & (prompt_mask == 0)
+        return logprobs[valid_mask]
 
     def rollout(
         self, data: List[Dict[str, Any]], workflow: RolloutWorkflow
@@ -295,13 +296,16 @@ class DistributedRolloutController(RolloutController):
         return result
 
     def _calc_metrics(self, padded):
-        olg_logp = self._calc_old_logp(padded)
+        old_logp = self.get_old_logp(padded)
+        old_p = torch.exp(old_logp)
+        entropy = -torch.sum(old_p * old_logp, dim=-1)
 
         prompt_len = padded["prompt_mask"].sum(1)
         logger.info(f"prompt_len: {prompt_len}")
 
         stats_tracker.scalar(**{"prompt_len": prompt_len.float().mean(),
-                                "sglang_old_logp": olg_logp.mean()})
+                                "sglang_old_logp": old_logp.mean(),
+                                "entropy": entropy.item()})
 
         # total reward
         keys = ["rewards", "seqlen"]

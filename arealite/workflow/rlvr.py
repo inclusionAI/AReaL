@@ -10,7 +10,9 @@ from arealite.api.io_struct import LLMRequest
 from arealite.api.workflow_api import RolloutWorkflow
 from realhf.api.core.data_api import RL_TASKS, load_hf_tokenizer
 from arealite.utils.padding import concat_padded_tensors
+from realhf.base import logging
 
+logger = logging.getLogger("RLVR")
 
 class RLVRWorkflow(RolloutWorkflow):
     def __init__(
@@ -54,6 +56,7 @@ class RLVRWorkflow(RolloutWorkflow):
 
         req = LLMRequest(
             rid=uuid.uuid4().hex,
+            text=text,
             input_ids=prompt_encodings["input_ids"],
             gconfig=new_gconfig,
         )
