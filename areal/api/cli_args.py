@@ -393,6 +393,7 @@ class SGLangConfig:
     def build_cmd(
         sglang_config: "SGLangConfig",
         tp_size,
+        pp_size,
         base_gpu_id,
         host,
         port,
@@ -401,6 +402,7 @@ class SGLangConfig:
         args = SGLangConfig.build_args(
             sglang_config=sglang_config,
             tp_size=tp_size,
+            pp_size=pp_size,
             base_gpu_id=base_gpu_id,
             host=host,
             port=port,
@@ -424,6 +426,7 @@ class SGLangConfig:
     def build_args(
         sglang_config: "SGLangConfig",
         tp_size,
+        pp_size,
         base_gpu_id,
         host,
         port,
@@ -443,6 +446,7 @@ class SGLangConfig:
             is_embedding=False,
             # Other runtime options
             tp_size=tp_size,
+            pp_size=pp_size,
             # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
             base_gpu_id=base_gpu_id,
             nnodes=1,
