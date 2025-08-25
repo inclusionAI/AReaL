@@ -69,8 +69,10 @@ def make_mcore_model(
     if bridge is not None:
         model = bridge.get_model(
             # TODO: Add DDP options when supporting training
-            wrap_with_ddp=False,
+            wrap_with_ddp=mcore_config.wrap_with_ddp,
             ddp_config=dataclasses.asdict(mcore_config.ddp),
+            use_torch_fsdp2=mcore_config.use_torch_fsdp2,
+            use_custom_fsdp=mcore_config.use_custom_fsdp,
             fp16=tf_config.fp16,
             bf16=tf_config.bf16,
             use_precision_aware_optimizer=mcore_config.use_precision_aware_optimizer,

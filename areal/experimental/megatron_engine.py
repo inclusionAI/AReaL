@@ -37,10 +37,11 @@ from areal.experimental.utils.mcore.packed_context_parallel import (
     packed_context_parallel_forward,
 )
 from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
-from areal.utils import logging, name_resolve, names, pkg_version
+from areal.utils import logging, name_resolve, names, pkg_version, stats_tracker
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
+    bcast_mb_list,
     broadcast_tensor,
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
@@ -97,7 +98,10 @@ class MegatronEngine(TrainEngine):
         seed: int = 0,
     ):
         # TODO: add parallel_strategy & seed in engine api when moving out of experimental
-        self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
+        if self.parallel_strategy is None:
+            self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
+        self._parallelism_group = dist.new_group()
+        self._init_context_and_model_parallel_group()
         self.seed = seed
 
         assert addr is None, "FSDPEngine does not support remote initialization."
@@ -106,7 +110,6 @@ class MegatronEngine(TrainEngine):
         self.rank = int(os.environ["RANK"])
         self.world_size = int(os.environ["WORLD_SIZE"])
 
-        self.create_process_group()
         self.tokenizer = load_hf_tokenizer(self.config.path)
         if USE_MBRIDGE:
             self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
@@ -142,33 +145,38 @@ class MegatronEngine(TrainEngine):
             **dataclasses.asdict(parallel_strategy),
         )
 
-    def create_process_group(self):
+    def create_process_group(self, parallel_strategy: ParallelStrategy):
+        assert not dist.is_initialized()
+        # TODO: Change engine_api.py and FSDPEngine API to seperate create_process_group
+        # from engine initialize when moving out of experimental.
+        self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
         # Required by NCCL weight update group for SGLang
         os.environ["NCCL_CUMEM_ENABLE"] = "0"
         os.environ["NCCL_NVLS_ENABLE"] = "0"
-        if not dist.is_initialized():
-            # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
-            # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
-            # otherwise initializing the NCCL weight update group will be wrong!
-            dist.init_process_group(
-                backend="nccl",
-                timeout=NCCL_DEFAULT_TIMEOUT,
-            )
-            # Initialize Megatron parallel states
-            # NOTE: we assume all MegatronEngine has the same parallel strategy.
-            mpu.initialize_model_parallel(
-                tensor_model_parallel_size=self.parallel_strategy.tensor_parallel_size,
-                pipeline_model_parallel_size=self.parallel_strategy.pipeline_parallel_size,
-                virtual_pipeline_model_parallel_size=self.parallel_strategy.virtual_pipeline_parallel_size,
-                use_sharp=False,
-                order="tp-cp-ep-dp-pp",
-                context_parallel_size=self.parallel_strategy.context_parallel_size,
-                expert_model_parallel_size=self.parallel_strategy.expert_parallel_size,
-                expert_tensor_parallel_size=self.parallel_strategy.expert_tensor_parallel_size,
-                distributed_timeout_minutes=int(NCCL_DEFAULT_TIMEOUT.seconds / 60),
-            )
-            self.own_global_group = True
+        # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
+        # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
+        # otherwise initializing the NCCL weight update group will be wrong!
+        dist.init_process_group(
+            backend="nccl",
+            timeout=NCCL_DEFAULT_TIMEOUT,
+        )
+        # Initialize Megatron parallel states
+        # NOTE: we assume all MegatronEngine has the same parallel strategy.
+        mpu.initialize_model_parallel(
+            tensor_model_parallel_size=self.parallel_strategy.tensor_parallel_size,
+            pipeline_model_parallel_size=self.parallel_strategy.pipeline_parallel_size,
+            virtual_pipeline_model_parallel_size=self.parallel_strategy.virtual_pipeline_parallel_size,
+            use_sharp=False,
+            order="tp-cp-ep-dp-pp",
+            context_parallel_size=self.parallel_strategy.context_parallel_size,
+            expert_model_parallel_size=self.parallel_strategy.expert_parallel_size,
+            expert_tensor_parallel_size=self.parallel_strategy.expert_tensor_parallel_size,
+            distributed_timeout_minutes=int(NCCL_DEFAULT_TIMEOUT.seconds / 60),
+        )
+        # Set megatron model parallel seed
+        tensor_parallel.model_parallel_cuda_manual_seed(self.seed)
 
+    def _init_context_and_model_parallel_group(self):
         # Initialize context and model parallel groups, which are only used in AReaL
         # for data distribution
         rank_generator = mpu.RankGenerator(
@@ -191,9 +199,6 @@ class MegatronEngine(TrainEngine):
             )
             if dp_rank == mpu.get_data_parallel_rank():
                 self.context_and_model_parallel_group = group
-        self._parallelism_group = dist.new_group()
-        # Set megatron model parallel seed
-        tensor_parallel.model_parallel_cuda_manual_seed(self.seed)
 
     def create_optimizer(self, ft_spec: FinetuneSpec):
         if self.optimizer_config is None:
@@ -204,12 +209,11 @@ class MegatronEngine(TrainEngine):
             self.optimizer_config.type == "adam"
         ), "Only AdamW optimizer is supported in this engine."
 
-        # Make megatron optimizer config, from legacy MegatronEngine
-        # TODO: add DDP options
-        # TODO: check if there is more options in mcore v0.13.1
+        # Make megatron optimizer config
         mcore_opt_config = MCoreOptimizerConfig(
             optimizer="adam",
             lr=self.optimizer_config.lr,
+            min_lr=self.optimizer_config.min_lr_ratio * self.optimizer_config.lr,
             weight_decay=self.optimizer_config.weight_decay,
             bf16=self.dtype is torch.bfloat16,
             fp16=self.dtype is torch.float16,
@@ -286,10 +290,14 @@ class MegatronEngine(TrainEngine):
         torch.cuda.empty_cache()
         gc.collect()
         dist.destroy_process_group(self.parallelism_group)
-        if self.own_global_group:
-            mpu.destroy_model_parallel()
-            dist.destroy_process_group()
+        dist.destroy_process_group(self.context_and_model_parallel_group)
         self.initialized = False
+
+    def destroy_process_groups(self):
+        # Should be explicitly called after experiments.
+        assert dist.is_initialized()
+        mpu.destroy_model_parallel()
+        dist.destroy_process_group()
 
     def train(self, mode: bool = True):
         self.model.train(mode=mode)
@@ -378,7 +386,6 @@ class MegatronEngine(TrainEngine):
             bridge=self.bridge,
         )
 
-    # TODO: clean code, merge with base_hf_engine.py
     def prepare_mb_list(
         self, input_: TensorDict, forward_only: bool = True
     ) -> MicroBatchList:
@@ -445,6 +452,17 @@ class MegatronEngine(TrainEngine):
         assert self.lr_scheduler is not None, "LR Scheduler is not initialized."
         self.lr_scheduler.step(1)
 
+    def _current_data_parallel_head(self) -> int:
+        """Get the rank of the head of the current data parallel group."""
+        assert self.initialized
+        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
+        return ranks[0]
+
+    def is_data_parallel_head(self) -> bool:
+        assert self.initialized
+        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
+        return ranks[0] == self.rank
+
     def train_batch(
         self,
         input_: TensorDict,
@@ -454,21 +472,96 @@ class MegatronEngine(TrainEngine):
         # TODO: simple training for testing, no parallelism and packing
         assert self.model is not None, "Model is not initialized."
         assert self.optimizer is not None, "Optimizer is not initialized."
-        input_ = amend_position_ids(input_)
         self.model.train()
         self.optimizer.zero_grad()
+        self.model.zero_grad_buffer()
 
-        output = self.model(**input_)
-        loss = loss_fn(output, input_)
-        loss.backward()
+        mb_list = None
+        if self.is_data_parallel_head():
+            mb_list = self.prepare_mb_list(input_, forward_only=False)
+            mb_list = mb_list.to(self.device)
 
-        # Update optimizer
-        update_successful, grad_norm, num_zeros_in_grad = self.optimizer.step()
-        return {
-            "loss": loss.item(),
-            "grad_norm": grad_norm,
-            "update_successful": update_successful,
-        }
+        torch.cuda.synchronize()
+        dist.barrier()
+
+        # broadcast mb_list to context and model parallel group
+        dp_head_rank = self._current_data_parallel_head()
+        mb_list = bcast_mb_list(
+            mb_list, src_rank=dp_head_rank, group=self.context_and_model_parallel_group
+        )
+
+        total_loss_weight = torch.tensor(
+            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs]),
+            dtype=torch.float32,
+        )
+        assert total_loss_weight != 0
+        max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
+        micro_batch_generator = iter(mb_list.padded_mbs)
+        forward_step_count = 0
+
+        def forward_step(batch_iter, model):
+            nonlocal forward_step_count
+            batch = next(batch_iter)
+            padding_length = mb_list.padding_lengths[forward_step_count]
+            orig_input = mb_list.mbs[forward_step_count]
+            cu_seqlens = batch["cu_seqlens"]
+            old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
+
+            forward_step_count += 1
+            output = packed_context_parallel_forward(model, batch)
+
+            if mpu.is_pipeline_last_stage():
+                output = unpad_logits(
+                    output,
+                    padding_length=padding_length,
+                    cu_seqlens=cu_seqlens,
+                    old_cu_seqlens=old_cu_seqlens,
+                )
+
+            def _scaled_loss_fn(input_, output):
+                loss = loss_fn(output, input_)
+                loss_scale = loss_weight_fn(input_) / total_loss_weight
+                # Megatron will average gradients across DP ranks.
+                # If we normalize loss across micro batches of all DP ranks,
+                # we should revert the effect of gradient averaging in megatron
+                # to make sure loss from each token is scaled properly.
+                loss_scale *= mpu.get_data_parallel_world_size()
+                loss_scale *= self.optimizer.get_loss_scale().item()
+                loss *= loss_scale
+                return loss, {}
+
+            r = output, functools.partial(_scaled_loss_fn, orig_input)
+            return r
+
+        forward_backward_func = get_forward_backward_func()
+        forward_backward_func(
+            forward_step_func=forward_step,
+            data_iterator=micro_batch_generator,
+            model=self.model,
+            num_microbatches=len(mb_list.padded_mbs),
+            seq_length=max_total_len,  # no use when input_shapes was set
+            micro_batch_size=1,  # no use when input_shapes was set
+            forward_only=False,
+        )
+        update_successful, grad_norm, _ = self.optimizer.step()
+        current_lr = self.optimizer.param_groups[0]["lr"]
+
+        stats = [None]
+        if mpu.is_pipeline_last_stage():
+            stats = [stats_tracker.export(reduce_group=mpu.get_data_parallel_group())]
+        # broadcast stats to all ranks in context and model parallel group
+        dist.broadcast_object_list(
+            stats,
+            src=mpu.get_pipeline_model_parallel_last_rank(),
+            group=mpu.get_pipeline_model_parallel_group(),
+        )
+        stats = stats[0]
+        return dict(
+            update_successful=float(update_successful),
+            grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
+            lr=current_lr,
+            **stats,
+        )
 
     @torch.no_grad()
     def eval_batch(
@@ -502,24 +595,25 @@ class MegatronEngine(TrainEngine):
         assert self.model is not None, "Model is not initialized."
         mb_list = None
         cu_seqlens = None
-        to_broadcast = [None, None]
 
         if self.is_data_parallel_head():
             cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
             mb_list = self.prepare_mb_list(input_)
-            to_broadcast = [mb_list, cu_seqlens]
+            mb_list = mb_list.to(self.device)
 
         torch.cuda.synchronize()
         dist.barrier()
         # broadcast mb_list to model+context parallel group
-        # TODO: write a function to broadcast structure with nested tensors for
-        # better performance
         dp_head_rank = self._current_data_parallel_head()
-        dist.broadcast_object_list(
-            to_broadcast, src=dp_head_rank, group=self.context_and_model_parallel_group
+        mb_list = bcast_mb_list(
+            mb_list, src_rank=dp_head_rank, group=self.context_and_model_parallel_group
+        )
+        cu_seqlens = broadcast_tensor(
+            cu_seqlens,
+            src_rank=dp_head_rank,
+            group=self.context_and_model_parallel_group,
         )
 
-        mb_list, cu_seqlens = to_broadcast
         # NOTE: Move tensors to correct device, since dist.broadcast_object_list does not
         # ensure the device of tensors in the object list
         cu_seqlens: torch.Tensor = cu_seqlens.to(self.device)
@@ -582,6 +676,5 @@ class MegatronEngine(TrainEngine):
             result,
             src_rank=mpu.get_pipeline_model_parallel_last_rank(),
             group=mpu.get_pipeline_model_parallel_group(),
-            device=self.device,
         )
         return result

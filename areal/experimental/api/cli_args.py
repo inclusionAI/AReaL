@@ -8,7 +8,10 @@ class DistributedDataParallelConfig:
     """
 
     grad_reduce_in_fp32: bool = True
-    overlap_grad_reduce: bool = True
+    # NOTE: Currently overlap_grad_reduce can only be set to False,
+    # otherwise error `Cannot set grad twice` will be raised when doing backward pass.
+    # TODO: modify GPTModel config to support overlap_grad_reduce=True
+    overlap_grad_reduce: bool = False
     overlap_param_gather: bool = False
     align_param_gather: bool = False
     use_distributed_optimizer: bool = True
@@ -25,6 +28,9 @@ class MegatronEngineConfig:
     """
 
     # Distributed Training Configuration
+    wrap_with_ddp: bool = True
+    use_torch_fsdp2: bool = False  # TODO: pending test
+    use_custom_fsdp: bool = False  # TODO: pending test
     ddp: DistributedDataParallelConfig = field(
         default_factory=DistributedDataParallelConfig
     )
@@ -47,3 +53,10 @@ class MegatronEngineConfig:
 @dataclass
 class ExperimentalTrainEngineConfig(TrainEngineConfig):
     megatron: MegatronEngineConfig = field(default_factory=MegatronEngineConfig)
+
+
+@dataclass
+class ExperimentalSFTConfig(BaseExperimentConfig):
+    model: ExperimentalTrainEngineConfig = field(
+        default_factory=ExperimentalTrainEngineConfig
+    )

@@ -811,7 +811,7 @@ def amend_position_ids(data: TensorDict) -> TensorDict:
     return data
 
 
-def broadcast_tensor(tensor, src_rank=0, group=None, device=None):
+def broadcast_tensor(tensor: torch.Tensor | None, src_rank=0, group=None):
     """
     Broadcast a tensor from source rank to all other ranks in the process group.
 
@@ -833,9 +833,14 @@ def broadcast_tensor(tensor, src_rank=0, group=None, device=None):
     if current_rank == src_rank:
         if tensor is None:
             raise ValueError(f"Tensor cannot be None on source rank {src_rank}")
-        assert tensor.device == device
+
+        device = tensor.device
         # Prepare metadata as Python objects
-        metadata = {"shape": list(tensor.shape), "dtype": tensor.dtype}
+        metadata = {
+            "shape": list(tensor.shape),
+            "dtype": tensor.dtype,
+            "device_type": device.type,
+        }
 
         # Broadcast metadata using broadcast_object_list
         metadata_list = [metadata]
@@ -845,16 +850,18 @@ def broadcast_tensor(tensor, src_rank=0, group=None, device=None):
         dist.broadcast(tensor, src=src_rank, group=group)
 
         return tensor
-
     else:
         # On non-source ranks, receive metadata
         metadata_list = [None]
         dist.broadcast_object_list(metadata_list, src=src_rank, group=group)
-
+        
         metadata = metadata_list[0]
         tensor_shape = metadata["shape"]
         dtype = metadata["dtype"]
-
+        device_type = metadata["device_type"]
+        device = (
+            torch.device("cpu") if device_type == "cpu" else torch.cuda.current_device()
+        )
         # Create tensor with the received shape and dtype
         tensor = torch.empty(tensor_shape, dtype=dtype, device=device)
 
@@ -911,3 +918,111 @@ def all_gather_tensor_container(data, group=None) -> List:
     results = [None for _ in range(dist.get_world_size(group))]
     dist.all_gather_object(results, data, group=group)
     return results
+
+
+def broadcast_tensor_container(data, src_rank=0, group=None):
+    if dist.get_rank() != src_rank:
+        metadata = [None]
+        dist.broadcast_object_list(metadata, src=src_rank, group=group)
+        data_type, info = metadata[0]
+        if data_type == "none":
+            return None
+        if data_type == "tensor":
+            return broadcast_tensor(data, src_rank=src_rank, group=group)
+        elif data_type == "list":
+            length = info
+            return [
+                broadcast_tensor_container(None, src_rank=src_rank, group=group)
+                for _ in range(length)
+            ]
+        elif data_type == "dict":
+            keys = info
+            return {
+                k: broadcast_tensor_container(None, src_rank=src_rank, group=group)
+                for k in keys
+            }
+        elif data_type == "object":
+            to_broadcast = [None]
+            dist.broadcast_object_list(to_broadcast, src=src_rank, group=group)
+            return to_broadcast[0]
+        else:
+            raise ValueError(f"Unknown data type: {data_type}")
+    else:
+        if data is None:
+            metadata = [("none", None)]
+            dist.broadcast_object_list(metadata, src=src_rank, group=group)
+            return None
+        elif torch.is_tensor(data):
+            metadata = [("tensor", None)]
+            dist.broadcast_object_list(metadata, src=src_rank, group=group)
+            return broadcast_tensor(data, src_rank=src_rank, group=group)
+        elif isinstance(data, list):
+            metadata = [("list", len(data))]
+            dist.broadcast_object_list(metadata, src=src_rank, group=group)
+            return [
+                broadcast_tensor_container(d, src_rank=src_rank, group=group)
+                for d in data
+            ]
+        elif isinstance(data, (dict, TensorDict)):
+            metadata = [("dict", list(data.keys()))]
+            dist.broadcast_object_list(metadata, src=src_rank, group=group)
+            return {
+                k: broadcast_tensor_container(v, src_rank=src_rank, group=group)
+                for k, v in data.items()
+            }
+        else:
+            metadata = [("object", None)]
+            dist.broadcast_object_list(metadata, src=src_rank, group=group)
+            to_broadcast = [data]
+            dist.broadcast_object_list(to_broadcast, src=src_rank, group=group)
+            return to_broadcast[0]
+
+def bcast_mb_list(
+    mb_list: MicroBatchList | None, src_rank=0, group=None
+) -> MicroBatchList:
+    if dist.get_rank() == src_rank:
+        assert mb_list is not None
+    # bcast tensor container attributes
+    data = broadcast_tensor_container(mb_list.data if mb_list else None, src_rank=src_rank, group=group)
+    mbs = broadcast_tensor_container(mb_list.mbs if mb_list else None, src_rank=src_rank, group=group)
+    padded_mbs = broadcast_tensor_container(
+        mb_list.padded_mbs if mb_list else None, src_rank=src_rank, group=group
+    )
+    old_cu_seqlens_list = broadcast_tensor_container(
+        mb_list.old_cu_seqlens_list if mb_list else None, src_rank=src_rank, group=group
+    )
+    # bcast other attributes
+    to_broadcast = [
+        mb_list.mb_spec,
+        mb_list.forward_indices,
+        mb_list.backward_indices,
+        mb_list.group_lens,
+        mb_list.padding_lengths,
+        mb_list.padded_to_lengths,
+        mb_list.align_to_lengths,
+    ] if mb_list else [
+        None for _ in range(7)
+    ]
+    dist.broadcast_object_list(to_broadcast, src=src_rank, group=group)
+    (
+        mb_spec,
+        forward_indices,
+        backward_indices,
+        group_lens,
+        padding_lengths,
+        padded_to_lengths,
+        align_to_lengths,
+    ) = to_broadcast
+    return MicroBatchList(
+        data=data,
+        mb_spec=mb_spec,
+        mbs=mbs,
+        forward_indices=forward_indices,
+        backward_indices=backward_indices,
+        group_lens=group_lens,
+        padded_mbs=padded_mbs,
+        padding_lengths=padding_lengths,
+        padded_to_lengths=padded_to_lengths,
+        old_cu_seqlens_list=old_cu_seqlens_list,
+        align_to_lengths=align_to_lengths,
+    )
