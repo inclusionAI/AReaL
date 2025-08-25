@@ -4,6 +4,7 @@ import re
 import subprocess
 import sys
 import time
+import copy
 from typing import Dict, List, Optional, Tuple
 
 import areal.utils.logging as logging
@@ -99,7 +100,7 @@ class SlurmLauncher:
         container_image: str,
         srun_additional_args: str = "",
         container_mounts: Optional[str] = None,
-        env_vars: Optional[Dict] = None,
+        env_vars: Optional[Dict | List[Dict]] = None,
         nodelist: Optional[str] = None,
         exclude: Optional[str] = None,
     ):
@@ -169,9 +170,14 @@ class SlurmLauncher:
             # Prepare the command for each job in the array
             job_cmd = cmd[i]
 
+            if isinstance(env_vars, list):
+                _env_vars = env_vars[i]
+            else:
+                _env_vars = env_vars
+
             if self.container_type == "apptainer":
                 env_string = " ".join(
-                    "--env {}={}".format(k, v) for k, v in env_vars.items()
+                    "--env {}={}".format(k, v) for k, v in _env_vars.items()
                 )
                 apptainer_cmd = APPTAINER_CMD_TEMPLATE.format(
                     container_mounts=container_mounts or "",
@@ -191,7 +197,7 @@ class SlurmLauncher:
                 )
             elif self.container_type == "none":
                 env_string = "--export=" + ",".join(
-                    "{}={}".format(k, v) for k, v in env_vars.items()
+                    "{}={}".format(k, v) for k, v in _env_vars.items()
                 )
                 srun_additional_args = srun_additional_args + " " + env_string
                 srun_cmd = SRUN_CMD_TEMPLATE.format(
@@ -432,8 +438,15 @@ def slurm_main(config, run_id: int = 0):
         config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
         n_sglang_servers = allocation_mode.gen_dp_size
         n_sglang_nodes = allocation_mode.gen_world_size // n_gpus_per_node
+        node_group_size = max(1, allocation_mode.gen_instance_size // n_gpus_per_node)
         n_servers_per_node = max(n_sglang_servers // n_sglang_nodes, 1)
 
+        cross_nodes = allocation_mode.gen_instance_size > n_gpus_per_node
+        env_vars = get_env_vars(
+            config.cluster.cluster_name,
+            config.launcher.inference_server_env_vars,
+        )
+        env_vars = [copy.deepcopy(env_vars) for _ in range(n_sglang_nodes)]
         base_seed = config.sglang.random_seed
         sglang_server_cmd_template = f"python3 -m areal.launcher.sglang_server {' '.join(sys.argv[2:])} sglang.random_seed={{seed}}"
         for i in range(n_sglang_nodes):
@@ -441,6 +454,13 @@ def slurm_main(config, run_id: int = 0):
                 seed=base_seed + i * n_servers_per_node
             )
             sglang_cmds.append(sglang_cmd)
+            if cross_nodes:
+                # master_addrs and master_ports are the IP addresses and free ports of the all nodes in the job array, obtained in the SBATCH script.
+                env_vars[i] |= dict(
+                    AREAL_SGLANG_MULTI_NODE_RANK=i % node_group_size,
+                    AREAL_SGLANG_MULTI_NODE_MASTER_ADDR=f"${{master_addrs[{i // node_group_size * node_group_size}]}}",
+                    AREAL_SGLANG_MULTI_NODE_MASTER_PORT=f"${{master_ports[{i // node_group_size * node_group_size}]}}",
+                )
 
         launcher.submit_array(
             job_name="llm_server",
@@ -454,10 +474,7 @@ def slurm_main(config, run_id: int = 0):
             srun_additional_args=config.launcher.slurm.srun_additional_args,
             container_image=config.launcher.slurm.inference_server_image,
             container_mounts=config.launcher.slurm.mount,
-            env_vars=get_env_vars(
-                config.cluster.cluster_name,
-                config.launcher.inference_server_env_vars,
-            ),
+            env_vars=env_vars,
         )
         # Get SGLang server addresses by name resolve
         try:

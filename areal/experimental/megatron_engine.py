@@ -272,15 +272,6 @@ class MegatronEngine(TrainEngine):
             async_save=self.mcore_config.async_save,
         )
 
-        self.checkpointer = MegatronCheckpointManager(
-            model=[self.model],
-            optimizer=self.optimizer,
-            lr_scheduler=self.lr_scheduler,
-            use_distributed_optimizer=self.mcore_config.ddp.use_distributed_optimizer,
-            use_checkpoint_opt_param_scheduler=self.mcore_config.use_checkpoint_opt_param_scheduler,
-            async_save=self.mcore_config.async_save,
-        )
-
     @property
     def parallelism_group(self) -> dist.ProcessGroup:
         assert self.initialized

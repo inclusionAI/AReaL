@@ -29,6 +29,7 @@ def launch_server_cmd(command: str) -> subprocess.Popen:
     """
     # Replace newline continuations and split the command string.
     command = command.replace("\\\n", " ").replace("\\", " ")
+    logger.info(f"Launch command: {command}")
     parts = command.split()
     _env = os.environ.copy()
     # To avoid DirectoryNotEmpty error caused by triton
@@ -86,17 +87,29 @@ class SGLangServerWrapper:
 
     def run(self):
         gpus_per_server = self.allocation_mode.gen_instance_size
+        cross_nodes = False
         if gpus_per_server > self.n_gpus_per_node:
-            raise NotImplementedError("Cross-node SGLang is not supported")
+            assert (
+                gpus_per_server % self.n_gpus_per_node == 0
+            ), "Cross-nodes SGLang only supports utilizing all gpus in one node"
+            cross_nodes = True
+            node_rank = int(os.environ["AREAL_SGLANG_MULTI_NODE_RANK"])
+            master_addr = os.environ["AREAL_SGLANG_MULTI_NODE_MASTER_ADDR"]
+            master_port = int(os.environ["AREAL_SGLANG_MULTI_NODE_MASTER_PORT"])
+        else:
+            node_rank = 0
+            master_addr = None
+            master_port = None
 
         n_servers_per_node = max(1, self.n_gpus_per_node // gpus_per_server)
+        n_nodes_per_server = max(1, gpus_per_server // self.n_gpus_per_node)
+
         if "CUDA_VISIBLE_DEVICES" in os.environ:
             visible = os.getenv("CUDA_VISIBLE_DEVICES").split(",")
             n_visible_devices = len(visible)
             n_servers_per_proc = max(1, n_visible_devices // gpus_per_server)
             server_idx_offset = int(visible[0]) // gpus_per_server
         else:
-            n_visible_devices = self.n_gpus_per_node
             n_servers_per_proc = n_servers_per_node
             server_idx_offset = 0
 
@@ -114,7 +127,13 @@ class SGLangServerWrapper:
             )
             server_port, dist_init_port = find_free_ports(2, port_range)
 
-            dist_init_addr = f"localhost:{dist_init_port}"
+            if cross_nodes:
+                n_nodes = n_nodes_per_server
+                dist_init_addr = f"{master_addr}:{master_port}"
+            else:
+                n_nodes = 1
+                dist_init_addr = f"localhost:{dist_init_port}"
+
             host_ip = gethostip()
 
             base_gpu_id = (server_local_idx - server_idx_offset) * gpus_per_server
@@ -125,8 +144,10 @@ class SGLangServerWrapper:
                 host=host_ip,
                 port=server_port,
                 dist_init_addr=dist_init_addr,
+                n_nodes=n_nodes,
+                node_rank=node_rank,
             )
-            launch_server_args.append((cmd, host_ip, server_port))
+            launch_server_args.append((cmd, host_ip, server_port, node_rank))
             server_addresses.append(f"http://{host_ip}:{server_port}")
 
         with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
@@ -156,11 +177,12 @@ class SGLangServerWrapper:
 
             time.sleep(1)
 
-    def launch_one_server(self, cmd, host_ip, server_port):
+    def launch_one_server(self, cmd, host_ip, server_port, node_rank):
         server_process = launch_server_cmd(cmd)
         wait_for_server(f"http://{host_ip}:{server_port}")
-        name = names.gen_servers(self.experiment_name, self.trial_name)
-        name_resolve.add_subentry(name, f"{host_ip}:{server_port}")
+        if node_rank == 0:
+            name = names.gen_servers(self.experiment_name, self.trial_name)
+            name_resolve.add_subentry(name, f"{host_ip}:{server_port}")
         logger.info(f"SGLang server launched at: http://{host_ip}:{server_port}")
         return server_process
 
