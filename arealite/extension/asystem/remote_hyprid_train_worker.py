@@ -1,4 +1,5 @@
 import gzip
+import os
 from typing import Any
 
 import requests
@@ -25,6 +26,7 @@ from realhf.api.core.data_api import (
     RL_TASKS,
     MicroBatchSpec,
     SequenceSample,
+    SequenceSplitSpec,
 )
 from realhf.base import logging, stats_tracker
 from realhf.base.datapack import flat2d
@@ -79,8 +81,9 @@ class RemoteHypridTrainWorker(TrainEngine):
                 self.rms = MovingAverageRunningMeanStd()
             else:
                 raise ValueError(f"Unknown value_norm_type {self.config.wrap_policy.value_norm_type}")
-        self.kl_ctl = None
+
         self.enable_colocate_mode = None
+        self.kl_ctl = self.config.wrap_policy.kl_ctl
 
     def initialize(self, cfg: RemoteMegatronInitConfig):
         global_rank = cfg.global_rank
@@ -248,7 +251,7 @@ class RemoteHypridTrainWorker(TrainEngine):
         input_: DistributedBatchMemory,
         loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor] = lambda x, y: x.sum(),
         loss_weight_fn: Callable[[Dict], float] = lambda x: 1.0,
-    ) -> Dict[str, float]:
+    ) -> List[Dict[str, float]]:
         # 0.接受rollout和reward之后的数据
         # - input_ids, prompt_mask, logprobs, versions, seqlen, rewards, task_ids, seq_no_eos_mask
         if not input_ or len(input_.dataset) == 0:
@@ -278,32 +281,68 @@ class RemoteHypridTrainWorker(TrainEngine):
         if "prompt_mask" in batch_data and "seqlen" in batch_data:
             batch_data["prompt_mask"] = pack_prompt_mask(batch_data["prompt_mask"], batch_data["seqlen"])
 
-        # print(f"train_distributed_batch, batch_data: {batch_data}")
+        if "ref_logprobs" in batch_data and "seqlen" in batch_data:
+            batch_data["packed_ref_logprobs"] = pack_ref_logprobs(batch_data["ref_logprobs"], batch_data["seqlen"])
+
         # 3.获取{advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards, global_stats}
         train_datas = self.process_training_data(batch_data)
         batch = {"advantages": train_datas["advantages"],
                  "old_logp": train_datas["old_logp"],
+                 "rollout_logp": train_datas["rollout_logp"],
                  "ppo_loss_mask": train_datas["ppo_loss_mask"],
                  "packed_input_ids": train_datas["packed_input_ids"],
-                 "kl_rewards": train_datas["kl_rewards"],
-                 "seqlen": batch_data["seqlen"]}
+                 "kl_rewards": train_datas["kl_rewards"]} # batch_data["seqlen"]
+        
+        if "ref_logprobs" in train_datas:
+            batch["ref_logprobs"] = train_datas["ref_logprobs"]
 
-        train_stats = self.train_batch(batch, loss_fn, loss_weight_fn)
-        indices = torch.where(train_datas["ppo_loss_mask"]==1)[0]
-        adv = train_datas["advantages"]
-        train_stats["advantages"] = adv[indices].mean()
-        total_seqlen = batch["seqlen"].sum()
-        train_stats[f"rank{self.global_rank}_total_seqlen"] = total_seqlen
+        batch_size = int(input_["seqlen"].shape[0])
+        flat_input = SequenceSample.from_default(
+            ids=list(range(batch_size)),
+            data=batch,
+            seqlens=[int(x) for x in input_["seqlen"].cpu().numpy().tolist()],
+        )
 
+        flat_input = SequenceSample.shuffled(flat_input)
+        bs = flat_input.bs
+        n_minibatches = self.config.wrap_policy.n_minibatches
+        sizes = [0 for _ in range(n_minibatches)]
+        for idx in range(bs):
+            sizes[idx % n_minibatches] += 1
+        spec = SequenceSplitSpec(sizes=sizes)
+        datas = flat_input.split_with_spec(spec)
+        all_stats = []
+        
+        scalar_metrics = {}
+        if "global_stats" in train_datas:
+            for key, value in train_datas["global_stats"].items():
+                if isinstance(value, (int, float)):
+                    scalar_metrics[key] = value
+        
+        for mb_i, data in enumerate(datas):
+            train_stats = self.train_batch_sequencesample(data, loss_fn, loss_weight_fn)
 
-        loss = train_stats.get("loss")
-        if loss is not None:
-            train_stats[f"rank{self.global_rank}_loss"] = loss
+            indices = torch.where(train_datas["ppo_loss_mask"] == 1)[0]
+            adv = train_datas["advantages"]
+            train_stats["advantages"] = adv[indices].mean()
+            total_seqlen = input_["seqlen"].sum()
+            train_stats[f"rank{self.global_rank}_total_seqlen"] = total_seqlen
 
-        logger.info(f"[RemoteHypridTrainWorker] Train batch exec success, global_step: {self.global_step}.")
+            loss = train_stats.get("loss")
+            if loss is not None:
+                train_stats[f"rank{self.global_rank}_loss"] = loss
+            
+            for key, value in scalar_metrics.items():
+                if key not in train_stats:
+                    train_stats[key] = value
+                else:
+                    logger.warning(f"[RemoteHypridTrainWorker] Duplicate metric key '{key}' found. Keeping existing value: {train_stats[key]}, ignoring global_stats value: {value}")
+            
+            all_stats.append(train_stats)
 
+        logger.info(f"[RemoteHypridTrainWorker] Train {n_minibatches} minibatches exec success, global_step: {self.global_step}.")
         self.global_step += 1
-        return train_stats
+        return all_stats
 
     def notify_event(self, event: str, global_step: int) -> None:
         """Handle training start/end events by sending HTTP notification.
@@ -340,6 +379,44 @@ class RemoteHypridTrainWorker(TrainEngine):
             raise ValueError(f"Error sending notify training event: {e}")
         
         return None
+
+    def train_batch_sequencesample(
+        self,
+        input_: SequenceSample,  # key: str, value: tensor
+        loss_fn: Callable[[torch.Tensor, Dict], torch.Tensor],
+        loss_weight_fn: Callable[[Dict], float],
+    ) -> Dict[str, float]:
+        mb_spec = MicroBatchSpec(n_mbs=self.config.n_mbs,
+                                 max_tokens_per_mb=self.config.max_tokens_per_mb)
+        try:
+            target_url = f"http://{self.megatron_addr}/train_batch"
+            headers = {"Content-Type": "application/octet-stream"}
+            payload = {
+                "sequence_sample": input_,
+                "micro_batch_spec": mb_spec,
+                "global_step": self.global_step,
+            }
+            data = serialize_and_compress(payload)
+            logger.info("[RemoteHypridTrainWorker] send train_batch request to megatron worker....")
+            response = requests.post(
+                target_url, data=data, headers=headers, timeout=7200
+            )
+            if response.status_code == 200:
+                logger.info(
+                    f"[RemoteHypridTrainWorker] Train batch exec success, response status code: {response.status_code}, response: {response.json()}"
+                )
+            else:
+                raise ValueError(
+                    f"[RemoteHypridTrainWorker] Failed to exec train_batch. Status code: {response.status_code}, Response: {response.text}"
+                )
+        except requests.exceptions.Timeout:
+            raise ValueError("[RemoteHypridTrainWorker] Train request timeout!")
+        except requests.exceptions.RequestException as e:
+            raise ValueError(
+                "[RemoteHypridTrainWorker] Send train request, an error occurred:", e
+            )
+
+        return response.json()['result']
 
     def train_batch(
         self,
@@ -454,17 +531,23 @@ class RemoteHypridTrainWorker(TrainEngine):
                 input_["packed_input_ids"], dtype=torch.float32
             )
         seq_no_eos_mask = input_["seq_no_eos_mask"]
-        # if self.kl_adapter.value == 0:
-        #     ref_logp: torch.FloatTensor = reward_score.new_zeros(
-        #         int(input_lens.sum()) - len(input_lens)
-        #     )
-        # else:
-        #     ref_logp: torch.FloatTensor = input_["packed_ref_logprobs"].float()
-        # TODO: fix me
-        ref_logp: torch.FloatTensor = reward_score.new_zeros(
-            int(input_lens.sum()) - len(input_lens)
-        )
+        if self.kl_adapter.value == 0:
+            ref_logp: torch.FloatTensor = reward_score.new_zeros(
+                int(input_lens.sum()) - len(input_lens)
+            )
+        else:
+            ref_logp: torch.FloatTensor = input_["packed_ref_logprobs"].float()
+
         old_logp: torch.FloatTensor = input_["packed_logprobs"].float()
+        rollout_logp: torch.FloatTensor = input_["packed_logprobs"].float()
+        if self.config.wrap_policy.recompute_logp:
+            logger.info("[RemoteHypridTrainWorker] enable recompute_logrobs")
+            compute_logp_input = {"packed_input_ids": input_["packed_input_ids"],
+                                  "seqlen": input_["seqlen"],
+                                  "packed_logprobs": input_["packed_logprobs"]}
+            logprobs = self.compute_logprobs(compute_logp_input)
+            packed_logp = pack_ref_logprobs(logprobs, input_["seqlen"])
+            old_logp = packed_logp.float()
 
         if not self.config.wrap_policy.disable_value:
             if self.config.wrap_policy.value_norm:
@@ -507,6 +590,7 @@ class RemoteHypridTrainWorker(TrainEngine):
         # Apply the mask to log probabilities.
         ref_logp *= loss_mask
         old_logp *= loss_mask
+        rollout_logp *= loss_mask
 
         new_reward_score = reward_score
 
@@ -523,9 +607,18 @@ class RemoteHypridTrainWorker(TrainEngine):
             logger.info(f"[RemoteHypridTrainWorker] process_training_data new_reward_score: {new_reward_score}")
 
         # Compute rewards and GAEs.
+        use_kl_in_loss = self.config.loss_configs.get('use_kl_in_loss', False)
+        kl_ctl_value = 0.0 if use_kl_in_loss else self.kl_adapter.value
+        logger.info(
+            # f"[RemoteHypridTrainWorker] process_training_data final_token_rewards: {rewards}\n"
+            # f"kl_reward: {kl_rewards}\n"
+            f"loss_config: {self.config.loss_configs}\n"
+            f"kl: {kl_ctl_value=}\n"
+            f"use_kl_in_loss: {use_kl_in_loss=}"
+        )
         if self.config.wrap_policy.use_dense_reward:
             kl_rewards, rewards = ppo_functional.get_packed_reward_dense(
-                kl_ctl=self.kl_adapter.value,
+                kl_ctl=kl_ctl_value,
                 clip_reward_value=self.config.wrap_policy.max_reward_clip,
                 log_probs=old_logp,
                 ref_log_probs=ref_logp,
@@ -536,7 +629,7 @@ class RemoteHypridTrainWorker(TrainEngine):
             )
         else:
             kl_rewards, rewards = ppo_functional.get_packed_rewards(
-                kl_ctl=self.kl_adapter.value,
+                kl_ctl=kl_ctl_value,
                 clip_reward_value=self.config.wrap_policy.max_reward_clip,
                 log_probs=old_logp,
                 ref_log_probs=ref_logp,
@@ -680,21 +773,168 @@ class RemoteHypridTrainWorker(TrainEngine):
             # for k in global_denominators:
             #     global_stats.pop(f"ppo_actor/{k}")
 
-        return dict(
+        result = dict(
             advantages=advantages,
             old_logp=old_logp,
+            rollout_logp=rollout_logp,
             ppo_loss_mask=loss_mask,
             packed_input_ids=input_["packed_input_ids"],
             kl_rewards=kl_rewards,
             global_stats=global_stats,
         )
+        
+        if use_kl_in_loss and "packed_ref_logprobs" in input_.keys():
+            result["ref_logprobs"] = ref_logp
+            
+        return result
 
+    def notify_event(self, event: str, global_step: int) -> None:
+        """Handle training start/end events by sending HTTP notification.
+
+        Args:
+            event: "train_start" or "train_end"
+            global_step: Current global step
+        """
+        if event not in ["train_start", "train_end"]:
+            raise ValueError(f"Invalid event type: {event}")
+
+        logger.info(f"[RemoteHypridTrainWorker] Sending training {event} notification at global_step: {global_step}")
+
+        try:
+            target_url = f"http://{self.megatron_addr}/events"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "event": event,
+                "global_step": global_step
+            }
+            response = requests.post(
+                target_url,
+                data=json.dumps(payload),
+                headers=headers,
+                timeout=60
+            )
+            if response.status_code != 200:
+                raise ValueError(
+                    f"Failed to send training event. Status code: {response.status_code}, "
+                    f"Response: {response.text}"
+                )
+        except Exception as e:
+            raise ValueError(f"Error sending notify training event: {e}")
+
+        return None
+
+    def compute_logprobs_with_distributed(
+        self,
+        input_: DistributedBatchMemory,
+    ) -> torch.Tensor | None:
+        if not input_ or len(input_.dataset) == 0:
+            raise ValueError("input_.dataset is empty")
+        first_item = input_[0]
+        attrs = list(first_item.keys())
+
+        batch_data = {}
+        for attr in attrs:
+            batch_data[attr] = input_[attr]
+        torch.set_printoptions(threshold=float('inf'))
+
+        if "input_ids" in batch_data and "seqlen" in batch_data:
+            batch_data["packed_input_ids"] = pack_input_ids(batch_data["input_ids"], batch_data["seqlen"])
+
+        # logprobs => packed_logprobs
+        if "logprobs" in batch_data and "seqlen" in batch_data:
+            batch_data["packed_logprobs"] = pack_logprobs(batch_data["logprobs"], batch_data["seqlen"])
+
+        batch = {
+            "packed_input_ids": batch_data["packed_input_ids"],
+            "seqlen": batch_data["seqlen"],
+            "packed_logprobs": batch_data["packed_logprobs"]}
+        logger.info(f"[RemoteHypridTrainWorker] compute_logprobs_with_distributed input packed_input_ids data: {batch_data["packed_input_ids"].shape}")
+        logprobs = self.compute_logprobs(batch)
+        if logprobs is None:
+            raise ValueError(
+                f"[RemoteHypridTrainWorker] Failed to exec compute_logprobs"
+            )
+        logger.info(f"[RemoteHypridTrainWorker] compute_logprobs_with_distributed success, logprobs shape: {logprobs.shape}")
+        return logprobs
+
+    def compute_logprobs(
+        self,
+        input_: Dict,  # key: str, value: tensor
+    ) -> torch.Tensor | None:
+        logger.info("[RemoteHypridTrainWorker] begin exec compute_logprobs...")
+        seqlen_tensor = input_["seqlen"]
+
+        batch_size = int(seqlen_tensor.shape[0])
+        group_size = int(seqlen_tensor.shape[1])
+        flat_input = SequenceSample.from_default(
+            ids=list(range(batch_size*group_size)),
+            data={k: v for k, v in input_.items() if k != "seqlen"},
+            seqlens=[int(x) for x in input_["seqlen"].cpu().numpy().tolist()],
+        )
+
+        mb_spec = MicroBatchSpec(n_mbs=self.config.n_mbs,
+                                 max_tokens_per_mb=self.config.max_tokens_per_mb)
+        try:
+            target_url = f"http://{self.megatron_addr}/compute_logprobs"
+            headers = {"Content-Type": "application/octet-stream"}
+            payload = {
+                "sequence_sample": flat_input,
+                "micro_batch_spec": mb_spec,
+            }
+            data = serialize_and_compress(payload)
+            logger.info("[RemoteHypridTrainWorker] send compute_logprobs request to megatron worker....")
+            response = requests.post(
+                target_url, data=data, headers=headers, timeout=7200
+            )
+            if response.status_code == 200:
+                sequence_sample_logp = cloudpickle.loads(response.content)
+                for k, v in sequence_sample_logp.data.items():
+                    sequence_sample_logp.data[k] = v.to("cpu").clone()
+                logger.info(
+                    f"[RemoteHypridTrainWorker] compute_logprobs exec success, response status code: {response.status_code}"
+                )
+
+                logprobs = sequence_sample_logp.data["logprobs"] #[0.11,0.33,0.44]
+                seqlens = sequence_sample_logp.seqlens["logprobs"] #[2, 1]
+
+                assert input_["packed_logprobs"].shape == logprobs.shape
+
+                # 将tensor列表转换为(batchsize, max_len)的2D tensor
+                batch_result = []
+                offset = 0
+                max_len = max([seqlen for batch in seqlens for seqlen in batch])
+                
+                for batch_seqlens in seqlens:
+                    for seqlen in batch_seqlens:
+                        seq_logprobs = logprobs[offset:offset + seqlen]
+                        padded = torch.nn.functional.pad(
+                            seq_logprobs, 
+                            (0, max_len - seqlen),
+                            value=0.0
+                        )
+                        batch_result.append(padded)
+                        offset += seqlen
+
+                stack_res = torch.stack(batch_result)
+                return stack_res
+            else:
+                raise ValueError(
+                    f"[RemoteHypridTrainWorker] Failed to exec compute_logprobs. Status code: {response.status_code}, "
+                    f"Response: {response.text}"
+                )
+        except requests.exceptions.Timeout:
+            raise ValueError("[RemoteHybridTrainWorker] compute_logprobs request timeout!")
+        except requests.exceptions.RequestException as e:
+            raise ValueError(
+                "[RemoteHybridTrainWorker] Send compute_logprobs request, an error occurred:", e
+            )
+
+        return None
 
 def serialize_and_compress(data):
     serialized_data = cloudpickle.dumps(data)
     compressed_data = gzip.compress(serialized_data)
     return compressed_data
-
 
 def pack_input_ids(input_ids: torch.Tensor, seqlen: torch.Tensor) -> torch.Tensor:
     """
@@ -729,6 +969,12 @@ def pack_logprobs(logprobs: torch.Tensor, seqlen: torch.Tensor) -> torch.Tensor:
         packed.append(logprobs[i, 1:seqlen[i].item()])
     return torch.cat(packed, dim=0)
 
+def pack_ref_logprobs(logprobs: torch.Tensor, seqlen: torch.Tensor) -> torch.Tensor:
+    packed = []
+    for i in range(logprobs.shape[0]):
+        ref_len = seqlen[i].item() - 1
+        packed.append(logprobs[i, :ref_len])
+    return torch.cat(packed, dim=0)
 
 def pack_prompt_mask(prompt_mask: torch.Tensor, seqlen: torch.Tensor) -> torch.Tensor:
     packed = []

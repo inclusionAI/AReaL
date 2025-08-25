@@ -53,8 +53,8 @@ class DistributedTrainController(TrainController):
         scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
         logger.info(f"scheduling config: {scheduling_config}")
 
-        arealite_path = os.environ["REAL_PACKAGE_PATH"]
-        engine_path = os.environ.get("ENGINE_PATH","")
+        arealite_path = os.getenv("REAL_PACKAGE_PATH", "")
+        engine_path = os.getenv("ENGINE_PATH", "")
         workerSpec = ContainerSpec(
             cpu=0,
             mem=0,
@@ -216,43 +216,59 @@ class DistributedTrainController(TrainController):
             stats_tracker.record_timing("distributed_train_step"),
             stats_tracker.scope("grpo_actor"),
         ):
-            for train_stat in results:
-                stats_tracker.scalar(**train_stat)
+            # 处理多个minibatch返回的结果
+            for worker_result in results:
+                if len(worker_result) > 1:  # 处理多个minibatch的情况
+                    for minibatch in worker_result:
+                        stats_tracker.scalar(**minibatch)
+                else:  # 保持对单个结果的兼容
+                    stats_tracker.scalar(**worker_result[0])
 
         return results
 
-    # @torch.no_grad
-    # def compute_logprobs_with_distributed(self, input_: DistributedBatchMemory) -> Tensor:
-    #     """Update the model with a batch of data and a loss function."""
-    #     logger.info(f"start to compute_logprobs_with_distributed")
-    #     batches = input_.split(self.dp_size)
-    #     dp_world_size = self.tp_size * self.pp_size
-    #     assert len(self.workers) % dp_world_size == 0
-    #     futures = []
-    #     results = []
-    #     with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
-    #         for index, worker in enumerate(self.workers):
-    #             batch_index = index // dp_world_size
-    #             batch_data = batches[batch_index]
-    #             futures.append(executor.submit(
-    #                 self.scheduler.call_engine,
-    #                 worker.id,
-    #                 "compute_logprobs_with_distributed",
-    #                 batch_data
-    #             ))
-    #         try:
-    #             for future in as_completed(futures):
-    #                 result = future.result()
-    #                 results.append(result)
-    #         except KeyboardInterrupt:
-    #             for f in futures:
-    #                 f.cancel()
-    #             raise
-    #
-    #     # cat tensor from dp head
-    #     tensors_from_dp_heads = results[::dp_world_size]
-    #     concatenated_result = torch.cat(tensors_from_dp_heads, dim=0)
-    #     return concatenated_result
+    def compute_logprobs_with_distributed(self, input_: DistributedBatchMemory) -> Tensor:
+        """Update the model with a batch of data and a loss function."""
+        logger.info(f"start to compute_logprobs_with_distributed")
+        batches = input_.split(self.dp_size)
+        futures = []
+        results = []
+        with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
+            for index, worker in enumerate(self.workers):
+                batch_index = index % self.dp_size
+                batch_data = batches[batch_index]
+                futures.append(executor.submit(
+                    self.scheduler.call_engine,
+                    worker.id,
+                    "compute_logprobs_with_distributed",
+                    batch_data
+                ))
+            try:
+                for future in futures:
+                    results.append(future.result())
+            except KeyboardInterrupt:
+                for f in futures:
+                    f.cancel()
+                raise
+
+        # cat tensor from dp head with padding
+        tensors_from_dp_heads = results[:self.dp_size]
+        if not tensors_from_dp_heads:
+            return torch.tensor([])
+            
+        # Find max length in dim 1
+        max_len = max(t.shape[1] for t in tensors_from_dp_heads)
+        max_len_all = max(t.shape[1] for t in results)
+        assert max_len_all == max_len
+        # Pad all tensors to max length
+        padded_tensors = []
+        for t in tensors_from_dp_heads:
+            pad_size = max_len - t.shape[1]
+            padded = torch.nn.functional.pad(t, (0, pad_size), value=0.0)
+            padded_tensors.append(padded)
+            
+        # Concatenate along batch dimension
+        concatenated_result = torch.cat(padded_tensors, dim=0)
+        return concatenated_result
 
     @torch.no_grad()
     def eval_batch(

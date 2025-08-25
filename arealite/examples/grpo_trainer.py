@@ -12,6 +12,7 @@ from arealite.api.cli_args import SaverConfig, \
 from arealite.api.io_struct import FinetuneSpec, AllocationMode
 from arealite.controller.rollout_controller import DistributedRolloutController
 from arealite.controller.train_controller import DistributedTrainController
+from arealite.controller.reference_controller import DistributedReferenceController
 from arealite.extension.asystem.remote_hybrid_inference_worker import RemoteHybridInferenceWorker
 from arealite.extension.asystem.remote_hyprid_train_worker import RemoteHypridTrainWorker
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
@@ -26,7 +27,7 @@ from arealite.dataset.utils import ShuffleSampler
 
 from realhf.base import logging, stats_tracker
 from arealite.api.cli_args import GRPOConfig, load_expr_config
-from arealite.utils.util import clear_dir
+from arealite.utils.util import clear_dir, custom_collate_fn
 
 logger = logging.getLogger("Trainer")
 
@@ -92,7 +93,9 @@ def main(args):
     train_dataset = dataset['train']
     train_dataset = train_dataset.filter(
         lambda x: len(tokenizer.encode(x["prompt"])) <= config.train_dataset.max_prompt_len)
-    dataloader = StatefulDataLoader(train_dataset, batch_size=1, sampler=ShuffleSampler(train_dataset), collate_fn=custom_collate_fn)
+    dataloader = StatefulDataLoader(
+        train_dataset, batch_size=1, sampler=ShuffleSampler(train_dataset), collate_fn=custom_collate_fn)
+
 
     ############################## recover #########################################
     recover_meta_info_path = config.recover.recover_meta_info_path
@@ -142,30 +145,20 @@ def main(args):
                     train_batch_size=config.train_bs_n_seqs))
     stats_logger.info(f"[Trainer] total_epochs={epoch_num} step_per_epoch={step_num}")
 
-    storage_path = f"{config.rollout.storage_path}/{config.experiment_name}/{config.trial_name}"
+    inference_config = config.rollout
+    inference_config.dp_size = allocate_mode.gen_dp_size # TODO: use allocate_mode
+    inference_config.tp_size = allocate_mode.gen_tp_size
+    inference_config.pp_size = allocate_mode.gen_pp_size
+    inference_config.storage_path = f"{config.rollout.storage_path}/{config.experiment_name}/{config.trial_name}"
+    inference_config.seed = config.seed
     rollout = DistributedRolloutController(
-        RemoteHybridInferenceWorker(
-            RemoteHybridInferenceConfig(experiment_name=config.experiment_name, trial_name=config.trial_name,
-                                        model_path=config.rollout.model_path,
-                                        storage_path=storage_path,
-                                        dp_size=allocate_mode.gen_dp_size, tp_size=allocate_mode.gen_tp_size,
-                                        pp_size=allocate_mode.gen_pp_size, seed=config.seed,
-                                        engine_config=config.rollout.engine_config)),
+        RemoteHybridInferenceWorker(inference_config),
         RolloutControllerConfig(experiment_name=config.experiment_name, trial_name=config.trial_name,
                                 allocation_mode=config.allocation_mode),
         scheduler,
     )
     actor = DistributedTrainController(
-        RemoteHypridTrainWorker(
-            RemoteMegatronEngineConfig(
-                experiment_name=config.experiment_name,
-                trial_name=config.trial_name,
-                loss_configs=config.actor.hybrid_engine.loss_configs,
-                remote_megatron_config=config.actor.hybrid_engine.remote_megatron_config,
-                wrap_policy=config.actor.hybrid_engine.wrap_policy,
-                max_tokens_per_mb=config.actor.hybrid_engine.max_tokens_per_mb,
-                group_size=config.actor.hybrid_engine.group_size)
-        ),
+        RemoteHypridTrainWorker(config.actor.hybrid_engine),
         TrainControllerConfig(experiment_name=config.experiment_name,
                               trial_name=config.trial_name,
                               allocation_mode=config.allocation_mode),
@@ -176,6 +169,16 @@ def main(args):
     # engine initialize
     rollout.initialize()
     actor.initialize(colocation_with=rollout if deploy_mode == "colocation" else None)
+    ref = None
+    if config.actor.hybrid_engine.wrap_policy.kl_ctl> 0:
+        ref = DistributedReferenceController(
+            RemoteHypridTrainWorker(config.ref.hybrid_engine),
+            TrainControllerConfig(experiment_name=config.experiment_name, trial_name=config.trial_name,
+                                  allocation_mode=config.allocation_mode),
+            scheduler,
+            group_size=config.actor.hybrid_engine.group_size
+        )
+        ref.initialize()
 
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
@@ -269,6 +272,22 @@ def main(args):
                             logger.info(f"start to notify_rollout_end_event, step: {step}, epoch: {epoch}")
                             rollout.notify_event("rollout_end", global_step)
                             logger.info(f"notify_rollout_end_event succeeded, step: {step}, epoch: {epoch}")
+
+                if config.actor.hybrid_engine.wrap_policy.kl_ctl > 0:
+                    with(
+                        stats_tracker.record_timing("reference_step"),
+                        stats_tracker.scope("reference")
+                    ):
+                        logger.info(f"start to compute_logprobs_with_distributed, step: {step}, epoch: {epoch}")
+                        logp = ref.compute_logprobs_with_distributed(dis_batch)
+                        logp.to("cpu")
+                        rollout_res_dict["ref_logprobs"] = logp
+                        dis_batch = DistributedBatchMemory(rollout_res_dict)
+                        logger.info(f"compute_logprobs_with_distributed succeeded, step: {step}, epoch: {epoch}, "
+                                    f"ref logp shape: {logp.shape}, old_logp shape: {rollout_res_dict["logprobs"].shape}, "
+                                    f"input_ids shape: {rollout_res_dict["input_ids"].shape}")
+
+                        print(f"rollout_res_dict keys: {rollout_res_dict.keys()}")
 
                 with (
                     stats_tracker.record_timing("train_step"),

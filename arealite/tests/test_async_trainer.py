@@ -138,7 +138,6 @@ def main_grpo():
             for k, v in rollout_res_dict.items():
                 if isinstance(v, torch.Tensor) and v.ndim > 1 and v.shape[0] == 1:
                     rollout_res_dict[k] = v.squeeze(0)
-                    print(f"[Trainer] dzq_debug rollout squeeze: key: {k}, shape: {rollout_res_dict[k].shape}")
             dis_batch = DistributedBatchMemory(rollout_res_dict)
             stats = actor.train_distributed_batch(dis_batch)
             print(f"[Trainer] train exec success, step: {step}, epoch: {epoch}, stats: {stats}")

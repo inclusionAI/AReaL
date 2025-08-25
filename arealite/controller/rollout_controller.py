@@ -110,8 +110,8 @@ class DistributedRolloutController(RolloutController):
         target = kwargs.get("colocation_with")
         scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
 
-        arealite_path = os.environ["REAL_PACKAGE_PATH"]
-        engine_path = os.environ.get("ENGINE_PATH","")
+        arealite_path = os.getenv("REAL_PACKAGE_PATH", "")
+        engine_path = os.getenv("ENGINE_PATH", "")
         workerSpec = ContainerSpec(
             cpu=0,
             mem=0,

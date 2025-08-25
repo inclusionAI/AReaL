@@ -13,6 +13,7 @@ from arealite.api.cli_args import SaverConfig, \
     RolloutControllerConfig, TrainControllerConfig, RemoteMegatronEngineConfig, StatsLoggerConfig, WandBConfig, \
     RemoteHybridInferenceConfig
 from arealite.api.io_struct import FinetuneSpec, AllocationMode
+from arealite.controller.reference_controller import DistributedReferenceController
 from arealite.controller.rollout_controller import DistributedRolloutController
 from arealite.controller.train_controller import DistributedTrainController
 from arealite.extension.asystem.remote_hybrid_inference_worker import RemoteHybridInferenceWorker
@@ -29,6 +30,14 @@ from arealite.utils.recover import Recover
 from arealite.dataset.utils import ShuffleSampler
 
 from realhf.base import logging, stats_tracker
+
+
+def custom_collate_fn(batch):
+    all_keys = set().union(*(d.keys() for d in batch))
+    collated_batch = {}
+    for key in all_keys:
+        collated_batch[key] = [d.get(key) for d in batch]
+    return collated_batch
 
 
 def clear_dir(path):
@@ -48,6 +57,7 @@ enable_colocate_mode = True
 
 if weight_update_type == "nccl":
     from arealite.extension.asystem.meta_server import start_meta_server
+
     host, port = start_meta_server()
     meta_server_addr = f"{host}:{port}"
     print(f'meta_server_addr {meta_server_addr}')
@@ -65,7 +75,7 @@ engine_config = {
     "enable_metrics": True,
     "mem_fraction_static": 0.7,
     "triton_attention_num_kv_splits": 16,
-    #----------------default value-----------------------------#,
+    "disable_shared_experts_fusion": True,
     'tokenizer_mode': 'auto',
     'load_format': 'auto',
     'is_embedding': False,
@@ -228,10 +238,10 @@ remote_megatron_config = {
 if weight_update_type == "nccl":
     remote_megatron_config['asystem_train_config'] = asystem_hybrid_config
 
-
 megatron_wrap_policy = {
     "n_minibatches": 1,
     "kl_ctl": 0.0,
+    "recompute_logp": False,
     "adv_norm": False,
     "discount": 1.0,
     "gae_lambda": 1.0,
@@ -279,8 +289,8 @@ def main_grpo():
             "trial_name": trial_name,
             "extra_envs": {
                 "FUNCTIONCALL_SERVICE_DOMAIN": "http://110.75.237.19:8080",
-                "REWARD_MODEL_PATH": "/storage/jiulin.jl/Skywork-Reward-V2-Qwen3-8B",
-                "REWARD_MODEL_SERVICE_URL": "http://reward-model-service.asystem-test.svc.sigma-my001.ml01.sgp-ml.local:30000/classify"
+                "REWARD_MODEL_PATH": "/storage/yuyan/jiulin.jl/Skywork-Reward-V2-Qwen3-8B",
+                "REWARD_MODEL_SERVICE_URL": "http://reward-model-service.asystem-test.svc.et15-02-aidc.sh.s-aidc.local:33000/classify"
             },
         }
     )
@@ -294,8 +304,8 @@ def main_grpo():
     seed = 42
     batch_rollout = True
     ########### gconfig ####################
-    force_no_logits_mask = True # asystem/0.1中已经废弃
-    use_cuda_graph = True # asystem/0.1中已经废弃
+    force_no_logits_mask = True  # asystem/0.1中已经废弃
+    use_cuda_graph = True  # asystem/0.1中已经废弃
     max_new_tokens = 15360
     min_new_tokens = 0
     temperature = 1.0
@@ -324,7 +334,7 @@ def main_grpo():
                            data_files="/storage/dataset/nlp/areal/moe_lite_math_0527_merge_train_areal.jsonl")
     train_dataset = dataset['train']
     train_dataset = train_dataset.filter(lambda x: len(tokenizer.encode(x["prompt"])) <= max_prompt_len)
-    dataloader = StatefulDataLoader(train_dataset, batch_size=1, sampler=ShuffleSampler(train_dataset))
+    dataloader = StatefulDataLoader(train_dataset, batch_size=1, sampler=ShuffleSampler(train_dataset), collate_fn=custom_collate_fn)
 
     ############################## recover #########################################
     recover_meta_info_path = ""
@@ -388,18 +398,31 @@ def main_grpo():
     actor = DistributedTrainController(
         RemoteHypridTrainWorker(RemoteMegatronEngineConfig(experiment_name=experiment_name, trial_name=trial_name,
                                                            loss_configs=loss_configs,
-                                                           remote_megatron_config=remote_megatron_config, 
-                                                           wrap_policy=RemoteMegatronEngineConfig.assign_wrap_policy(megatron_wrap_policy))),
-        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, 
-                              allocation_mode=allocation_mode),
+                                                           remote_megatron_config=remote_megatron_config,
+                                                           wrap_policy=RemoteMegatronEngineConfig.assign_wrap_policy(
+                                                               megatron_wrap_policy))),
+        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
         scheduler,
         group_size=group_size
     )
-    
+
     # engine initialize
     actor.initialize()
 
     rollout.initialize(colocation_with=actor if enable_colocate_mode else None)
+
+    ref = None
+    if megatron_wrap_policy["kl_ctl"] > 0:
+        ref = DistributedReferenceController(
+            RemoteHypridTrainWorker(RemoteMegatronEngineConfig(experiment_name=experiment_name, trial_name=trial_name,
+                                                               loss_configs=loss_configs,
+                                                               remote_megatron_config=remote_megatron_config)),
+            TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name,
+                                  allocation_mode=allocation_mode),
+            scheduler,
+            group_size=group_size
+        )
+        ref.initialize()
 
     gconfig = GenerationHyperparameters(
         min_new_tokens=min_new_tokens,
@@ -470,7 +493,7 @@ def main_grpo():
                                 if future.exception() is not None:
                                     raise future.exception()
                         logger.info(f"nccl mode update weight succeeded (parallel), step: {step}, epoch: {epoch}")
-                    
+
                 with (
                     stats_tracker.record_timing("rollout_step"),
                     stats_tracker.scope("rollout"),
@@ -504,6 +527,51 @@ def main_grpo():
                             logger.info(f"start to notify_rollout_end_event, step: {step}, epoch: {epoch}")
                             rollout.notify_event("rollout_end", global_step)
                             logger.info(f"notify_rollout_end_event succeeded, step: {step}, epoch: {epoch}")
+
+                if megatron_wrap_policy["kl_ctl"] > 0:
+                    with(
+                        stats_tracker.record_timing("reference_step"),
+                        stats_tracker.scope("reference")
+                    ):
+                        logger.info(f"start to compute_logprobs_with_distributed, step: {step}, epoch: {epoch}")
+                        logp = ref.compute_logprobs_with_distributed(dis_batch)
+                        logp.to("cpu")
+                        rollout_res_dict["ref_logprobs"] = logp
+                        dis_batch = DistributedBatchMemory(rollout_res_dict)
+                        logger.info(f"compute_logprobs_with_distributed succeeded, step: {step}, epoch: {epoch}, "
+                                    f"ref logp shape: {logp.shape}, old_logp shape: {rollout_res_dict["logprobs"].shape}, "
+                                    f"input_ids shape: {rollout_res_dict["input_ids"].shape}")
+
+                        # 验证ref_logprobs和logprobs的packed shape是否匹配
+                        print(f"rollout_res_dict keys: {rollout_res_dict.keys()}")
+                        ref_logprobs = rollout_res_dict["ref_logprobs"]
+                        logprobs = rollout_res_dict["logprobs"]
+                        seqlen = rollout_res_dict["seqlen"]
+
+                        # 实现pack_logprobs逻辑但不返回Tensor
+                        def check_packed_shapes(tensor, seqlen):
+                            packed_shapes = []
+                            for i in range(tensor.shape[0]):
+                                packed_shapes.append(tensor[i, 1:seqlen[i].item()].shape)
+                            return packed_shapes
+
+                        def check_packed_shapes_ref(tensor, seqlen):
+                            packed_shapes = []
+                            for i in range(tensor.shape[0]):
+                                ref_len = seqlen[i].item() - 1
+                                packed_shapes.append(tensor[i, :ref_len].shape)
+                            return packed_shapes
+
+                        ref_shapes = check_packed_shapes_ref(ref_logprobs,
+                                                             seqlen)  # seqlen=4, 实际长度 [1,2,3, PAD, PAD, PAD], 0,1,2,3
+                        logp_shapes = check_packed_shapes(logprobs, seqlen)  # 实际长度+1，[PAD, 1,2,3, PAD, PAD, PAD], 1,2,3
+
+                        if ref_shapes != logp_shapes:
+                            error_msg = f"ref_logprobs和logprobs的packed shape不匹配:\n"
+                            error_msg += f"ref_shapes: {ref_shapes}\n"
+                            error_msg += f"logp_shapes: {logp_shapes}"
+                            raise ValueError(error_msg)
+                        logger.info("ref_logprobs和logprobs的packed shape验证通过.........................")
 
                 with (
                     stats_tracker.record_timing("train_step"),

@@ -590,6 +590,8 @@ class RemoteMegatronWrapPolicy:
     discount: float = 1.0
     gae_lambda: float = 1.0
     eps_clip: float = 0.2
+    clip_ratio_low: float = 0.2
+    clip_ratio_high: float = 0.28
     c_clip: Optional[float] = None
     value_eps_clip: float = 0.2
     max_reward_clip: float = 5.0
@@ -618,6 +620,7 @@ class RemoteMegatronWrapPolicy:
         default=1.0, metadata={"help": "Reward scaling factor"}
     )
     reward_output_bias: float = field(default=0.0, metadata={"help": "Reward bias"})
+    recompute_logp: bool = True # TODO, default to False
 
 
 @dataclass
@@ -741,6 +744,7 @@ class GRPOConfig(BaseExperimentConfig):
     gconfig: GenerationHyperparameters = field(default_factory=GenerationHyperparameters)
     rollout: RemoteHybridInferenceConfig = field(default_factory=RemoteHybridInferenceConfig)
     actor: TrainEngineConfig = field(default_factory=TrainEngineConfig)
+    ref: TrainEngineConfig = field(default_factory=TrainEngineConfig)
     recover: RecoverConfig = field(default_factory=RecoverConfig)
 
 
@@ -760,7 +764,7 @@ def load_expr_config(argv: List[str], config_cls) -> Tuple[BaseExperimentConfig,
     )
     hydra_init(config_path=str(relpath.parent), job_name="app", version_base=None)
     cfg = hydra_compose(
-        config_name=str(relpath.name).rstrip(".yaml"),
+        config_name=str(relpath.name).removesuffix(".yaml"),
         overrides=overrides,
     )
 

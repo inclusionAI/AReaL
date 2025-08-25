@@ -555,6 +555,7 @@ class SequenceSample:
             "ref_logprobs",
             "old_logp",
             "ref_logp",
+            "rollout_logp",
             "advantages",
             "ppo_loss_mask",
             "kl_rewards",
