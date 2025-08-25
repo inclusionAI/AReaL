@@ -42,6 +42,7 @@ class RemoteMegatronInitConfig:
     global_rank: int
     world_size: int
     recover_dir: str = ""
+    enable_colocate_mode: bool = False
 
 
 class RemoteHypridTrainWorker(TrainEngine):
@@ -79,11 +80,13 @@ class RemoteHypridTrainWorker(TrainEngine):
             else:
                 raise ValueError(f"Unknown value_norm_type {self.config.wrap_policy.value_norm_type}")
         self.kl_ctl = None
+        self.enable_colocate_mode = None
 
     def initialize(self, cfg: RemoteMegatronInitConfig):
         global_rank = cfg.global_rank
         self.global_rank = cfg.global_rank
         local_rank = global_rank % 8
+        self.enable_colocate_mode = cfg.enable_colocate_mode
 
         print(f"[megatron] dzq_debug global_rank: {global_rank}, serveraddr len:{len(cfg.server_addrs)}")
         self.megatron_addr = cfg.server_addrs[global_rank]
@@ -102,7 +105,7 @@ class RemoteHypridTrainWorker(TrainEngine):
             "megatron_config": megatron_config,
             "loss_configs": self.config.loss_configs,
             "recover_dir": cfg.recover_dir,
-            "enable_colocate_mode": False,
+            "enable_colocate_mode": cfg.enable_colocate_mode,
         }
 
         try:
@@ -309,6 +312,7 @@ class RemoteHypridTrainWorker(TrainEngine):
             event: "train_start" or "train_end"
             global_step: Current global step
         """
+        assert self.enable_colocate_mode is not None, "enable_colocate_mode is not set"
         if event not in ["train_start", "train_end"]:
             raise ValueError(f"Invalid event type: {event}")
             

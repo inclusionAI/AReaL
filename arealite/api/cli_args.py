@@ -544,6 +544,7 @@ class BaseExperimentConfig:
                     "Options: manual/heuristic or pattern-based."
         },
     )
+    enable_colocate_mode: bool = field(default=False, metadata={"help": "Enable colocate mode."})
     seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
     total_train_epochs: int = field(
         default=1, metadata={"help": "Total number of epochs to train the model."}

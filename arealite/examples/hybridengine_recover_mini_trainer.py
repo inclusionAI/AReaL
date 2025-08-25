@@ -44,6 +44,7 @@ def clear_dir(path):
 logger = logging.getLogger("Trainer")
 
 weight_update_type = "nccl"  # nccl
+enable_colocate_mode = True
 
 if weight_update_type == "nccl":
     from arealite.extension.asystem.meta_server import start_meta_server
@@ -264,9 +265,11 @@ megatron_wrap_policy = {
 }
 
 
+
+
 def main_grpo():
     experiment_name = "arealite-mini"
-    trial_name = "upup-64x8-onestep-0821-24"
+    trial_name = "upup-co-card-test-1"
 
     # init scheduler
     scheduler = AsystemScheduler(
@@ -281,6 +284,8 @@ def main_grpo():
             },
         }
     )
+
+    
 
     batch_size = 64
     group_size = 8
@@ -304,9 +309,13 @@ def main_grpo():
     global_step = 0
     os.environ['WANDB_API_KEY'] = 'local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe'
     os.environ["WANDB_BASE_URL"] = "https://slurm.alipay.com"
-    deploy_mode = "separation"
+
     allocation_mode = "gen:d8t4p1,train:d8t1p4"
     allocate_mode = AllocationMode.from_str(allocation_mode)
+    allocate_mode.enable_colocate_mode = enable_colocate_mode
+    if enable_colocate_mode:
+        engine_config['enable_memory_saver'] = True
+    
     storage_path = "/storage/openpsi/checkpoints/{experiment_name}/{trial_name}".format(
         experiment_name=experiment_name, trial_name=trial_name)
 
@@ -381,14 +390,16 @@ def main_grpo():
                                                            loss_configs=loss_configs,
                                                            remote_megatron_config=remote_megatron_config, 
                                                            wrap_policy=RemoteMegatronEngineConfig.assign_wrap_policy(megatron_wrap_policy))),
-        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
+        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, 
+                              allocation_mode=allocation_mode),
         scheduler,
         group_size=group_size
     )
     
     # engine initialize
-    rollout.initialize()
-    actor.initialize(colocation_with=rollout if deploy_mode == "colocation" else None)
+    actor.initialize()
+
+    rollout.initialize(colocation_with=actor if enable_colocate_mode else None)
 
     gconfig = GenerationHyperparameters(
         min_new_tokens=min_new_tokens,

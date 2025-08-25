@@ -41,7 +41,7 @@ class DistributedTrainController(TrainController):
         self.dp_size = self.allocate_mode.train_dp_size
         self.tp_size = self.allocate_mode.train_tp_size
         self.pp_size = self.allocate_mode.train_pp_size
-
+        self.enable_colocate_mode = self.allocate_mode.enable_colocate_mode
 
 
     def initialize(self, *args, **kwargs):
@@ -78,7 +78,7 @@ class DistributedTrainController(TrainController):
             portCount=1
         )
         engineSpec.env_vars["ENGINE_PACKAGE_PATH"] = engine_path
-        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13370153-20250807145856.sif"
+        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13200124-20250815232101.sif"
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
             experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         engineSpec.env_vars["WORKER_TYPE"] = "training-engine"
@@ -92,7 +92,7 @@ class DistributedTrainController(TrainController):
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
 
-        self.scheduler.create_workers(self.role,scheduling_config)
+        self.uid = self.scheduler.create_workers(self.role, scheduling_config)
 
         self.workers = self.scheduler.get_workers(self.role, timeout=1800)
 
@@ -108,7 +108,7 @@ class DistributedTrainController(TrainController):
                         worker.id,
                         self.train_engine,
                         RemoteMegatronInitConfig(
-                            server_addrs=server_addrs, global_rank=index, world_size=self.world_size
+                            server_addrs=server_addrs, global_rank=index, world_size=self.world_size, enable_colocate_mode=self.enable_colocate_mode
                         ),
                     )
                 )

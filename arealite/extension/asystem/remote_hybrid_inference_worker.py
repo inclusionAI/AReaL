@@ -46,6 +46,7 @@ class RemoteHypidInferenceInitConfig:
     world_size: int     # 总的 world size
     global_ranks: list[int] # 要求和 main_server_addrs 的 idx 一一对应
     master_addr: str # global的master addr
+    enable_colocate_mode: bool
 
 
 class RemoteHybridInferenceWorker(InferenceEngine):
@@ -105,7 +106,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     "tp_size": self.config.tp_size,
                 }
                 body["rank_config"] = rank_config
-                body["enable_colocate_mode"] = False
+                body["enable_colocate_mode"] = initialize_cfg.enable_colocate_mode
                 url = "http://" + initialize_cfg.main_server_addrs[index] + "/initialize"
                 logger.info(
                     f"[RemoteHybridInferenceWorker] url: {url}, send hybrid inference initialize config to engine: {body}")

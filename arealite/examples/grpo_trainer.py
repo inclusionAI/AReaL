@@ -40,6 +40,8 @@ def custom_collate_fn(batch):
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
+
+    enable_colocate_mode = config.enable_colocate_mode if hasattr(config, 'enable_colocate_mode') else False
     
     # Print full config
     logger.info("Loaded config:\n" + pprint.pformat(config, indent=2, width=120, depth=6))
@@ -78,8 +80,13 @@ def main(args):
     os.environ['WANDB_API_KEY'] = config.stats_logger.wandb.wandb_api_key
     os.environ["WANDB_BASE_URL"] = config.stats_logger.wandb.wandb_base_url
     deploy_mode = config.scheduler.deploy_mode
+
     allocation_mode = config.allocation_mode
     allocate_mode = AllocationMode.from_str(allocation_mode)
+    allocate_mode.enable_colocate_mode = enable_colocate_mode
+    if enable_colocate_mode:
+        config.rollout.engine_config['enable_memory_saver'] = True
+        
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
     dataset = load_dataset("json", data_files=config.train_dataset.path)
     train_dataset = dataset['train']

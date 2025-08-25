@@ -41,6 +41,7 @@ class DistributedRolloutController(RolloutController):
         self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
         self.dp_world_size = self.allocate_mode.gen_world_size // self.allocate_mode.gen_dp_size
         self.role = kwargs.get("role", "rollout")
+        self.enable_colocate_mode = self.allocate_mode.enable_colocate_mode
 
     def _rpc_call(self, method, batches=None, *args, **kwargs):
         """
@@ -133,7 +134,7 @@ class DistributedRolloutController(RolloutController):
             portCount=3
         )
         engineSpec.env_vars["ENGINE_PACKAGE_PATH"] = engine_path
-        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13370153-20250807145856.sif"
+        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13200124-20250815232101.sif"
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         engineSpec.env_vars["WORKER_TYPE"] = "rollout-engine"
         engineSpec.env_vars["WORK_MODE"] = "GENERATION"
@@ -187,7 +188,8 @@ class DistributedRolloutController(RolloutController):
                         free_addrs=free_addrs,
                         world_size=self.allocate_mode.gen_world_size,
                         global_ranks=list(range(index, index+self.dp_world_size)),
-                        master_addr=master_addr
+                        master_addr=master_addr,
+                        enable_colocate_mode=self.enable_colocate_mode
                     )
 
                 futures.append(executor.submit(

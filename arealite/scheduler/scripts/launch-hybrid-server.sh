@@ -79,7 +79,7 @@ sync_copy() {
 }
 
 
-CMD="python -m asystem_runtime.engine_server"
+CMD="python -m asystem_runtime.engine_server --worker-type ${WORKER_TYPE} --worker-index ${WORKER_INDEX}"
 
 
 sync_copy

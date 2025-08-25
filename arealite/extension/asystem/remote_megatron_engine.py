@@ -42,6 +42,7 @@ class RemoteMegatronInitConfig:
     global_rank: int
     world_size: int
     recover_dir: str = ""
+    enable_colocate_mode: bool = False
 
 
 class RemoteMegatronEngine(TrainEngine):
