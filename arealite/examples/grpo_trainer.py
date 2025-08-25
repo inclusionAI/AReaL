@@ -167,8 +167,10 @@ def main(args):
     )
 
     # engine initialize
-    rollout.initialize()
-    actor.initialize(colocation_with=rollout if deploy_mode == "colocation" else None)
+    # initialize actor first for colocation mode
+    actor.initialize()
+    rollout.initialize(colocation_with=actor if enable_colocate_mode else None)
+
     ref = None
     if config.actor.hybrid_engine.wrap_policy.kl_ctl> 0:
         ref = DistributedReferenceController(
