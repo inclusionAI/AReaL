@@ -37,6 +37,7 @@ from areal.utils.model import (
     VALID_VISION_MODELS,
     disable_dropout_in_model,
     is_qwen2_vl_model,
+    is_qwen3_moe_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
@@ -327,8 +328,12 @@ class BaseHFEngine(TrainEngine):
             ]
             mb["use_cache"] = False
             padded_mb["use_cache"] = False
-            mb["attention_mask"] = dict(full_attention=None)
-            padded_mb["attention_mask"] = dict(full_attention=None)
+            if is_qwen3_moe_model(self.model_config.model_type):
+                mb["attention_mask"] = None
+                padded_mb["attention_mask"] = None
+            else:
+                mb["attention_mask"] = dict(full_attention=None)
+                padded_mb["attention_mask"] = dict(full_attention=None)
             if "multi_modal_input" in mb:
                 image_grid_thw_list = [
                     item["image_grid_thw"]

@@ -1,10 +1,10 @@
+import copy
 import getpass
 import os
 import re
 import subprocess
 import sys
 import time
-import copy
 from typing import Dict, List, Optional, Tuple
 
 import areal.utils.logging as logging
