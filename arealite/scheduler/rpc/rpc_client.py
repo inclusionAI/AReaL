@@ -45,6 +45,8 @@ class RPCClient:
         )
         if resp.status_code == 200:
             return cloudpickle.loads(resp.content)
+        elif resp.status_code == 503:
+            raise TimeoutError(f"RPC call timeout: {resp.content}")
         else:
             raise RuntimeError(f"RPC call failed: {resp.content}")
 

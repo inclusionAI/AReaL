@@ -56,6 +56,9 @@ class GenerationHyperparameters:
     min_new_tokens: int = field(
         default=0, metadata={"help": "Minimum number of tokens to generate."}
     )
+    max_tokens: int = field(
+        default=2048, metadata={"help": "Maximum number of tokens including prompt and generated tokens."}
+    )
     greedy: bool = field(
         default=False,
         metadata={"help": "Whether to use greedy decoding (max probability)."},
@@ -81,6 +84,26 @@ class GenerationHyperparameters:
         args = asdict(self)
         args.update(kwargs)
         return GenerationHyperparameters(**args)
+    
+
+@dataclass
+class PartialRolloutConfig:
+    """Configuration for partial rollout."""
+
+    mini_samples_per_group: int = field(
+        default=8, metadata={"help": "Number of mini samples to train in one group"}
+    )
+    batch_size_exceeding_num: int = field(
+        default=32, metadata={"help": "Batch size exceeding number"}
+    )
+    staleness_version: int = field(
+        default=1, metadata={"help": "Max staleness version for the rollout."}
+    )
+
+    def new(self, **kwargs):
+        args = asdict(self)
+        args.update(kwargs)
+        return PartialRolloutConfig(**args)
 
 
 # Train Engine Configs
@@ -351,6 +374,7 @@ class RolloutControllerConfig:
     experiment_name: str = MISSING
     trial_name: str = MISSING
     enable_colocate_mode: bool = False
+    group_size: int = 0
 
 
 @dataclass
@@ -749,6 +773,7 @@ class GRPOConfig(BaseExperimentConfig):
     actor: TrainEngineConfig = field(default_factory=TrainEngineConfig)
     ref: TrainEngineConfig = field(default_factory=TrainEngineConfig)
     recover: RecoverConfig = field(default_factory=RecoverConfig)
+    partial_rollout: PartialRolloutConfig = field(default_factory=PartialRolloutConfig)
 
 
 def load_expr_config(argv: List[str], config_cls) -> Tuple[BaseExperimentConfig, str]:

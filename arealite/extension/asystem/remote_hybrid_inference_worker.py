@@ -8,7 +8,7 @@ import traceback
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from queue import Empty, Full, Queue
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 from dataclasses import dataclass, asdict
 
 import aiohttp
@@ -127,7 +127,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     result = response.json()
                     logger.info(f"[RemoteHybridInferenceWorker] initialize success, response: {result}")
             except Exception as e:
-                logger.error(f"[RemoteHybridInferenceWorker] initialize failed: {str(e)}")
+                logger.error(f"[RemoteHybridInferenceWorker] initialize failed: {str(e)}, response is {response.text}")
                 raise
 
         self.exiting = threading.Event()
@@ -268,6 +268,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
 
+        assert len(req.input_ids) < gconfig.max_tokens
+
+        max_new_tokens = min(gconfig.max_tokens - len(req.input_ids), gconfig.max_new_tokens)
+        assert max_new_tokens > 0
+
         if gconfig.n_samples != 1:
             raise ValueError(
                 "RemoteHybridInferenceWorker does not support n_samples > 1. "
@@ -276,12 +281,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         sample_params = {
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
-            "max_new_tokens": gconfig.max_new_tokens,
+            "max_new_tokens": max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
         }
 
-        print(f"gconfig.max_new_tokens: {gconfig.max_new_tokens}", flush=True)
         # NOTE: rid should NOT be passed in payload
         payload = {
             "input_ids": req.input_ids.copy(),
@@ -311,8 +315,8 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             self.rid_queue.append(req.rid)
 
         while (
-            stop_reason != "stop" and stop_reason != "length"
-            and len(accumulated_output_tokens) < gconfig.max_new_tokens
+            stop_reason not in ["stop", "abort", "length"]
+            and len(accumulated_output_tokens) < max_new_tokens
         ):
             # loop until the generation is complete
             response = await arequest_with_retry(
@@ -328,18 +332,19 @@ class RemoteHybridInferenceWorker(InferenceEngine):
 
             # Parse response
             meta_info = result["meta_info"]
+
             output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
             output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
 
             # Update accumulated outputs
             accumulated_output_tokens.extend(output_tokens)
             accumulated_output_logprobs.extend(output_logprobs)
-            # FIXME: Update with actual server versions
-            accumulated_versions.extend([-1] * len(output_tokens))
+            accumulated_versions.extend([self.get_version()] * len(output_tokens))
 
             # Check if generation is complete
             finish_reason = meta_info["finish_reason"]
             stop_reason = finish_reason["type"]
+
             payload["input_ids"] += result["output_ids"].copy()
             sample_params["max_new_tokens"] -= len(output_tokens)
 
@@ -448,7 +453,6 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         # executor = ThreadPoolExecutor(max_workers=1)
         # return executor.submit(self._update_weights, meta)
         self._update_weights(meta)
-        self._version = self._version + 1
         return True
 
     def _update_weights(self, meta: WeightUpdateMeta):
@@ -467,7 +471,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     res = response.json()
                     assert res["success"]
                 except Exception as e:
-                    logger.error(f"[RemoteHybridInferenceWorker] Failed to update weights on {addr}: {str(e)}")
+                    logger.error(f"[RemoteHybridInferenceWorker] Failed to update weights on {addr}: {str(e)}, response is {response.text}")
                     raise
 
             with ThreadPoolExecutor(max_workers=len(self.addresses)) as executor:
@@ -476,9 +480,8 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     future.result()  # Wait for all to complete or raise first exception
 
             logger.info(
-                f"[RemoteHybridInferenceWorker] Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms"
+                f"[RemoteHybridInferenceWorker] Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms, updated version: {meta.model_version}"
             )
-            self.set_version(meta.model_version)
         elif meta.type == "nccl" or meta.type == "astate":
             load_timestamp = time.time_ns()
             logger.info(f"[RemoteHybridInferenceWorkerer] Begin update weights.")
@@ -506,11 +509,12 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     future.result()  # Wait for all to complete or raise first exception
 
             logger.info(
-                f"[RemoteHybridInferenceWorker] Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms"
+                f"[RemoteHybridInferenceWorker] Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms, updated version: {meta.model_version}"
             )
-            self.set_version(meta.model_version)
         else:
             raise ValueError(f"Unknown weight update type {meta.type}")
+        
+        self.set_version(meta.model_version)
 
     def pause(self):
         self.paused.set()
@@ -519,24 +523,37 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         self.paused.clear()
 
     def update_weights_from_disk(self, addr, path: str):
-        response = requests.post(
-            f"http://{addr}/update_weights_from_disk",
-            json={"model_path": str(path)},
-            timeout=self.config.request_timeout
-        )
-        response.raise_for_status()
-        res = response.json()
-        assert res["success"]
-
-    def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:
         try:
-            self.input_queue.put_nowait((data, workflow))
+            response = requests.post(
+                f"http://{addr}/update_weights_from_disk",
+                json={"model_path": str(path)},
+                timeout=self.config.request_timeout
+            )
+            response.raise_for_status()
+            res = response.json()
+            assert res["success"]
+        except Exception as e:
+            logger.error(f"[RemoteHybridInferenceWorker] Failed to update weights from disk on {addr}: {str(e)}, response is {response.text}")
+            raise
+
+    def submit(self, data: Union[List[Dict[str, Any]], Dict[str, Any]], workflow: "RolloutWorkflow") -> None:
+        try:
+            if not isinstance(data, list):
+                data = [data]
+            for d in data:
+                self.input_queue.put_nowait((d, workflow))
         except Full:
             raise RuntimeError("Input queue full. Please increase queue_size.")
 
     def submit_batch(self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow") -> None:
         try:
-            self.input_queue.put_nowait((data, workflow))
+            self.input_queue.put_nowait(data, workflow)
+        except Full:
+            raise RuntimeError("Input queue full. Please increase queue_size.")
+
+    def submit_batch(self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow") -> None:
+        try:
+            self.input_queue.put_nowait(data, workflow)
         except Full:
             raise RuntimeError("Input queue full. Please increase queue_size.")
 
@@ -558,7 +575,8 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             try:
                 result = self.output_queue.get(timeout=ROLLOUT_POLL_WAIT_TIME)
                 if should_accept is None or should_accept(result):
-                    self.result_cache.append(result)
+                    with self.lock:
+                        self.result_cache.append(result)
                     accepted += 1
                 else:
                     with self.lock:
@@ -571,10 +589,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             raise TimeoutError(
                 f"Timed out waiting for {count} rollouts, " f"only received {accepted}."
             )
-        results, self.result_cache = (
-            self.result_cache[:count],
-            self.result_cache[count:],
-        )
+        with self.lock:
+            results, self.result_cache = (
+                self.result_cache[:count],
+                self.result_cache[count:],
+            )
 
         logger.info(f"[RemoteHybridInferenceWorker] wait, get all results len: {len(results)}, details: {results}")
         group_size = 1
@@ -587,6 +606,54 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             padded = TensorDict(padded, batch_size=[bs])
         print(f"[RemoteHybridInferenceWorker] wait, padded type: {type(padded)}, padded: {padded}")
         return padded
+    
+
+    def wait_at_least_no_concat(
+        self,
+        count: int,
+        timeout: float | None = None,
+        should_accept: Callable | None = None,
+    ) -> List[TensorDict]:
+        """
+        Return of wait rollback. In two situations, this method will return:
+            1. Collect `count` results.
+            2. When the timeout period reaches `timeout`, all collected data will be returned.
+        Since timeout will return all collected data, the `count` can be set to a very large number, relying solely on `timeout` to 
+        control method call latency, thus achieving the effect of batch grouping. Meanwhile, both `count` and `timeout` can be set 
+        to a smaller value to balance batch and latency.
+        This method will return a List containing all unpadded raw data.
+        """
+        tik = time.perf_counter()
+        accepted = len(self.result_cache)
+        timeout = timeout or float(7 * 24 * 3600)
+
+        while (
+            accepted < count
+            and not self.exiting.is_set()
+            and time.perf_counter() - tik < timeout
+        ):
+            try:
+                result = self.output_queue.get(timeout=ROLLOUT_POLL_WAIT_TIME)
+                if should_accept is None or should_accept(result):
+                    with self.lock:
+                        self.result_cache.append(result)
+                    accepted += 1
+                else:
+                    with self.lock:
+                        self.rollout_stat.accepted -= 1
+            except Empty:
+                pass
+        if self.exiting.is_set():
+            raise RuntimeError("Rollout engine is exiting, cannot wait for results.")
+
+        with self.lock:
+            results, self.result_cache = (
+                self.result_cache[:accepted],
+                self.result_cache[accepted:],
+            )
+
+        logger.info(f"[RemoteHybridInferenceWorker] wait_at_least_no_concat get {len(results)} results.")
+        return results
 
     def rollout(  # only dp head accept this request
         self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow", *args, **kwargs
@@ -654,3 +721,27 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             raise ValueError(f"Error sending inference event notification: {e}")
             
         return None
+
+    def abort_all_requests(self) -> None:
+        """Abort all pending requests in the inference engine."""
+        def abort_all_requests_single_server(addr):
+            try:
+                response = requests.post(
+                    f"http://{addr}/abort_all_requests",
+                    json={},
+                    timeout=self.config.request_timeout
+                )
+                response.raise_for_status()
+                res = response.json()
+                assert res["success"]
+            except Exception as e:
+                logger.error(f"[RemoteHybridInferenceWorker] Failed to Abort requests on {addr}: {str(e)}, response is {response.text}")
+                raise
+
+        with ThreadPoolExecutor(max_workers=len(self.addresses)) as executor:
+            futures = [executor.submit(abort_all_requests_single_server, addr) for addr in self.addresses]
+            for future in futures:
+                future.result()  # Wait for all to complete or raise first exception
+
+        return None
+

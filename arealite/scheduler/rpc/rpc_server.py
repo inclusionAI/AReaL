@@ -4,9 +4,10 @@ import os
 import pickle
 import threading
 import logging
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from arealite.scheduler.utils import deserialize_with_metadata
 import cloudpickle
+import traceback
 
 
 logger = logging.getLogger("RPCServer")
@@ -51,9 +52,12 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 self.send_response(404)
                 self.end_headers()
         except Exception as e:
-            import traceback
-            logging.error(f"Exception in do_POST: {e}\n{traceback.format_exc()}")
-            self.send_response(500)
+            code = 500
+            if isinstance(e, TimeoutError):
+                code = 503
+            else:
+                logging.error(f"Exception in do_POST: {e}\n{traceback.format_exc()}")
+            self.send_response(code)
             self.end_headers()
             self.wfile.write(
                 f"Exception: {e}\n{traceback.format_exc()}".encode("utf-8")
@@ -61,7 +65,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
 
 
 def start_rpc_server(port):
-    server = HTTPServer(("0.0.0.0", port), EngineRPCServer)
+    server = ThreadingHTTPServer(("0.0.0.0", port), EngineRPCServer)
     server.serve_forever()
 
 def get_serve_port(args):

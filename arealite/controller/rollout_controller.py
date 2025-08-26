@@ -1,10 +1,13 @@
 import os
 from functools import partial
-from typing import List, Dict, Any
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 from tensordict import TensorDict, stack
+import threading
+import traceback
 import torch
 from arealite.api.engine_api import InferenceEngine
 from arealite.api.io_struct import WeightUpdateMeta, AllocationMode
+from arealite.scheduler.base import Worker
 
 from arealite.api.cli_args import RolloutControllerConfig, RemoteHybridInferenceConfig
 from arealite.api.workflow_api import RolloutWorkflow
@@ -53,7 +56,7 @@ class DistributedRolloutController(RolloutController):
         :param kwargs: 通用关键字参数
         :return: 所有调用的结果列表
         """
-        logger.info(f"start to rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
+        logger.info(f"start to rpc call, method: {method}, args: {args}, kwargs: {kwargs}, self.allocate_mode.gen_dp_size: {self.allocate_mode.gen_dp_size}")
         futures = []
         results = []
 
@@ -61,6 +64,8 @@ class DistributedRolloutController(RolloutController):
             for i in range(self.allocate_mode.gen_dp_size):
                 # 获取当前 master worker 的地址
                 master_worker = self.workers[self.dp_world_size * i]
+
+                logger.info(f"RPC calling worker {master_worker.id} for method {method}")
 
                 # 如果 batches 为空，使用通用参数；否则使用 batch 中的特定参数
                 if batches and i < len(batches):
@@ -166,6 +171,9 @@ class DistributedRolloutController(RolloutController):
         futures = []
 
         master_addr = ""
+
+        self.exiting = threading.Event()
+
         # FIXME: @chucai
         time.sleep(60)
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
@@ -213,6 +221,12 @@ class DistributedRolloutController(RolloutController):
                 for f in futures:
                     f.cancel()
                 raise
+    
+    def destory(self):
+        self.exiting.set()
+
+    def __del__(self):
+        self.destroy()
 
     def update_weights(self, meta: WeightUpdateMeta) -> None:
         """Update weights in the inference engine."""
@@ -235,7 +249,7 @@ class DistributedRolloutController(RolloutController):
 
         for index in range(self.allocate_mode.gen_dp_size):
             master_worker = self.workers[self.dp_world_size * index]
-            self.scheduler.call_engine(master_worker.id, "submit_distributed_batch", batches[index], workflow)
+            self.scheduler.call_engine(master_worker.id, "submit", batches[index], workflow)
 
     def wait(self, count: int, timeout: int)  -> TensorDict:
         """Wait for a specified number of requests to complete, with a timeout."""
@@ -248,6 +262,65 @@ class DistributedRolloutController(RolloutController):
             results.append(result)
         res = stack(results, dim=0)
         return res
+    
+    def _thread_loop(self, func: Callable, sleep_time: float = 0.1, recycle: Callable = None):
+        try:
+            while not self.exiting.is_set():
+                func()
+                time.sleep(sleep_time)
+        except Exception:
+            traceback.print_exc()
+        finally:
+            # Cancel remaining tasks
+            if recycle is not None:
+                recycle()
+
+    def _start_wait_at_least_no_concat_loop(self, master_worker: Worker, callback: Callable[[List[TensorDict]], None], batch_count: int, timeout: float, no_response_timeout: float = None) -> None:
+        assert batch_count >= 0
+        assert timeout >= 0
+
+        if no_response_timeout is None:
+            no_response_timeout = timeout * 20
+
+        def _wait_at_least_no_concat_callable():
+            try:
+                res: List[TensorDict] = self.scheduler.call_engine(master_worker.id, "wait_at_least_no_concat", batch_count, timeout)
+                if res is None or len(res) == 0:
+                    res: List[TensorDict] = self.scheduler.call_engine(master_worker.id, "wait_at_least_no_concat", 1, no_response_timeout)
+            except TimeoutError as e:
+                logger.debug(f"Timeout while waiting for results from worker {master_worker.id}: {e}")
+            except Exception as e:
+                logger.error(f"Error while waiting for results from worker {master_worker.id}: {e}")
+                raise e
+
+            callback(res)
+
+            for r in res:
+                keys = ["rewards", "seqlen"]
+                for key in keys:
+                    tensor = r[key]
+                    for value in tensor:
+                        stats_tracker.scalar(**{key: value})
+
+        t = threading.Thread(target=partial(self._thread_loop, _wait_at_least_no_concat_callable, sleep_time=0))
+        t.start()
+
+
+    def register_callback_to_all_worker(self, method: str, callback: Callable, **kwargs):
+        if method == "wait_at_least_no_concat":
+            assert "batch_count" in kwargs and "timeout" in kwargs
+            for index in range(self.allocate_mode.gen_dp_size):
+                master_worker = self.workers[self.dp_world_size * index]
+                self._start_wait_at_least_no_concat_loop(master_worker, callback, batch_count=kwargs["batch_count"], timeout=kwargs["timeout"])
+        else:
+            raise ValueError(f"Unsupported method {method} for registering callback.")
+        
+
+    def abort_all_requests(self) -> None:
+        """Abort all pending requests in the inference engine."""
+        self._rpc_call("abort_all_requests")
+        logger.info("All pending requests have been aborted.")
+        return None
 
 
     def rollout_distributed_batch(

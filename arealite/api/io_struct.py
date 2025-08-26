@@ -32,7 +32,7 @@ class LLMResponse:
     output_tokens: List[int] = field(default_factory=list)
     output_logprobs: List[float] = field(default_factory=list)
     output_versions: List[int] = field(default_factory=list)
-    stop_reason: Literal["length", "stop", "interrupt"] = "stop"
+    stop_reason: Literal["length", "stop", "interrupt", "abort"] = "stop"
 
     # statistics
     latency: float = float("inf")
