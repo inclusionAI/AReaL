@@ -2,7 +2,8 @@ import importlib.util
 import pathlib
 import sys
 import time
-from typing import Dict, List, Optional
+from functools import partial
+from typing import Callable, Dict, List, Optional
 
 import ray
 import ray.exceptions
@@ -128,7 +129,7 @@ class RayLauncher:
         mem_per_task: int,  # MB
         list_kwargs: List[Dict] | None = None,
         env_vars: Optional[Dict] = None,
-        amend_torch_dist_env: bool = False,
+        env_hook: Optional[Callable[[PlacementGroup], List[Dict]]] = None,
     ):
         """Submit an array of jobs to Ray with ray placement groups.
 
@@ -184,12 +185,8 @@ class RayLauncher:
             # Reuse placement group in recover runs
             placement_group = self.placement_groups[job_name]
 
-        if amend_torch_dist_env:
-            host_ip, port = get_placement_group_master_ip_and_port(placement_group)
-            logger.info(
-                f"Amend torch distributed env vars: "
-                f"MASTER_ADDR={host_ip}, PORT={port}"
-            )
+        if env_hook:
+            extra_env_vars = env_hook(placement_group)
 
         futures = []
         for i in range(count):
@@ -204,25 +201,13 @@ class RayLauncher:
                 )
 
             node_id = i // tasks_per_node
-            _env_vars = {
-                **env_vars,
-            }
 
-            if amend_torch_dist_env:
-                # NOTE: Here we only provide environment variables for torch distributed
-                # initialization, and LOCAL_RANK for torch.device.
-                # Other environment variables automatically set by torchrun are not set, and
-                # they should be never accessed in trainer code.
-                _env_vars.update(
-                    {
-                        "RANK": str(i),
-                        "WORLD_SIZE": str(count),
-                        # Ray will automatically isolate CUDA_VISIBLE_DEVICES for each GPU
-                        "LOCAL_RANK": "0",
-                        "MASTER_ADDR": str(host_ip),
-                        "MASTER_PORT": str(port),
-                    }
-                )
+            if env_hook:
+                _env_vars = env_vars.copy()
+                _env_vars |= extra_env_vars[i]
+            else:
+                _env_vars = env_vars
+
             future = self.submit(
                 job_name=f"{job_name}:{i}",
                 file_path=file_path,
@@ -351,32 +336,72 @@ def ray_main(config, run_id: int = 0):
     if allocation_mode.gen_backend == "sglang":
         # Launcher should launch SGLang servers according to allocation mode.
         config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
-        sglang_tp_size = allocation_mode.gen_tp_size
         n_sglang_servers = allocation_mode.gen_dp_size
         n_sglang_nodes = allocation_mode.gen_world_size // n_gpus_per_node
+        node_group_size = max(1, allocation_mode.gen_instance_size // n_gpus_per_node)
+        n_servers_per_node = max(n_sglang_servers // n_sglang_nodes, 1)
+        cross_nodes = allocation_mode.gen_instance_size > n_gpus_per_node
 
         base_seed = config.sglang.random_seed
         sglang_args_list = [
-            [sys.argv[2:] + [f"sglang.random_seed={base_seed + i}"]]
-            for i in range(n_sglang_servers)
+            [
+                sys.argv[2:]
+                + [f"sglang.random_seed={base_seed + i * n_servers_per_node}"]
+            ]
+            for i in range(n_sglang_nodes)
         ]
         sglang_entry_point = str(
             pathlib.Path(__file__).resolve().parent.joinpath("sglang_server.py")
         )
+
+        def sglang_env_hook(
+            n_tasks: int, task_group_size: int, placement_group: PlacementGroup
+        ) -> List[Dict]:
+            master_addrs = []
+            master_ports = []
+            for i in range(0, n_tasks, task_group_size):
+                host_ip, port = get_placement_group_master_ip_and_port(
+                    placement_group, i
+                )
+                master_addrs.append(host_ip)
+                master_ports.append(port)
+
+            env_vars = []
+            for i in range(n_tasks):
+                env_vars.append(
+                    dict(
+                        AREAL_SGLANG_MULTI_NODE_RANK=str(i % task_group_size),
+                        AREAL_SGLANG_MULTI_NODE_MASTER_ADDR=master_addrs[
+                            i // task_group_size
+                        ],
+                        AREAL_SGLANG_MULTI_NODE_MASTER_PORT=str(
+                            master_ports[i // task_group_size]
+                        ),
+                    )
+                )
+
+            return env_vars
+
+        # launch a task to start all sglang servers in one node
         launcher.submit_array(
             job_name="llm_server",
             file_path=sglang_entry_point,
             func_name=DEFAULT_MAIN_FUNC_NAME,
-            count=n_sglang_servers,
+            count=n_sglang_nodes,
             nodes=n_sglang_nodes,
             list_args=sglang_args_list,
-            gpus_per_task=sglang_tp_size,
+            gpus_per_task=n_gpus_per_node,
             cpus_per_task=config.launcher.inference_server_cpus_per_gpu
-            * sglang_tp_size,
-            mem_per_task=config.launcher.inference_server_mem_per_gpu * sglang_tp_size,
+            * n_gpus_per_node,
+            mem_per_task=config.launcher.inference_server_mem_per_gpu * n_gpus_per_node,
             env_vars=get_env_vars(
                 config.cluster.cluster_name,
                 config.launcher.inference_server_env_vars,
+            ),
+            env_hook=(
+                partial(sglang_env_hook, n_sglang_nodes, node_group_size)
+                if cross_nodes
+                else None
             ),
         )
         # Get SGLang server addresses via name_resolve
@@ -403,6 +428,30 @@ def ray_main(config, run_id: int = 0):
         # In ray, we launch trainer in the granularity of processes (1 GPU per process)
         # We amend environment variable similar to torchrun to ensure correct initialization of
         # torch distributed.
+        def torch_env_hook(n_tasks: int, placement_group: PlacementGroup) -> List[Dict]:
+            host_ip, port = get_placement_group_master_ip_and_port(placement_group)
+            logger.info(
+                f"Amend torch distributed env vars: "
+                f"MASTER_ADDR={host_ip}, PORT={port}"
+            )
+            env_vars = []
+            for i in range(n_tasks):
+                # NOTE: Here we only provide environment variables for torch distributed
+                # initialization, and LOCAL_RANK for torch.device.
+                # Other environment variables automatically set by torchrun are not set, and
+                # they should be never accessed in trainer code.
+                env_vars.append(
+                    {
+                        "RANK": str(i),
+                        "WORLD_SIZE": str(n_tasks),
+                        # Ray will automatically isolate CUDA_VISIBLE_DEVICES for each GPU
+                        "LOCAL_RANK": "0",
+                        "MASTER_ADDR": str(host_ip),
+                        "MASTER_PORT": str(port),
+                    }
+                )
+            return env_vars
+
         launcher.submit_array(
             job_name="trainer",
             file_path=trainer_entry_point,
@@ -421,7 +470,7 @@ def ray_main(config, run_id: int = 0):
                 AREAL_LLM_SERVER_ADDRS=",".join(sglang_addrs),
                 AREAL_RECOVER_RUN=str(int(is_recover_run)),
             ),
-            amend_torch_dist_env=True,
+            env_hook=partial(torch_env_hook, trainer_n_nodes * n_gpus_per_node),
         )
 
     try:

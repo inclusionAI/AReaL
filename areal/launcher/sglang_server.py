@@ -108,7 +108,7 @@ class SGLangServerWrapper:
             visible = os.getenv("CUDA_VISIBLE_DEVICES").split(",")
             n_visible_devices = len(visible)
             n_servers_per_proc = max(1, n_visible_devices // gpus_per_server)
-            server_idx_offset = int(visible[0]) // gpus_per_server
+            server_idx_offset = min(list(map(int, visible))) // gpus_per_server
         else:
             n_servers_per_proc = n_servers_per_node
             server_idx_offset = 0
