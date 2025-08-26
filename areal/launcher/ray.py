@@ -11,6 +11,7 @@ from ray.util.placement_group import PlacementGroup
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 import areal.utils.logging as logging
+from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
@@ -19,7 +20,6 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
-from areal.api.io_struct import AllocationMode, AllocationType
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import (
     JobException,

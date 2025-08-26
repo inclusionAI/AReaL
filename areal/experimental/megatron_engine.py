@@ -15,6 +15,7 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from tensordict import TensorDict
 
+from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import MicroBatchSpec
 from areal.api.engine_api import FinetuneSpec, TrainEngine
 from areal.experimental.api.cli_args import (
@@ -22,7 +23,6 @@ from areal.experimental.api.cli_args import (
 )
 from areal.experimental.api.io_struct import (
     MegatronParallelStrategy,
-    ParallelStrategy,
     ParamSpec,
     SaveLoadMeta,
     WeightUpdateMeta,

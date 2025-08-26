@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import psutil
 
+from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
@@ -18,7 +19,6 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
-from areal.api.io_struct import AllocationMode, AllocationType
 from areal.utils import logging, name_resolve, names
 from areal.utils.device import gpu_count
 from areal.utils.launcher import JobException, JobInfo, JobState, get_env_vars

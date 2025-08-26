@@ -6,7 +6,7 @@ import pathlib
 import time
 from typing import Dict, Optional
 
-from areal.api.io_struct import AllocationMode, AllocationType
+from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.utils import logging, name_resolve, names
 
 logger = logging.getLogger("Launcher Utils")
