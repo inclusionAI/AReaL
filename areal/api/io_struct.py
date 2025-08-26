@@ -191,11 +191,11 @@ class AllocationMode:
 
     @staticmethod
     def extract_gen_alloc(allocation_mode: str) -> Dict:
-        pattern = re.compile(r"(?:vllm|sglang)\.(.+?)")
+        pattern = re.compile(r"(?:vllm|sglang)\.(.+)")
         m = pattern.match(allocation_mode)
         if not m:
             return {}
-        return AllocationMode.extract_parallelism_strategy(m.group(1))
+        return AllocationMode.extract_parallelism_strategy(m.group(1))["*"]
 
     @staticmethod
     def extract_decoupled_alloc(allocation_mode: str) -> Dict:
