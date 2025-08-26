@@ -42,7 +42,8 @@ def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
 
-    enable_colocate_mode = config.enable_colocate_mode if hasattr(config, 'enable_colocate_mode') else False
+    if config.enable_colocate_mode:
+        config.rollout.engine_config['enable_memory_saver'] = True
     
     # Print full config
     logger.info("Loaded config:\n" + pprint.pformat(config, indent=2, width=120, depth=6))
@@ -84,9 +85,6 @@ def main(args):
 
     allocation_mode = config.allocation_mode
     allocate_mode = AllocationMode.from_str(allocation_mode)
-    allocate_mode.enable_colocate_mode = enable_colocate_mode
-    if enable_colocate_mode:
-        config.rollout.engine_config['enable_memory_saver'] = True
         
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
     dataset = load_dataset("json", data_files=config.train_dataset.path)
@@ -154,14 +152,14 @@ def main(args):
     rollout = DistributedRolloutController(
         RemoteHybridInferenceWorker(inference_config),
         RolloutControllerConfig(experiment_name=config.experiment_name, trial_name=config.trial_name,
-                                allocation_mode=config.allocation_mode),
+                                allocation_mode=config.allocation_mode, enable_colocate_mode=config.enable_colocate_mode),
         scheduler,
     )
     actor = DistributedTrainController(
         RemoteHypridTrainWorker(config.actor.hybrid_engine),
         TrainControllerConfig(experiment_name=config.experiment_name,
                               trial_name=config.trial_name,
-                              allocation_mode=config.allocation_mode),
+                              allocation_mode=config.allocation_mode, enable_colocate_mode=config.enable_colocate_mode),
         scheduler,
         group_size=config.actor.hybrid_engine.group_size
     )
@@ -169,14 +167,14 @@ def main(args):
     # engine initialize
     # initialize actor first for colocation mode
     actor.initialize()
-    rollout.initialize(colocation_with=actor if enable_colocate_mode else None)
+    rollout.initialize(colocation_with=actor if config.enable_colocate_mode else None)
 
     ref = None
     if config.actor.hybrid_engine.wrap_policy.kl_ctl> 0:
         ref = DistributedReferenceController(
             RemoteHypridTrainWorker(config.ref.hybrid_engine),
             TrainControllerConfig(experiment_name=config.experiment_name, trial_name=config.trial_name,
-                                  allocation_mode=config.allocation_mode),
+                                  allocation_mode=config.allocation_mode, enable_colocate_mode=enable_colocate_mode),
             scheduler,
             group_size=config.actor.hybrid_engine.group_size
         )

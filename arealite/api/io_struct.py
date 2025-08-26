@@ -130,14 +130,6 @@ class AllocationMode:
     @property
     def reference_world_size(self) -> int:
         return self.reference_dp_size * self.reference_pp_size * self.reference_tp_size
-    
-    @property
-    def enable_colocate_mode(self) -> bool:
-        return self.enable_colocate_mode_
-    
-    @enable_colocate_mode.setter
-    def enable_colocate_mode(self, value: bool):
-        self.enable_colocate_mode_ = value
 
     @classmethod
     def from_str(cls, allocation_mode: str):

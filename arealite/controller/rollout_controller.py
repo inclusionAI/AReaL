@@ -41,7 +41,7 @@ class DistributedRolloutController(RolloutController):
         self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
         self.dp_world_size = self.allocate_mode.gen_world_size // self.allocate_mode.gen_dp_size
         self.role = kwargs.get("role", "rollout")
-        self.enable_colocate_mode = self.allocate_mode.enable_colocate_mode
+        self.enable_colocate_mode = self.config.enable_colocate_mode
 
     def _rpc_call(self, method, batches=None, *args, **kwargs):
         """

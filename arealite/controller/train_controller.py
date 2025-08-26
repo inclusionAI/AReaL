@@ -41,7 +41,7 @@ class DistributedTrainController(TrainController):
         self.dp_size = self.allocate_mode.train_dp_size
         self.tp_size = self.allocate_mode.train_tp_size
         self.pp_size = self.allocate_mode.train_pp_size
-        self.enable_colocate_mode = self.allocate_mode.enable_colocate_mode
+        self.enable_colocate_mode = self.config.enable_colocate_mode
 
 
     def initialize(self, *args, **kwargs):

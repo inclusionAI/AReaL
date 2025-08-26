@@ -274,7 +274,8 @@ megatron_wrap_policy = {
     "reward_output_bias": -1.0
 }
 
-
+if enable_colocate_mode:
+    engine_config['enable_memory_saver'] = True
 
 
 def main_grpo():
@@ -322,9 +323,6 @@ def main_grpo():
 
     allocation_mode = "gen:d8t4p1,train:d8t1p4"
     allocate_mode = AllocationMode.from_str(allocation_mode)
-    allocate_mode.enable_colocate_mode = enable_colocate_mode
-    if enable_colocate_mode:
-        engine_config['enable_memory_saver'] = True
     
     storage_path = "/storage/openpsi/checkpoints/{experiment_name}/{trial_name}".format(
         experiment_name=experiment_name, trial_name=trial_name)
@@ -392,7 +390,7 @@ def main_grpo():
                                         pp_size=allocate_mode.gen_pp_size, seed=seed, engine_config=engine_config,
                                         batch_requests=batch_rollout)),
         RolloutControllerConfig(experiment_name=experiment_name, trial_name=trial_name,
-                                allocation_mode=allocation_mode),
+                                allocation_mode=allocation_mode, enable_colocate_mode=enable_colocate_mode),
         scheduler,
     )
     actor = DistributedTrainController(
@@ -401,7 +399,8 @@ def main_grpo():
                                                            remote_megatron_config=remote_megatron_config,
                                                            wrap_policy=RemoteMegatronEngineConfig.assign_wrap_policy(
                                                                megatron_wrap_policy))),
-        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
+        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name,
+                              allocation_mode=allocation_mode, enable_colocate_mode=enable_colocate_mode),
         scheduler,
         group_size=group_size
     )

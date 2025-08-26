@@ -116,6 +116,7 @@ class TrainControllerConfig:
     )
     experiment_name: str = MISSING
     trial_name: str = MISSING
+    enable_colocate_mode: bool = False
 
 @dataclass
 class SGLangConfig:
@@ -348,6 +349,7 @@ class RolloutControllerConfig:
     )
     experiment_name: str = MISSING
     trial_name: str = MISSING
+    enable_colocate_mode: bool = False
 
 
 @dataclass
