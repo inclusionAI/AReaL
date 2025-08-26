@@ -22,7 +22,6 @@ DEFAULT_MODES = [
     RunMode.DEFAULT.value,
     RunMode.ORACLE_PLAN.value,
     RunMode.NO_USER.value,
-    RunMode.NO_USER_ORACLE_PLAN.value,
 ]
 DEFAULT_LLM_AGENT_ARGS = {"temperature": 0.0}
 DEFAULT_LLM_USER_ARGS = {"temperature": 0.0}
