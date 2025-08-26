@@ -42,6 +42,8 @@ def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
 
+    config.gconfig.max_tokens = config.gconfig.max_new_tokens + config.train_dataset.max_prompt_len
+
     if config.enable_colocate_mode:
         config.rollout.engine_config['enable_memory_saver'] = True
     
