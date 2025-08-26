@@ -31,6 +31,8 @@ def assert_tensor_container_close(x1, x2):
 @pytest.mark.parametrize("world_size", [2, 4, 8])
 @pytest.mark.parametrize("granularity", [1, 2, 4])
 def test_redistribute(world_size, granularity, tmp_path):
+    if torch.cuda.device_count() < world_size:
+        pytest.skip(f"Test requires {world_size} GPUs")
     port = find_free_ports(1)[0]
     try:
         subprocess.run(
