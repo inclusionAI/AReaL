@@ -89,7 +89,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--port", type=int, required=False)
-    args = parser.parse_args()
+
+    args, unknown = parser.parse_known_args()
     port = get_serve_port(args)
 
     print(f"About to start RPC server on {port}")

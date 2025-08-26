@@ -123,7 +123,7 @@ class DistributedRolloutController(RolloutController):
         workerSpec.env_vars["REAL_PACKAGE_PATH"] = arealite_path
         workerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
         workerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
-        workerSpec.env_vars["WORKER_TYPE"] = "rollout-worker"
+        workerSpec.env_vars["WORKER_TYPE"] = f"{self.role}-worker"
 
         engineSpec = ContainerSpec(
             cpu=0,
@@ -134,24 +134,27 @@ class DistributedRolloutController(RolloutController):
             portCount=3
         )
         engineSpec.env_vars["ENGINE_PACKAGE_PATH"] = engine_path
-        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13200124-20250815232101.sif"
+        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13570177-20250826120640.sif"
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
-        engineSpec.env_vars["WORKER_TYPE"] = "rollout-engine"
+        engineSpec.env_vars["WORKER_TYPE"] = f"{self.role}-engine"
         engineSpec.env_vars["WORK_MODE"] = "GENERATION"
         engineSpec.env_vars["GLOO_SOCKET_IFNAME"] = "eth0"
         engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "eth0"
         engineSpec.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         engineSpec.env_vars["USE_MAX_V2"] = "1"
         engineSpec.env_vars["DISCOVERY_CONFIG_CENTER_TYPE"] = "HTTP"
-
+        engineSpec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
+        engineSpec.env_vars["NCCL_NVLS_ENABLE"] = "0"
+        engineSpec.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
+        engineSpec.env_vars["NCCL_DEBUG"] = "WARNING"
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
 
 
-        self.uid = self.scheduler.create_workers("rollout", scheduling_config)
+        self.uid = self.scheduler.create_workers(self.role, scheduling_config)
 
-        self.workers = self.scheduler.get_workers("rollout", timeout=1800)
+        self.workers = self.scheduler.get_workers(self.role, timeout=1800)
         # 如果1个实例跨机部署，返回的server_addrs是engine实例数的整数倍;e.g. dp2tp8pp2, 需要2个engine，返回了4个server_addrs， 只有index==0|2的才是真正的服务地址
         # 如果多个实例同机部署，返回的server_addrs和engine实例数等长
         worker_addrs = [

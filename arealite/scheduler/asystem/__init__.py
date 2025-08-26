@@ -70,8 +70,8 @@ class AsystemScheduler(Scheduler):
             node_count = engine.gpu // self.n_gpus_per_node
             scheduler_config.replicas = scheduler_config.replicas * node_count
 
-        
         # 提交作业到Asystem
+        scheduler_config.role = worker_key
         job_info = self.submit_job(scheduler_config)
         job_name = job_info.get("job_name")
         job_uid = job_info.get("job_uid")
@@ -207,7 +207,8 @@ class AsystemScheduler(Scheduler):
         # 构建基础标签
         labels = {
             "expr_name": self.expr_name,
-            "trial_name": self.trial_name,
+            # hack: 先通过trial区分下不同的角色
+            "trial_name": self.trial_name + "_" + scheduling_config.role,
             "run_name": self.run_name,
         }
 

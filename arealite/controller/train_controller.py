@@ -36,7 +36,7 @@ class DistributedTrainController(TrainController):
         super().__init__(train_engine, config, scheduler)
         self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
         self.role = kwargs.get("role", "train")
-        self.group_size = kwargs.get("group_size")
+        self.group_size = config.group_size
         self.world_size = self.allocate_mode.train_world_size
         self.dp_size = self.allocate_mode.train_dp_size
         self.tp_size = self.allocate_mode.train_tp_size
@@ -67,7 +67,7 @@ class DistributedTrainController(TrainController):
         workerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
         workerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
             experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
-        workerSpec.env_vars["WORKER_TYPE"] = "training-worker"
+        workerSpec.env_vars["WORKER_TYPE"] = f"{self.role}-worker"
 
         engineSpec = ContainerSpec(
             cpu=0,
@@ -78,16 +78,20 @@ class DistributedTrainController(TrainController):
             portCount=1
         )
         engineSpec.env_vars["ENGINE_PACKAGE_PATH"] = engine_path
-        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13200124-20250815232101.sif"
+        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13570177-20250826120640.sif"
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
             experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
-        engineSpec.env_vars["WORKER_TYPE"] = "training-engine"
+        engineSpec.env_vars["WORKER_TYPE"] = f"{self.role}-engine"
         engineSpec.env_vars["WORK_MODE"] = "TRAINING"
         engineSpec.env_vars["GLOO_SOCKET_IFNAME"] = "eth0"
         engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "eth0"
         engineSpec.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         engineSpec.env_vars["USE_MAX_V2"] = "1"
         engineSpec.env_vars["DISCOVERY_CONFIG_CENTER_TYPE"] = "HTTP"
+        engineSpec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
+        engineSpec.env_vars["NCCL_NVLS_ENABLE"] = "0"
+        engineSpec.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
+        engineSpec.env_vars["NCCL_DEBUG"] = "WARNING"
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)

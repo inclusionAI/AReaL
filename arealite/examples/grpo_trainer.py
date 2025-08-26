@@ -152,14 +152,16 @@ def main(args):
     rollout = DistributedRolloutController(
         RemoteHybridInferenceWorker(inference_config),
         RolloutControllerConfig(experiment_name=config.experiment_name, trial_name=config.trial_name,
-                                allocation_mode=config.allocation_mode, enable_colocate_mode=config.enable_colocate_mode),
+                                allocation_mode=config.allocation_mode, enable_colocate_mode=config.enable_colocate_mode,
+                                group_size=config.actor.hybrid_engine.group_size),
         scheduler,
     )
     actor = DistributedTrainController(
         RemoteHypridTrainWorker(config.actor.hybrid_engine),
         TrainControllerConfig(experiment_name=config.experiment_name,
                               trial_name=config.trial_name,
-                              allocation_mode=config.allocation_mode, enable_colocate_mode=config.enable_colocate_mode),
+                              allocation_mode=config.allocation_mode, enable_colocate_mode=config.enable_colocate_mode,
+                              group_size=config.actor.hybrid_engine.group_size),
         scheduler,
         group_size=config.actor.hybrid_engine.group_size
     )
@@ -174,9 +176,9 @@ def main(args):
         ref = DistributedReferenceController(
             RemoteHypridTrainWorker(config.ref.hybrid_engine),
             TrainControllerConfig(experiment_name=config.experiment_name, trial_name=config.trial_name,
-                                  allocation_mode=config.allocation_mode, enable_colocate_mode=enable_colocate_mode),
+                                  allocation_mode=config.allocation_mode, enable_colocate_mode=False,
+                                  group_size=config.actor.hybrid_engine.group_size),
             scheduler,
-            group_size=config.actor.hybrid_engine.group_size
         )
         ref.initialize()
 

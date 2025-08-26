@@ -35,4 +35,3 @@ class DistributedReferenceController(DistributedTrainController):
         self.dp_size = self.allocate_mode.reference_dp_size
         self.tp_size = self.allocate_mode.reference_tp_size
         self.pp_size = self.allocate_mode.reference_pp_size
-        self.group_size = kwargs.get("group_size")

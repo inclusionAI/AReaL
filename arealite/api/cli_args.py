@@ -117,6 +117,7 @@ class TrainControllerConfig:
     experiment_name: str = MISSING
     trial_name: str = MISSING
     enable_colocate_mode: bool = False
+    group_size: int = 0
 
 @dataclass
 class SGLangConfig:

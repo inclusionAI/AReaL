@@ -31,6 +31,7 @@ class SchedulingConfig:
     replicas: int = 0
     specs: List[ContainerSpec] = field(default_factory=list)
     schedule_strategy: ScheduleStrategy=None
+    role: str = ""
 
 
 class Scheduler(abc.ABC):
