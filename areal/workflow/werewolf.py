@@ -75,7 +75,7 @@ class WerewolfWorkflow(RolloutWorkflow):
         self, 
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
-        max_turns: int = 50,
+        max_turns: int = 70,
         turn_discount: float = 1.0,
         dump_dir: str | None = None,
         env_kwargs: dict | None = None,
@@ -393,6 +393,7 @@ class WerewolfWorkflow(RolloutWorkflow):
                 versions=torch.tensor(versions).unsqueeze(0),
                 attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
                 rewards=torch.tensor([float(reward)]),
+                sft_ppo_mask=torch.tensor([1], dtype=torch.long),
             )
             results.append(TensorDict(res, batch_size=[1]))
             t_pack_tensors_total += time.perf_counter() - t0
