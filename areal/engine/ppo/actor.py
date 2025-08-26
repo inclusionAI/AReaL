@@ -149,93 +149,143 @@ class PPOActor:
         data["logprobs"] = old_logp
 
     def ppo_update(self, data: TensorDict) -> List[Dict[str, float]]:
-        attn_mask = data["attention_mask"]
-        loss_mask = data["loss_mask"]
-        reward_score = data["rewards"]
-        seqlens = attn_mask.sum(-1)
-
-        all_stats = []
-        ########## Logging code starts ##########
-        result_denominators = {
-            "correct_n_seqs": (reward_score > 0).bool(),
-            "incorrect_n_seqs": (reward_score <= 0).bool(),
-        }
-        global_denominators = dict(
-            n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
-            n_tokens=torch.ones_like(loss_mask, dtype=torch.bool),
-            n_valid_tokens=loss_mask.bool(),
-            **result_denominators,
-        )
-        stats_tracker.denominator(**global_denominators)
-        stats_tracker.stat(
-            correct_seq_len=seqlens.float(), denominator="correct_n_seqs"
-        )
-        stats_tracker.stat(
-            incorrect_seq_len=seqlens.float(), denominator="incorrect_n_seqs"
-        )
-
-        stats = dict(
-            advantages=data["advantages"],
-            kl_rewards=data["kl_rewards"],
-            final_reward=data["tot_rewards"],
-        )
-        stats_tracker.stat(**stats, denominator="n_valid_tokens")
-
-        prompt_lens = []
-        prompt_lens = data["attention_mask"].sum(-1) - data["loss_mask"].sum(-1)
-        seq_stats = dict(
-            no_eos_ratios=(seqlens == attn_mask.shape[-1]).float(),
-            task_reward=reward_score.float(),
-            prompt_len=prompt_lens.float(),
-            seq_len=seqlens.float(),
-        )
-        stats_tracker.stat(**seq_stats, denominator="n_seqs")
-        scalars = dict(
-            mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
-            eps_clip=self.config.eps_clip,
-        )
-        if self.config.c_clip is not None:
-            scalars["c_clip"] = self.config.c_clip
-            scalars["use_dual_clip"] = 1
+        mask = data.get("sft_ppo_mask")
+        if mask is not None:
+            mask = mask.view(-1).bool()
+            ppo_data = data[~mask]
+            sft_data = data[mask]
+            ppo_data.pop("sft_ppo_mask", None)
+            sft_data.pop("sft_ppo_mask", None)
         else:
-            scalars["use_dual_clip"] = 0
-        if self.config.behav_imp_weight_cap is not None:
-            scalars["behav_imp_weight_cap"] = self.config.behav_imp_weight_cap
-        stats_tracker.scalar(**scalars)
+            ppo_data = data
+            sft_data = None
 
-        global_stats = stats_tracker.export(reduce_group=self.engine.parallelism_group)
-        for k in global_denominators:
-            keys = list(global_stats.keys())
-            for k2 in keys:
-                if k2.endswith(k):
-                    global_stats.pop(k2)
-        ########## Logging code ends ##########
+        all_stats: List[Dict[str, float]] = []
 
-        for key in ["rewards", "tot_rewards", "kl_rewards", "versions"]:
-            data.pop(key, None)
-        # NOTE: calling engine.train() is critical to enabling gradient checkpointing
-        self.engine.train()
-        mb_inputs = split_padded_tensor_dict_into_mb_list(
-            data,
-            mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
-        )
-        for mb in mb_inputs.mbs:
-            train_stat = self.engine.train_batch(
-                mb,
-                loss_fn=functools.partial(
-                    grpo_loss_fn,
-                    temperature=self.temperature,
-                    eps_clip=self.config.eps_clip,
-                    c_clip=self.config.c_clip,
-                    behav_imp_weight_cap=self.config.behav_imp_weight_cap,
-                ),
-                loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
+        if ppo_data.shape[0] > 0:
+            attn_mask = ppo_data["attention_mask"]
+            loss_mask = ppo_data["loss_mask"]
+            reward_score = ppo_data["rewards"]
+            seqlens = attn_mask.sum(-1)
+
+            ########## Logging code starts ##########
+            result_denominators = {
+                "correct_n_seqs": (reward_score > 0).bool(),
+                "incorrect_n_seqs": (reward_score <= 0).bool(),
+            }
+            global_denominators = dict(
+                n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
+                n_tokens=torch.ones_like(loss_mask, dtype=torch.bool),
+                n_valid_tokens=loss_mask.bool(),
+                **result_denominators,
             )
-            stats_tracker.scalar(**train_stat)
-            all_stats.append(
-                stats_tracker.export(reduce_group=self.engine.parallelism_group)
+            stats_tracker.denominator(**global_denominators)
+            stats_tracker.stat(
+                correct_seq_len=seqlens.float(), denominator="correct_n_seqs"
             )
-        all_stats[0].update(global_stats)
+            stats_tracker.stat(
+                incorrect_seq_len=seqlens.float(), denominator="incorrect_n_seqs"
+            )
+
+            stats = dict(
+                advantages=ppo_data["advantages"],
+                kl_rewards=ppo_data["kl_rewards"],
+                final_reward=ppo_data["tot_rewards"],
+            )
+            stats_tracker.stat(**stats, denominator="n_valid_tokens")
+
+            prompt_lens = ppo_data["attention_mask"].sum(-1) - ppo_data["loss_mask"].sum(-1)
+            seq_stats = dict(
+                no_eos_ratios=(seqlens == attn_mask.shape[-1]).float(),
+                task_reward=reward_score.float(),
+                prompt_len=prompt_lens.float(),
+                seq_len=seqlens.float(),
+            )
+            stats_tracker.stat(**seq_stats, denominator="n_seqs")
+            scalars = dict(
+                mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
+                eps_clip=self.config.eps_clip,
+            )
+            if self.config.c_clip is not None:
+                scalars["c_clip"] = self.config.c_clip
+                scalars["use_dual_clip"] = 1
+            else:
+                scalars["use_dual_clip"] = 0
+            if self.config.behav_imp_weight_cap is not None:
+                scalars["behav_imp_weight_cap"] = self.config.behav_imp_weight_cap
+            stats_tracker.scalar(**scalars)
+
+            global_stats = stats_tracker.export(
+                reduce_group=self.engine.parallelism_group
+            )
+            for k in global_denominators:
+                keys = list(global_stats.keys())
+                for k2 in keys:
+                    if k2.endswith(k):
+                        global_stats.pop(k2)
+            ########## Logging code ends ##########
+
+            for key in ["rewards", "tot_rewards", "kl_rewards", "versions"]:
+                ppo_data.pop(key, None)
+            # NOTE: calling engine.train() is critical to enabling gradient checkpointing
+            self.engine.train()
+            mb_inputs = split_padded_tensor_dict_into_mb_list(
+                ppo_data,
+                mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
+            )
+            for mb in mb_inputs.mbs:
+                train_stat = self.engine.train_batch(
+                    mb,
+                    loss_fn=functools.partial(
+                        grpo_loss_fn,
+                        temperature=self.temperature,
+                        eps_clip=self.config.eps_clip,
+                        c_clip=self.config.c_clip,
+                        behav_imp_weight_cap=self.config.behav_imp_weight_cap,
+                    ),
+                    loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
+                )
+                stats_tracker.scalar(**train_stat)
+                all_stats.append(
+                    stats_tracker.export(
+                        reduce_group=self.engine.parallelism_group
+                    )
+                )
+            if all_stats:
+                all_stats[0].update(global_stats)
+
+        if sft_data is not None and sft_data.shape[0] > 0:
+            for key in [
+                "advantages",
+                "kl_rewards",
+                "tot_rewards",
+                "rewards",
+                "versions",
+                "prox_logp",
+                "ref_logp",
+                "logprobs",
+            ]:
+                sft_data.pop(key, None)
+            self.engine.train()
+            mb_inputs = split_padded_tensor_dict_into_mb_list(
+                sft_data,
+                mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
+            )
+            for mb in mb_inputs.mbs:
+                train_stat = self.engine.train_batch(
+                    mb,
+                    loss_fn=functools.partial(
+                        sft_loss_fn, temperature=self.temperature
+                    ),
+                    loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
+                )
+                stats_tracker.scalar(**train_stat)
+                all_stats.append(
+                    stats_tracker.export(
+                        reduce_group=self.engine.parallelism_group
+                    )
+                )
+
         return all_stats
 
 
@@ -329,5 +379,33 @@ def grpo_loss_fn(
         clipped_new_logp=clipped_new_logp,
         clipped_old_logp=clipped_old_logp,
         denominator="clipped_tokens",
+    )
+    return loss
+
+def sft_loss_fn(logits: torch.Tensor, input_data: Dict, temperature: float):
+    """Cross-entropy loss for SFT data."""
+    input_ids = input_data["input_ids"]
+    loss_mask = input_data["loss_mask"].bool()
+    labels = torch.roll(input_ids, shifts=-1, dims=-1)
+    logprobs = gather_logprobs(logits, labels, temperature)
+    loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
+    logprobs = torch.where(loss_mask, logprobs, 0.0)
+    loss = -logprobs.sum() / loss_mask.count_nonzero()
+
+    stats_tracker.denominator(
+        n_tokens=torch.ones(logits.shape[0], dtype=torch.bool, device=logits.device),
+        n_valid_tokens=loss_mask,
+    )
+    stats_tracker.stat(
+        new_logp=logprobs.detach(),
+        sft_loss=-logprobs.detach(),
+        denominator="n_valid_tokens",
+    )
+    vocab_min_logits = logits.detach().min(-1).values.float()
+    vocab_max_logits = logits.detach().max(-1).values.float()
+    stats_tracker.stat(
+        vocab_min_logits=vocab_min_logits,
+        vocab_max_logits=vocab_max_logits,
+        denominator="n_tokens",
     )
     return loss
