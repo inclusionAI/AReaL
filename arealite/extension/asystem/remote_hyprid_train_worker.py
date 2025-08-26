@@ -864,8 +864,13 @@ class RemoteHypridTrainWorker(TrainEngine):
         logger.info("[RemoteHypridTrainWorker] begin exec compute_logprobs...")
         seqlen_tensor = input_["seqlen"]
 
-        batch_size = int(seqlen_tensor.shape[0])
-        group_size = int(seqlen_tensor.shape[1])
+        if seqlen_tensor.dim() == 1:
+            batch_size = int(seqlen_tensor.shape[0])
+            group_size = 1
+        else:
+            batch_size = int(seqlen_tensor.shape[0])
+            group_size = int(seqlen_tensor.shape[1])
+            
         flat_input = SequenceSample.from_default(
             ids=list(range(batch_size*group_size)),
             data={k: v for k, v in input_.items() if k != "seqlen"},
