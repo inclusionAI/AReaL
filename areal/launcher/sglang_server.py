@@ -118,6 +118,7 @@ class SGLangServerWrapper:
         ports_per_server = 40000 // n_servers_per_node
         launch_server_args = []
         server_addresses = []
+        base_random_seed = self.config.random_seed
         for server_local_idx in range(
             server_idx_offset, server_idx_offset + n_servers_per_proc
         ):
@@ -137,6 +138,7 @@ class SGLangServerWrapper:
             host_ip = gethostip()
 
             base_gpu_id = (server_local_idx - server_idx_offset) * gpus_per_server
+            self.config.random_seed = base_random_seed + base_gpu_id
             cmd = SGLangConfig.build_cmd(
                 self.config,
                 tp_size=self.allocation_mode.gen_tp_size,
