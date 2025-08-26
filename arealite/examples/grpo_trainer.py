@@ -62,14 +62,14 @@ def main(args):
         }
     )
 
-    if config.weight_update_type == "nccl":
+    if config.weight_update_type != "disk":
         from arealite.extension.asystem.meta_server import start_meta_server
         host, port = start_meta_server()
         meta_server_addr = f"{host}:{port}"
 
         asystem_hybrid_config = {
             "meta_server_addr": meta_server_addr,
-            "weights_exchange_comm_backend": "nccl",
+            "weights_exchange_comm_backend": config.weight_update_type,
             "weights_validation_steps": 0,
             "enable_debug_mode": True,
         }
@@ -152,8 +152,7 @@ def main(args):
     rollout = DistributedRolloutController(
         RemoteHybridInferenceWorker(inference_config),
         RolloutControllerConfig(experiment_name=config.experiment_name, trial_name=config.trial_name,
-                                allocation_mode=config.allocation_mode, enable_colocate_mode=config.enable_colocate_mode,
-                                group_size=config.actor.hybrid_engine.group_size),
+                                allocation_mode=config.allocation_mode, enable_colocate_mode=config.enable_colocate_mode),
         scheduler,
     )
     actor = DistributedTrainController(
@@ -162,8 +161,7 @@ def main(args):
                               trial_name=config.trial_name,
                               allocation_mode=config.allocation_mode, enable_colocate_mode=config.enable_colocate_mode,
                               group_size=config.actor.hybrid_engine.group_size),
-        scheduler,
-        group_size=config.actor.hybrid_engine.group_size
+        scheduler
     )
 
     # engine initialize
@@ -229,7 +227,7 @@ def main(args):
                         rollout.update_weights(weight_update_config)
                         logger.info(f"disk mode update weight succeeded, step: {step}, epoch: {epoch}")
                         clear_dir(weight_update_config.path)
-                    elif weight_update_config.type == "nccl":
+                    else:
                         import concurrent.futures
                         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
                             upload_future = executor.submit(actor.upload_weights, weight_update_config)
@@ -239,7 +237,7 @@ def main(args):
                             for future in [upload_future, update_future]:
                                 if future.exception() is not None:
                                     raise future.exception()
-                        logger.info(f"nccl mode update weight succeeded (parallel), step: {step}, epoch: {epoch}")
+                        logger.info(f"{weight_update_config.type} update weight succeeded (parallel), step: {step}, epoch: {epoch}")
 
                 with (
                     stats_tracker.record_timing("rollout_step"),

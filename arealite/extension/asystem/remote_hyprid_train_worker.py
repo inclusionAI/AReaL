@@ -155,7 +155,7 @@ class RemoteHypridTrainWorker(TrainEngine):
         self.initialized = False
 
     def upload_weights(self, meta: WeightUpdateMeta):
-        if meta.type == "nccl":
+        if meta.type == "nccl" or meta.type == "astate":
             try:
                 logger.info(
                     f"[RemoteHypridTrainWorker] upload_weights begin send request to megatron server, "

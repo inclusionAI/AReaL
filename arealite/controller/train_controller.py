@@ -87,11 +87,12 @@ class DistributedTrainController(TrainController):
         engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "eth0"
         engineSpec.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         engineSpec.env_vars["USE_MAX_V2"] = "1"
-        engineSpec.env_vars["DISCOVERY_CONFIG_CENTER_TYPE"] = "HTTP"
+        engineSpec.env_vars["DISCOVERY_CONFIG_CENTER_TYPE"] = "FILE"
         engineSpec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
         engineSpec.env_vars["NCCL_NVLS_ENABLE"] = "0"
         engineSpec.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
         engineSpec.env_vars["NCCL_DEBUG"] = "WARNING"
+        engineSpec.env_vars["ASTRA_SHARED_PATH"] = f"/storage/openpsi/astate_shared_storage"
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)

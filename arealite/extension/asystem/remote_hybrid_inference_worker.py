@@ -479,7 +479,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 f"[RemoteHybridInferenceWorker] Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms"
             )
             self.set_version(meta.model_version)
-        else:
+        elif meta.type == "nccl" or meta.type == "astate":
             load_timestamp = time.time_ns()
             logger.info(f"[RemoteHybridInferenceWorkerer] Begin update weights.")
 
@@ -509,6 +509,8 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 f"[RemoteHybridInferenceWorker] Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms"
             )
             self.set_version(meta.model_version)
+        else:
+            raise ValueError(f"Unknown weight update type {meta.type}")
 
     def pause(self):
         self.paused.set()

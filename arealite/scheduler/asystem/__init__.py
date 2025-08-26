@@ -51,7 +51,9 @@ class AsystemScheduler(Scheduler):
         self.n_gpus_per_node = int(config.get("n_gpus_per_node", "8"))
         # Initialize RPCClient for create_engine and call_engine
         self.rpc_client = RPCClient()
-
+        # 每次实验生成一个uuid
+        self.uuid = str(time.time_ns())
+        self.extra_envs["CLUSTER_NAME"] = f"{self.expr_name}_{self.trial_name}_{self.uuid}"
         logger.info(f"AsystemScheduler initialized for {self.run_name}. API URL: {self.api_url}")
 
     def _build_rpc_client(self, config):
