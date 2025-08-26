@@ -147,6 +147,7 @@ class DistributedRolloutController(RolloutController):
         engineSpec.env_vars["NCCL_NVLS_ENABLE"] = "0"
         engineSpec.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
         engineSpec.env_vars["NCCL_DEBUG"] = "WARNING"
+        engineSpec.env_vars["ASTRA_SHARED_PATH"] = f"/storage/openpsi/astate_shared_storage"
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
