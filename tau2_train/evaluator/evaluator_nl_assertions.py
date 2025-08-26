@@ -5,6 +5,7 @@ from tau2_train.data_model.message import Message, SystemMessage, UserMessage
 from tau2_train.data_model.simulation import NLAssertionCheck, RewardInfo
 from tau2_train.data_model.tasks import RewardType, Task
 from tau2_train.utils.llm_utils import to_litellm_messages
+from tau2_train.user_simulator import create_with_retry
 from openai import OpenAI
 from loguru import logger
 
@@ -116,14 +117,16 @@ class NLAssertionsEvaluator:
         
         llm_client = OpenAI(
             api_key="empty",
-            base_url="http://10.11.16.243:8000/v1/"
+            base_url="http://10.11.16.251:8000/v1/"
         )
 
         messages = to_litellm_messages(messages)
-        response = llm_client.chat.completions.create(
-                model="/storage/openpsi/models/Qwen__Qwen2.5-72B-Instruct/",
-                messages=messages,
-            )
+
+        response = create_with_retry(
+            llm_client,
+            model="/storage/openpsi/models/Qwen__Qwen2.5-72B-Instruct/",
+            messages=messages,
+        )
 
         ## TODO
         try:

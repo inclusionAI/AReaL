@@ -121,8 +121,6 @@ class ParticipantMessageBase(BaseModel):
         """
         if self.content is None:
             return False
-        if isinstance(self.content, str) and self.content.strip() == "":
-            return False
         return True
 
     def is_tool_call(self) -> bool:

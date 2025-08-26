@@ -81,12 +81,16 @@ class LLMAgent:
 
         self.domain_policy = domain_policy
         self.tools = tools
+        self.stop = False
 
     @property
     def system_prompt(self) -> str:
         return SYSTEM_PROMPT.format(
             domain_policy=self.domain_policy, agent_instruction=AGENT_INSTRUCTION
         )
+
+    def is_stop(self, message):
+        return self.stop
 
     def get_init_state(
         self, message_history: Optional[list] = None
@@ -138,10 +142,22 @@ class LLMAgent:
                 tools=tools,
                 toeknize=True,
             )
+        max_new_tokens = min(self.gconfig.max_new_tokens, 32768 - len(input_ids) - 1)
+        if max_new_tokens <= 0:
+            self.stop = True
+            assistant_message = AssistantMessage(
+                role="assistant",
+                content="",
+                tool_calls=None,
+                raw_data=None,
+            )
+            state.messages.append(assistant_message)
+            return assistant_message, state
+        
         req = ModelRequest(
                 rid=self.traj_rid,
                 input_ids=input_ids,
-                gconfig=self.gconfig.new(n_samples=1),
+                gconfig=self.gconfig.new(n_samples=1, max_new_tokens=max_new_tokens),
             )
 
         resp = await self.llm_engine.agenerate(req)

@@ -9,7 +9,7 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 seed: 1
-total_train_epochs: 10
+total_train_epochs: 100
 tokenizer_path: ${actor.path}
 async_training: true
 
@@ -38,7 +38,7 @@ actor:
   gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_mb: 32768
+    max_tokens_per_gpu: 32768
   pad_to_maximum: true
   optimizer:
     type: adam
@@ -72,7 +72,7 @@ ref:
   disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
-    max_tokens_per_mb: 32768
+    max_tokens_per_gpu: 32768
   pad_to_maximum: true
   optimizer: null
   backend: fsdp

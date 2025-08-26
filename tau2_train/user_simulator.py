@@ -16,7 +16,8 @@ from .environment.tool import Tool
 
 from .utils import DATA_DIR
 from .utils.llm_utils import to_litellm_messages
-from openai import OpenAI
+from openai import OpenAI, RateLimitError, APIError
+import time
 
 from loguru import logger
 
@@ -53,6 +54,24 @@ def get_global_user_sim_guidelines(use_tools: bool = False) -> str:
         with open(GLOBAL_USER_SIM_GUIDELINES_PATH, "r") as fp:
             user_sim_guidelines = fp.read()
     return user_sim_guidelines
+
+def create_with_retry(client, max_retries=5, initial_delay=1, backoff_factor=2, **kwargs):
+    retries = 0
+    delay = initial_delay
+    
+    while retries <= max_retries:
+        try:
+            return client.chat.completions.create(**kwargs)
+        except (RateLimitError, APIError) as e:
+            retries += 1
+            if retries > max_retries:
+                raise Exception(f"all {max_retries} trials fialed: {e}")
+            
+            print(f"try {retries}/{max_retries} fail, wait {delay} s ...")
+            time.sleep(delay)
+            delay *= backoff_factor
+        except Exception as e:
+            raise e
 
 
 SYSTEM_PROMPT = """
@@ -132,7 +151,7 @@ class UserSimulator:
         # TODO
         self.llm_client = OpenAI(
             api_key="empty",
-            base_url="http://10.11.16.243:8000/v1/"
+            base_url="http://10.11.16.251:8000/v1/"
         )
         #####
         self.tools = tools
@@ -218,12 +237,19 @@ class UserSimulator:
         # Generate response
 
         tools = [tool.openai_schema for tool in self.tools] if self.tools else None
-        response = self.llm_client.chat.completions.create(
-                model=self.llm,
-                messages=messages,
-                tools=tools,
-                **self.llm_args,
-            )
+        # response = self.llm_client.chat.completions.create(
+        #         model=self.llm,
+        #         messages=messages,
+        #         tools=tools,
+        #         **self.llm_args,
+        #     )
+        response = create_with_retry(
+            self.llm_client,
+            model=self.llm,
+            messages=messages,
+            tools=tools,
+            **self.llm_args,
+        )
 
         response = response.choices[0]
         user_response = response.message.content

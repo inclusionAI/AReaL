@@ -3,9 +3,12 @@ import asyncio
 import os
 import uuid
 
-import tau2_train
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+print(sys.path)
 
 from tau2_train.domains.airline.environment import get_environment, get_tasks
+from tau2_train.data_model.tasks import Task
 from tau2_train.agent import LLMAgent
 from tau2_train.orchestrator import Orchestrator
 from tau2_train.user_simulator import UserSimulator
@@ -120,8 +123,13 @@ class Tau2Workflow(RolloutWorkflow):
 
     async def arun_episode(self, engine: InferenceEngine, data=None):
         
-        tasks = get_tasks()
-        task = random.choice(tasks)
+
+        if data is None:
+            tasks = get_tasks()
+            task = random.choice(tasks)
+        else:
+ 
+            task = Task.model_validate(data)
                 
         trajs = await asyncio.gather(*[self.collect_agent_trajectory(engine, task) for _ in range(self.n_trajs)])
         version = engine.get_version()
@@ -154,12 +162,11 @@ class Tau2Workflow(RolloutWorkflow):
 
             # Dump rollout to file
             with open(
-                os.path.join(self.dump_dir, str(version), f"{data['qid']}_{uuid.uuid4().hex}.jsonl"), "w"
+                os.path.join(self.dump_dir, str(version), f"{data['id']}_{uuid.uuid4().hex}.jsonl"), "w"
             ) as f:
                 for i, (messages, _, score) in enumerate(trajs):
                     f.write(json.dumps(dict(messages=messages, reward=score, traj_idx=i)) + "\n")
 
-        results = results[-16:]
         return concat_padded_tensors(results)
 
 @dataclass
@@ -295,6 +302,9 @@ def main(args):
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
         torch.cuda.synchronize()
+
+        from areal.utils.redistributor import redistribute
+        batch = redistribute(batch).data
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):

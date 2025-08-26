@@ -127,8 +127,7 @@ class Orchestrator:
                     ]
                 )
                 self.message = last_message
-                # if self.agent.is_stop(last_message):
-                if False:
+                if self.agent.is_stop(last_message):
                     self.done = True
                     self.termination_reason = TerminationReason.AGENT_STOP
             # Last message is a user message
@@ -278,8 +277,7 @@ class Orchestrator:
                 self.message, self.agent_state
             )
             agent_msg.validate()
-            # if self.agent.is_stop(agent_msg):
-            if False:
+            if self.agent.is_stop(agent_msg):
                 self.done = True
                 self.termination_reason = TerminationReason.AGENT_STOP
             self.trajectory.append(agent_msg)
