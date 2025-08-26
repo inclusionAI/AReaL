@@ -28,6 +28,7 @@ MODES_MAP = {
     "base": "default",
     "solo": "no-user",
     "gt": "oracle-plan",
+    "oracle-plan": "oracle-plan",
     "solo-gt": "oracle-plan-no-user",
     "default": "default",
     "no-user": "no-user",
@@ -64,7 +65,7 @@ LLMS = [
     "claude-3-7-sonnet-20250219",
     "gpt-4.1-mini-2025-04-14",
     "qwen2.5:7b",
-    "gpt-4.1-ft"
+    "gpt-4.1-ft",
 ]
 
 LLMS_FOR_TELECOM_ANALYSIS = [
@@ -72,28 +73,76 @@ LLMS_FOR_TELECOM_ANALYSIS = [
     "o4-mini-2025-04-16",
     "qwen2.5:7b",
     "gpt-4.1-ft",
-    "gpt-4.1"
+    "gpt-4.1",
+    "gpt-5",
 ]
 
-LLM_NAME_MAP = {
-    "gpt-4.1": "gpt4.1",
-    "gpt-4.1-2025-04-14": "gpt4.1",
-    "o4-mini-2025-04-16": "o4-mini",
-    "claude-3-7-sonnet-20250219": "claude-3.7-sonnet",
-    "gpt-4.1-mini-2025-04-14": "gpt4.1-mini",
-    "qwen2.5:7b": "qwen2.5-7b",
-    "gpt-4.1-ft": "gpt-4.1-ft",
-}
+# Predefined color palette for LLMs
+_COLOR_PALETTE = [
+    "#4C72B0",  # Nice blue
+    "#DD8452",  # Warm orange
+    "#55A868",  # Fresh green
+    "#C44E52",  # Rich red
+    "#8C564B",  # Rich brown
+    "#8172B3",  # Purple
+    "#CCB974",  # Gold
+    "#64B5CD",  # Light blue
+    "#4C72B0",  # Dark blue
+    "#F28E2B",  # Orange
+    "#E15759",  # Red
+    "#76B7B2",  # Teal
+    "#59A14F",  # Green
+    "#EDC948",  # Yellow
+    "#B07AA1",  # Purple
+    "#FF9DA7",  # Pink
+    "#9C755F",  # Brown
+    "#BAB0AC",  # Gray
+]
 
-LLM_COLORS = {
-    "gpt-4.1-2025-04-14": "#4C72B0",  # Nice blue
-    "gpt-4.1": "#4C72B0",  # Nice blue
-    "o4-mini-2025-04-16": "#DD8452",  # Warm orange
-    "claude-3-7-sonnet-20250219": "#55A868",  # Fresh green
-    "gpt-4.1-mini-2025-04-14": "#C44E52",  # Rich red
-    "qwen2.5:7b": "#8C564B",  # Rich brown
-    "gpt-4.1-ft": "#55A868",  # nice green
-}
+# Global registry to track LLMs and their assigned colors
+_LLM_REGISTRY = {}
+
+
+def get_llm_color(llm_name: str) -> str:
+    """
+    Get a consistent color for any LLM.
+
+    Args:
+        llm_name (str): The full LLM name
+
+    Returns:
+        str: A hex color code for the LLM
+    """
+    # Check if we've already assigned a color to this LLM
+    if llm_name in _LLM_REGISTRY:
+        return _LLM_REGISTRY[llm_name]
+
+    # Assign a new color from the palette
+    color_index = len(_LLM_REGISTRY) % len(_COLOR_PALETTE)
+    color = _COLOR_PALETTE[color_index]
+
+    # Store the assignment
+    _LLM_REGISTRY[llm_name] = color
+
+    return color
+
+
+def reset_llm_registry():
+    """
+    Reset the LLM registry. Useful for testing or when you want to start fresh.
+    """
+    global _LLM_REGISTRY
+    _LLM_REGISTRY = {}
+
+
+def get_all_known_llms() -> List[str]:
+    """
+    Get a list of all LLMs that have been encountered.
+
+    Returns:
+        List[str]: List of all LLM names that have been processed
+    """
+    return list(_LLM_REGISTRY.keys())
 
 
 def get_pass_hat_k_values(df: pd.DataFrame) -> Tuple[List[int], List[float]]:
@@ -154,7 +203,7 @@ def plot_pass_k_metrics_per_llm_per_domain_bar_chart(
         plt.figure(figsize=(7, 3))
 
         # Add title with LLM name
-        plt.title(LLM_NAME_MAP[llm], fontsize=16)
+        plt.title(llm, fontsize=16)
 
         # Set up bar positions
         x = np.arange(len(k_values))
@@ -229,7 +278,7 @@ def plot_pass_k_metrics_per_llm_per_domain_bar_chart(
         plt.legend(fontsize=10, framealpha=0.9)
         plt.xticks(x, k_values, fontsize=12)
         plt.yticks(fontsize=12)
-        plt.ylim(bottom=0, top=0.9)
+        plt.ylim(bottom=0, top=1.1)
 
         # Remove top and right spines
         plt.gca().spines["top"].set_visible(False)
@@ -248,7 +297,7 @@ def plot_avg_pass_k_metrics_per_llm_per_mode(
     Creates bar charts showing average Pass^k metrics for each LLM across different modes in the telecom domain.
 
     This function generates a bar chart comparing the average Pass^k performance of different LLMs
-    across various modes (base, base-solo, gt, gt-solo) in the telecom domain. The chart includes:
+    across various modes (default, no-user, oracle-plan) in the telecom domain. The chart includes:
     - Bars for each mode showing average Pass^k values
     - Error bars showing standard deviation
     - Value labels on top of each bar
@@ -303,11 +352,11 @@ def plot_avg_pass_k_metrics_per_llm_per_mode(
             x + i * width - 0.2,  # Reduced offset from 0.4 to 0.2
             averages,
             width,
-            label=LLM_NAME_MAP[llm],
+            label=llm,
             yerr=stds,
             capsize=5,
             alpha=0.7,
-            color=LLM_COLORS[llm],  # Add color from LLM_COLORS
+            color=get_llm_color(llm),  # Add color from get_llm_color function
             ecolor="black",  # This will be overridden by the errorbar call
             error_kw=dict(
                 linestyle=":", alpha=0.3, capsize=5, capthick=1, elinewidth=1
@@ -342,6 +391,169 @@ def plot_avg_pass_k_metrics_per_llm_per_mode(
     file_name = f"pass_k_metrics_{telecom_version}_avg_bar.pdf"
     plt.savefig(fig_dir / file_name, bbox_inches="tight", dpi=300)
     plt.close()
+
+
+def plot_pass_k_metrics_per_llm_per_mode_telecom(
+    fig_dir: Path, df_metrics: pd.DataFrame, telecom_version: str = "telecom"
+):
+    """
+    Creates bar charts showing Pass^k metrics for each LLM across different modes in a specific telecom domain.
+
+    This function generates a separate bar chart for each LLM, showing how Pass^k varies
+    across different modes (default, no-user, oracle-plan) in the specified telecom domain.
+    Each chart includes:
+    - Bars for each mode showing Pass^k values
+    - Smooth lines connecting the bars for better visualization
+    - Value labels on top of each bar
+    - A legend identifying each mode
+
+    Args:
+        fig_dir (Path): Directory where the figures will be saved
+        df_metrics (pd.DataFrame): DataFrame containing the metrics data
+        telecom_version (str): Version of the telecom domain to analyze (e.g., "telecom", "telecom-workflow")
+    """
+
+    # Filter data for the specified telecom domain only
+    df_metrics = df_metrics[df_metrics["domain"] == telecom_version]
+    if len(df_metrics) == 0:
+        logger.warning(f"No data found for telecom domains. Skipping...")
+        return
+
+    # Get unique k values
+    k_values = sorted(
+        [
+            int(col.split("_")[-1])
+            for col in df_metrics.columns
+            if col.startswith("pass_hat_")
+        ]
+    )
+
+    # Debug: print available columns and k values
+    logger.info(
+        f"Available columns: {[col for col in df_metrics.columns if col.startswith('pass_hat_')]}"
+    )
+    logger.info(f"Found k values: {k_values}")
+
+    tested_modes = df_metrics["mode"].unique()
+    modes_to_plot = [m for m in MODES if m in tested_modes]
+
+    # Create a separate figure for each LLM
+    for llm in df_metrics["llm"].unique():
+        # Filter data for this LLM
+        llm_data = df_metrics[df_metrics["llm"] == llm]
+        if len(llm_data) == 0:
+            logger.warning(f"No data found for {llm}. Skipping...")
+            continue
+
+        # Create figure
+        plt.figure(figsize=(7, 3))
+
+        # Add title with LLM name
+        plt.title(llm, fontsize=16)
+
+        # Set up bar positions
+        x = np.arange(len(k_values))
+        width = 0.8 / len(modes_to_plot)  # Width of bars (one per mode)
+
+        # Plot bars for each mode
+        for i, mode in enumerate(modes_to_plot):
+            mode_data = llm_data[llm_data["mode"] == mode]
+
+            # Get pass^k values for this mode
+            pass_values = []
+            for k in k_values:
+                col = f"pass_hat_{k}"
+                if col in mode_data.columns:
+                    value = mode_data[col].mean()
+                    pass_values.append(value)
+                    logger.debug(f"Mode {mode}, k={k}: {value}")
+                else:
+                    pass_values.append(0)
+                    logger.debug(f"Mode {mode}, k={k}: column {col} not found")
+
+            logger.debug(f"Mode {mode} pass values: {pass_values}")
+
+            # Calculate x positions for bars and markers
+            x_pos = x + i * width - 0.4 + width / 2
+
+            # Plot bars
+            plt.bar(
+                x_pos,
+                pass_values,
+                width,
+                label=mode,
+                color=MODE_COLORS[mode],
+                alpha=0.7,
+                zorder=2,
+            )
+            if len(k_values) > 1 and len(pass_values) > 1:
+                # Check if we have valid numeric data
+                if not any(np.isnan(pass_values)) and not any(np.isinf(pass_values)):
+                    try:
+                        # Create smooth line that passes through the markers
+                        x_smooth = np.linspace(x_pos[0], x_pos[-1], 300)
+                        spl = make_interp_spline(
+                            x_pos, pass_values, k=min(3, len(pass_values) - 1)
+                        )
+                        y_smooth = spl(x_smooth)
+
+                        # Add smoothed line over the bars
+                        plt.plot(
+                            x_smooth,
+                            y_smooth,
+                            color=MODE_COLORS[mode],
+                            linewidth=1.5,
+                            alpha=0.5,
+                            zorder=1,
+                        )
+                    except (ValueError, TypeError):
+                        # If spline fails, just plot the line without smoothing
+                        plt.plot(
+                            x_pos,
+                            pass_values,
+                            color=MODE_COLORS[mode],
+                            linewidth=1.5,
+                            alpha=0.5,
+                            zorder=1,
+                        )
+
+                # Add markers at actual data points
+                plt.scatter(
+                    x_pos,
+                    pass_values,
+                    color=MODE_COLORS[mode],
+                    s=30,
+                    alpha=0.7,
+                    zorder=3,
+                    marker=MODE_MARKERS[mode],
+                )
+
+            # Add value labels on top of bars
+            for j, v in enumerate(pass_values):
+                plt.text(
+                    x_pos[j],
+                    v + 0.02,
+                    f"{v:.2f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=12,
+                )
+
+        plt.xlabel("k", fontsize=12)
+        plt.ylabel("Pass^k", fontsize=12)
+        plt.legend(fontsize=10, framealpha=0.9)
+        plt.xticks(x, k_values, fontsize=12)
+        plt.yticks(fontsize=12)
+        plt.ylim(bottom=0, top=1.1)
+
+        # Remove top and right spines
+        plt.gca().spines["top"].set_visible(False)
+        plt.gca().spines["right"].set_visible(False)
+
+        plt.tight_layout()
+        file_name = f"pass_k_metrics_telecom_modes_{llm}_{telecom_version}.pdf"
+        plt.savefig(fig_dir / file_name, bbox_inches="tight", dpi=300)
+        plt.close()
 
 
 def plot_pass_one_metrics_per_llm_per_mode(
@@ -402,10 +614,10 @@ def plot_pass_one_metrics_per_llm_per_mode(
             x + i * width - 0.2,  # Reduced offset from 0.4 to 0.2
             pass_one_values,
             width,
-            label=LLM_NAME_MAP[llm],
+            label=llm,
             capsize=5,
             alpha=0.7,
-            color=LLM_COLORS[llm],  # Add color from LLM_COLORS
+            color=get_llm_color(llm),  # Add color from get_llm_color function
         )
 
         # Add value labels on top of bars
@@ -487,7 +699,7 @@ def plot_pass_k_metrics_per_llm_per_mode(
     # Plot for each LLM
     for llm_idx, llm in enumerate(llms):
         ax = axes[llm_idx]
-        ax.set_title(f"LLM: {LLM_NAME_MAP[llm]}", fontsize=12)
+        ax.set_title(f"LLM: {llm}", fontsize=12)
 
         # Plot each k value
         for k_idx, k in enumerate(k_values):
@@ -610,7 +822,7 @@ def results_per_intent_telecom(
         plt.figure(figsize=(9, 4))
 
         # Add title with LLM name
-        plt.title(LLM_NAME_MAP[llm], fontsize=16)
+        plt.title(llm, fontsize=16)
 
         # Get unique k values
         k_values = sorted([col for col in df_llm.columns if isinstance(col, int)])
@@ -739,7 +951,7 @@ def results_per_persona_telecom(
 
         # Create figure
         plt.figure(figsize=(8, 4))
-        plt.title(LLM_NAME_MAP[llm], fontsize=16)
+        plt.title(llm, fontsize=16)
 
         # Get unique k values
         k_values = sorted([col for col in df_llm.columns if isinstance(col, int)])
@@ -1171,7 +1383,7 @@ def plot_pass_k_vs_num_actions_all_llms(
     The plot includes:
     - Lines with markers showing the relationship between Pass^k and number of actions
     - Different line styles for different modes (using MODE_STYLES)
-    - Different colors for different LLMs (using LLM_COLORS)
+    - Different colors for different LLMs (using get_llm_color function)
     - Different markers for different modes (using MODE_MARKERS)
     - A background plot showing the proportion of tasks for each number of actions (in %)
     - Grid lines for better readability
@@ -1209,7 +1421,9 @@ def plot_pass_k_vs_num_actions_all_llms(
     modes = df_pass_hat_k_filtered["mode"].unique()
     count_actions_mode = "default" if "default" in modes else modes[0]
     if count_actions_mode not in modes:
-        logger.warning(f"No data found for {count_actions_mode}. Using {modes[0]} instead to count number of actions in each task.")
+        logger.warning(
+            f"No data found for {count_actions_mode}. Using {modes[0]} instead to count number of actions in each task."
+        )
         count_actions_mode = modes[0]
 
     # Calculate task proportions for background plot
@@ -1277,7 +1491,7 @@ def plot_pass_k_vs_num_actions_all_llms(
             ]
 
             # Create label combining LLM and mode
-            label = f"{LLM_NAME_MAP[llm]} ({mode})"
+            label = f"{llm} ({mode})"
 
             # Plot regular values with line and mode-specific markers
             line = ax.plot(
@@ -1285,7 +1499,7 @@ def plot_pass_k_vs_num_actions_all_llms(
                 [full_series.values[i] for i in regular_indices],
                 marker=MODE_MARKERS[mode],
                 linewidth=2,
-                color=LLM_COLORS[llm],
+                color=get_llm_color(llm),
                 linestyle=MODE_STYLES[mode],
                 label=label,
             )[0]
@@ -1297,7 +1511,7 @@ def plot_pass_k_vs_num_actions_all_llms(
                 marker=MODE_MARKERS[mode],
                 markersize=8,
                 linestyle="",
-                color=LLM_COLORS[llm],
+                color=get_llm_color(llm),
             )
 
             # Store handle and label for legend
@@ -1356,7 +1570,7 @@ def plot_pass_k_vs_num_issues_all_llms(
     The plot includes:
     - Lines with markers showing the relationship between Pass^k and number of issues
     - Different line styles for different modes (using MODE_STYLES)
-    - Different colors for different LLMs (using LLM_COLORS)
+    - Different colors for different LLMs (using get_llm_color function)
     - Different markers for different modes (using MODE_MARKERS)
     - A background plot showing the proportion of tasks for each number of issues (in %)
     - Grid lines for better readability
@@ -1402,7 +1616,9 @@ def plot_pass_k_vs_num_issues_all_llms(
     modes = df_pass_hat_k_filtered["mode"].unique()
     count_issues_mode = "default" if "default" in modes else modes[0]
     if count_issues_mode not in modes:
-        logger.warning(f"No data found for {count_issues_mode}. Using {modes[0]} instead to count number of issues in each task.")
+        logger.warning(
+            f"No data found for {count_issues_mode}. Using {modes[0]} instead to count number of issues in each task."
+        )
         count_issues_mode = modes[0]
 
     # Calculate task proportions for background plot
@@ -1470,7 +1686,7 @@ def plot_pass_k_vs_num_issues_all_llms(
             ]
 
             # Create label combining LLM and mode
-            label = f"{LLM_NAME_MAP[llm]} ({mode})"
+            label = f"{llm} ({mode})"
 
             # Plot regular values with line and mode-specific markers
             line = ax.plot(
@@ -1478,7 +1694,7 @@ def plot_pass_k_vs_num_issues_all_llms(
                 [full_series.values[i] for i in regular_indices],
                 marker=MODE_MARKERS[mode],
                 linewidth=2,
-                color=LLM_COLORS[llm],
+                color=get_llm_color(llm),
                 linestyle=MODE_STYLES[mode],
                 label=label,
             )[0]
@@ -1490,7 +1706,7 @@ def plot_pass_k_vs_num_issues_all_llms(
                 marker=MODE_MARKERS[mode],
                 markersize=8,
                 linestyle="",
-                color=LLM_COLORS[llm],
+                color=get_llm_color(llm),
             )
 
             # Store handle and label for legend
@@ -2259,12 +2475,14 @@ def analyze_results(exp_dir: Path):
     get_cost_info(fig_dir, df)
 
     plot_pass_k_metrics_per_llm_per_domain_bar_chart(fig_dir, df_pass_hat_k)
-
     ## TELECOM  ONLY
     for telecom_version in ["telecom", "telecom-workflow"]:
         # Create new plot for impact of communication on performance
         plot_avg_pass_k_metrics_per_llm_per_mode(
             fig_dir, df_metrics, telecom_version=telecom_version
+        )
+        plot_pass_k_metrics_per_llm_per_mode_telecom(
+            fig_dir, df_metrics, telecom_version
         )
         plot_pass_one_metrics_per_llm_per_mode(
             fig_dir, df_metrics, telecom_version=telecom_version

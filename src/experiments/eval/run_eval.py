@@ -24,6 +24,11 @@ def is_reasoning_llm(llm: str) -> bool:
     return re.match(pat, llm) is not None
 
 
+def is_gpt_5(llm: str) -> bool:
+    pat = r"^gpt-5"
+    return re.match(pat, llm) is not None
+
+
 def make_config(
     llm: str,
     domain: str,
@@ -95,6 +100,15 @@ def make_config(
         logger.info(f"Using reasoning LLM: {llm}. Setting reasoning effort to high...")
         llm_agent_args = deepcopy(llm_agent_args)
         llm_agent_args["reasoning_effort"] = "high"
+        tmp = llm_agent_args.pop("temperature")
+        logger.warning(
+            f"Temperature: {tmp} removed for reasoning LLM: {llm}. Only default temp supported."
+        )
+
+    if is_gpt_5(llm):
+        logger.info(f"Using GPT-5. Setting reasoning effort to low...")
+        llm_agent_args = deepcopy(llm_agent_args)
+        # llm_agent_args["reasoning"] = {"effort": "high"}
         tmp = llm_agent_args.pop("temperature")
         logger.warning(
             f"Temperature: {tmp} removed for reasoning LLM: {llm}. Only default temp supported."

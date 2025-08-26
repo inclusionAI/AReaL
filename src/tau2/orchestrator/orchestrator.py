@@ -251,6 +251,7 @@ class Orchestrator:
                     self.to_role = Role.ENV
                     self.done = self.agent.is_stop(first_message)
                     if self.done:
+                        self.to_role = Role.USER  # FIXIT: For now, we assume last message cannot be to the environment
                         self.termination_reason = TerminationReason.AGENT_STOP
         self.check_communication_error()
         self.environment.sync_tools()
@@ -333,24 +334,31 @@ class Orchestrator:
         self.initialize()
         while not self.done:
             self.step()
-            # We don't want to terminate if the last message is to the environment
+            # Checking for maximum steps and errors only if the last message is not to the environment
             if self.to_role == Role.ENV:
                 continue
-            if self.step_count >= self.max_steps:
+            if self.step_count >= self.max_steps and self.to_role != Role.ENV:
                 self.done = True
                 self.termination_reason = TerminationReason.MAX_STEPS
-            if self.num_errors >= self.max_errors:
+            if self.num_errors >= self.max_errors and self.to_role != Role.ENV:
                 self.done = True
                 self.termination_reason = TerminationReason.TOO_MANY_ERRORS
         # Send stop signal to the agent, user, and environment
+        has_error = self.termination_reason in [
+            TerminationReason.USER_ERROR,
+            TerminationReason.AGENT_ERROR,
+        ]
         last_msg_to_agent = None
         last_msg_to_user = None
         if self.to_role == Role.AGENT:
             last_msg_to_agent = self.message
         elif self.to_role == Role.USER:
             last_msg_to_user = self.message
-        elif self.to_role == Role.ENV:
-            raise ValueError("Environment should not be the last message")
+        elif self.to_role == Role.ENV and not has_error:
+            raise ValueError(
+                "Environment should not receive the last message. Last message: "
+                + str(self.message)
+            )
         self.agent.stop(last_msg_to_agent, self.agent_state)
         self.user.stop(last_msg_to_user, self.user_state)
 
