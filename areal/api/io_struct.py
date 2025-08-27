@@ -166,7 +166,7 @@ class AllocationMode:
         if para:
             return cls(
                 AllocationType.LLM_SERVER_ONLY,
-                dict(gen=para),
+                dict(gen=para["*"]),
                 AllocationMode.get_gen_backend(allocation_mode),
             )
         raise NotImplementedError(f"Failed to parse allocation: {allocation_mode}")
@@ -191,7 +191,7 @@ class AllocationMode:
 
     @staticmethod
     def extract_gen_alloc(allocation_mode: str) -> Dict:
-        pattern = re.compile(r"(?:vllm|sglang)\.(.+?)")
+        pattern = re.compile(r"^(?:vllm|sglang)\.(.+)$")
         m = pattern.match(allocation_mode)
         if not m:
             return {}

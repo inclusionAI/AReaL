@@ -44,7 +44,9 @@ def test_micro_batch_split(mock_padded_data, n_mbs, max_tokens_per_gpu):
     # Unpad and split to microbatches
     packed_data = pack_tensor_dict(mock_padded_data)
     original_lens = packed_data["cu_seqlens"][1:] - packed_data["cu_seqlens"][:-1]
-    assert torch.allclose(original_lens, mock_padded_data["attention_mask"].sum(1))
+    assert torch.allclose(
+        original_lens.long(), mock_padded_data["attention_mask"].sum(1)
+    )
     split_result = split_padded_tensor_dict_into_mb_list(mock_padded_data, mb_spec)
     split_result.mbs = [pack_tensor_dict(mb) for mb in split_result.mbs]
     reordered_lens = [original_lens[i] for i in split_result.forward_indices]

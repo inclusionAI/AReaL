@@ -55,6 +55,7 @@ class FSDPEngine(BaseHFEngine):
         self.mixed_precision_policy = None
         self.device_mesh = None
         self.cpu_offload = None
+        self.config.mb_spec._context_parallel_size = self.config.fsdp.ulysses_sp_size
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
         # Initialize distributed enviroments and load model.

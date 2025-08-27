@@ -15,6 +15,7 @@ from areal.utils import seeding, stats_tracker
 from areal.utils.data import broadcast_tensor_container, pad_sequences_to_tensors
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger

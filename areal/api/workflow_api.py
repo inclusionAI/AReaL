@@ -10,16 +10,14 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 import torch.distributed as dist
 import uvloop
+from megatron.core import parallel_state as mpu
 from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
-from megatron.core import parallel_state as mpu
 
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import RolloutStat
-from areal.experimental.openai.types import (
-    CompletionWithTokenLogpReward,
-)
+from areal.experimental.openai.types import CompletionWithTokenLogpReward
 from areal.utils import logging
 from areal.utils.data import concat_padded_tensors
 
