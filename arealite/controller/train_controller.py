@@ -120,8 +120,9 @@ class DistributedTrainController(TrainController):
                 for index, worker in enumerate(self.workers)
             ]
             try:
-                for future in futures:
-                    future.result()
+                for worker_index, future in enumerate(futures):
+                    rank_info = future.result()
+                    logger.info(f"worker_index: {worker_index}, rank_info: {rank_info}")
             except KeyboardInterrupt:
                 for f in futures:
                     f.cancel()
@@ -200,7 +201,14 @@ class DistributedTrainController(TrainController):
         results = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             for index, worker in enumerate(self.workers):
-                batch_index = index % self.dp_size
+                # 32卡 tp8pp2
+                # 0-7: tp0-7, pp0, dp0
+                # 8-15: tp0-7, pp0, dp1
+                # 16-23: tp0-7, pp1, dp0
+                # 24-31: tp0-7, pp1, dp1
+
+                # (index/tp_size) % pp_size
+                batch_index = (index // self.tp_size) % (self.pp_size)
                 batch_data = batches[batch_index]
                 futures.append(executor.submit(
                     self.scheduler.call_engine,
