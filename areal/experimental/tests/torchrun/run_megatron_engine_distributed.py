@@ -19,6 +19,7 @@ from areal.experimental.api.cli_args import (
 from areal.experimental.api.io_struct import AllocationMode, FinetuneSpec
 from areal.experimental.megatron_engine import MegatronEngine
 from areal.utils import seeding
+from areal.utils.data import broadcast_tensor_container
 
 MODEL_PATHS = {
     "qwen3": "/storage/openpsi/models/Qwen__Qwen3-1.7B/",
@@ -115,8 +116,13 @@ def test_forward(model_type: str, alloc_mode: str, output: Optional[str] = None)
 
     input_ = mock_input(batch_size=16, max_seqlen=128, device=engine.device)
     print(f"rank {rank} is_data_parallel_head()={engine.is_data_parallel_head()}")
+    bcasted_input = broadcast_tensor_container(
+        input_,
+        src_rank=engine.current_data_parallel_head(),
+        group=engine.context_and_model_parallel_group,
+    )
     logits = engine.forward(
-        input_=input_ if engine.is_data_parallel_head() else None,
+        input_=bcasted_input,
         post_hook=all_gather_logits,
         aggregate_fn=lambda xs: torch.cat(xs, dim=0),
     )
@@ -183,6 +189,7 @@ def test_forward(model_type: str, alloc_mode: str, output: Optional[str] = None)
     dist.barrier()
     fsdp_engine.destroy()
     engine.destroy()
+    engine.destroy_process_groups()
 
     print(f"Test: test_forward(model_type={model_type}, alloc_mode={alloc_mode}) Done.")
     if rank == 0 and output is not None:
@@ -214,9 +221,14 @@ def test_train(model_type: str, alloc_mode: str, output: Optional[str] = None):
 
     input_ = mock_input(batch_size=16, max_seqlen=128, device=engine.device)
     print(f"rank {rank} is_data_parallel_head()={engine.is_data_parallel_head()}")
+    bcasted_input = broadcast_tensor_container(
+        input_,
+        src_rank=engine.current_data_parallel_head(),
+        group=engine.context_and_model_parallel_group,
+    )
 
     train_result = engine.train_batch(
-        input_=input_ if engine.is_data_parallel_head() else None,
+        input_=bcasted_input,
         loss_fn=mock_loss_fn,
         loss_weight_fn=lambda x: x["cu_seqlens"][-1],
     )
@@ -225,6 +237,7 @@ def test_train(model_type: str, alloc_mode: str, output: Optional[str] = None):
     torch.cuda.synchronize()
     dist.barrier()
     engine.destroy()
+    engine.destroy_process_groups()
 
     print(f"Test: test_train(model_type={model_type}, alloc_mode={alloc_mode}) Done.")
 

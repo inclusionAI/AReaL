@@ -56,7 +56,25 @@ class ExperimentalTrainEngineConfig(TrainEngineConfig):
 
 
 @dataclass
+class ExperimentalPPOActorConfig(PPOActorConfig, ExperimentalTrainEngineConfig):
+    pass
+
+
+@dataclass
 class ExperimentalSFTConfig(BaseExperimentConfig):
     model: ExperimentalTrainEngineConfig = field(
         default_factory=ExperimentalTrainEngineConfig
     )
+
+
+@dataclass
+class ExperimentalGRPOConfig(BaseExperimentConfig):
+    async_training: bool = field(default=True)
+    gconfig: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
+    rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
+    actor: ExperimentalPPOActorConfig = field(
+        default_factory=ExperimentalPPOActorConfig
+    )
+    ref: ExperimentalPPOActorConfig = field(default_factory=ExperimentalPPOActorConfig)

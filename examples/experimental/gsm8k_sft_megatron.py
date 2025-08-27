@@ -1,6 +1,7 @@
 import os
 import sys
 
+import torch.distributed as dist
 from megatron.core import parallel_state as mpu
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -11,10 +12,9 @@ from areal.experimental.api.cli_args import ExperimentalSFTConfig as SFTConfig
 from areal.experimental.api.io_struct import AllocationMode
 from areal.experimental.megatron_lm_engine import MegatronLMEngine
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import pad_sequences_to_tensors
+from areal.utils.data import broadcast_tensor_container, pad_sequences_to_tensors
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
@@ -118,6 +118,12 @@ def main(args):
                 epoch_step=step,
                 steps_per_epoch=len(train_dataloader),
             )
+            # NOTE: data are identical across model+context parallel group
+            data = broadcast_tensor_container(
+                data,
+                src_rank=engine.current_data_parallel_head(),
+                group=engine.context_and_model_parallel_group,
+            )
             with (
                 stats_tracker.record_timing("train_step"),
                 stats_tracker.scope("sft"),
@@ -128,21 +134,19 @@ def main(args):
             with stats_tracker.record_timing("save"):
                 saver.save(engine, epoch, step, global_step, tokenizer=tokenizer)
 
-            # TODO: test after impl eval
-            # with stats_tracker.record_timing("eval"):
-            #     # No need to log anything. Logging will be handled outside
-            #     # via stats_tracker.export().
-            #     def evaluate_fn():
-            #         with stats_tracker.scope("sft-eval"):
-            #             for data in valid_dataloader:
-            #                 engine.evaluate_lm(data)
+            with stats_tracker.record_timing("eval"):
 
-            #     evaluator.evaluate(
-            #         evaluate_fn,
-            #         epoch,
-            #         step,
-            #         global_step,
-            #     )
+                def evaluate_fn():
+                    with stats_tracker.scope("sft-eval"):
+                        for data in valid_dataloader:
+                            engine.evaluate_lm(data)
+
+                evaluator.evaluate(
+                    evaluate_fn,
+                    epoch,
+                    step,
+                    global_step,
+                )
 
             with stats_tracker.record_timing("checkpoint_for_recover"):
                 recover_handler.dump(

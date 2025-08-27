@@ -42,7 +42,6 @@ from areal.utils import logging, name_resolve, names, stats_tracker
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
-    bcast_mb_list,
     broadcast_tensor,
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
@@ -213,6 +212,7 @@ class MegatronEngine(TrainEngine):
             adam_eps=self.optimizer_config.eps,
             use_distributed_optimizer=self.mcore_config.ddp.use_distributed_optimizer,
             params_dtype=self.dtype,
+            clip_grad=self.optimizer_config.gradient_clipping,
         )
         mcore_opt_config.overlap_param_gather_with_optimizer_step = (
             self.mcore_config.overlap_param_gather_with_optimizer_step
@@ -453,43 +453,19 @@ class MegatronEngine(TrainEngine):
         assert self.lr_scheduler is not None, "LR Scheduler is not initialized."
         self.lr_scheduler.step(1)
 
-    def _current_data_parallel_head(self) -> int:
-        """Get the rank of the head of the current data parallel group."""
-        assert self.initialized
-        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
-        return ranks[0]
-
-    def is_data_parallel_head(self) -> bool:
-        assert self.initialized
-        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
-        return ranks[0] == self.rank
-
     def train_batch(
         self,
         input_: TensorDict,
         loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
         loss_weight_fn: Callable[[TensorDict], float],
     ) -> Dict[str, float]:
-        # TODO: simple training for testing, no parallelism and packing
         assert self.model is not None, "Model is not initialized."
         assert self.optimizer is not None, "Optimizer is not initialized."
-        self.model.train()
         self.optimizer.zero_grad()
         self.model.zero_grad_buffer()
-
-        mb_list = None
-        if self.is_data_parallel_head():
-            mb_list = self.prepare_mb_list(input_, forward_only=False)
-            mb_list = mb_list.to(self.device)
-
-        torch.cuda.synchronize()
-        dist.barrier()
-
-        # broadcast mb_list to context and model parallel group
-        dp_head_rank = self._current_data_parallel_head()
-        mb_list = bcast_mb_list(
-            mb_list, src_rank=dp_head_rank, group=self.context_and_model_parallel_group
-        )
+        # Assume input_ is identical across context and model parallel group
+        mb_list = self.prepare_mb_list(input_, forward_only=False)
+        mb_list = mb_list.to(self.device)
 
         total_loss_weight = torch.tensor(
             sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs]),
@@ -531,8 +507,7 @@ class MegatronEngine(TrainEngine):
                 loss *= loss_scale
                 return loss, {}
 
-            r = output, functools.partial(_scaled_loss_fn, orig_input)
-            return r
+            return output, functools.partial(_scaled_loss_fn, orig_input)
 
         forward_backward_func = get_forward_backward_func()
         forward_backward_func(
@@ -557,11 +532,15 @@ class MegatronEngine(TrainEngine):
             group=mpu.get_pipeline_model_parallel_group(),
         )
         stats = stats[0]
+        # TODO: currently if we export tracked stats here, stats will be exported twice.
+        # We need to: 1. Unify the way stats are tracked, through return value of `train_batch`
+        # or directly recorded by `stats_tracker`; 2. Find a way to properly handle stats broadcasting.
+        with stats_tracker.DEFAULT_TRACKER.disable_scope():
+            stats_tracker.scalar(**stats)
         return dict(
             update_successful=float(update_successful),
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
             lr=current_lr,
-            **stats,
         )
 
     @torch.no_grad()
@@ -571,9 +550,77 @@ class MegatronEngine(TrainEngine):
         loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
         loss_weight_fn: Callable[[TensorDict], float],
     ) -> torch.Tensor | None:
-        raise NotImplementedError()
+        assert self.model is not None, "Model is not initialized."
+        # Assume input_ is identical across context and model parallel group
+        mb_list = self.prepare_mb_list(input_, forward_only=False)
+        mb_list = mb_list.to(self.device)
 
-    def _current_data_parallel_head(self) -> int:
+        total_loss_weight = torch.tensor(
+            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs]),
+            dtype=torch.float32,
+        )
+        assert total_loss_weight != 0
+        max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
+        micro_batch_generator = iter(mb_list.padded_mbs)
+        forward_step_count = 0
+
+        def forward_step(batch_iter, model):
+            nonlocal forward_step_count
+            batch = next(batch_iter)
+            padding_length = mb_list.padding_lengths[forward_step_count]
+            orig_input = mb_list.mbs[forward_step_count]
+            cu_seqlens = batch["cu_seqlens"]
+            old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
+
+            forward_step_count += 1
+            output = packed_context_parallel_forward(model, batch)
+
+            if mpu.is_pipeline_last_stage():
+                output = unpad_logits(
+                    output,
+                    padding_length=padding_length,
+                    cu_seqlens=cu_seqlens,
+                    old_cu_seqlens=old_cu_seqlens,
+                )
+
+            def _scaled_loss_fn(input_, output):
+                # NOTE: Do not need to record loss here, will be
+                # automatically recorded by stats_tracker
+                loss = loss_fn(output, input_)
+                loss_scale = loss_weight_fn(input_) / total_loss_weight
+                loss_scale *= mpu.get_data_parallel_world_size()
+                loss *= loss_scale
+                return loss, {}
+
+            return output, functools.partial(_scaled_loss_fn, orig_input)
+
+        forward_backward_func = get_forward_backward_func()
+        forward_backward_func(
+            forward_step_func=forward_step,
+            data_iterator=micro_batch_generator,
+            model=self.model,
+            num_microbatches=len(mb_list.padded_mbs),
+            seq_length=max_total_len,  # no use when input_shapes was set
+            micro_batch_size=1,  # no use when input_shapes was set
+            forward_only=True,
+        )
+
+        # TODO: refactor the following lines into engine.sync_stats
+        stats = [None]
+        if mpu.is_pipeline_last_stage():
+            stats = [stats_tracker.export(reduce_group=mpu.get_data_parallel_group())]
+        # broadcast stats to all ranks in context and model parallel group
+        dist.broadcast_object_list(
+            stats,
+            src=mpu.get_pipeline_model_parallel_last_rank(),
+            group=mpu.get_pipeline_model_parallel_group(),
+        )
+        stats = stats[0]
+        with stats_tracker.DEFAULT_TRACKER.disable_scope():
+            stats_tracker.scalar(**stats)
+        return None
+
+    def current_data_parallel_head(self) -> int:
         """Get the rank of the head of the current data parallel group."""
         assert self.initialized
         ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
@@ -592,28 +639,11 @@ class MegatronEngine(TrainEngine):
         post_hook: Callable[[torch.Tensor, TensorDict], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
-        # TODO: simple forward for testing, no parallelism and packing
         assert self.model is not None, "Model is not initialized."
-        mb_list = None
-        cu_seqlens = None
-
-        if self.is_data_parallel_head():
-            cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
-            mb_list = self.prepare_mb_list(input_)
-            mb_list = mb_list.to(self.device)
-
-        torch.cuda.synchronize()
-        dist.barrier()
-        # broadcast mb_list to model+context parallel group
-        dp_head_rank = self._current_data_parallel_head()
-        mb_list = bcast_mb_list(
-            mb_list, src_rank=dp_head_rank, group=self.context_and_model_parallel_group
-        )
-        cu_seqlens = broadcast_tensor(
-            cu_seqlens,
-            src_rank=dp_head_rank,
-            group=self.context_and_model_parallel_group,
-        )
+        # Assume input_ is identical across context and model parallel group
+        cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
+        mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
 
         # NOTE: Move tensors to correct device, since dist.broadcast_object_list does not
         # ensure the device of tensors in the object list
@@ -631,6 +661,7 @@ class MegatronEngine(TrainEngine):
             nonlocal forward_step_count
             batch = next(batch_iter)
             padding_length = mb_list.padding_lengths[forward_step_count]
+            orig_input = mb_list.mbs[forward_step_count]
             cu_seqlens = batch["cu_seqlens"]
             old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
 
@@ -651,7 +682,7 @@ class MegatronEngine(TrainEngine):
                     output = post_hook(output, input_)
                 return loss, {"output": output}
 
-            return output, functools.partial(_post_process_fn, batch)
+            return output, functools.partial(_post_process_fn, orig_input)
 
         forward_backward_func = get_forward_backward_func()
         output_list = forward_backward_func(

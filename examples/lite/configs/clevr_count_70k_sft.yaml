@@ -72,8 +72,8 @@ evaluator:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-  freq_epochs: null
-  freq_steps: 1
+  freq_epochs: 1
+  freq_steps: null
   freq_secs: null
 
 stats_logger:

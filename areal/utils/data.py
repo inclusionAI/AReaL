@@ -848,6 +848,7 @@ def broadcast_tensor(tensor: torch.Tensor | None, src_rank=0, group=None):
         dist.broadcast_object_list(metadata_list, src=src_rank, group=group)
 
         # Broadcast the actual tensor
+        tensor = tensor.contiguous()
         dist.broadcast(tensor, src=src_rank, group=group)
 
         return tensor

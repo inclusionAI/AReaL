@@ -12,6 +12,7 @@ import torch.distributed as dist
 import uvloop
 from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
+from megatron.core import parallel_state as mpu
 
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
@@ -88,7 +89,10 @@ class WorkflowExecutor:
 
     def get_capacity(self):
         if dist.is_initialized():
-            world_size = dist.get_world_size()
+            if not mpu.is_initialized():
+                world_size = dist.get_world_size()
+            else:
+                world_size = mpu.get_data_parallel_world_size()
         else:
             world_size = 1
 
