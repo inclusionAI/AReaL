@@ -239,7 +239,7 @@ class WerewolfWorkflow(RolloutWorkflow):
 
             # Teacher also answers for data (not used to guide action)
             teacher_answer_tasks = []
-            if (not use_opp_generation) and self.teacher_rollout:
+            if self.teacher_rollout:
                 for qi, q in enumerate(self_questions):
                     taprompt = (
                         f"{obs}\n"
@@ -502,7 +502,7 @@ class WerewolfWorkflow(RolloutWorkflow):
         ]
 
         logging_vals = [
-            len(results),                           # 0
+            avg_div,                           # 0
             traj_len[0] + traj_len[1],              # 1
             traj_len[0],                            # 2
             traj_len[1],                            # 3
