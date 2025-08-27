@@ -39,6 +39,7 @@ class PPOActor:
         self.mask_no_eos_with_zero = config.mask_no_eos_with_zero
 
         self.temperature = config.temperature
+        self.sft_reg = config.sft_reg
 
     @torch.no_grad()
     def compute_logp(
@@ -159,6 +160,18 @@ class PPOActor:
         else:
             ppo_data = data
             sft_data = None
+        ppo_tokens = (
+            ppo_data["loss_mask"].count_nonzero().item()
+            if ppo_data is not None and ppo_data.shape[0] > 0
+            else 0
+        )
+        sft_tokens = (
+            sft_data["loss_mask"].count_nonzero().item()
+            if sft_data is not None and sft_data.shape[0] > 0
+            else 0
+        )
+        # auto_reg = (ppo_tokens / max(1, sft_tokens))
+        auto_reg = 1.0
 
         all_stats: List[Dict[str, float]] = []
 
@@ -213,6 +226,9 @@ class PPOActor:
                 scalars["use_dual_clip"] = 0
             if self.config.behav_imp_weight_cap is not None:
                 scalars["behav_imp_weight_cap"] = self.config.behav_imp_weight_cap
+            scalars["ppo_tokens"] = ppo_tokens
+            scalars["sft_tokens"] = sft_tokens
+            scalars["auto_reg"] = auto_reg
             stats_tracker.scalar(**scalars)
 
             global_stats = stats_tracker.export(
@@ -275,7 +291,9 @@ class PPOActor:
                 train_stat = self.engine.train_batch(
                     mb,
                     loss_fn=functools.partial(
-                        sft_loss_fn, temperature=self.temperature
+                        sft_loss_fn, 
+                        temperature=self.temperature, 
+                        sft_reg=self.sft_reg * auto_reg
                     ),
                     loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
                 )
@@ -382,7 +400,7 @@ def grpo_loss_fn(
     )
     return loss
 
-def sft_loss_fn(logits: torch.Tensor, input_data: Dict, temperature: float):
+def sft_loss_fn(logits: torch.Tensor, input_data: Dict, temperature: float, sft_reg: float=1.0):
     """Cross-entropy loss for SFT data."""
     input_ids = input_data["input_ids"]
     loss_mask = input_data["loss_mask"].bool()
@@ -408,4 +426,4 @@ def sft_loss_fn(logits: torch.Tensor, input_data: Dict, temperature: float):
         vocab_max_logits=vocab_max_logits,
         denominator="n_tokens",
     )
-    return loss
+    return loss * sft_reg

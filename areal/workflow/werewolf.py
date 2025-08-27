@@ -146,6 +146,10 @@ class WerewolfWorkflow(RolloutWorkflow):
             # Store the current agent and get its summary
             current_agent = env.agent_player
             current_role = env.agent_role
+            use_opp_generation = (
+                ((current_role != "werewolf" and self.role == "werewolf") or (current_role == "werewolf" and self.role == "villager"))
+                and self.opp_rollout
+            )
             prev_summary = summaries[current_agent][-1] if summaries[current_agent] else "None yet."
 
             # ========== 1) Agent self-generates 3 questions ==========
@@ -165,15 +169,24 @@ class WerewolfWorkflow(RolloutWorkflow):
                 add_generation_prompt=True,
             )
             t_tokenize_total += time.perf_counter() - t0
-
-            qgen_req = ModelRequest(
-                rid=f"{rid}-qgen-{turn}",
-                input_ids=qgen_ids,
-                gconfig=self.gconfig.new(n_samples=1, max_new_tokens=1024),
-                tokenizer=self.tokenizer,
-            )
+            
             t0 = time.perf_counter()
-            qgen_resp = await engine.agenerate(qgen_req)
+            if use_opp_generation:
+                qgen_req = ModelRequest(
+                    rid=f"{rid}-qgen-{turn}",
+                    input_ids=qgen_ids,
+                    gconfig=self.gconfig.new(n_samples=1, max_new_tokens=1024),
+                    tokenizer=self.opp_tokenizer or self.tokenizer,
+                )
+                qgen_resp = await self.opp_rollout.agenerate(qgen_req)
+            else:
+                qgen_req = ModelRequest(
+                    rid=f"{rid}-qgen-{turn}",
+                    input_ids=qgen_ids,
+                    gconfig=self.gconfig.new(n_samples=1, max_new_tokens=1024),
+                    tokenizer=self.tokenizer,
+                )
+                qgen_resp = await engine.agenerate(qgen_req)
             t_qgen_total += time.perf_counter() - t0
 
             t0 = time.perf_counter()
@@ -192,7 +205,6 @@ class WerewolfWorkflow(RolloutWorkflow):
 
             # ========== 2) Agent answers the 3 questions ==========
             agent_answer_tasks = []
-            agent_answer_ids = []
             for qi, q in enumerate(self_questions):
                 aprompt = (
                     f"{obs}\n"
@@ -208,18 +220,26 @@ class WerewolfWorkflow(RolloutWorkflow):
                 )
                 t_tokenize_total += time.perf_counter() - t0
 
-                a_req = ModelRequest(
-                    rid=f"{rid}-ans-{turn}-{qi}",
-                    input_ids=a_ids,
-                    gconfig=self.gconfig.new(n_samples=1, max_new_tokens=512),
-                    tokenizer=self.tokenizer,
-                )
-                agent_answer_ids.append(a_ids)
-                agent_answer_tasks.append(engine.agenerate(a_req))
+                if use_opp_generation:
+                    a_req = ModelRequest(
+                        rid=f"{rid}-ans-{turn}-{qi}",
+                        input_ids=a_ids,
+                        gconfig=self.gconfig.new(n_samples=1, max_new_tokens=512),
+                        tokenizer=self.opp_tokenizer or self.tokenizer,
+                    )
+                    agent_answer_tasks.append(self.opp_rollout.agenerate(a_req))
+                else:
+                    a_req = ModelRequest(
+                        rid=f"{rid}-ans-{turn}-{qi}",
+                        input_ids=a_ids,
+                        gconfig=self.gconfig.new(n_samples=1, max_new_tokens=512),
+                        tokenizer=self.tokenizer,
+                    )
+                    agent_answer_tasks.append(engine.agenerate(a_req))
 
             # Teacher also answers for data (not used to guide action)
             teacher_answer_tasks = []
-            if self.teacher_rollout:
+            if (not use_opp_generation) and self.teacher_rollout:
                 for qi, q in enumerate(self_questions):
                     taprompt = (
                         f"{obs}\n"
@@ -243,70 +263,11 @@ class WerewolfWorkflow(RolloutWorkflow):
                     )
                     teacher_answer_tasks.append(self.teacher_rollout.agenerate(ta_req))
 
-            if teacher_answer_tasks:
-                t0 = time.perf_counter()
-                resps = await asyncio.gather(*agent_answer_tasks, *teacher_answer_tasks)
-                t_all = time.perf_counter() - t0
-                # Split timing crudely by counts
-                n_a, n_t = len(agent_answer_tasks), len(teacher_answer_tasks)
-                if n_a + n_t > 0:
-                    t_agent_answer_total += t_all * (n_a / (n_a + n_t))
-                    t_teacher_answer_total += t_all * (n_t / (n_a + n_t))
-                agent_ans_resps = resps[: len(agent_answer_tasks)]
-                teacher_ans_resps = resps[len(agent_answer_tasks) :]
-            else:
-                t0 = time.perf_counter()
-                agent_ans_resps = await asyncio.gather(*agent_answer_tasks)
-                t_agent_answer_total += time.perf_counter() - t0
-                teacher_ans_resps = []
-
+            # Only gather the agent's answer now
             t0 = time.perf_counter()
+            agent_ans_resps = await asyncio.gather(*agent_answer_tasks)
             agent_answers = [self.tokenizer.decode(r.output_tokens) for r in agent_ans_resps]
-            if self.teacher_rollout:
-                if self.teacher_tokenizer:
-                    teacher_answers = [self.teacher_tokenizer.decode(r.output_tokens) for r in teacher_ans_resps]
-                else:
-                    teacher_answers = [self.tokenizer.decode(r.output_tokens) for r in teacher_ans_resps]
-            else:
-                teacher_answers = []
-            # Count decode time into "agent answer" bucket (dominant part after gen)
             t_agent_answer_total += time.perf_counter() - t0
-
-            # Build SFT training data from teacher answers
-            if self.teacher_rollout and teacher_answers:
-                for qi, (q, t_ans) in enumerate(zip(self_questions, teacher_answers)):
-                    taprompt = (
-                        f"{obs}\n"
-                        f"Your previous summary: {prev_summary}\n"
-                        f"Question: {q}\n"
-                        "Answer concisely and concretely for this turn only."
-                    )
-                    prompt_ids = self.tokenizer.apply_chat_template(
-                        [{"role": "user", "content": taprompt}],
-                        tokenize=True,
-                        add_generation_prompt=True,
-                    )
-                    full_ids = self.tokenizer.apply_chat_template(
-                        [
-                            {"role": "user", "content": taprompt},
-                            {"role": "assistant", "content": t_ans},
-                        ],
-                        tokenize=True,
-                        add_generation_prompt=False,
-                    )
-                    loss_mask = [0] * len(prompt_ids) + [1] * (len(full_ids) - len(prompt_ids))
-                    t0 = time.perf_counter()
-                    sft_res = dict(
-                        input_ids=torch.tensor(full_ids).unsqueeze(0),
-                        loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                        logprobs=torch.zeros(1, len(full_ids)),
-                        versions=torch.zeros(1, len(full_ids), dtype=torch.long),
-                        attention_mask=torch.ones(len(full_ids), dtype=torch.bool).unsqueeze(0),
-                        rewards=torch.zeros(1),
-                        sft_ppo_mask=torch.tensor([1], dtype=torch.long),
-                    )
-                    results.append(TensorDict(sft_res, batch_size=[1]))
-                    t_pack_tensors_total += time.perf_counter() - t0
 
             # ========== 3) Use agent's Q&A to guide action generation ==========
             qa_block = "\n".join([
@@ -329,10 +290,6 @@ class WerewolfWorkflow(RolloutWorkflow):
             t_action_build_total += time.perf_counter() - t0
             t_tokenize_total += 0.0  # (already included in build section)
 
-            use_opp_generation = (
-                ((env.agent_role != "werewolf" and self.role == "werewolf") or (env.agent_role == "werewolf" and self.role == "villager"))
-                and self.opp_rollout
-            )
             if use_opp_generation:
                 req = ModelRequest(
                     rid=rid,
@@ -384,7 +341,7 @@ class WerewolfWorkflow(RolloutWorkflow):
             else:
                 reward = reward_list[0]
 
-            # Record the results for this step
+            # ========== 4) Build PPO training data ==========
             t0 = time.perf_counter()
             res = dict(
                 input_ids=torch.tensor(seq).unsqueeze(0),
@@ -405,7 +362,53 @@ class WerewolfWorkflow(RolloutWorkflow):
             traj_len[0] += resp.input_len
             traj_len[1] += resp.output_len
 
-            # ========== 4) Ask for agent summarization, then log all Q&As ==========
+            # ========== 5) Build SFT training data ==========
+            if self.teacher_rollout and len(teacher_answer_tasks) > 0:
+                t0 = time.perf_counter()
+                teacher_ans_resps = await asyncio.gather(*teacher_answer_tasks)
+                if self.teacher_tokenizer:
+                    teacher_answers = [self.teacher_tokenizer.decode(r.output_tokens) for r in teacher_ans_resps]
+                else:
+                    teacher_answers = [self.tokenizer.decode(r.output_tokens) for r in teacher_ans_resps]
+                t_teacher_answer_total += time.perf_counter() - t0
+            else:
+                teacher_answers = []
+            if self.teacher_rollout and len(teacher_answers) > 0:
+                for qi, (q, t_ans) in enumerate(zip(self_questions, teacher_answers)):
+                    taprompt = (
+                        f"{obs}\n"
+                        f"Your previous summary: {prev_summary}\n"
+                        f"Question: {q}\n"
+                        "Answer concisely and concretely for this turn only."
+                    )
+                    prompt_ids = self.tokenizer.apply_chat_template(
+                        [{"role": "user", "content": taprompt}],
+                        tokenize=True,
+                        add_generation_prompt=True,
+                    )
+                    full_ids = self.tokenizer.apply_chat_template(
+                        [
+                            {"role": "user", "content": taprompt},
+                            {"role": "assistant", "content": t_ans},
+                        ],
+                        tokenize=True,
+                        add_generation_prompt=False,
+                    )
+                    loss_mask = [0] * len(prompt_ids) + [1] * (len(full_ids) - len(prompt_ids))
+                    t0 = time.perf_counter()
+                    sft_res = dict(
+                        input_ids=torch.tensor(full_ids).unsqueeze(0),
+                        loss_mask=torch.tensor(loss_mask).unsqueeze(0),
+                        logprobs=torch.zeros(1, len(full_ids)),
+                        versions=torch.zeros(1, len(full_ids), dtype=torch.long),
+                        attention_mask=torch.ones(len(full_ids), dtype=torch.bool).unsqueeze(0),
+                        rewards=torch.zeros(1),
+                        sft_ppo_mask=torch.tensor([1], dtype=torch.long),
+                    )
+                    results.append(TensorDict(sft_res, batch_size=[1]))
+                    t_pack_tensors_total += time.perf_counter() - t0
+
+            # ========== 6) Ask for agent summarization, then log all Q&As ==========
             if self.use_summary:
                 m = re.findall(r"<answer>(.*?)</answer>", completion_str, re.DOTALL)
                 action_txt = m[-1].strip().lower() if m else ""

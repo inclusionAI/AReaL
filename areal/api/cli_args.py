@@ -251,6 +251,9 @@ class PPOActorConfig(TrainEngineConfig):
     temperature: float = field(
         default=1.0, metadata={"help": "Temperature during generation."}
     )
+    sft_reg: float = field(
+        default=1.0, metadata={"help": "Multiplier for SFT loss during PPO training."}
+    )
     # Reward
     group_reward_norm: bool = field(
         default=False,
