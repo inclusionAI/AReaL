@@ -320,10 +320,14 @@ class BaseHFEngine(TrainEngine):
         for i, mb in enumerate(mb_list.padded_mbs):
             mb_list.padded_mbs[i] = dict(**mb)
         for mb, padded_mb in zip(mb_list.mbs, mb_list.padded_mbs):
-            mb["max_seqlen"] = int(mb["max_seqlen"])
-            padded_mb["max_seqlen"] = int(padded_mb["max_seqlen"])
-            mb["cu_seqlens_q"] = mb["cu_seqlens_k"] = mb["cu_seqlens"]
-            padded_mb["cu_seqlens_q"] = padded_mb["cu_seqlens_k"] = padded_mb[
+            mb["max_length_q"] = mb["max_length_k"] = mb["max_seqlen"] = int(
+                mb["max_seqlen"]
+            )
+            padded_mb["max_length_q"] = padded_mb["max_length_k"] = padded_mb[
+                "max_seqlen"
+            ] = int(padded_mb["max_seqlen"])
+            mb["cu_seq_lens_q"] = mb["cu_seq_lens_k"] = mb["cu_seqlens"]
+            padded_mb["cu_seq_lens_q"] = padded_mb["cu_seq_lens_k"] = padded_mb[
                 "cu_seqlens"
             ]
             mb["use_cache"] = False

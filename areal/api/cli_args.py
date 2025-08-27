@@ -183,6 +183,12 @@ class FSDPWrapPolicy:
 
 @dataclass
 class FSDPEngineConfig:
+    ulysses_sp_size: int = field(
+        default=1,
+        metadata={
+            "help": "Ulysses sequence parallel size (default: 1)",
+        },
+    )
     wrap_policy: Optional[FSDPWrapPolicy] = field(
         default=None,
         metadata={"help": "FSDP wrap policy, specifying model layers to wrap."},

@@ -13,23 +13,30 @@ logger = logging.getLogger("FSDPEngine")
 if pkg_version.is_version_greater_or_equal("torch", "2.6.0"):
     from torch.distributed.fsdp import (
         CPUOffloadPolicy,
-        FSDPModule,
         MixedPrecisionPolicy,
         fully_shard,
     )
 elif pkg_version.is_version_greater_or_equal("torch", "2.4.0"):
     from torch.distributed._composable.fsdp import (
         CPUOffloadPolicy,
-        FSDPModule,
         MixedPrecisionPolicy,
         fully_shard,
     )
 else:
-    CPUOffloadPolicy = None
-    FSDPModule = None
-    MixedPrecisionPolicy = None
-    fully_shard = None
-    logger.warning("Current PyTorch version < 2.4.0 is not supported for FSDPEngine.")
+    raise ModuleNotFoundError(
+        "Current PyTorch version < 2.4.0 is not supported for FSDPEngine."
+    )
+
+__all__ = [
+    "CPUOffloadPolicy",
+    "MixedPrecisionPolicy",
+    "fully_shard",
+    "fsdp2_clip_grad_norm_",
+    "create_fsdp_device_mesh",
+    "apply_fsdp2",
+    "fsdp2_load_full_state_dict",
+    "get_cosine_schedule_with_warmup",
+]
 
 
 def fsdp2_clip_grad_norm_(

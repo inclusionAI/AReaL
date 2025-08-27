@@ -260,7 +260,7 @@ def pack_tensor_dict(data: TensorDict):
     # Calculate cumulative sequence lengths
     lens = attention_mask.sum(dim=1, dtype=torch.int32)
     max_seqlen = lens.max().item()
-    cu_seqlens = torch.cumsum(lens, dim=0)
+    cu_seqlens = torch.cumsum(lens, dim=0, dtype=torch.int32)
     cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
 
     total_length = int(cu_seqlens[-1].item())
@@ -854,7 +854,7 @@ def broadcast_tensor(tensor: torch.Tensor | None, src_rank=0, group=None):
         # On non-source ranks, receive metadata
         metadata_list = [None]
         dist.broadcast_object_list(metadata_list, src=src_rank, group=group)
-        
+
         metadata = metadata_list[0]
         tensor_shape = metadata["shape"]
         dtype = metadata["dtype"]
@@ -977,14 +977,19 @@ def broadcast_tensor_container(data, src_rank=0, group=None):
             dist.broadcast_object_list(to_broadcast, src=src_rank, group=group)
             return to_broadcast[0]
 
+
 def bcast_mb_list(
     mb_list: MicroBatchList | None, src_rank=0, group=None
 ) -> MicroBatchList:
     if dist.get_rank() == src_rank:
         assert mb_list is not None
     # bcast tensor container attributes
-    data = broadcast_tensor_container(mb_list.data if mb_list else None, src_rank=src_rank, group=group)
-    mbs = broadcast_tensor_container(mb_list.mbs if mb_list else None, src_rank=src_rank, group=group)
+    data = broadcast_tensor_container(
+        mb_list.data if mb_list else None, src_rank=src_rank, group=group
+    )
+    mbs = broadcast_tensor_container(
+        mb_list.mbs if mb_list else None, src_rank=src_rank, group=group
+    )
     padded_mbs = broadcast_tensor_container(
         mb_list.padded_mbs if mb_list else None, src_rank=src_rank, group=group
     )
@@ -992,17 +997,19 @@ def bcast_mb_list(
         mb_list.old_cu_seqlens_list if mb_list else None, src_rank=src_rank, group=group
     )
     # bcast other attributes
-    to_broadcast = [
-        mb_list.mb_spec,
-        mb_list.forward_indices,
-        mb_list.backward_indices,
-        mb_list.group_lens,
-        mb_list.padding_lengths,
-        mb_list.padded_to_lengths,
-        mb_list.align_to_lengths,
-    ] if mb_list else [
-        None for _ in range(7)
-    ]
+    to_broadcast = (
+        [
+            mb_list.mb_spec,
+            mb_list.forward_indices,
+            mb_list.backward_indices,
+            mb_list.group_lens,
+            mb_list.padding_lengths,
+            mb_list.padded_to_lengths,
+            mb_list.align_to_lengths,
+        ]
+        if mb_list
+        else [None for _ in range(7)]
+    )
     dist.broadcast_object_list(to_broadcast, src=src_rank, group=group)
     (
         mb_spec,
