@@ -338,17 +338,20 @@ def main(args):
 
                     with(stats_tracker.record_timing("main")):
                         logger.info(f"start to rollout, step: {step}, epoch: {epoch}, batch_data len: {len(batch_data)}")
-                        rollout.submit(batch_data, workflow=workflow)
-                        while not rollout_buffer.is_sufficient():
-                            time.sleep(0.1)
                         
-                        rollout_res = rollout_buffer.pop_batched_rollout_res()
+                        with(stats_tracker.record_timing("partial_rollout")):
+                            rollout.submit(batch_data, workflow=workflow)
+                            while not rollout_buffer.is_sufficient():
+                                time.sleep(0.1)
+                        
+                            rollout_res = rollout_buffer.pop_batched_rollout_res()
 
-                        # 触发 abort，收集剩余的样本
-                        rollout.abort_all_requests()
-                        # 本轮做训练的 rollout_res 已经 pop 出去了，所以只需要等待 rollout_buffer 中有 batch_size_exceeding_num 个元素，即可保证所有请求都已返回
-                        while not rollout_buffer.current_has(rollout_buffer.batch_size_exceeding_num):
-                            time.sleep(0.1)
+                        with(stats_tracker.record_timing("abort_all_requests")):
+                            # 触发 abort，收集剩余的样本
+                            rollout.abort_all_requests()
+                            # 本轮做训练的 rollout_res 已经 pop 出去了，所以只需要等待 rollout_buffer 中有 batch_size_exceeding_num 个元素，即可保证所有请求都已返回
+                            while not rollout_buffer.current_has(rollout_buffer.batch_size_exceeding_num):
+                                time.sleep(0.1)
 
                         logger.info(f"rollout succeeded {len(rollout_res)} samples, step: {step}, epoch: {epoch}")
 
