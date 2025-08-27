@@ -62,7 +62,7 @@ python trl_sft.py \
 
 import argparse
 
-from datasets import load_dataset
+from datasets import DatasetDict, load_from_disk
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import (
     ModelConfig,
@@ -77,57 +77,61 @@ from trl import (
 )
 
 
-def main(script_args, training_args, model_args):
+def main(script_args: ScriptArguments, sft_config: SFTConfig, model_config: ModelConfig):
     ################
     # Model init kwargs & Tokenizer
     ################
-    quantization_config = get_quantization_config(model_args)
+    quantization_config = get_quantization_config(model_config)
     model_kwargs = dict(
-        revision=model_args.model_revision,
-        trust_remote_code=model_args.trust_remote_code,
-        attn_implementation=model_args.attn_implementation,
-        torch_dtype=model_args.torch_dtype,
-        use_cache=False if training_args.gradient_checkpointing else True,
+        revision=model_config.model_revision,
+        trust_remote_code=model_config.trust_remote_code,
+        attn_implementation=model_config.attn_implementation,
+        torch_dtype=model_config.torch_dtype,
+        use_cache=False if sft_config.gradient_checkpointing else True,
         device_map=get_kbit_device_map() if quantization_config is not None else None,
         quantization_config=quantization_config,
     )
 
     # Create model
-    model = AutoModelForCausalLM.from_pretrained(model_args.model_name_or_path, **model_kwargs)
+    model = AutoModelForCausalLM.from_pretrained(model_config.model_name_or_path, **model_kwargs)
 
     # Create tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
-        model_args.model_name_or_path, trust_remote_code=model_args.trust_remote_code, use_fast=True
+        model_config.model_name_or_path, trust_remote_code=model_config.trust_remote_code, use_fast=True
     )
 
     # Set default chat template if needed
     if tokenizer.chat_template is None:
-        # TODO: source should be passed as an argument
-        model, tokenizer = clone_chat_template(model, tokenizer, "Qwen/Qwen3-0.6B")
+        raise ValueError("Tokenizer chat template is None")
+        # # TODO: source should be passed as an argument
+        # model, tokenizer = clone_chat_template(model, tokenizer, "Qwen/Qwen3-0.6B")
 
     ################
     # Dataset
     ################
-    dataset = load_dataset(script_args.dataset_name, name=script_args.dataset_config)
+    dataset: DatasetDict = load_from_disk(script_args.dataset_name)
 
     ################
     # Training
     ################
     trainer = SFTTrainer(
         model=model,
-        args=training_args,
-        train_dataset=dataset[script_args.dataset_train_split],
-        eval_dataset=dataset[script_args.dataset_test_split] if training_args.eval_strategy != "no" else None,
+        args=sft_config,
+        train_dataset=dataset[script_args.dataset_train_split].select(range(10)),
+        eval_dataset=dataset[script_args.dataset_test_split].select(range(10)) if sft_config.eval_strategy != "no" else None,
         processing_class=tokenizer,
-        peft_config=get_peft_config(model_args),
+        peft_config=get_peft_config(model_config),
     )
 
+    # trainer.train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+
+    # trainer.compute_loss(trainer.model, trainer.train_dataset[0])
     trainer.train()
 
-    # Save and push to hub
-    trainer.save_model(training_args.output_dir)
-    if training_args.push_to_hub:
-        trainer.push_to_hub(dataset_name=script_args.dataset_name)
+    # # Save and push to hub
+    # trainer.save_model(training_args.output_dir)
+    # if training_args.push_to_hub:
+    #     trainer.push_to_hub(dataset_name=script_args.dataset_name)
 
 
 def make_parser(subparsers: argparse._SubParsersAction = None):
@@ -144,5 +148,5 @@ if __name__ == "__main__":
     # When using the trl cli, this script may be run with additional arguments, corresponding accelerate arguments.
     # To ensure that their parsing does not interfere with the script arguments, parse the arguments with
     # `return_remaining_strings=True`, then ignore the remaining strings.
-    script_args, training_args, model_args, _ = parser.parse_args_and_config(return_remaining_strings=True)
-    main(script_args, training_args, model_args)
+    script_args, sft_config, model_args, _ = parser.parse_args_and_config(return_remaining_strings=True)
+    main(script_args, sft_config, model_args)

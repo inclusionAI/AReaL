@@ -1,0 +1,24 @@
+python trl_sft.py \
+    --model_name_or_path /home/ubuntu/victor-north-tx/models/Qwen2.5-3B-instruct \
+    --chat_template_path qwen2.5_prompt_template.jinja \
+    --dataset_name data/full-v1 \
+    --dataset_train_split train \
+    --dataset_test_split test \
+    --learning_rate 8.0e-5 \
+    --num_train_epochs 20 \
+    --per_device_train_batch_size 2 \
+    --gradient_accumulation_steps 8 \
+    --gradient_checkpointing \
+    --logging_steps 2 \
+    --eval_strategy epoch \
+    --save_strategy epoch \
+    --save_total_limit 1 \
+    --load_best_model_at_end \
+    --metric_for_best_model eval_loss \
+    --greater_is_better false \
+    --auto_find_batch_size \
+    --assistant_only_loss \
+    --output_dir ./data/Qwen2.5-3B-instruct-sft-full-tau2-assistant-only-loss \
+    --report_to_wandb \
+    --run_name Qwen2.5-3B-instruct-sft-full-tau2-assistant-only-loss \
+    --patience 2

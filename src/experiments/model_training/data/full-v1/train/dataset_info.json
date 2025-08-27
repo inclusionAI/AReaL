@@ -1,0 +1,1177 @@
+{
+  "citation": "",
+  "description": "",
+  "features": {
+    "messages": {
+      "feature": {
+        "content": {
+          "dtype": "string",
+          "_type": "Value"
+        },
+        "role": {
+          "dtype": "string",
+          "_type": "Value"
+        },
+        "tool_call_id": {
+          "dtype": "string",
+          "_type": "Value"
+        },
+        "tool_calls": {
+          "feature": {
+            "function": {
+              "arguments": {
+                "dtype": "string",
+                "_type": "Value"
+              },
+              "name": {
+                "dtype": "string",
+                "_type": "Value"
+              }
+            },
+            "id": {
+              "dtype": "string",
+              "_type": "Value"
+            },
+            "type": {
+              "dtype": "string",
+              "_type": "Value"
+            }
+          },
+          "_type": "List"
+        }
+      },
+      "_type": "List"
+    },
+    "tools": {
+      "feature": {
+        "function": {
+          "description": {
+            "dtype": "string",
+            "_type": "Value"
+          },
+          "name": {
+            "dtype": "string",
+            "_type": "Value"
+          },
+          "parameters": {
+            "$defs": {
+              "APNNames": {
+                "enum": {
+                  "feature": {
+                    "dtype": "string",
+                    "_type": "Value"
+                  },
+                  "_type": "List"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "APNSettings": {
+                "additionalProperties": {
+                  "dtype": "bool",
+                  "_type": "Value"
+                },
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "properties": {
+                  "apn_name": {
+                    "$ref": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "default": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "description": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  },
+                  "mms_apn": {
+                    "anyOf": {
+                      "feature": {
+                        "type": {
+                          "dtype": "string",
+                          "_type": "Value"
+                        }
+                      },
+                      "_type": "List"
+                    },
+                    "default": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "description": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "title": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  },
+                  "mms_port": {
+                    "anyOf": {
+                      "feature": {
+                        "type": {
+                          "dtype": "string",
+                          "_type": "Value"
+                        }
+                      },
+                      "_type": "List"
+                    },
+                    "default": {
+                      "dtype": "null",
+                      "_type": "Value"
+                    },
+                    "description": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "title": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  },
+                  "mms_proxy": {
+                    "anyOf": {
+                      "feature": {
+                        "type": {
+                          "dtype": "string",
+                          "_type": "Value"
+                        }
+                      },
+                      "_type": "List"
+                    },
+                    "default": {
+                      "dtype": "null",
+                      "_type": "Value"
+                    },
+                    "description": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "title": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  },
+                  "mmsc_url": {
+                    "anyOf": {
+                      "feature": {
+                        "type": {
+                          "dtype": "string",
+                          "_type": "Value"
+                        }
+                      },
+                      "_type": "List"
+                    },
+                    "default": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "description": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "title": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  },
+                  "reset_at_reboot": {
+                    "default": {
+                      "dtype": "bool",
+                      "_type": "Value"
+                    },
+                    "description": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "title": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "type": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  }
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "FlightInfo": {
+                "properties": {
+                  "date": {
+                    "description": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "title": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "type": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  },
+                  "flight_number": {
+                    "description": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "title": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "type": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  }
+                },
+                "required": {
+                  "feature": {
+                    "dtype": "string",
+                    "_type": "Value"
+                  },
+                  "_type": "List"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "NetworkModePreference": {
+                "enum": {
+                  "feature": {
+                    "dtype": "string",
+                    "_type": "Value"
+                  },
+                  "_type": "List"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "Passenger": {
+                "properties": {
+                  "dob": {
+                    "description": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "title": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "type": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  },
+                  "first_name": {
+                    "description": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "title": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "type": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  },
+                  "last_name": {
+                    "description": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "title": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "type": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  }
+                },
+                "required": {
+                  "feature": {
+                    "dtype": "string",
+                    "_type": "Value"
+                  },
+                  "_type": "List"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "Payment": {
+                "properties": {
+                  "amount": {
+                    "description": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "title": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "type": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  },
+                  "payment_id": {
+                    "description": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "title": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "type": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  }
+                },
+                "required": {
+                  "feature": {
+                    "dtype": "string",
+                    "_type": "Value"
+                  },
+                  "_type": "List"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              }
+            },
+            "properties": {
+              "address1": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "address2": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "amount": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "apn_settings": {
+                "anyOf": {
+                  "feature": {
+                    "$ref": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "additionalProperties": {
+                      "dtype": "bool",
+                      "_type": "Value"
+                    },
+                    "type": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  },
+                  "_type": "List"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "app_name": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "bill_id": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "cabin": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "enum": {
+                  "feature": {
+                    "dtype": "string",
+                    "_type": "Value"
+                  },
+                  "_type": "List"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "city": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "country": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "customer_id": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "date": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "destination": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "dob": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "email": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "expression": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "first_name": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "flight_number": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "flight_type": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "enum": {
+                  "feature": {
+                    "dtype": "string",
+                    "_type": "Value"
+                  },
+                  "_type": "List"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "flights": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "items": {
+                  "anyOf": {
+                    "feature": {
+                      "$ref": {
+                        "dtype": "string",
+                        "_type": "Value"
+                      },
+                      "additionalProperties": {
+                        "dtype": "bool",
+                        "_type": "Value"
+                      },
+                      "type": {
+                        "dtype": "string",
+                        "_type": "Value"
+                      }
+                    },
+                    "_type": "List"
+                  }
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "full_name": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "gb_amount": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "id": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "insurance": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "enum": {
+                  "feature": {
+                    "dtype": "string",
+                    "_type": "Value"
+                  },
+                  "_type": "List"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "item_ids": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "items": {
+                  "type": {
+                    "dtype": "string",
+                    "_type": "Value"
+                  }
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "last_name": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "limit": {
+                "default": {
+                  "dtype": "int64",
+                  "_type": "Value"
+                },
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "line_id": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "mode": {
+                "anyOf": {
+                  "feature": {
+                    "$ref": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    },
+                    "type": {
+                      "dtype": "string",
+                      "_type": "Value"
+                    }
+                  },
+                  "_type": "List"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "new_item_ids": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "items": {
+                  "type": {
+                    "dtype": "string",
+                    "_type": "Value"
+                  }
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "nonfree_baggages": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "order_id": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "origin": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "passengers": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "items": {
+                  "anyOf": {
+                    "feature": {
+                      "$ref": {
+                        "dtype": "string",
+                        "_type": "Value"
+                      },
+                      "additionalProperties": {
+                        "dtype": "bool",
+                        "_type": "Value"
+                      },
+                      "type": {
+                        "dtype": "string",
+                        "_type": "Value"
+                      }
+                    },
+                    "_type": "List"
+                  }
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "payment_id": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "payment_method_id": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "payment_methods": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "items": {
+                  "anyOf": {
+                    "feature": {
+                      "$ref": {
+                        "dtype": "string",
+                        "_type": "Value"
+                      },
+                      "additionalProperties": {
+                        "dtype": "bool",
+                        "_type": "Value"
+                      },
+                      "type": {
+                        "dtype": "string",
+                        "_type": "Value"
+                      }
+                    },
+                    "_type": "List"
+                  }
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "permission": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "phone_number": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "product_id": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "reason": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "reservation_id": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "state": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "summary": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "total_baggages": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "user_id": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              },
+              "zip": {
+                "description": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "title": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "type": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              }
+            },
+            "required": {
+              "feature": {
+                "dtype": "string",
+                "_type": "Value"
+              },
+              "_type": "List"
+            },
+            "title": {
+              "dtype": "string",
+              "_type": "Value"
+            },
+            "type": {
+              "dtype": "string",
+              "_type": "Value"
+            }
+          }
+        },
+        "type": {
+          "dtype": "string",
+          "_type": "Value"
+        }
+      },
+      "_type": "List"
+    },
+    "parallel_tool_calls": {
+      "dtype": "bool",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": ""
+}
