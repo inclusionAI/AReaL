@@ -67,7 +67,7 @@ class RLVRWorkflow(RolloutWorkflow):
             logprobs = [0] * resp.input_len + resp.output_logprobs
             prompt_mask = [1] * resp.input_len + [0] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
-            seq_no_eos_mask = resp.stop_reason == "stop"
+            seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (seq[-1] != self.tokenizer.pad_token_id)
 
             if "prompt" in data.keys():
                 del data["prompt"]
@@ -143,7 +143,7 @@ class RLVRWorkflow(RolloutWorkflow):
             logprobs = [0] * resp.input_len + resp.output_logprobs
             prompt_mask = [1] * resp.input_len + [0] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
-            seq_no_eos_mask = resp.stop_reason == "stop"
+            seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (seq[-1] != self.tokenizer.pad_token_id)
             data = data_list[index//new_gconfig.n_samples]
 
             completion = self.tokenizer.decode(resp.output_tokens, clean_up_tokenization_spaces=False, skip_special_tokens=True)
