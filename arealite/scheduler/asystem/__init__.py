@@ -1,3 +1,4 @@
+import signal
 from dataclasses import asdict
 
 from arealite.scheduler.base import Scheduler, Worker
@@ -54,7 +55,22 @@ class AsystemScheduler(Scheduler):
         # 每次实验生成一个uuid
         self.uuid = str(time.time_ns())
         self.extra_envs["CLUSTER_NAME"] = f"{self.expr_name}_{self.trial_name}_{self.uuid}"
+
+        # 信号捕获是为了手动跑 trainer.py 增加的功能，用来在 trainer 退出时清理相关 Job
+        signal.signal(signal.SIGINT, self.batch_cleanup_jobs)
+        signal.signal(signal.SIGTERM, self.batch_cleanup_jobs)
+
         logger.info(f"AsystemScheduler initialized for {self.run_name}. API URL: {self.api_url}")
+
+    def batch_cleanup_jobs(self, signum, frame):
+        logger.info(f"signum {signum} received: handle_signals starts")
+        for job_name, job_uid in self.submitted_jobs.items():
+            try:
+                self.stop_job(job_uid)
+                logger.info(f"Stopped job: {job_uid}")
+            except Exception as e:
+                logger.error(f"Error stopping job {job_uid}: {e}")
+        logger.info(f"signum {signum} received: handle_signals finished")
 
     def _build_rpc_client(self, config):
         pass
@@ -81,6 +97,10 @@ class AsystemScheduler(Scheduler):
         if job_uid:
             self.submitted_jobs[worker_key] = job_uid
             logger.info(f"Job {job_name} submitted with UID: {job_uid}")
+
+            with open('/tmp/job_uids.txt', 'a') as f:
+                f.write(job_uid + '\n')
+
             return job_uid
         else:
             raise RuntimeError(f"Failed to submit job: {job_info}")
@@ -423,7 +443,7 @@ class AsystemScheduler(Scheduler):
         logger.info(f"Stopping job with UID: {job_uid}")
 
         try:
-            response = self._request("DELETE", f"AsystemJobs/{job_uid}")
+            response = self._request("POST", f"AsystemJobs/{job_uid}/cancel")
             logger.info(f"Job {job_uid} stop request sent successfully")
         except Exception as e:
             logger.error(f"Error stopping job {job_uid}: {e}")
