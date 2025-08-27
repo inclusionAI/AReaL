@@ -138,7 +138,7 @@ class SGLangServerWrapper:
             host_ip = gethostip()
 
             base_gpu_id = (server_local_idx - server_idx_offset) * gpus_per_server
-            self.config.random_seed = base_random_seed + base_gpu_id
+            self.config.random_seed = base_random_seed + server_local_idx
             cmd = SGLangConfig.build_cmd(
                 self.config,
                 tp_size=self.allocation_mode.gen_tp_size,
