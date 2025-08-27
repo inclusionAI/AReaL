@@ -378,6 +378,7 @@ class SGLangConfig:
     dtype: str = "bfloat16"
     kv_cache_dtype: str = "auto"
     dp_size: int = 1  # only used for dp attention
+    ep_size: int = 1
     # logging
     log_level: str = "warning"
     log_level_http: Optional[str] = "warning"
