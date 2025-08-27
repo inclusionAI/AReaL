@@ -328,23 +328,6 @@ class MegatronCheckpointManager:
         sharded_state_dict = self.generate_state_dict(
             with_model, with_optimizer, with_rng
         )
-        log_with_rank(
-            f"Generated state dict for saving: {sharded_state_dict.keys()}",
-            rank=self.rank,
-        )
-        for vpp_rank, model in enumerate(self.model):
-            if len(self.model) > 1:
-                model_i_keys = sharded_state_dict[f"model{vpp_rank}"].keys()
-                log_with_rank(
-                    f"Generated state dict for saving: {model_i_keys}",
-                    rank=self.rank,
-                )
-            else:
-                log_with_rank(
-                    f"Generated state dict for saving: {sharded_state_dict['model'].keys()}",
-                    rank=self.rank,
-                )
-
         # Load Dist Checkpointing
         state_dict = load_dist_checkpointing(
             sharded_state_dict=sharded_state_dict,
@@ -418,22 +401,6 @@ class MegatronCheckpointManager:
         if self.use_dist_checkpointing:
             # Generate state dict for saving
             state_dict = self.generate_state_dict(with_model, with_optimizer, with_rng)
-            log_with_rank(
-                f"Generated state dict for saving: {state_dict.keys()}",
-                rank=self.rank,
-            )
-            for vpp_rank, model in enumerate(self.model):
-                if len(self.model) > 1:
-                    model_i_keys = state_dict[f"model{vpp_rank}"].keys()
-                    log_with_rank(
-                        f"Generated state dict for saving: {model_i_keys}",
-                        rank=self.rank,
-                    )
-                else:
-                    log_with_rank(
-                        f"Generated state dict for saving: {state_dict['model'].keys()}",
-                        rank=self.rank,
-                    )
             # Start Async save if enabled
             async_save_request = save_dist_checkpointing(
                 sharded_state_dict=state_dict,

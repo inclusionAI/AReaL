@@ -834,6 +834,7 @@ def broadcast_tensor(tensor: torch.Tensor | None, src_rank=0, group=None):
         if tensor is None:
             raise ValueError(f"Tensor cannot be None on source rank {src_rank}")
 
+        tensor = tensor.contiguous()
         device = tensor.device
         # Prepare metadata as Python objects
         metadata = {

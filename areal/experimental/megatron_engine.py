@@ -3,8 +3,9 @@ import functools
 import gc
 import os
 from datetime import datetime
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
+import mbridge
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
@@ -27,17 +28,17 @@ from areal.experimental.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
+from areal.experimental.model.hf_load import load_weights_from_hf_with_mbridge_fast
+from areal.experimental.model.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.experimental.model.registry import (
-    load_from_hf,
     make_hf_and_mcore_config,
     make_mcore_model,
-    save_to_hf,
 )
 from areal.experimental.utils.mcore.packed_context_parallel import (
     packed_context_parallel_forward,
 )
 from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
-from areal.utils import logging, name_resolve, names, pkg_version, stats_tracker
+from areal.utils import logging, name_resolve, names, stats_tracker
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
@@ -54,15 +55,6 @@ from areal.utils.data import (
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
-
-USE_MBRIDGE = False
-if pkg_version.is_available("mbridge"):
-    import mbridge
-
-    USE_MBRIDGE = True
-else:
-    USE_MBRIDGE = False
-
 
 logger = logging.getLogger("MegatronEngine")
 
@@ -111,12 +103,11 @@ class MegatronEngine(TrainEngine):
         self.world_size = int(os.environ["WORLD_SIZE"])
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
-        if USE_MBRIDGE:
-            self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
-            self.bridge.dtype = self.dtype
-            logger.info(
-                "Using mbridge to create models and hf model save/load in MegatronEngine."
-            )
+        self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
+        self.bridge.dtype = self.dtype
+        logger.info(
+            "Using mbridge to create models and hf model save/load in MegatronEngine."
+        )
 
         self.hf_config, self.tf_config = make_hf_and_mcore_config(
             self.config.path, dtype=self.dtype, bridge=self.bridge
@@ -339,24 +330,34 @@ class MegatronEngine(TrainEngine):
             assert (
                 not meta.with_optim
             ), "HF format does not support optimizer state saving, please use DCP format instead."
-            self._save_model_to_hf(meta.path, meta.tokenizer, meta.processor)
+            self._save_model_to_hf(
+                meta.path,
+                tokenizer=meta.tokenizer,
+                processor=meta.processor,
+                base_model_path=meta.base_model_path,
+            )
         elif meta.weight_format == "dcp":
             self.checkpointer.save_checkpoint(meta.path, with_optimizer=meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 
     def _save_model_to_hf(
-        self, path: str, tokenizer: Any | None = None, processor: Any | None = None
+        self,
+        path: str,
+        tokenizer: Any | None = None,
+        processor: Any | None = None,
+        base_model_path: Optional[str] = None,
     ):
         assert self.model is not None, "Model is not initialized."
         os.makedirs(path, exist_ok=True)
 
-        # Save model weights
-        save_to_hf(
-            hf_config=self.hf_config,
-            save_path=path,
-            model=self.model,
+        save_weights_to_hf_with_mbridge_fast(
             bridge=self.bridge,
+            models=[self.model],
+            weights_path=path,
+            base_model_path=base_model_path,
+            max_shard_size_byte=int(3e9),
+            max_workers=None,
         )
 
         if dist.get_rank() == 0:
@@ -379,11 +380,11 @@ class MegatronEngine(TrainEngine):
 
     def _load_model_from_hf(self, path: str):
         assert self.model is not None, "Model is not initialized."
-        load_from_hf(
-            hf_config=self.hf_config,
-            load_path=path,
-            model=self.model,
+        load_weights_from_hf_with_mbridge_fast(
             bridge=self.bridge,
+            models=[self.model],
+            weights_path=path,
+            max_workers=None,
         )
 
     def prepare_mb_list(

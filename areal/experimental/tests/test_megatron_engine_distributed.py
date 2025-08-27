@@ -1,6 +1,7 @@
 import subprocess
 
 import pytest
+import torch
 
 from areal.experimental.api.io_struct import AllocationMode
 from areal.utils.network import find_free_ports
@@ -31,25 +32,33 @@ def _run_test_with_torchrun(model_type: str, alloc_mode: str, output: str):
     assert result == "Passed", f"Test failed: {result}"
 
 
-@pytest.mark.two_gpu
+@pytest.mark.multi_gpu
 def test_qwen3_tensor_parallel(tmp_path_factory):
+    if torch.cuda.device_count() < 2:
+        pytest.skip("tensor parallel requires 2 GPUs to run")
     output = tmp_path_factory.mktemp("test_output") / "qwen3_tensor_parallel.out"
     _run_test_with_torchrun("qwen3", "d1p1t2", output=str(output))
 
 
-@pytest.mark.two_gpu
+@pytest.mark.multi_gpu
 def test_qwen3_pipeline_parallel(tmp_path_factory):
+    if torch.cuda.device_count() < 2:
+        pytest.skip("pipeline parallel requires 2 GPUs to run")
     output = tmp_path_factory.mktemp("test_output") / "qwen3_pipeline_parallel.out"
     _run_test_with_torchrun("qwen3", "d1p2t1", output=str(output))
 
 
-@pytest.mark.two_gpu
+@pytest.mark.multi_gpu
 def test_qwen3_context_parallel(tmp_path_factory):
+    if torch.cuda.device_count() < 2:
+        pytest.skip("context parallel requires 2 GPUs to run")
     output = tmp_path_factory.mktemp("test_output") / "qwen3_context_parallel.out"
     _run_test_with_torchrun("qwen3", "d1p1t1c2", output=str(output))
 
 
-@pytest.mark.two_gpu
+@pytest.mark.multi_gpu
 def test_qwen3moe_expert_parallel(tmp_path_factory):
+    if torch.cuda.device_count() < 4:
+        pytest.skip("Qwen3 MoE expert parallel requires 4 GPUs to run")
     output = tmp_path_factory.mktemp("test_output") / "qwen3moe_expert_parallel.out"
-    _run_test_with_torchrun("qwen3moe", "d1p1t2c1/d1p1t1e2", output=str(output))
+    _run_test_with_torchrun("qwen3moe", "d1p1t2c2/d1p1t1e4", output=str(output))
