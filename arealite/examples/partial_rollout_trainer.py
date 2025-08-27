@@ -2,6 +2,7 @@ import sys
 import os
 import pprint
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any, Union
 
 import torch
@@ -172,12 +173,6 @@ def main(args):
                               group_size=config.actor.hybrid_engine.group_size),
         scheduler
     )
-
-    # engine initialize
-    # initialize actor first for colocation mode
-    actor.initialize()
-    rollout.initialize(colocation_with=actor if config.enable_colocate_mode else None)
-
     ref = None
     if config.actor.hybrid_engine.wrap_policy.kl_ctl> 0:
         ref = DistributedReferenceController(
@@ -187,7 +182,52 @@ def main(args):
                                   group_size=config.actor.hybrid_engine.group_size),
             scheduler,
         )
-        ref.initialize()
+
+    # 共卡：actor -> rollout 按顺序，reference 可以并行。
+    # 分卡：actor、rollout、reference 三者并行。
+
+    # helper function for initializing Reference controller
+    def init_ref_controller_helper(ref):
+        if ref is not None:
+            logger.info("ref is not none, initializing reference controller")
+            ref.initialize()
+
+    # helper function for initializing Train Controller (actor) & Rollout Controller
+    def init_train_and_rollout_controller_helper(actor, rollout):
+        logger.info("initializing trainer controller and rollout controller")
+        actor.initialize()
+        rollout.initialize(colocation_with=actor if config.enable_colocate_mode else None)
+
+    # helper function for initializing Rollout controller
+    def init_rollout_controller_helper(rollout):
+        logger.info("initializing rollout controller")
+        rollout.initialize(colocation_with=actor if config.enable_colocate_mode else None)
+
+    if config.enable_colocate_mode:
+        logger.info(f"initializing all controllers in colocation mode {config.enable_colocate_mode}")
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(init_train_and_rollout_controller_helper, actor, rollout),
+                executor.submit(init_ref_controller_helper, ref),
+            ]
+            for future in futures:
+                future.result()
+        logger.info(f"initialized all controllers in colocation mode {config.enable_colocate_mode}")
+    else:
+        logger.info(f"initializing all controllers in colocation mode {config.enable_colocate_mode}")
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [
+                executor.submit(actor.initialize),
+                executor.submit(init_rollout_controller_helper, rollout),
+                executor.submit(init_ref_controller_helper, ref),
+            ]
+            for future in futures:
+                future.result()
+        logger.info(f"initialized all controllers in colocation mode {config.enable_colocate_mode}")
+
+    # actor.initialize()
+    # rollout.initialize(colocation_with=actor if config.enable_colocate_mode else None)
+    #      ref.initialize()
 
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
