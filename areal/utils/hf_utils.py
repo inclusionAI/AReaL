@@ -1,8 +1,5 @@
 from functools import lru_cache
-from typing import (
-    Optional,
-    Tuple,
-)
+from typing import Optional, Tuple
 
 import transformers
 
