@@ -1,6 +1,7 @@
 import subprocess
 
 import pytest
+import torch
 
 from areal.utils.network import find_free_ports
 
@@ -23,6 +24,9 @@ def _run_test_with_torchrun(n_gpus: int):
         pytest.fail(f"Test failed with error: {e.stderr.decode()}")
 
 
-@pytest.mark.two_gpu
-def test_fsdp_ulysses_train_batch_2gpu(tmp_path_factory):
-    _run_test_with_torchrun(2)
+@pytest.mark.multi_gpu
+@pytest.mark.parametrize("world_size", [2])
+def test_fsdp_ulysses_train_batch_2gpu(world_size):
+    if torch.cuda.device_count() < world_size:
+        pytest.skip(f"This test requires {world_size} gpus")
+    _run_test_with_torchrun(world_size)
