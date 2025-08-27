@@ -1,4 +1,4 @@
-experiment_name: arealite-mini-grpo
+experiment_name: arealite-mini-grpo-partial-rollout
 trial_name: trial0
 allocation_mode: "gen:d4t4p1,train:d4t1p4"
 seed: 42

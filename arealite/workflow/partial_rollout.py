@@ -9,7 +9,6 @@ from arealite.api.cli_args import GenerationHyperparameters
 from arealite.api.io_struct import LLMRequest, LLMResponse
 from arealite.api.workflow_api import RolloutWorkflow
 from realhf.api.core.data_api import RL_TASKS, load_hf_tokenizer
-from arealite.utils.padding import concat_padded_tensors
 
 
 class PartialRolloutWorkflow(RolloutWorkflow):
@@ -84,8 +83,8 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         output_version = resp.output_versions[0]
         versions = [output_version] * (resp.input_len + resp.output_len)
 
-        # seq_no_eos_mask 的意义是，这个 sample 不需要 eos_mask，是有 EOS 的意思
-        seq_no_eos_mask = seq[-1] == self.tokenizer.eos_token_id
+        # seq_no_eos_mask，有 EOS 是 False，没有 EOS 是 True
+        seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (seq[-1] != self.tokenizer.pad_token_id)
         # seq_no_eos_mask = resp.stop_reason in ["stop", "interrupt", "abort"]
 
         if "prompt" in data.keys():
@@ -135,8 +134,8 @@ class PartialRolloutWorkflow(RolloutWorkflow):
             prompt_ids, clean_up_tokenization_spaces=False, skip_special_tokens=True
         )
 
-        # seq_no_eos_mask 的意义是，这个 sample 不需要 eos_mask，是有 EOS 的意思
-        is_sample_finished = data["previous_seq_no_eos_mask"][0]
+        # seq_no_eos_mask，有 EOS 是 False，没有 EOS 是 True
+        is_sample_finished = not data["previous_seq_no_eos_mask"][0]
 
         assert self.gconfig.n_samples == 1, "in PartialRolloutWorkflow, n_samples must be 1"
         
@@ -179,7 +178,7 @@ class PartialRolloutWorkflow(RolloutWorkflow):
             logprobs = previous_logprobs + resp.output_logprobs
             prompt_mask = [1] * prompt_len + [0] * completion_len
             versions = data["previous_version"][0][:resp.input_len] + resp.output_versions
-            seq_no_eos_mask = seq[-1] == self.tokenizer.eos_token_id
+            seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (seq[-1] != self.tokenizer.pad_token_id)
             # seq_no_eos_mask = resp.stop_reason in ["stop", "interrupt", "abort"]
         else:
             # sample is already finished, we do not need to request a new rollout, just use the previous responses
