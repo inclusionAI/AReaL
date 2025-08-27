@@ -2,7 +2,6 @@ import functools
 from typing import Dict, List, Optional
 
 import torch
-import torch.distributed as dist
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from tensordict import TensorDict
@@ -166,7 +165,11 @@ class PPOActor:
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]
         seqlens = attn_mask.sum(-1)
-        stats_reduce_group = self.engine.parallelism_group if not mpu.is_initialized() else mpu.get_data_parallel_group()
+        stats_reduce_group = (
+            self.engine.parallelism_group
+            if not mpu.is_initialized()
+            else mpu.get_data_parallel_group()
+        )
 
         all_stats = []
         ########## Logging code starts ##########
@@ -246,9 +249,7 @@ class PPOActor:
                 loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
             )
             stats_tracker.scalar(**train_stat)
-            all_stats.append(
-                stats_tracker.export(reduce_group=stats_reduce_group)
-            )
+            all_stats.append(stats_tracker.export(reduce_group=stats_reduce_group))
         all_stats[0].update(global_stats)
         return all_stats
 

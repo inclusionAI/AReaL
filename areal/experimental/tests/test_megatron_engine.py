@@ -78,7 +78,6 @@ def engine():
         experiment_name="test",
         trial_name="test",
         path=MODEL_PATH,
-        allocation_mode="d1p1t1",
         optimizer=OptimizerConfig(),
         megatron=MegatronEngineConfig(),
     )

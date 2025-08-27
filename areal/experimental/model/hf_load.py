@@ -3,6 +3,7 @@ import os
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from glob import glob
 from typing import Dict, List, Optional, Tuple
 
 import torch
@@ -10,7 +11,6 @@ import torch.distributed as dist
 from mbridge.core.bridge import Bridge
 from megatron.core import parallel_state as mpu
 from safetensors import safe_open
-from glob import glob
 
 from areal.utils import logging
 

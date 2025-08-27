@@ -16,13 +16,13 @@ from areal.experimental.api.cli_args import ExperimentalGRPOConfig as GRPOConfig
 from areal.experimental.api.io_struct import AllocationMode
 from areal.experimental.megatron_actor import MegatronPPOActor
 from areal.utils import seeding, stats_tracker
+from areal.utils.data import broadcast_tensor_container
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
-from areal.utils.data import broadcast_tensor_container
 from areal.workflow.rlvr import RLVRWorkflow
 
 
@@ -275,7 +275,9 @@ def main(args):
         torch.cuda.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
-        stats[0].update(stats_tracker.export_all(reduce_group=mpu.get_data_parallel_group()))
+        stats[0].update(
+            stats_tracker.export_all(reduce_group=mpu.get_data_parallel_group())
+        )
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])

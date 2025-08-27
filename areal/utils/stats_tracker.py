@@ -53,13 +53,13 @@ class DistributedStatsTracker:
 
         def __exit__(self, exc_type, exc_val, exc_tb):
             self.tracker.scope_stack.pop()
-            
+
     def _get_full_key(self, key):
         """Combine scope stack with current key"""
         if not self.scope_stack:
             return key
         return "/".join(self.scope_stack + [key])
-    
+
     @contextmanager
     def disable_scope(self):
         tmp = self.scope_stack
