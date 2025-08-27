@@ -126,7 +126,7 @@ class RemoteHypridTrainWorker(TrainEngine):
             )
             if response.status_code == 200:
                 logger.info(
-                    f"[RemoteHypridTrainWorker] rank: {global_rank} Payload sent successfully to {target_url}"
+                    f"[RemoteHypridTrainWorker] rank: {global_rank} Payload sent successfully to {target_url}, response is {response.json()}"
                 )
             else:
                 raise ValueError(
