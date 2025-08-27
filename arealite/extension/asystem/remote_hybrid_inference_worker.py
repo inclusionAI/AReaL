@@ -500,7 +500,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     res = response.json()
                     assert res["success"]
                 except Exception as e:
-                    logger.error(f"[RemoteHybridInferenceWorker] Failed to update weights on {addr}: {str(e)}")
+                    logger.error(f"[RemoteHybridInferenceWorker] Failed to update weights on {addr}: {str(e)}, response is {response.text}")
                     raise
 
             with ThreadPoolExecutor(max_workers=len(self.addresses)) as executor:
