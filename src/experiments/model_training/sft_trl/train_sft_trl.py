@@ -12,7 +12,7 @@ from torch.distributed import destroy_process_group
 from transformers import AutoModelForCausalLM, AutoTokenizer, EarlyStoppingCallback
 from trl import SFTConfig, SFTTrainer, TrlParser, ScriptArguments, ModelConfig, get_quantization_config, get_kbit_device_map, get_peft_config
 
-from experiments.model_training.prepare_dataset import load_as_hf_dataset
+from experiments.model_training.dataset_prep.prepare_dataset import load_as_hf_dataset
 
 dotenv.load_dotenv()
 
