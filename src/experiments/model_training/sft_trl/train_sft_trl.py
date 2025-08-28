@@ -23,7 +23,9 @@ from trl import (
     get_quantization_config,
 )
 
-from experiments.model_training.dataset_prep.prepare_dataset import load_as_hf_dataset
+from experiments.model_training.dataset_prep.prepare_tau_dataset import (
+    load_as_hf_dataset,
+)
 
 dotenv.load_dotenv()
 
@@ -142,16 +144,6 @@ def get_model_and_tokenizer(
     return model, tokenizer
 
 
-DEFAULT_MODEL = "Qwen/Qwen2.5-0.5B-instruct"
-DEFAULT_TRAIN_DATASET_PATH = "/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/data/train_full-v1.jsonl"
-DEFAULT_TEST_DATASET_PATH = "/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/data/test_full-v1.jsonl"
-DEFAULT_OUTPUT_DIR = "/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/data/qwen2.5-0.5b-instruct-sft-full-tau2"
-DEFAULT_MAX_TRAIN_DATAPOINTS = None
-DEFAULT_MAX_TEST_DATAPOINTS = None
-DEFAULT_USE_PEFT = False
-DEFAULT_PATIENCE = 2
-
-
 def load_datasets(
     train_dataset_path: str,
     test_dataset_path: str,
@@ -176,114 +168,6 @@ def load_datasets(
     return train_dataset, test_dataset
 
 
-def train(
-    model_name: str = DEFAULT_MODEL,
-    train_dataset_path: str = DEFAULT_TRAIN_DATASET_PATH,
-    test_dataset_path: str = DEFAULT_TEST_DATASET_PATH,
-    output_dir: str = DEFAULT_OUTPUT_DIR,
-    max_train_datapoints: int = DEFAULT_MAX_TRAIN_DATAPOINTS,
-    max_test_datapoints: int = DEFAULT_MAX_TEST_DATAPOINTS,
-    use_peft: bool = DEFAULT_USE_PEFT,
-    patience: int = DEFAULT_PATIENCE,
-    report_to_wandb: bool = True,
-    run_name: str = None,
-    use_accelerate: bool = False,
-    chat_template_path: str | Path | None = None,
-):
-    """
-    Train HF model using the SFTTrainer from trl.
-    SFTTrainer is a wrapper around the HF Trainer class that allows for supervised fine-tuning of a model.
-    It directly integrates with accelerate.
-    """
-    train_dataset, test_dataset = load_datasets(
-        train_dataset_path=train_dataset_path,
-        test_dataset_path=test_dataset_path,
-        max_train_datapoints=max_train_datapoints,
-        max_test_datapoints=max_test_datapoints,
-    )
-
-    model, tokenizer = get_model_and_tokenizer(
-        model_name, torch_dtype="auto", device_map="cuda", use_accelerate=use_accelerate
-    )  # If auto, this is going to create issue with accelerate
-    # tokenizer.chat_template = QWEN25_TEMPLATE # NOTE: This is required to be able to compute assistant masks.
-    # if hasattr(tokenizer, "model_max_length"):
-    #     max_length = tokenizer.model_max_length
-    # else:
-    #     max_length = 1024
-    # max_length = None
-    # print(f"Setting max_length to {max_length}")
-
-    if use_peft:
-        learning_rate = 1e-4  # Higher learning rate for PEFT?
-    else:
-        learning_rate = 8e-5
-
-    # NOTE:
-    # Issue with assistant_only_loss=True:
-    # chat_template does not contain {% generation %} condition so HF cannot compute assistant masks.
-    # I updated that but I get no looss if I do assistant_only_loss=True
-    assistant_only_loss = True
-
-    sft_config = SFTConfig(
-        assistant_only_loss=assistant_only_loss,  # Only compute the loss on the assistant messages, requires jinja2 template with {% generation %} and {% endgeneration %}
-        report_to="none" if not report_to_wandb else "wandb",  # disable logging to W&B
-        chat_template_path=chat_template_path
-        if assistant_only_loss
-        else None,  # NOTE: This is required to be able to compute assistant masks.
-        run_name=run_name,  #  Optional run name for W&B
-        logging_strategy="steps",
-        learning_rate=learning_rate,  # Learning rate for training.
-        num_train_epochs=3,  #  Set the number of epochs to train the model.
-        per_device_train_batch_size=1,  # Batch size for each device (e.g., GPU) during training.
-        gradient_accumulation_steps=8,  # Number of steps before performing a backward/update pass to accumulate gradients.
-        fp16_full_eval=True,
-        eval_accumulation_steps=4,
-        per_device_eval_batch_size=2,
-        gradient_checkpointing=True,  # Enable gradient checkpointing to reduce memory usage during training at the cost of slower training speed. Not compatible with use_cache=True?
-        logging_steps=2,  # Frequency of logging training progress (log every 2 steps).
-        eval_strategy="epoch",  # evaluate at end of each epoch
-        save_strategy="epoch",  # save checkpoint at end of each epoch
-        save_total_limit=1,  # keep only the best/latest model
-        load_best_model_at_end=True,  # load best model according to eval loss
-        metric_for_best_model="eval_loss",  # use eval loss for best model selection
-        greater_is_better=False,  # lower eval_loss is better
-        output_dir=output_dir,  # directory to save checkpoints
-        auto_find_batch_size=True,  # Automatically find the best batch size for training.
-        max_length=8192,
-    )
-
-    # Instantiate early stopping callback
-    early_stopping_callback = EarlyStoppingCallback(
-        early_stopping_patience=patience  # Stop if no improvement for 2 evals (epochs)
-    )
-
-    if use_peft:  # FIXME: Check what's the right config.
-        # lora_config = LoraConfig(
-        #     r=64,
-        #     lora_alpha=16,
-        #     target_modules=["c_attn", "q_proj", "v_proj"],  # adjust to Qwen architecture
-        #     lora_dropout=0.05,
-        #     bias="none",
-        #     task_type=TaskType.CAUSAL_LM,
-        # )
-        lora_config = LoraConfig()
-    else:
-        lora_config = None
-
-    sft_trainer = SFTTrainer(
-        model=model,
-        args=sft_config,
-        train_dataset=train_dataset,
-        eval_dataset=test_dataset,
-        processing_class=tokenizer,
-        callbacks=[early_stopping_callback],
-        peft_config=lora_config,
-    )
-    sft_trainer.train()
-    if use_accelerate:
-        destroy_process_group()  # For some reason the training process does not end when using accelerate.
-
-
 def make_parser(subparsers: argparse._SubParsersAction = None):
     dataclass_types = (ScriptArguments, SFTConfig, ModelConfig, TrainingArguments)
     if subparsers is not None:
@@ -299,13 +183,13 @@ def train_sft_trl(
     script_args: ScriptArguments,  # Not currently used.
     sft_config: SFTConfig,
     model_config: ModelConfig,
+    train_dataset_path: str,
+    test_dataset_path: str,
     chat_template_path: str | Path | None = None,
-    train_dataset_path: str = DEFAULT_TRAIN_DATASET_PATH,
-    test_dataset_path: str = DEFAULT_TEST_DATASET_PATH,
-    max_train_datapoints: int = DEFAULT_MAX_TRAIN_DATAPOINTS,
-    max_test_datapoints: int = DEFAULT_MAX_TEST_DATAPOINTS,
+    max_train_datapoints: int | None = None,
+    max_test_datapoints: int | None = None,
     use_accelerate: bool = False,
-    patience: int | None = DEFAULT_PATIENCE,
+    patience: int | None = 2,
 ):
     """
     Main function to train a model using the SFTTrainer from trl.
@@ -319,8 +203,8 @@ def train_sft_trl(
         chat_template_path: str | Path | None, path to the chat template.
         train_dataset_path: str, path to the train dataset.
         test_dataset_path: str, path to the test dataset.
-        max_train_datapoints: int, maximum number of datapoints to use for training.
-        max_test_datapoints: int, maximum number of datapoints to use for testing.
+        max_train_datapoints: int | None, maximum number of datapoints to use for training.
+        max_test_datapoints: int | None, maximum number of datapoints to use for testing.
         use_accelerate: bool, whether to use accelerate.
         patience: int | None, number of epochs to wait before early stopping.
     """
@@ -404,8 +288,6 @@ def train_sft_trl(
 
 
 def main():
-    from pathlib import Path
-
     parser = make_parser()
     script_args, sft_config, model_config, training_args, _ = (
         parser.parse_args_and_config(return_remaining_strings=True)

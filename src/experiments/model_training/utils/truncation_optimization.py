@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-from experiments.model_training.dataset_prep.prepare_dataset import (
+from experiments.model_training.dataset_prep.prepare_tau_dataset import (
     load_as_hf_dataset,
     remove_none_values,
 )
