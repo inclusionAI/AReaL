@@ -2,13 +2,14 @@ import os
 import shutil
 import time
 from pathlib import Path
+import argparse
 
 import dotenv
 from accelerate import PartialState
 from peft import LoraConfig, TaskType, get_peft_model
 from torch.distributed import destroy_process_group
 from transformers import AutoModelForCausalLM, AutoTokenizer, EarlyStoppingCallback
-from trl import SFTConfig, SFTTrainer
+from trl import SFTConfig, SFTTrainer, TrlParser, ScriptArguments, ModelConfig, get_quantization_config, get_kbit_device_map, get_peft_config
 
 from experiments.model_training.prepare_dataset import load_as_hf_dataset
 
@@ -108,6 +109,25 @@ DEFAULT_USE_PEFT = False
 DEFAULT_PATIENCE = 2
 
 
+def load_datasets(train_dataset_path: str, test_dataset_path: str, max_train_datapoints: int | None = None, max_test_datapoints: int | None = None) -> tuple[Dataset, Dataset]:
+    assert os.path.exists(train_dataset_path), (
+        f"Train dataset path {train_dataset_path} does not exist."
+    )
+    assert os.path.exists(test_dataset_path), (
+        f"Test dataset path {test_dataset_path} does not exist."
+    )
+    train_dataset = load_as_hf_dataset(
+        train_dataset_path, max_datapoints=max_train_datapoints
+    )
+    test_dataset = load_as_hf_dataset(
+        test_dataset_path, max_datapoints=max_test_datapoints
+    )
+
+    print(f"Train dataset length: {len(train_dataset)}")
+    print(f"Test dataset length: {len(test_dataset)}")
+    return train_dataset, test_dataset
+
+
 def train(
     model_name: str = DEFAULT_MODEL,
     train_dataset_path: str = DEFAULT_TRAIN_DATASET_PATH,
@@ -127,21 +147,12 @@ def train(
     SFTTrainer is a wrapper around the HF Trainer class that allows for supervised fine-tuning of a model.
     It directly integrates with accelerate.
     """
-    assert os.path.exists(train_dataset_path), (
-        f"Train dataset path {train_dataset_path} does not exist."
+    train_dataset, test_dataset = load_datasets(
+        train_dataset_path=train_dataset_path,
+        test_dataset_path=test_dataset_path,
+        max_train_datapoints=max_train_datapoints,
+        max_test_datapoints=max_test_datapoints,
     )
-    assert os.path.exists(test_dataset_path), (
-        f"Test dataset path {test_dataset_path} does not exist."
-    )
-    train_dataset = load_as_hf_dataset(
-        train_dataset_path, max_datapoints=max_train_datapoints
-    )
-    test_dataset = load_as_hf_dataset(
-        test_dataset_path, max_datapoints=max_test_datapoints
-    )
-
-    print(f"Train dataset length: {len(train_dataset)}")
-    print(f"Test dataset length: {len(test_dataset)}")
 
     model, tokenizer = get_model_and_tokenizer(
         model_name, torch_dtype="auto", device_map="cuda", use_accelerate=use_accelerate
@@ -225,11 +236,100 @@ def train(
         destroy_process_group()  # For some reason the training process does not end when using accelerate.
 
 
+def make_parser(subparsers: argparse._SubParsersAction = None):
+    dataclass_types = (ScriptArguments, SFTConfig, ModelConfig)
+    if subparsers is not None:
+        parser = subparsers.add_parser("sft", help="Run the SFT training script", dataclass_types=dataclass_types)
+    else:
+        parser = TrlParser(dataclass_types)
+    return parser
+
+
+
+def main(script_args: ScriptArguments, # Not currently used.
+    sft_config: SFTConfig, 
+    model_config: ModelConfig, 
+    chat_template_path: str | Path | None = None, 
+    train_dataset_path: str = DEFAULT_TRAIN_DATASET_PATH, 
+    test_dataset_path: str = DEFAULT_TEST_DATASET_PATH, 
+    max_train_datapoints: int = DEFAULT_MAX_TRAIN_DATAPOINTS, 
+    max_test_datapoints: int = DEFAULT_MAX_TEST_DATAPOINTS,
+    use_accelerate: bool = False,
+    patience: int = DEFAULT_PATIENCE,
+    ):
+    ################
+    # Model init kwargs & Tokenizer
+    ################
+    quantization_config = get_quantization_config(model_config)
+    device_map = get_kbit_device_map() if use_accelerate or (quantization_config is not None) else "auto"
+    model_kwargs = dict(
+        revision=model_config.model_revision,
+        trust_remote_code=model_config.trust_remote_code,
+        attn_implementation=model_config.attn_implementation,
+        torch_dtype=model_config.torch_dtype,
+        use_cache=False if sft_config.gradient_checkpointing else True,
+        device_map=device_map,
+        quantization_config=quantization_config,
+    )
+
+    # Create model
+    model = AutoModelForCausalLM.from_pretrained(model_config.model_name_or_path, **model_kwargs)
+
+    # Create tokenizer
+    tokenizer = get_tokenizer(
+        model_config.model_name_or_path, trust_remote_code=model_config.trust_remote_code, use_fast=True, chat_template_path=chat_template_path
+    )
+
+    ################
+    # Dataset
+    ################
+    train_dataset, test_dataset = load_datasets(
+        train_dataset_path=train_dataset_path,
+        test_dataset_path=test_dataset_path,
+        max_train_datapoints=max_train_datapoints,
+        max_test_datapoints=max_test_datapoints,
+    )
+
+    ################
+    # Training
+    ################
+
+    # Instantiate early stopping callback
+    early_stopping_callback = EarlyStoppingCallback(
+        early_stopping_patience=patience  # Stop if no improvement for 2 evals (epochs)
+    )
+
+
+    trainer = SFTTrainer(
+        model=model,
+        args=sft_config,
+        train_dataset=train_dataset,
+        eval_dataset=test_dataset if sft_config.eval_strategy != "no" else None,
+        processing_class=tokenizer,
+        callbacks=[early_stopping_callback],
+        peft_config=get_peft_config(model_config),
+    )
+
+    # trainer.train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+
+    # trainer.compute_loss(trainer.model, trainer.train_dataset[0])
+    trainer.train()
+
+    # # Save and push to hub
+    # trainer.save_model(training_args.output_dir)
+
+    if use_accelerate:
+        destroy_process_group()  # For some reason the training process does not end when using accelerate.
+
+
 if __name__ == "__main__":
     from pathlib import Path
 
-    model_name = "Qwen2.5-0.5B-instruct"
-    model = f"Qwen/{model_name}"
+    parser = make_parser()
+    script_args, sft_config, model_config, _ = parser.parse_args_and_config(return_remaining_strings=True)
+
+    # model_name = "Qwen2.5-0.5B-instruct"
+    # model = f"Qwen/{model_name}"
     train_dataset_path = "/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/data/train_full-v1.jsonl"
     test_dataset_path = "/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/data/test_full-v1.jsonl"
     trained_model_name = f"{model_name}-sft-full-tau2-assistant-only-loss"
@@ -256,17 +356,30 @@ if __name__ == "__main__":
     patience = 2
     use_accelerate = True
 
-    train(
-        model_name=model,
+    # train(
+    #     model_name=model,
+    #     train_dataset_path=train_dataset_path,
+    #     test_dataset_path=test_dataset_path,
+    #     output_dir=output_dir,
+    #     max_train_datapoints=max_train_datapoints,
+    #     max_test_datapoints=max_test_datapoints,
+    #     use_peft=use_peft,
+    #     patience=patience,
+    #     report_to_wandb=report_to_wandb,
+    #     run_name=run_name,
+    #     use_accelerate=use_accelerate,
+    #     chat_template_path=chat_template_path,
+    # )
+
+    main(
+        script_args=script_args,
+        sft_config=sft_config,
+        model_config=model_config,
+        chat_template_path=chat_template_path,
         train_dataset_path=train_dataset_path,
         test_dataset_path=test_dataset_path,
-        output_dir=output_dir,
         max_train_datapoints=max_train_datapoints,
         max_test_datapoints=max_test_datapoints,
-        use_peft=use_peft,
-        patience=patience,
-        report_to_wandb=report_to_wandb,
-        run_name=run_name,
         use_accelerate=use_accelerate,
-        chat_template_path=chat_template_path,
+        patience=patience,
     )
