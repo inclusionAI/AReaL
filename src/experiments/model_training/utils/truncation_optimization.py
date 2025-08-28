@@ -19,6 +19,7 @@ from experiments.model_training.dataset_prep.prepare_tau_dataset import (
     remove_none_values,
 )
 from experiments.model_training.sft_trl.train_sft_trl import get_tokenizer
+from tau2.utils.utils import DATA_DIR
 
 
 def analyze_tokens(example):
@@ -164,27 +165,6 @@ def analyze_token_distribution(
     return df
 
 
-# def generate_truncation_limits(df, num_steps=20):
-#     """
-#     Generate truncation limits from min(first_assistant_token_index) to max(last_assistant_token_index) with fixed number of steps.
-
-#     Args:
-#         df (pandas.DataFrame): DataFrame with token statistics
-#         num_steps (int): Number of steps between truncation limits
-
-#     Returns:
-#         list: List of truncation limits
-#     """
-#     min_assistant_start = df['first_assistant_token_index'].min()
-#     max_assistant_end = df['last_assistant_token_index'].max()
-
-#     # Generate limits from min_assistant_start to max_assistant_end with num_steps
-#     step_size = int((max_assistant_end - min_assistant_start) / num_steps)
-#     truncation_limits = list(range(min_assistant_start, max_assistant_end + 1, step_size))
-
-#     return truncation_limits
-
-
 def create_assistant_token_position_distribution(df) -> pd.DataFrame:
     """
     Create a distribution of assistant token positions
@@ -199,16 +179,13 @@ def create_assistant_token_position_distribution(df) -> pd.DataFrame:
     )
 
 
-def create_visualizations(
-    df, output_path="token_distribution_analysis.png", num_steps=20
-):
+def create_visualizations(df, output_path: str | Path):
     """
     Create visualization plots for token distribution analysis.
 
     Args:
         df (pandas.DataFrame): DataFrame with token statistics
         output_path (str): Path to save the visualization
-        num_steps (int): Number of steps between truncation limits
     """
     print("Creating visualization plots...")
 
@@ -456,6 +433,12 @@ def create_visualizations(
             "Distribution of Conversation Tokens", fontsize=11, fontweight="bold"
         )
 
+    if isinstance(output_path, str):
+        output_path = Path(output_path)
+
+    if not output_path.parent.exists():
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     print(f"Visualization saved to: {output_path}")
     plt.show()
@@ -498,7 +481,6 @@ def main():
 Examples:
   python truncation_optimization.py --dataset data/train.jsonl --model Qwen/Qwen2.5-0.5B-instruct
   python truncation_optimization.py --dataset data/train.jsonl --model Qwen/Qwen2.5-0.5B-instruct --chat-template template.jinja --num-samples 1000
-  python truncation_optimization.py --dataset data/train.jsonl --model Qwen/Qwen2.5-0.5B-instruct --step-size 50
         """,
     )
 
@@ -520,21 +502,14 @@ Examples:
 
     parser.add_argument(
         "--output",
-        default="token_distribution_analysis.png",
-        help="Output path for visualization (default: token_distribution_analysis.png)",
+        default=DATA_DIR / "analyses" / "token_distribution_analysis.png",
+        help=f"Output path for visualization (default: {DATA_DIR}/analyses/token_distribution_analysis.png)",
     )
 
     parser.add_argument(
         "--remove-system-messages",
         action="store_true",
         help="Remove system messages from the dataset (default: False)",
-    )
-
-    parser.add_argument(
-        "--num-steps",
-        type=int,
-        default=100,
-        help="Step size for truncation limits (default: 100)",
     )
 
     args = parser.parse_args()
@@ -562,7 +537,7 @@ Examples:
         print_analysis_summary(df)
 
         # Create visualizations
-        create_visualizations(df, args.output, num_steps=args.num_steps)
+        create_visualizations(df=df, output_path=args.output)
 
         print(f"\nAnalysis complete! Visualization saved to: {args.output}")
 

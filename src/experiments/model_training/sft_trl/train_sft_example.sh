@@ -6,7 +6,6 @@
 #   --train_dataset_path "/home/ubuntu/victor-north-tx/tau2-bench-private/data/tau2/sft-v1-small/sft-v1-small-openai/train_sft-v1-small.jsonl" \
 #   --test_dataset_path "/home/ubuntu/victor-north-tx/tau2-bench-private/data/tau2/sft-v1-small/sft-v1-small-openai/test_sft-v1-small.jsonl" \
 #   --chat_template_path "/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/prompt_templates/qwen2.5_prompt_template.jinja" \
-#   --use_accelerate \
 #   --patience 2 \
 #   --delete_existing_output_dir \
 #   --assistant_only_loss \
@@ -29,10 +28,12 @@
 #   --greater_is_better false \
 #   --auto_find_batch_size \
 #   --max_length 8192 \
-#   --logging_strategy "steps"
+#   --logging_strategy "steps" \
+#   --use_accelerate
 
 
-# Simple training with minimal memory usage
+# Simple training with minimal memory usage for basic testing
+# Uses the small dataset.
 # batch size 1
 # gradient accumulation steps 1
 # per device train batch size 1

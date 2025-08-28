@@ -1,10 +1,6 @@
-# Training using TRL
+# Training using HF TRL (Deprecated)
 
 ## SFT
-Use `train_sft_trl_qwen.py` to train a model using SFT.
-SFTTrainer integrate accelerate.
-
-
 
 Install requirements:
 
