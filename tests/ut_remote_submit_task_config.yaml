@@ -56,7 +56,7 @@ cases_sub_path:
   - tests/comm # skip failed cases
   - tests/cpp_extensions # skip failed cases
   - tests/data # skip failed cases
-  - tests/distributed # skip failed cases
+#  - tests/distributed # skip failed cases
 #  - tests/experiments # may it cases
   - tests/generation # skip failed cases
   - tests/interfaces # skip failed cases
