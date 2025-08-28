@@ -5,6 +5,7 @@ from pathlib import Path
 import argparse
 
 import dotenv
+from datasets import Dataset
 from accelerate import PartialState
 from peft import LoraConfig, TaskType, get_peft_model
 from torch.distributed import destroy_process_group
@@ -328,8 +329,8 @@ if __name__ == "__main__":
     parser = make_parser()
     script_args, sft_config, model_config, _ = parser.parse_args_and_config(return_remaining_strings=True)
 
-    # model_name = "Qwen2.5-0.5B-instruct"
-    # model = f"Qwen/{model_name}"
+    model_name = "Qwen2.5-0.5B-instruct"
+    model = f"Qwen/{model_name}"
     train_dataset_path = "/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/data/train_full-v1.jsonl"
     test_dataset_path = "/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/data/test_full-v1.jsonl"
     trained_model_name = f"{model_name}-sft-full-tau2-assistant-only-loss"
