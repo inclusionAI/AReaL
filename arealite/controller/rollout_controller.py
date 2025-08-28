@@ -143,8 +143,6 @@ class DistributedRolloutController(RolloutController):
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         engineSpec.env_vars["WORKER_TYPE"] = f"{self.role}-engine"
         engineSpec.env_vars["WORK_MODE"] = "GENERATION"
-        engineSpec.env_vars["GLOO_SOCKET_IFNAME"] = "eth0"
-        engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "eth0"
         engineSpec.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         engineSpec.env_vars["USE_MAX_V2"] = "1"
         engineSpec.env_vars["DISCOVERY_CONFIG_CENTER_TYPE"] = "FILE"
@@ -152,7 +150,23 @@ class DistributedRolloutController(RolloutController):
         engineSpec.env_vars["NCCL_NVLS_ENABLE"] = "0"
         engineSpec.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
         engineSpec.env_vars["NCCL_DEBUG"] = "WARNING"
+        engineSpec.env_vars["NVTE_FUSED_ATTN"] = "0"
+        engineSpec.env_vars["NCCL_MAX_NCHANNELS"] = "16"
         engineSpec.env_vars["ASTRA_SHARED_PATH"] = f"/storage/openpsi/astate_shared_storage"
+
+
+        engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "bond0"
+        engineSpec.env_vars["GLOO_SOCKET_IFNAME"]="eth0"
+        engineSpec.env_vars["NCCL_NET_PLUGIN"] = ""
+        engineSpec.env_vars["NCCL_IB_GID_INDEX"] = "3"
+        engineSpec.env_vars["NCCL_IB_TIMEOUT"] = "22"
+        engineSpec.env_vars["NCCL_IB_RETRY_CNT"] ="7"
+        engineSpec.env_vars["NCCL_IB_SL"] = "5"
+        engineSpec.env_vars["NCCL_IB_TC"] = "136"
+        engineSpec.env_vars["NCCL_IB_HCA"] = "mlx5_bond"
+        engineSpec.env_vars["NCCL_SET_THREAD_NAME"] = "1"
+        engineSpec.env_vars["NCCL_IB_QPS_PER_CONNECTION"] = "8"
+        engineSpec.env_vars["NCCL_SET_THREAD_NAME"] = "1"
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)

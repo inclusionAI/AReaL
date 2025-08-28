@@ -30,7 +30,11 @@ class RPCClient:
         logger.info(
             f"send create_engine to {worker_id} ({ip}:{port}), status={resp.status_code}"
         )
-        return resp.status_code == 200
+        if resp.status_code == 200:
+            logger.info(f"ok to create engine")
+            return cloudpickle.loads(resp.content)
+        else:
+            logger.error(f"failed to create engine, {resp.status_code}, {resp.content}")
 
     def call_engine(self, worker_id, method, *args, **kwargs):
         ip, port = self._addrs[worker_id]

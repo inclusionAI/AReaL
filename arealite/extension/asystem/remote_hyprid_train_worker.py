@@ -85,7 +85,7 @@ class RemoteHypridTrainWorker(TrainEngine):
         self.enable_colocate_mode = None
         self.kl_ctl = self.config.wrap_policy.kl_ctl
 
-    def initialize(self, cfg: RemoteMegatronInitConfig):
+    def initialize(self, cfg: RemoteMegatronInitConfig) -> dict:
         global_rank = cfg.global_rank
         self.global_rank = cfg.global_rank
         local_rank = global_rank % 8
@@ -125,9 +125,13 @@ class RemoteHypridTrainWorker(TrainEngine):
                 f"[RemoteHypridTrainWorker] initialize finished send request to megatron server"
             )
             if response.status_code == 200:
+                # response as belows:
+                # {'success': True, 'result': {'rank': 913, 'tp_size': 2, 'dp_size': 24, 'pp_size': 20, 'vpp_size': None, 'cp_size': 1, 'ep_size': 8, 'etp_size': 1, 'pp_rank': 19, 'dp_rank': 0, 'tp_rank': 1, 'cp_rank': 0, 'ep_rank': 1, 'etp_rank': 0}, 'engine_type': 'training', 'message': 'Engine training initialized successfully 33.180.162.194'}
+                resp = response.json()
                 logger.info(
-                    f"[RemoteHypridTrainWorker] rank: {global_rank} Payload sent successfully to {target_url}, response is {response.json()}"
+                    f"[RemoteHypridTrainWorker] rank: {global_rank} Payload sent successfully to {target_url}, response is {resp}"
                 )
+                return resp["result"]
             else:
                 raise ValueError(
                     f"[Rank {global_rank}] Failed to send payload. Status code: {response.status_code}, "

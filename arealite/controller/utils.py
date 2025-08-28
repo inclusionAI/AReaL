@@ -16,8 +16,7 @@ def create_engine_with_retry(
     retries = 0
     while retries < max_retries:
         try:
-            create_engine_func(*args, **kwargs)
-            return
+            return create_engine_func(*args, **kwargs)
         except ConnectionError as e:
             logger.info(f"worker is not ready, retrying in {retry_delay} seconds...")
             time.sleep(retry_delay)

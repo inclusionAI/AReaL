@@ -23,11 +23,11 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 decompressed_data = gzip.decompress(data)
                 engine_obj, init_args = cloudpickle.loads(decompressed_data)
                 EngineRPCServer.engine = engine_obj
-                EngineRPCServer.engine.initialize(init_args)
-                logger.info("Engine created and initialized on RPC server.")
+                result = EngineRPCServer.engine.initialize(init_args)
+                logger.info(f"Engine created and initialized on RPC server: {result}")
                 self.send_response(200)
                 self.end_headers()
-                self.wfile.write(b"OK")
+                self.wfile.write(cloudpickle.dumps(result))
             elif self.path == "/call":
                 if EngineRPCServer.engine is None:
                     self.send_response(500)

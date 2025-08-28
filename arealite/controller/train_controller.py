@@ -83,8 +83,6 @@ class DistributedTrainController(TrainController):
             experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         engineSpec.env_vars["WORKER_TYPE"] = f"{self.role}-engine"
         engineSpec.env_vars["WORK_MODE"] = "TRAINING"
-        engineSpec.env_vars["GLOO_SOCKET_IFNAME"] = "eth0"
-        engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "eth0"
         engineSpec.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         engineSpec.env_vars["USE_MAX_V2"] = "1"
         engineSpec.env_vars["DISCOVERY_CONFIG_CENTER_TYPE"] = "FILE"
@@ -93,6 +91,23 @@ class DistributedTrainController(TrainController):
         engineSpec.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
         engineSpec.env_vars["NCCL_DEBUG"] = "WARNING"
         engineSpec.env_vars["ASTRA_SHARED_PATH"] = f"/storage/openpsi/astate_shared_storage"
+        engineSpec.env_vars["NVTE_FUSED_ATTN"] = "0"
+        engineSpec.env_vars["NCCL_MAX_NCHANNELS"] = "16"
+        engineSpec.env_vars["NCCL_DEBUG_SUBSYS"] = "INIT,TUNING,GRAPH"
+        # engineSpec.env_vars["CUDA_LAUNCH_BLOCKING"] = "1"
+
+        engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "bond0"
+        engineSpec.env_vars["GLOO_SOCKET_IFNAME"]="eth0"
+        engineSpec.env_vars["NCCL_NET_PLUGIN"] = ""
+        engineSpec.env_vars["NCCL_IB_GID_INDEX"] = "3"
+        engineSpec.env_vars["NCCL_IB_TIMEOUT"] = "22"
+        engineSpec.env_vars["NCCL_IB_RETRY_CNT"] ="7"
+        engineSpec.env_vars["NCCL_IB_SL"] = "5"
+        engineSpec.env_vars["NCCL_IB_TC"] = "136"
+        engineSpec.env_vars["NCCL_IB_HCA"] = "mlx5_bond"
+        engineSpec.env_vars["NCCL_SET_THREAD_NAME"] = "1"
+        engineSpec.env_vars["NCCL_IB_QPS_PER_CONNECTION"] = "8"
+        engineSpec.env_vars["NCCL_SET_THREAD_NAME"] = "1"
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
@@ -100,7 +115,7 @@ class DistributedTrainController(TrainController):
         self.uid = self.scheduler.create_workers(self.role, scheduling_config)
 
         self.workers = self.scheduler.get_workers(self.role, timeout=1800)
-
+        self.rank_info = {}
         server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
         # FIXME: @chucai
         time.sleep(60)
@@ -122,6 +137,7 @@ class DistributedTrainController(TrainController):
             try:
                 for worker_index, future in enumerate(futures):
                     rank_info = future.result()
+                    self.rank_info[worker_index] = rank_info
                     logger.info(f"worker_index: {worker_index}, rank_info: {rank_info}")
             except KeyboardInterrupt:
                 for f in futures:
@@ -207,9 +223,9 @@ class DistributedTrainController(TrainController):
                 # 16-23: tp0-7, pp1, dp0
                 # 24-31: tp0-7, pp1, dp1
 
-                # (index/tp_size) % pp_size
-                batch_index = (index // self.tp_size) % (self.pp_size)
-                batch_data = batches[batch_index]
+                rank_info = self.rank_info[index]
+                dp_rank =  rank_info["dp_rank"]
+                batch_data = batches[dp_rank]
                 futures.append(executor.submit(
                     self.scheduler.call_engine,
                     worker.id,
@@ -247,8 +263,9 @@ class DistributedTrainController(TrainController):
         results = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             for index, worker in enumerate(self.workers):
-                batch_index = (index // self.tp_size) % (self.pp_size)
-                batch_data = batches[batch_index]
+                rank_info = self.rank_info[index]
+                dp_rank =  rank_info["dp_rank"]
+                batch_data = batches[dp_rank]
                 futures.append(executor.submit(
                     self.scheduler.call_engine,
                     worker.id,
