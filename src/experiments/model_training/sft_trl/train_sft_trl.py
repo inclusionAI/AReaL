@@ -35,9 +35,6 @@ os.environ["WANDB_LOG_MODEL"] = "checkpoint"  # log all model checkpoints
 class TrainingArguments:
     """Additional training arguments not covered by TRL's built-in argument classes."""
 
-    chat_template_path: Optional[str] = field(
-        default=None, metadata={"help": "Path to the chat template file"}
-    )
     train_dataset_path: str = field(
         default="/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/data/train_full-v1.jsonl",
         metadata={"help": "Path to the training dataset"},
@@ -434,7 +431,7 @@ def main():
         script_args=script_args,
         sft_config=sft_config,
         model_config=model_config,
-        chat_template_path=training_args.chat_template_path,
+        chat_template_path=sft_config.chat_template_path,
         train_dataset_path=training_args.train_dataset_path,
         test_dataset_path=training_args.test_dataset_path,
         max_train_datapoints=training_args.max_train_datapoints,
