@@ -146,3 +146,29 @@ class RolloutBuffer(object):
             self.current_size = 0
             self.ready_to_train_sample_num = 0
             return all_samples
+        
+    def save(self, path: str) -> None:
+        with self.lock_:
+            data = {
+                "train_batch_size": self.train_batch_size,
+                "batch_size_exceeding_num": self.batch_size_exceeding_num,
+                "group_size": self.group_size,
+                "mini_samples_per_group": self.mini_samples_per_group,
+                "staleness_version": self.staleness_version,
+                "current_size": self.current_size,
+                "ready_to_train_sample_num": self.ready_to_train_sample_num,
+                "buffer": self.buffer
+            }
+            torch.save(data, path)
+
+    def load(self, path: str) -> None:
+        with self.lock_:
+            data = torch.load(path)
+            self.train_batch_size = data["train_batch_size"]
+            self.batch_size_exceeding_num = data["batch_size_exceeding_num"]
+            self.group_size = data["group_size"]
+            self.mini_samples_per_group = data["mini_samples_per_group"]
+            self.staleness_version = data["staleness_version"]
+            self.current_size = data["current_size"]
+            self.ready_to_train_sample_num = data["ready_to_train_sample_num"]
+            self.buffer = data["buffer"]
