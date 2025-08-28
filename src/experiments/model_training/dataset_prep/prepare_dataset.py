@@ -1,11 +1,12 @@
 import argparse
 import json
+import random
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Optional, TypeVar, Union
 
+from datasets import Dataset
 from pydantic import Field
 from rich.console import Console
-from datasets import Dataset
 
 from tau2.agent.base import is_valid_agent_history_message
 from tau2.agent.llm_agent import LLMAgent, LLMSoloAgent
@@ -120,7 +121,6 @@ class SFTDataset(BaseModelNoExtra):
         return {split: len(self[split]) for split in self.splits.keys()}
 
 
-
 def load_as_hf_dataset(dataset_path, max_datapoints=None, save_to_path=None) -> Dataset:
     """
     Loads a dataset from a JSONL file of OpenAICompletionDataPoint objects and returns a HuggingFace Dataset.
@@ -151,6 +151,8 @@ def make_sft_dataset(
     name: Optional[str] = None,
     success_only: bool = True,
     splits: tuple[str] = ("train", "test"),
+    sample_ratio: float = 1.0,
+    seed: int = 123,
 ) -> SFTDataset:
     """
     Make a SFT dataset from a list of result paths.
@@ -162,6 +164,8 @@ def make_sft_dataset(
         name: Name of the dataset (you have to provide it if save_dir is provided)
         success_only: If True, only include successful simulations.
         splits: Splits to include in the dataset. Default is ("train", "test").
+        sample_ratio: Ratio of datapoints to sample from the dataset.
+        seed: Seed for random sampling.
     """
 
     if isinstance(result_paths_or_dir, str):
@@ -192,7 +196,12 @@ def make_sft_dataset(
             if split not in dataset:
                 raise ValueError(f"Dataset from {result_path} is missing split {split}")
             splits_data[split] += dataset[split]
-
+    if sample_ratio < 1.0:
+        random.seed(seed)
+        for split in splits:
+            splits_data[split] = random.sample(
+                splits_data[split], int(len(splits_data[split]) * sample_ratio) + 1
+            )
     sft_dataset = SFTDataset(splits=splits_data)
     console.print_json(json.dumps(sft_dataset.get_info(), indent=2))
     do_save = save_path is not None
@@ -528,6 +537,26 @@ def get_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Only include successful simulations.",
     )
+    make_parser.add_argument(
+        "--splits",
+        type=str,
+        nargs="+",
+        default=["train", "test"],
+        help="Splits to include in the dataset.",
+    )
+
+    make_parser.add_argument(
+        "--sample-ratio",
+        type=float,
+        default=1.0,
+        help="Ratio of datapoints to sample from the dataset.",
+    )
+    make_parser.add_argument(
+        "--seed",
+        type=int,
+        default=123,
+        help="Seed for random sampling.",
+    )
 
     # Subparser for to_openai_sft_dataset
     convert_parser = subparsers.add_parser(
@@ -577,6 +606,9 @@ def main():
             save_dir=args.save_dir,
             name=args.name,
             success_only=args.success_only,
+            splits=args.splits,
+            sample_ratio=args.sample_ratio,
+            seed=args.seed,
         )
     elif args.command == "to-openai":
         for split in args.split:

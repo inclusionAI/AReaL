@@ -11,6 +11,7 @@ logs/
 data/simulations/
 data/exp/
 data/datasets/
+data/models/
 src/experiments/model_serving/vllm_serving/.*
 .ruff_cache
 
