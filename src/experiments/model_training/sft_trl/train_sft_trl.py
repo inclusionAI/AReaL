@@ -1,16 +1,27 @@
+import argparse
 import os
 import shutil
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
-import argparse
+from typing import Optional
 
 import dotenv
-from datasets import Dataset
 from accelerate import PartialState
+from datasets import Dataset
 from peft import LoraConfig, TaskType, get_peft_model
 from torch.distributed import destroy_process_group
 from transformers import AutoModelForCausalLM, AutoTokenizer, EarlyStoppingCallback
-from trl import SFTConfig, SFTTrainer, TrlParser, ScriptArguments, ModelConfig, get_quantization_config, get_kbit_device_map, get_peft_config
+from trl import (
+    ModelConfig,
+    ScriptArguments,
+    SFTConfig,
+    SFTTrainer,
+    TrlParser,
+    get_kbit_device_map,
+    get_peft_config,
+    get_quantization_config,
+)
 
 from experiments.model_training.dataset_prep.prepare_dataset import load_as_hf_dataset
 
@@ -18,6 +29,40 @@ dotenv.load_dotenv()
 
 os.environ["WANDB_PROJECT"] = "tau2-bench-agent"  # name your W&B project
 os.environ["WANDB_LOG_MODEL"] = "checkpoint"  # log all model checkpoints
+
+
+@dataclass
+class TrainingArguments:
+    """Additional training arguments not covered by TRL's built-in argument classes."""
+
+    chat_template_path: Optional[str] = field(
+        default=None, metadata={"help": "Path to the chat template file"}
+    )
+    train_dataset_path: str = field(
+        default="/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/data/train_full-v1.jsonl",
+        metadata={"help": "Path to the training dataset"},
+    )
+    test_dataset_path: str = field(
+        default="/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/data/test_full-v1.jsonl",
+        metadata={"help": "Path to the test dataset"},
+    )
+    max_train_datapoints: Optional[int] = field(
+        default=None, metadata={"help": "Maximum number of training datapoints to use"}
+    )
+    max_test_datapoints: Optional[int] = field(
+        default=None, metadata={"help": "Maximum number of test datapoints to use"}
+    )
+    use_accelerate: bool = field(
+        default=False,
+        metadata={"help": "Whether to use accelerate for distributed training"},
+    )
+    patience: Optional[int] = field(
+        default=2, metadata={"help": "Number of epochs to wait for early stopping"}
+    )
+    delete_existing_output_dir: bool = field(
+        default=False,
+        metadata={"help": "Whether to automatically delete existing output directory"},
+    )
 
 
 def check_chat_template_supports_assistant_only_loss(chat_template: str) -> bool:
@@ -110,7 +155,12 @@ DEFAULT_USE_PEFT = False
 DEFAULT_PATIENCE = 2
 
 
-def load_datasets(train_dataset_path: str, test_dataset_path: str, max_train_datapoints: int | None = None, max_test_datapoints: int | None = None) -> tuple[Dataset, Dataset]:
+def load_datasets(
+    train_dataset_path: str,
+    test_dataset_path: str,
+    max_train_datapoints: int | None = None,
+    max_test_datapoints: int | None = None,
+) -> tuple[Dataset, Dataset]:
     assert os.path.exists(train_dataset_path), (
         f"Train dataset path {train_dataset_path} does not exist."
     )
@@ -238,31 +288,54 @@ def train(
 
 
 def make_parser(subparsers: argparse._SubParsersAction = None):
-    dataclass_types = (ScriptArguments, SFTConfig, ModelConfig)
+    dataclass_types = (ScriptArguments, SFTConfig, ModelConfig, TrainingArguments)
     if subparsers is not None:
-        parser = subparsers.add_parser("sft", help="Run the SFT training script", dataclass_types=dataclass_types)
+        parser = subparsers.add_parser(
+            "sft", help="Run the SFT training script", dataclass_types=dataclass_types
+        )
     else:
         parser = TrlParser(dataclass_types)
     return parser
 
 
-
-def main(script_args: ScriptArguments, # Not currently used.
-    sft_config: SFTConfig, 
-    model_config: ModelConfig, 
-    chat_template_path: str | Path | None = None, 
-    train_dataset_path: str = DEFAULT_TRAIN_DATASET_PATH, 
-    test_dataset_path: str = DEFAULT_TEST_DATASET_PATH, 
-    max_train_datapoints: int = DEFAULT_MAX_TRAIN_DATAPOINTS, 
+def train_sft_trl(
+    script_args: ScriptArguments,  # Not currently used.
+    sft_config: SFTConfig,
+    model_config: ModelConfig,
+    chat_template_path: str | Path | None = None,
+    train_dataset_path: str = DEFAULT_TRAIN_DATASET_PATH,
+    test_dataset_path: str = DEFAULT_TEST_DATASET_PATH,
+    max_train_datapoints: int = DEFAULT_MAX_TRAIN_DATAPOINTS,
     max_test_datapoints: int = DEFAULT_MAX_TEST_DATAPOINTS,
     use_accelerate: bool = False,
-    patience: int = DEFAULT_PATIENCE,
-    ):
+    patience: int | None = DEFAULT_PATIENCE,
+):
+    """
+    Main function to train a model using the SFTTrainer from trl.
+    SFTTrainer is a wrapper around the HF Trainer class that allows for supervised fine-tuning of a model.
+    It directly integrates with accelerate.
+
+    Args:
+        script_args: ScriptArguments, not currently used.
+        sft_config: SFTConfig, configuration for the SFT training.
+        model_config: ModelConfig, configuration for the model.
+        chat_template_path: str | Path | None, path to the chat template.
+        train_dataset_path: str, path to the train dataset.
+        test_dataset_path: str, path to the test dataset.
+        max_train_datapoints: int, maximum number of datapoints to use for training.
+        max_test_datapoints: int, maximum number of datapoints to use for testing.
+        use_accelerate: bool, whether to use accelerate.
+        patience: int | None, number of epochs to wait before early stopping.
+    """
     ################
     # Model init kwargs & Tokenizer
     ################
     quantization_config = get_quantization_config(model_config)
-    device_map = get_kbit_device_map() if use_accelerate or (quantization_config is not None) else "auto"
+    device_map = (
+        get_kbit_device_map()
+        if use_accelerate or (quantization_config is not None)
+        else "auto"
+    )
     model_kwargs = dict(
         revision=model_config.model_revision,
         trust_remote_code=model_config.trust_remote_code,
@@ -274,11 +347,16 @@ def main(script_args: ScriptArguments, # Not currently used.
     )
 
     # Create model
-    model = AutoModelForCausalLM.from_pretrained(model_config.model_name_or_path, **model_kwargs)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_config.model_name_or_path, **model_kwargs
+    )
 
     # Create tokenizer
     tokenizer = get_tokenizer(
-        model_config.model_name_or_path, trust_remote_code=model_config.trust_remote_code, use_fast=True, chat_template_path=chat_template_path
+        model_config.model_name_or_path,
+        trust_remote_code=model_config.trust_remote_code,
+        use_fast=True,
+        chat_template_path=chat_template_path,
     )
 
     ################
@@ -292,14 +370,19 @@ def main(script_args: ScriptArguments, # Not currently used.
     )
 
     ################
+    # Callbacks
+    ################
+    # Instantiate early stopping callback
+    early_stopping_callback = (
+        EarlyStoppingCallback(early_stopping_patience=patience)
+        if patience is not None
+        else None
+    )
+    callbacks = [early_stopping_callback] if early_stopping_callback is not None else []
+
+    ################
     # Training
     ################
-
-    # Instantiate early stopping callback
-    early_stopping_callback = EarlyStoppingCallback(
-        early_stopping_patience=patience  # Stop if no improvement for 2 evals (epochs)
-    )
-
 
     trainer = SFTTrainer(
         model=model,
@@ -307,7 +390,7 @@ def main(script_args: ScriptArguments, # Not currently used.
         train_dataset=train_dataset,
         eval_dataset=test_dataset if sft_config.eval_strategy != "no" else None,
         processing_class=tokenizer,
-        callbacks=[early_stopping_callback],
+        callbacks=callbacks,
         peft_config=get_peft_config(model_config),
     )
 
@@ -323,64 +406,43 @@ def main(script_args: ScriptArguments, # Not currently used.
         destroy_process_group()  # For some reason the training process does not end when using accelerate.
 
 
-if __name__ == "__main__":
+def main():
     from pathlib import Path
 
     parser = make_parser()
-    script_args, sft_config, model_config, _ = parser.parse_args_and_config(return_remaining_strings=True)
+    script_args, sft_config, model_config, training_args, _ = (
+        parser.parse_args_and_config(return_remaining_strings=True)
+    )
 
-    model_name = "Qwen2.5-0.5B-instruct"
-    model = f"Qwen/{model_name}"
-    train_dataset_path = "/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/data/train_full-v1.jsonl"
-    test_dataset_path = "/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/data/test_full-v1.jsonl"
-    trained_model_name = f"{model_name}-sft-full-tau2-assistant-only-loss"
-    output_dir = f"/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/data/{trained_model_name}"
-    chat_template_path = "/home/ubuntu/victor-north-tx/tau2-bench-private/src/experiments/model_training/qwen2.5_prompt_template.jinja"
-    report_to_wandb = True
-    run_name = f"{trained_model_name}"
-    if Path(output_dir).exists():
-        print(
-            f"Output directory {output_dir} already exists. Do you want to delete it? (y/n)"
+    # Handle output directory deletion if requested
+    if (
+        training_args.delete_existing_output_dir
+        and Path(sft_config.output_dir).exists()
+    ):
+        print(f"Deleting existing output directory: {sft_config.output_dir}")
+        shutil.rmtree(sft_config.output_dir)
+    elif (
+        Path(sft_config.output_dir).exists()
+        and not training_args.delete_existing_output_dir
+    ):
+        raise ValueError(
+            f"Output directory {sft_config.output_dir} already exists. "
+            f"Use --delete_existing_output_dir to automatically delete it."
         )
-        answer = input()
-        if answer == "y":
-            print(f"Deleting output directory {output_dir}")
-            shutil.rmtree(output_dir)
-        else:
-            raise ValueError(
-                f"Output directory {output_dir} already exists. Please delete it or choose a different output directory."
-            )
 
-    max_train_datapoints = None
-    max_test_datapoints = None
-    use_peft = False
-    patience = 2
-    use_accelerate = True
-
-    # train(
-    #     model_name=model,
-    #     train_dataset_path=train_dataset_path,
-    #     test_dataset_path=test_dataset_path,
-    #     output_dir=output_dir,
-    #     max_train_datapoints=max_train_datapoints,
-    #     max_test_datapoints=max_test_datapoints,
-    #     use_peft=use_peft,
-    #     patience=patience,
-    #     report_to_wandb=report_to_wandb,
-    #     run_name=run_name,
-    #     use_accelerate=use_accelerate,
-    #     chat_template_path=chat_template_path,
-    # )
-
-    main(
+    train_sft_trl(
         script_args=script_args,
         sft_config=sft_config,
         model_config=model_config,
-        chat_template_path=chat_template_path,
-        train_dataset_path=train_dataset_path,
-        test_dataset_path=test_dataset_path,
-        max_train_datapoints=max_train_datapoints,
-        max_test_datapoints=max_test_datapoints,
-        use_accelerate=use_accelerate,
-        patience=patience,
+        chat_template_path=training_args.chat_template_path,
+        train_dataset_path=training_args.train_dataset_path,
+        test_dataset_path=training_args.test_dataset_path,
+        max_train_datapoints=training_args.max_train_datapoints,
+        max_test_datapoints=training_args.max_test_datapoints,
+        use_accelerate=training_args.use_accelerate,
+        patience=training_args.patience,
     )
+
+
+if __name__ == "__main__":
+    main()
