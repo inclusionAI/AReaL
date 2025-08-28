@@ -9,7 +9,6 @@ from typing import Optional
 import dotenv
 from accelerate import PartialState
 from datasets import Dataset
-from peft import LoraConfig, TaskType, get_peft_model
 from torch.distributed import destroy_process_group
 from transformers import AutoModelForCausalLM, AutoTokenizer, EarlyStoppingCallback
 from trl import (

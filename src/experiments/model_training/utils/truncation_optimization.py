@@ -10,13 +10,11 @@ from collections import Counter
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import seaborn as sns
 
 from experiments.model_training.dataset_prep.prepare_tau_dataset import (
     load_as_hf_dataset,
-    remove_none_values,
 )
 from experiments.model_training.sft_trl.train_sft_trl import get_tokenizer
 from tau2.utils.utils import DATA_DIR
