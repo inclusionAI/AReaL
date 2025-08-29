@@ -6,8 +6,20 @@ build-backend = "setuptools.build_meta"
 name = "areal"
 description = "AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning"
 readme = "README.md"
+license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 dynamic = ["version"]
+authors = [
+    {name = "AReaL Team"},
+]
+maintainers = [
+    {name = "AReaL Team"},
+]
+[project.urls]
+"Homepage" = "https://github.com/inclusionAI/AReaL"
+"Repository" = "https://github.com/inclusionAI/AReaL"
+"Documentation" = "https://inclusionai.github.io/AReaL/intro.html"
+"Bug Tracker" = "https://github.com/inclusionAI/AReaL/issues"
 keywords = [
     "distributed-systems",
     "reinforcement-learning",
@@ -21,8 +33,15 @@ classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Environment :: GPU :: NVIDIA CUDA :: 12 :: 12.2",
     "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Distributed Computing",
 ]
 
 dependencies = [
@@ -115,20 +134,12 @@ dependencies = [
     "prettytable",
     "sh",
     
-    # Development tools (consider moving to optional dependencies)
-    "pytest",
-    "ipython",
-    "jupyter-book",
-    "sphinx",
-    "sphinx-nefertiti",
-    "black==25.1.0",
-    "isort==6.0.1",
-    "clang-format==19.1.7",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "ipython",
     "black==25.1.0",
     "isort==6.0.1",
     "clang-format==19.1.7",
@@ -141,14 +152,18 @@ docs = [
     "jupyter-book",
 ]
 
+all = [
+    "areal[dev]",
+    "areal[docs]",
+]
+
 [tool.setuptools.dynamic]
 version = {attr = "areal.__version__"}
 
 [tool.setuptools.packages.find]
-where = ["."] # ["."] by default
-# include = ["csrc/*", "realhf/*"] # ["*"] by default
-# exclude = ["tests", "docker"]    # empty by default
-# namespaces = false               # true by default
+where = ["."]
+include = ["areal*"]
+exclude = ["tests*", "realhf*", "docs*", "examples*", "evaluation*", "benchmark*"]
 
 [tool.isort]
 profile = "black"
