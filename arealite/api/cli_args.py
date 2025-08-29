@@ -647,7 +647,7 @@ class RemoteMegatronWrapPolicy:
         default=1.0, metadata={"help": "Reward scaling factor"}
     )
     reward_output_bias: float = field(default=0.0, metadata={"help": "Reward bias"})
-    recompute_logp: bool = True # TODO, default to False
+    recompute_logp: bool = False
 
 
 @dataclass
@@ -756,14 +756,17 @@ class SFTConfig(BaseExperimentConfig):
 
 @dataclass
 class RecoverConfig:
+    experiment_name: str = field(default="default-experiment")
+    trial_name: str = field(default="trial0")
     fileroot: str = field(default="")
-    freq_epochs: int = field(default=0)
-    freq_steps: int = field(default=0)
-    freq_secs: Optional[int] = field(
-        default=None, metadata={"help": "freq_secs"}
-    )
     recover_meta_info_path: str = field(default="")
     enable_recover: bool = field(default=False)
+    latest_disable_save_hf: bool = field(default=True, metadata={"help": "Disable saving latest huggingFace"})
+    periodic_disable_save_hf: bool = field(default=False, metadata={"help": "Disable saving periodic huggingFace"})
+    periodic_save_interval: Optional[int] = field(default=None, metadata={"help": "Periodic save steps"})
+    latest_save_interval: Optional[int] = field(default=None, metadata={"help": "Latest save steps"})
+
+
 
 
 @dataclass

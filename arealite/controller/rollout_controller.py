@@ -153,6 +153,7 @@ class DistributedRolloutController(RolloutController):
         engineSpec.env_vars["NVTE_FUSED_ATTN"] = "0"
         engineSpec.env_vars["NCCL_MAX_NCHANNELS"] = "16"
         engineSpec.env_vars["ASTRA_SHARED_PATH"] = f"/storage/openpsi/astate_shared_storage"
+        engineSpec.env_vars["USE_AREAL_LITE"] = "1"
 
 
         engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "bond0"

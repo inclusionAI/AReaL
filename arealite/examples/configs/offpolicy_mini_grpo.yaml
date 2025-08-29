@@ -5,7 +5,7 @@ seed: 42
 total_train_epochs: 10
 total_train_steps: 11450
 train_bs_n_seqs: 256
-weight_update_type: "nccl"
+weight_update_type: "astate"
 tokenizer_path: "/storage/yuyan/liuyongkang.lyk/output_models/b1-ml-32k-r10528-1p5e4_bs256_release_general_longcot200w_700w_clean_v2_0725/hf_ckpts/9853"
 train_dataset:
   path: "/storage/yuyan/xukuan.xk/repos/antnlp/personal/llm/benchmark/train_0731_adeng_new_0726_areal_train.jsonl"
@@ -30,7 +30,7 @@ stats_logger:
 gconfig:
   n_samples: 8
   min_new_tokens: 0
-  max_new_tokens: 31744
+  max_new_tokens: 31743
   greedy: false
   temperature: 1.0
   top_k: 1000000
@@ -227,7 +227,9 @@ actor:
       eps_clip: 0.2
       temperature: 1
       token_normalize_scope: "dp"
-      enable_offpolicy: true
+      enable_offpolicy: ${actor.hybrid_engine.wrap_policy.recompute_logp}
+      use_kl_in_loss: false
+      kl_type: k1
 
 ref:
   hybrid_engine:
@@ -373,8 +375,12 @@ ref:
       enable_offpolicy: true
 
 recover:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
   recover_meta_info_path: ""
   enable_recover: true
-  freq_epochs: 1
-  freq_steps: 20
-  fileroot: "/storage/openpsi"
+  latest_disable_save_hf: true
+  periodic_disable_save_hf: false
+  latest_save_interval: 1
+  periodic_save_interval: 5
+  fileroot: "/storage/openpsi/experiments"

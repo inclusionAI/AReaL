@@ -265,8 +265,12 @@ actor:
       token_normalize_scope: dp
 
 recover:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
   recover_meta_info_path: ""
   enable_recover: true
-  freq_epochs: 1
-  freq_steps: 20
-  fileroot: "/storage/openpsi"
+  latest_disable_save_hf: true
+  periodic_disable_save_hf: false
+  latest_save_interval: 1
+  periodic_save_interval: 5
+  fileroot: "/storage/openpsi/experiments"

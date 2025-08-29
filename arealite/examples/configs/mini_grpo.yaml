@@ -260,8 +260,9 @@ actor:
       token_normalize_scope: dp
 
 recover:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
   recover_meta_info_path: ""
   enable_recover: true
-  freq_epochs: 1
-  freq_steps: 20
+  periodic_save_interval: 20
   fileroot: "/storage/openpsi"

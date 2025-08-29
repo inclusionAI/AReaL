@@ -95,6 +95,7 @@ class DistributedTrainController(TrainController):
         engineSpec.env_vars["NCCL_MAX_NCHANNELS"] = "16"
         engineSpec.env_vars["NCCL_DEBUG_SUBSYS"] = "INIT,TUNING,GRAPH"
         engineSpec.env_vars["CUDA_LAUNCH_BLOCKING"] = "1"
+        engineSpec.env_vars["USE_AREAL_LITE"] = "1"
 
         engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "bond0"
         engineSpec.env_vars["GLOO_SOCKET_IFNAME"]="eth0"

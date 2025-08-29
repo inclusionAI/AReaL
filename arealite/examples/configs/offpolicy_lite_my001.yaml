@@ -225,6 +225,9 @@ actor:
       eps_clip: 0.2
       temperature: 1
       token_normalize_scope: "dp"
+      use_kl_in_loss: false
+      kl_type: k1
+      enable_offpolicy: ${actor.hybrid_engine.wrap_policy.recompute_logp}
 
 ref:
   hybrid_engine:
@@ -359,17 +362,19 @@ ref:
       vocab_size: 126464
       weight_decay: 0.01
     loss_configs:
-      kl_ctl: 0.1
+      kl_ctl: 0.001
       adaptive_kl_target: 6
       adaptive_kl_horizon: 10000
       eps_clip: 0.2
       temperature: 1
       token_normalize_scope: "dp"
+      enable_offpolicy: ${ref.hybrid_engine.wrap_policy.recompute_logp}
 
 
 recover:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
   recover_meta_info_path: ""
   enable_recover: true
-  freq_epochs: 1
-  freq_steps: 20
+  periodic_save_interval: 5
   fileroot: "/storage/openpsi"

@@ -26,7 +26,7 @@ from realhf.api.core.data_api import load_hf_tokenizer
 from arealite.api.engine_api import WeightUpdateMeta
 from arealite.extension.asystem.math_reward import reward_fn
 from arealite.scheduler.asystem import AsystemScheduler
-from arealite.utils.recover import Recover
+from arealite.recover import periodic_checkpoint, latest_checkpoint
 from arealite.dataset.utils import ShuffleSampler
 from arealite.controller.rollout_buffer import RolloutBuffer
 
@@ -109,36 +109,27 @@ def main(args):
     recover_meta_info_path = config.recover.recover_meta_info_path
     enable_recover = True
 
-    recover_cfg = SaverConfig(
-        experiment_name=config.experiment_name,
-        trial_name=config.trial_name,
-        fileroot=config.recover.fileroot,
-        freq_epochs=config.recover.freq_epochs,
-        freq_steps=config.recover.freq_steps,
-        freq_secs=config.recover.freq_secs,
-    )
     can_recover = False
     recover_epoch = 0
     recover_step = 0
     if recover_meta_info_path != "" and enable_recover:
-        can_recover, recover_meta_info = Recover.load(recover_meta_info_path)
+        can_recover, recover_meta_info = latest_checkpoint.Recover.load(recover_meta_info_path)
 
     if can_recover:
         recover_epoch = recover_meta_info.epoch
         recover_global_step = recover_meta_info.global_step + 1
         recover_step = recover_meta_info.epoch_step + 1
         global_step = recover_meta_info.global_step + 1
+        config.actor.hybrid_engine.global_step = global_step
         logger.info(
             f"🚀[Trainer] Recover success! global_step: {recover_meta_info.global_step}, epoch: {recover_meta_info.epoch}, step: {recover_meta_info.epoch_step}, "
             f"start new exp: global_step: {recover_global_step}, cur_step: {recover_step}")
-    recover = Recover(config=recover_cfg,
-                      ft_spec=FinetuneSpec(total_train_epochs=config.total_train_epochs,
-                                           dataset_size=step_num * config.train_bs_n_seqs,
-                                           train_batch_size=config.train_bs_n_seqs))
+    latest_recover = latest_checkpoint.Recover(config.recover)
     if can_recover:
-        recover.load_ctl_states(recover_meta_info)
         dataloader.load_state_dict(recover_meta_info.dataloader_state)
         config.actor.hybrid_engine.remote_megatron_config["recover_dir"] = recover_meta_info.checkpoint_path
+
+    periodic_recover = periodic_checkpoint.Recover(config.recover)
     ##################################################################################
 
     stats_logger = StatsLogger(StatsLoggerConfig(
@@ -269,7 +260,7 @@ def main(args):
     # start to train
     for epoch in range(recover_epoch, epoch_num):
         data_generator = iter(dataloader)
-        start_step = recover_step + 1 if can_recover and epoch == recover_epoch else 0
+        start_step = recover_step if can_recover and epoch == recover_epoch else 0
         for step in range(start_step, step_num):
             logger.info(f"start to prepare data, step: {step}, epoch: {epoch}, global_step: {global_step}")
             with (
@@ -405,15 +396,23 @@ def main(args):
                     actor.train_distributed_batch(dis_batch)
                     logger.info(f"train succeeded, step: {step}, epoch: {epoch}")
 
-                    with stats_tracker.record_timing("recover_save"):
-                        if recover.freq_ctl.check(
-                            epochs=int(step == recover.ft_spec.steps_per_epoch - 1), steps=1
-                        ):
+                    with stats_tracker.record_timing("latest_recover_save"):
+                        if global_step % config.recover.latest_save_interval == 0 or global_step == config.total_train_steps:
                             logger.info(
-                                f"[Trainer] start save recover info, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}")
-                            recover.save(actor, epoch, step, global_step, dataloader.state_dict())
+                                f"[Trainer] start save latest_checkpoint recover info, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}")
+                            latest_recover.save(actor, epoch, step, global_step, dataloader.state_dict(),
+                                                "latest_checkpoint", disable_save_hf=config.recover.latest_disable_save_hf)
                             logger.info(
-                                f"[Trainer] recover save success, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}")
+                                f"[Trainer] latest_checkpoint recover save success, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}")
+
+                    with stats_tracker.record_timing("periodic_recover_save"):
+                        if global_step > 0 and global_step % config.recover.periodic_save_interval == 0 or global_step == config.total_train_steps:
+                            logger.info(
+                                f"[Trainer] start save periodic_checkpoint recover info, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}")
+                            periodic_recover.save(actor, epoch, step, global_step, dataloader.state_dict(),
+                                                  "periodic_checkpoint", disable_save_hf=config.recover.periodic_disable_save_hf)
+                            logger.info(
+                                f"[Trainer] periodic_checkpoint recover save success, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}")
 
                     with (
                         stats_tracker.record_timing("notify_train_end_event"),
