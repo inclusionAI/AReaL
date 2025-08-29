@@ -139,7 +139,7 @@ class DistributedRolloutController(RolloutController):
             portCount=3
         )
         engineSpec.env_vars["ENGINE_PACKAGE_PATH"] = engine_path
-        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13570177-20250827102409.sif"
+        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13570177-20250829175427.sif"
         engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
         engineSpec.env_vars["WORKER_TYPE"] = f"{self.role}-engine"
         engineSpec.env_vars["WORK_MODE"] = "GENERATION"
