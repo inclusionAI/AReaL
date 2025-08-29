@@ -9,6 +9,7 @@ import colorama
 import torch
 import json
 import re
+from typing import Dict
 from collections import defaultdict
 from realhf.impl.environment import werewolf_env
 from tensordict import TensorDict
@@ -36,10 +37,10 @@ def _extract_three_questions(text: str) -> list[str]:
     """
     qs = []
     # Pattern 1: Q1...Q2...Q3
-    if ("Q1" in text) and ("Q2" in text) and ("Q3" in text):
-        q1 = text[text.find("Q1") + 2 : text.find("Q2")]
-        q2 = text[text.find("Q2") + 2 : text.find("Q3")]
-        q3 = text[text.find("Q3") + 2 :]
+    if ("Q1:" in text) and ("Q2:" in text) and ("Q3:" in text):
+        q1 = text[text.find("Q1:") + 3 : text.find("Q2:")].strip()
+        q2 = text[text.find("Q2:") + 3 : text.find("Q3:")].strip()
+        q3 = text[text.find("Q3:") + 3 :].strip()
         qs = [q1, q2, q3]
     # Pattern 2: Q1:/Q2:/Q3:
     if len(qs) < 3:
@@ -122,6 +123,7 @@ class WerewolfWorkflow(RolloutWorkflow):
         were_total = 0.0 # Werewolf side total reward
         traj_len = [0, 0]  # input, output
         summaries = defaultdict(list)
+        agent_thoughts: Dict[str, str] = {}
         qa_logs = []
         teacher_logs = []
 
@@ -153,12 +155,15 @@ class WerewolfWorkflow(RolloutWorkflow):
             prev_summary = summaries[current_agent][-1] if summaries[current_agent] else "None yet."
 
             # ========== 1) Agent self-generates 3 questions ==========
+            qa_target_role = "a werewolf" if current_role != "werewolf" else "biggest living threat"
             qgen_prompt = (
                 f"{obs}\n"
                 f"Your previous summary: {prev_summary}\n\n"
                 "Formulate exactly three short, decision-focused questions with ground truth answers you should ask yourself "
                 "to choose the best next action in this werewolf game turn.\n"
-                "Be specific to the current roles, suspicions, allies, and public information.\n"
+                "Be specific to the current roles, suspicions, allies, and public information:\n"
+                f"Example questions you might ask yourself: Who is most likely the {qa_target_role} in this game and why?"
+                f"What strategy will the {qa_target_role} take to maximize his chance of winning?"
                 "Output strictly in the following format:\n"
                 "Q1: ...\\n\nQ2: ...\\n\nQ3: ...\\n"
             )
@@ -190,17 +195,16 @@ class WerewolfWorkflow(RolloutWorkflow):
             t_qgen_total += time.perf_counter() - t0
 
             t0 = time.perf_counter()
-            qgen_text = self.tokenizer.decode(qgen_resp.output_tokens)
+            qgen_text = self.tokenizer.decode(qgen_resp.output_tokens, skip_special_tokens=True)
             t_qgen_decode_total += time.perf_counter() - t0
 
             self_questions = _extract_three_questions(qgen_text)
             if not self_questions:
-                ask_target_role = "a werewolf" if current_role != "werewolf" else "the biggest living threat"
                 # Safety fallback
                 self_questions = [
-                    f"Who is most likely {ask_target_role} this turn and why?",
+                    f"Who is most likely {qa_target_role} in this game and why?",
                     "What action should I take now to maximize team success?",
-                    "What information should I reveal or conceal to influence votes?",
+                    f"What strategy will the {qa_target_role} take to maximize his chance of winning?",
                 ]
 
             # ========== 2) Agent answers the 3 questions ==========
@@ -209,8 +213,8 @@ class WerewolfWorkflow(RolloutWorkflow):
                 aprompt = (
                     f"{obs}\n"
                     f"Your previous summary: {prev_summary}\n"
-                    f"Question: {q}\n"
-                    "Answer concisely and concretely for this turn only."
+                    f"You asked yourself this question: {q}\n"
+                    "Answer the question concisely and concretely for this turn only."
                 )
                 t0 = time.perf_counter()
                 a_ids = self.tokenizer.apply_chat_template(
@@ -237,15 +241,29 @@ class WerewolfWorkflow(RolloutWorkflow):
                     )
                     agent_answer_tasks.append(engine.agenerate(a_req))
 
-            # Teacher also answers for data (not used to guide action)
+            # Teacher also answers for data (with priviledged thoughts data)
+            thought_str = ""
+            alive_agents = env._alive_list()
+            alive_roles = env.role_type
+            for agt in alive_agents:
+                _role = alive_roles[agt]
+                if agt == current_agent:
+                    continue
+                last_thought = agent_thoughts.get(f"{agt} ({_role})", "")
+                if last_thought != "":
+                    if thought_str == "":
+                        thought_str = "You know secretly that: "
+                    thought_str += f"{agt} ({_role}) thought in the last round: {last_thought}."
+            
             teacher_answer_tasks = []
             if (not use_opp_generation) and self.teacher_rollout: # TODO: Check whether or not use opp_gen
                 for qi, q in enumerate(self_questions):
                     taprompt = (
                         f"{obs}\n"
                         f"Previous agent summary: {prev_summary}\n"
-                        f"Question: {q}\n"
-                        "Answer concisely and concretely for this turn only."
+                        f"{thought_str}\n"
+                        f"You asked yourself this question: {q}\n"
+                        "Answer the question concisely and concretely for this turn only."
                     )
                     t0 = time.perf_counter()
                     ta_ids = (self.teacher_tokenizer or self.tokenizer).apply_chat_template(
@@ -266,7 +284,7 @@ class WerewolfWorkflow(RolloutWorkflow):
             # Only gather the agent's answer now
             t0 = time.perf_counter()
             agent_ans_resps = await asyncio.gather(*agent_answer_tasks)
-            agent_answers = [self.tokenizer.decode(r.output_tokens) for r in agent_ans_resps]
+            agent_answers = [self.tokenizer.decode(r.output_tokens, skip_special_tokens=True) for r in agent_ans_resps]
             t_agent_answer_total += time.perf_counter() - t0
 
             # ========== 3) Use agent's Q&A to guide action generation ==========
@@ -301,7 +319,7 @@ class WerewolfWorkflow(RolloutWorkflow):
                 resp = await self.opp_rollout.agenerate(req)
                 t_action_gen_total += time.perf_counter() - t0
                 t0 = time.perf_counter()
-                completion_str = self.opp_tokenizer.decode(resp.output_tokens) if self.opp_tokenizer else self.tokenizer.decode(resp.output_tokens)
+                completion_str = self.opp_tokenizer.decode(resp.output_tokens, skip_special_tokens=True) if self.opp_tokenizer else self.tokenizer.decode(resp.output_tokens, skip_special_tokens=True)
                 t_action_decode_total += time.perf_counter() - t0
             else:
                 req = ModelRequest(
@@ -314,7 +332,7 @@ class WerewolfWorkflow(RolloutWorkflow):
                 resp = await engine.agenerate(req)
                 t_action_gen_total += time.perf_counter() - t0
                 t0 = time.perf_counter()
-                completion_str = self.tokenizer.decode(resp.output_tokens)
+                completion_str = self.tokenizer.decode(resp.output_tokens, skip_special_tokens=True)
                 t_action_decode_total += time.perf_counter() - t0
 
             seq = resp.input_tokens + resp.output_tokens
@@ -322,7 +340,7 @@ class WerewolfWorkflow(RolloutWorkflow):
             loss_mask = [0] * resp.input_len + [1] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
 
-            prompt_str = self.tokenizer.decode(action_ids)
+            prompt_str = self.tokenizer.decode(action_ids, skip_special_tokens=True)
 
             # Get next env state
             t0 = time.perf_counter()
@@ -367,9 +385,9 @@ class WerewolfWorkflow(RolloutWorkflow):
                 t0 = time.perf_counter()
                 teacher_ans_resps = await asyncio.gather(*teacher_answer_tasks)
                 if self.teacher_tokenizer:
-                    teacher_answers = [self.teacher_tokenizer.decode(r.output_tokens) for r in teacher_ans_resps]
+                    teacher_answers = [self.teacher_tokenizer.decode(r.output_tokens, skip_special_tokens=True) for r in teacher_ans_resps]
                 else:
-                    teacher_answers = [self.tokenizer.decode(r.output_tokens) for r in teacher_ans_resps]
+                    teacher_answers = [self.tokenizer.decode(r.output_tokens, skip_special_tokens=True) for r in teacher_ans_resps]
                 t_teacher_answer_total += time.perf_counter() - t0
             else:
                 teacher_answers = []
@@ -408,7 +426,10 @@ class WerewolfWorkflow(RolloutWorkflow):
                     results.append(TensorDict(sft_res, batch_size=[1]))
                     t_pack_tensors_total += time.perf_counter() - t0
 
-            # ========== 6) Ask for agent summarization, then log all Q&As ==========
+            # ========== 6) Agent summarization, log agent thinking and Q&As ==========
+            t = re.findall(r"<think>(.*?)</think>", completion_str, re.DOTALL)
+            think_str = t[-1].strip().lower() if t else ""
+            agent_thoughts[f"{current_agent} ({current_role})"] = think_str
             if self.use_summary:
                 m = re.findall(r"<answer>(.*?)</answer>", completion_str, re.DOTALL)
                 action_txt = m[-1].strip().lower() if m else ""
@@ -434,7 +455,7 @@ class WerewolfWorkflow(RolloutWorkflow):
                 t_sum = time.perf_counter() - t0
                 t_summary_agent_total += t_sum
 
-                agent_summary = self.tokenizer.decode(summary_resps[0].output_tokens)
+                agent_summary = self.tokenizer.decode(summary_resps[0].output_tokens, skip_special_tokens=True)
                 summaries[current_agent].append(agent_summary)
 
                 qa_logs.append(
@@ -454,14 +475,14 @@ class WerewolfWorkflow(RolloutWorkflow):
                         "QAs": [{"question": self_questions[i], "answer": agent_answers[i]} for i in range(len(self_questions))],
                     }
                 )
-                if self.teacher_rollout:
-                    teacher_logs.append(
-                        {
-                            "agent": current_agent,
-                            "role": current_role,
-                            "QAs": [{"question": self_questions[i], "answer": teacher_answers[i] if i < len(teacher_answers) else ""} for i in range(len(self_questions))],
-                        }
-                    )
+            if self.teacher_rollout:
+                teacher_logs.append(
+                    {
+                        "agent": current_agent,
+                        "role": current_role,
+                        "QAs": [{"question": self_questions[i], "answer": teacher_answers[i] if i < len(teacher_answers) else ""} for i in range(len(self_questions))],
+                    }
+                )
 
             if done or (turn == self.max_turns - 1):
                 logger.info(f"Trajectory ended with {turn + 1} turns, total reward: {sum(rewards)}.")
