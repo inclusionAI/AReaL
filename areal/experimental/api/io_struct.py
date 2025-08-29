@@ -1,7 +1,9 @@
 import dataclasses
+from dataclasses import field
+from typing import Optional
 
 from areal.api.alloc_mode import AllocationMode as MainAllocationMode
-from areal.api.io_struct import *
+from areal.api.alloc_mode import AllocationType
 
 
 @dataclasses.dataclass
@@ -136,15 +138,10 @@ class MegatronParallelStrategy(ParallelStrategy):
         )
 
 
-class AllocationType(enum.Enum):
-    COLOCATE = 0
-    DECOUPLED_TRAIN = 1
-    LLM_SERVER_ONLY = 2
-    DECOUPLED_EVAL = 3
+# AllocationType is now imported from the main module
 
 
-class InvalidAllocationModeError(Exception):
-    pass
+# InvalidAllocationModeError is now imported from the main module
 
 
 @dataclasses.dataclass
@@ -155,6 +152,7 @@ class AllocationMode:
     gen: Optional[ParallelStrategy] = None
     train: Optional[ParallelStrategy] = None
     gen_backend: Optional[str] = None
+    train_backend: Optional[str] = None
 
     @property
     def gen_tp_size(self) -> int:
@@ -237,4 +235,5 @@ class AllocationMode:
             gen=convert_strategy(main_alloc.gen),
             train=convert_strategy(main_alloc.train),
             gen_backend=main_alloc.gen_backend,
+            train_backend=main_alloc.train_backend,
         )
