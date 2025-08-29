@@ -81,6 +81,20 @@ echo head_node_ip=$head_node_ip
 trainer_port=$(srun {srun_additional_args} --nodes=1 --ntasks=1 -n1 -c1 --mem=10M --nodelist="$head_node" bash -c "comm -23 <(seq 10000 60000 | sort) <(ss -tan | awk '{{print $4}}' | cut -d':' -f2 | grep '[0-9]\\{{1,5\\}}' | sort -u) | shuf | head -n 1")
 echo trainer_port=$trainer_port
 
+# Get IP address of each node
+master_addrs=()
+for node in "${{nodes_array[@]}}"; do
+    ip=$(srun {srun_additional_args} --nodes=1 --ntasks=1 -n1 -c1 --mem=10M --nodelist="$node" hostname --ip-address)
+    master_addrs+=("$ip")
+done
+echo master_addrs="${{master_addrs[@]}}"
+# Get a free port for each node
+master_ports=()
+for node in "${{nodes_array[@]}}"; do
+    port=$(srun {srun_additional_args} --nodes=1 --ntasks=1 -n1 -c1 --mem=10M --nodelist="$node" bash -c "comm -23 <(seq 10000 60000 | sort) <(ss -tan | awk '{{print $4}}' | cut -d':' -f2 | grep '[0-9]\\{{1,5\\}}' | sort -u) | shuf | head -n 1")
+    master_ports+=("$port")
+done
+
 # srun commands
 {srun_cmds}
 

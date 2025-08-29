@@ -19,6 +19,7 @@ from areal.experimental.api.cli_args import (
 from areal.experimental.api.io_struct import AllocationMode, FinetuneSpec
 from areal.experimental.megatron_engine import MegatronEngine
 from areal.utils import seeding
+from areal.utils.data import broadcast_tensor_container
 
 MODEL_PATHS = {
     "qwen3": "/storage/openpsi/models/Qwen__Qwen3-1.7B/",
@@ -87,6 +88,7 @@ def make_engine(model_type, allocation_mode, mb_spec, init_optimizer=False):
     alloc_mode = AllocationMode.from_str(allocation_mode)
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
     engine = MegatronEngine(config)
+    engine.create_process_group(parallel_strategy=alloc_mode.train)
     engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
     return engine
 
@@ -114,8 +116,13 @@ def test_forward(model_type: str, alloc_mode: str, output: Optional[str] = None)
 
     input_ = mock_input(batch_size=16, max_seqlen=128, device=engine.device)
     print(f"rank {rank} is_data_parallel_head()={engine.is_data_parallel_head()}")
+    bcasted_input = broadcast_tensor_container(
+        input_,
+        src_rank=engine.current_data_parallel_head(),
+        group=engine.context_and_model_parallel_group,
+    )
     logits = engine.forward(
-        input_=input_ if engine.is_data_parallel_head() else None,
+        input_=bcasted_input,
         post_hook=all_gather_logits,
         aggregate_fn=lambda xs: torch.cat(xs, dim=0),
     )
@@ -182,6 +189,7 @@ def test_forward(model_type: str, alloc_mode: str, output: Optional[str] = None)
     dist.barrier()
     fsdp_engine.destroy()
     engine.destroy()
+    engine.destroy_process_groups()
 
     print(f"Test: test_forward(model_type={model_type}, alloc_mode={alloc_mode}) Done.")
     if rank == 0 and output is not None:
@@ -190,6 +198,48 @@ def test_forward(model_type: str, alloc_mode: str, output: Optional[str] = None)
                 f.write("Passed")
             else:
                 f.write("Failed")
+
+
+def mock_loss_fn(logits: torch.Tensor, input_data) -> torch.Tensor:
+    """Mock loss function for testing."""
+    from megatron.core import tensor_parallel
+
+    labels = input_data["input_ids"]
+    logprobs = -tensor_parallel.vocab_parallel_cross_entropy(
+        vocab_parallel_logits=logits, target=labels
+    )
+    return torch.mean(logprobs)
+
+
+def test_train(model_type: str, alloc_mode: str, output: Optional[str] = None):
+    print(f"running train test: model_type={model_type} alloc_mode={alloc_mode}")
+    rank = int(os.environ["RANK"])
+
+    mb_spec = MicroBatchSpec(max_tokens_per_gpu=256)
+    engine = make_engine(model_type, alloc_mode, mb_spec, init_optimizer=True)
+    seeding.set_random_seed(0, key=f"trainer{rank}")
+
+    input_ = mock_input(batch_size=16, max_seqlen=128, device=engine.device)
+    print(f"rank {rank} is_data_parallel_head()={engine.is_data_parallel_head()}")
+    bcasted_input = broadcast_tensor_container(
+        input_,
+        src_rank=engine.current_data_parallel_head(),
+        group=engine.context_and_model_parallel_group,
+    )
+
+    train_result = engine.train_batch(
+        input_=bcasted_input,
+        loss_fn=mock_loss_fn,
+        loss_weight_fn=lambda x: x["cu_seqlens"][-1],
+    )
+
+    print(f"final rank {rank} train_result: {train_result}")
+    torch.cuda.synchronize()
+    dist.barrier()
+    engine.destroy()
+    engine.destroy_process_groups()
+
+    print(f"Test: test_train(model_type={model_type}, alloc_mode={alloc_mode}) Done.")
 
 
 def main():
@@ -213,8 +263,20 @@ def main():
         default=None,
         help="Optional path to save the output result",
     )
+    parser.add_argument(
+        "--test_type",
+        type=str,
+        choices=["forward", "train"],
+        default="forward",
+        help="Type of test to run: 'forward' or 'train'",
+    )
     args = parser.parse_args()
-    test_forward(args.model_type, args.allocation_mode, output=args.output)
+
+    print(args)
+    if args.test_type == "train":
+        test_train(args.model_type, args.allocation_mode, output=args.output)
+    else:
+        test_forward(args.model_type, args.allocation_mode, output=args.output)
 
 
 if __name__ == "__main__":

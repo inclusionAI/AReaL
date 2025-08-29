@@ -5,7 +5,9 @@ from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 from areal.utils.network import find_free_ports, gethostip
 
 
-def get_placement_group_master_ip_and_port(placement_group: PlacementGroup):
+def get_placement_group_master_ip_and_port(
+    placement_group: PlacementGroup, placement_group_bundle_index: int = 0
+):
     def _master_ip_and_port():
         host_ip = gethostip()
         port = find_free_ports(1, (10000, 60000))[0]

@@ -37,6 +37,7 @@ from areal.utils.model import (
     VALID_VISION_MODELS,
     disable_dropout_in_model,
     is_qwen2_vl_model,
+    is_qwen3_moe_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
@@ -319,16 +320,24 @@ class BaseHFEngine(TrainEngine):
         for i, mb in enumerate(mb_list.padded_mbs):
             mb_list.padded_mbs[i] = dict(**mb)
         for mb, padded_mb in zip(mb_list.mbs, mb_list.padded_mbs):
-            mb["max_seqlen"] = int(mb["max_seqlen"])
-            padded_mb["max_seqlen"] = int(padded_mb["max_seqlen"])
-            mb["cu_seqlens_q"] = mb["cu_seqlens_k"] = mb["cu_seqlens"]
-            padded_mb["cu_seqlens_q"] = padded_mb["cu_seqlens_k"] = padded_mb[
+            mb["max_length_q"] = mb["max_length_k"] = mb["max_seqlen"] = int(
+                mb["max_seqlen"]
+            )
+            padded_mb["max_length_q"] = padded_mb["max_length_k"] = padded_mb[
+                "max_seqlen"
+            ] = int(padded_mb["max_seqlen"])
+            mb["cu_seq_lens_q"] = mb["cu_seq_lens_k"] = mb["cu_seqlens"]
+            padded_mb["cu_seq_lens_q"] = padded_mb["cu_seq_lens_k"] = padded_mb[
                 "cu_seqlens"
             ]
             mb["use_cache"] = False
             padded_mb["use_cache"] = False
-            mb["attention_mask"] = dict(full_attention=None)
-            padded_mb["attention_mask"] = dict(full_attention=None)
+            if is_qwen3_moe_model(self.model_config.model_type):
+                mb["attention_mask"] = None
+                padded_mb["attention_mask"] = None
+            else:
+                mb["attention_mask"] = dict(full_attention=None)
+                padded_mb["attention_mask"] = dict(full_attention=None)
             if "multi_modal_input" in mb:
                 image_grid_thw_list = [
                     item["image_grid_thw"]

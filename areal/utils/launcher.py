@@ -39,7 +39,7 @@ NA132_ENVIRONS = {
     "NCCL_DEBUG": "WARN",
     "NCCL_DEBUG_SUBSYS": "INIT,TUNING,GRAPH",
 }
-SGLANG_SERVER_WAIT_TIMEOUT_SECONDS = 180
+SGLANG_SERVER_WAIT_TIMEOUT_SECONDS = 360
 
 
 def get_env_vars(
@@ -134,6 +134,3 @@ def validate_config_for_distributed_launcher(config):
         assert (
             allocation_mode.gen_pp_size == 1
         ), "Pipeline generation in SGLang is not supported for now."
-        assert (
-            allocation_mode.gen_tp_size <= config.cluster.n_gpus_per_node
-        ), "Currently only support SGLang TP size less <= #GPUs per node."

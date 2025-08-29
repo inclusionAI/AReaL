@@ -1,6 +1,6 @@
 experiment_name: gsm8k-grpo
 trial_name: trial0
-allocation_mode: sglang.d4p1t1+d4p1t1
+allocation_mode: sglang.d4p1t1+d1p2t2
 cluster:
   fileroot: /tmp/areal/experiments
   n_nodes: 1
@@ -41,17 +41,15 @@ actor:
     max_tokens_per_gpu: 10240
   optimizer:
     type: adam
-    lr: 1.70e-5
-    weight_decay: 0.017
+    lr: 3e-6
+    weight_decay: 0.003
     beta1: 0.9
     beta2: 0.999
     eps: 1e-8
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
-  backend: fsdp
-  fsdp:
-    ulysses_sp_size: 1
+  backend: megatron
 
   group_size: ${gconfig.n_samples}
   group_adv_norm: false
@@ -75,9 +73,7 @@ ref:
   mb_spec:
     max_tokens_per_gpu: 10240
   optimizer: null
-  backend: fsdp
-  fsdp:
-    ulysses_sp_size: 1
+  backend: megatron
 
 # SGLang
 sglang:

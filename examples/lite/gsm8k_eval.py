@@ -8,7 +8,8 @@ from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.utils import seeding, stats_tracker
-from areal.utils.hf_utils import load_hf_tokenizer, tabulate_stats
+from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.printing import tabulate_stats
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 

@@ -156,6 +156,8 @@ class RecoverHandler:
         processor: AutoProcessor | None = None,
         base_model_path: str | None = None,
     ):
+        if self.config.mode == "disabled":
+            return
         # currently only support recover on one engine
         if not self.freq_ctl.check(
             epochs=int(step_info.epoch_step == self.ft_spec.steps_per_epoch - 1),
@@ -201,6 +203,8 @@ class RecoverHandler:
         weight_update_meta: WeightUpdateMeta | None = None,
         inference_engine_update_from: str = "default",
     ) -> RecoverInfo | None:
+        if self.config.mode == "disabled":
+            return
         if os.environ.get("AREAL_RECOVER_RUN", "0") != "1":
             return
         if inference_engine is not None:

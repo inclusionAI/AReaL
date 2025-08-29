@@ -183,6 +183,12 @@ class FSDPWrapPolicy:
 
 @dataclass
 class FSDPEngineConfig:
+    ulysses_sp_size: int = field(
+        default=1,
+        metadata={
+            "help": "Ulysses sequence parallel size (default: 1)",
+        },
+    )
     wrap_policy: Optional[FSDPWrapPolicy] = field(
         default=None,
         metadata={"help": "FSDP wrap policy, specifying model layers to wrap."},
@@ -377,6 +383,8 @@ class SGLangConfig:
     cpu_offload_gb: int = 0
     dtype: str = "bfloat16"
     kv_cache_dtype: str = "auto"
+    dp_size: int = 1  # only used for dp attention
+    ep_size: int = 1
     # logging
     log_level: str = "warning"
     log_level_http: Optional[str] = "warning"
@@ -397,6 +405,8 @@ class SGLangConfig:
         host,
         port,
         dist_init_addr: Optional[str] = None,
+        n_nodes: int = 1,
+        node_rank: int = 0,
     ):
         args = SGLangConfig.build_args(
             sglang_config=sglang_config,
@@ -405,6 +415,8 @@ class SGLangConfig:
             host=host,
             port=port,
             dist_init_addr=dist_init_addr,
+            n_nodes=n_nodes,
+            node_rank=node_rank,
         )
 
         # convert to flags
@@ -428,6 +440,8 @@ class SGLangConfig:
         host,
         port,
         dist_init_addr: Optional[str] = None,
+        n_nodes: int = 1,
+        node_rank: int = 0,
     ):
 
         args: Dict = conf_as_dict(sglang_config)
@@ -445,8 +459,8 @@ class SGLangConfig:
             tp_size=tp_size,
             # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
             base_gpu_id=base_gpu_id,
-            nnodes=1,
-            node_rank=0,
+            nnodes=n_nodes,
+            node_rank=node_rank,
             # initialization addresses and ports
             dist_init_addr=dist_init_addr,
             **args,
