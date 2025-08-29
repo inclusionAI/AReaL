@@ -54,4 +54,20 @@ class RPCClient:
         else:
             raise RuntimeError(f"RPC call failed: {resp.content}")
 
+    def call_engine_with_serialized_data(self, worker_id: str, serialized_data: bytes):
+        """
+        数据面调用（带序列化数据）
+        """
+        ip, port = self._addrs[worker_id]
+        url = f"http://{ip}:{port}/call"
 
+        resp = requests.post(url, data=serialized_data, timeout=7200)
+        logger.info(
+           f"Sent call to {worker_id} ({ip}:{port}), status={resp.status_code}"
+        )
+        if resp.status_code == 200:
+            return cloudpickle.loads(resp.content)
+        elif resp.status_code == 503:
+            raise TimeoutError(f"RPC call timeout: {resp.content}")
+        else:
+            raise RuntimeError(f"RPC call failed: {resp.content}")

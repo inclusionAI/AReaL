@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import torch
 from concurrent.futures import ThreadPoolExecutor
+import cloudpickle
 
 from torch import Tensor
 
@@ -214,6 +215,8 @@ class DistributedTrainController(TrainController):
         logger.info(f"start to train_distributed_batch")
         batches = input_._split_by_seqlen_ffd_helper(self.group_size, self.dp_size)
         self._calc_metrics(batches)
+
+        serialized_data = [cloudpickle.dumps(("train_distributed_batch", [batch], {})) for batch in batches]
         futures = []
         results = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
@@ -226,11 +229,10 @@ class DistributedTrainController(TrainController):
 
                 rank_info = self.rank_info[index]
                 dp_rank =  rank_info["dp_rank"]
-                batch_data = batches[dp_rank]
+                batch_data = serialized_data[dp_rank]
                 futures.append(executor.submit(
-                    self.scheduler.call_engine,
+                    self.scheduler.call_engine_with_serialized_data,
                     worker.id,
-                    "train_distributed_batch",
                     batch_data
                 ))
             try:
@@ -260,17 +262,17 @@ class DistributedTrainController(TrainController):
         """Update the model with a batch of data and a loss function."""
         logger.info(f"start to compute_logprobs_with_distributed")
         batches = input_.split(self.dp_size)
+        serialized_data = [cloudpickle.dumps(("compute_logprobs_with_distributed", [batch], {})) for batch in batches]
         futures = []
         results = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             for index, worker in enumerate(self.workers):
                 rank_info = self.rank_info[index]
                 dp_rank =  rank_info["dp_rank"]
-                batch_data = batches[dp_rank]
+                batch_data = serialized_data[dp_rank]
                 futures.append(executor.submit(
-                    self.scheduler.call_engine,
+                    self.scheduler.call_engine_with_serialized_data,
                     worker.id,
-                    "compute_logprobs_with_distributed",
                     batch_data
                 ))
             try:

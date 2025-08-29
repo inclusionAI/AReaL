@@ -237,7 +237,7 @@ class DistributedRolloutController(RolloutController):
                     f.cancel()
                 raise
     
-    def destory(self):
+    def destroy(self):
         self.exiting.set()
 
     def __del__(self):

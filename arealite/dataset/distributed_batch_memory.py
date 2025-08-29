@@ -44,7 +44,7 @@ class DistributedBatchMemory:
         for i in range(dp_size):
             start = i * part_size
             end = min(start + part_size, batch_size)
-            split_data = {k: v[start:end] for k, v in self.dataset.items()}
+            split_data = {k: v[start:end].clone() for k, v in self.dataset.items()}
             batches.append(DistributedBatchMemory(split_data))
         return batches
 

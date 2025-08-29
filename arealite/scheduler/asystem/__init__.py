@@ -178,6 +178,13 @@ class AsystemScheduler(Scheduler):
         logger.info(f"Calling '{method}' on worker {worker_id}")
         return self.rpc_client.call_engine(worker_id, method, *args, **kwargs)
 
+    def call_engine_with_serialized_data(self, worker_id: str, serialized_data: bytes):
+        """
+        数据面调用（带序列化数据）
+        """
+        logger.info(f"Calling on worker {worker_id} with serialized data")
+        return self.rpc_client.call_engine_with_serialized_data(worker_id, serialized_data)
+
     def cleanup(self):
         """
         清理提交的作业和资源
