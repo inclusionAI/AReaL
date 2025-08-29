@@ -213,7 +213,11 @@ class DistributedTrainController(TrainController):
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function."""
         logger.info(f"start to train_distributed_batch")
-        batches = input_._split_by_seqlen_ffd_helper(self.group_size, self.dp_size)
+        with (
+            stats_tracker.record_timing("train_distributed_batch_data_split"),
+        ):
+            batches = input_._split_by_seqlen_ffd_helper(self.group_size, self.dp_size)
+
         self._calc_metrics(batches)
 
         serialized_data = [cloudpickle.dumps(("train_distributed_batch", [batch], {})) for batch in batches]
@@ -244,25 +248,25 @@ class DistributedTrainController(TrainController):
                     f.cancel()
                 raise
 
-        with (
-            stats_tracker.record_timing("distributed_train_step"),
-            stats_tracker.scope("grpo_actor"),
-        ):
-            # 处理多个minibatch返回的结果
-            for worker_result in results:
-                if len(worker_result) > 1:  # 处理多个minibatch的情况
-                    for minibatch in worker_result:
-                        stats_tracker.scalar(**minibatch)
-                else:  # 保持对单个结果的兼容
-                    stats_tracker.scalar(**worker_result[0])
+        # 处理多个minibatch返回的结果
+        for worker_result in results:
+            if len(worker_result) > 1:  # 处理多个minibatch的情况
+                for minibatch in worker_result:
+                    stats_tracker.scalar(**minibatch)
+            else:  # 保持对单个结果的兼容
+                stats_tracker.scalar(**worker_result[0])
 
-        return results
+        return
 
     def compute_logprobs_with_distributed(self, input_: DistributedBatchMemory) -> Tensor:
         """Update the model with a batch of data and a loss function."""
         logger.info(f"start to compute_logprobs_with_distributed")
-        batches = input_.split(self.dp_size)
-        serialized_data = [cloudpickle.dumps(("compute_logprobs_with_distributed", [batch], {})) for batch in batches]
+        with (
+            stats_tracker.record_timing("compute_logprobs_with_distributed_data_split"),
+        ):
+            batches = input_.split(self.dp_size)
+            serialized_data = [cloudpickle.dumps(("compute_logprobs_with_distributed", [batch], {})) for batch in batches]
+
         futures = []
         results = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:

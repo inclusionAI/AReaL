@@ -279,13 +279,12 @@ def main(args):
                 ):
                     with (
                         stats_tracker.record_timing("notify_rollout_start_event"),
-                        stats_tracker.scope("rollout"),
                     ):
                         logger.info(f"start to notify_rollout_start_event, step: {step}, epoch: {epoch}")
                         rollout.notify_event("rollout_start", global_step)
                         logger.info(f"notify_rollout_start_event succeeded, step: {step}, epoch: {epoch}")
 
-                    with(stats_tracker.record_timing("main")):
+                    with(stats_tracker.record_timing("rollout_main")):
                         logger.info(f"start to rollout, step: {step}, epoch: {epoch}")
                         rollout_res = rollout.rollout(batch_data, workflow=workflow)
                         logger.info(f"rollout succeeded, step: {step}, epoch: {epoch}")
@@ -299,7 +298,6 @@ def main(args):
 
                         with (
                             stats_tracker.record_timing("notify_rollout_end_event"),
-                            stats_tracker.scope("rollout"),
                         ):
                             logger.info(f"start to notify_rollout_end_event, step: {step}, epoch: {epoch}")
                             rollout.notify_event("rollout_end", global_step)
@@ -323,15 +321,17 @@ def main(args):
                 ):
                     with (
                         stats_tracker.record_timing("notify_train_start_event"),
-                        stats_tracker.scope("train"),
                     ):
                         logger.info(f"start to notify_train_start_event, step: {step}, epoch: {epoch}")
                         actor.notify_event("train_start", global_step)
                         logger.info(f"notify_train_start_event succeeded, step: {step}, epoch: {epoch}")
 
-                    logger.info(f"start to train, step: {step}, epoch: {epoch}")
-                    actor.train_distributed_batch(dis_batch)
-                    logger.info(f"train succeeded, step: {step}, epoch: {epoch}")
+                    with (
+                        stats_tracker.record_timing("train_distributed_batch"),
+                    ):
+                        logger.info(f"start to train, step: {step}, epoch: {epoch}")
+                        actor.train_distributed_batch(dis_batch)
+                        logger.info(f"train succeeded, step: {step}, epoch: {epoch}")
 
                     with stats_tracker.record_timing("latest_recover_save"):
                         if global_step % config.recover.latest_save_interval == 0 or global_step == config.total_train_steps:
@@ -353,7 +353,6 @@ def main(args):
 
                     with (
                         stats_tracker.record_timing("notify_train_end_event"),
-                        stats_tracker.scope("train"),
                     ):
                         logger.info(f"start to notify_train_end_event, step: {step}, epoch: {epoch}")
                         actor.notify_event("train_end", global_step)

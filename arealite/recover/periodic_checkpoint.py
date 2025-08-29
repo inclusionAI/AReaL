@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 from transformers import PreTrainedTokenizerFast
 
 from arealite.api.cli_args import RecoverConfig
+from arealite.api.controller_api import TrainController
 from arealite.api.engine_api import TrainEngine
 from arealite.api.io_struct import SaveLoadMeta
 
@@ -95,7 +96,7 @@ class Recover:
 
     def save(
         self,
-        engine: TrainEngine,
+        ctl: TrainController,
         epoch: int,
         step: int,
         global_step: int,
@@ -120,7 +121,7 @@ class Recover:
                 tokenizer=tokenizer,
                 base_model_path=base_model_path,
             )
-            engine.save(meta)
+            ctl.save(meta)
             logger.info(f"[Recover] Saved hf model to {path} success.")
 
         # save checkpoint
@@ -137,7 +138,7 @@ class Recover:
             tokenizer=tokenizer,
             base_model_path=base_model_path,
         )
-        engine.save(meta)
+        ctl.save(meta)
         logger.info(f"[Recover] Saved checkpoint to {path} success.")
 
         # save meta info

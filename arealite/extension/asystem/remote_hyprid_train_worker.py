@@ -329,12 +329,6 @@ class RemoteHypridTrainWorker(TrainEngine):
             indices = torch.where(train_datas["ppo_loss_mask"] == 1)[0]
             adv = train_datas["advantages"]
             train_stats["advantages"] = adv[indices].mean()
-            total_seqlen = input_["seqlen"].sum()
-            train_stats[f"rank{self.global_rank}_total_seqlen"] = total_seqlen
-
-            loss = train_stats.get("loss")
-            if loss is not None:
-                train_stats[f"rank{self.global_rank}_loss"] = loss
             
             for key, value in scalar_metrics.items():
                 if key not in train_stats:
