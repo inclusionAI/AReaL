@@ -17,9 +17,8 @@ def get_placement_group_master_ip_and_port(
         num_cpus=1,
         num_gpus=0,
         memory=10 * 1024 * 1024,  # Convert MB to bytes
-        scheduling_strategy=PlacementGroupSchedulingStrategy(
-            placement_group=placement_group,
-            placement_group_bundle_index=placement_group_bundle_index,
-        ),
+        scheduling_strategy="DEFAULT",  
+        # DEFAULT scheduling strategy 
+        # to avoid placement group conflict
     )(_master_ip_and_port).remote()
     return ray.get(future)
