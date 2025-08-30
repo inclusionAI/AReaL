@@ -402,15 +402,14 @@ class MegatronEngine(TrainEngine):
         min_n_mbs = (
             1 if forward_only else 2 * pp_size
         )  # avoid pipeline bubbles in training
-        # NOTE: self.config.mb_spec.max_tokens_per_gpu determines
-        # the expected number of tokens per micro-batch **in the forward pass on a GPU**.
+        # NOTE: self.config.mb_spec.max_tokens_per_mb determines
+        # the expected **total** number of tokens per micro-batch **in the forward pass**.
         # The micro batch list splitted here will be splitted to each
         # context parallel rank, so the total number of tokens per
-        # micro-batch here will be `max_tokens_per_gpu * cp_size`.
+        # GPU in a forward pass here will be `max_tokens_per_mb / cp_size`.
         mb_spec = MicroBatchSpec.new(
             self.config.mb_spec,
             n_mbs=max(min_n_mbs, self.config.mb_spec.n_mbs),
-            _context_parallel_size=cp_size,
         )
         mb_list = split_padded_tensor_dict_into_mb_list(
             input_,
@@ -419,8 +418,8 @@ class MegatronEngine(TrainEngine):
         )
         mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
         # NOTE: Pad micro-batches to:
-        # 1. Reduce GPU memory fragmentation, pad memory usage to GPU page size or
-        #    max_tokens_per_gpu
+        # 1. Reduce GPU memory fragmentation, pad actual # tokens per mb to integer multiples
+        #  of GPU page size or max_tokens_per_mb
         # 2. Align sequence lengths to integer multiples of `align_to_multiple_of=tp_size*cp_size*2`
         #    to satisfy the requirement of Megatron parallelism.
         align_to_multiple_of = tp_size * cp_size * 2 if cp_size > 1 else tp_size

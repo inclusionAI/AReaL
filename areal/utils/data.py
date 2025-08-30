@@ -394,7 +394,7 @@ class MicroBatchList:
         )
 
 
-DEFAULT_MAX_TOKENS_PER_GPU = int(1e12)
+DEFAULT_MAX_TOKENS_PER_MB = int(1e12)
 
 
 def split_padded_tensor_dict_into_mb_list(
@@ -416,9 +416,9 @@ def split_padded_tensor_dict_into_mb_list(
     assert (
         "attention_mask" in data
     ), "Input data must be padded and contain 'attention_mask' key."
-    if mb_spec.max_tokens_per_gpu is None:
+    if mb_spec.max_tokens_per_mb is None:
         mb_spec = MicroBatchSpec.new(
-            mb_spec, max_tokens_per_gpu=DEFAULT_MAX_TOKENS_PER_GPU
+            mb_spec, max_tokens_per_mb=DEFAULT_MAX_TOKENS_PER_MB
         )
     bs = data["attention_mask"].shape[0]
     max_seqlen = data["attention_mask"].shape[1]
@@ -692,11 +692,11 @@ def pad_mb_list(
     old_cu_seqlens_list = []
     align_to_lengths = []
     if pad_to_maximum and (
-        mb_list.mb_spec.max_tokens_per_gpu is None
-        or mb_list.mb_spec.max_tokens_per_gpu == DEFAULT_MAX_TOKENS_PER_GPU
+        mb_list.mb_spec.max_tokens_per_mb is None
+        or mb_list.mb_spec.max_tokens_per_mb == DEFAULT_MAX_TOKENS_PER_MB
     ):
         logger.warning(
-            f"Unable to pad to maximum because max_tokens_per_gpu is not properly set."
+            f"Unable to pad to maximum because max_tokens_per_mb is not properly set."
         )
         pad_to_maximum = False
     for mb, l in zip(mb_list.mbs, mb_list.group_lens):

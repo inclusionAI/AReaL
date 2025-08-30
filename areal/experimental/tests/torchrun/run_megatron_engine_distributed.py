@@ -110,7 +110,7 @@ def make_fsdp_engine(model_type, mb_spec, init_optimizer=False):
 def test_forward(model_type: str, alloc_mode: str, output: Optional[str] = None):
     rank = int(os.environ["RANK"])
 
-    mb_spec = MicroBatchSpec(max_tokens_per_gpu=256)
+    mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
     engine = make_engine(model_type, alloc_mode, mb_spec)
     seeding.set_random_seed(0, key=f"trainer{rank}")
 
@@ -215,7 +215,7 @@ def test_train(model_type: str, alloc_mode: str, output: Optional[str] = None):
     print(f"running train test: model_type={model_type} alloc_mode={alloc_mode}")
     rank = int(os.environ["RANK"])
 
-    mb_spec = MicroBatchSpec(max_tokens_per_gpu=256)
+    mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
     engine = make_engine(model_type, alloc_mode, mb_spec, init_optimizer=True)
     seeding.set_random_seed(0, key=f"trainer{rank}")
 
