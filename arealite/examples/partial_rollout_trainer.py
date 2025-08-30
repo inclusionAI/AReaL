@@ -422,8 +422,8 @@ def main(args):
                         actor.notify_event("train_end", global_step)
                         logger.info(f"notify_train_end_event succeeded, step: {step}, epoch: {epoch}")
 
-                metric = stats_tracker.export()
-                stats_logger.commit(epoch, step, global_step, metric)
+            metric = stats_tracker.export()
+            stats_logger.commit(epoch, step, global_step, metric)
 
             global_step += 1
 
