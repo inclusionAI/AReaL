@@ -119,15 +119,58 @@ def pad_input(hidden_states, indices, batch, seqlen):
 def concat_padded_tensors(
     tensor_dicts: List[TensorDict], pad_value: float = 0.0
 ) -> TensorDict:
-    """Concatenate and pad tensors from multiple padded tensor dictionaries."""
+    """Concatenate and pad tensors from multiple padded tensor dictionaries.
+
+    This function is tolerant to TensorDicts that have an empty batch_size tuple
+    (e.g., constructed without an explicit batch_size). In that case, it infers
+    the batch dimension from `attention_mask` if present, or from any tensor key
+    with at least one dimension.
+    """
     if not tensor_dicts:
         return TensorDict()
 
-    batch_sizes = [tuple(d.batch_size) for d in tensor_dicts]
-    new_batch_size = [sum(x[0] for x in batch_sizes), *batch_sizes[0][1:]]
+    # Validate presence of attention_mask early so we can safely infer batch sizes
+    if not all("attention_mask" in td for td in tensor_dicts):
+        missing = [i for i, td in enumerate(tensor_dicts) if "attention_mask" not in td]
+        raise ValueError(
+            f"All TensorDicts must contain 'attention_mask'. Missing at indices: {missing}"
+        )
+
+    # Infer per-item batch size robustly (avoid indexing empty tuples)
+    inferred_bs0: List[int] = []
+    for td in tensor_dicts:
+        bs_tuple = tuple(td.batch_size)
+        if len(bs_tuple) >= 1:
+            inferred_bs0.append(int(bs_tuple[0]))
+            continue
+        # Fall back to attention_mask if batch_size is empty
+        am = td["attention_mask"]
+        if am.ndim >= 2:
+            inferred_bs0.append(int(am.shape[0]))
+            continue
+        # As a last resort, infer from any tensor value with a leading dimension
+        found = False
+        for v in td.values():
+            if torch.is_tensor(v) and v.ndim >= 1:
+                inferred_bs0.append(int(v.shape[0]))
+                found = True
+                break
+        if not found:
+            raise ValueError(
+                "Cannot infer batch size for a TensorDict without a non-scalar tensor."
+            )
+
+    # Compose the new batch_size: sum over first dimension; keep any trailing dims if present
+    # Prefer the first TensorDict that has non-empty trailing batch dims
+    trailing: List[int] | None = None
+    for td in tensor_dicts:
+        bs_tuple = tuple(td.batch_size)
+        if len(bs_tuple) > 1:
+            trailing = list(bs_tuple[1:])
+            break
+    new_batch_size = [sum(inferred_bs0), *(trailing or [])]
 
     # Find max sequence length across all dictionaries
-    assert all("attention_mask" in td for td in tensor_dicts)
     max_length = max([x["attention_mask"].shape[1] for x in tensor_dicts])
     result = {}
 
@@ -139,8 +182,9 @@ def concat_padded_tensors(
         merged_multi_modal = []
 
         # Merge multi-modal data maintaining per-dp correspondence
-        for tensor_dict in tensor_dicts:
-            td_batch_size = tensor_dict.batch_size[0]
+        for i, tensor_dict in enumerate(tensor_dicts):
+            # Use the already inferred batch size to avoid IndexError
+            td_batch_size = inferred_bs0[i]
 
             if "multi_modal_input" in tensor_dict:
                 # Has multi_modal_input - extend the lists
