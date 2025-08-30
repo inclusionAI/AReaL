@@ -50,6 +50,7 @@ def sglang_server():
         host=HOST,
         port=PORT,
         tp_size=1,
+        pp_size=1,
         base_gpu_id=0,
         dist_init_addr=f"{HOST}:{DIST_PORT}",
     )
