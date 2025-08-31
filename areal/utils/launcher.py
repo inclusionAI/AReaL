@@ -39,7 +39,23 @@ NA132_ENVIRONS = {
     "NCCL_DEBUG": "WARN",
     "NCCL_DEBUG_SUBSYS": "INIT,TUNING,GRAPH",
 }
-SGLANG_SERVER_WAIT_TIMEOUT_SECONDS = 360
+try:
+    # Allow overriding via env var for long model loads on first run
+    SGLANG_SERVER_WAIT_TIMEOUT_SECONDS = int(
+        os.getenv("AREAL_SGLANG_WAIT_TIMEOUT_SECONDS", str(60 * 15))
+    )
+except ValueError:
+    SGLANG_SERVER_WAIT_TIMEOUT_SECONDS = 60 * 15  # 15 minutes (fallback)
+
+# Optionally allow proceeding when a fraction of servers are ready.
+# Defaults to 1.0 (require all servers by default for backward compatibility).
+def _get_min_ready_fraction() -> float:
+    try:
+        v = float(os.getenv("AREAL_SGLANG_MIN_READY_FRACTION", "1.0"))
+        # Clamp to [0.0, 1.0]
+        return max(0.0, min(1.0, v))
+    except ValueError:
+        return 1.0
 
 
 def get_env_vars(
@@ -99,20 +115,37 @@ def wait_sglang_server_addrs(
     # Get SGLang slurm nodes, find the hosts
     name = names.gen_servers(experiment_name, trial_name)
     start = time.perf_counter()
+    min_ready_fraction = _get_min_ready_fraction()
+    # Compute minimum required servers based on fraction (ceil semantics)
+    min_required = (
+        n_sglang_servers
+        if min_ready_fraction >= 0.9999
+        else int(n_sglang_servers * min_ready_fraction + 0.9999)
+    )
     while True:
         sglang_addrs = name_resolve.get_subtree(name)
-        if len(sglang_addrs) >= n_sglang_servers:
+        if len(sglang_addrs) >= min_required:
             logger.info(
-                f"Found {len(sglang_addrs)} SGLang servers: {', '.join(sglang_addrs)}"
+                f"Found {len(sglang_addrs)} SGLang servers (min_required={min_required}, expected={n_sglang_servers}): "
+                f"{', '.join(sglang_addrs)}"
             )
             break
 
         time.sleep(1)
         if time.perf_counter() - start > SGLANG_SERVER_WAIT_TIMEOUT_SECONDS:
-            raise TimeoutError(
-                f"Timeout waiting for SGLang servers to be ready. "
-                f"Expected {n_sglang_servers} servers, found {len(sglang_addrs)}."
-            )
+            if len(sglang_addrs) >= min_required:
+                logger.warning(
+                    "Timeout waiting for all SGLang servers, proceeding with %d/%d ready (min_required=%d).",
+                    len(sglang_addrs),
+                    n_sglang_servers,
+                    min_required,
+                )
+                break
+            else:
+                raise TimeoutError(
+                    f"Timeout waiting for SGLang servers to be ready. "
+                    f"Expected {n_sglang_servers} servers, found {len(sglang_addrs)} (min_required={min_required})."
+                )
     return sglang_addrs
 
 
