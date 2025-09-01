@@ -1,8 +1,8 @@
 import dataclasses
+import getpass
 import os
 import pathlib
 import pickle
-import getpass
 from typing import Dict, List, Optional, Tuple
 
 from transformers import PreTrainedTokenizerFast
@@ -10,13 +10,12 @@ from transformers import PreTrainedTokenizerFast
 from arealite.api.cli_args import SaverConfig
 from arealite.api.engine_api import TrainEngine
 from arealite.api.io_struct import FinetuneSpec, SaveLoadMeta
-
-from realhf.base import timeutil
-from realhf.base import constants, logging
+from realhf.base import constants, logging, timeutil
 
 logger = logging.getLogger("recover")
 
 RECOVER_INFO_PATH = None
+
 
 @dataclasses.dataclass
 class RecoverInfo:
@@ -160,10 +159,21 @@ class Recover:
         # save meta info
         self.save_meta_info(epoch, step, global_step, dataloader_state)
 
-    def save_meta_info(self, epoch: int, step: int, global_step: int, dataloader_state: dict, name: str = "default"):
+    def save_meta_info(
+        self,
+        epoch: int,
+        step: int,
+        global_step: int,
+        dataloader_state: dict,
+        name: str = "default",
+    ):
         path = self.get_save_meta_path(self.config, epoch, step, global_step, name)
-        hf_path = self.get_save_checkpoint_path(self.config, epoch, step, global_step, name)
-        checkpoint_path = self.get_save_checkpoint_path(self.config, epoch, step, global_step, name) #TODO,diff path
+        hf_path = self.get_save_checkpoint_path(
+            self.config, epoch, step, global_step, name
+        )
+        checkpoint_path = self.get_save_checkpoint_path(
+            self.config, epoch, step, global_step, name
+        )  # TODO,diff path
         recover_info = RecoverInfo(
             epoch=epoch,
             epoch_step=step,
@@ -173,18 +183,18 @@ class Recover:
             step_ctl_state=self.freq_ctl.step_ctl.state_dict(),
             time_ctl_state=self.freq_ctl.time_ctl.state_dict(),
             hf_path=hf_path,
-            checkpoint_path=checkpoint_path
+            checkpoint_path=checkpoint_path,
         )
         with open(os.path.join(path, "recover_info.pkl"), "wb") as f:
             pickle.dump(recover_info, f)
         logger.info(f"[Recover] Saved recover meta info to {path} success.")
 
     def load_ctl_states(self, recover_info: RecoverInfo):
-        if hasattr(recover_info, 'epoch_ctl_state'):
+        if hasattr(recover_info, "epoch_ctl_state"):
             self.freq_ctl.epoch_ctl.load_state_dict(recover_info.epoch_ctl_state)
-        if hasattr(recover_info, 'step_ctl_state'):
+        if hasattr(recover_info, "step_ctl_state"):
             self.freq_ctl.step_ctl.load_state_dict(recover_info.step_ctl_state)
-        if hasattr(recover_info, 'time_ctl_state'):
+        if hasattr(recover_info, "time_ctl_state"):
             self.freq_ctl.time_ctl.load_state_dict(recover_info.time_ctl_state)
 
     @staticmethod

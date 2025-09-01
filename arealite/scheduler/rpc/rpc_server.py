@@ -1,16 +1,18 @@
 import argparse
 import gzip
+import logging
 import os
 import pickle
 import threading
-import logging
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from arealite.scheduler.utils import deserialize_with_metadata
-import cloudpickle
 import traceback
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import cloudpickle
+
+from arealite.scheduler.utils import deserialize_with_metadata
 
 logger = logging.getLogger("RPCServer")
+
 
 class EngineRPCServer(BaseHTTPRequestHandler):
     engine = None
@@ -68,15 +70,16 @@ def start_rpc_server(port):
     server = ThreadingHTTPServer(("0.0.0.0", port), EngineRPCServer)
     server.serve_forever()
 
+
 def get_serve_port(args):
     port = args.port
-    port_str = os.environ.get('PORT_LIST', '').strip()
+    port_str = os.environ.get("PORT_LIST", "").strip()
 
     # 检查是否设置
     if not port_str:
         return port
     # 按逗号分割并去除每个元素的空格
-    ports = [p.strip() for p in port_str.split(',')]
+    ports = [p.strip() for p in port_str.split(",")]
     # 检查数组是否为空
     if not ports:
         return port
@@ -89,7 +92,9 @@ if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
-    file_handler = logging.FileHandler("/tmp/output.log", mode="a")  # mode="w" 会覆盖文件
+    file_handler = logging.FileHandler(
+        "/tmp/output.log", mode="a"
+    )  # mode="w" 会覆盖文件
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--port", type=int, required=False)
@@ -101,5 +106,3 @@ if __name__ == "__main__":
 
     start_rpc_server(port)
     print(f"RPC server running on port {port}")
-
-

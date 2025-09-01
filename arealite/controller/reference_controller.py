@@ -1,32 +1,38 @@
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+
 import torch
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from arealite.api.cli_args import TrainControllerConfig
 from arealite.api.controller_api import TrainController
 from arealite.api.engine_api import TrainEngine
-from arealite.api.io_struct import (
-    SaveLoadMeta,
-    WeightUpdateMeta,
-    AllocationMode,
-)
+from arealite.api.io_struct import AllocationMode, SaveLoadMeta, WeightUpdateMeta
 from arealite.controller.train_controller import DistributedTrainController
 from arealite.controller.utils import create_engine_with_retry
-from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec, ScheduleStrategy
-from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronInitConfig
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
+from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronInitConfig
+from arealite.scheduler.base import (
+    ContainerSpec,
+    Scheduler,
+    ScheduleStrategy,
+    SchedulingConfig,
+)
 from realhf.base import logging
+
 logger = logging.getLogger("DistributedReferenceController")
+
+
 class DistributedReferenceController(DistributedTrainController):
     def __init__(
-            self,
-            train_engine: TrainEngine,
-            config: TrainControllerConfig,
-            scheduler: Scheduler,
-            *args,
-            **kwargs
+        self,
+        train_engine: TrainEngine,
+        config: TrainControllerConfig,
+        scheduler: Scheduler,
+        *args,
+        **kwargs,
     ):
         super().__init__(train_engine, config, scheduler)
         self.allocate_mode = AllocationMode.from_str(config.allocation_mode)

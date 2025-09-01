@@ -1,6 +1,7 @@
-from datasets import Dataset
 import torch
+from datasets import Dataset
 from torch.utils.data import Sampler
+
 
 def process_rl_dataset(dataset: Dataset):
     def process(sample):
@@ -27,6 +28,6 @@ class ShuffleSampler(Sampler):
     def __iter__(self):
         for idx in self.shuffle_indices:
             yield idx
-        
+
     def __len__(self):
         return len(self.data_source)

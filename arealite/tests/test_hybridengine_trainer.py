@@ -1,4 +1,6 @@
+import os
 import resource
+import shutil
 import sys
 import time
 
@@ -6,29 +8,40 @@ import torch
 from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from arealite.api.cli_args import load_expr_config, BaseExperimentConfig, InferenceEngineConfig, TrainEngineConfig, \
-    RolloutControllerConfig, TrainControllerConfig, RemoteMegatronEngineConfig, StatsLoggerConfig, WandBConfig, \
-    RemoteHybridInferenceConfig
-from arealite.api.io_struct import FinetuneSpec, AllocationMode
+from arealite.api.cli_args import (
+    BaseExperimentConfig,
+    GenerationHyperparameters,
+    InferenceEngineConfig,
+    RemoteHybridInferenceConfig,
+    RemoteMegatronEngineConfig,
+    RolloutControllerConfig,
+    StatsLoggerConfig,
+    TrainControllerConfig,
+    TrainEngineConfig,
+    WandBConfig,
+    load_expr_config,
+)
+from arealite.api.engine_api import WeightUpdateMeta
+from arealite.api.io_struct import AllocationMode, FinetuneSpec
 from arealite.controller.rollout_controller import DistributedRolloutController
 from arealite.controller.train_controller import DistributedTrainController
-from arealite.extension.asystem.remote_hybrid_inference_worker import RemoteHybridInferenceWorker
-from arealite.extension.asystem.remote_hyprid_train_worker import RemoteHypridTrainWorker
+from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
+from arealite.extension.asystem.math_reward import reward_fn
+from arealite.extension.asystem.remote_hybrid_inference_worker import (
+    RemoteHybridInferenceWorker,
+)
+from arealite.extension.asystem.remote_hyprid_train_worker import (
+    RemoteHypridTrainWorker,
+)
 from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronEngine
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangEngine
+from arealite.scheduler.asystem import AsystemScheduler
 from arealite.scheduler.local import LocalScheduler
-from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.utils.stats_logger import StatsLogger
 from arealite.workflow.rlvr import RLVRWorkflow
-from arealite.api.cli_args import GenerationHyperparameters
 from realhf.api.core.data_api import load_hf_tokenizer
-from arealite.api.engine_api import WeightUpdateMeta
-from arealite.extension.asystem.math_reward import reward_fn
-from arealite.scheduler.asystem import AsystemScheduler
-import os
-import shutil
-
 from realhf.base import logging, stats_tracker
+
 
 def clear_dir(path):
     if os.path.exists(path):
@@ -39,54 +52,60 @@ def clear_dir(path):
             elif os.path.isdir(file_path):
                 shutil.rmtree(file_path)
 
+
 logger = logging.getLogger("Trainer")
+
 
 def main_grpo():
     experiment_name = "arealite"
     trial_name = "helloworld"
 
     # init controller
-    scheduler = AsystemScheduler({
-        "endpoint": "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081",
-        "expr_name": experiment_name,
-        "trial_name": trial_name,
-        "train": {
-            "worker": {
-                "image": "",
-                "cmd": "",
-                "extra_envs": {
-                    "REAL_PACKAGE_PATH": "fff",
+    scheduler = AsystemScheduler(
+        {
+            "endpoint": "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081",
+            "expr_name": experiment_name,
+            "trial_name": trial_name,
+            "train": {
+                "worker": {
+                    "image": "",
+                    "cmd": "",
+                    "extra_envs": {
+                        "REAL_PACKAGE_PATH": "fff",
+                    },
+                },
+                "engine": {
+                    "image": "",
+                    "cmd": "",
+                    "extra_envs": {
+                        "REAL_PACKAGE_PATH": "fff",
+                    },
                 },
             },
-            "engine": {
-                "image": "",
-                "cmd": "",
-                "extra_envs": {
-                    "REAL_PACKAGE_PATH": "fff",
+            "rollout": {
+                "worker": {
+                    "image": "",
+                    "cmd": "",
+                    "extra_envs": {
+                        "REAL_PACKAGE_PATH": "fff",
+                    },
                 },
-            },
-        },
-        "rollout": {
-            "worker": {
-                "image": "",
-                "cmd": "",
-                "extra_envs": {
-                    "REAL_PACKAGE_PATH": "fff",
-                },
-            },
-            "engine": {
-                "image": "",
-                "cmd": "",
-                "extra_envs": {
-                    "REAL_PACKAGE_PATH": "fff",
+                "engine": {
+                    "image": "",
+                    "cmd": "",
+                    "extra_envs": {
+                        "REAL_PACKAGE_PATH": "fff",
+                    },
                 },
             },
         }
-    })
+    )
 
-    dataset = load_dataset("json",
-                           data_files="/storage/xinyu.kxy/data/moe_lite_math_0527_merge_train_areal.jsonl")
-    train_dataset = dataset['train']
+    dataset = load_dataset(
+        "json",
+        data_files="/storage/xinyu.kxy/data/moe_lite_math_0527_merge_train_areal.jsonl",
+    )
+    train_dataset = dataset["train"]
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
     batch_size = 64
     group_size = 8
@@ -96,32 +115,62 @@ def main_grpo():
     step_num = 1145
     epoch_num = 10
     global_step = 0
-    os.environ['WANDB_API_KEY'] = 'local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe'
+    os.environ["WANDB_API_KEY"] = "local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe"
     os.environ["WANDB_BASE_URL"] = "https://slurm.alipay.com"
     deploy_mode = "separation"
     allocation_mode = "gen:d4t8p1,train:d32t1p1"
     allocate_mode = AllocationMode.from_str(allocation_mode)
     storage_path = "/storage/openpsi/checkpoints/{experiment_name}/{trial_name}".format(
-        experiment_name=experiment_name, trial_name=trial_name)
+        experiment_name=experiment_name, trial_name=trial_name
+    )
 
-    stats_logger = StatsLogger(StatsLoggerConfig(
-        experiment_name=experiment_name, trial_name=trial_name,fileroot="/storage/openpsi/experiments",
-        wandb=WandBConfig(
-            mode="online",
+    stats_logger = StatsLogger(
+        StatsLoggerConfig(
+            experiment_name=experiment_name,
+            trial_name=trial_name,
+            fileroot="/storage/openpsi/experiments",
+            wandb=WandBConfig(
+                mode="online",
+            ),
         ),
-
-    ), FinetuneSpec(total_train_epochs=epoch_num, dataset_size=step_num * batch_size ,train_batch_size=batch_size))
+        FinetuneSpec(
+            total_train_epochs=epoch_num,
+            dataset_size=step_num * batch_size,
+            train_batch_size=batch_size,
+        ),
+    )
     stats_logger.info(f"total_epochs={epoch_num} step_per_epoch={step_num}")
 
     rollout = DistributedRolloutController(
-        RemoteHybridInferenceWorker(RemoteHybridInferenceConfig(experiment_name=experiment_name, trial_name=trial_name, model_path=MODEL_PATH, storage_path=storage_path,
-                                                                dp_size=allocate_mode.gen_dp_size, tp_size=allocate_mode.gen_tp_size, pp_size=allocate_mode.gen_pp_size)),
-        RolloutControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
+        RemoteHybridInferenceWorker(
+            RemoteHybridInferenceConfig(
+                experiment_name=experiment_name,
+                trial_name=trial_name,
+                model_path=MODEL_PATH,
+                storage_path=storage_path,
+                dp_size=allocate_mode.gen_dp_size,
+                tp_size=allocate_mode.gen_tp_size,
+                pp_size=allocate_mode.gen_pp_size,
+            )
+        ),
+        RolloutControllerConfig(
+            experiment_name=experiment_name,
+            trial_name=trial_name,
+            allocation_mode=allocation_mode,
+        ),
         scheduler,
     )
     actor = DistributedTrainController(
-        RemoteHypridTrainWorker(RemoteMegatronEngineConfig(experiment_name=experiment_name, trial_name=trial_name)),
-        TrainControllerConfig(experiment_name=experiment_name, trial_name=trial_name, allocation_mode=allocation_mode),
+        RemoteHypridTrainWorker(
+            RemoteMegatronEngineConfig(
+                experiment_name=experiment_name, trial_name=trial_name
+            )
+        ),
+        TrainControllerConfig(
+            experiment_name=experiment_name,
+            trial_name=trial_name,
+            allocation_mode=allocation_mode,
+        ),
         scheduler,
     )
     # engine initialize
@@ -149,12 +198,18 @@ def main_grpo():
                 batch_data = []
                 while len(batch_data) < batch_size:
                     batch = next(data_generator)
-                    prompt = batch["prompt"] if isinstance(batch, dict) else batch[0]["prompt"]
+                    prompt = (
+                        batch["prompt"]
+                        if isinstance(batch, dict)
+                        else batch[0]["prompt"]
+                    )
                     tokenized = tokenizer(prompt, truncation=False, return_length=True)
                     if tokenized["length"][0] <= max_prompt_len:
                         batch_data.append(batch)
                     else:
-                        logger.warning(f"Ignored prompt with length {tokenized['length'][0]} > {max_prompt_len}")
+                        logger.warning(
+                            f"Ignored prompt with length {tokenized['length'][0]} > {max_prompt_len}"
+                        )
 
                 if len(batch_data) < batch_size:
                     break
@@ -173,7 +228,9 @@ def main_grpo():
                     logger.info(f"start to update weight, step: {step}, epoch: {epoch}")
                     actor.upload_weights(weight_update_config)
                     rollout.update_weights(weight_update_config)
-                    logger.info(f"update weight succeeded, step: {step}, epoch: {epoch}")
+                    logger.info(
+                        f"update weight succeeded, step: {step}, epoch: {epoch}"
+                    )
                     clear_dir(weight_update_config.path)
 
                 with (
@@ -184,31 +241,45 @@ def main_grpo():
                         stats_tracker.record_timing("notify_rollout_start_event"),
                         stats_tracker.scope("rollout"),
                     ):
-                        logger.info(f"start to notify_rollout_start_event, step: {step}, epoch: {epoch}")
+                        logger.info(
+                            f"start to notify_rollout_start_event, step: {step}, epoch: {epoch}"
+                        )
                         rollout.notify_event("rollout_start", global_step)
-                        logger.info(f"notify_rollout_start_event succeeded, step: {step}, epoch: {epoch}")
+                        logger.info(
+                            f"notify_rollout_start_event succeeded, step: {step}, epoch: {epoch}"
+                        )
 
-                    with(stats_tracker.record_timing("main")):
+                    with stats_tracker.record_timing("main"):
                         logger.info(f"start to rollout, step: {step}, epoch: {epoch}")
                         rollout_res = rollout.rollout(batch_data, workflow=workflow)
                         logger.info(f"rollout succeeded, step: {step}, epoch: {epoch}")
 
-                    with(stats_tracker.record_timing("post_data_process")):
+                    with stats_tracker.record_timing("post_data_process"):
                         rollout_res_dict = rollout_res.to_dict()
                         for k, v in rollout_res_dict.items():
-                            if isinstance(v, torch.Tensor) and v.ndim > 1 and v.shape[0] == 1:
+                            if (
+                                isinstance(v, torch.Tensor)
+                                and v.ndim > 1
+                                and v.shape[0] == 1
+                            ):
                                 rollout_res_dict[k] = v.squeeze(0)
-                        torch.set_printoptions(threshold=float('inf'))
-                        logger.info(f"after rollout rewards: {rollout_res_dict["rewards"]}")
+                        torch.set_printoptions(threshold=float("inf"))
+                        logger.info(
+                            f"after rollout rewards: {rollout_res_dict["rewards"]}"
+                        )
                         dis_batch = DistributedBatchMemory(rollout_res_dict)
 
                         with (
                             stats_tracker.record_timing("notify_rollout_end_event"),
                             stats_tracker.scope("rollout"),
                         ):
-                            logger.info(f"start to notify_rollout_end_event, step: {step}, epoch: {epoch}")
+                            logger.info(
+                                f"start to notify_rollout_end_event, step: {step}, epoch: {epoch}"
+                            )
                             rollout.notify_event("rollout_end", global_step)
-                            logger.info(f"notify_rollout_end_event succeeded, step: {step}, epoch: {epoch}")
+                            logger.info(
+                                f"notify_rollout_end_event succeeded, step: {step}, epoch: {epoch}"
+                            )
 
                 with (
                     stats_tracker.record_timing("train_step"),
@@ -218,9 +289,13 @@ def main_grpo():
                         stats_tracker.record_timing("notify_train_start_event"),
                         stats_tracker.scope("train"),
                     ):
-                        logger.info(f"start to notify_train_start_event, step: {step}, epoch: {epoch}")
+                        logger.info(
+                            f"start to notify_train_start_event, step: {step}, epoch: {epoch}"
+                        )
                         actor.notify_event("train_start", global_step)
-                        logger.info(f"notify_train_start_event succeeded, step: {step}, epoch: {epoch}")
+                        logger.info(
+                            f"notify_train_start_event succeeded, step: {step}, epoch: {epoch}"
+                        )
 
                     logger.info(f"start to train, step: {step}, epoch: {epoch}")
                     actor.train_distributed_batch(dis_batch)
@@ -230,21 +305,21 @@ def main_grpo():
                         stats_tracker.record_timing("notify_train_end_event"),
                         stats_tracker.scope("train"),
                     ):
-                        logger.info(f"start to notify_train_end_event, step: {step}, epoch: {epoch}")
+                        logger.info(
+                            f"start to notify_train_end_event, step: {step}, epoch: {epoch}"
+                        )
                         actor.notify_event("train_end", global_step)
-                        logger.info(f"notify_train_end_event succeeded, step: {step}, epoch: {epoch}")
+                        logger.info(
+                            f"notify_train_end_event succeeded, step: {step}, epoch: {epoch}"
+                        )
 
                 metric = stats_tracker.export()
                 stats_logger.commit(epoch, step, global_step, metric)
 
             global_step += 1
 
-
     stats_logger.close()
-
 
 
 if __name__ == "__main__":
     main_grpo()
-
-

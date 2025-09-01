@@ -1,12 +1,13 @@
 import logging
 
 import cloudpickle
+import torch
+from tensordict import TensorDict
 
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.scheduler.local import LocalScheduler
 from arealite.scheduler.test.my_engine import MyEngine
-import torch
-from tensordict import TensorDict
+
 
 def main():
     logging.basicConfig(
@@ -24,7 +25,7 @@ def main():
         "seq_no_eos_mask": torch.zeros(256, dtype=torch.bool),
         "seqlen": torch.zeros(256, dtype=torch.int64),
         "task_ids": torch.zeros(256, dtype=torch.int64),
-        "versions": torch.zeros((256, 9060), dtype=torch.int64)
+        "versions": torch.zeros((256, 9060), dtype=torch.int64),
     }
     result = TensorDict(fields, batch_size=[256])
 
@@ -34,6 +35,7 @@ def main():
     a = cloudpickle.dumps(rollout_res_dict)
     b = cloudpickle.dumps(dbm)
     import sys
+
     print(f"a: {sys.getsizeof(a)}, b: {sys.getsizeof(b)}")
     workers = sched.get_workers("infer")
     engine_obj = MyEngine({"value": 24})
@@ -41,7 +43,6 @@ def main():
     result = sched.call_engine("", "infer", dbm)
     print("Result:", result)
     assert result == 1024
-
 
 
 if __name__ == "__main__":

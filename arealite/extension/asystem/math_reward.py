@@ -1,18 +1,19 @@
 # Copyright 2025 Ant Group Inc.
 
+import ast
 import os
 import re
-import ast
-import requests
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Tuple
+
+import requests
 from transformers import AutoTokenizer
 
 import arealite.base.logging as logging
 from arealite.extension.asystem.functioncall.code.verify import code_verify
-from arealite.extension.asystem.functioncall.math.verify import math_verify
-from arealite.extension.asystem.functioncall.logic.verify import logic_verify
 from arealite.extension.asystem.functioncall.ifeval.verify import ifeval_verify
+from arealite.extension.asystem.functioncall.logic.verify import logic_verify
+from arealite.extension.asystem.functioncall.math.verify import math_verify
 
 logger = logging.getLogger("__name__")
 

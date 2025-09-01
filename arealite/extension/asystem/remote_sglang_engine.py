@@ -1,12 +1,12 @@
 import asyncio
+import dataclasses
+import json
 import os
 import random
-import json
 import threading
 import time
 import traceback
-import dataclasses
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import datetime
 from queue import Empty, Full, Queue
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
@@ -16,17 +16,16 @@ import requests
 import torch.distributed as dist
 import uvloop
 from tensordict import TensorDict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from arealite.api.cli_args import InferenceEngineConfig
 from arealite.api.engine_api import InferenceEngine, Scheduling
-from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.api.io_struct import (
     LLMRequest,
     LLMResponse,
     RolloutStat,
     WeightUpdateMeta,
 )
+from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.utils.data import concat_padded_tensors
 from arealite.utils.http import arequest_with_retry, get_default_connector
 from realhf.base import logging, name_resolve, names, pkg_version
@@ -53,6 +52,7 @@ class RemoteSGLangInitConfig:
     # /opt/conda/bin/python -m sglang.launch_server --model-path /storage/to/path --host 10.0.0.2 --port 8188 --dist-init-addr 10.0.0.1:9120 --nnodes 2 --node-rank 1 --tp 8 --pp 2
     sglang_addrs_list: list[list[str]]
 
+
 class RemoteSGLangEngine(InferenceEngine):
     def __init__(self, config: InferenceEngineConfig):
         config.max_concurrent_rollouts = (
@@ -73,9 +73,11 @@ class RemoteSGLangEngine(InferenceEngine):
     def initialize(self, config: RemoteSGLangInitConfig):
         logger.info(f"SGLangEngine begin exec initialize, config: {config}")
         # todo: init command from sglang config
-        command_template = ("/opt/conda/bin/python -m sglang.launch_server --model-path /storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/hf_ckpts/8604 "
-                            "--host {server_ip} --port {server_port} --dist-init-addr {dist_init_addr} --nnodes {node_num} --node-rank {node_rank} --tp 8 --enable-dp-attention --dp 2 --skip-tokenizer-init --trust-remote-code --disable-radix-cache --mem-fraction-static 0.7 "
-                            "--max-running-requests 256 --chunked-prefill-size 16384 --cuda-graph-bs 1 2 4 8 16 32 64 128 256 384 512 640 768 896 1024 --attention-backend triton")
+        command_template = (
+            "/opt/conda/bin/python -m sglang.launch_server --model-path /storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/hf_ckpts/8604 "
+            "--host {server_ip} --port {server_port} --dist-init-addr {dist_init_addr} --nnodes {node_num} --node-rank {node_rank} --tp 8 --enable-dp-attention --dp 2 --skip-tokenizer-init --trust-remote-code --disable-radix-cache --mem-fraction-static 0.7 "
+            "--max-running-requests 256 --chunked-prefill-size 16384 --cuda-graph-bs 1 2 4 8 16 32 64 128 256 384 512 640 768 896 1024 --attention-backend triton"
+        )
 
         # self.addresses = config.server_addrs
         dist_init_addr = config.sglang_addrs_list[0][1]
@@ -86,8 +88,14 @@ class RemoteSGLangEngine(InferenceEngine):
             server_ip = server_ip_port[0]
             server_port = server_ip_port[1]
             if index == 0:
-                self.addresses = [server_ip+":"+server_port]
-            command = command_template.format(server_ip=server_ip, server_port=server_port, dist_init_addr=dist_init_addr, node_num=node_num, node_rank=node_rank)
+                self.addresses = [server_ip + ":" + server_port]
+            command = command_template.format(
+                server_ip=server_ip,
+                server_port=server_port,
+                dist_init_addr=dist_init_addr,
+                node_num=node_num,
+                node_rank=node_rank,
+            )
             data = {"command": command}
             url = "http://" + config.main_server_addrs[index] + "/initialize"
 
@@ -96,14 +104,13 @@ class RemoteSGLangEngine(InferenceEngine):
                 url,
                 headers={"Content-Type": "application/json"},
                 data=json.dumps(data),
-                timeout=60  # 增加超时控制
+                timeout=60,  # 增加超时控制
             )
 
             response.raise_for_status()  # 自动处理 4xx/5xx 状态码
 
             result = response.json()
             logger.info(result)
-
 
         # self.addresses = ["10.10.131.247:8188"] * 8 + ["10.10.131.73:8188"] * 8
         self.exiting = threading.Event()
@@ -369,7 +376,7 @@ class RemoteSGLangEngine(InferenceEngine):
                     response = requests.post(
                         f"http://{addr}/update_weights_from_disk",
                         json={"model_path": str(meta.path), "allow_interrupt": True},
-                        timeout=self.config.request_timeout
+                        timeout=self.config.request_timeout,
                     )
                     response.raise_for_status()
                     res = response.json()
@@ -388,7 +395,10 @@ class RemoteSGLangEngine(InferenceEngine):
             #     future.result()  # Wait for all to complete or raise first exception
 
             with ThreadPoolExecutor(max_workers=len(self.addresses)) as executor:
-                futures = [executor.submit(update_single_server, addr) for addr in self.addresses]
+                futures = [
+                    executor.submit(update_single_server, addr)
+                    for addr in self.addresses
+                ]
                 for future in futures:
                     future.result()  # Wait for all to complete or raise first exception
 
@@ -409,7 +419,7 @@ class RemoteSGLangEngine(InferenceEngine):
         response = requests.post(
             f"http://{addr}/update_weights_from_disk",
             json={"model_path": str(path), "allow_interrupt": False},
-            timeout=self.config.request_timeout
+            timeout=self.config.request_timeout,
         )
         response.raise_for_status()
         res = response.json()
@@ -462,7 +472,9 @@ class RemoteSGLangEngine(InferenceEngine):
             self.result_cache[count:],
         )
 
-        logger.info(f"[RemoteSGLangEngine] wait, get all results len: {len(results)}, details: {results}")
+        logger.info(
+            f"[RemoteSGLangEngine] wait, get all results len: {len(results)}, details: {results}"
+        )
         group_size = 1
         if len(results) > 0:
             group_size = int(results[0]["input_ids"].shape[0])
@@ -471,7 +483,9 @@ class RemoteSGLangEngine(InferenceEngine):
         padded = concat_padded_tensors(results)
         if isinstance(padded, dict):
             padded = TensorDict(padded, batch_size=[bs])
-        print(f"[RemoteSGLangEngine] wait, padded type: {type(padded)}, padded: {padded}")
+        print(
+            f"[RemoteSGLangEngine] wait, padded type: {type(padded)}, padded: {padded}"
+        )
         return padded
 
     def rollout(  # only dp head accept this request
@@ -498,7 +512,7 @@ class RemoteSGLangEngine(InferenceEngine):
     ):
         for i in range(len(batch)):
             self.submit(batch[i], workflow)
-    
+
     def get_scheduling_config(self):
         # one dp total resources
         return Scheduling(

@@ -114,7 +114,6 @@ class AllocationMode:
     def train_world_size(self) -> int:
         return self.train_dp_size * self.train_pp_size * self.train_tp_size
 
-
     @property
     def reference_tp_size(self) -> int:
         return self.parallel_strat["ref"]["t"]
@@ -134,7 +133,9 @@ class AllocationMode:
     @classmethod
     def from_str(cls, allocation_mode: str):
         alloc_decoupled = AllocationMode.extract_decoupled_alloc(allocation_mode)
-        alloc_key_value_custom_alloc = AllocationMode.extract_key_value_alloc(allocation_mode)
+        alloc_key_value_custom_alloc = AllocationMode.extract_key_value_alloc(
+            allocation_mode
+        )
         if alloc_decoupled:
             if "vllm" in allocation_mode:
                 return cls(AllocationType.DECOUPLED_vLLM, alloc_decoupled)
@@ -164,7 +165,7 @@ class AllocationMode:
 
     @staticmethod
     def extract_key_value_alloc(
-            allocation_mode: str,
+        allocation_mode: str,
     ) -> Dict[str, Dict[str, int]] | None:
         def parse_key_value_pairs(s: str):
             pattern = re.compile(r"([^:,]+):([^:,]+)")

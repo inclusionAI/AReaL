@@ -57,7 +57,10 @@ class GenerationHyperparameters:
         default=0, metadata={"help": "Minimum number of tokens to generate."}
     )
     max_tokens: int = field(
-        default=2048, metadata={"help": "Maximum number of tokens including prompt and generated tokens."}
+        default=2048,
+        metadata={
+            "help": "Maximum number of tokens including prompt and generated tokens."
+        },
     )
     greedy: bool = field(
         default=False,
@@ -84,7 +87,7 @@ class GenerationHyperparameters:
         args = asdict(self)
         args.update(kwargs)
         return GenerationHyperparameters(**args)
-    
+
 
 @dataclass
 class PartialRolloutConfig:
@@ -134,13 +137,14 @@ class TrainControllerConfig:
         default="sglang.d1t8p1+d1t8p1",
         metadata={
             "help": "GPU parallel strategy allocation mode. "
-                    "Options: manual/heuristic or pattern-based."
+            "Options: manual/heuristic or pattern-based."
         },
     )
     experiment_name: str = MISSING
     trial_name: str = MISSING
     enable_colocate_mode: bool = False
     group_size: int = 0
+
 
 @dataclass
 class SGLangConfig:
@@ -266,6 +270,7 @@ class SGLangConfig:
         flags = " ".join(flags)
         return f"python3 -m sglang.launch_server {flags}"
 
+
 @dataclass
 class InferenceEngineConfig:
     experiment_name: str = field(
@@ -283,7 +288,7 @@ class InferenceEngineConfig:
         },
     )
     queue_size: None | int = field(
-        default=8192*10,
+        default=8192 * 10,
         metadata={"help": "Input/Output queue size for async rollout."},
     )
     consumer_batch_size: int = field(
@@ -294,8 +299,8 @@ class InferenceEngineConfig:
         default=0,
         metadata={
             "help": "Maximum off-policyness for the head. "
-                    "If the current version is more than this many versions behind, "
-                    "the request will not be accepted.",
+            "If the current version is more than this many versions behind, "
+            "the request will not be accepted.",
         },
     )
     # Used by remote inference engines.
@@ -356,6 +361,7 @@ class RemoteHybridInferenceConfig(InferenceEngineConfig):
         default=7200.0, metadata={"help": "Timeout for HTTP requests."}
     )
 
+
 @dataclass
 class SGLangEngineConfig:
     pass
@@ -363,12 +369,12 @@ class SGLangEngineConfig:
 
 @dataclass
 class RolloutControllerConfig:
-    #inference_engine_config: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
+    # inference_engine_config: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     allocation_mode: str = field(
         default="sglang.d1t8p1+d1t8p1",
         metadata={
             "help": "GPU parallel strategy allocation mode. "
-                    "Options: manual/heuristic or pattern-based."
+            "Options: manual/heuristic or pattern-based."
         },
     )
     experiment_name: str = MISSING
@@ -533,6 +539,7 @@ class TrainDataset:
     max_prompt_len: int = field(default=1024)
     shuffle: bool = field(default=True)
 
+
 @dataclass
 class SchedulerConfig:
     endpoint: str = field(default="http://localhost:8081")
@@ -540,6 +547,7 @@ class SchedulerConfig:
     functioncall_service_domain: str = field(default="http://localhost:8080")
     reward_model_path: str = field(default="")
     reward_model_service_url: str = field(default="http://localhost:30000/classify")
+
 
 @dataclass
 class BaseExperimentConfig:
@@ -568,10 +576,12 @@ class BaseExperimentConfig:
         default="",
         metadata={
             "help": "GPU parallel strategy allocation mode. "
-                    "Options: manual/heuristic or pattern-based."
+            "Options: manual/heuristic or pattern-based."
         },
     )
-    enable_colocate_mode: bool = field(default=False, metadata={"help": "Enable colocate mode."})
+    enable_colocate_mode: bool = field(
+        default=False, metadata={"help": "Enable colocate mode."}
+    )
     seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
     total_train_epochs: int = field(
         default=1, metadata={"help": "Total number of epochs to train the model."}
@@ -583,9 +593,9 @@ class BaseExperimentConfig:
     weight_update_type: str = field(default="nccl", metadata={"help": "nccl/disk"})
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     train_bs_n_seqs: int = field(
-        default=64,
-        metadata={"help": "Training batch size in number of sequences"}
+        default=64, metadata={"help": "Training batch size in number of sequences"}
     )
+
 
 # FSDP
 @dataclass
@@ -640,7 +650,9 @@ class RemoteMegatronWrapPolicy:
     mask_too_long: bool = False
     use_dense_reward: bool = False
     reward_delta: bool = True
-    token_normalize_scope: str = field(default="global", metadata={"choices": ["global", "dp"]})
+    token_normalize_scope: str = field(
+        default="global", metadata={"choices": ["global", "dp"]}
+    )
     sample_reuse: int = 1
     temperature: float = 1.0  # GenerationHyperparameters
     reward_output_scaling: float = field(
@@ -663,10 +675,10 @@ class RemoteMegatronEngineConfig:
     @staticmethod
     def assign_wrap_policy(policy_dict: Dict) -> RemoteMegatronWrapPolicy:
         """Assign values from dictionary to RemoteMegatronWrapPolicy fields.
-        
+
         Args:
             policy_dict: Dictionary containing wrap policy configuration
-            
+
         Returns:
             Configured RemoteMegatronWrapPolicy instance
         """
@@ -675,6 +687,7 @@ class RemoteMegatronEngineConfig:
             if hasattr(policy, field_name):
                 setattr(policy, field_name, field_value)
         return policy
+
     experiment_name: str = field(
         default="test-exp",
         metadata={"help": "Name of the experiment (no '_' or '/'). Required."},
@@ -708,6 +721,7 @@ class RemoteMegatronEngineConfig:
             "help": "global step for recover",
         },
     )
+
 
 @dataclass
 class TrainEngineConfig:
@@ -748,7 +762,10 @@ class TrainEngineConfig:
     )
     backend: str = ""
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
-    hybrid_engine: RemoteMegatronEngineConfig = field(default_factory=RemoteMegatronEngineConfig)
+    hybrid_engine: RemoteMegatronEngineConfig = field(
+        default_factory=RemoteMegatronEngineConfig
+    )
+
 
 @dataclass
 class SFTConfig(BaseExperimentConfig):
@@ -762,18 +779,28 @@ class RecoverConfig:
     fileroot: str = field(default="")
     recover_meta_info_path: str = field(default="")
     enable_recover: bool = field(default=False)
-    latest_disable_save_hf: bool = field(default=True, metadata={"help": "Disable saving latest huggingFace"})
-    periodic_disable_save_hf: bool = field(default=False, metadata={"help": "Disable saving periodic huggingFace"})
-    periodic_save_interval: Optional[int] = field(default=None, metadata={"help": "Periodic save steps"})
-    latest_save_interval: Optional[int] = field(default=None, metadata={"help": "Latest save steps"})
-
-
+    latest_disable_save_hf: bool = field(
+        default=True, metadata={"help": "Disable saving latest huggingFace"}
+    )
+    periodic_disable_save_hf: bool = field(
+        default=False, metadata={"help": "Disable saving periodic huggingFace"}
+    )
+    periodic_save_interval: Optional[int] = field(
+        default=None, metadata={"help": "Periodic save steps"}
+    )
+    latest_save_interval: Optional[int] = field(
+        default=None, metadata={"help": "Latest save steps"}
+    )
 
 
 @dataclass
 class GRPOConfig(BaseExperimentConfig):
-    gconfig: GenerationHyperparameters = field(default_factory=GenerationHyperparameters)
-    rollout: RemoteHybridInferenceConfig = field(default_factory=RemoteHybridInferenceConfig)
+    gconfig: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
+    rollout: RemoteHybridInferenceConfig = field(
+        default_factory=RemoteHybridInferenceConfig
+    )
     actor: TrainEngineConfig = field(default_factory=TrainEngineConfig)
     ref: TrainEngineConfig = field(default_factory=TrainEngineConfig)
     recover: RecoverConfig = field(default_factory=RecoverConfig)

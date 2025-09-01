@@ -1,25 +1,32 @@
+import os
+import shutil
 import sys
-from arealite.scheduler.asystem import AsystemScheduler
+
 import torch
 from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from arealite.api.cli_args import load_expr_config, BaseExperimentConfig, InferenceEngineConfig, TrainEngineConfig, \
-    RolloutControllerConfig, TrainControllerConfig, RemoteMegatronEngineConfig
+from arealite.api.cli_args import (
+    BaseExperimentConfig,
+    GenerationHyperparameters,
+    InferenceEngineConfig,
+    RemoteMegatronEngineConfig,
+    RolloutControllerConfig,
+    TrainControllerConfig,
+    TrainEngineConfig,
+    load_expr_config,
+)
+from arealite.api.engine_api import WeightUpdateMeta
 from arealite.controller.rollout_controller import DistributedRolloutController
 from arealite.controller.train_controller import DistributedTrainController
+from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
+from arealite.extension.asystem.math_reward import reward_fn
 from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronEngine
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangEngine
+from arealite.scheduler.asystem import AsystemScheduler
 from arealite.scheduler.local import LocalScheduler
-from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.workflow.rlvr import RLVRWorkflow
-from arealite.api.cli_args import GenerationHyperparameters
 from realhf.api.core.data_api import load_hf_tokenizer
-from arealite.api.engine_api import WeightUpdateMeta
-from arealite.extension.asystem.math_reward import reward_fn
-
-import os
-import shutil
 
 
 def clear_dir(path):
@@ -31,41 +38,51 @@ def clear_dir(path):
             elif os.path.isdir(file_path):
                 shutil.rmtree(file_path)
 
+
 def main_grpo():
     # init controller
 
-    scheduler = AsystemScheduler({
-        "endpoint": "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081",
-        "expr_name": "arealite-test",
-        "trial_name": "trial-0",
-        "train_config": {
-            "image": "xxx",
-            "extra_envs": {
-                "REAL_PACKAGE_PATH": "fff",
+    scheduler = AsystemScheduler(
+        {
+            "endpoint": "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081",
+            "expr_name": "arealite-test",
+            "trial_name": "trial-0",
+            "train_config": {
+                "image": "xxx",
+                "extra_envs": {
+                    "REAL_PACKAGE_PATH": "fff",
+                },
             },
-        },
-        "rollout_config": {
-            "image": "xxx",
-            "extra_envs": {
-                "REAL_PACKAGE_PATH": "fff",
+            "rollout_config": {
+                "image": "xxx",
+                "extra_envs": {
+                    "REAL_PACKAGE_PATH": "fff",
+                },
             },
+        }
+    )
 
-        },
-    })
-
-    rollout_config = InferenceEngineConfig(experiment_name="arealite", trial_name="async")
+    rollout_config = InferenceEngineConfig(
+        experiment_name="arealite", trial_name="async"
+    )
 
     rollout = DistributedRolloutController(
         RemoteSGLangEngine(rollout_config),
         RolloutControllerConfig(
-            experiment_name="arealite", trial_name="async", allocation_mode="gen:d1t8p1,train:d1t8p1"
+            experiment_name="arealite",
+            trial_name="async",
+            allocation_mode="gen:d1t8p1,train:d1t8p1",
         ),
         scheduler,
     )
     actor = DistributedTrainController(
-        RemoteMegatronEngine(RemoteMegatronEngineConfig(experiment_name="arealite", trial_name="async")),
+        RemoteMegatronEngine(
+            RemoteMegatronEngineConfig(experiment_name="arealite", trial_name="async")
+        ),
         TrainControllerConfig(
-            experiment_name="arealite", trial_name="async", allocation_mode="gen:d1t8p1,train:d1t8p1"
+            experiment_name="arealite",
+            trial_name="async",
+            allocation_mode="gen:d1t8p1,train:d1t8p1",
         ),
         scheduler,
     )
@@ -84,9 +101,11 @@ def main_grpo():
         tokenizer=tokenizer,
     )
 
-    dataset = load_dataset("json",
-                           data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train.jsonl")
-    train_dataset = dataset['train']
+    dataset = load_dataset(
+        "json",
+        data_files="/storage/xukuan.xk/repos/antnlp/personal/llm/benchmark/orz_areal_train.jsonl",
+    )
+    train_dataset = dataset["train"]
     dataloader = StatefulDataLoader(train_dataset, batch_size=1)
     batch_size = 512
     batch_data = []
@@ -98,7 +117,7 @@ def main_grpo():
         # Submit batches
         if rollout_config.max_head_offpolicyness > 0:
             batch_data = []
-            for i in range(rollout_config.max_head_offpolicyness*batch_size):
+            for i in range(rollout_config.max_head_offpolicyness * batch_size):
                 batch = next(data_generator)
                 batch_data.append(batch)
             rollout.submit(batch_data, workflow=workflow)
@@ -140,7 +159,9 @@ def main_grpo():
                     rollout_res_dict[k] = v.squeeze(0)
             dis_batch = DistributedBatchMemory(rollout_res_dict)
             stats = actor.train_distributed_batch(dis_batch)
-            print(f"[Trainer] train exec success, step: {step}, epoch: {epoch}, stats: {stats}")
+            print(
+                f"[Trainer] train exec success, step: {step}, epoch: {epoch}, stats: {stats}"
+            )
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from realhf.base.network import find_multiple_free_ports, gethostip
 
 pytestmark = pytest.mark.skip("skip failed cases")
 
+
 def _worker_process(result_queue, count, low, high, experiment, trial):
     """Helper function for multi-process testing."""
     ports = find_multiple_free_ports(

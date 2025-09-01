@@ -1,29 +1,30 @@
 import argparse
-import subprocess
 import os
+import random
+import subprocess
 import sys
+import time
 
 import uvicorn
-import random
-import time
 from fastapi import FastAPI, HTTPException, Request
 
 
 def get_serve_port(args):
     port = args.port
-    port_str = os.environ.get('PORT_LIST', '').strip()
+    port_str = os.environ.get("PORT_LIST", "").strip()
 
     # 检查是否设置
     if not port_str:
         return port
         # 按逗号分割并去除每个元素的空格
-    ports = [p.strip() for p in port_str.split(',')]
+    ports = [p.strip() for p in port_str.split(",")]
     # 检查数组是否为空
     if not ports:
         return port
     # 获取第 0 个元素
     first_port = ports[0]
     return int(first_port)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="InferenceServer")
@@ -32,7 +33,6 @@ if __name__ == "__main__":
     port = get_serve_port(args)
 
     app = FastAPI()
-
 
     @app.post("/initialize")
     async def initialize(request: Request):
@@ -48,14 +48,13 @@ if __name__ == "__main__":
         try:
             # 启动子进程执行命令
             process = subprocess.Popen(
-                command.split(),
-                stdout=sys.stdout,
-                stderr=sys.stderr
+                command.split(), stdout=sys.stdout, stderr=sys.stderr
             )
             return {"pid": process.pid, "status": "started"}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to start process: {str(e)}")
-
+            raise HTTPException(
+                status_code=500, detail=f"Failed to start process: {str(e)}"
+            )
 
     # 随机延迟启动（保持原有逻辑）
     sleep_time = random.randint(1, 7)

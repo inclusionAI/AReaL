@@ -1,7 +1,7 @@
 import dataclasses
+import getpass
 import os
 import pickle
-import getpass
 from typing import Optional, Tuple
 
 from transformers import PreTrainedTokenizerFast
@@ -10,10 +10,10 @@ from arealite.api.cli_args import RecoverConfig
 from arealite.api.controller_api import TrainController
 from arealite.api.engine_api import TrainEngine
 from arealite.api.io_struct import SaveLoadMeta
-
 from realhf.base import logging
 
 logger = logging.getLogger("recover")
+
 
 @dataclasses.dataclass
 class RecoverInfo:
@@ -49,7 +49,7 @@ class Recover:
         name: str,
     ):
         path = os.path.join(
-            self.get_save_checkpoint_root(name), 
+            self.get_save_checkpoint_root(name),
             f"epoch{epoch}epochstep{step}globalstep{globalstep}",
         )
         os.makedirs(path, exist_ok=True)
@@ -125,9 +125,7 @@ class Recover:
             logger.info(f"[Recover] Saved hf model to {path} success.")
 
         # save checkpoint
-        path = self.get_save_checkpoint_path(
-            epoch, step, global_step, name
-        )
+        path = self.get_save_checkpoint_path(epoch, step, global_step, name)
         weight_format = "mcore"
         with_optim = True
         meta = SaveLoadMeta(
@@ -144,9 +142,13 @@ class Recover:
         # save meta info
         self.save_meta_info(epoch, step, global_step, dataloader_state, name)
 
-    def save_meta_info(self, epoch: int, step: int, global_step: int, dataloader_state: dict, name: str):
+    def save_meta_info(
+        self, epoch: int, step: int, global_step: int, dataloader_state: dict, name: str
+    ):
         path = self.get_save_meta_path(epoch, step, global_step, name)
-        hf_path = self.get_save_checkpoint_path(epoch, step, global_step, f"{name}/huggingface")
+        hf_path = self.get_save_checkpoint_path(
+            epoch, step, global_step, f"{name}/huggingface"
+        )
         checkpoint_path = self.get_save_checkpoint_path(epoch, step, global_step, name)
         recover_info = RecoverInfo(
             epoch=epoch,
@@ -154,7 +156,7 @@ class Recover:
             global_step=global_step,
             dataloader_state=dataloader_state,
             hf_path=hf_path,
-            checkpoint_path=checkpoint_path
+            checkpoint_path=checkpoint_path,
         )
         with open(os.path.join(path, "recover_info.pkl"), "wb") as f:
             pickle.dump(recover_info, f)

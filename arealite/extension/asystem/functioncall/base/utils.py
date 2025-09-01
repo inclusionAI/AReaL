@@ -2,8 +2,8 @@
 # Copyright 2024 Wei Fu & Zhiyu Mei
 # Licensed under the Apache License, Version 2.0 (the "License").
 import json
-from datetime import datetime
 import uuid
+from datetime import datetime
 
 try:
     from arealite.base import constants, logging

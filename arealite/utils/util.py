@@ -1,5 +1,7 @@
 import os
 import shutil
+
+
 def clear_dir(path):
     if os.path.exists(path):
         for filename in os.listdir(path):

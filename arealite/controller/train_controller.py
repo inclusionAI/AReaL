@@ -1,27 +1,28 @@
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-import torch
-from concurrent.futures import ThreadPoolExecutor
 import cloudpickle
-
+import torch
 from torch import Tensor
 
 from arealite.api.cli_args import TrainControllerConfig
 from arealite.api.controller_api import TrainController
 from arealite.api.engine_api import TrainEngine
-from arealite.api.io_struct import (
-    SaveLoadMeta,
-    WeightUpdateMeta,
-    AllocationMode,
-)
+from arealite.api.io_struct import AllocationMode, SaveLoadMeta, WeightUpdateMeta
 from arealite.controller.utils import create_engine_with_retry
-from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec, ScheduleStrategy
-from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronInitConfig
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
-from realhf.base import stats_tracker, logging
+from arealite.extension.asystem.remote_megatron_engine import RemoteMegatronInitConfig
+from arealite.scheduler.base import (
+    ContainerSpec,
+    Scheduler,
+    ScheduleStrategy,
+    SchedulingConfig,
+)
+from realhf.base import logging, stats_tracker
+
 logger = logging.getLogger("DistributedTrainController")
 
 
@@ -32,7 +33,7 @@ class DistributedTrainController(TrainController):
         config: TrainControllerConfig,
         scheduler: Scheduler,
         *args,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(train_engine, config, scheduler)
         self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
@@ -44,14 +45,15 @@ class DistributedTrainController(TrainController):
         self.pp_size = self.allocate_mode.train_pp_size
         self.enable_colocate_mode = self.config.enable_colocate_mode
 
-
     def initialize(self, *args, **kwargs):
         """Initialize environments for distributed training and load models."""
         scheduling = self.train_engine.get_scheduling_config()
         scheduling_config = SchedulingConfig(replicas=self.world_size)
 
         target = kwargs.get("colocation_with")
-        scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
+        scheduling_config.schedule_strategy = (
+            ScheduleStrategy(type="colocation", uid=target.uid) if target else None
+        )
         logger.info(f"scheduling config: {scheduling_config}")
 
         arealite_path = os.getenv("REAL_PACKAGE_PATH", "")
@@ -60,28 +62,48 @@ class DistributedTrainController(TrainController):
             cpu=0,
             mem=0,
             gpu=scheduling.gpu,
-            cmd=f"bash {arealite_path}/arealite/scheduler/scripts/launch-worker.sh".format(arealite_path=arealite_path),
-            env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
-            portCount=1
+            cmd=f"bash {arealite_path}/arealite/scheduler/scripts/launch-worker.sh".format(
+                arealite_path=arealite_path
+            ),
+            env_vars=(
+                scheduling.env_vars.copy() if scheduling.env_vars is not None else {}
+            ),
+            portCount=1,
         )
         workerSpec.env_vars["REAL_PACKAGE_PATH"] = arealite_path
-        workerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
-        workerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
-            experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
+        workerSpec.env_vars["WORKER_IMAGE"] = (
+            "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
+        )
+        workerSpec.env_vars["WORKER_LOG_DIR"] = (
+            "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
+                experiment_name=self.config.experiment_name,
+                trial_name=self.config.trial_name,
+            )
+        )
         workerSpec.env_vars["WORKER_TYPE"] = f"{self.role}-worker"
 
         engineSpec = ContainerSpec(
             cpu=0,
             mem=0,
             gpu=0,
-            cmd=f"bash {arealite_path}/arealite/scheduler/scripts/launch-hybrid-server.sh".format(arealite_path=arealite_path),
-            env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
-            portCount=1
+            cmd=f"bash {arealite_path}/arealite/scheduler/scripts/launch-hybrid-server.sh".format(
+                arealite_path=arealite_path
+            ),
+            env_vars=(
+                scheduling.env_vars.copy() if scheduling.env_vars is not None else {}
+            ),
+            portCount=1,
         )
         engineSpec.env_vars["ENGINE_PACKAGE_PATH"] = engine_path
-        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13570177-20250829175427.sif"
-        engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
-            experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
+        engineSpec.env_vars["WORKER_IMAGE"] = (
+            "/storage/openpsi/images/hybrid-engine-13570177-20250829175427.sif"
+        )
+        engineSpec.env_vars["WORKER_LOG_DIR"] = (
+            "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
+                experiment_name=self.config.experiment_name,
+                trial_name=self.config.trial_name,
+            )
+        )
         engineSpec.env_vars["WORKER_TYPE"] = f"{self.role}-engine"
         engineSpec.env_vars["WORK_MODE"] = "TRAINING"
         engineSpec.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -91,7 +113,9 @@ class DistributedTrainController(TrainController):
         engineSpec.env_vars["NCCL_NVLS_ENABLE"] = "0"
         engineSpec.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
         engineSpec.env_vars["NCCL_DEBUG"] = "WARNING"
-        engineSpec.env_vars["ASTRA_SHARED_PATH"] = f"/storage/openpsi/astate_shared_storage"
+        engineSpec.env_vars["ASTRA_SHARED_PATH"] = (
+            f"/storage/openpsi/astate_shared_storage"
+        )
         engineSpec.env_vars["NVTE_FUSED_ATTN"] = "0"
         engineSpec.env_vars["NCCL_MAX_NCHANNELS"] = "16"
         engineSpec.env_vars["NCCL_DEBUG_SUBSYS"] = "INIT,TUNING,GRAPH"
@@ -99,11 +123,11 @@ class DistributedTrainController(TrainController):
         engineSpec.env_vars["USE_AREAL_LITE"] = "1"
 
         engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "bond0"
-        engineSpec.env_vars["GLOO_SOCKET_IFNAME"]="eth0"
+        engineSpec.env_vars["GLOO_SOCKET_IFNAME"] = "eth0"
         engineSpec.env_vars["NCCL_NET_PLUGIN"] = ""
         engineSpec.env_vars["NCCL_IB_GID_INDEX"] = "3"
         engineSpec.env_vars["NCCL_IB_TIMEOUT"] = "22"
-        engineSpec.env_vars["NCCL_IB_RETRY_CNT"] ="7"
+        engineSpec.env_vars["NCCL_IB_RETRY_CNT"] = "7"
         engineSpec.env_vars["NCCL_IB_SL"] = "5"
         engineSpec.env_vars["NCCL_IB_TC"] = "136"
         engineSpec.env_vars["NCCL_IB_HCA"] = "mlx5_bond"
@@ -118,7 +142,9 @@ class DistributedTrainController(TrainController):
 
         self.workers = self.scheduler.get_workers(self.role, timeout=1800)
         self.rank_info = {}
-        server_addrs = [f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports]
+        server_addrs = [
+            f"{worker.ip}:{worker.ports[0]}" for worker in self.workers if worker.ports
+        ]
         # FIXME: @chucai
         time.sleep(60)
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
@@ -133,7 +159,7 @@ class DistributedTrainController(TrainController):
                             server_addrs=server_addrs,
                             global_rank=index,
                             world_size=self.world_size,
-                            enable_colocate_mode=self.enable_colocate_mode
+                            enable_colocate_mode=self.enable_colocate_mode,
                         ),
                     )
                 )
@@ -155,15 +181,13 @@ class DistributedTrainController(TrainController):
         pass
 
     def _rpc_call(self, method, *args, **kwargs):
-        logger.info(f"start to  rpc call, method: {method}, args: {args}, kwargs: {kwargs}")
+        logger.info(
+            f"start to  rpc call, method: {method}, args: {args}, kwargs: {kwargs}"
+        )
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             futures = [
                 executor.submit(
-                    self.scheduler.call_engine,
-                    worker.id,
-                    method,
-                    *args,
-                    **kwargs
+                    self.scheduler.call_engine, worker.id, method, *args, **kwargs
                 )
                 for worker in self.workers
             ]
@@ -179,7 +203,6 @@ class DistributedTrainController(TrainController):
                 for f in futures:
                     f.cancel()
                 raise  # 重新抛出异常，主程序能感知
-
 
     def upload_weights(self, meta: WeightUpdateMeta):
         """Upload weights to the inference engine."""
@@ -203,7 +226,7 @@ class DistributedTrainController(TrainController):
 
     def notify_event(self, event: str, global_step: int) -> None:
         """Notify workers about training start/end events.
-        
+
         Args:
             event: "train_start" or "train_end"
             global_step: Current global step
@@ -216,14 +239,15 @@ class DistributedTrainController(TrainController):
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function."""
         logger.info(f"start to train_distributed_batch")
-        with (
-            stats_tracker.record_timing("train_distributed_batch_data_split"),
-        ):
+        with (stats_tracker.record_timing("train_distributed_batch_data_split"),):
             batches = input_._split_by_seqlen_ffd_helper(self.group_size, self.dp_size)
 
         self._calc_metrics(batches)
 
-        serialized_data = [cloudpickle.dumps(("train_distributed_batch", [batch], {})) for batch in batches]
+        serialized_data = [
+            cloudpickle.dumps(("train_distributed_batch", [batch], {}))
+            for batch in batches
+        ]
         futures = []
         results = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
@@ -235,13 +259,15 @@ class DistributedTrainController(TrainController):
                 # 24-31: tp0-7, pp1, dp1
 
                 rank_info = self.rank_info[index]
-                dp_rank =  rank_info["dp_rank"]
+                dp_rank = rank_info["dp_rank"]
                 batch_data = serialized_data[dp_rank]
-                futures.append(executor.submit(
-                    self.scheduler.call_engine_with_serialized_data,
-                    worker.id,
-                    batch_data
-                ))
+                futures.append(
+                    executor.submit(
+                        self.scheduler.call_engine_with_serialized_data,
+                        worker.id,
+                        batch_data,
+                    )
+                )
             try:
                 for future in futures:
                     result = future.result()
@@ -261,27 +287,34 @@ class DistributedTrainController(TrainController):
 
         return
 
-    def compute_logprobs_with_distributed(self, input_: DistributedBatchMemory) -> Tensor:
+    def compute_logprobs_with_distributed(
+        self, input_: DistributedBatchMemory
+    ) -> Tensor:
         """Update the model with a batch of data and a loss function."""
         logger.info(f"start to compute_logprobs_with_distributed")
         with (
             stats_tracker.record_timing("compute_logprobs_with_distributed_data_split"),
         ):
             batches = input_.split(self.dp_size)
-            serialized_data = [cloudpickle.dumps(("compute_logprobs_with_distributed", [batch], {})) for batch in batches]
+            serialized_data = [
+                cloudpickle.dumps(("compute_logprobs_with_distributed", [batch], {}))
+                for batch in batches
+            ]
 
         futures = []
         results = []
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             for index, worker in enumerate(self.workers):
                 rank_info = self.rank_info[index]
-                dp_rank =  rank_info["dp_rank"]
+                dp_rank = rank_info["dp_rank"]
                 batch_data = serialized_data[dp_rank]
-                futures.append(executor.submit(
-                    self.scheduler.call_engine_with_serialized_data,
-                    worker.id,
-                    batch_data
-                ))
+                futures.append(
+                    executor.submit(
+                        self.scheduler.call_engine_with_serialized_data,
+                        worker.id,
+                        batch_data,
+                    )
+                )
             try:
                 for future in futures:
                     results.append(future.result())
@@ -291,10 +324,10 @@ class DistributedTrainController(TrainController):
                 raise
 
         # cat tensor from dp head with padding
-        tensors_from_dp_heads = results[:self.dp_size]
+        tensors_from_dp_heads = results[: self.dp_size]
         if not tensors_from_dp_heads:
             return torch.tensor([])
-            
+
         # Find max length in dim 1
         max_len = max(t.shape[1] for t in tensors_from_dp_heads)
         max_len_all = max(t.shape[1] for t in results)
@@ -305,7 +338,7 @@ class DistributedTrainController(TrainController):
             pad_size = max_len - t.shape[1]
             padded = torch.nn.functional.pad(t, (0, pad_size), value=0.0)
             padded_tensors.append(padded)
-            
+
         # Concatenate along batch dimension
         concatenated_result = torch.cat(padded_tensors, dim=0)
         return concatenated_result
@@ -329,6 +362,6 @@ class DistributedTrainController(TrainController):
 
     def _calc_metrics(self, batch_inputs):
         # seqlen std
-        seqlens = [td['seqlen'].sum().item() for td in batch_inputs]
+        seqlens = [td["seqlen"].sum().item() for td in batch_inputs]
         seqlen_std = torch.tensor(seqlens).float().std().item()
         stats_tracker.scalar(**{"seqlen_std": seqlen_std})

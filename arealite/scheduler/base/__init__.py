@@ -1,7 +1,7 @@
 import abc
 import logging
-from typing import Any, List, Dict
 from dataclasses import dataclass, field
+from typing import Any, Dict, List
 
 
 @dataclass
@@ -21,16 +21,18 @@ class ContainerSpec:
     env_vars: Dict[str, str] = field(default_factory=dict)
     portCount: int = 2
 
+
 @dataclass
 class ScheduleStrategy:
     type: str = ""
     uid: str = ""
 
+
 @dataclass
 class SchedulingConfig:
     replicas: int = 0
     specs: List[ContainerSpec] = field(default_factory=list)
-    schedule_strategy: ScheduleStrategy=None
+    schedule_strategy: ScheduleStrategy = None
     role: str = ""
 
 

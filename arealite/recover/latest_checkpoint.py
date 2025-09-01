@@ -1,10 +1,10 @@
 import dataclasses
+import getpass
 import os
 import pickle
-import getpass
 import shutil
-from typing import Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional, Tuple
 
 from transformers import PreTrainedTokenizerFast
 
@@ -12,10 +12,10 @@ from arealite.api.cli_args import RecoverConfig
 from arealite.api.controller_api import TrainController
 from arealite.api.engine_api import TrainEngine
 from arealite.api.io_struct import SaveLoadMeta
-
 from realhf.base import logging
 
 logger = logging.getLogger("recover")
+
 
 @dataclasses.dataclass
 class RecoverInfo:
@@ -43,7 +43,6 @@ class Recover:
         os.makedirs(path, exist_ok=True)
         return path
 
-
     def get_save_huggingface_checkpoint_path(
         self,
         name: str,
@@ -63,7 +62,7 @@ class Recover:
             f"{self.config.fileroot}/recover/{getpass.getuser()}/{self.config.experiment_name}/{self.config.trial_name}/metas",
             name,
         )
-        
+
         os.makedirs(path, exist_ok=True)
         return path
 
@@ -80,19 +79,24 @@ class Recover:
         disable_save_hf: bool = True,
     ):
         # Determine checkpoint name based on global_step parity
-        checkpoint_name = "latest_checkpoint_odd" if global_step % 2 else "latest_checkpoint_even"
+        checkpoint_name = (
+            "latest_checkpoint_odd" if global_step % 2 else "latest_checkpoint_even"
+        )
         symlink_name = name
-        
+
         # Clear target directory
         target_dir = self.get_save_checkpoint_path(checkpoint_name)
         if os.path.exists(target_dir):
             import shutil
+
             shutil.rmtree(target_dir)
         os.makedirs(target_dir, exist_ok=True)
 
         # save hf model
         if not disable_save_hf:
-            hf_path = self.get_save_huggingface_checkpoint_path(f"{checkpoint_name}/huggingface")
+            hf_path = self.get_save_huggingface_checkpoint_path(
+                f"{checkpoint_name}/huggingface"
+            )
             weight_format = "huggingface"
             with_optim = False
             meta = SaveLoadMeta(
@@ -131,12 +135,16 @@ class Recover:
             else:
                 shutil.rmtree(symlink_path)
         os.symlink(target_dir, symlink_path)
-        logger.info(f"[Recover] global_step: {global_step} Created symlink {symlink_name} -> {checkpoint_name}")
+        logger.info(
+            f"[Recover] global_step: {global_step} Created symlink {symlink_name} -> {checkpoint_name}"
+        )
 
         # Async cleanup of the other checkpoint dir
-        other_checkpoint = "latest_checkpoint_even" if global_step % 2 else "latest_checkpoint_odd"
+        other_checkpoint = (
+            "latest_checkpoint_even" if global_step % 2 else "latest_checkpoint_odd"
+        )
         other_dir = self.get_save_checkpoint_path(other_checkpoint)
-        
+
         def cleanup_dir(dir_path):
             try:
                 if os.path.exists(dir_path):
@@ -150,14 +158,23 @@ class Recover:
             executor.submit(cleanup_dir, other_dir)
             logger.info(f"[Recover] Started async cleanup for {other_dir}")
 
-    def save_meta_info(self, epoch: int, step: int, global_step: int, dataloader_state: dict, name: str = "latest_checkpoint"):
+    def save_meta_info(
+        self,
+        epoch: int,
+        step: int,
+        global_step: int,
+        dataloader_state: dict,
+        name: str = "latest_checkpoint",
+    ):
         # Determine meta name based on global_step parity
-        meta_name = "latest_checkpoint_odd" if global_step % 2 else "latest_checkpoint_even"
+        meta_name = (
+            "latest_checkpoint_odd" if global_step % 2 else "latest_checkpoint_even"
+        )
         symlink_name = name
-        
+
         # Save meta to odd/even directory
         path = self.get_save_meta_path(meta_name)
-        
+
         # meta info, use symlink_name
         hf_path = self.get_save_checkpoint_path(f"{symlink_name}/huggingface")
         checkpoint_path = self.get_save_checkpoint_path(symlink_name)
@@ -167,7 +184,7 @@ class Recover:
             global_step=global_step,
             dataloader_state=dataloader_state,
             hf_path=hf_path,
-            checkpoint_path=checkpoint_path
+            checkpoint_path=checkpoint_path,
         )
         with open(os.path.join(path, "recover_info.pkl"), "wb") as f:
             pickle.dump(recover_info, f)
@@ -181,10 +198,14 @@ class Recover:
             else:
                 shutil.rmtree(symlink_path)
         os.symlink(path, symlink_path)
-        logger.info(f"[Recover] global_step: {global_step} Created meta symlink {symlink_name} -> {meta_name}")
+        logger.info(
+            f"[Recover] global_step: {global_step} Created meta symlink {symlink_name} -> {meta_name}"
+        )
 
         # Sync cleanup of the other meta dir
-        other_meta = "latest_checkpoint_even" if global_step % 2 else "latest_checkpoint_odd"
+        other_meta = (
+            "latest_checkpoint_even" if global_step % 2 else "latest_checkpoint_odd"
+        )
         other_dir = self.get_save_meta_path(other_meta)
         try:
             if os.path.exists(other_dir):

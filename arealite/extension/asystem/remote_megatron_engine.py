@@ -1,31 +1,22 @@
+import dataclasses
 import gzip
-from typing import Any
+import json
+from typing import Any, Callable, Dict, List
 
-import requests
 import cloudpickle
+import requests
+import torch
 
+import realhf.impl.model.utils.ppo_functional as ppo_functional
 from arealite.api.cli_args import RemoteMegatronEngineConfig
 from arealite.api.engine_api import (
     SaveLoadMeta,
+    Scheduling,
     TrainEngine,
     WeightUpdateMeta,
-    Scheduling,
 )
-
-import dataclasses
-import json
-from typing import Dict, List, Callable
-
-import torch
-
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
-
-import realhf.impl.model.utils.ppo_functional as ppo_functional
-from realhf.api.core.data_api import (
-    RL_TASKS,
-    MicroBatchSpec,
-    SequenceSample,
-)
+from realhf.api.core.data_api import RL_TASKS, MicroBatchSpec, SequenceSample
 from realhf.base import logging, stats_tracker
 from realhf.base.datapack import flat2d
 from realhf.impl.model.utils.functional import (
@@ -60,24 +51,31 @@ class RemoteMegatronEngine(TrainEngine):
             assert self.config.wrap_policy.adaptive_kl_target is not None
             assert self.config.wrap_policy.adaptive_kl_horizon is not None
             self.kl_adapter = ppo_functional.AdaptiveKLController(
-                self.config.wrap_policy.kl_ctl, self.config.wrap_policy.adaptive_kl_target,
-                self.config.wrap_policy.adaptive_kl_horizon
+                self.config.wrap_policy.kl_ctl,
+                self.config.wrap_policy.adaptive_kl_target,
+                self.config.wrap_policy.adaptive_kl_horizon,
             )
         else:
-            self.kl_adapter = ppo_functional.FixedKLController(self.config.wrap_policy.kl_ctl)
+            self.kl_adapter = ppo_functional.FixedKLController(
+                self.config.wrap_policy.kl_ctl
+            )
         if self.config.wrap_policy.value_norm:
             from realhf.impl.model.modules import (
                 ExponentialRunningMeanStd,
                 MovingAverageRunningMeanStd,
             )
+
             if self.config.wrap_policy.value_norm_type == "exp":
                 self.rms = ExponentialRunningMeanStd(
-                    beta=self.config.wrap_policy.value_norm_beta, epsilon=self.config.wrap_policy.value_norm_eps
+                    beta=self.config.wrap_policy.value_norm_beta,
+                    epsilon=self.config.wrap_policy.value_norm_eps,
                 )
             elif self.config.wrap_policy.value_norm_type == "ma":
                 self.rms = MovingAverageRunningMeanStd()
             else:
-                raise ValueError(f"Unknown value_norm_type {self.config.wrap_policy.value_norm_type}")
+                raise ValueError(
+                    f"Unknown value_norm_type {self.config.wrap_policy.value_norm_type}"
+                )
         self.kl_ctl = None
 
     def initialize(self, cfg: RemoteMegatronInitConfig):
@@ -85,7 +83,9 @@ class RemoteMegatronEngine(TrainEngine):
         self.global_rank = cfg.global_rank
         local_rank = global_rank % 8
 
-        print(f"[megatron] dzq_debug global_rank: {global_rank}, serveraddr len:{len(cfg.server_addrs)}")
+        print(
+            f"[megatron] dzq_debug global_rank: {global_rank}, serveraddr len:{len(cfg.server_addrs)}"
+        )
         self.megatron_addr = cfg.server_addrs[global_rank]
         master_addr = cfg.server_addrs[0]
         master_ip, master_port = master_addr.split(":", 1)  # ip:port
@@ -133,7 +133,9 @@ class RemoteMegatronEngine(TrainEngine):
         except Exception as e:
             raise ValueError(f"[Rank {global_rank}] Unexpected error: {e}")
 
-        logger.info(f"[RemoteMegatronEngine] rank: {global_rank} megatron server initialize success")
+        logger.info(
+            f"[RemoteMegatronEngine] rank: {global_rank} megatron server initialize success"
+        )
         self.initialized = True
 
     def get_scheduling_config(self):
@@ -154,7 +156,8 @@ class RemoteMegatronEngine(TrainEngine):
             self.update_weights_from_distributed()
         elif meta.type == "disk":
             logger.info(
-                f"[RemoteMegatronEngine] upload_weights save hf model to disk, path: {meta.path}, step: {self.global_step}.")
+                f"[RemoteMegatronEngine] upload_weights save hf model to disk, path: {meta.path}, step: {self.global_step}."
+            )
             save_load_meta = SaveLoadMeta(
                 path=meta.path,
                 weight_format="huggingface",
@@ -164,8 +167,7 @@ class RemoteMegatronEngine(TrainEngine):
                 base_model_path=None,
             )
             self.save(save_load_meta)
-            logger.info(
-                f"[RemoteMegatronEngine] upload_weights success.")
+            logger.info(f"[RemoteMegatronEngine] upload_weights success.")
         else:
             raise ValueError(f"Unknown weight update type {meta.type}")
 
@@ -177,7 +179,8 @@ class RemoteMegatronEngine(TrainEngine):
             logger.info(
                 f"[RemoteMegatronEngine] send save request, "
                 f"weight_format: {meta.weight_format}, save_dir: {meta.path},  "
-                f"global_step: {meta.global_step}")
+                f"global_step: {meta.global_step}"
+            )
             payload = {
                 "save_dir_prefix": meta.path,
                 "save_type": meta.weight_format,
@@ -198,10 +201,13 @@ class RemoteMegatronEngine(TrainEngine):
                     f"request. status code: {response.status_code}, response: {response.text}"
                 )
         except requests.exceptions.Timeout:
-            raise ValueError(f"[RemoteMegatronEngine] save {meta.weight_format} request timed out!")
+            raise ValueError(
+                f"[RemoteMegatronEngine] save {meta.weight_format} request timed out!"
+            )
         except requests.exceptions.RequestException as e:
             raise ValueError(
-                f"[RemoteMegatronEngine] Send save {meta.weight_format} request, an error occurred: {e}")
+                f"[RemoteMegatronEngine] Send save {meta.weight_format} request, an error occurred: {e}"
+            )
         return response
 
     def load(self, meta: SaveLoadMeta):
@@ -239,47 +245,63 @@ class RemoteMegatronEngine(TrainEngine):
         batch_data = {}
         for attr in attrs:
             batch_data[attr] = input_[attr]
-        torch.set_printoptions(threshold=float('inf'))
-        logger.info(f"[RemoteMegatronEngine] train_distributed_batch rewards: {batch_data["rewards"]}")
+        torch.set_printoptions(threshold=float("inf"))
+        logger.info(
+            f"[RemoteMegatronEngine] train_distributed_batch rewards: {batch_data["rewards"]}"
+        )
         # 2. input_的数据转换：prompt_mask, packed_input_ids, seqlens.packed_input_ids, rewards, task_ids, seq_no_eos_mask, packed_logprobs
         # input_ids => packed_input_ids
         # seqlens => seqlens.packed_input_ids
         # logprobs => packed_logprobs
         # input_ids => packed_input_ids
         if "input_ids" in batch_data and "seqlen" in batch_data:
-            batch_data["packed_input_ids"] = pack_input_ids(batch_data["input_ids"], batch_data["seqlen"])
+            batch_data["packed_input_ids"] = pack_input_ids(
+                batch_data["input_ids"], batch_data["seqlen"]
+            )
 
         # logprobs => packed_logprobs
         if "logprobs" in batch_data and "seqlen" in batch_data:
-            batch_data["packed_logprobs"] = pack_logprobs(batch_data["logprobs"], batch_data["seqlen"])
+            batch_data["packed_logprobs"] = pack_logprobs(
+                batch_data["logprobs"], batch_data["seqlen"]
+            )
 
         if "prompt_mask" in batch_data and "seqlen" in batch_data:
-            batch_data["prompt_mask"] = pack_prompt_mask(batch_data["prompt_mask"], batch_data["seqlen"])
+            batch_data["prompt_mask"] = pack_prompt_mask(
+                batch_data["prompt_mask"], batch_data["seqlen"]
+            )
 
         # print(f"train_distributed_batch, batch_data: {batch_data}")
         # 3.获取{advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards, global_stats}
         train_datas = self.process_training_data(batch_data)
-        batch = {"advantages": train_datas["advantages"],
-                 "old_logp": train_datas["old_logp"],
-                 "ppo_loss_mask": train_datas["ppo_loss_mask"],
-                 "packed_input_ids": train_datas["packed_input_ids"],
-                 "kl_rewards": train_datas["kl_rewards"],
-                 "seqlen": batch_data["seqlen"]}
+        batch = {
+            "advantages": train_datas["advantages"],
+            "old_logp": train_datas["old_logp"],
+            "ppo_loss_mask": train_datas["ppo_loss_mask"],
+            "packed_input_ids": train_datas["packed_input_ids"],
+            "kl_rewards": train_datas["kl_rewards"],
+            "seqlen": batch_data["seqlen"],
+        }
         logger.info(f"debug3 : {batch}")
         train_stats = self.train_batch(batch, loss_fn, loss_weight_fn)
-        logger.info(f"[RemoteMegatronEngine] Train batch exec success, global_step: {self.global_step}.")
+        logger.info(
+            f"[RemoteMegatronEngine] Train batch exec success, global_step: {self.global_step}."
+        )
 
         # 3、保存模型
-        self.save(SaveLoadMeta(
-            # TODO: hardcode
-            path=f"/storage/openpsi/checkpoints/{self.config.experiment_name}/{self.config.trial_name}",
-            weight_format="huggingface",
-            global_step=self.global_step,
-            with_optim=True,
-            tokenizer=None,
-            base_model_path=None,
-        ))
-        logger.info(f"[RemoteMegatronEngine] Train save hf exec success, global_step: {self.global_step}.")
+        self.save(
+            SaveLoadMeta(
+                # TODO: hardcode
+                path=f"/storage/openpsi/checkpoints/{self.config.experiment_name}/{self.config.trial_name}",
+                weight_format="huggingface",
+                global_step=self.global_step,
+                with_optim=True,
+                tokenizer=None,
+                base_model_path=None,
+            )
+        )
+        logger.info(
+            f"[RemoteMegatronEngine] Train save hf exec success, global_step: {self.global_step}."
+        )
 
         # 4. 更新global_step
         self.global_step += 1
@@ -301,8 +323,9 @@ class RemoteMegatronEngine(TrainEngine):
             seqlens=[int(x) for x in input_["seqlen"].cpu().numpy().tolist()],
         )
 
-        mb_spec = MicroBatchSpec(n_mbs=self.config.n_mbs,
-                                 max_tokens_per_mb=self.config.max_tokens_per_mb)
+        mb_spec = MicroBatchSpec(
+            n_mbs=self.config.n_mbs, max_tokens_per_mb=self.config.max_tokens_per_mb
+        )
         try:
             target_url = f"http://{self.megatron_addr}/train_batch"
             headers = {"Content-Type": "application/octet-stream"}
@@ -311,7 +334,9 @@ class RemoteMegatronEngine(TrainEngine):
                 "micro_batch_spec": mb_spec,
             }
             data = serialize_and_compress(payload)
-            logger.info("[RemoteMegatronEngine] send train_batch request to megatron worker....")
+            logger.info(
+                "[RemoteMegatronEngine] send train_batch request to megatron worker...."
+            )
             response = requests.post(
                 target_url, data=data, headers=headers, timeout=7200
             )
@@ -359,24 +384,23 @@ class RemoteMegatronEngine(TrainEngine):
         self,
         input_: Dict[str, torch.Tensor],
     ) -> Dict:
-
-        '''
+        """
         inputs:
             - prompt_mask, packed_input_ids, seqlens.packed_input_ids, rewards, task_ids, seq_no_eos_mask, packed_logprobs
         outputs:
             - {advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards, global_stats}
-        '''
+        """
         prompt_mask = input_["prompt_mask"]
-        input_lens = torch.tensor(
-            input_["seqlen"], device="cpu"
-        )
+        input_lens = torch.tensor(input_["seqlen"], device="cpu")
         cu_seqlens = torch.nn.functional.pad(input_lens.cumsum(0), (1, 0)).int()
         prompt_lens = []
         for s, e in zip(cu_seqlens[:-1], cu_seqlens[1:]):
             prompt_lens.append(prompt_mask[s:e].sum())
         prompt_lens = torch.tensor(prompt_lens, device="cpu")
         reward_score = input_["rewards"].float()
-        logger.info(f"[RemoteMegatronEngine] process_training_data reward_score: {reward_score}")
+        logger.info(
+            f"[RemoteMegatronEngine] process_training_data reward_score: {reward_score}"
+        )
         task_ids = input_["task_ids"]
         # task_ids = task_ids.repeat(self.config.group_size, 1).transpose(0, 1).reshape(-1)
 
@@ -385,9 +409,7 @@ class RemoteMegatronEngine(TrainEngine):
         if not self.config.wrap_policy.disable_value:
             values = input_["values"].float()
         else:
-            values = torch.zeros_like(
-                input_["packed_input_ids"], dtype=torch.float32
-            )
+            values = torch.zeros_like(input_["packed_input_ids"], dtype=torch.float32)
         seq_no_eos_mask = input_["seq_no_eos_mask"]
         # if self.kl_adapter.value == 0:
         #     ref_logp: torch.FloatTensor = reward_score.new_zeros(
@@ -424,7 +446,7 @@ class RemoteMegatronEngine(TrainEngine):
         if self.config.wrap_policy.mask_too_long:
             for i in range(seq_no_eos_mask.shape[0]):
                 if seq_no_eos_mask[i]:
-                    loss_mask[cu_seqlens[i]: cu_seqlens[i + 1]] = False
+                    loss_mask[cu_seqlens[i] : cu_seqlens[i + 1]] = False
 
         shift_one_indices = torch.cat(
             [
@@ -445,17 +467,28 @@ class RemoteMegatronEngine(TrainEngine):
 
         new_reward_score = reward_score
 
-        if not self.config.wrap_policy.adv_norm and self.config.wrap_policy.group_adv_norm:
+        if (
+            not self.config.wrap_policy.adv_norm
+            and self.config.wrap_policy.group_adv_norm
+        ):
             n_seqs = len(input_lens)
             reward_score_grpo = reward_score.clone().detach()
             new_reward_score = reward_score_grpo
             for i in range(n_seqs // self.config.group_size):
-                group_rewards = reward_score[i * self.config.group_size: (i + 1) * self.config.group_size]
+                group_rewards = reward_score[
+                    i * self.config.group_size : (i + 1) * self.config.group_size
+                ]
                 grouped_std = group_rewards.std(dim=-1)
-                normed_rewards = (group_rewards - group_rewards.mean(-1, keepdim=True)) / (grouped_std + 1e-9)
-                reward_score_grpo[i * self.config.group_size: (i + 1) * self.config.group_size] = normed_rewards
+                normed_rewards = (
+                    group_rewards - group_rewards.mean(-1, keepdim=True)
+                ) / (grouped_std + 1e-9)
+                reward_score_grpo[
+                    i * self.config.group_size : (i + 1) * self.config.group_size
+                ] = normed_rewards
 
-            logger.info(f"[RemoteMegatronEngine] process_training_data new_reward_score: {new_reward_score}")
+            logger.info(
+                f"[RemoteMegatronEngine] process_training_data new_reward_score: {new_reward_score}"
+            )
 
         # Compute rewards and GAEs.
         if self.config.wrap_policy.use_dense_reward:
@@ -509,21 +542,21 @@ class RemoteMegatronEngine(TrainEngine):
                 for i in range(0, n_samples, self.config.group_size):
                     for j in range(1, self.config.group_size):
                         assert (
-                            prompt_mask[cu_seqlens[i]: cu_seqlens[i + 1]].sum()
+                            prompt_mask[cu_seqlens[i] : cu_seqlens[i + 1]].sum()
                             == prompt_mask[
-                               cu_seqlens[i + j]: cu_seqlens[i + j + 1]
-                               ].sum()
+                                cu_seqlens[i + j] : cu_seqlens[i + j + 1]
+                            ].sum()
                         )
                     adv_list.append(
                         masked_normalization(
                             advantages[
-                            short1cu_seqlens[i]: short1cu_seqlens[
-                                i + self.config.group_size
+                                short1cu_seqlens[i] : short1cu_seqlens[
+                                    i + self.config.group_size
                                 ]
                             ],
                             loss_mask[
-                            short1cu_seqlens[i]: short1cu_seqlens[
-                                i + self.config.group_size
+                                short1cu_seqlens[i] : short1cu_seqlens[
+                                    i + self.config.group_size
                                 ]
                             ],
                             all_reduce=False,
@@ -763,7 +796,7 @@ remote_megatron_config = {
     "load": "/storage/liuyongkang.lyk/output_models/moelite-32k-qwen3-640w-ep3-3e4-05250954/iter_0008604_asystem",
     "save": "/storage/xukuan.xk/repos/antnlp/personal/llm/dumps/rl/asystem_moe_lite_distll_test",
     "save_interval": 1,
-    "expert_model_parallel_size": 8
+    "expert_model_parallel_size": 8,
 }
 
 loss_configs = {
@@ -772,6 +805,5 @@ loss_configs = {
     "adaptive_kl_horizon": 10000,
     "eps_clip": 0.2,
     "temperature": 1,
-    "token_normalize_scope": "dp"
+    "token_normalize_scope": "dp",
 }
-

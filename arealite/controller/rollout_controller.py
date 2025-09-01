@@ -1,30 +1,42 @@
 import os
+import threading
+import time
+import traceback
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
-from tensordict import TensorDict, stack
-import threading
-import traceback
-import torch
-from arealite.api.engine_api import InferenceEngine
-from arealite.api.io_struct import WeightUpdateMeta, AllocationMode
-from arealite.scheduler.base import Worker
 
-from arealite.api.cli_args import RolloutControllerConfig, RemoteHybridInferenceConfig
+import torch
+from tensordict import TensorDict, stack
+
+from arealite.api.cli_args import RemoteHybridInferenceConfig, RolloutControllerConfig
+from arealite.api.controller_api import RolloutController
+from arealite.api.engine_api import InferenceEngine
+from arealite.api.io_struct import AllocationMode, WeightUpdateMeta
 from arealite.api.workflow_api import RolloutWorkflow
 from arealite.controller.utils import create_engine_with_retry, group_avg_torch
-from arealite.extension.asystem.remote_hybrid_inference_worker import RemoteHybridInferenceWorker, \
-    RemoteHypidInferenceInitConfig
-from arealite.utils.data import concat_padded_tensors
-from arealite.api.controller_api import RolloutController
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
-from arealite.scheduler.base import Scheduler, SchedulingConfig, ContainerSpec, ScheduleStrategy
-from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangInitConfig, RemoteSGLangEngine
+from arealite.extension.asystem.remote_hybrid_inference_worker import (
+    RemoteHybridInferenceWorker,
+    RemoteHypidInferenceInitConfig,
+)
+from arealite.extension.asystem.remote_sglang_engine import (
+    RemoteSGLangEngine,
+    RemoteSGLangInitConfig,
+)
+from arealite.scheduler.base import (
+    ContainerSpec,
+    Scheduler,
+    ScheduleStrategy,
+    SchedulingConfig,
+    Worker,
+)
+from arealite.utils.data import concat_padded_tensors
 from realhf.api.core.data_api import RL_TASKS
-from realhf.base import stats_tracker, logging
-from concurrent.futures import ThreadPoolExecutor
-import time
+from realhf.base import logging, stats_tracker
 
 logger = logging.getLogger("DistributedRolloutController")
+
 
 class DistributedRolloutController(RolloutController):
     # RolloutController可以通过同名接口调用所有InferenceEngine的方法
@@ -38,11 +50,13 @@ class DistributedRolloutController(RolloutController):
         config: RolloutControllerConfig,
         scheduler: Scheduler,
         *args,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(inf_engine, config, scheduler)
         self.allocate_mode = AllocationMode.from_str(config.allocation_mode)
-        self.dp_world_size = self.allocate_mode.gen_world_size // self.allocate_mode.gen_dp_size
+        self.dp_world_size = (
+            self.allocate_mode.gen_world_size // self.allocate_mode.gen_dp_size
+        )
         self.role = kwargs.get("role", "rollout")
         self.enable_colocate_mode = self.config.enable_colocate_mode
 
@@ -56,7 +70,9 @@ class DistributedRolloutController(RolloutController):
         :param kwargs: 通用关键字参数
         :return: 所有调用的结果列表
         """
-        logger.info(f"start to rpc call, method: {method}, args: {args}, kwargs: {kwargs}, self.allocate_mode.gen_dp_size: {self.allocate_mode.gen_dp_size}")
+        logger.info(
+            f"start to rpc call, method: {method}, args: {args}, kwargs: {kwargs}, self.allocate_mode.gen_dp_size: {self.allocate_mode.gen_dp_size}"
+        )
         futures = []
         results = []
 
@@ -65,27 +81,33 @@ class DistributedRolloutController(RolloutController):
                 # 获取当前 master worker 的地址
                 master_worker = self.workers[self.dp_world_size * i]
 
-                logger.info(f"RPC calling worker {master_worker.id} for method {method}")
+                logger.info(
+                    f"RPC calling worker {master_worker.id} for method {method}"
+                )
 
                 # 如果 batches 为空，使用通用参数；否则使用 batch 中的特定参数
                 if batches and i < len(batches):
                     batch = batches[i]
-                    futures.append(executor.submit(
-                        self.scheduler.call_engine,
-                        master_worker.id,
-                        method,
-                        batch,  # 使用 batch 中的参数
-                        *args,
-                        **kwargs
-                    ))
+                    futures.append(
+                        executor.submit(
+                            self.scheduler.call_engine,
+                            master_worker.id,
+                            method,
+                            batch,  # 使用 batch 中的参数
+                            *args,
+                            **kwargs,
+                        )
+                    )
                 else:
-                    futures.append(executor.submit(
-                        self.scheduler.call_engine,
-                        master_worker.id,
-                        method,
-                        *args,  # 使用通用参数
-                        **kwargs
-                    ))
+                    futures.append(
+                        executor.submit(
+                            self.scheduler.call_engine,
+                            master_worker.id,
+                            method,
+                            *args,  # 使用通用参数
+                            **kwargs,
+                        )
+                    )
 
             try:
                 for future in futures:
@@ -99,8 +121,6 @@ class DistributedRolloutController(RolloutController):
 
         return results
 
-
-
     def initialize(self, *args, **kwargs):
         """Initialize environments for distributed inference and load models."""
 
@@ -113,7 +133,9 @@ class DistributedRolloutController(RolloutController):
         # replicas = self.allocate_mode.gen_world_size * node_count if scheduling.gpu >= n_gpu_per_node else self.allocate_mode.gen_world_size
         scheduling_config = SchedulingConfig(replicas=self.allocate_mode.gen_world_size)
         target = kwargs.get("colocation_with")
-        scheduling_config.schedule_strategy = ScheduleStrategy(type="colocation", uid=target.uid) if target else None
+        scheduling_config.schedule_strategy = (
+            ScheduleStrategy(type="colocation", uid=target.uid) if target else None
+        )
 
         arealite_path = os.getenv("REAL_PACKAGE_PATH", "")
         engine_path = os.getenv("ENGINE_PATH", "")
@@ -121,26 +143,48 @@ class DistributedRolloutController(RolloutController):
             cpu=0,
             mem=0,
             gpu=scheduling.gpu,
-            cmd=f"bash {arealite_path}/arealite/scheduler/scripts/launch-worker.sh".format(arealite_path=arealite_path),
-            env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
-            portCount=1
+            cmd=f"bash {arealite_path}/arealite/scheduler/scripts/launch-worker.sh".format(
+                arealite_path=arealite_path
+            ),
+            env_vars=(
+                scheduling.env_vars.copy() if scheduling.env_vars is not None else {}
+            ),
+            portCount=1,
         )
         workerSpec.env_vars["REAL_PACKAGE_PATH"] = arealite_path
-        workerSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
-        workerSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
+        workerSpec.env_vars["WORKER_IMAGE"] = (
+            "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
+        )
+        workerSpec.env_vars["WORKER_LOG_DIR"] = (
+            "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
+                experiment_name=self.config.experiment_name,
+                trial_name=self.config.trial_name,
+            )
+        )
         workerSpec.env_vars["WORKER_TYPE"] = f"{self.role}-worker"
 
         engineSpec = ContainerSpec(
             cpu=0,
             mem=0,
             gpu=0,
-            cmd=f"bash {arealite_path}/arealite/scheduler/scripts/launch-hybrid-server.sh".format(arealite_path=arealite_path),
-            env_vars=scheduling.env_vars.copy() if scheduling.env_vars is not None else {},
-            portCount=3
+            cmd=f"bash {arealite_path}/arealite/scheduler/scripts/launch-hybrid-server.sh".format(
+                arealite_path=arealite_path
+            ),
+            env_vars=(
+                scheduling.env_vars.copy() if scheduling.env_vars is not None else {}
+            ),
+            portCount=3,
         )
         engineSpec.env_vars["ENGINE_PACKAGE_PATH"] = engine_path
-        engineSpec.env_vars["WORKER_IMAGE"] = "/storage/openpsi/images/hybrid-engine-13570177-20250829175427.sif"
-        engineSpec.env_vars["WORKER_LOG_DIR"] = "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(experiment_name=self.config.experiment_name, trial_name=self.config.trial_name)
+        engineSpec.env_vars["WORKER_IMAGE"] = (
+            "/storage/openpsi/images/hybrid-engine-13570177-20250829175427.sif"
+        )
+        engineSpec.env_vars["WORKER_LOG_DIR"] = (
+            "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
+                experiment_name=self.config.experiment_name,
+                trial_name=self.config.trial_name,
+            )
+        )
         engineSpec.env_vars["WORKER_TYPE"] = f"{self.role}-engine"
         engineSpec.env_vars["WORK_MODE"] = "GENERATION"
         engineSpec.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -152,16 +196,17 @@ class DistributedRolloutController(RolloutController):
         engineSpec.env_vars["NCCL_DEBUG"] = "WARNING"
         engineSpec.env_vars["NVTE_FUSED_ATTN"] = "0"
         engineSpec.env_vars["NCCL_MAX_NCHANNELS"] = "16"
-        engineSpec.env_vars["ASTRA_SHARED_PATH"] = f"/storage/openpsi/astate_shared_storage"
+        engineSpec.env_vars["ASTRA_SHARED_PATH"] = (
+            f"/storage/openpsi/astate_shared_storage"
+        )
         engineSpec.env_vars["USE_AREAL_LITE"] = "1"
 
-
         engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "bond0"
-        engineSpec.env_vars["GLOO_SOCKET_IFNAME"]="eth0"
+        engineSpec.env_vars["GLOO_SOCKET_IFNAME"] = "eth0"
         engineSpec.env_vars["NCCL_NET_PLUGIN"] = ""
         engineSpec.env_vars["NCCL_IB_GID_INDEX"] = "3"
         engineSpec.env_vars["NCCL_IB_TIMEOUT"] = "22"
-        engineSpec.env_vars["NCCL_IB_RETRY_CNT"] ="7"
+        engineSpec.env_vars["NCCL_IB_RETRY_CNT"] = "7"
         engineSpec.env_vars["NCCL_IB_SL"] = "5"
         engineSpec.env_vars["NCCL_IB_TC"] = "136"
         engineSpec.env_vars["NCCL_IB_HCA"] = "mlx5_bond"
@@ -171,7 +216,6 @@ class DistributedRolloutController(RolloutController):
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
-
 
         self.uid = self.scheduler.create_workers(self.role, scheduling_config)
 
@@ -198,36 +242,46 @@ class DistributedRolloutController(RolloutController):
                     continue
                 master_worker = self.workers[index]
                 main_server_addrs = [
-                    f"{worker.ip}:{worker.ports[0]}" for worker in self.workers[index:index+self.dp_world_size] if worker.ports
+                    f"{worker.ip}:{worker.ports[0]}"
+                    for worker in self.workers[index : index + self.dp_world_size]
+                    if worker.ports
                 ]
                 free_addrs = [
-                    [f"{worker.ip}:{port}" for worker in
-                     self.workers[index:index+self.dp_world_size] for port in worker.ports[1:]]
+                    [
+                        f"{worker.ip}:{port}"
+                        for worker in self.workers[index : index + self.dp_world_size]
+                        for port in worker.ports[1:]
+                    ]
                 ]
 
                 if isinstance(self.inf_engine, RemoteSGLangEngine):
-                    init_config = RemoteSGLangInitConfig(main_server_addrs=main_server_addrs, sglang_addrs_list=free_addrs)
+                    init_config = RemoteSGLangInitConfig(
+                        main_server_addrs=main_server_addrs,
+                        sglang_addrs_list=free_addrs,
+                    )
                 elif isinstance(self.inf_engine, RemoteHybridInferenceWorker):
                     if index == 0:
                         master_addr = free_addrs[0][0]
                     init_config = RemoteHypidInferenceInitConfig(
-                        main_server_addrs=main_server_addrs, 
+                        main_server_addrs=main_server_addrs,
                         free_addrs=free_addrs,
                         world_size=self.allocate_mode.gen_world_size,
-                        global_ranks=list(range(index, index+self.dp_world_size)),
+                        global_ranks=list(range(index, index + self.dp_world_size)),
                         master_addr=master_addr,
-                        enable_colocate_mode=self.enable_colocate_mode
+                        enable_colocate_mode=self.enable_colocate_mode,
                     )
 
-                futures.append(executor.submit(
-                    partial(
-                        create_engine_with_retry,
-                        self.scheduler.create_engine,
-                        master_worker.id,
-                        self.inf_engine,
-                        init_config,
-                            )
-                ))
+                futures.append(
+                    executor.submit(
+                        partial(
+                            create_engine_with_retry,
+                            self.scheduler.create_engine,
+                            master_worker.id,
+                            self.inf_engine,
+                            init_config,
+                        )
+                    )
+                )
             try:
                 for future in futures:
                     future.result()  # 可加异常处理
@@ -236,7 +290,7 @@ class DistributedRolloutController(RolloutController):
                 for f in futures:
                     f.cancel()
                 raise
-    
+
     def destroy(self):
         self.exiting.set()
 
@@ -245,12 +299,12 @@ class DistributedRolloutController(RolloutController):
 
     def update_weights(self, meta: WeightUpdateMeta) -> None:
         """Update weights in the inference engine."""
-        self._rpc_call("update_weights", None,  meta)
+        self._rpc_call("update_weights", None, meta)
         return
 
     def notify_event(self, event: str, global_step: int) -> None:
         """Notify workers about inference start/end events.
-        
+
         Args:
             event: "rollout_start" or "rollout_end"
             global_step: Current global step
@@ -264,21 +318,27 @@ class DistributedRolloutController(RolloutController):
 
         for index in range(self.allocate_mode.gen_dp_size):
             master_worker = self.workers[self.dp_world_size * index]
-            self.scheduler.call_engine(master_worker.id, "submit", batches[index], workflow)
+            self.scheduler.call_engine(
+                master_worker.id, "submit", batches[index], workflow
+            )
 
-    def wait(self, count: int, timeout: int)  -> TensorDict:
+    def wait(self, count: int, timeout: int) -> TensorDict:
         """Wait for a specified number of requests to complete, with a timeout."""
         batch_count = count // len(self.workers)
         assert count % self.allocate_mode.gen_dp_size == 0
         results = []
         for index in range(self.allocate_mode.gen_dp_size):
             master_worker = self.workers[self.dp_world_size * index]
-            result = self.scheduler.call_engine(master_worker.id, "wait", batch_count, timeout)
+            result = self.scheduler.call_engine(
+                master_worker.id, "wait", batch_count, timeout
+            )
             results.append(result)
         res = stack(results, dim=0)
         return res
-    
-    def _thread_loop(self, func: Callable, sleep_time: float = 0.1, recycle: Callable = None):
+
+    def _thread_loop(
+        self, func: Callable, sleep_time: float = 0.1, recycle: Callable = None
+    ):
         try:
             while not self.exiting.is_set():
                 func()
@@ -290,7 +350,14 @@ class DistributedRolloutController(RolloutController):
             if recycle is not None:
                 recycle()
 
-    def _start_wait_at_least_no_concat_loop(self, master_worker: Worker, callback: Callable[[List[TensorDict]], None], batch_count: int, timeout: float, no_response_timeout: float = None) -> None:
+    def _start_wait_at_least_no_concat_loop(
+        self,
+        master_worker: Worker,
+        callback: Callable[[List[TensorDict]], None],
+        batch_count: int,
+        timeout: float,
+        no_response_timeout: float = None,
+    ) -> None:
         assert batch_count >= 0
         assert timeout >= 0
 
@@ -299,13 +366,24 @@ class DistributedRolloutController(RolloutController):
 
         def _wait_at_least_no_concat_callable():
             try:
-                res: List[TensorDict] = self.scheduler.call_engine(master_worker.id, "wait_at_least_no_concat", batch_count, timeout)
+                res: List[TensorDict] = self.scheduler.call_engine(
+                    master_worker.id, "wait_at_least_no_concat", batch_count, timeout
+                )
                 if res is None or len(res) == 0:
-                    res: List[TensorDict] = self.scheduler.call_engine(master_worker.id, "wait_at_least_no_concat", 1, no_response_timeout)
+                    res: List[TensorDict] = self.scheduler.call_engine(
+                        master_worker.id,
+                        "wait_at_least_no_concat",
+                        1,
+                        no_response_timeout,
+                    )
             except TimeoutError as e:
-                logger.debug(f"Timeout while waiting for results from worker {master_worker.id}: {e}")
+                logger.debug(
+                    f"Timeout while waiting for results from worker {master_worker.id}: {e}"
+                )
             except Exception as e:
-                logger.error(f"Error while waiting for results from worker {master_worker.id}: {e}")
+                logger.error(
+                    f"Error while waiting for results from worker {master_worker.id}: {e}"
+                )
                 raise e
 
             callback(res)
@@ -317,26 +395,34 @@ class DistributedRolloutController(RolloutController):
                     for value in tensor:
                         stats_tracker.scalar(**{key: value})
 
-        t = threading.Thread(target=partial(self._thread_loop, _wait_at_least_no_concat_callable, sleep_time=0))
+        t = threading.Thread(
+            target=partial(
+                self._thread_loop, _wait_at_least_no_concat_callable, sleep_time=0
+            )
+        )
         t.start()
 
-
-    def register_callback_to_all_worker(self, method: str, callback: Callable, **kwargs):
+    def register_callback_to_all_worker(
+        self, method: str, callback: Callable, **kwargs
+    ):
         if method == "wait_at_least_no_concat":
             assert "batch_count" in kwargs and "timeout" in kwargs
             for index in range(self.allocate_mode.gen_dp_size):
                 master_worker = self.workers[self.dp_world_size * index]
-                self._start_wait_at_least_no_concat_loop(master_worker, callback, batch_count=kwargs["batch_count"], timeout=kwargs["timeout"])
+                self._start_wait_at_least_no_concat_loop(
+                    master_worker,
+                    callback,
+                    batch_count=kwargs["batch_count"],
+                    timeout=kwargs["timeout"],
+                )
         else:
             raise ValueError(f"Unsupported method {method} for registering callback.")
-        
 
     def abort_all_requests(self) -> None:
         """Abort all pending requests in the inference engine."""
         self._rpc_call("abort_all_requests")
         logger.info("All pending requests have been aborted.")
         return None
-
 
     def rollout_distributed_batch(
         self, data: DistributedBatchMemory, workflow: RolloutWorkflow
@@ -366,7 +452,7 @@ class DistributedRolloutController(RolloutController):
     ) -> TensorDict:
         batches = self.split_list(data, self.allocate_mode.gen_dp_size)
 
-        results = self._rpc_call("rollout", batches,workflow)
+        results = self._rpc_call("rollout", batches, workflow)
         assert len(results) > 0
         size = int(results[0]["input_ids"].shape[0])
         bs = size * len(results)
@@ -385,7 +471,7 @@ class DistributedRolloutController(RolloutController):
         index = 0
         for i in range(n):
             current_size = chunk_size + 1 if i < rem else chunk_size
-            result.append(lst[index:index + current_size])
+            result.append(lst[index : index + current_size])
             index += current_size
         return result
 
@@ -397,9 +483,13 @@ class DistributedRolloutController(RolloutController):
         prompt_len = padded["prompt_mask"].sum(1)
         logger.info(f"prompt_len: {prompt_len}")
 
-        stats_tracker.scalar(**{"prompt_len": prompt_len.float().mean(),
-                                "sglang_old_logp": old_logp.mean(),
-                                "entropy": entropy.item()})
+        stats_tracker.scalar(
+            **{
+                "prompt_len": prompt_len.float().mean(),
+                "sglang_old_logp": old_logp.mean(),
+                "entropy": entropy.item(),
+            }
+        )
 
         # total reward
         keys = ["rewards", "seqlen"]

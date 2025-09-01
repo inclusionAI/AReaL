@@ -1,8 +1,8 @@
 from arealite.api.cli_args import InferenceEngineConfig, RolloutControllerConfig
+from arealite.api.engine_api import WeightUpdateMeta
 from arealite.controller.rollout_controller import DistributedRolloutController
 from arealite.extension.asystem.remote_sglang_engine import RemoteSGLangEngine
 from arealite.scheduler.local import LocalScheduler
-from arealite.api.engine_api import WeightUpdateMeta
 
 
 def main_grpo():
@@ -10,7 +10,9 @@ def main_grpo():
     scheduler = LocalScheduler({})
 
     rollout = DistributedRolloutController(
-        RemoteSGLangEngine(InferenceEngineConfig(experiment_name="ff", trial_name="ff")),
+        RemoteSGLangEngine(
+            InferenceEngineConfig(experiment_name="ff", trial_name="ff")
+        ),
         RolloutControllerConfig(),
         scheduler,
     )

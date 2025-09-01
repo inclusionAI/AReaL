@@ -8,11 +8,12 @@ from transformers import PreTrainedTokenizerFast
 from arealite.api.cli_args import GenerationHyperparameters
 from arealite.api.io_struct import LLMRequest
 from arealite.api.workflow_api import RolloutWorkflow
-from realhf.api.core.data_api import RL_TASKS, load_hf_tokenizer
 from arealite.utils.padding import concat_padded_tensors
+from realhf.api.core.data_api import RL_TASKS, load_hf_tokenizer
 from realhf.base import logging
 
 logger = logging.getLogger("RLVR")
+
 
 class RLVRWorkflow(RolloutWorkflow):
     def __init__(
@@ -24,7 +25,7 @@ class RLVRWorkflow(RolloutWorkflow):
     ):
         if tokenizer is None and tokenizer_path is None:
             raise ValueError("Either tokenizer or tokenizer_path must be provided")
-            
+
         self.reward_fn = reward_fn
         self.gconfig = gconfig
         self.tokenizer = tokenizer if tokenizer is not None else None
@@ -40,7 +41,8 @@ class RLVRWorkflow(RolloutWorkflow):
             max_length=None,
             padding=False,
             return_length=True,
-            return_attention_mask=False)
+            return_attention_mask=False,
+        )
 
         n_samples = self.gconfig.n_samples
         new_gconfig = self.gconfig.new(
@@ -67,12 +69,18 @@ class RLVRWorkflow(RolloutWorkflow):
             logprobs = [0] * resp.input_len + resp.output_logprobs
             prompt_mask = [1] * resp.input_len + [0] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
-            seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (seq[-1] != self.tokenizer.pad_token_id)
+            seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (
+                seq[-1] != self.tokenizer.pad_token_id
+            )
 
             if "prompt" in data.keys():
                 del data["prompt"]
 
-            completion = self.tokenizer.decode(resp.output_tokens, clean_up_tokenization_spaces=False, skip_special_tokens=True)
+            completion = self.tokenizer.decode(
+                resp.output_tokens,
+                clean_up_tokenization_spaces=False,
+                skip_special_tokens=True,
+            )
 
             reward = self.reward_fn(
                 prompt=text,
@@ -82,10 +90,14 @@ class RLVRWorkflow(RolloutWorkflow):
                 **data,
             )
             task_id = RL_TASKS.index(data["task"][0])
-            print(f"[RLVRWorkflow] prompt: {text}, completion: {completion}, solutions: {data["solutions"][0]}")
+            print(
+                f"[RLVRWorkflow] prompt: {text}, completion: {completion}, solutions: {data["solutions"][0]}"
+            )
             res = dict(
                 # unsqueeze to add an additional batch dimension
-                input_ids=torch.tensor(seq).unsqueeze(0),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
+                input_ids=torch.tensor(seq).unsqueeze(
+                    0
+                ),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
                 prompt_mask=torch.tensor(prompt_mask).unsqueeze(0),
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
                 versions=torch.tensor(versions).unsqueeze(0),
@@ -93,7 +105,7 @@ class RLVRWorkflow(RolloutWorkflow):
                 rewards=torch.tensor([reward]),
                 seqlen=torch.tensor([len(seq)]),
                 task_ids=torch.tensor([task_id]),
-                seq_no_eos_mask=torch.tensor([seq_no_eos_mask])
+                seq_no_eos_mask=torch.tensor([seq_no_eos_mask]),
             )
             results.append(TensorDict(res, batch_size=[1]))
 
@@ -126,7 +138,8 @@ class RLVRWorkflow(RolloutWorkflow):
                 max_length=None,
                 padding=False,
                 return_length=True,
-                return_attention_mask=False)
+                return_attention_mask=False,
+            )
 
             req = LLMRequest(
                 rid=uuid.uuid4().hex,
@@ -143,12 +156,18 @@ class RLVRWorkflow(RolloutWorkflow):
             logprobs = [0] * resp.input_len + resp.output_logprobs
             prompt_mask = [1] * resp.input_len + [0] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
-            seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (seq[-1] != self.tokenizer.pad_token_id)
-            data = data_list[index//new_gconfig.n_samples]
+            seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (
+                seq[-1] != self.tokenizer.pad_token_id
+            )
+            data = data_list[index // new_gconfig.n_samples]
 
-            completion = self.tokenizer.decode(resp.output_tokens, clean_up_tokenization_spaces=False, skip_special_tokens=True)
+            completion = self.tokenizer.decode(
+                resp.output_tokens,
+                clean_up_tokenization_spaces=False,
+                skip_special_tokens=True,
+            )
 
-            text = texts[index//new_gconfig.n_samples]
+            text = texts[index // new_gconfig.n_samples]
             if "prompt" in data.keys():
                 del data["prompt"]
 
@@ -160,10 +179,14 @@ class RLVRWorkflow(RolloutWorkflow):
                 **data,
             )
             task_id = RL_TASKS.index(data["task"][0])
-            print(f"[RLVRWorkflow] prompt: {text}, completion: {completion}, solutions: {data['query_id'][0]}")
+            print(
+                f"[RLVRWorkflow] prompt: {text}, completion: {completion}, solutions: {data['query_id'][0]}"
+            )
             res = dict(
                 # unsqueeze to add an additional batch dimension
-                input_ids=torch.tensor(seq).unsqueeze(0),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
+                input_ids=torch.tensor(seq).unsqueeze(
+                    0
+                ),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
                 prompt_mask=torch.tensor(prompt_mask).unsqueeze(0),
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
                 versions=torch.tensor(versions).unsqueeze(0),
@@ -171,7 +194,7 @@ class RLVRWorkflow(RolloutWorkflow):
                 rewards=torch.tensor([reward]),
                 seqlen=torch.tensor([len(seq)]),
                 task_ids=torch.tensor([task_id]),
-                seq_no_eos_mask=torch.tensor([seq_no_eos_mask])
+                seq_no_eos_mask=torch.tensor([seq_no_eos_mask]),
             )
             results.append(TensorDict(res, batch_size=[1]))
 

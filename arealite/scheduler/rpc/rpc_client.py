@@ -1,16 +1,19 @@
 import gzip
+import inspect
 import os
+import pickle
 import sys
 import time
-
-import requests
-import pickle
-from realhf.base import logging
-import inspect
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
 import cloudpickle
+import requests
+
+from realhf.base import logging
 
 logger = logging.getLogger("RPCClient")
+
+
 class RPCClient:
     def __init__(self):
         self._addrs = {}
@@ -45,7 +48,7 @@ class RPCClient:
         serialized_data = cloudpickle.dumps(req)
         resp = requests.post(url, data=serialized_data, timeout=7200)
         logger.info(
-           f"Sent call '{method}' to {worker_id} ({ip}:{port}), status={resp.status_code}"
+            f"Sent call '{method}' to {worker_id} ({ip}:{port}), status={resp.status_code}"
         )
         if resp.status_code == 200:
             return cloudpickle.loads(resp.content)
@@ -63,7 +66,7 @@ class RPCClient:
 
         resp = requests.post(url, data=serialized_data, timeout=7200)
         logger.info(
-           f"Sent call to {worker_id} ({ip}:{port}), status={resp.status_code}"
+            f"Sent call to {worker_id} ({ip}:{port}), status={resp.status_code}"
         )
         if resp.status_code == 200:
             return cloudpickle.loads(resp.content)

@@ -95,7 +95,6 @@ class TrainEngine(abc.ABC):
         """Update the model with a batch of data and a loss function."""
         raise NotImplementedError()
 
-
     @torch.no_grad()
     def eval_batch(
         self,
@@ -143,7 +142,9 @@ class InferenceEngine(abc.ABC):
         """Asynchronously submit a request to the inference engine. Exits immediately."""
         raise NotImplementedError()
 
-    def submit_batch(self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow") -> None:
+    def submit_batch(
+        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+    ) -> None:
         """Asynchronously submit a request to the inference engine. Exits immediately."""
         raise NotImplementedError()
 
@@ -166,5 +167,3 @@ class InferenceEngine(abc.ABC):
     def get_scheduling_config(self) -> Scheduling:
         """Get the scheduling configuration for the engine, e.g., image, cpu/gpu/memory size."""
         raise NotImplementedError()
-
-

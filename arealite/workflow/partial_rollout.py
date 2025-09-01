@@ -1,8 +1,9 @@
 import asyncio
 import uuid
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
 import torch
-from tensordict import TensorDict, NonTensorData
+from tensordict import NonTensorData, TensorDict
 from transformers import PreTrainedTokenizerFast
 
 from arealite.api.cli_args import GenerationHyperparameters
@@ -21,7 +22,7 @@ class PartialRolloutWorkflow(RolloutWorkflow):
     ):
         if tokenizer is None and tokenizer_path is None:
             raise ValueError("Either tokenizer or tokenizer_path must be provided")
-            
+
         self.reward_fn = reward_fn
         self.gconfig = gconfig
         self.tokenizer = tokenizer if tokenizer is not None else None
@@ -33,10 +34,12 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         """
         data_name_id = f"q[{data['query_id'][0]}]i[{data['index_in_group'][0]}]"
 
-        print(f"[PartialRolloutWorkflow] data {data_name_id} run_new_prompt_task with data: {data}")
+        print(
+            f"[PartialRolloutWorkflow] data {data_name_id} run_new_prompt_task with data: {data}"
+        )
         assert data.get("prompt") is not None
         assert data.get("previous_ids") is None
-        
+
         prompt_text = data["prompt"][0]
         input_ids = self.tokenizer(
             prompt_text,
@@ -44,9 +47,12 @@ class PartialRolloutWorkflow(RolloutWorkflow):
             max_length=None,
             padding=False,
             return_length=True,
-            return_attention_mask=False)["input_ids"]
+            return_attention_mask=False,
+        )["input_ids"]
 
-        assert self.gconfig.n_samples == 1, "in PartialRolloutWorkflow, n_samples must be 1"
+        assert (
+            self.gconfig.n_samples == 1
+        ), "in PartialRolloutWorkflow, n_samples must be 1"
         new_gconfig = self.gconfig.new(
             n_samples=1,
             max_new_tokens=self.gconfig.max_new_tokens,
@@ -84,13 +90,19 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         versions = [output_version] * (resp.input_len + resp.output_len)
 
         # seq_no_eos_mask，有 EOS 是 False，没有 EOS 是 True
-        seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (seq[-1] != self.tokenizer.pad_token_id)
+        seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (
+            seq[-1] != self.tokenizer.pad_token_id
+        )
         # seq_no_eos_mask = resp.stop_reason in ["stop", "interrupt", "abort"]
 
         if "prompt" in data.keys():
             del data["prompt"]
 
-        completion = self.tokenizer.decode(resp.output_tokens, clean_up_tokenization_spaces=False, skip_special_tokens=True)
+        completion = self.tokenizer.decode(
+            resp.output_tokens,
+            clean_up_tokenization_spaces=False,
+            skip_special_tokens=True,
+        )
 
         reward = self.reward_fn(
             prompt=prompt_text,
@@ -100,10 +112,14 @@ class PartialRolloutWorkflow(RolloutWorkflow):
             **data,
         )
         task_id = RL_TASKS.index(data["task"][0])
-        print(f"[PartialRolloutWorkflow][New Prompt] data {data_name_id}, task: {data['task'][0]}, input_ids {input_ids},  prompt: {prompt_text}, completion: {completion}, completion_tokens: {resp.output_tokens}, solutions: {data['solutions'][0]}, reward: {reward}")
+        print(
+            f"[PartialRolloutWorkflow][New Prompt] data {data_name_id}, task: {data['task'][0]}, input_ids {input_ids},  prompt: {prompt_text}, completion: {completion}, completion_tokens: {resp.output_tokens}, solutions: {data['solutions'][0]}, reward: {reward}"
+        )
         res = dict(
             # unsqueeze to add an additional batch dimension
-            input_ids=torch.tensor(seq).unsqueeze(0),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
+            input_ids=torch.tensor(seq).unsqueeze(
+                0
+            ),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
             prompt_mask=torch.tensor(prompt_mask).unsqueeze(0),
             logprobs=torch.tensor(logprobs).unsqueeze(0),
             versions=torch.tensor(versions).unsqueeze(0),
@@ -124,7 +140,9 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         Run a reapply task.
         """
         data_name_id = f"q[{data['query_id'][0]}]i[{data['index_in_group'][0]}]"
-        print(f"[PartialRolloutWorkflow] data {data_name_id} run_reapply_task with data: {data}")
+        print(
+            f"[PartialRolloutWorkflow] data {data_name_id} run_reapply_task with data: {data}"
+        )
         assert data.get("previous_ids") is not None
 
         input_ids = data["previous_ids"][0]
@@ -137,8 +155,10 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         # seq_no_eos_mask，有 EOS 是 False，没有 EOS 是 True
         is_sample_finished = not data["previous_seq_no_eos_mask"][0]
 
-        assert self.gconfig.n_samples == 1, "in PartialRolloutWorkflow, n_samples must be 1"
-        
+        assert (
+            self.gconfig.n_samples == 1
+        ), "in PartialRolloutWorkflow, n_samples must be 1"
+
         if (not is_sample_finished) and (len(input_ids) < self.gconfig.max_tokens):
             # 续推
             new_gconfig = self.gconfig.new(
@@ -170,15 +190,21 @@ class PartialRolloutWorkflow(RolloutWorkflow):
                 - stop_reason: Literal["length", "stop", "interrupt", "abort"] = "stop"
             """
             seq = resp.input_tokens + resp.output_tokens
-            
+
             completion_len = len(seq) - prompt_len
             completion_ids = seq[prompt_len:]
 
-            previous_logprobs = data["previous_logprobs"][0][:resp.input_len] # 这里要用 input_len 而不是 prompt_len，因为可能是中间打断的
+            previous_logprobs = data["previous_logprobs"][0][
+                : resp.input_len
+            ]  # 这里要用 input_len 而不是 prompt_len，因为可能是中间打断的
             logprobs = previous_logprobs + resp.output_logprobs
             prompt_mask = [1] * prompt_len + [0] * completion_len
-            versions = data["previous_version"][0][:resp.input_len] + resp.output_versions
-            seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (seq[-1] != self.tokenizer.pad_token_id)
+            versions = (
+                data["previous_version"][0][: resp.input_len] + resp.output_versions
+            )
+            seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (
+                seq[-1] != self.tokenizer.pad_token_id
+            )
             # seq_no_eos_mask = resp.stop_reason in ["stop", "interrupt", "abort"]
         else:
             # sample is already finished, we do not need to request a new rollout, just use the previous responses
@@ -191,7 +217,6 @@ class PartialRolloutWorkflow(RolloutWorkflow):
             versions = data["previous_version"][0]
             seq_no_eos_mask = data["previous_seq_no_eos_mask"][0]
 
-
         if "prompt" in data.keys():
             del data["prompt"]
         if "previous_ids" in data.keys():
@@ -201,7 +226,9 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         if "previous_logprobs" in data.keys():
             del data["previous_logprobs"]
 
-        completion = self.tokenizer.decode(completion_ids, clean_up_tokenization_spaces=False, skip_special_tokens=True)
+        completion = self.tokenizer.decode(
+            completion_ids, clean_up_tokenization_spaces=False, skip_special_tokens=True
+        )
 
         if not is_sample_finished:
             reward = self.reward_fn(
@@ -215,10 +242,14 @@ class PartialRolloutWorkflow(RolloutWorkflow):
             reward = data["previous_rewards"][0]
 
         task_id = RL_TASKS.index(data["task"][0])
-        print(f"[PartialRolloutWorkflow][Reapply] data {data_name_id}, task: {data['task'][0]}, input_ids {input_ids},  prompt: {prompt_text}, completion: {completion}, completion_tokens: {completion_ids}, solutions: {data['solutions'][0]}, reward: {reward}")
+        print(
+            f"[PartialRolloutWorkflow][Reapply] data {data_name_id}, task: {data['task'][0]}, input_ids {input_ids},  prompt: {prompt_text}, completion: {completion}, completion_tokens: {completion_ids}, solutions: {data['solutions'][0]}, reward: {reward}"
+        )
         res = dict(
             # unsqueeze to add an additional batch dimension
-            input_ids=torch.tensor(seq).unsqueeze(0),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
+            input_ids=torch.tensor(seq).unsqueeze(
+                0
+            ),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
             prompt_mask=torch.tensor(prompt_mask).unsqueeze(0),
             logprobs=torch.tensor(logprobs).unsqueeze(0),
             versions=torch.tensor(versions).unsqueeze(0),
@@ -239,8 +270,8 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         :param data: A dictionary containing the following
             - "prompt": A list containing a single string prompt.
 
-            - "previous_ids": If the key exists, state that this data is a sample that was not fully inferred in 
-            the previous round. This field is a list containing a single input_ids, which is a list of token IDs 
+            - "previous_ids": If the key exists, state that this data is a sample that was not fully inferred in
+            the previous round. This field is a list containing a single input_ids, which is a list of token IDs
             representing the prompt.
             - "previous_version": If the data is a reply sample, this field is a list containing a list of integers,
             which represents the versions of the tokens in the previous sample.
@@ -255,14 +286,14 @@ class PartialRolloutWorkflow(RolloutWorkflow):
 
             - "task": A list containing a single task name, which is one of the RL_TASKS.
             - "solutions": A list containing a single solution string.
-            - "query_id": A list containing a single query ID string, which is the id of the prompt, all samples 
+            - "query_id": A list containing a single query ID string, which is the id of the prompt, all samples
             in the same group(has same prompt) should have the same query_id.
             - "index_in_group": A list containing a single integer, which is the index of this sample in the group. The "query_id" and "index_in_group" together uniquely identify a sample.
         """
         # text = self.tokenizer.apply_chat_template(
         #     data["messages"], tokenize=False, add_generation_prompt=True
         # )
-        
+
         if self.tokenizer is None:
             self.tokenizer = load_hf_tokenizer(self.tokenizer_path)
         assert isinstance(data, dict), "data must be a dictionary"

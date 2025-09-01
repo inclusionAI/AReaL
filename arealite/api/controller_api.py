@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
@@ -7,8 +6,13 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 import torch
 from tensordict import TensorDict
 
-from arealite.api.cli_args import MicroBatchSpec, TrainControllerConfig, InferenceEngineConfig, RolloutControllerConfig
-from arealite.api.engine_api import TrainEngine, InferenceEngine
+from arealite.api.cli_args import (
+    InferenceEngineConfig,
+    MicroBatchSpec,
+    RolloutControllerConfig,
+    TrainControllerConfig,
+)
+from arealite.api.engine_api import InferenceEngine, TrainEngine
 from arealite.api.io_struct import (
     FinetuneSpec,
     LLMRequest,
@@ -16,9 +20,9 @@ from arealite.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
-from arealite.scheduler.base import Scheduler
-from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.api.workflow_api import RolloutWorkflow
+from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
+from arealite.scheduler.base import Scheduler
 
 
 class TrainController(ABC):
@@ -27,7 +31,12 @@ class TrainController(ABC):
     # 虽然方法相同，但是传数据集的参数类型不同:
     #   Engine data: List[Dict[str, Any]]
     #   Controller data: DistributedBatch
-    def __init__(self, train_engine: TrainEngine, config: TrainControllerConfig, scheduler: Scheduler):
+    def __init__(
+        self,
+        train_engine: TrainEngine,
+        config: TrainControllerConfig,
+        scheduler: Scheduler,
+    ):
         self.train_engine = train_engine
         self.config = config
         self.scheduler = scheduler
@@ -88,11 +97,11 @@ class TrainController(ABC):
         raise NotImplementedError()
 
     def train_distributed_batch(
-            self,
-            input_: DistributedBatchMemory
+        self, input_: DistributedBatchMemory
     ) -> Dict[str, float]:
         """Update the model with a batch of data."""
         raise NotImplementedError()
+
 
 class RolloutController(ABC):
     # RolloutController可以通过同名接口调用所有InferenceEngine的方法
@@ -100,7 +109,12 @@ class RolloutController(ABC):
     # 虽然方法相同，但是传数据集的参数类型不同:
     #   Engine data: List[Dict[str, Any]]
     #   Controller data: DistributedBatch
-    def __init__(self, inf_engine: InferenceEngine, config: RolloutControllerConfig, scheduler: Scheduler):
+    def __init__(
+        self,
+        inf_engine: InferenceEngine,
+        config: RolloutControllerConfig,
+        scheduler: Scheduler,
+    ):
         self.inf_engine = inf_engine
         self.config = config
         self.scheduler = scheduler
@@ -128,9 +142,7 @@ class RolloutController(ABC):
         raise NotImplementedError()
 
     def rollout_distributed_batch(
-            self,
-            input_: DistributedBatchMemory,
-            workflow: RolloutWorkflow
+        self, input_: DistributedBatchMemory, workflow: RolloutWorkflow
     ) -> DistributedBatchMemory:
         """Submit a batch of requests to the inference engine and wait for the results."""
         raise NotImplementedError()

@@ -20,7 +20,9 @@ class DistributedBatchMemory:
         batch_size = next(iter(dataset.values())).shape[0]
         for key, tensor in dataset.items():
             if tensor.shape[0] != batch_size:
-                raise ValueError(f"Batch size mismatch for key '{key}': expected {batch_size}, got {tensor.shape[0]}")
+                raise ValueError(
+                    f"Batch size mismatch for key '{key}': expected {batch_size}, got {tensor.shape[0]}"
+                )
 
     def _convert_list_to_dict(self, list_dataset):
         """将 list[Dict] 转换为 Dict[str, Tensor]"""
@@ -86,9 +88,11 @@ class DistributedBatchMemory:
         # 512/4 = 128
         count_of_each_part = total // n
         # fixme
-        assert count_of_each_part % (group_size * n) == 0, "count of each part must be devided by (n * group_size)"
+        assert (
+            count_of_each_part % (group_size * n) == 0
+        ), "count of each part must be devided by (n * group_size)"
         # 128/4 = 32
-        count_of_each_part_of_each_n =  count_of_each_part // n
+        count_of_each_part_of_each_n = count_of_each_part // n
         indexes = [[] for _ in range(n)]
         for part in range(n):
             # [0, 128, 256, 384]
@@ -96,8 +100,15 @@ class DistributedBatchMemory:
             inner_indices = []
             for i in range(n):
                 # [0, 128, 256, 384] + range(32..64..96..128)
-                tmp_inner_indices = list(range(count_of_each_part_of_each_n*i, count_of_each_part_of_each_n*(i+1)))
-                inner_indices.append(list(map(lambda item: item + start_index, tmp_inner_indices)))
+                tmp_inner_indices = list(
+                    range(
+                        count_of_each_part_of_each_n * i,
+                        count_of_each_part_of_each_n * (i + 1),
+                    )
+                )
+                inner_indices.append(
+                    list(map(lambda item: item + start_index, tmp_inner_indices))
+                )
                 indexes[i].extend(inner_indices[i])
 
         batches = []
@@ -114,17 +125,23 @@ class DistributedBatchMemory:
         # 512/4
         count_of_each_part = total // n
         # fixme
-        assert count_of_each_part % (group_size * n) == 0, "count of each part must be devided by (n * group_size)"
+        assert (
+            count_of_each_part % (group_size * n) == 0
+        ), "count of each part must be devided by (n * group_size)"
         indexes = [[] for _ in range(n)]
         # 128/8 = 16
-        group_count_of_each_part =  count_of_each_part // group_size
+        group_count_of_each_part = count_of_each_part // group_size
         print(f"group_count_of_each_part: {group_count_of_each_part}")
         # group = 16, n=4
         for group_num in range(group_count_of_each_part):
             for i in range(n):
-                tmp_index = list(range(i * count_of_each_part + group_num * group_size,
-                i * count_of_each_part + (group_num + 1) * group_size))
-                indexes[group_num//n].extend(tmp_index)
+                tmp_index = list(
+                    range(
+                        i * count_of_each_part + group_num * group_size,
+                        i * count_of_each_part + (group_num + 1) * group_size,
+                    )
+                )
+                indexes[group_num // n].extend(tmp_index)
 
         batches = []
         print(f"indexes: {indexes}")
@@ -181,15 +198,23 @@ class DistributedBatchMemory:
         print(f"group_total_lens: {group_total_lens}")
         # 返回indexes
         # [[0,4],[1,5],[2,6],[3,7]]
-        unsorted_group_rebalanced_indexs = ffd_allocate(group_total_lens.tolist(), int(1e12), n)
-        group_rebalanced_indexs = sorted([sorted(g) for g in unsorted_group_rebalanced_indexs])
+        unsorted_group_rebalanced_indexs = ffd_allocate(
+            group_total_lens.tolist(), int(1e12), n
+        )
+        group_rebalanced_indexs = sorted(
+            [sorted(g) for g in unsorted_group_rebalanced_indexs]
+        )
         print(f"group_rebalanced_indexs: {group_rebalanced_indexs}")
         batches = []
         for i in range(n):
             indexes = []
             # print(f"group_rebalanced_indexs[i]: {group_rebalanced_indexs[i]}")
             for group_index in group_rebalanced_indexs[i]:
-                tmp_indexs = list(range(group_size*group_index, group_size*group_index + group_size))
+                tmp_indexs = list(
+                    range(
+                        group_size * group_index, group_size * group_index + group_size
+                    )
+                )
                 # print(f"tmp_indexs: {tmp_indexs}")
                 indexes.extend(tmp_indexs)
             # print(f"indexes: {indexes}")
@@ -223,8 +248,8 @@ class DistributedBatchMemory:
 
     def __setitem__(self, key, value):
         """支持两种赋值方式：
-            - str键: 更新整个属性张量
-            - int索引: 需要将数据转换为列表格式后更新（效率较低，建议避免）
+        - str键: 更新整个属性张量
+        - int索引: 需要将数据转换为列表格式后更新（效率较低，建议避免）
         """
         if isinstance(key, str):
             # 更新整个属性张量
@@ -233,15 +258,17 @@ class DistributedBatchMemory:
             if self.dataset:
                 expected_batch_size = next(iter(self.dataset.values())).shape[0]
                 if value.shape[0] != expected_batch_size:
-                    raise ValueError(f"张量的批处理大小不匹配。期望{expected_batch_size}, 实际{value.shape[0]}")
+                    raise ValueError(
+                        f"张量的批处理大小不匹配。期望{expected_batch_size}, 实际{value.shape[0]}"
+                    )
             self.dataset[key] = value
         else:
             raise TypeError("键必须为str类型以更新属性张量")
 
     def __delitem__(self, key):
         """支持两种删除方式：
-            - int索引: 删除指定位置的样本
-            - str键: 删除整个属性
+        - int索引: 删除指定位置的样本
+        - str键: 删除整个属性
         """
         if isinstance(key, int):
             # 转换为列表格式进行删除
@@ -266,7 +293,6 @@ class DistributedBatchMemory:
             list_dataset.append(sample)
         return list_dataset
 
-
     def __str__(self):
         if not self.dataset:
             return "DistributedBatchMemory<empty>"
@@ -276,9 +302,9 @@ class DistributedBatchMemory:
         shapes = {k: v.shape for k, v in self.dataset.items()}
         return f"DistributedBatchMemory<batch_size={batch_size}, keys={keys}, shapes={shapes}, values={self.dataset.items()}>"
 
-
     def __repr__(self):
         return self.__str__()
+
 
 if __name__ == "__main__":
     # 示例：创建一个长度为 512 的张量

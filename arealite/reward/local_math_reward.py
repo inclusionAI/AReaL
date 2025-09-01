@@ -14,7 +14,6 @@ from sympy.parsing.latex import parse_latex
 from sympy.parsing.sympy_parser import parse_expr
 from word2number import w2n
 
-
 from arealite.base import logging
 
 logger = logging.getLogger("math parser")

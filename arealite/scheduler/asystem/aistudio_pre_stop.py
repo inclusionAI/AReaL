@@ -2,6 +2,7 @@
 # AIStudio 侧需要把 aistudio_pre_stop.py 复制到 /workspace/bin，作为 pre stop hook 执行。
 
 import logging
+
 import requests
 from requests import RequestException
 
@@ -10,7 +11,7 @@ logger = logging.getLogger("cleanupjobs")
 ENDPOINT = "http://asystem-scheduler.asystem-cluster-prod-1.svc:8081"
 API_BASE_PATH = "/api/v1"
 
-with open('/tmp/job_uids.txt', 'r') as f:
+with open("/tmp/job_uids.txt", "r") as f:
     uids = [line.strip() for line in f if line.strip()]
 for uid in uids:
     logger.info(f"Stopping job with UID: {uid}")

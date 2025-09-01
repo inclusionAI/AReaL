@@ -1,7 +1,9 @@
 import pytest
 import torch
-from tensordict import TensorDict, NonTensorData
+from tensordict import NonTensorData, TensorDict
+
 from arealite.controller.rollout_buffer import RolloutBuffer
+
 
 def make_sample(query_id, index_in_group, version=1):
     query_id = str(query_id)
@@ -11,22 +13,26 @@ def make_sample(query_id, index_in_group, version=1):
     reward = 0.5
     task_id = 42
     seq_no_eos_mask = False
-    
-    return TensorDict({
-        "input_ids": torch.tensor(seq).unsqueeze(0),
-        "prompt_mask": torch.tensor(prompt_mask).unsqueeze(0),
-        "logprobs": torch.tensor(logprobs).unsqueeze(0),
-        "versions": torch.tensor([version]).unsqueeze(0),
-        "attention_mask": torch.ones(len(seq)).unsqueeze(0),
-        "rewards": torch.tensor([reward]),
-        "seqlen": torch.tensor([len(seq)]),
-        "task_ids": torch.tensor([task_id]),
-        "seq_no_eos_mask": torch.tensor([seq_no_eos_mask]),
-        "query_id": NonTensorData([query_id]),
-        "index_in_group": NonTensorData([index_in_group]),
-        "task": NonTensorData([42]),
-        "solutions": NonTensorData([["solution1", "solution2"]]),
-    }, batch_size=[1])
+
+    return TensorDict(
+        {
+            "input_ids": torch.tensor(seq).unsqueeze(0),
+            "prompt_mask": torch.tensor(prompt_mask).unsqueeze(0),
+            "logprobs": torch.tensor(logprobs).unsqueeze(0),
+            "versions": torch.tensor([version]).unsqueeze(0),
+            "attention_mask": torch.ones(len(seq)).unsqueeze(0),
+            "rewards": torch.tensor([reward]),
+            "seqlen": torch.tensor([len(seq)]),
+            "task_ids": torch.tensor([task_id]),
+            "seq_no_eos_mask": torch.tensor([seq_no_eos_mask]),
+            "query_id": NonTensorData([query_id]),
+            "index_in_group": NonTensorData([index_in_group]),
+            "task": NonTensorData([42]),
+            "solutions": NonTensorData([["solution1", "solution2"]]),
+        },
+        batch_size=[1],
+    )
+
 
 def test_add_and_get_current_size():
     buf = RolloutBuffer(train_batch_size=2, group_size=2, mini_samples_per_group=2)
@@ -37,12 +43,14 @@ def test_add_and_get_current_size():
     buf.add(sample2)
     assert buf.get_current_size() == 2
 
+
 def test_add_duplicate_raises():
     buf = RolloutBuffer(group_size=2, mini_samples_per_group=2)
     sample = make_sample(1, 0)
     buf.add(sample)
     with pytest.raises(AssertionError):
         buf.add(sample)
+
 
 def test_is_sufficient():
     buf = RolloutBuffer(train_batch_size=2, group_size=2, mini_samples_per_group=2)
@@ -51,12 +59,15 @@ def test_is_sufficient():
     buf.add(make_sample(1, 1))
     assert buf.is_sufficient()
 
+
 def test_pop_batched_rollout_res(monkeypatch):
     buf = RolloutBuffer(train_batch_size=2, group_size=2, mini_samples_per_group=2)
     buf.add(make_sample(1, 0))
     buf.add(make_sample(1, 1))
     # Patch concat_padded_tensors to just return the list for test
-    monkeypatch.setattr("arealite.controller.rollout_buffer.concat_padded_tensors", lambda x: x)
+    monkeypatch.setattr(
+        "arealite.controller.rollout_buffer.concat_padded_tensors", lambda x: x
+    )
     res = buf.pop_batched_rollout_res()
     assert isinstance(res, list)
     assert len(res) == 2
@@ -89,6 +100,7 @@ def test_pop_batched_rollout_res(monkeypatch):
         assert isinstance(r["task_ids"], torch.Tensor)
         assert isinstance(r["seq_no_eos_mask"], torch.Tensor)
 
+
 def test_expire_stale_samples():
     buf = RolloutBuffer(group_size=2, mini_samples_per_group=2, staleness_version=1)
     buf.add(make_sample(1, 0, version=1))
@@ -103,6 +115,7 @@ def test_expire_stale_samples():
     buf.expire_stale_samples(current_version=4)
     # Now both samples should be expired
     assert buf.get_current_size() == 0
+
 
 def test_pop_all_cached_samples():
     buf = RolloutBuffer(group_size=2, mini_samples_per_group=2)

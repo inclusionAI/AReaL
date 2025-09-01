@@ -1,17 +1,15 @@
+import abc
+import concurrent.futures
+import logging
 import subprocess
 import sys
-import logging
 from collections import defaultdict
 from datetime import datetime
-import concurrent.futures
+from typing import Any, List
+
 from arealite.scheduler.base import Scheduler, Worker
 from arealite.scheduler.rpc.rpc_client import RPCClient
 from arealite.scheduler.utils import find_free_port, wait_for_port
-
-
-import abc
-import logging
-from typing import Any, List
 
 
 class LocalScheduler(Scheduler):

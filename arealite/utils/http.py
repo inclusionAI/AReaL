@@ -66,7 +66,7 @@ async def arequest_with_retry(
                     logger.info("http requests return")
                 res = await response.json()
                 response.raise_for_status()
-                #res = await response.json()
+                # res = await response.json()
                 if verbose:
                     logger.info("get http result")
                 if session is None:

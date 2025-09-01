@@ -1,26 +1,27 @@
-import logging
 import asyncio
-import threading
-import pickle
 import json
+import logging
+import os
+import pickle
+import socket
+import struct
+import threading
 import time
 import traceback
 from typing import Any, Dict, Tuple, Union
-from aiohttp import web
-import socket
+
 import requests
-import struct
-import os
+from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
 
 def configure_logging(level=logging.INFO, force=True):
-  logging.basicConfig(
-    level=level,
-    format="%(asctime)s\t%(levelname)s %(filename)s:%(lineno)s -- %(process)d -- %(message)s",
-    force=force,
-)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s\t%(levelname)s %(filename)s:%(lineno)s -- %(process)d -- %(message)s",
+        force=force,
+    )
 
 
 def get_ip_address():
@@ -30,7 +31,8 @@ def get_ip_address():
             return s.getsockname()[0]
     except Exception:
         return socket.gethostbyname(socket.gethostname())
-    
+
+
 def get_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
@@ -154,7 +156,9 @@ class MetaServer:
 
     def start(self):
         """Start the server in a daemon thread"""
-        self._server_thread = threading.Thread(target=self._run_server, daemon=True, name="AsystemMetaServer")
+        self._server_thread = threading.Thread(
+            target=self._run_server, daemon=True, name="AsystemMetaServer"
+        )
         self._server_thread.start()
 
         # Poll health check until server is ready
@@ -222,15 +226,17 @@ class MetaServer:
                 {"success": False, "error": f"Key '{key}' not found"}, status=404
             )
         data = self.storage[key]
-        
+
         # If data is already bytes, return it directly
         if isinstance(data, bytes):
             return web.Response(body=data, content_type="application/octet-stream")
-        
+
         # Otherwise, serialize the object to binary format
         try:
             binary_data = to_binary(data)
-            return web.Response(body=binary_data, content_type="application/octet-stream")
+            return web.Response(
+                body=binary_data, content_type="application/octet-stream"
+            )
         except Exception as e:
             return web.json_response(
                 {"success": False, "error": f"Failed to serialize object: {str(e)}"},
