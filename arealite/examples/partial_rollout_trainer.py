@@ -17,6 +17,7 @@ from arealite.api.cli_args import (
     RolloutControllerConfig,
     SaverConfig,
     StatsLoggerConfig,
+    TensorBoardConfig,
     TrainControllerConfig,
     WandBConfig,
     load_expr_config,
@@ -167,6 +168,7 @@ def main(args):
             wandb=WandBConfig(
                 mode=config.stats_logger.wandb.mode,
             ),
+            tensorboard=TensorBoardConfig(path=config.stats_logger.tensorboard.path)
         ),
         FinetuneSpec(
             total_train_epochs=epoch_num,
