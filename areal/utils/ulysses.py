@@ -68,7 +68,7 @@ def gather_seq_scatter_heads(
 
 
 def gather_heads_scatter_seq(
-    x: Tensor, head_dim: int, seq_dim: int, group: ProcessGroup = None
+    x: Tensor, head_dim: int, seq_dim: int, group: Optional[ProcessGroup] = None
 ) -> Tensor:
     """
     A func to sync attention result with alltoall in sequence parallel
@@ -107,7 +107,7 @@ def _unpad_tensor(x: Tensor, dim: int, padding_size: int) -> Tensor:
 
 
 def slice_input_tensor(
-    x: Tensor, dim: int, padding: bool = True, group: ProcessGroup = None
+    x: Tensor, dim: int, padding: bool = True, group: Optional[dist.ProcessGroup] = None
 ) -> Tensor:
     group = get_ulysses_sequence_parallel_group() if group is None else group
     sp_world_size = dist.get_world_size(group)

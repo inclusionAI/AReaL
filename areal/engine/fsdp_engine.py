@@ -42,6 +42,7 @@ from areal.utils.ulysses import (
     get_ulysses_sequence_parallel_group,
     get_ulysses_sequence_parallel_rank,
     get_ulysses_sequence_parallel_world_size,
+    ulysses_pad,
     ulysses_pad_and_slice_inputs,
 )
 
@@ -73,6 +74,10 @@ class FSDPEngine(BaseHFEngine):
         # Create Ulysses device mesh
         self.ulysses_device_mesh = None
         self.ulysses_sp_size = self.config.fsdp.ulysses_sp_size
+        if self.world_size % self.ulysses_sp_size != 0:
+            raise ValueError(
+                f"FSDP's world_size ({self.world_size}) must be divisible by ulysses_sp_size ({self.ulysses_sp_size})!"
+            )
         dp = self.world_size // self.ulysses_sp_size
         if self.ulysses_sp_size > 1:
             self.ulysses_device_mesh = init_device_mesh(
@@ -327,17 +332,34 @@ class FSDPEngine(BaseHFEngine):
                         input_ids = padded_mb_input["input_ids"]
                         position_ids = padded_mb_input.get("position_ids", None)
 
-                        # Pad and slice the inputs
-                        input_ids_sliced, position_ids_sliced, ulysses_pad_size = (
-                            ulysses_pad_and_slice_inputs(
+                        if self.is_vision_model:
+                            # NOTE: For vision models, inputs_embeds will be sliced instead of input_ids.
+                            #       Please refer to patch_vlm_for_ulysses_input_slicing() in
+                            #       areal/models/transformers/ulyssess_patch.py
+                            (
+                                ulysses_input_ids,
+                                ulysses_position_ids,
+                                ulysses_pad_size,
+                            ) = ulysses_pad(
                                 input_ids, position_ids, sp_size=sp_world_size
                             )
-                        )
+                        else:
+                            # Pad and slice the inputs
+                            (
+                                ulysses_input_ids,
+                                ulysses_position_ids,
+                                ulysses_pad_size,
+                            ) = ulysses_pad_and_slice_inputs(
+                                input_ids, position_ids, sp_size=sp_world_size
+                            )
+
+                        if not ulysses_position_ids.is_contiguous():
+                            ulysses_position_ids = ulysses_position_ids.contiguous()
 
                         ulysses_mb_input = padded_mb_input.copy()
-                        ulysses_mb_input["input_ids"] = input_ids_sliced
-                        if position_ids_sliced is not None:
-                            ulysses_mb_input["position_ids"] = position_ids_sliced
+                        ulysses_mb_input["input_ids"] = ulysses_input_ids
+                        if ulysses_position_ids is not None:
+                            ulysses_mb_input["position_ids"] = ulysses_position_ids
 
                         # NOTE: Only null attention mask is supported
                         attention_mask = ulysses_mb_input.get("attention_mask", None)
@@ -440,17 +462,34 @@ class FSDPEngine(BaseHFEngine):
                         input_ids = padded_mb_input["input_ids"]
                         position_ids = padded_mb_input.get("position_ids", None)
 
-                        # Pad and slice the inputs
-                        input_ids_sliced, position_ids_sliced, ulysses_pad_size = (
-                            ulysses_pad_and_slice_inputs(
+                        if self.is_vision_model:
+                            # NOTE: For vision models, inputs_embeds will be sliced instead of input_ids.
+                            #       Please refer to patch_vlm_for_ulysses_input_slicing() in
+                            #       areal/models/transformers/ulyssess_patch.py
+                            (
+                                ulysses_input_ids,
+                                ulysses_position_ids,
+                                ulysses_pad_size,
+                            ) = ulysses_pad(
                                 input_ids, position_ids, sp_size=sp_world_size
                             )
-                        )
+                        else:
+                            # Pad and slice the inputs
+                            (
+                                ulysses_input_ids,
+                                ulysses_position_ids,
+                                ulysses_pad_size,
+                            ) = ulysses_pad_and_slice_inputs(
+                                input_ids, position_ids, sp_size=sp_world_size
+                            )
+
+                        if not ulysses_position_ids.is_contiguous():
+                            ulysses_position_ids = ulysses_position_ids.contiguous()
 
                         ulysses_mb_input = padded_mb_input.copy()
-                        ulysses_mb_input["input_ids"] = input_ids_sliced
-                        if position_ids_sliced is not None:
-                            ulysses_mb_input["position_ids"] = position_ids_sliced
+                        ulysses_mb_input["input_ids"] = ulysses_input_ids
+                        if ulysses_position_ids is not None:
+                            ulysses_mb_input["position_ids"] = ulysses_position_ids
 
                         outputs = self.model(**ulysses_mb_input)
 
@@ -521,17 +560,34 @@ class FSDPEngine(BaseHFEngine):
                         input_ids = padded_mb_input["input_ids"]
                         position_ids = padded_mb_input.get("position_ids", None)
 
-                        # Pad and slice the inputs
-                        input_ids_sliced, position_ids_sliced, ulysses_pad_size = (
-                            ulysses_pad_and_slice_inputs(
+                        if self.is_vision_model:
+                            # NOTE: For vision models, inputs_embeds will be sliced instead of input_ids.
+                            #       Please refer to patch_vlm_for_ulysses_input_slicing() in
+                            #       areal/models/transformers/ulyssess_patch.py
+                            (
+                                ulysses_input_ids,
+                                ulysses_position_ids,
+                                ulysses_pad_size,
+                            ) = ulysses_pad(
                                 input_ids, position_ids, sp_size=sp_world_size
                             )
-                        )
+                        else:
+                            # Pad and slice the inputs
+                            (
+                                ulysses_input_ids,
+                                ulysses_position_ids,
+                                ulysses_pad_size,
+                            ) = ulysses_pad_and_slice_inputs(
+                                input_ids, position_ids, sp_size=sp_world_size
+                            )
+
+                        if not ulysses_position_ids.is_contiguous():
+                            ulysses_position_ids = ulysses_position_ids.contiguous()
 
                         ulysses_mb_input = padded_mb_input.copy()
-                        ulysses_mb_input["input_ids"] = input_ids_sliced
-                        if position_ids_sliced is not None:
-                            ulysses_mb_input["position_ids"] = position_ids_sliced
+                        ulysses_mb_input["input_ids"] = ulysses_input_ids
+                        if ulysses_position_ids is not None:
+                            ulysses_mb_input["position_ids"] = ulysses_position_ids
 
                         outputs = self.model(**ulysses_mb_input)
 
