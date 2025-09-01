@@ -658,6 +658,7 @@ class RemoteMegatronEngineConfig:
     )
     remote_megatron_config: Dict = field(default_factory=dict)
     loss_configs: Dict = field(default_factory=dict)
+    recover_dir: str = field(default="")
 
     @staticmethod
     def assign_wrap_policy(policy_dict: Dict) -> RemoteMegatronWrapPolicy:

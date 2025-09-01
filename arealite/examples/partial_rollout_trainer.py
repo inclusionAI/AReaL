@@ -127,7 +127,7 @@ def main(args):
     latest_recover = latest_checkpoint.Recover(config.recover)
     if can_recover:
         dataloader.load_state_dict(recover_meta_info.dataloader_state)
-        config.actor.hybrid_engine.remote_megatron_config["recover_dir"] = recover_meta_info.checkpoint_path
+        config.actor.hybrid_engine.recover_dir = recover_meta_info.checkpoint_path
 
     periodic_recover = periodic_checkpoint.Recover(config.recover)
     ##################################################################################
@@ -160,7 +160,8 @@ def main(args):
         RemoteHypridTrainWorker(config.actor.hybrid_engine),
         TrainControllerConfig(experiment_name=config.experiment_name,
                               trial_name=config.trial_name,
-                              allocation_mode=config.allocation_mode, enable_colocate_mode=config.enable_colocate_mode,
+                              allocation_mode=config.allocation_mode,
+                              enable_colocate_mode=config.enable_colocate_mode,
                               group_size=config.actor.hybrid_engine.group_size),
         scheduler
     )

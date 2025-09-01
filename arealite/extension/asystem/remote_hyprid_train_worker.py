@@ -43,7 +43,6 @@ class RemoteMegatronInitConfig:
     server_addrs: list[str]
     global_rank: int
     world_size: int
-    recover_dir: str = ""
     enable_colocate_mode: bool = False
 
 
@@ -107,7 +106,7 @@ class RemoteHypridTrainWorker(TrainEngine):
             "world_size": str(cfg.world_size),
             "megatron_config": megatron_config,
             "loss_configs": self.config.loss_configs,
-            "recover_dir": cfg.recover_dir,
+            "recover_dir": self.config.recover_dir,
             "enable_colocate_mode": cfg.enable_colocate_mode,
         }
 

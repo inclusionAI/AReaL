@@ -130,7 +130,10 @@ class DistributedTrainController(TrainController):
                         worker.id,
                         self.train_engine,
                         RemoteMegatronInitConfig(
-                            server_addrs=server_addrs, global_rank=index, world_size=self.world_size, enable_colocate_mode=self.enable_colocate_mode
+                            server_addrs=server_addrs,
+                            global_rank=index,
+                            world_size=self.world_size,
+                            enable_colocate_mode=self.enable_colocate_mode
                         ),
                     )
                 )
