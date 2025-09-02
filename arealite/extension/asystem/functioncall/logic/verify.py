@@ -10,7 +10,7 @@ from arealite.extension.asystem.functioncall.base.call import (
 from arealite.extension.asystem.functioncall.base.utils import construct_uid, logger
 
 
-def logic_verify(
+async def logic_verify(
     id2info, generateds: List, query_ids: List, batch_size=1, timeout=1000
 ) -> List:
     assert len(generateds) == len(query_ids), (
@@ -66,7 +66,7 @@ def logic_verify(
 
         batch_args_list.append(sub_problem)
 
-    results_batch = batch_function_call(batch_args_list, str(Language.LOGIC), timeout)
+    results_batch = await batch_function_call(batch_args_list, str(Language.LOGIC), timeout)
 
     labels = [0.0] * len(query_ids)
     # Map results back to original indices

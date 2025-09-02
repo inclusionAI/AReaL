@@ -230,7 +230,7 @@ def caculate_concurrency():
     return concurrency_for_one_exp // dp
 
 
-def batch_function_call(payload_list, task_type, timeout):
+async def batch_function_call(payload_list, task_type, timeout):
     start_time = time.time()
     url = f"{FUNCTIONCALL_SERVICE_DOMAIN}/apis/functioncalls"
 
@@ -239,14 +239,9 @@ def batch_function_call(payload_list, task_type, timeout):
         f"Batch function call start, task type: {task_type}, request count: {len(payload_list)}, time: {time.ctime(start_time)} ms, concurrency: {concurrency}"
     )
 
-    async def _main():
-        return await batch_function_call_async(
-            payload_list, url, timeout, concurrency=concurrency
-        )
-
-    with ThreadPoolExecutor() as executor:
-        future = executor.submit(asyncio.run, _main())
-        result = future.result()
+    result = await batch_function_call_async(
+        payload_list, url, timeout, concurrency=concurrency
+    )
 
     execution_time = time.time() - start_time
     logger.info(

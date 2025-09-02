@@ -82,7 +82,7 @@ class RLVRWorkflow(RolloutWorkflow):
                 skip_special_tokens=True,
             )
 
-            reward = self.reward_fn(
+            reward = await self.reward_fn(
                 prompt=text,
                 completion=completion,
                 prompt_ids=resp.input_tokens,
@@ -171,7 +171,7 @@ class RLVRWorkflow(RolloutWorkflow):
             if "prompt" in data.keys():
                 del data["prompt"]
 
-            reward = self.reward_fn(
+            reward = await self.reward_fn(
                 prompt=text,
                 completion=completion,
                 prompt_ids=resp.input_tokens,

@@ -13,7 +13,7 @@ from arealite.extension.asystem.functioncall.base.call import (
 from arealite.extension.asystem.functioncall.base.utils import construct_uid, logger
 
 
-def math_verify(
+async def math_verify(
     id2info, generateds: List, query_ids: List, batch_size=10, timeout=1000
 ) -> List:
     assert len(generateds) == len(query_ids), (
@@ -60,7 +60,7 @@ def math_verify(
 
         batch_args_list.append(sub_problem)
 
-    results_batch = batch_function_call(batch_args_list, "math", timeout)
+    results_batch = await batch_function_call(batch_args_list, "math", timeout)
 
     labels = [0] * len(query_ids)
     # Map results back to original indices

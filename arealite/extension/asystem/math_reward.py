@@ -1,10 +1,12 @@
 # Copyright 2025 Ant Group Inc.
 
 import ast
+import asyncio
 import os
 import re
 from typing import Dict, List, Tuple
 
+import aiohttp
 import requests
 from transformers import AutoTokenizer
 
@@ -18,7 +20,7 @@ from arealite.utils.errors import FrameworkError
 logger = logging.getLogger("__name__")
 
 
-def reward_fn(
+async def reward_fn(
     prompt: str,
     completion: str,
     prompt_ids: List[int],
@@ -44,16 +46,16 @@ def reward_fn(
     id2info = {query_id: info_details}
 
     if task == "math" or task == "stem":
-        format_rewards = math_verify(id2info, answers, query_id_strs)
+        format_rewards = await math_verify(id2info, answers, query_id_strs)
     elif task == "code":
         codes = [extract_python_code(_answer) for _answer in answers]
-        format_rewards = code_verify(id2info, codes, query_id_strs)
+        format_rewards = await code_verify(id2info, codes, query_id_strs)
     elif task == "general":
-        format_rewards = general_verify(id2info, answers, query_id_strs)
+        format_rewards = await general_verify(id2info, answers, query_id_strs)
     elif task == "logic":
-        format_rewards = logic_verify(id2info, answers, query_id_strs)
+        format_rewards = await logic_verify(id2info, answers, query_id_strs)
     elif task == "ifeval":
-        format_rewards = ifeval_verify(id2info, answers, query_id_strs)
+        format_rewards = await ifeval_verify(id2info, answers, query_id_strs)
     assert len(format_rewards) == len(answers), (
         task,
         len(format_rewards),
@@ -61,9 +63,9 @@ def reward_fn(
         answers,
     )
 
-    logger.info(
-        f"task: {task}, completion: {completion}, query_id: {query_id}, reward: {format_rewards}"
-    )
+    # logger.info(
+    #     f"task: {task}, completion: {completion}, query_id: {query_id}, reward: {format_rewards}"
+    # )
     return format_rewards[0]
 
     # labels = math_verify([solutions], [completion], [query_id])
@@ -104,7 +106,7 @@ def extract_content(input_text):
         return input_text
 
 
-def general_verify(id2info, responses: List[str], query_ids: List) -> List[float]:
+async def general_verify(id2info, responses: List[str], query_ids: List) -> List[float]:
     assert len(responses) == len(query_ids), (
         len(responses),
         len(query_ids),
@@ -148,7 +150,10 @@ def general_verify(id2info, responses: List[str], query_ids: List) -> List[float
     payload.update({"text": convs_formatted})
 
     try:
-        api_responses = requests.post(REWARD_MODEL_SERVICE_URL, json=payload).json()
+        async with aiohttp.ClientSession() as session:
+            async with session.post(REWARD_MODEL_SERVICE_URL, json=payload) as response:
+                api_responses = await response.json()
+        
         if "error" in api_responses:
             raise FrameworkError(
                 "FrameworkError",
@@ -199,17 +204,17 @@ def extract_python_code(text, min_length=20, strict_syntax=False):
 
 
 if __name__ == "__main__":
-    answer = "<answer>\n28\n</answer>"
-    data = {
-        "task": ["general"],
-        "query_id": ["general-42941"],
-        "prompt": [
-            "<role>HUMAN</role>33岁孩子不听话,如何处理父子之间矛盾?<role>ASSISTANT</role>"
-        ],
-    }
+    async def main():
+        answer = "<answer>\n28\n</answer>"
+        data = {
+            "task": ["general"],
+            "query_id": ["general-42941"],
+            "prompt": [
+                "<role>HUMAN</role>33岁孩子不听话,如何处理父子之间矛盾?<role>ASSISTANT</role>"
+            ],
+        }
 
-    print(
-        reward_fn(
+        result = await reward_fn(
             "<role>HUMAN</role>33岁孩子不听话,如何处理父子之间矛盾?<role>ASSISTANT</role>",  # data["prompt"][0],
             answer,
             None,
@@ -218,4 +223,6 @@ if __name__ == "__main__":
             query_id=data["query_id"],
             # prompt=data["prompt"],
         )
-    )
+        print(result)
+
+    asyncio.run(main())

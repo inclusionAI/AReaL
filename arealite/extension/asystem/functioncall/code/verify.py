@@ -119,7 +119,7 @@ def load_problems_with_testcase_batch(
     return problem_list
 
 
-def code_verify(
+async def code_verify(
     id2info,
     generateds,
     query_ids,
@@ -144,7 +144,7 @@ def code_verify(
     logger.info(
         f"code_verify start, request count: {len(payload_list)}, query size: {len(query_ids)}, query_id_0: {query_ids[0]}"
     )
-    rsp_list = batch_function_call(payload_list, "code", timeout)
+    rsp_list = await batch_function_call(payload_list, "code", timeout)
 
     results = [1] * len(query_ids) if len(rsp_list) else [0] * len(query_ids)
     for idx, rsp in enumerate(rsp_list):

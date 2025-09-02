@@ -9,7 +9,7 @@ from arealite.extension.asystem.functioncall.base.call import (
 from arealite.extension.asystem.functioncall.base.utils import construct_uid, logger
 
 
-def ifeval_verify(
+async def ifeval_verify(
     id2info, generateds: List, query_ids: List, batch_size=1, timeout=1000
 ) -> List:
     assert len(generateds) == len(query_ids), (
@@ -57,7 +57,7 @@ def ifeval_verify(
 
         batch_args_list.append(sub_problem)
 
-    results_batch = batch_function_call(
+    results_batch = await batch_function_call(
         batch_args_list, str(Language.INSTRUCT), timeout
     )
 
