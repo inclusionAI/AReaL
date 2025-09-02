@@ -708,6 +708,8 @@ class RemoteHybridTrainWorker(TrainEngine):
             seq_no_eos_mask=seq_no_eos_mask,
         )
 
+        torch.cuda.empty_cache()
+
         # Optionally perform normalization.
         if self.config.wrap_policy.value_norm:
             self.rms.update(returns, mask=loss_mask)
