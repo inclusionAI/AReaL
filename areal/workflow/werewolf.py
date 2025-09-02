@@ -288,7 +288,10 @@ class WerewolfWorkflow(RolloutWorkflow):
             # Only gather the agent's answer now
             t0 = time.perf_counter()
             agent_ans_resps = await asyncio.gather(*agent_answer_tasks)
-            agent_answers = [self.tokenizer.decode(r.output_tokens, skip_special_tokens=True) for r in agent_ans_resps]
+            if use_opp_generation and self.opp_tokenizer:
+                agent_answers = [self.opp_tokenizer.decode(r.output_tokens, skip_special_tokens=True) for r in agent_ans_resps]
+            else:
+                agent_answers = [self.tokenizer.decode(r.output_tokens, skip_special_tokens=True) for r in agent_ans_resps]
             t_agent_answer_total += time.perf_counter() - t0
 
             # ========== 3) Use agent's Q&A to guide action generation ==========
@@ -453,13 +456,19 @@ class WerewolfWorkflow(RolloutWorkflow):
                     gconfig=self.gconfig.new(n_samples=1, max_new_tokens=512),
                     tokenizer=self.tokenizer,
                 )
-                summary_tasks = [engine.agenerate(summary_req)]
+                if use_opp_generation:
+                    summary_tasks = [self.opp_rollout.agenerate(summary_req)]
+                else:
+                    summary_tasks = [engine.agenerate(summary_req)]
                 t0 = time.perf_counter()
                 summary_resps = await asyncio.gather(*summary_tasks)
                 t_sum = time.perf_counter() - t0
                 t_summary_agent_total += t_sum
 
-                agent_summary = self.tokenizer.decode(summary_resps[0].output_tokens, skip_special_tokens=True)
+                if use_opp_generation and self.opp_tokenizer:
+                    agent_summary = self.opp_tokenizer.decode(summary_resps[0].output_tokens, skip_special_tokens=True)
+                else:
+                    agent_summary = self.tokenizer.decode(summary_resps[0].output_tokens, skip_special_tokens=True)
                 summaries[current_agent].append(agent_summary)
 
                 qa_logs.append(
