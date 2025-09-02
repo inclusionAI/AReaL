@@ -60,6 +60,13 @@ class AsystemScheduler(Scheduler):
         self.extra_envs["CLUSTER_NAME"] = (
             f"{self.expr_name}_{self.trial_name}_{self.uuid}"
         )
+        # 设置 env，用于 antlogs 日志收集
+        self.extra_envs["EXPR_NAME"] = (
+            f"{self.expr_name}"
+        )
+        self.extra_envs["TRIAL_NAME"] = (
+            f"{self.trial_name}"
+        )
 
         # 信号捕获是为了手动跑 trainer.py 增加的功能，用来在 trainer 退出时清理相关 Job
         signal.signal(signal.SIGINT, self.batch_cleanup_jobs)

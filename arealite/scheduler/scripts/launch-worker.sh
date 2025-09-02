@@ -50,19 +50,24 @@ mkdir -p ${WORKER_LOG_DIR}
 
 WORKER_LOG_FILE=${WORKER_LOG_DIR}/${WORKER_TYPE}-${WORKER_INDEX}.log
 
-echo "ASystem Entrypoint Env:" >> ${WORKER_LOG_FILE}
+mkdir -p ${LOCAL_WORKER_DIR}/${EXPR_NAME}/${TRIAL_NAME}
+WORKER_ANTLOGS_LOG_FILE=${LOCAL_WORKER_DIR}/${EXPR_NAME}/${TRIAL_NAME}/${WORKER_TYPE}-${WORKER_INDEX}.log
 
+log_to_both_files() {
+    echo "$@" | tee -a ${WORKER_ANTLOGS_LOG_FILE} >> ${WORKER_LOG_FILE}
+}
+
+log_to_both_files "ASystem Entrypoint Env:"
 env >> ${WORKER_LOG_FILE}
-
-echo "ASystem Worker Command: ${WORKER_COMMAND}" >> ${WORKER_LOG_FILE}
+env >> ${WORKER_ANTLOGS_LOG_FILE}
+log_to_both_files "ASystem Worker Command: ${WORKER_COMMAND}"
 
 cd ${REAL_PACKAGE_PATH}
 
-uname -a >> ${WORKER_LOG_FILE}
+log_to_both_files `uname -a`
 
 #systemctl stop nanovisor
 systemctl stop nanovisor
-
 
 # 定义同步使用的文件和路径
 LOCK_FILE="/tmp/copy.lock"
@@ -72,22 +77,22 @@ DONE_FILE="/tmp/copy_done.flag"
 sync_copy() {
     # 检查是否已完成复制
     if [[ -f "$DONE_FILE" ]]; then
-        echo "Copy already completed. Proceeding." >> ${WORKER_LOG_FILE}
+        log_to_both_files "Copy already completed. Proceeding."
         return 0
     fi
 
     # 尝试获取文件锁 (非阻塞模式)
     exec 9>"$LOCK_FILE"
     if flock -n 9; then
-        echo "Acquired lock. Starting copy..." >> ${WORKER_LOG_FILE}
+        log_to_both_files "Acquired lock. Starting copy..."
         # 双重检查：获取锁后再次确认状态
         if [[ ! -f "$DONE_FILE" ]]; then
             # 执行复制操作 (替换为您的实际命令)
             if cp ${WORKER_IMAGE} /tmp/image.sif; then
                 touch "$DONE_FILE"
-                echo "Copy completed successfully." >> ${WORKER_LOG_FILE}
+                log_to_both_files "Copy completed successfully."
             else
-                echo "Error: Copy failed!" >> ${WORKER_LOG_FILE}
+                log_to_both_files "Error: Copy failed!"
                 exit 1
             fi
 	fi
@@ -95,18 +100,18 @@ sync_copy() {
         flock -u 9
     else
         # 等待复制完成
-        echo "Waiting for copy to complete..." >> ${WORKER_LOG_FILE}
+        log_to_both_files "Waiting for copy to complete..."
         while [[ ! -f "$DONE_FILE" ]]; do
             sleep 1
         done
-        echo "Copy completed by another process. Proceeding." >> ${WORKER_LOG_FILE}
+        log_to_both_files "Copy completed by another process. Proceeding."
     fi
 }
 
 sync_copy
 WORKER_IMAGE="/tmp/image.sif"
 
-singularity --debug exec --pid --nv --no-home --writable-tmpfs --bind /storage:/storage --workdir "${REAL_PACKAGE_PATH}" "${WORKER_IMAGE}" bash -c "${WORKER_COMMAND}" 2>&1 | tee -a ${WORKER_LOG_FILE} | grep --line-buffered -F 'monitor_logger' >> ${LOCAL_WORKER_MONITOR_LOG_FILE}
+singularity --debug exec --pid --nv --no-home --writable-tmpfs --bind /storage:/storage --workdir "${REAL_PACKAGE_PATH}" "${WORKER_IMAGE}" bash -c "${WORKER_COMMAND}" 2>&1 | tee -a ${WORKER_LOG_FILE} | tee -a ${WORKER_ANTLOGS_LOG_FILE} | grep --line-buffered -F "monitor_logger" >> ${LOCAL_WORKER_MONITOR_LOG_FILE}
 
 
 
