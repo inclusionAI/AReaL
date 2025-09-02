@@ -28,17 +28,16 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         self.tokenizer = tokenizer if tokenizer is not None else None
         self.tokenizer_path = tokenizer_path
 
-    async def _compute_reward(self, prompt,
-                        completion,
-                        prompt_ids,
-                        completion_ids,
-                        stop_reason,
-                        data):
+    async def _compute_reward(
+        self, prompt, completion, prompt_ids, completion_ids, stop_reason, data
+    ):
         if stop_reason == "abort":
             # skip reward computation when abort
             return 0
         else:
-            return await self.reward_fn(prompt, completion, prompt_ids, completion_ids, **data)
+            return await self.reward_fn(
+                prompt, completion, prompt_ids, completion_ids, **data
+            )
 
     async def _run_new_prompt_task(self, engine, data: Dict[str, Any]) -> TensorDict:
         """
@@ -122,7 +121,8 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         )
         task_id = RL_TASKS.index(data["task"][0])
         print(
-            f"[PartialRolloutWorkflow][New Prompt] data {data_name_id}, task: {data['task'][0]}, reward: {reward}, stop_reason: {resp.stop_reason}, input_ids {input_ids},  prompt: {prompt_text}, completion: {completion}, completion_tokens: {resp.output_tokens}, solutions: {data['solutions'][0]}")
+            f"[PartialRolloutWorkflow][New Prompt] data {data_name_id}, task: {data['task'][0]}, reward: {reward}, stop_reason: {resp.stop_reason}, input_ids {input_ids},  prompt: {prompt_text}, completion: {completion}, completion_tokens: {resp.output_tokens}, solutions: {data['solutions'][0]}"
+        )
         res = dict(
             # unsqueeze to add an additional batch dimension
             input_ids=torch.tensor(seq).unsqueeze(
@@ -249,7 +249,8 @@ class PartialRolloutWorkflow(RolloutWorkflow):
 
         task_id = RL_TASKS.index(data["task"][0])
         print(
-            f"[PartialRolloutWorkflow][Reapply] data {data_name_id}, task: {data['task'][0]}, reward: {reward}, stop_reason: {stop_reason}, input_ids {input_ids},  prompt: {prompt_text}, completion: {completion}, completion_tokens: {completion_ids}, solutions: {data['solutions'][0]}")
+            f"[PartialRolloutWorkflow][Reapply] data {data_name_id}, task: {data['task'][0]}, reward: {reward}, stop_reason: {stop_reason}, input_ids {input_ids},  prompt: {prompt_text}, completion: {completion}, completion_tokens: {completion_ids}, solutions: {data['solutions'][0]}"
+        )
         res = dict(
             # unsqueeze to add an additional batch dimension
             input_ids=torch.tensor(seq).unsqueeze(

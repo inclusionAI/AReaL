@@ -66,7 +66,9 @@ async def logic_verify(
 
         batch_args_list.append(sub_problem)
 
-    results_batch = await batch_function_call(batch_args_list, str(Language.LOGIC), timeout)
+    results_batch = await batch_function_call(
+        batch_args_list, str(Language.LOGIC), timeout
+    )
 
     labels = [0.0] * len(query_ids)
     # Map results back to original indices

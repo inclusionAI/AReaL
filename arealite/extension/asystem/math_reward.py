@@ -15,6 +15,10 @@ from arealite.extension.asystem.functioncall.code.verify import code_verify
 from arealite.extension.asystem.functioncall.ifeval.verify import ifeval_verify
 from arealite.extension.asystem.functioncall.logic.verify import logic_verify
 from arealite.extension.asystem.functioncall.math.verify import math_verify
+from arealite.extension.asystem.functioncall.swe.local_verify import (
+    swe_verify as local_swe_verify,
+)
+from arealite.extension.asystem.functioncall.swe.verify import swe_verify
 from arealite.utils.errors import FrameworkError
 
 logger = logging.getLogger("__name__")
@@ -56,6 +60,12 @@ async def reward_fn(
         format_rewards = await logic_verify(id2info, answers, query_id_strs)
     elif task == "ifeval":
         format_rewards = await ifeval_verify(id2info, answers, query_id_strs)
+    elif task == "swe":
+        extra_info = kwargs.get("extra_info")[0]
+        if extra_info and extra_info.get("provider", "functioncall") == "local":
+            format_rewards = await local_swe_verify(id2info, answers, query_id_strs)
+        else:
+            format_rewards = await swe_verify(id2info, answers, query_id_strs)
     assert len(format_rewards) == len(answers), (
         task,
         len(format_rewards),
@@ -63,9 +73,6 @@ async def reward_fn(
         answers,
     )
 
-    # logger.info(
-    #     f"task: {task}, completion: {completion}, query_id: {query_id}, reward: {format_rewards}"
-    # )
     return format_rewards[0]
 
     # labels = math_verify([solutions], [completion], [query_id])
@@ -153,7 +160,7 @@ async def general_verify(id2info, responses: List[str], query_ids: List) -> List
         async with aiohttp.ClientSession() as session:
             async with session.post(REWARD_MODEL_SERVICE_URL, json=payload) as response:
                 api_responses = await response.json()
-        
+
         if "error" in api_responses:
             raise FrameworkError(
                 "FrameworkError",
@@ -204,6 +211,7 @@ def extract_python_code(text, min_length=20, strict_syntax=False):
 
 
 if __name__ == "__main__":
+
     async def main():
         answer = "<answer>\n28\n</answer>"
         data = {

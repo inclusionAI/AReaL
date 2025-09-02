@@ -545,6 +545,7 @@ class SchedulerConfig:
     endpoint: str = field(default="http://localhost:8081")
     deploy_mode: str = field(default="separation")
     functioncall_service_domain: str = field(default="http://localhost:8080")
+    reward_functioncall_config: Dict = field(default_factory=dict)
     reward_model_path: str = field(default="")
     reward_model_service_url: str = field(default="http://localhost:30000/classify")
 

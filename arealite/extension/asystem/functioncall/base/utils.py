@@ -25,6 +25,16 @@ except Exception:
     logger.addHandler(console)
 
 
+def construct_swe_uid(query_id: str):
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    try:
+        trial_name = f"{constants.experiment_name()}&{constants.trial_name()}"
+    except Exception as e:
+        trial_name = "test"
+    uid = f"{timestamp}-[{trial_name}]-{query_id}-{str(uuid.uuid4())[:4]}"
+    return uid
+
+
 def construct_uid(query_id: str, start_idx: int, end_idx: int):
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     try:

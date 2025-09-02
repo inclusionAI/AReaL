@@ -1,3 +1,4 @@
+import json
 import os
 import pprint
 import sys
@@ -76,8 +77,9 @@ def main(args):
             "trial_name": config.trial_name,
             "extra_envs": {
                 "FUNCTIONCALL_SERVICE_DOMAIN": config.scheduler.functioncall_service_domain,
-                # "REWARD_MODEL_PATH": config.scheduler.reward_model_path,
-                # "REWARD_MODEL_SERVICE_URL": config.scheduler.reward_model_service_url
+                "REWARD_FUNCTIONCALL_CONFIG": json.dumps(
+                    config.scheduler.reward_functioncall_config
+                ),
             },
         }
     )

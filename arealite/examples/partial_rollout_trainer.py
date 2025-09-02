@@ -168,7 +168,7 @@ def main(args):
             wandb=WandBConfig(
                 mode=config.stats_logger.wandb.mode,
             ),
-            tensorboard=TensorBoardConfig(path=config.stats_logger.tensorboard.path)
+            tensorboard=TensorBoardConfig(path=config.stats_logger.tensorboard.path),
         ),
         FinetuneSpec(
             total_train_epochs=epoch_num,

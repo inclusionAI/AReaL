@@ -170,9 +170,6 @@ async def batch_function_call_async(payload_list, url, timeout, concurrency=1500
         semaphore = asyncio.Semaphore(concurrency)
 
         async def limited_task(payload):
-            ok, err_rsp = check_payload(payload)
-            if not ok:
-                return err_rsp, 0
             async with semaphore:
                 st = time.monotonic()
                 result = await async_invoke_function(session, url, timeout, payload)
@@ -230,9 +227,12 @@ def caculate_concurrency():
     return concurrency_for_one_exp // dp
 
 
-async def batch_function_call(payload_list, task_type, timeout):
+async def batch_function_call(
+    payload_list, task_type, timeout, host=FUNCTIONCALL_SERVICE_DOMAIN
+):
     start_time = time.time()
-    url = f"{FUNCTIONCALL_SERVICE_DOMAIN}/apis/functioncalls"
+    host = host if host else FUNCTIONCALL_SERVICE_DOMAIN
+    url = f"{host}/apis/functioncalls"
 
     concurrency = caculate_concurrency()
     logger.info(
