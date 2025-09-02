@@ -100,8 +100,9 @@ class EnvironmentEvaluator(EvaluatorBase):
                 )
             except Exception as e:
                 logger.warning(
-                    f"Error in golden actions {action.name}({action.arguments}): {e}"
+                    f"Error in golden actions {task.id} {task.evaluation_criteria.actions} {action.name}({action.arguments}): {e}"
                 )
+                raise e
 
         # Comparing the environments
         agent_db_hash = gold_environment.get_db_hash()

@@ -91,14 +91,11 @@ def parse_nl_assertions(rubrics_str):
     return result
 
 
-with open("tau_airline_mt_dialogs_v0.jsonl") as f, \
-    open("training_data.jsonl", 'w') as fout:
+with open("/storage/openpsi/users/xushusheng.xss/data/agent_training/tau_bench/tau_airline_mt_dialogs_v0.jsonl") as f, \
+    open("/storage/openpsi/users/xushusheng.xss/data/agent_training/tau_bench/tau_airline_mt_dialogs_v0_format_fix.jsonl", 'w') as fout:
 
     for idx, line in enumerate(f):
         data = json.loads(line)
-
-        if idx == 122:
-            breakpoint()
 
         cur_data = dict(
                     id="train" + "_" + str(idx),
@@ -120,5 +117,6 @@ with open("tau_airline_mt_dialogs_v0.jsonl") as f, \
                     )
 
                 )
+        cur_data["evaluation_criteria"] = json.dumps(cur_data["evaluation_criteria"])
         print(json.dumps(cur_data), file=fout)
     

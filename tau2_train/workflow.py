@@ -32,6 +32,7 @@ import torch.distributed as dist
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 import random
+import copy
 
 from areal.api.cli_args import (
     GenerationHyperparameters,
@@ -97,6 +98,7 @@ class Tau2Workflow(RolloutWorkflow):
             llm=self.user_model
         )
 
+        old_task = copy.deepcopy(task)
         orchestrator = Orchestrator(
             "airline",
             agent=agent,
@@ -121,16 +123,16 @@ class Tau2Workflow(RolloutWorkflow):
         ##
         return messagaes, traj_records, reward
 
-    async def arun_episode(self, engine: InferenceEngine, data=None):
+    async def arun_episode(self, engine: InferenceEngine, raw_data=None):
         
-
+        data = copy.deepcopy(raw_data)
         if data is None:
             tasks = get_tasks()
             task = random.choice(tasks)
         else:
- 
+            data['evaluation_criteria'] = json.loads(data['evaluation_criteria'])
             task = Task.model_validate(data)
-                
+
         trajs = await asyncio.gather(*[self.collect_agent_trajectory(engine, task) for _ in range(self.n_trajs)])
         version = engine.get_version()
 
