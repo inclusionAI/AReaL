@@ -226,6 +226,7 @@ class PPOActor:
                     grpo_loss_fn,
                     temperature=self.temperature,
                     eps_clip=self.config.eps_clip,
+                    eps_clip_higher=self.config.eps_clip_higher,
                     c_clip=self.config.c_clip,
                     behav_imp_weight_cap=self.config.behav_imp_weight_cap,
                 ),
@@ -262,6 +263,7 @@ def grpo_loss_fn(
     input_data: Dict,
     temperature: float,
     eps_clip: float,
+    eps_clip_higher: float | None,
     c_clip: float | None,
     behav_imp_weight_cap: float | None,
 ):
@@ -282,6 +284,7 @@ def grpo_loss_fn(
         old_logprobs=old_logp,
         advantages=advantages,
         eps_clip=eps_clip,
+        eps_clip_higher=eps_clip_higher,
         loss_mask=loss_mask,
         c_clip=c_clip,
         proximal_logprobs=prox_logp,

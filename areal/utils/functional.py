@@ -126,6 +126,7 @@ def ppo_actor_loss_fn(
     advantages: torch.Tensor,
     eps_clip: float,
     loss_mask: torch.Tensor,
+    eps_clip_higher: Optional[float] = None,
     c_clip: Optional[float] = None,
     behav_imp_weight_cap: Optional[float] = None,
 ) -> Tuple[torch.Tensor, Dict]:
@@ -139,7 +140,12 @@ def ppo_actor_loss_fn(
     """
     loss_mask_count = loss_mask.count_nonzero() or 1
     ratio = torch.where(loss_mask, torch.exp(logprobs - proximal_logprobs), 0)
-    clipped_ratio = torch.clamp(ratio, 1.0 - eps_clip, 1.0 + eps_clip)
+    if eps_clip_higher is not None:
+        assert eps_clip_higher > eps_clip, "eps_clip_higher must be greater than eps_clip"
+        eps_clip_lower = eps_clip
+    else:
+        eps_clip_higher = eps_clip_lower = eps_clip
+    clipped_ratio = torch.clamp(ratio, 1.0 - eps_clip_lower, 1.0 + eps_clip_higher)
     pg_loss1 = -advantages * ratio
     pg_loss2 = -advantages * clipped_ratio
     clip_mask = pg_loss1.detach() < pg_loss2.detach()
