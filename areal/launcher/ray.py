@@ -12,6 +12,7 @@ from ray.util.placement_group import PlacementGroup
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 import areal.utils.logging as logging
+from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
@@ -20,7 +21,6 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
-from areal.api.io_struct import AllocationMode, AllocationType
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import (
     JobException,
@@ -336,8 +336,8 @@ def ray_main(config, run_id: int = 0):
     if allocation_mode.gen_backend == "sglang":
         # Launcher should launch SGLang servers according to allocation mode.
         config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
-        n_sglang_servers = allocation_mode.gen_dp_size
-        n_sglang_nodes = allocation_mode.gen_world_size // n_gpus_per_node
+        n_sglang_servers = allocation_mode.gen.dp_size
+        n_sglang_nodes = allocation_mode.gen.world_size // n_gpus_per_node
         node_group_size = max(1, allocation_mode.gen_instance_size // n_gpus_per_node)
         n_servers_per_node = max(n_sglang_servers // n_sglang_nodes, 1)
         cross_nodes = allocation_mode.gen_instance_size > n_gpus_per_node

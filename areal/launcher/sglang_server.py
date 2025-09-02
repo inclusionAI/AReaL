@@ -8,6 +8,7 @@ from typing import Optional
 
 import requests
 
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
     ClusterSpecConfig,
     NameResolveConfig,
@@ -15,7 +16,6 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
-from areal.api.io_struct import AllocationMode
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import TRITON_CACHE_PATH
 from areal.utils.network import find_free_ports, gethostip
@@ -141,7 +141,7 @@ class SGLangServerWrapper:
             self.config.random_seed = base_random_seed + server_local_idx
             cmd = SGLangConfig.build_cmd(
                 self.config,
-                tp_size=self.allocation_mode.gen_tp_size,
+                tp_size=self.allocation_mode.gen.tp_size,
                 base_gpu_id=base_gpu_id,
                 host=host_ip,
                 port=server_port,

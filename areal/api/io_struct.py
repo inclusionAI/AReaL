@@ -1,7 +1,4 @@
-import enum
-import itertools
 import os
-import re
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
@@ -11,6 +8,7 @@ import torch
 from PIL.Image import Image as ImageObject
 from transformers import PreTrainedTokenizerFast
 
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GenerationHyperparameters
 from areal.utils.network import find_free_ports, gethostip
 
@@ -79,150 +77,6 @@ class FinetuneSpec:
     @property
     def steps_per_epoch(self):
         return self.dataset_size // self.train_batch_size
-
-
-class AllocationType(enum.Enum):
-    COLOCATE = 0
-    DECOUPLED_TRAIN = 1
-    LLM_SERVER_ONLY = 2
-    DECOUPLED_EVAL = 3
-
-
-@dataclass
-class AllocationMode:
-    type_: AllocationType
-    parallel_strat: Dict[str, Dict[str, int]]
-    gen_backend: Optional[str] = None
-
-    @property
-    def gen_tp_size(self) -> int:
-        return self.parallel_strat["gen"]["t"]
-
-    @property
-    def gen_pp_size(self) -> int:
-        return self.parallel_strat["gen"]["p"]
-
-    @property
-    def gen_dp_size(self) -> int:
-        return self.parallel_strat["gen"]["d"]
-
-    @property
-    def gen_instance_size(self):
-        return self.gen_tp_size * self.gen_pp_size
-
-    @property
-    def gen_world_size(self) -> int:
-        return self.gen_dp_size * self.gen_pp_size * self.gen_tp_size
-
-    @property
-    def train_tp_size(self) -> int:
-        return self.parallel_strat["*"]["t"]
-
-    @property
-    def train_pp_size(self) -> int:
-        return self.parallel_strat["*"]["p"]
-
-    @property
-    def train_dp_size(self) -> int:
-        return self.parallel_strat["*"]["d"]
-
-    @property
-    def train_world_size(self) -> int:
-        return self.train_dp_size * self.train_pp_size * self.train_tp_size
-
-    @classmethod
-    def from_str(cls, allocation_mode: str):
-        # 1. A string like "d2p2t1", representing the N-d parallelism strategy
-        para = AllocationMode.extract_parallelism_strategy(allocation_mode)
-        if para:
-            return cls(
-                AllocationType.COLOCATE,
-                para,
-                AllocationMode.get_gen_backend(allocation_mode),
-            )
-        para = AllocationMode.extract_decoupled_alloc(allocation_mode)
-        # 2. A string like "sglang.d4p1t1+d2pm2", representing a decoupled
-        # allocation with 4 GPUs dedicated for SGLang inference and
-        # other 4 GPUs dedicated for training
-        if "*" in para:
-            return cls(
-                AllocationType.DECOUPLED_TRAIN,
-                para,
-                AllocationMode.get_gen_backend(allocation_mode),
-            )
-        # 3. A string like "sglang.d4p1t1+eval" or "sglang.d4p1t1+cpu",
-        # representing a decoupled allocation with 4 GPUs for SGLang server
-        # and several CPU client processes to send requests.
-        # The number of CPU processes depend on the launcher type.
-        # One process for local launcher and `n_gpus_per_node` processes for Ray/SLURM.
-        if para:
-            return cls(
-                AllocationType.DECOUPLED_EVAL,
-                para,
-                AllocationMode.get_gen_backend(allocation_mode),
-            )
-        # 4. A string like "sglang.d4p1t1"", representing SGLang server-only allocation.
-        para = AllocationMode.extract_gen_alloc(allocation_mode)
-        if para:
-            return cls(
-                AllocationType.LLM_SERVER_ONLY,
-                dict(gen=para["*"]),
-                AllocationMode.get_gen_backend(allocation_mode),
-            )
-        raise NotImplementedError(f"Failed to parse allocation: {allocation_mode}")
-
-    @staticmethod
-    def extract_parallelism_strategy(allocation_mode: str) -> Dict:
-        for x, y, z in itertools.permutations(["d", "t", "p"]):
-            pattern = rf"{x}(\d+){y}(\d+){z}(\d+)"
-            m = re.match(pattern, allocation_mode)
-            if not m:
-                continue
-            a, b, c = map(int, m.groups())
-            # to be consistent with the key-value pattern
-            return {
-                "*": {
-                    x: a,
-                    y: b,
-                    z: c,
-                }
-            }
-        return {}
-
-    @staticmethod
-    def extract_gen_alloc(allocation_mode: str) -> Dict:
-        pattern = re.compile(r"^(?:vllm|sglang)\.(.+)$")
-        m = pattern.match(allocation_mode)
-        if not m:
-            return {}
-        return AllocationMode.extract_parallelism_strategy(m.group(1))
-
-    @staticmethod
-    def extract_decoupled_alloc(allocation_mode: str) -> Dict:
-        pattern = re.compile(
-            r"(?:(?:vllm|sglang)\.(.+?)\+(.+))|(?:(.+?)\+(?:vllm|sglang)\.(.+))"
-        )
-        m = pattern.match(allocation_mode)
-        if not m:
-            return {}
-        if m.group(1):
-            gen_alloc = m.group(1)
-            other_alloc = m.group(2)
-        else:
-            gen_alloc = m.group(4)
-            other_alloc = m.group(3)
-        gen_alloc = AllocationMode.extract_parallelism_strategy(gen_alloc)
-        other_alloc = AllocationMode.extract_parallelism_strategy(other_alloc)
-        other_alloc.update({"gen": gen_alloc["*"]})
-        return other_alloc
-
-    @staticmethod
-    def get_gen_backend(allocation_mode: str) -> Optional[str]:
-        if "vllm" in allocation_mode:
-            return "vllm"
-        if "sglang" in allocation_mode:
-            return "sglang"
-        return None
 
 
 @dataclass

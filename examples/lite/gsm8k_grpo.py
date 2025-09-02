@@ -7,8 +7,13 @@ import torch
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo, WeightUpdateMeta
+from areal.api.io_struct import (
+    FinetuneSpec,
+    StepInfo,
+    WeightUpdateMeta,
+)
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine

@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import psutil
 
+from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
@@ -18,8 +19,6 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
-from areal.api.io_struct import AllocationType
-from areal.experimental.api.io_struct import AllocationMode
 from areal.utils import logging, name_resolve, names
 from areal.utils.device import gpu_count
 from areal.utils.launcher import JobException, JobInfo, JobState, get_env_vars
@@ -278,15 +277,15 @@ def local_main(config, run_id: int = 0):
     if alloc_mode.gen_backend == "sglang":
         base_seed = config.sglang.random_seed
         config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
-        ports = find_free_ports(alloc_mode.gen_dp_size * 2, port_range=(10000, 50000))
+        ports = find_free_ports(alloc_mode.gen.dp_size * 2, port_range=(10000, 50000))
         host_ip = gethostip()
         host = "localhost" if not config.sglang.enable_metrics else host_ip
-        for i in range(alloc_mode.gen_dp_size):
+        for i in range(alloc_mode.gen.dp_size):
             config.sglang.random_seed = base_seed + i
             cmd = SGLangConfig.build_cmd(
                 config.sglang,
                 host=host,
-                tp_size=alloc_mode.gen_tp_size,
+                tp_size=alloc_mode.gen.tp_size,
                 base_gpu_id=0,
                 port=ports[i * 2],
                 dist_init_addr=f"localhost:{ports[i*2+1]}",
@@ -298,8 +297,8 @@ def local_main(config, run_id: int = 0):
         launcher.submit_array(
             job_name="llm_server",
             cmd=server_cmd,
-            count=alloc_mode.gen_dp_size,
-            gpu=alloc_mode.gen_pp_size * alloc_mode.gen_tp_size,
+            count=alloc_mode.gen.dp_size,
+            gpu=alloc_mode.gen.pp_size * alloc_mode.gen.tp_size,
             env_vars=get_env_vars(
                 config.cluster.cluster_name,
                 config.launcher.inference_server_env_vars,
@@ -315,7 +314,7 @@ def local_main(config, run_id: int = 0):
             gpu = 0
             nprocs = 1
         else:
-            gpu = nprocs = alloc_mode.train_world_size
+            gpu = nprocs = alloc_mode.train.world_size
         launcher.submit(
             job_name="trainer",
             cmd=f"torchrun --nnodes 1 --nproc-per-node {nprocs} --master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} {' '.join(sys.argv[1:])}",

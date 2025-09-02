@@ -7,6 +7,8 @@ import torch.distributed as dist
 from megatron.core import parallel_state as mpu
 from tensordict import TensorDict
 
+from areal.api.alloc_mode import AllocationMode
+from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.experimental.api.cli_args import (
     ExperimentalTrainEngineConfig as TrainEngineConfig,
@@ -16,7 +18,6 @@ from areal.experimental.api.cli_args import (
     MicroBatchSpec,
     OptimizerConfig,
 )
-from areal.experimental.api.io_struct import AllocationMode, FinetuneSpec
 from areal.experimental.megatron_engine import MegatronEngine
 from areal.utils import seeding
 from areal.utils.data import broadcast_tensor_container

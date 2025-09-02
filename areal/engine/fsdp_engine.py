@@ -221,7 +221,7 @@ class FSDPEngine(BaseHFEngine):
         if dist.get_rank() == 0:
             self.weight_update_group = init_custom_process_group(
                 backend="nccl",
-                world_size=meta.alloc_mode.gen_world_size + 1,
+                world_size=meta.alloc_mode.gen.world_size + 1,
                 init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
                 rank=0,
                 group_name=meta.nccl_group_name,
