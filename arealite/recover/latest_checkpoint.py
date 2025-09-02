@@ -10,8 +10,8 @@ from transformers import PreTrainedTokenizerFast
 
 from arealite.api.cli_args import RecoverConfig
 from arealite.api.controller_api import TrainController
-from arealite.api.engine_api import TrainEngine
 from arealite.api.io_struct import SaveLoadMeta
+from arealite.utils.errors import FrameworkError
 from realhf.base import logging
 
 logger = logging.getLogger("recover")
@@ -108,7 +108,7 @@ class Recover:
                 base_model_path=base_model_path,
             )
             ctl.save(meta)
-            logger.info(f"[Recover] Saved hf model to {hf_path} success.")
+            logger.info(f"Saved hf model to {hf_path} success.")
 
         # save checkpoint
         weight_format = "mcore"
@@ -122,7 +122,7 @@ class Recover:
             base_model_path=base_model_path,
         )
         ctl.save(meta)
-        logger.info(f"[Recover] Saved checkpoint to {target_dir} success.")
+        logger.info(f"Saved checkpoint to {target_dir} success.")
 
         # save meta info
         self.save_meta_info(epoch, step, global_step, dataloader_state, name)
@@ -136,7 +136,7 @@ class Recover:
                 shutil.rmtree(symlink_path)
         os.symlink(target_dir, symlink_path)
         logger.info(
-            f"[Recover] global_step: {global_step} Created symlink {symlink_name} -> {checkpoint_name}"
+            f"global_step: {global_step} Created symlink {symlink_name} -> {checkpoint_name}"
         )
 
         # Async cleanup of the other checkpoint dir
@@ -149,14 +149,15 @@ class Recover:
             try:
                 if os.path.exists(dir_path):
                     shutil.rmtree(dir_path)
-                    logger.info(f"[Recover] Async cleanup completed for {dir_path}")
+                    logger.info(f"Async cleanup completed for {dir_path}")
             except Exception as e:
-                logger.error(f"[Recover] Async cleanup failed for {dir_path}: {str(e)}")
+                logger.error(f"Async cleanup failed for {dir_path}: {str(e)}")
+                raise FrameworkError("FrameworkError", "RecoverError", e)
 
         # Start async cleanup in thread pool
         with ThreadPoolExecutor(max_workers=1) as executor:
             executor.submit(cleanup_dir, other_dir)
-            logger.info(f"[Recover] Started async cleanup for {other_dir}")
+            logger.info(f"Started async cleanup for {other_dir}")
 
     def save_meta_info(
         self,
@@ -188,7 +189,7 @@ class Recover:
         )
         with open(os.path.join(path, "recover_info.pkl"), "wb") as f:
             pickle.dump(recover_info, f)
-        logger.info(f"[Recover] Saved recover meta info to {path} success.")
+        logger.info(f"Saved recover meta info to {path} success.")
 
         # Create/update meta symlink
         symlink_path = self.get_save_meta_path(symlink_name)
@@ -199,7 +200,7 @@ class Recover:
                 shutil.rmtree(symlink_path)
         os.symlink(path, symlink_path)
         logger.info(
-            f"[Recover] global_step: {global_step} Created meta symlink {symlink_name} -> {meta_name}"
+            f"global_step: {global_step} Created meta symlink {symlink_name} -> {meta_name}"
         )
 
         # Sync cleanup of the other meta dir
@@ -210,9 +211,10 @@ class Recover:
         try:
             if os.path.exists(other_dir):
                 shutil.rmtree(other_dir)
-                logger.info(f"[Recover] Sync cleanup completed for {other_dir}")
+                logger.info(f"Sync cleanup completed for {other_dir}")
         except Exception as e:
-            logger.error(f"[Recover] Sync cleanup failed for {other_dir}: {str(e)}")
+            logger.error(f"Sync cleanup failed for {other_dir}: {str(e)}")
+            raise FrameworkError("FrameworkError", "RecoverError", e)
 
     @staticmethod
     def load(path: str) -> Tuple[bool, Optional[RecoverInfo]]:
@@ -222,7 +224,9 @@ class Recover:
             return True, recover_info
         except FileNotFoundError:
             logger.warning(f"Recover info not found at {path}")
-            return False, None
+            raise FrameworkError(
+                "FrameworkError", "RecoverError", f"Recover info not found at {path}"
+            )
         except Exception as e:
             logger.error(f"Failed to load recover info from {path}: {str(e)}")
-            return False, None
+            raise FrameworkError("FrameworkError", "RecoverError", e)

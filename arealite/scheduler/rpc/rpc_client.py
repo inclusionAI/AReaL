@@ -34,10 +34,13 @@ class RPCClient:
             f"send create_engine to {worker_id} ({ip}:{port}), status={resp.status_code}"
         )
         if resp.status_code == 200:
-            logger.info(f"ok to create engine")
+            logger.info(f"create engine success.")
             return cloudpickle.loads(resp.content)
         else:
-            logger.error(f"failed to create engine, {resp.status_code}, {resp.content}")
+            logger.error(f"Failed to create engine, {resp.status_code}, {resp.content}")
+            raise RuntimeError(
+                f"Failed to create engine, {resp.status_code}, {resp.content}"
+            )
 
     def call_engine(self, worker_id, method, *args, **kwargs):
         ip, port = self._addrs[worker_id]

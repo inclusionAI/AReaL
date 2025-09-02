@@ -1,5 +1,6 @@
 import torch
 
+from arealite.utils.errors import FrameworkError
 from realhf.base.datapack import ffd_allocate
 
 
@@ -20,8 +21,10 @@ class DistributedBatchMemory:
         batch_size = next(iter(dataset.values())).shape[0]
         for key, tensor in dataset.items():
             if tensor.shape[0] != batch_size:
-                raise ValueError(
-                    f"Batch size mismatch for key '{key}': expected {batch_size}, got {tensor.shape[0]}"
+                raise FrameworkError(
+                    "FrameworkError",
+                    "DistributedBatchMemoryError",
+                    f"Batch size mismatch for key '{key}': expected {batch_size}, got {tensor.shape[0]}",
                 )
 
     def _convert_list_to_dict(self, list_dataset):
@@ -38,7 +41,11 @@ class DistributedBatchMemory:
     def split(self, dp_size: int) -> list:
         """分割数据集"""
         if not self.dataset:
-            raise ValueError("Cannot split empty dataset")
+            raise FrameworkError(
+                "FrameworkError",
+                "DistributedBatchMemoryError",
+                "Cannot split empty dataset",
+            )
 
         batch_size = next(iter(self.dataset.values())).shape[0]
         part_size = (batch_size + dp_size - 1) // dp_size  # 向上取整
@@ -109,6 +116,7 @@ class DistributedBatchMemory:
                 inner_indices.append(
                     list(map(lambda item: item + start_index, tmp_inner_indices))
                 )
+
                 indexes[i].extend(inner_indices[i])
 
         batches = []
@@ -244,7 +252,11 @@ class DistributedBatchMemory:
         elif isinstance(key, str):
             return self.dataset[key]
         else:
-            raise TypeError("Key must be int or str")
+            raise FrameworkError(
+                "FrameworkError",
+                "DistributedBatchMemoryError",
+                "Key must be int or str",
+            )
 
     def __setitem__(self, key, value):
         """支持两种赋值方式：
@@ -254,16 +266,24 @@ class DistributedBatchMemory:
         if isinstance(key, str):
             # 更新整个属性张量
             if not isinstance(value, torch.Tensor):
-                raise ValueError("值必须为torch.Tensor类型")
+                raise FrameworkError(
+                    "FrameworkError",
+                    "DistributedBatchMemoryError",
+                    "value must be torch.Tensor",
+                )
             if self.dataset:
                 expected_batch_size = next(iter(self.dataset.values())).shape[0]
                 if value.shape[0] != expected_batch_size:
-                    raise ValueError(
-                        f"张量的批处理大小不匹配。期望{expected_batch_size}, 实际{value.shape[0]}"
+                    raise FrameworkError(
+                        "FrameworkError",
+                        "DistributedBatchMemoryError",
+                        f"The batch size of the tensor does not match. Expected {expected_batch_size}, actual {value.shape[0]}",
                     )
             self.dataset[key] = value
         else:
-            raise TypeError("键必须为str类型以更新属性张量")
+            raise FrameworkError(
+                "FrameworkError", "DistributedBatchMemoryError", f"key must be str"
+            )
 
     def __delitem__(self, key):
         """支持两种删除方式：
@@ -280,7 +300,11 @@ class DistributedBatchMemory:
             if key in self.dataset:
                 del self.dataset[key]
         else:
-            raise TypeError(f"键必须为int或str类型, 实际类型为{type(key)}")
+            raise FrameworkError(
+                "FrameworkError",
+                "DistributedBatchMemoryError",
+                f"key: {type(key)} must be str or int",
+            )
 
     def _convert_dict_to_list(self, dict_dataset):
         """将字典格式的数据集转换为列表格式（用于按索引删除）"""

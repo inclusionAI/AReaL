@@ -34,8 +34,8 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 if EngineRPCServer.engine is None:
                     self.send_response(500)
                     self.end_headers()
-                    self.wfile.write(b"Engine not initialized")
-                    logging.error("Call received but engine not initialized.")
+                    self.wfile.write(b"Engine is none")
+                    logger.error("Call received but engine is none.")
                     return
                 action, args, kwargs = cloudpickle.loads(data)
                 method = getattr(EngineRPCServer.engine, action)
@@ -43,7 +43,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 # decompressed_data = gzip.decompress(data)
                 # action, args, kwargs = cloudpickle.loads(decompressed_data)
                 # method = getattr(EngineRPCServer.engine, action)
-                logging.info(
+                logger.info(
                     f"RPC server calling engine method: {action} - {args} - {kwargs}"
                 )
                 result = method(*args, **kwargs)
@@ -58,7 +58,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
             if isinstance(e, TimeoutError):
                 code = 503
             else:
-                logging.error(f"Exception in do_POST: {e}\n{traceback.format_exc()}")
+                logger.error(f"Exception in do_POST: {e}\n{traceback.format_exc()}")
             self.send_response(code)
             self.end_headers()
             self.wfile.write(

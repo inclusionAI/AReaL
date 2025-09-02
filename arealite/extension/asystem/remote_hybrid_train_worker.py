@@ -1,7 +1,6 @@
 import dataclasses
 import gzip
 import json
-import os
 from typing import Any, Callable, Dict, List
 
 import cloudpickle
@@ -17,6 +16,7 @@ from arealite.api.engine_api import (
     WeightUpdateMeta,
 )
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
+from arealite.utils.errors import EngineError
 from realhf.api.core.data_api import (
     RL_TASKS,
     MicroBatchSpec,
@@ -24,13 +24,9 @@ from realhf.api.core.data_api import (
     SequenceSplitSpec,
 )
 from realhf.base import logging, stats_tracker
-from realhf.base.datapack import flat2d
-from realhf.impl.model.utils.functional import (
-    gather_packed_shifted_log_probs,
-    masked_normalization,
-)
+from realhf.impl.model.utils.functional import masked_normalization
 
-logger = logging.getLogger("RemoteHypridTrainWorker")
+logger = logging.getLogger("RemoteHybridTrainWorker")
 
 
 @dataclasses.dataclass
@@ -41,7 +37,7 @@ class RemoteMegatronInitConfig:
     enable_colocate_mode: bool = False
 
 
-class RemoteHypridTrainWorker(TrainEngine):
+class RemoteHybridTrainWorker(TrainEngine):
     def __init__(self, config: RemoteMegatronEngineConfig):
         self.config = config
 
@@ -91,17 +87,12 @@ class RemoteHypridTrainWorker(TrainEngine):
         self.global_rank = cfg.global_rank
         local_rank = global_rank % 8
         self.enable_colocate_mode = cfg.enable_colocate_mode
-
-        print(
-            f"[megatron] dzq_debug global_rank: {global_rank}, serveraddr len:{len(cfg.server_addrs)}"
-        )
         self.megatron_addr = cfg.server_addrs[global_rank]
         master_addr = cfg.server_addrs[0]
         master_ip, master_port = master_addr.split(":", 1)  # ip:port
-        logger.info(f"[RemoteHypridTrainWorker] exec initialize, init_config: {cfg}")
+        logger.info(f"exec initialize, init_config: {cfg}")
 
         megatron_config = self.config.remote_megatron_config
-        # megatron_config["total_train_steps"] = cfg.ft_spec.total_train_steps
         payload = {
             "rank": str(cfg.global_rank),
             "local_rank": str(local_rank),
@@ -118,38 +109,48 @@ class RemoteHypridTrainWorker(TrainEngine):
             target_url = f"http://{self.megatron_addr}/initialize"
             headers = {"Content-Type": "application/json"}
             logger.info(
-                f"[RemoteHypridTrainWorker] initialize begin send request to megatron server, "
+                f"initialize begin send request to megatron server, "
                 f"target_url: {target_url}, rank: {global_rank}, target_url: {target_url}"
             )
             response = requests.post(
                 target_url, data=json.dumps(payload), headers=headers, timeout=7200
             )
-            logger.info(
-                f"[RemoteHypridTrainWorker] initialize finished send request to megatron server"
-            )
+            logger.info(f"initialize finished send request to megatron server")
             if response.status_code == 200:
                 # response as belows:
-                # {'success': True, 'result': {'rank': 913, 'tp_size': 2, 'dp_size': 24, 'pp_size': 20, 'vpp_size': None, 'cp_size': 1, 'ep_size': 8, 'etp_size': 1, 'pp_rank': 19, 'dp_rank': 0, 'tp_rank': 1, 'cp_rank': 0, 'ep_rank': 1, 'etp_rank': 0}, 'engine_type': 'training', 'message': 'Engine training initialized successfully 33.180.162.194'}
+                # {'success': True, 'result': {'rank': 913, 'tp_size': 2, 'dp_size': 24, 'pp_size': 20,
+                # 'vpp_size': None, 'cp_size': 1, 'ep_size': 8, 'etp_size': 1, 'pp_rank': 19, 'dp_rank': 0,
+                # 'tp_rank': 1, 'cp_rank': 0, 'ep_rank': 1, 'etp_rank': 0}, 'engine_type': 'training',
+                # 'message': 'Engine training initialized successfully 33.180.162.194'}
                 resp = response.json()
                 logger.info(
-                    f"[RemoteHypridTrainWorker] rank: {global_rank} Payload sent successfully to {target_url}, response is {resp}"
+                    f"Rank{global_rank} payload sent successfully to {target_url}, response: {resp}"
                 )
                 return resp["result"]
             else:
-                raise ValueError(
-                    f"[Rank {global_rank}] Failed to send payload. Status code: {response.status_code}, "
-                    f"Response: {response.text}"
+                raise EngineError(
+                    "TrainEngineError",
+                    "InitializeError",
+                    f"rank{global_rank}, status code: {response.status_code}, response: {response.text}",
                 )
         except ValueError as ve:
-            raise ValueError(f"[Rank {global_rank}] Error parsing target address: {ve}")
+            raise EngineError(
+                "TrainEngineError", "InitializeError", f"rank{global_rank}, error: {ve}"
+            )
         except requests.exceptions.RequestException as re:
-            raise ValueError(f"[Rank {global_rank}] Error sending HTTP request: {re}")
+            raise EngineError(
+                "TrainEngineError",
+                "InitializeError",
+                f"rank{global_rank}, error sending http request: {re}",
+            )
         except Exception as e:
-            raise ValueError(f"[Rank {global_rank}] Unexpected error: {e}")
+            raise EngineError(
+                "TrainEngineError",
+                "InitializeError",
+                f"rank{global_rank}, unexpected error: {e}",
+            )
 
-        logger.info(
-            f"[RemoteHypridTrainWorker] rank: {global_rank} megatron server initialize success"
-        )
+        logger.info(f"rank{global_rank} megatron server initialize success.")
         self.initialized = True
 
     def get_scheduling_config(self):
@@ -167,7 +168,7 @@ class RemoteHypridTrainWorker(TrainEngine):
         if meta.type == "nccl" or meta.type == "astate":
             try:
                 logger.info(
-                    f"[RemoteHypridTrainWorker] upload_weights begin send request to megatron server, "
+                    f"upload_weights begin send request to megatron server, "
                     f"target_url: http://{self.megatron_addr}/update_weights"
                 )
                 target_url = f"http://{self.megatron_addr}/update_weights"
@@ -179,23 +180,24 @@ class RemoteHypridTrainWorker(TrainEngine):
                     timeout=7200,
                 )
                 if response.status_code == 200:
-                    logger.info(f"[RemoteHypridTrainWorker] upload_weights success")
+                    logger.info("upload_weights success")
                 else:
-                    raise ValueError(
-                        f"[RemoteHypridTrainWorker] Failed to upload weights. "
-                        f"Status code: {response.status_code}, Response: {response.text}"
+                    raise EngineError(
+                        "TrainEngineError",
+                        "UploadWeightsError",
+                        f"Status code: {response.status_code}, Response: {response.text}",
                     )
             except requests.exceptions.Timeout:
-                raise ValueError(
-                    "[RemoteHypridTrainWorker] Upload weights request timeout!"
+                raise EngineError(
+                    "TrainEngineError",
+                    "UploadWeightsError",
+                    "Upload weights request timeout",
                 )
             except requests.exceptions.RequestException as e:
-                raise ValueError(
-                    f"[RemoteHypridTrainWorker] Send upload weights request, an error occurred: {e}"
-                )
+                raise EngineError("TrainEngineError", "UploadWeightsError", e)
         elif meta.type == "disk":
             logger.info(
-                f"[RemoteHypridTrainWorker] upload_weights save hf model to disk, path: {meta.path}, step: {self.global_step}."
+                f"upload_weights save hf model to disk, path: {meta.path}, step: {self.global_step}."
             )
             save_load_meta = SaveLoadMeta(
                 path=meta.path,
@@ -206,9 +208,13 @@ class RemoteHypridTrainWorker(TrainEngine):
                 base_model_path=None,
             )
             self.save(save_load_meta)
-            logger.info(f"[RemoteHypridTrainWorker] upload_weights success.")
+            logger.info(f"upload_weights success.")
         else:
-            raise ValueError(f"Unknown weight update type {meta.type}")
+            raise EngineError(
+                "TrainEngineError",
+                "UploadWeightsError",
+                f"Unknown weight update type {meta.type}",
+            )
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format not in ["huggingface", "mcore"]:
@@ -216,7 +222,7 @@ class RemoteHypridTrainWorker(TrainEngine):
 
         try:
             logger.info(
-                f"[RemoteHypridTrainWorker] send save request, "
+                f"send save request, "
                 f"weight_format: {meta.weight_format}, save_dir: {meta.path},  "
                 f"global_step: {meta.global_step}"
             )
@@ -231,22 +237,21 @@ class RemoteHypridTrainWorker(TrainEngine):
                 target_url, data=json.dumps(payload), headers=headers, timeout=7200
             )
             if response.status_code == 200:
-                logger.info(
-                    f"[RemoteHypridTrainWorker] save hf request exec success, save_dir: {meta.path}"
-                )
+                logger.info(f"save hf request exec success, save_dir: {meta.path}")
             else:
-                raise ValueError(
-                    f"[RemoteHypridTrainWorker] Failed to send save {meta.weight_format} "
-                    f"request. status code: {response.status_code}, response: {response.text}"
+                raise EngineError(
+                    "TrainEngineError",
+                    "SaveError",
+                    f"Status code: {response.status_code}, Response: {response.text}",
                 )
         except requests.exceptions.Timeout:
-            raise ValueError(
-                f"[RemoteHypridTrainWorker] save {meta.weight_format} request timed out!"
+            raise EngineError(
+                "TrainEngineError",
+                "SaveError",
+                f"save {meta.weight_format} request timeout",
             )
         except requests.exceptions.RequestException as e:
-            raise ValueError(
-                f"[RemoteHypridTrainWorker] Send save {meta.weight_format} request, an error occurred: {e}"
-            )
+            raise EngineError("TrainEngineError", "SaveError", e)
         return response
 
     def load(self, meta: SaveLoadMeta):
@@ -284,9 +289,7 @@ class RemoteHypridTrainWorker(TrainEngine):
         for attr in attrs:
             batch_data[attr] = input_[attr]
         torch.set_printoptions(threshold=float("inf"))
-        logger.info(
-            f"[RemoteHypridTrainWorker] train_distributed_batch rewards: {batch_data['rewards']}"
-        )
+        logger.info(f"train_distributed_batch rewards: {batch_data['rewards']}")
         # 2. input_的数据转换：prompt_mask, packed_input_ids, seqlens.packed_input_ids, rewards, task_ids, seq_no_eos_mask, packed_logprobs
         # input_ids => packed_input_ids
         # seqlens => seqlens.packed_input_ids
@@ -362,13 +365,13 @@ class RemoteHypridTrainWorker(TrainEngine):
                     train_stats[key] = value
                 else:
                     logger.warning(
-                        f"[RemoteHypridTrainWorker] Duplicate metric key '{key}' found. Keeping existing value: {train_stats[key]}, ignoring global_stats value: {value}"
+                        f"Duplicate metric key '{key}' found. Keeping existing value: {train_stats[key]}, ignoring global_stats value: {value}"
                     )
 
             all_stats.append(train_stats)
 
         logger.info(
-            f"[RemoteHypridTrainWorker] Train {n_minibatches} minibatches exec success, global_step: {self.global_step}."
+            f"Train {n_minibatches} minibatches exec success, global_step: {self.global_step}."
         )
         self.global_step += 1
         return all_stats
@@ -385,7 +388,7 @@ class RemoteHypridTrainWorker(TrainEngine):
             raise ValueError(f"Invalid event type: {event}")
 
         logger.info(
-            f"[RemoteHypridTrainWorker] Sending training {event} notification at global_step: {global_step}"
+            f"Sending training {event} notification at global_step: {global_step}"
         )
 
         try:
@@ -396,12 +399,17 @@ class RemoteHypridTrainWorker(TrainEngine):
                 target_url, data=json.dumps(payload), headers=headers, timeout=60
             )
             if response.status_code != 200:
-                raise ValueError(
-                    f"Failed to send training event. Status code: {response.status_code}, "
-                    f"Response: {response.text}"
+                raise EngineError(
+                    "TrainEngineError",
+                    "NotifyEventError",
+                    f"Status code: {response.status_code}, Response: {response.text}",
                 )
         except Exception as e:
-            raise ValueError(f"Error sending notify training event: {e}")
+            raise EngineError(
+                "TrainEngineError",
+                "NotifyEventError",
+                e,
+            )
 
         return None
 
@@ -423,25 +431,31 @@ class RemoteHypridTrainWorker(TrainEngine):
                 "global_step": self.global_step,
             }
             data = serialize_and_compress(payload)
-            logger.info(
-                "[RemoteHypridTrainWorker] send train_batch request to megatron worker...."
-            )
+            logger.info("send train_batch request to megatron worker.")
             response = requests.post(
                 target_url, data=data, headers=headers, timeout=7200
             )
             if response.status_code == 200:
                 logger.info(
-                    f"[RemoteHypridTrainWorker] Train batch exec success, response status code: {response.status_code}, response: {response.json()}"
+                    f"Train batch exec success, response status code: {response.status_code}, response: {response.json()}"
                 )
             else:
-                raise ValueError(
-                    f"[RemoteHypridTrainWorker] Failed to exec train_batch. Status code: {response.status_code}, Response: {response.text}"
+                raise EngineError(
+                    "TrainEngineError",
+                    "TrainBatchError",
+                    f"Status code: {response.status_code}, Response: {response.text}",
                 )
         except requests.exceptions.Timeout:
-            raise ValueError("[RemoteHypridTrainWorker] Train request timeout!")
+            raise EngineError(
+                "TrainEngineError",
+                "TrainBatchError",
+                f"Request Timeout",
+            )
         except requests.exceptions.RequestException as e:
-            raise ValueError(
-                "[RemoteHypridTrainWorker] Send train request, an error occurred:", e
+            raise EngineError(
+                "TrainEngineError",
+                "TrainBatchError",
+                e,
             )
 
         return response.json()["result"]
@@ -454,7 +468,7 @@ class RemoteHypridTrainWorker(TrainEngine):
     ) -> Dict[str, float]:
         # 输入： advantages, old_logp, ppo_loss_mask, packed_input_ids, kl_rewards
         # Dict[str, tensor] to SequenceSample
-        logger.info("[RemoteHypridTrainWorker] begin exec train batch...")
+        logger.info("begin exec train batch...")
         batch_size = int(input_["seqlen"].shape[0])
         flat_input = SequenceSample.from_default(
             ids=list(range(batch_size)),
@@ -474,25 +488,31 @@ class RemoteHypridTrainWorker(TrainEngine):
                 "global_step": self.global_step,
             }
             data = serialize_and_compress(payload)
-            logger.info(
-                "[RemoteHypridTrainWorker] send train_batch request to megatron worker...."
-            )
+            logger.info("send train_batch request to megatron worker....")
             response = requests.post(
                 target_url, data=data, headers=headers, timeout=7200
             )
             if response.status_code == 200:
                 logger.info(
-                    f"[RemoteHypridTrainWorker] Train batch exec success, response status code: {response.status_code}, response: {response.json()}"
+                    f"Train batch exec success, response status code: {response.status_code}, response: {response.json()}"
                 )
             else:
-                raise ValueError(
-                    f"[RemoteHypridTrainWorker] Failed to exec train_batch. Status code: {response.status_code}, Response: {response.text}"
+                raise EngineError(
+                    "TrainEngineError",
+                    "TrainBatchError",
+                    f"Status code: {response.status_code}, Response: {response.text}",
                 )
         except requests.exceptions.Timeout:
-            raise ValueError("[RemoteHypridTrainWorker] Train request timeout!")
+            raise EngineError(
+                "TrainEngineError",
+                "TrainBatchError",
+                "Request Timeout",
+            )
         except requests.exceptions.RequestException as e:
-            raise ValueError(
-                "[RemoteHypridTrainWorker] Send train request, an error occurred:", e
+            raise EngineError(
+                "TrainEngineError",
+                "TrainBatchError",
+                e,
             )
 
         return response.json()["result"]
@@ -547,9 +567,7 @@ class RemoteHypridTrainWorker(TrainEngine):
             reward_score,
         )
 
-        logger.info(
-            f"[RemoteHypridTrainWorker] process_training_data reward_score: {reward_score}"
-        )
+        logger.info(f"process_training_data reward_score: {reward_score}")
         task_ids = input_["task_ids"]
         # task_ids = task_ids.repeat(self.config.group_size, 1).transpose(0, 1).reshape(-1)
 
@@ -570,7 +588,7 @@ class RemoteHypridTrainWorker(TrainEngine):
         old_logp: torch.FloatTensor = input_["packed_logprobs"].float()
         rollout_logp: torch.FloatTensor = input_["packed_logprobs"].float()
         if self.config.wrap_policy.recompute_logp:
-            logger.info("[RemoteHypridTrainWorker] enable recompute_logrobs")
+            logger.info("enable recompute_logrobs")
             compute_logp_input = {
                 "packed_input_ids": input_["packed_input_ids"],
                 "seqlen": input_["seqlen"],
@@ -644,16 +662,12 @@ class RemoteHypridTrainWorker(TrainEngine):
                     i * self.config.group_size : (i + 1) * self.config.group_size
                 ] = normed_rewards
 
-            logger.info(
-                f"[RemoteHypridTrainWorker] process_training_data new_reward_score: {new_reward_score}"
-            )
+            logger.info(f"process_training_data new_reward_score: {new_reward_score}")
 
         # Compute rewards and GAEs.
         use_kl_in_loss = self.config.loss_configs.get("use_kl_in_loss", False)
         kl_ctl_value = 0.0 if use_kl_in_loss else self.kl_adapter.value
         logger.info(
-            # f"[RemoteHypridTrainWorker] process_training_data final_token_rewards: {rewards}\n"
-            # f"kl_reward: {kl_rewards}\n"
             f"loss_config: {self.config.loss_configs}\n"
             f"kl: {kl_ctl_value=}\n"
             f"use_kl_in_loss: {use_kl_in_loss=}"
@@ -841,7 +855,7 @@ class RemoteHypridTrainWorker(TrainEngine):
             raise ValueError(f"Invalid event type: {event}")
 
         logger.info(
-            f"[RemoteHypridTrainWorker] Sending training {event} notification at global_step: {global_step}"
+            f"Sending training {event} notification at global_step: {global_step}"
         )
 
         try:
@@ -852,12 +866,17 @@ class RemoteHypridTrainWorker(TrainEngine):
                 target_url, data=json.dumps(payload), headers=headers, timeout=60
             )
             if response.status_code != 200:
-                raise ValueError(
-                    f"Failed to send training event. Status code: {response.status_code}, "
-                    f"Response: {response.text}"
+                raise EngineError(
+                    "TrainEngineError",
+                    "NotifyEventError",
+                    f"Status code: {response.status_code}, Response: {response.text}",
                 )
         except Exception as e:
-            raise ValueError(f"Error sending notify training event: {e}")
+            raise EngineError(
+                "TrainEngineError",
+                "NotifyEventError",
+                e,
+            )
 
         return None
 
@@ -891,24 +910,30 @@ class RemoteHypridTrainWorker(TrainEngine):
             "seqlen": batch_data["seqlen"],
             "packed_logprobs": batch_data["packed_logprobs"],
         }
+        input_ids_shape = batch_data["packed_input_ids"].shape
         logger.info(
-            f"[RemoteHypridTrainWorker] compute_logprobs_with_distributed input packed_input_ids data: {batch_data["packed_input_ids"].shape}"
+            f"compute_logprobs_with_distributed input packed_input_ids data: {input_ids_shape}"
         )
-        logprobs = self.compute_logprobs(batch)
-        if logprobs is None:
-            raise ValueError(
-                f"[RemoteHypridTrainWorker] Failed to exec compute_logprobs"
+        try:
+            logprobs = self.compute_logprobs(batch)
+            if logprobs is None:
+                raise EngineError(
+                    "RefEngineError",
+                    "ComputeLogpError",
+                    f"Failed to exec compute_logprobs, logprobs is none",
+                )
+            logger.info(
+                f"compute_logprobs_with_distributed success, logprobs shape: {logprobs.shape}"
             )
-        logger.info(
-            f"[RemoteHypridTrainWorker] compute_logprobs_with_distributed success, logprobs shape: {logprobs.shape}"
-        )
-        return logprobs
+            return logprobs
+        except Exception as e:
+            raise EngineError("RefEngineError", "ComputeLogpError", e)
 
     def compute_logprobs(
         self,
         input_: Dict,  # key: str, value: tensor
     ) -> torch.Tensor | None:
-        logger.info("[RemoteHypridTrainWorker] begin exec compute_logprobs...")
+        logger.info("begin exec compute_logprobs...")
         seqlen_tensor = input_["seqlen"]
 
         if seqlen_tensor.dim() == 1:
@@ -935,9 +960,7 @@ class RemoteHypridTrainWorker(TrainEngine):
                 "micro_batch_spec": mb_spec,
             }
             data = serialize_and_compress(payload)
-            logger.info(
-                "[RemoteHypridTrainWorker] send compute_logprobs request to megatron worker...."
-            )
+            logger.info("send compute_logprobs request to megatron worker....")
             response = requests.post(
                 target_url, data=data, headers=headers, timeout=7200
             )
@@ -946,7 +969,7 @@ class RemoteHypridTrainWorker(TrainEngine):
                 for k, v in sequence_sample_logp.data.items():
                     sequence_sample_logp.data[k] = v.to("cpu").clone()
                 logger.info(
-                    f"[RemoteHypridTrainWorker] compute_logprobs exec success, response status code: {response.status_code}"
+                    f"compute_logprobs exec success, response status code: {response.status_code}"
                 )
 
                 logprobs = sequence_sample_logp.data["logprobs"]  # [0.11,0.33,0.44]
@@ -971,17 +994,21 @@ class RemoteHypridTrainWorker(TrainEngine):
                 stack_res = torch.stack(batch_result)
                 return stack_res
             else:
-                raise ValueError(
-                    f"[RemoteHypridTrainWorker] Failed to exec compute_logprobs. Status code: {response.status_code}, "
-                    f"Response: {response.text}"
+                raise EngineError(
+                    "TrainEngineError",
+                    "ComputeLogpError",
+                    f"Status code: {response.status_code}, Response: {response.text}",
                 )
         except requests.exceptions.Timeout:
-            raise ValueError(
-                "[RemoteHybridTrainWorker] compute_logprobs request timeout!"
+            raise EngineError(
+                "TrainEngineError",
+                "ComputeLogpError",
+                "Request Timeout",
             )
         except requests.exceptions.RequestException as e:
-            raise ValueError(
-                "[RemoteHybridTrainWorker] Send compute_logprobs request, an error occurred:",
+            raise EngineError(
+                "TrainEngineError",
+                "ComputeLogpError",
                 e,
             )
 

@@ -13,6 +13,8 @@ from typing import Any, Dict, Tuple, Union
 import requests
 from aiohttp import web
 
+from arealite.utils.errors import EngineError
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,7 +121,9 @@ class MetaServer:
             del self.storage[key]
         else:
             logger.warning(f"Key '{key}' not found in storage")
-            raise ValueError(f"Key '{key}' not found in storage")
+            raise EngineError(
+                "MetaServerError", "SystemError", f"Key '{key}' not found in storage"
+            )
 
     def get_address(self) -> str:
         """Get server address"""
@@ -152,7 +156,11 @@ class MetaServer:
                 f"[{os.getpid()}] Start server with {self.host}, {self.port} failed"
             )
             self._server_error = e
-            raise e
+            raise EngineError(
+                "MetaServerError",
+                "SystemError",
+                f"[{os.getpid()}] Start server with {self.host}, {self.port} failed",
+            )
 
     def start(self):
         """Start the server in a daemon thread"""
@@ -167,12 +175,16 @@ class MetaServer:
             # Check if server thread failed
             if not self._server_thread.is_alive():
                 if self._server_error:
-                    raise RuntimeError(
-                        f"Server failed to start on {self.host}:{self.port}: {self._server_error}"
+                    raise EngineError(
+                        "MetaServerError",
+                        "SystemError",
+                        f"Server failed to start on {self.host}:{self.port}: {self._server_error}",
                     ) from self._server_error
                 else:
-                    raise RuntimeError(
-                        f"Server thread died unexpectedly on {self.host}:{self.port}"
+                    raise EngineError(
+                        "MetaServerError",
+                        "SystemError",
+                        f"Server thread died unexpectedly on {self.host}:{self.port}",
                     )
 
             try:
@@ -187,8 +199,10 @@ class MetaServer:
             time.sleep(0.1)
 
         # Timeout reached
-        raise RuntimeError(
-            f"Server failed to respond within timeout on {self.host}:{self.port}"
+        raise EngineError(
+            "MetaServerError",
+            "SystemError",
+            f"Server failed to respond within timeout on {self.host}:{self.port}",
         )
 
     def stop(self):

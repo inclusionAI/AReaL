@@ -10,6 +10,7 @@ import requests
 
 from arealite.scheduler.base import Scheduler, SchedulingConfig, Worker
 from arealite.scheduler.rpc.rpc_client import RPCClient
+from arealite.utils.errors import FrameworkError
 
 try:
     import cloudpickle
@@ -111,7 +112,9 @@ class AsystemScheduler(Scheduler):
 
             return job_uid
         else:
-            raise RuntimeError(f"Failed to submit job: {job_info}")
+            raise FrameworkError(
+                "FrameworkError", "SchedulerError", f"Failed to submit job: {job_info}"
+            )
 
     def get_workers(self, worker_key, timeout: float = 300.0) -> List[Worker]:
         """
@@ -211,7 +214,7 @@ class AsystemScheduler(Scheduler):
             logger.info("Cleanup completed successfully")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
-            raise
+            raise FrameworkError("FrameworkError", "SchedulerError", e)
 
     def _request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """Helper method for making HTTP requests to the Asystem server."""
@@ -231,10 +234,10 @@ class AsystemScheduler(Scheduler):
             logger.error(
                 f"HTTPError: {e.response.status_code} calling {method} {url}. Response: {error_content}"
             )
-            raise SchedulerError(f"Asystem API request failed: {e}") from e
+            raise FrameworkError("FrameworkError", "SchedulerError", e)
         except requests.exceptions.RequestException as e:
             logger.error(f"RequestException: {e} calling {method} {url}")
-            raise SchedulerError(f"Asystem API request failed: {e}") from e
+            raise FrameworkError("FrameworkError", "SchedulerError", e)
 
     def _generate_job_name(self) -> str:
         """Generate unique job name"""
@@ -346,7 +349,11 @@ class AsystemScheduler(Scheduler):
             )
             return {"job_name": payload["jobName"], "job_uid": job_uid}
         else:
-            raise SchedulerError(f"Failed to get job UID from response: {result}")
+            raise FrameworkError(
+                "FrameworkError",
+                "SchedulerError",
+                f"Failed to get job UID from response: {result}",
+            )
 
     def wait_for_jobs(
         self, worker_key, submitted_jobs: Dict[str, str], timeout: float = 300.0
@@ -363,8 +370,10 @@ class AsystemScheduler(Scheduler):
         while True:
             # 检查超时
             if timeout and (time.time() - start_time) > timeout:
-                raise SchedulerError(
-                    f"Timeout waiting for jobs to start after {timeout} seconds"
+                raise FrameworkError(
+                    "FrameworkError",
+                    "SchedulerError",
+                    f"Timeout waiting for jobs to start after {timeout} seconds",
                 )
 
             all_ready = True
@@ -385,7 +394,11 @@ class AsystemScheduler(Scheduler):
                 logger.info(f"All jobs are running. Server infos: {job_server_infos}")
                 return job_server_infos
             elif status in ["FAILED", "CANCELLED"]:
-                raise SchedulerError(f"Job {job_uid} failed with status: {status}")
+                raise FrameworkError(
+                    "FrameworkError",
+                    "SchedulerError",
+                    f"Job {job_uid} failed with status: {status}",
+                )
 
             time.sleep(SCHEDULER_WAIT_CHECK_TIME_INTERVAL)
 
@@ -502,96 +515,6 @@ class AsystemScheduler(Scheduler):
             logger.info(f"Job {job_uid} stop request sent successfully")
         except Exception as e:
             logger.error(f"Error stopping job {job_uid}: {e}")
-            raise SchedulerError(f"Failed to stop job {job_uid}: {e}")
-
-    # def create_engine(self, worker_id: str, engine_obj: Any, init_config: Any = None) -> bool:
-    #     """
-    #     在指定worker上创建引擎实例
-    #     """
-    #     logger.info(f"Creating engine on worker {worker_id}")
-    #
-    #     try:
-    #         # 获取worker信息
-    #         worker_info = self._get_worker_info_by_id(worker_id)
-    #         if not worker_info:
-    #             logger.error(f"Worker {worker_id} not found")
-    #             return False
-    #
-    #         ip = worker_info.get("ip")
-    #         ports = worker_info.get("ports", [])
-    #
-    #         if not ip or not ports:
-    #             logger.error(f"Invalid worker info for {worker_id}: ip={ip}, ports={ports}")
-    #             return False
-    #
-    #         # 使用第一个端口作为RPC端口
-    #         rpc_port = ports[0]
-    #         url = f"http://{ip}:{rpc_port}/create_engine"
-    #
-    #         # 使用cloudpickle序列化引擎对象和初始化配置
-    #         payload = (engine_obj, init_config)
-    #         serialized_obj = cloudpickle.dumps(payload)
-    #
-    #         logger.debug(f"Sending create_engine request to {url}")
-    #
-    #         # 发送HTTP POST请求
-    #         response = requests.post(url, data=serialized_obj, timeout=30)
-    #
-    #         if response.status_code == 200:
-    #             logger.info(f"Successfully created engine on worker {worker_id} ({ip}:{rpc_port})")
-    #             return True
-    #         else:
-    #             logger.error(f"Failed to create engine on worker {worker_id}: HTTP {response.status_code}")
-    #             logger.error(f"Response: {response.text}")
-    #             return False
-    #
-    #     except Exception as e:
-    #         logger.error(f"Error creating engine on worker {worker_id}: {e}")
-    #         return False
-
-    # def call_engine(self, worker_id: str, method: str, *args, **kwargs) -> Any:
-    #     """
-    #     调用指定worker上引擎的方法
-    #     """
-    #     logger.info(f"Calling method '{method}' on worker {worker_id}")
-    #
-    #     try:
-    #         # 获取worker信息
-    #         worker_info = self._get_worker_info_by_id(worker_id)
-    #         if not worker_info:
-    #             logger.error(f"Worker {worker_id} not found")
-    #             raise SchedulerError(f"Worker {worker_id} not found")
-    #
-    #         ip = worker_info.get("ip")
-    #         ports = worker_info.get("ports", [])
-    #
-    #         if not ip or not ports:
-    #             logger.error(f"Invalid worker info for {worker_id}: ip={ip}, ports={ports}")
-    #             raise SchedulerError(f"Invalid worker info for {worker_id}")
-    #
-    #         # 使用第一个端口作为RPC端口
-    #         rpc_port = ports[0]
-    #         url = f"http://{ip}:{rpc_port}/call"
-    #
-    #         # 构建请求数据，格式与LocalScheduler的RPCClient保持一致
-    #         req = (method, args, kwargs)
-    #         serialized_req = cloudpickle.dumps(req)
-    #
-    #         logger.debug(f"Sending call request to {url}: method={method}")
-    #
-    #         # 发送HTTP POST请求
-    #         response = requests.post(url, data=serialized_req, timeout=30)
-    #
-    #         if response.status_code == 200:
-    #             # 反序列化响应结果
-    #             result = cloudpickle.loads(response.content)
-    #             logger.info(f"Successfully called '{method}' on worker {worker_id} ({ip}:{rpc_port})")
-    #             return result
-    #         else:
-    #             logger.error(f"Failed to call '{method}' on worker {worker_id}: HTTP {response.status_code}")
-    #             logger.error(f"Response: {response.text}")
-    #             raise SchedulerError(f"RPC call failed: {response.text}")
-    #
-    #     except Exception as e:
-    #         logger.error(f"Error calling method {method} on worker {worker_id}: {e}")
-    #         raise SchedulerError(f"Failed to call method {method}: {e}")
+            raise FrameworkError(
+                "FrameworkError", "SchedulerError", f"Failed to stop job {job_uid}: {e}"
+            )

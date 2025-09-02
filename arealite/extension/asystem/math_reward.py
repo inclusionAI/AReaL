@@ -3,7 +3,6 @@
 import ast
 import os
 import re
-import xml.etree.ElementTree as ET
 from typing import Dict, List, Tuple
 
 import requests
@@ -14,6 +13,7 @@ from arealite.extension.asystem.functioncall.code.verify import code_verify
 from arealite.extension.asystem.functioncall.ifeval.verify import ifeval_verify
 from arealite.extension.asystem.functioncall.logic.verify import logic_verify
 from arealite.extension.asystem.functioncall.math.verify import math_verify
+from arealite.utils.errors import FrameworkError
 
 logger = logging.getLogger("__name__")
 
@@ -81,15 +81,17 @@ try:
             f"Reward Model Tokenizer for '{REWARD_MODEL_PATH}' loaded successfully."
         )
     elif REWARD_MODEL_PATH or REWARD_MODEL_SERVICE_URL:
-        raise ValueError(
-            "The 'REWARD_MODEL_SERVICE_URL' or REWARD_MODEL_PATH env variable is not set."
+        raise FrameworkError(
+            "FrameworkError",
+            "RewardError",
+            "The 'REWARD_MODEL_SERVICE_URL' or REWARD_MODEL_PATH env variable is not set.",
         )
 
 except Exception as e:
     logger.error(
         f"FATAL: Could not load reward model tokenizer for '{REWARD_MODEL_PATH}'. Error: {e}"
     )
-    raise e
+    raise FrameworkError("FrameworkError", "RewardError", e)
 
 
 def extract_content(input_text):
@@ -148,7 +150,11 @@ def general_verify(id2info, responses: List[str], query_ids: List) -> List[float
     try:
         api_responses = requests.post(REWARD_MODEL_SERVICE_URL, json=payload).json()
         if "error" in api_responses:
-            raise Exception(f"General reward call failed with err msg: {api_responses}")
+            raise FrameworkError(
+                "FrameworkError",
+                "RewardError",
+                f"General reward call failed with err msg: {api_responses}",
+            )
 
         rewards = [res["embedding"][0] for res in api_responses]
 
@@ -164,7 +170,7 @@ def general_verify(id2info, responses: List[str], query_ids: List) -> List[float
         logger.error(
             f"Error during reward model API call or while processing the response: {e}"
         )
-        raise e
+        raise FrameworkError("FrameworkError", "RewardError", e)
 
 
 def extract_python_code(text, min_length=20, strict_syntax=False):

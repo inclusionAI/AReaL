@@ -52,6 +52,10 @@ class Recover:
             self.get_save_checkpoint_root(name),
             f"epoch{epoch}epochstep{step}globalstep{globalstep}",
         )
+        if os.path.exists(path):
+            import shutil
+
+            shutil.rmtree(path)
         os.makedirs(path, exist_ok=True)
         return path
 
@@ -66,6 +70,10 @@ class Recover:
             self.get_save_checkpoint_root(name),
             f"epoch{epoch}epochstep{step}globalstep{globalstep}",
         )
+        if os.path.exists(path):
+            import shutil
+
+            shutil.rmtree(path)
         os.makedirs(path, exist_ok=True)
         return path
 
@@ -122,7 +130,7 @@ class Recover:
                 base_model_path=base_model_path,
             )
             ctl.save(meta)
-            logger.info(f"[Recover] Saved hf model to {path} success.")
+            logger.info(f"Saved hf model to {path} success.")
 
         # save checkpoint
         path = self.get_save_checkpoint_path(epoch, step, global_step, name)
@@ -137,7 +145,7 @@ class Recover:
             base_model_path=base_model_path,
         )
         ctl.save(meta)
-        logger.info(f"[Recover] Saved checkpoint to {path} success.")
+        logger.info(f"Saved checkpoint to {path} success.")
 
         # save meta info
         self.save_meta_info(epoch, step, global_step, dataloader_state, name)
@@ -160,7 +168,7 @@ class Recover:
         )
         with open(os.path.join(path, "recover_info.pkl"), "wb") as f:
             pickle.dump(recover_info, f)
-        logger.info(f"[Recover] Saved recover meta info to {path} success.")
+        logger.info(f"Saved recover meta info to {path} success.")
 
     @staticmethod
     def load(path: str) -> Tuple[bool, Optional[RecoverInfo]]:

@@ -27,8 +27,9 @@ from arealite.api.io_struct import (
 )
 from arealite.dataset.distributed_batch_memory import DistributedBatchMemory
 from arealite.utils.data import concat_padded_tensors
+from arealite.utils.errors import EngineError, FrameworkError
 from arealite.utils.http import arequest_with_retry, get_default_connector
-from realhf.base import logging, name_resolve, names, pkg_version, seeding
+from realhf.base import logging, seeding
 
 if TYPE_CHECKING:
     from arealite.api.workflow_api import RolloutWorkflow
@@ -66,12 +67,10 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         self.rollout_stat = RolloutStat()
 
         self._version = 0
-        logger.info(f"[RemoteHybridInferenceWorker] class __init__ success...")
+        logger.info(f"class __init__ success...")
 
     def initialize(self, initialize_cfg: RemoteHypidInferenceInitConfig):
-        logger.info(
-            f"[RemoteHybridInferenceWorker] begin exec initialize, config: {initialize_cfg}"
-        )
+        logger.info(f"begin exec initialize, config: {initialize_cfg}")
         master_addr_info = initialize_cfg.master_addr
         master_addr, master_port = master_addr_info.split(":")
         world_size = initialize_cfg.world_size
@@ -118,7 +117,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     "http://" + initialize_cfg.main_server_addrs[index] + "/initialize"
                 )
                 logger.info(
-                    f"[RemoteHybridInferenceWorker] url: {url}, send hybrid inference initialize config to engine: {body}"
+                    f"url: {url}, send hybrid inference initialize config to engine: {body}"
                 )
 
                 futures.append(
@@ -134,19 +133,12 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             try:
                 for future in as_completed(futures):
                     response = future.result()
-                    print(
-                        f"[RemoteHybridInferenceWorker] response: {response._content}"
-                    )
-                    response.raise_for_status()  # 自动处理 4xx/5xx 状态码
+                    logger.info(f"response: {response._content}")
+                    response.raise_for_status()
                     result = response.json()
-                    logger.info(
-                        f"[RemoteHybridInferenceWorker] initialize success, response: {result}"
-                    )
+                    logger.info(f"initialize success, response: {result}")
             except Exception as e:
-                logger.error(
-                    f"[RemoteHybridInferenceWorker] initialize failed: {str(e)}, response is {response.text}"
-                )
-                raise
+                raise EngineError("InferenceEngineError", "InitializeError", e)
 
         self.exiting = threading.Event()
         self.paused = threading.Event()
@@ -158,7 +150,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         self.executor = ProcessPoolExecutor(max_workers=1)
         self.rollout_thread = threading.Thread(target=self._rollout_thread)
         self.rollout_thread.start()
-        logger.info("[RemoteHybridInferenceWorker] initialize exec success...")
+        logger.info("initialize exec success.")
 
     def destroy(self):
         self.executor.shutdown()
@@ -178,7 +170,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         try:
             uvloop.run(self._rollout_thread_async())
         except Exception as e:
-            traceback.print_exc()
+            raise EngineError("InferenceEngineError", "RolloutError", e)
 
     async def _rollout_thread_async(self):
         rollout_tasks = self.rollout_tasks
@@ -207,9 +199,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 ):
                     data, workflow = self.input_queue.get_nowait()
 
-                    logger.info(
-                        f"[RemoteHybridInferenceWorker] Get data from puller: {data}"
-                    )
+                    logger.info(f"Get data from puller: {data}")
                     task = asyncio.create_task(
                         (
                             workflow.arun_episodes(self, data)
@@ -223,7 +213,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                         self.rollout_stat.submitted += 1
                         self.rollout_stat.running += 1
                         logger.info(
-                            f"[RemoteHybridInferenceWorker] Submit rollout rid {rid}. "
+                            f"Submit rollout rid {rid}. "
                             f"Submit: {self.rollout_stat.submitted}, "
                             f"running: {self.rollout_stat.running}, "
                             f"accepted: {self.rollout_stat.accepted}."
@@ -252,21 +242,23 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     try:
                         self.output_queue.put_nowait(traj)
                     except Full:
-                        raise RuntimeError(
-                            "Output queue full. Please increase queue_size."
+                        raise FrameworkError(
+                            "FrameworkError",
+                            "InferenceWorkRolloutError",
+                            "Output queue full. Please increase queue_size.",
                         )
 
                     with self.lock:
                         self.rollout_stat.running -= 1
                         logger.info(
-                            f"[RemoteHybridInferenceWorker] Finish rollout {task_rid}. "
+                            f"Finish rollout {task_rid}. "
                             f"Submit: {self.rollout_stat.submitted}, "
                             f"running: {self.rollout_stat.running}, "
                             f"accepted: {self.rollout_stat.accepted}."
                         )
                 await asyncio.sleep(1)
-        except Exception:
-            traceback.print_exc()
+        except Exception as e:
+            raise EngineError("InferenceEngineError", "RolloutError", e)
         finally:
             # Cancel remaining tasks
             with self.lock:
@@ -284,7 +276,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 server = self.addresses[self.server_idx]
                 self.server_idx = (self.server_idx + 1) % len(self.addresses)
                 return server
-        raise NotImplementedError("Only round-robin scheduling is implemented.")
+        raise FrameworkError(
+            "FrameworkError",
+            "InferenceWorkError",
+            "Only round-robin scheduling is implemented.",
+        )
 
     async def agenerate(self, req: LLMRequest) -> LLMResponse:
         """Async version of generate using aiohttp."""
@@ -300,10 +296,13 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         assert max_new_tokens > 0
 
         if gconfig.n_samples != 1:
-            raise ValueError(
+            FrameworkError(
+                "FrameworkError",
+                "InferenceWorkError",
                 "RemoteHybridInferenceWorker does not support n_samples > 1. "
-                "Please call generate for multiple times with n_samples = 1."
+                "Please call generate for multiple times with n_samples = 1.",
             )
+
         sample_params = {
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
@@ -412,7 +411,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             "return_logprob": True,
             "stream": False,
         }
-        logger.info(f"generate payload {payload}")
+        logger.info(f"generate payload: {payload}")
         # Make request
         start_time = time.perf_counter()
         server_addr = self.choose_server()
@@ -473,8 +472,6 @@ class RemoteHybridInferenceWorker(InferenceEngine):
 
         consumer_bs = max(1, self.config.consumer_batch_size // world_size)
         capacity = min(capacity, (ofp + version + 1) * consumer_bs - sample_cnt)
-        # logger.info(f"max_concurrent_rollouts: {max_concurrent_rollouts}, version: {version}, ofp: {ofp}, self.config.consumer_batch_size: {self.config.consumer_batch_size}, sample_cnt: {sample_cnt}")
-
         return capacity
 
     def update_weights(self, meta):
@@ -486,9 +483,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
     def _update_weights(self, meta: WeightUpdateMeta):
         if meta.type == "disk":
             load_timestamp = time.time_ns()
-            logger.info(
-                f"[RemoteHybridInferenceWorker] Begin update weights from {meta.path}"
-            )
+            logger.info(f"Begin update weights from {meta.path}")
 
             def update_single_server(addr):
                 try:
@@ -501,10 +496,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     res = response.json()
                     assert res["success"]
                 except Exception as e:
-                    logger.error(
-                        f"[RemoteHybridInferenceWorker] Failed to update weights on {addr}: {str(e)}, response is {response.text}"
+                    raise EngineError(
+                        "InferenceEngineError",
+                        "UpdateWeightError",
+                        f"Failed to update weights on {addr}: {str(e)}, response: {response.text}",
                     )
-                    raise
 
             with ThreadPoolExecutor(max_workers=len(self.addresses)) as executor:
                 futures = [
@@ -512,14 +508,14 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     for addr in self.addresses
                 ]
                 for future in futures:
-                    future.result()  # Wait for all to complete or raise first exception
+                    future.result()
 
             logger.info(
-                f"[RemoteHybridInferenceWorker] Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms, updated version: {meta.model_version}"
+                f"Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms, updated version: {meta.model_version}"
             )
         elif meta.type == "nccl" or meta.type == "astate":
             load_timestamp = time.time_ns()
-            logger.info(f"[RemoteHybridInferenceWorkerer] Begin update weights.")
+            logger.info(f"Begin update weights.")
 
             def update_single_server(addr):
                 try:
@@ -529,20 +525,21 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                         timeout=self.config.request_timeout,
                     )
                     if response.status_code == 200:
-                        logger.info(
-                            f"[RemoteHybridInferenceWorker] Successfully updated weights on {addr}"
-                        )
+                        logger.info(f"Successfully updated weights on {addr}")
                     else:
-                        raise ValueError(
-                            f"Unexpected status code: {response.status_code}"
+                        raise EngineError(
+                            "InferenceEngineError",
+                            "UpdateWeightError",
+                            f"Status code: {response.status_code}, Response: {response.text}",
                         )
                     res = response.json()
                     assert res["success"]
                 except Exception as e:
-                    logger.error(
-                        f"[RemoteHybridInferenceWorker] Failed to update weights on {addr}: {str(e)}, response is {response.text}"
+                    raise EngineError(
+                        "InferenceEngineError",
+                        "UpdateWeightError",
+                        f"Failed to update weights on {addr}: {str(e)}, response: {response.text}",
                     )
-                    raise
 
             with ThreadPoolExecutor(max_workers=len(self.addresses)) as executor:
                 futures = [
@@ -553,11 +550,14 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     future.result()  # Wait for all to complete or raise first exception
 
             logger.info(
-                f"[RemoteHybridInferenceWorker] Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms, updated version: {meta.model_version}"
+                f"Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms, updated version: {meta.model_version}"
             )
         else:
-            raise ValueError(f"Unknown weight update type {meta.type}")
-
+            raise FrameworkError(
+                "FrameworkError",
+                "InferenceWorkerError",
+                f"Unknown weight update type {meta.type}",
+            )
         self.set_version(meta.model_version)
 
     def pause(self):
@@ -577,10 +577,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             res = response.json()
             assert res["success"]
         except Exception as e:
-            logger.error(
-                f"[RemoteHybridInferenceWorker] Failed to update weights from disk on {addr}: {str(e)}, response is {response.text}"
+            raise EngineError(
+                "InferenceEngineError",
+                "UpdateWeightError",
+                f"Failed to update weights from disk on {addr}: {str(e)}, response is {response.text}",
             )
-            raise
 
     def submit(
         self,
@@ -593,7 +594,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             for d in data:
                 self.input_queue.put_nowait((d, workflow))
         except Full:
-            raise RuntimeError("Input queue full. Please increase queue_size.")
+            raise FrameworkError(
+                "FrameworkError",
+                "InferenceWorkError",
+                "Input queue full. Please increase queue_size.",
+            )
 
     def submit_batch(
         self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
@@ -601,7 +606,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         try:
             self.input_queue.put_nowait(data, workflow)
         except Full:
-            raise RuntimeError("Input queue full. Please increase queue_size.")
+            raise FrameworkError(
+                "FrameworkError",
+                "InferenceWorkError",
+                "Input queue full. Please increase queue_size.",
+            )
 
     def submit_batch(
         self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
@@ -609,7 +618,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         try:
             self.input_queue.put_nowait(data, workflow)
         except Full:
-            raise RuntimeError("Input queue full. Please increase queue_size.")
+            raise FrameworkError(
+                "FrameworkError",
+                "InferenceWorkError",
+                "Input queue full. Please increase queue_size.",
+            )
 
     def wait(
         self,
@@ -638,10 +651,17 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             except Empty:
                 pass
         if self.exiting.is_set():
-            raise RuntimeError("Rollout engine is exiting, cannot wait for results.")
+            raise FrameworkError(
+                "FrameworkError",
+                "InferenceWorkError",
+                "Rollout engine is exiting, cannot wait for results.",
+            )
         if accepted < count:
-            raise TimeoutError(
-                f"Timed out waiting for {count} rollouts, " f"only received {accepted}."
+            raise FrameworkError(
+                "FrameworkError",
+                "InferenceWorkError",
+                f"Timed out waiting for {count} rollouts, "
+                f"only received {accepted}.",
             )
         with self.lock:
             results, self.result_cache = (
@@ -649,9 +669,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 self.result_cache[count:],
             )
 
-        logger.info(
-            f"[RemoteHybridInferenceWorker] wait, get all results len: {len(results)}, details: {results}"
-        )
+        logger.info(f"wait, get all results len: {len(results)}, details: {results}")
         group_size = 1
         if len(results) > 0:
             group_size = int(results[0]["input_ids"].shape[0])
@@ -660,9 +678,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         padded = concat_padded_tensors(results)
         if isinstance(padded, dict):
             padded = TensorDict(padded, batch_size=[bs])
-        print(
-            f"[RemoteHybridInferenceWorker] wait, padded type: {type(padded)}, padded: {padded}"
-        )
+        logger.info(f"wait, padded type: {type(padded)}, padded: {padded}")
         return padded
 
     def wait_at_least_no_concat(
@@ -701,7 +717,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             except Empty:
                 pass
         if self.exiting.is_set():
-            raise RuntimeError("Rollout engine is exiting, cannot wait for results.")
+            raise FrameworkError(
+                "FrameworkError",
+                "InferenceWorkError",
+                "Rollout engine is exiting, cannot wait for results.",
+            )
 
         with self.lock:
             results, self.result_cache = (
@@ -709,9 +729,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 self.result_cache[accepted:],
             )
 
-        logger.info(
-            f"[RemoteHybridInferenceWorker] wait_at_least_no_concat get {len(results)} results."
-        )
+        logger.info(f"wait_at_least_no_concat get {len(results)} results.")
         return results
 
     def rollout(  # only dp head accept this request
@@ -757,9 +775,8 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             raise ValueError(f"Invalid event type: {event}")
 
         logger.info(
-            f"[RemoteHybridInferenceWorker] Sending inference {event} notification at global_step: {global_step}"
+            f"Sending inference {event} notification at global_step: {global_step}"
         )
-
         try:
             target_url = f"http://{self.addresses[0]}/events"
             headers = {"Content-Type": "application/json"}
@@ -768,13 +785,14 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 target_url, data=json.dumps(payload), headers=headers, timeout=60
             )
             if response.status_code != 200:
-                raise ValueError(
-                    f"Failed to send inference event. Status code: {response.status_code}, "
-                    f"Response: {response.text}"
+                raise EngineError(
+                    "InferenceEngineError",
+                    "NotifyEventError",
+                    f"Status code: {response.status_code}, Response: {response.text}",
                 )
-        except Exception as e:
-            raise ValueError(f"Error sending inference event notification: {e}")
 
+        except Exception as e:
+            raise EngineError("InferenceEngineError", "NotifyEventError", e)
         return None
 
     def abort_all_requests(self) -> None:
@@ -791,10 +809,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 res = response.json()
                 assert res["success"]
             except Exception as e:
-                logger.error(
-                    f"[RemoteHybridInferenceWorker] Failed to Abort requests on {addr}: {str(e)}, response is {response.text}"
-                )
-                raise
+                raise EngineError("InferenceEngineError", "AbortRequestError", e)
 
         with ThreadPoolExecutor(max_workers=len(self.addresses)) as executor:
             futures = [
@@ -802,6 +817,6 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 for addr in self.addresses
             ]
             for future in futures:
-                future.result()  # Wait for all to complete or raise first exception
+                future.result()
 
         return None

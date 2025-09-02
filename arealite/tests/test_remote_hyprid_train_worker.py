@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from arealite.extension.asystem.remote_hyprid_train_worker import pack_logprobs
+from arealite.extension.asystem.remote_hybrid_train_worker import pack_logprobs
 
 
 class TestPackLogprobs(unittest.TestCase):

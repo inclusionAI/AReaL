@@ -174,6 +174,12 @@ class DistributedTrainController(TrainController):
                 for f in futures:
                     f.cancel()
                 raise
+            except Exception as e:
+                for f in futures:
+                    f.cancel()
+                raise RuntimeError(
+                    f"Failed to initialize worker_index: {worker_index}, rank_info: {rank_info}, error: {e}"
+                )
         # todo: 不能写死remote megatron, 让engine抽象出接口
 
     def destroy(self):
@@ -203,6 +209,10 @@ class DistributedTrainController(TrainController):
                 for f in futures:
                     f.cancel()
                 raise  # 重新抛出异常，主程序能感知
+            except Exception as e:
+                for f in futures:
+                    f.cancel()
+                raise RuntimeError(f"{method} failed, error: {e}")
 
     def upload_weights(self, meta: WeightUpdateMeta):
         """Upload weights to the inference engine."""
@@ -276,6 +286,10 @@ class DistributedTrainController(TrainController):
                 for f in futures:
                     f.cancel()
                 raise
+            except Exception as e:
+                for f in futures:
+                    f.cancel()
+                raise RuntimeError(f"train_distributed_batch failed, error: {e}")
 
         # 处理多个minibatch返回的结果
         for worker_result in results:
@@ -322,6 +336,10 @@ class DistributedTrainController(TrainController):
                 for f in futures:
                     f.cancel()
                 raise
+            except Exception as e:
+                for f in futures:
+                    f.cancel()
+                raise RuntimeError(f"compute_logp failed, error: {e}")
 
         # cat tensor from dp head with padding
         tensors_from_dp_heads = results[: self.dp_size]

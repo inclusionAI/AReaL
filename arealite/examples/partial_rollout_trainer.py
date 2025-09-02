@@ -34,8 +34,8 @@ from arealite.extension.asystem.math_reward import reward_fn
 from arealite.extension.asystem.remote_hybrid_inference_worker import (
     RemoteHybridInferenceWorker,
 )
-from arealite.extension.asystem.remote_hyprid_train_worker import (
-    RemoteHypridTrainWorker,
+from arealite.extension.asystem.remote_hybrid_train_worker import (
+    RemoteHybridTrainWorker,
 )
 from arealite.recover import latest_checkpoint, periodic_checkpoint
 from arealite.scheduler.asystem import AsystemScheduler
@@ -197,7 +197,7 @@ def main(args):
         scheduler,
     )
     actor = DistributedTrainController(
-        RemoteHypridTrainWorker(config.actor.hybrid_engine),
+        RemoteHybridTrainWorker(config.actor.hybrid_engine),
         TrainControllerConfig(
             experiment_name=config.experiment_name,
             trial_name=config.trial_name,
@@ -210,7 +210,7 @@ def main(args):
     ref = None
     if config.actor.hybrid_engine.wrap_policy.kl_ctl > 0:
         ref = DistributedReferenceController(
-            RemoteHypridTrainWorker(config.ref.hybrid_engine),
+            RemoteHybridTrainWorker(config.ref.hybrid_engine),
             TrainControllerConfig(
                 experiment_name=config.experiment_name,
                 trial_name=config.trial_name,
