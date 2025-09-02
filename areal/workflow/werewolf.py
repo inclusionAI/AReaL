@@ -159,14 +159,18 @@ class WerewolfWorkflow(RolloutWorkflow):
             qgen_prompt = (
                 f"{obs}\n"
                 f"Your previous summary: {prev_summary}\n\n"
-                "Formulate exactly three short, decision-focused questions with ground truth answers you should ask yourself "
-                "to choose the best next action in this werewolf game turn.\n"
-                "Be specific to the current roles, suspicions, allies, and public information:\n"
-                f"Example questions you might ask yourself: Who is most likely the {qa_target_role} in this game and why?"
-                f"What strategy will the {qa_target_role} take to maximize his chance of winning?"
+                "Generate exactly three short questions whose answers can be deduced "
+                "from the known game state and public information (not hypothetical or vague). "
+                "Each question should be concrete, factual, and directly relevant to deciding "
+                "your best next action in this Werewolf game turn.\n\n"
+                "Example of acceptable questions:\n"
+                f'Q1: Which player do you think is the {qa_target_role} and why?\n'
+                'Q2: Who would you vote out in the next voting and why?\n'
+                'Q3: Are there dead players yet? If so, what roles are they?\n\n'
                 "Output strictly in the following format:\n"
-                "Q1: ...\\n\nQ2: ...\\n\nQ3: ...\\n"
+                "Q1: ...\nQ2: ...\nQ3: ...\n"
             )
+
             t0 = time.perf_counter()
             qgen_ids = self.tokenizer.apply_chat_template(
                 [{"role": "user", "content": qgen_prompt}],
@@ -202,9 +206,9 @@ class WerewolfWorkflow(RolloutWorkflow):
             if not self_questions:
                 # Safety fallback
                 self_questions = [
-                    f"Who is most likely {qa_target_role} in this game and why?",
+                    f"Which player do you think is the {qa_target_role} and why?",
                     "What action should I take now to maximize team success?",
-                    f"What strategy will the {qa_target_role} take to maximize his chance of winning?",
+                    f"Are there dead players yet? If so, what roles are they?",
                 ]
 
             # ========== 2) Agent answers the 3 questions ==========
@@ -214,7 +218,7 @@ class WerewolfWorkflow(RolloutWorkflow):
                     f"{obs}\n"
                     f"Your previous summary: {prev_summary}\n"
                     f"You asked yourself this question: {q}\n"
-                    "Answer the question concisely and concretely for this turn only."
+                    "Answer the question concisely and concretely for this turn."
                 )
                 t0 = time.perf_counter()
                 a_ids = self.tokenizer.apply_chat_template(
