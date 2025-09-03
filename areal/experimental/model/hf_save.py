@@ -10,14 +10,10 @@ import torch
 import torch.distributed as dist
 from mbridge.core import Bridge
 from mbridge.core.bridge import Bridge
-from mbridge.core.util import (
-    unwrap_model,
-)
+from mbridge.core.util import unwrap_model
 from megatron.core import parallel_state as mpu
 from safetensors.torch import save_file
-from torch.distributed._functional_collectives import (
-    all_gather_into_tensor_coalesced,
-)
+from torch.distributed._functional_collectives import all_gather_into_tensor_coalesced
 
 from areal.utils import logging
 

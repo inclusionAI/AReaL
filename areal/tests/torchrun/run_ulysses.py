@@ -9,9 +9,7 @@ from transformers.models.qwen2.modeling_qwen2 import (
 )
 
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
-from areal.utils.ulysses import (
-    set_ulysses_sequence_parallel_group,
-)
+from areal.utils.ulysses import set_ulysses_sequence_parallel_group
 
 
 def setup_distributed_environment():
