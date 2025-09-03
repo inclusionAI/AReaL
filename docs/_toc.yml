@@ -15,6 +15,10 @@ parts:
     - file: tutorial/eval
     - file: tutorial/quickstart_legacy
     # - file: tutorial/troubleshooting
+  - caption: Best Practices
+    chapters:
+    - file: best_practices/debugging
+    - file: best_practices/handling_oom
   - caption: References
     chapters:
     - file: references/benchmark
