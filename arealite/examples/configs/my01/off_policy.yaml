@@ -1,32 +1,21 @@
 experiment_name: mini-model
 trial_name: off-policy
 allocation_mode: "gen:d8t4p1,train:d8t1p4,ref:d16t1p1"
-
-partial_rollout:
-  mini_samples_per_group: 8
-  batch_size_exceeding_num: 0 # set to 0 means not use partial rollout
-  # if you want to use partial rollout, set batch_size_exceeding_num > 0 like this
-  # batch_size_exceeding_num: 512
-  staleness_version: 1
-
 seed: 42
 total_train_epochs: 10
 total_train_steps: 1145
 train_bs_n_seqs: 64
 weight_update_type: "astate"
 enable_colocate_mode: true
-tokenizer_path: "/storage/yuyan/xingbu.lsc/output_models/ring-moe-v2-sft-general700w_longcot200w_0725/hf_ckpts/28869_kz"
+tokenizer_path: "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/ring-moe-v2-sft-general700w_longcot200w_0725/hf_ckpts/28869_kz"
 train_dataset:
-  path: "/storage/openpsi/codes/meijun.mei/swe/context_combined_sandbox_jun.jsonl"
+  path: "/storage/dataset/nlp/areal/moe_lite_math_0527_merge_train_areal.jsonl"
   shuffle: true
   max_prompt_len: 1024
 scheduler:
-  endpoint: "http://asystem-scheduler.asystem-cluster-prod-1.svc:8081"
+  endpoint: "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081"
   deploy_mode: "separation"
   functioncall_service_domain: "http://110.75.237.19:8080"
-  reward_functioncall_config:
-      swe:
-        host: "http://110.76.16.141:8080"
   reward_model_path: "/storage/jiulin.jl/Skywork-Reward-V2-Qwen3-8B"
   reward_model_service_url: "http://reward-model-service.asystem-test.svc.sigma-my001.ml01.sgp-ml.local:30000/classify"
 
@@ -36,7 +25,7 @@ stats_logger:
   fileroot: "/storage/openpsi/experiments"
   wandb:
     mode: "online"
-    wandb_base_url: "http://8.150.1.98:8080"
+    wandb_base_url: "https://slurm.alipay.com"
     wandb_api_key: "local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe"
   tensorboard:
     path: "/home/admin/logs/tfevent/asystem"
@@ -50,10 +39,17 @@ gconfig:
   top_k: 1000000
   top_p: 1.0
 
+partial_rollout:
+  mini_samples_per_group: 8
+  batch_size_exceeding_num: 0 # set to 0 means not use partial rollout
+  # if you want to use partial rollout, set batch_size_exceeding_num > 0 like this
+  # batch_size_exceeding_num: 512
+  staleness_version: 1
+
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  model_path: "/storage/yuyan/xingbu.lsc/output_models/ring-moe-v2-sft-general700w_longcot200w_0725/hf_ckpts/28869_kz"
+  model_path: ${tokenizer_path}
   storage_path: "/storage/openpsi/checkpoints"
   seed: ${seed}
   engine_config:
@@ -173,7 +169,7 @@ actor:
       hidden_dropout: 0.0
       hidden_size: 2048
       init_method_std: 0.006
-      load: /storage/yuyan/model/nlp/aystem-test-ring-moe-v2-sft-general700w_longcot200w_0725_iter_0028869
+      load: /storage/xukuan.xk/repos/antnlp/personal/pretrained_models/ring-moe-v2-sft-general700w_longcot200w_0725/iter_0028869
       log_loss_scale_to_tensorboard: false
       log_num_zeros_in_grad: true
       log_params_norm: true
@@ -242,7 +238,7 @@ actor:
       recompute_num_layers: 5
       rotary_base: 600000
       rotary_percent: 0.5
-      save: /dnn_training_sys/users/xinyu.kxy/experiments/2025-08-20_20-04-37/experiments/models/mcore_ckpt_32/asystem_moe_mini
+      save: /mnt/asystem-s3/common/users/senlin.zsl/experiments/2025-07-19_14-32-43/experiments/models/mcore_ckpt_32/asystem_moe_mini
       save_interval: 1
       seed: 42
       seq_length: 16384
