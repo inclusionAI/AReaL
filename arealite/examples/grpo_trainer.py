@@ -40,6 +40,13 @@ from arealite.utils.stats_logger import StatsLogger
 from arealite.utils.util import clear_dir, custom_collate_fn
 from arealite.workflow.rlvr import RLVRWorkflow
 from realhf.api.core.data_api import load_hf_tokenizer
+from arealite.api.engine_api import WeightUpdateMeta
+from arealite.extension.asystem.math_reward import reward_fn
+from arealite.scheduler.asystem import AsystemScheduler
+from arealite.recover import periodic_checkpoint, latest_checkpoint
+from arealite.dataset.utils import ShuffleSampler
+from arealite.utils.metric import calc_training_data_metrics, calc_training_data_version_metrics
+
 from realhf.base import logging, stats_tracker
 
 logger = logging.getLogger("Trainer")
@@ -288,6 +295,8 @@ def main(args):
         tokenizer_path=config.tokenizer_path,
     )
 
+    current_model_version = 0
+
     for epoch in range(recover_epoch, epoch_num):
         data_generator = iter(dataloader)
         start_step = recover_step if can_recover and epoch == recover_epoch else 0
@@ -310,6 +319,7 @@ def main(args):
                     path=f"/storage/openpsi/checkpoints/{config.experiment_name}/{config.trial_name}",
                     alloc_mode=None,
                     comm_backend=None,
+                    model_version=current_model_version
                 )
 
                 with (
@@ -365,25 +375,23 @@ def main(args):
                         rollout_res = rollout.rollout(batch_data, workflow=workflow)
                         logger.info(f"rollout succeeded, step: {step}, epoch: {epoch}")
 
-                    with stats_tracker.record_timing("post_data_process"):
-                        rollout_res_dict = rollout_res.to_dict()
-                        for k, v in rollout_res_dict.items():
-                            if (
-                                isinstance(v, torch.Tensor)
-                                and v.ndim > 1
-                                and v.shape[0] == 1
-                            ):
-                                rollout_res_dict[k] = v.squeeze(0)
-                        dis_batch = DistributedBatchMemory(rollout_res_dict)
+                with (stats_tracker.scope("training_data"),):
+                    calc_training_data_metrics(rollout_res)
+                    calc_training_data_version_metrics(rollout_res, current_model_version)
 
-                        with (stats_tracker.record_timing("notify_rollout_end_event"),):
-                            logger.info(
-                                f"start to notify_rollout_end_event, step: {step}, epoch: {epoch}"
-                            )
-                            rollout.notify_event("rollout_end", global_step)
-                            logger.info(
-                                f"notify_rollout_end_event succeeded, step: {step}, epoch: {epoch}"
-                            )
+                with(stats_tracker.record_timing("post_data_process")):
+                    rollout_res_dict = rollout_res.to_dict()
+                    for k, v in rollout_res_dict.items():
+                        if isinstance(v, torch.Tensor) and v.ndim > 1 and v.shape[0] == 1:
+                            rollout_res_dict[k] = v.squeeze(0)
+                    dis_batch = DistributedBatchMemory(rollout_res_dict)
+
+                    with (
+                        stats_tracker.record_timing("notify_rollout_end_event"),
+                    ):
+                        logger.info(f"start to notify_rollout_end_event, step: {step}, epoch: {epoch}")
+                        rollout.notify_event("rollout_end", global_step)
+                        logger.info(f"notify_rollout_end_event succeeded, step: {step}, epoch: {epoch}")
 
                 if config.actor.hybrid_engine.wrap_policy.kl_ctl > 0:
                     with (
@@ -470,6 +478,8 @@ def main(args):
                         logger.info(
                             f"notify_train_end_event succeeded, step: {step}, epoch: {epoch}"
                         )
+            
+            current_model_version += 1
 
             metric = stats_tracker.export()
             stats_logger.commit(epoch, step, global_step, metric)

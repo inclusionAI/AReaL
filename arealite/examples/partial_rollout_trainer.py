@@ -43,6 +43,14 @@ from arealite.utils.stats_logger import StatsLogger
 from arealite.utils.util import clear_dir, custom_collate_fn
 from arealite.workflow.partial_rollout import PartialRolloutWorkflow
 from realhf.api.core.data_api import load_hf_tokenizer
+from arealite.api.engine_api import WeightUpdateMeta
+from arealite.extension.asystem.math_reward import reward_fn
+from arealite.scheduler.asystem import AsystemScheduler
+from arealite.recover import periodic_checkpoint, latest_checkpoint
+from arealite.dataset.utils import ShuffleSampler
+from arealite.utils.metric import calc_training_data_metrics, calc_training_data_version_metrics
+from arealite.controller.rollout_buffer import RolloutBuffer
+
 from realhf.base import logging, stats_tracker
 
 logger = logging.getLogger("Trainer")
@@ -322,12 +330,7 @@ def main(args):
                         rollout_buffer current size: {rollout_buffer.get_current_size()}, ready to train sample num: {rollout_buffer.get_ready_to_train_sample_num()}"
             )
 
-    rollout.register_callback_to_all_worker(
-        "wait_at_least_no_concat",
-        add_res_to_rollout_buffer_callback,
-        batch_count=4,
-        timeout=10,
-    )
+    rollout.register_callback_to_all_worker("wait_at_least_no_concat", add_res_to_rollout_buffer_callback, batch_count=8, timeout=4, no_response_timeout=100)
 
     current_model_version = 0
 
@@ -343,36 +346,42 @@ def main(args):
                 stats_tracker.record_timing("e2e"),
                 stats_tracker.scope("grpo_actor"),
             ):
-                rollout_buffer.expire_stale_samples(
-                    current_version=current_model_version
-                )
-                batch_data = rollout_buffer.pop_all_cached_samples()
-                lack_samples = (
-                    training_real_batch_size
-                    + config.partial_rollout.batch_size_exceeding_num
-                    - len(batch_data)
-                )
-                logger.info(f"pop {len(batch_data)} samples from rollout buffer")
-                for _ in range((lack_samples + group_size - 1) // group_size):
-                    try:
-                        batch = next(data_generator)
-                    except StopIteration:
-                        data_generator = iter(dataloader)
-                        batch = next(data_generator)
-                    for i in range(group_size):
-                        new_batch = batch.copy()
-                        new_batch["index_in_group"] = [str(i)]
-                        batch_data.append(new_batch)
+                with (
+                    stats_tracker.record_timing("prepare_datas"),
+                    stats_tracker.scope("prepare_datas")
+                ):
+                    expire_sample_num = rollout_buffer.expire_stale_samples(
+                        current_version=current_model_version
+                    )
+                    stats_tracker.scalar(**{"expire_sample_num": expire_sample_num})
+                    batch_data = rollout_buffer.pop_all_cached_samples()
+                    lack_samples = (
+                        training_real_batch_size
+                        + config.partial_rollout.batch_size_exceeding_num
+                        - len(batch_data)
+                    )
+                    logger.info(f"pop {len(batch_data)} samples from rollout buffer")
+                    for _ in range((lack_samples + group_size - 1) // group_size):
+                        try:
+                            batch = next(data_generator)
+                        except StopIteration:
+                            data_generator = iter(dataloader)
+                            batch = next(data_generator)
+                        for i in range(group_size):
+                            new_batch = batch.copy()
+                            new_batch["index_in_group"] = [str(i)]
+                            batch_data.append(new_batch)
 
-                logger.info(
-                    f"add {(lack_samples + group_size  - 1) // group_size} samples to batch_data, batch_data len is {len(batch_data)}, step: {step}, epoch: {epoch}, global_step: {global_step}"
-                )
+                    logger.info(
+                        f"add {(lack_samples + group_size  - 1) // group_size} samples to batch_data, batch_data len is {len(batch_data)}, step: {step}, epoch: {epoch}, global_step: {global_step}"
+                    )
 
                 weight_update_config = WeightUpdateMeta(
                     type=config.weight_update_type,
                     path=f"/storage/openpsi/checkpoints/{config.experiment_name}/{config.trial_name}",
                     alloc_mode=None,
                     comm_backend=None,
+                    model_version=current_model_version
                 )
 
                 with (
@@ -451,7 +460,11 @@ def main(args):
                             f"rollout succeeded {len(rollout_res)} samples, step: {step}, epoch: {epoch}"
                         )
 
-                    with stats_tracker.record_timing("post_data_process"):
+                with (stats_tracker.scope("training_data"),):
+                    calc_training_data_metrics(rollout_res)
+                    calc_training_data_version_metrics(rollout_res, current_model_version)
+
+                    with(stats_tracker.record_timing("post_data_process")):
                         rollout_res_dict = rollout_res.to_dict()
                         for k, v in rollout_res_dict.items():
                             if (
@@ -573,6 +586,7 @@ def main(args):
                             f"notify_train_end_event succeeded, step: {step}, epoch: {epoch}"
                         )
 
+            current_model_version += 1
             metric = stats_tracker.export()
             stats_logger.commit(epoch, step, global_step, metric)
 

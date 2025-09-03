@@ -21,23 +21,27 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         tokenizer_path: str = None,
     ):
         if tokenizer is None and tokenizer_path is None:
-            raise ValueError("Either tokenizer or tokenizer_path must be provided")
+            raise ValueError(
+                "Either tokenizer or tokenizer_path must be provided")
 
         self.reward_fn = reward_fn
         self.gconfig = gconfig
         self.tokenizer = tokenizer if tokenizer is not None else None
         self.tokenizer_path = tokenizer_path
 
-    async def _compute_reward(
-        self, prompt, completion, prompt_ids, completion_ids, stop_reason, data
-    ):
-        if stop_reason == "abort":
-            # skip reward computation when abort
-            return 0
-        else:
-            return await self.reward_fn(
-                prompt, completion, prompt_ids, completion_ids, **data
-            )
+    async def _compute_reward(self, 
+                              prompt,
+                              completion,
+                              prompt_ids,
+                              completion_ids,
+                              stop_reason,
+                              data):
+        # if stop_reason == "abort":
+        #     # skip reward computation when abort
+        #     return 0
+        # else:
+        #     return await self.reward_fn(prompt, completion, prompt_ids, completion_ids, **data)
+        return await self.reward_fn(prompt, completion, prompt_ids, completion_ids, **data)
 
     async def _run_new_prompt_task(self, engine, data: Dict[str, Any]) -> TensorDict:
         """
@@ -46,8 +50,7 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         data_name_id = f"q[{data['query_id'][0]}]i[{data['index_in_group'][0]}]"
 
         print(
-            f"[PartialRolloutWorkflow] data {data_name_id} run_new_prompt_task with data: {data}"
-        )
+            f"[PartialRolloutWorkflow] data {data_name_id} run_new_prompt_task with data: {data}")
         assert data.get("prompt") is not None
         assert data.get("previous_ids") is None
 
@@ -117,8 +120,10 @@ class PartialRolloutWorkflow(RolloutWorkflow):
             completion=completion,
             prompt_ids=resp.input_tokens,
             completion_ids=resp.output_tokens,
-            **data,
+            stop_reason=resp.stop_reason,
+            data=data,
         )
+
         task_id = RL_TASKS.index(data["task"][0])
         print(
             f"[PartialRolloutWorkflow][New Prompt] data {data_name_id}, task: {data['task'][0]}, reward: {reward}, stop_reason: {resp.stop_reason}, input_ids {input_ids},  prompt: {prompt_text}, completion: {completion}, completion_tokens: {resp.output_tokens}, solutions: {data['solutions'][0]}"
@@ -161,13 +166,13 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         )
 
         # seq_no_eos_mask，有 EOS 是 False，没有 EOS 是 True
-        is_sample_finished = not data["previous_seq_no_eos_mask"][0]
+        is_sample_finished = (not data["previous_seq_no_eos_mask"][0]) or (len(input_ids) >= self.gconfig.max_tokens)
 
         assert (
             self.gconfig.n_samples == 1
         ), "in PartialRolloutWorkflow, n_samples must be 1"
 
-        if (not is_sample_finished) and (len(input_ids) < self.gconfig.max_tokens):
+        if not is_sample_finished:
             # 续推
             new_gconfig = self.gconfig.new(
                 n_samples=1,
@@ -212,6 +217,8 @@ class PartialRolloutWorkflow(RolloutWorkflow):
                 seq[-1] != self.tokenizer.pad_token_id
             )
             # seq_no_eos_mask = resp.stop_reason in ["stop", "interrupt", "abort"]
+
+            stop_reason = resp.stop_reason
         else:
             # sample is already finished, we do not need to request a new rollout, just use the previous responses
             seq = input_ids
@@ -222,6 +229,8 @@ class PartialRolloutWorkflow(RolloutWorkflow):
             prompt_mask = [1] * prompt_len + [0] * completion_len
             versions = data["previous_version"][0]
             seq_no_eos_mask = data["previous_seq_no_eos_mask"][0]
+
+            stop_reason = "length" if seq_no_eos_mask else "stop"
 
         if "prompt" in data.keys():
             del data["prompt"]
@@ -242,7 +251,8 @@ class PartialRolloutWorkflow(RolloutWorkflow):
                 completion=completion,
                 prompt_ids=prompt_ids,
                 completion_ids=completion_ids,
-                **data,
+                stop_reason=stop_reason,
+                data=data,
             )
         else:
             reward = data["previous_rewards"][0]

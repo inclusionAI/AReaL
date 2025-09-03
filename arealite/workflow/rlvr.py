@@ -68,7 +68,8 @@ class RLVRWorkflow(RolloutWorkflow):
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0] * resp.input_len + resp.output_logprobs
             prompt_mask = [1] * resp.input_len + [0] * resp.output_len
-            versions = [-1] * resp.input_len + resp.output_versions
+            output_version = resp.output_versions[0]
+            versions = [output_version] * (resp.input_len + resp.output_len)
             seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (
                 seq[-1] != self.tokenizer.pad_token_id
             )
@@ -155,7 +156,8 @@ class RLVRWorkflow(RolloutWorkflow):
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0] * resp.input_len + resp.output_logprobs
             prompt_mask = [1] * resp.input_len + [0] * resp.output_len
-            versions = [-1] * resp.input_len + resp.output_versions
+            output_version = resp.output_versions[0]
+            versions = [output_version] * (resp.input_len + resp.output_len)
             seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (
                 seq[-1] != self.tokenizer.pad_token_id
             )

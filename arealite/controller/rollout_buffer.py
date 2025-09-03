@@ -110,13 +110,15 @@ class RolloutBuffer(object):
                     break
         return concat_padded_tensors(results)
 
-    def expire_stale_samples(self, current_version: int):
+    def expire_stale_samples(self, current_version: int) -> int:
         """
         Remove samples that are older than the staleness version.
         :param current_version: The current version of the model.
         """
+        expired_samples = 0
         with self.lock_:
-            expired_samples = 0
+            # 在当前版本，同一个 query 的所有 sample 都是在同一个版本下发给 rollout 的，所以会同时过期
+            # 在未来支持 mini_samples_per_group != group_size 的场景，这段代码也是生效的
             for query_id in list(self.buffer.keys()):
                 group_samples = self.buffer[query_id]
                 for index_in_group in list(group_samples.keys()):
@@ -129,6 +131,8 @@ class RolloutBuffer(object):
                     del self.buffer[query_id]
             self.current_size -= expired_samples
             self.ready_to_train_sample_num -= expired_samples
+
+        return expired_samples
 
     def pop_all_cached_samples(self) -> List[Dict[str, Any]]:
         """

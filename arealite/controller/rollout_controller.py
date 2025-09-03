@@ -38,6 +38,7 @@ from realhf.base import logging, stats_tracker
 logger = logging.getLogger("DistributedRolloutController")
 
 
+
 class DistributedRolloutController(RolloutController):
     # RolloutController可以通过同名接口调用所有InferenceEngine的方法
     # 除此之外没有别的方法了
@@ -114,7 +115,8 @@ class DistributedRolloutController(RolloutController):
                     result = future.result()  # 可加异常处理
                     results.append(result)
             except KeyboardInterrupt:
-                logger.info("receive ctrl+c, terminating all initialization tasks...")
+                logger.info(
+                    "receive ctrl+c, terminating all initialization tasks...")
                 for f in futures:
                     f.cancel()
                 raise
@@ -131,7 +133,8 @@ class DistributedRolloutController(RolloutController):
         scheduling = self.inf_engine.get_scheduling_config()
 
         # replicas = self.allocate_mode.gen_world_size * node_count if scheduling.gpu >= n_gpu_per_node else self.allocate_mode.gen_world_size
-        scheduling_config = SchedulingConfig(replicas=self.allocate_mode.gen_world_size)
+        scheduling_config = SchedulingConfig(
+            replicas=self.allocate_mode.gen_world_size)
         target = kwargs.get("colocation_with")
         scheduling_config.schedule_strategy = (
             ScheduleStrategy(type="colocation", uid=target.uid) if target else None
@@ -266,7 +269,8 @@ class DistributedRolloutController(RolloutController):
                         main_server_addrs=main_server_addrs,
                         free_addrs=free_addrs,
                         world_size=self.allocate_mode.gen_world_size,
-                        global_ranks=list(range(index, index + self.dp_world_size)),
+                        global_ranks=list(
+                            range(index, index+self.dp_world_size)),
                         master_addr=master_addr,
                         enable_colocate_mode=self.enable_colocate_mode,
                     )
@@ -286,7 +290,8 @@ class DistributedRolloutController(RolloutController):
                 for future in futures:
                     future.result()  # 可加异常处理
             except KeyboardInterrupt:
-                logger.info("receive ctrl+c, terminating all initialization tasks...")
+                logger.info(
+                    "receive ctrl+c, terminating all initialization tasks...")
                 for f in futures:
                     f.cancel()
                 raise
@@ -388,13 +393,6 @@ class DistributedRolloutController(RolloutController):
 
             callback(res)
 
-            for r in res:
-                keys = ["rewards", "seqlen"]
-                for key in keys:
-                    tensor = r[key]
-                    for value in tensor:
-                        stats_tracker.scalar(**{key: value})
-
         t = threading.Thread(
             target=partial(
                 self._thread_loop, _wait_at_least_no_concat_callable, sleep_time=0
@@ -410,13 +408,10 @@ class DistributedRolloutController(RolloutController):
             for index in range(self.allocate_mode.gen_dp_size):
                 master_worker = self.workers[self.dp_world_size * index]
                 self._start_wait_at_least_no_concat_loop(
-                    master_worker,
-                    callback,
-                    batch_count=kwargs["batch_count"],
-                    timeout=kwargs["timeout"],
-                )
+                    master_worker, callback, batch_count=kwargs["batch_count"], timeout=kwargs["timeout"], no_response_timeout=kwargs.get("no_response_timeout", None))
         else:
-            raise ValueError(f"Unsupported method {method} for registering callback.")
+            raise ValueError(
+                f"Unsupported method {method} for registering callback.")
 
     def abort_all_requests(self) -> None:
         """Abort all pending requests in the inference engine."""
@@ -430,22 +425,14 @@ class DistributedRolloutController(RolloutController):
         """Submit a batch of requests to the inference engine and wait for the results."""
         batches = data.split(self.allocate_mode.gen_dp_size)
         assert len(self.workers) % self.dp_world_size == 0
-        results = self._rpc_call("rollout_distributed_batch", batches, workflow)
+        results = self._rpc_call(
+            "rollout_distributed_batch", batches, workflow)
 
         batchdata = DistributedBatchMemory(None)
         for dataset in results:
             batchdata = batchdata.merge(dataset)
 
         return batchdata
-
-    def get_old_logp(self, tensordict):
-        prompt_mask = tensordict["prompt_mask"]
-        seqlen = tensordict["seqlen"]
-        logprobs = tensordict["logprobs"]
-        batch, seq_len = logprobs.shape
-        idx = torch.arange(seq_len).unsqueeze(0).expand(batch, seq_len)
-        valid_mask = (idx < seqlen.unsqueeze(1)) & (prompt_mask == 0)
-        return logprobs[valid_mask]
 
     def rollout(
         self, data: List[Dict[str, Any]], workflow: RolloutWorkflow
@@ -460,7 +447,6 @@ class DistributedRolloutController(RolloutController):
         padded = concat_padded_tensors(results)
         if isinstance(padded, dict):
             padded = TensorDict(padded, batch_size=[bs])
-        self._calc_metrics(padded)
         return padded
 
     def split_list(self, lst, n):
@@ -475,31 +461,3 @@ class DistributedRolloutController(RolloutController):
             index += current_size
         return result
 
-    def _calc_metrics(self, padded):
-        old_logp = self.get_old_logp(padded)
-        old_p = torch.exp(old_logp)
-        entropy = -torch.sum(old_p * old_logp, dim=-1)
-
-        prompt_len = padded["prompt_mask"].sum(1)
-        logger.info(f"prompt_len: {prompt_len}")
-
-        stats_tracker.scalar(
-            **{
-                "prompt_len": prompt_len.float().mean(),
-                "sglang_old_logp": old_logp.mean(),
-                "entropy": entropy.item(),
-            }
-        )
-
-        # total reward
-        keys = ["rewards", "seqlen"]
-        for key in keys:
-            tensor = padded[key]
-            for value in tensor:
-                stats_tracker.scalar(**{key: value})
-
-        # task reward
-        groups, rewards = group_avg_torch(padded["rewards"], padded["task_ids"])
-        for group, reward in zip(groups, rewards):
-            task_name = RL_TASKS[int(group)]
-            stats_tracker.scalar(**{f"{task_name}_reward": float(reward)})
