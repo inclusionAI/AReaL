@@ -59,11 +59,11 @@ python3 realhf/training/main_async_ppo.py \
     max_head_offpolicyness=4
 ```
 
-::::{important} Running `main_async_ppo.py` with `ppo.recompute_logprob=False`,
-`ppo.use_decoupled_loss=False`, and `max_head_offpolicyness=0` will essentially
-replicate the behavior of synchronous PPO. Therefore, it's usually not recommended to
-run synchronous PPO directly (i.e., `main_sync_ppo.py`). The workflow of asynchronous RL
-is more stable and easier to customize. ::::
+> Running `main_async_ppo.py` with `ppo.recompute_logprob=False`,
+> `ppo.use_decoupled_loss=False`, and `max_head_offpolicyness=0` will essentially
+> replicate the behavior of synchronous PPO. Therefore, it's usually not recommended to
+> run synchronous PPO directly (i.e., `main_sync_ppo.py`). The workflow of asynchronous
+> RL is more stable and easier to customize.
 
 ## Command Line Options
 
