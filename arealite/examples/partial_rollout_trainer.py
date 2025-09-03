@@ -1,3 +1,4 @@
+import json
 import os
 import pprint
 import sys
@@ -91,8 +92,9 @@ def main(args):
             "trial_name": config.trial_name,
             "extra_envs": {
                 "FUNCTIONCALL_SERVICE_DOMAIN": config.scheduler.functioncall_service_domain,
-                # "REWARD_MODEL_PATH": config.scheduler.reward_model_path,
-                # "REWARD_MODEL_SERVICE_URL": config.scheduler.reward_model_service_url
+                "REWARD_FUNCTIONCALL_CONFIG": json.dumps(
+                    config.scheduler.reward_functioncall_config
+                ),
             },
         }
     )
@@ -119,7 +121,6 @@ def main(args):
     global_step = 0
     os.environ["WANDB_API_KEY"] = config.stats_logger.wandb.wandb_api_key
     os.environ["WANDB_BASE_URL"] = config.stats_logger.wandb.wandb_base_url
-    deploy_mode = config.scheduler.deploy_mode
 
     allocation_mode = config.allocation_mode
     allocate_mode = AllocationMode.from_str(allocation_mode)
@@ -141,7 +142,6 @@ def main(args):
     ############################## recover #########################################
     recover_meta_info_path = config.recover.recover_meta_info_path
     enable_recover = True
-
     can_recover = False
     recover_epoch = 0
     recover_step = 0
@@ -285,10 +285,6 @@ def main(args):
             f"initialized all controllers in colocation mode {config.enable_colocate_mode}"
         )
 
-    # actor.initialize()
-    # rollout.initialize(colocation_with=actor if config.enable_colocate_mode else None)
-    #      ref.initialize()
-
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
@@ -416,7 +412,7 @@ def main(args):
                                 if future.exception() is not None:
                                     raise future.exception()
                         logger.info(
-                            f"nccl mode update weight succeeded (parallel), step: {step}, epoch: {epoch}"
+                            f"{weight_update_config.type} update weight succeeded (parallel), step: {step}, epoch: {epoch}"
                         )
 
                 with (
@@ -504,12 +500,8 @@ def main(args):
                         rollout_res_dict["ref_logprobs"] = logp
                         dis_batch = DistributedBatchMemory(rollout_res_dict)
                         logger.info(
-                            f"compute_logprobs_with_distributed succeeded, step: {step}, epoch: {epoch}, "
-                            f"ref logp shape: {logp.shape}, old_logp shape: {rollout_res_dict["logprobs"].shape}, "
-                            f"input_ids shape: {rollout_res_dict["input_ids"].shape}"
+                            f"compute ref logprobs succeeded, step: {step}, epoch: {epoch}, ref logp shape: {logp.shape}"
                         )
-
-                        print(f"rollout_res_dict keys: {rollout_res_dict.keys()}")
 
                 with (
                     stats_tracker.record_timing("train_step"),
@@ -527,9 +519,10 @@ def main(args):
                             f"notify_train_start_event succeeded, step: {step}, epoch: {epoch}"
                         )
 
-                    logger.info(f"start to train, step: {step}, epoch: {epoch}")
-                    actor.train_distributed_batch(dis_batch)
-                    logger.info(f"train succeeded, step: {step}, epoch: {epoch}")
+                    with (stats_tracker.record_timing("train_distributed_batch"),):
+                        logger.info(f"start to train, step: {step}, epoch: {epoch}")
+                        actor.train_distributed_batch(dis_batch)
+                        logger.info(f"train succeeded, step: {step}, epoch: {epoch}")
 
                     with stats_tracker.record_timing("latest_recover_save"):
                         if (
@@ -587,9 +580,9 @@ def main(args):
                         )
 
             current_model_version += 1
+
             metric = stats_tracker.export()
             stats_logger.commit(epoch, step, global_step, metric)
-
             global_step += 1
 
     stats_logger.close()
