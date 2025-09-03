@@ -308,7 +308,7 @@ class FSDPEngine(BaseHFEngine):
         # Process microbatches with gradient accumulation
         if self.ulysses_sp_size > 1:
             with self.ulysses_sharding_manager:
-                sp_rank = get_ulysses_sequence_parallel_rank()
+                get_ulysses_sequence_parallel_rank()
                 sp_world_size = get_ulysses_sequence_parallel_world_size()
                 sp_group = get_ulysses_sequence_parallel_group()
                 dp_world_size = self.world_size // sp_world_size
@@ -444,7 +444,7 @@ class FSDPEngine(BaseHFEngine):
 
         if self.ulysses_sp_size > 1:
             with self.ulysses_sharding_manager:
-                sp_rank = get_ulysses_sequence_parallel_rank()
+                get_ulysses_sequence_parallel_rank()
                 sp_world_size = get_ulysses_sequence_parallel_world_size()
                 sp_group = get_ulysses_sequence_parallel_group()
 
