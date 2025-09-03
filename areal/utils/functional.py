@@ -144,7 +144,7 @@ def ppo_actor_loss_fn(
     clipped_ratio = torch.clamp(
         ratio,
         1.0 - eps_clip,
-        1.0 + eps_clip if eps_clip_higher is None else eps_clip_higher,
+        1.0 + (eps_clip if eps_clip_higher is None else eps_clip_higher),
     )
 
     pg_loss1 = -advantages * ratio
