@@ -121,7 +121,7 @@ class RecoverInfo:
                             f"the world size {dist.get_world_size()}."
                         )
                         dataloader_info = dataloader_info[dist.get_rank()]
-                        
+
             return cls(
                 last_step_info=last_step_info,
                 saver_info=saver_info,

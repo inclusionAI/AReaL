@@ -369,11 +369,10 @@ class FSDPEngine(BaseHFEngine):
                         outputs = self.model(**ulysses_mb_input)
 
                         logits = outputs.logits.squeeze(0)
-                        # Remove Ulysses padding if on last rank
-                        if ulysses_pad_size > 0 and sp_rank == sp_world_size - 1:
-                            logits = logits[:-ulysses_pad_size]
                         gathered_logits = dist_F.all_gather(logits, group=sp_group)
                         full_logits = torch.cat(gathered_logits, dim=0)
+                        if ulysses_pad_size > 0:
+                            full_logits = full_logits[:-ulysses_pad_size]
                         # Remove original padding
                         if pad_length > 0:
                             full_logits = full_logits[:-pad_length]
@@ -494,11 +493,10 @@ class FSDPEngine(BaseHFEngine):
                         outputs = self.model(**ulysses_mb_input)
 
                         logits = outputs.logits.squeeze(0)
-                        # Remove Ulysses padding if on last rank
-                        if ulysses_pad_size > 0 and sp_rank == sp_world_size - 1:
-                            logits = logits[:-ulysses_pad_size]
                         gathered_logits = dist_F.all_gather(logits, group=sp_group)
                         full_logits = torch.cat(gathered_logits, dim=0)
+                        if ulysses_pad_size > 0:
+                            full_logits = full_logits[:-ulysses_pad_size]
                         # Remove original padding
                         if pad_length > 0:
                             full_logits = full_logits[:-pad_length]
@@ -592,11 +590,10 @@ class FSDPEngine(BaseHFEngine):
                         outputs = self.model(**ulysses_mb_input)
 
                         logits = outputs.logits.squeeze(0)
-                        # Remove Ulysses padding if on last rank
-                        if ulysses_pad_size > 0 and sp_rank == sp_world_size - 1:
-                            logits = logits[:-ulysses_pad_size]
                         gathered_logits = dist_F.all_gather(logits, group=sp_group)
                         full_logits = torch.cat(gathered_logits, dim=0)
+                        if ulysses_pad_size > 0:
+                            full_logits = full_logits[:-ulysses_pad_size]
                         # Remove original padding
                         if pad_length > 0:
                             full_logits = full_logits[:-pad_length]
