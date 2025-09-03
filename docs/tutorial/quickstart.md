@@ -56,11 +56,11 @@ python3 -m areal.launcher.local examples/lite/gsm8k_grpo.py \
     +sglang.attention_backend=triton
 ```
 
-::::{important} We're currently refactoring from legacy AReaL to AReaL-lite, which
-introduces some configuration differences. We provide a **config converter** to transfer
-old AReaL config into AReaL-lite YAML file for users' convenience.
-[Click here](#switching-from-legacy-areal-to-areal-lite) to learn how to use the
-**config converter**. ::::
+> We're currently refactoring from legacy AReaL to AReaL-lite, which introduces some
+> configuration differences. We provide a **config converter** to transfer old AReaL
+> config into AReaL-lite YAML file for users' convenience.
+> [Click here](#switching-from-legacy-areal-to-areal-lite) to learn how to use the
+> **config converter**.
 
 (distributed-experiments-with-ray-or-slurm)=
 

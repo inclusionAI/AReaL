@@ -111,13 +111,13 @@ fsdp:
   ulysses_sp_size: 2  # or 4, 8 depending on your setup
 ```
 
-:::{important} Just remember: `ulysses_sp_size` needs to divide evenly into both your
-FSDP parallelism degree and your model's attention heads.
-
-For example, with 40 attention heads and `d32` allocation mode:
-
-- These work: `1, 2, 4, 8`
-- These don't: `16, 32` (too many for the attention heads) :::
+> Just remember: `ulysses_sp_size` needs to divide evenly into both your FSDP
+> parallelism degree and your model's attention heads.
+>
+> For example, with 40 attention heads and `d32` allocation mode:
+>
+> - These work: `1, 2, 4, 8`
+> - These don't: `16, 32` (too many for the attention heads)
 
 ## Resolving Weight Update OOM Errors
 
