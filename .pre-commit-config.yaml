@@ -30,7 +30,9 @@ repos:
         args:
           - --wrap=88
         additional_dependencies:
-          - mdformat-myst
+          - mdformat-gfm
+          - mdformat-tables
+          - mdformat-frontmatter
 
   - repo: https://github.com/pycqa/autoflake
     rev: v2.3.1

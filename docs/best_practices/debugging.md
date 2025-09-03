@@ -76,8 +76,7 @@ AREAL_LLM_SERVER_ADDRS=127.0.0.1:20082 \
 
 ## Debugging Custom RL Algorithms
 
-:::\{note} If you're using existing AReaL algorithms like GRPO, you can skip this
-section. :::
+> If you're using existing AReaL algorithms like GRPO, you can skip this section.
 
 For custom RL algorithms, you can debug them just like offline training (think SFT) by
 using pre-generated data instead of running inference.

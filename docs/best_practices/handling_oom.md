@@ -35,8 +35,8 @@ usage:
   usage. The [FSDP docs](https://docs.pytorch.org/docs/stable/fsdp.html) have more
   details.
 
-:::\{note} Don't worry about `train_dataset.batch_size` - it doesn't actually affect
-peak memory usage. Stick to the parameters above when troubleshooting OOM issues. :::
+> Don't worry about `train_dataset.batch_size` - it doesn't actually affect peak memory
+> usage. Stick to the parameters above when troubleshooting OOM issues.
 
 ## Resolving Generation OOM Errors
 
@@ -111,7 +111,7 @@ fsdp:
   ulysses_sp_size: 2  # or 4, 8 depending on your setup
 ```
 
-:::\{important} Just remember: `ulysses_sp_size` needs to divide evenly into both your
+:::{important} Just remember: `ulysses_sp_size` needs to divide evenly into both your
 FSDP parallelism degree and your model's attention heads.
 
 For example, with 40 attention heads and `d32` allocation mode:
