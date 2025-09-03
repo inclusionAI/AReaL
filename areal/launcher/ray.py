@@ -1,5 +1,6 @@
 import importlib.util
 import pathlib
+import re
 import sys
 import time
 from functools import partial
@@ -239,12 +240,23 @@ class RayLauncher:
         else:
             logger.warning(f"Job {job_name} not found in running jobs.")
 
-    def stop_all(self, force: bool = False):
-        """Stop all jobs."""
-        for job_name in list(self.jobs.keys()):
+    def stop_all(self, force: bool = False, pattern: Optional[str] = None):
+        """Stop all jobs with pattern matched."""
+        job_names = list(self.jobs.keys())
+        if pattern:
+            job_names = [
+                job_name for job_name in job_names if re.search(pattern, job_name)
+            ]
+        for job_name in job_names:
             self.stop(job_name, force=force)
-        logger.info("All jobs stopped.")
-        self.jobs.clear()
+        if pattern:
+            logger.info(f'Jobs matching the pattern "{pattern}" stopped')
+        else:
+            logger.info("All jobs stopped.")
+        cur_job_names = self.jobs.keys()
+        for job_name in job_names:
+            if job_name in cur_job_names:
+                self.jobs.pop(job_name)
 
     def wait(
         self, check_status=(JobState.FAILED,), remove_status=(JobState.COMPLETED,)
@@ -412,7 +424,9 @@ def ray_main(config, run_id: int = 0):
                 n_sglang_servers,
             )
         except (TimeoutError, KeyboardInterrupt) as e:
-            launcher.stop_all(force=True)
+            launcher.stop_all(
+                force=False
+            )  # force=False will send KeyboardInterrupt to sglang_server.main() to further clean all sglang-related processes
             raise e
 
     if allocation_mode.type_ == AllocationType.DECOUPLED_EVAL:
@@ -476,7 +490,16 @@ def ray_main(config, run_id: int = 0):
     try:
         launcher.wait(check_status=(JobState.COMPLETED, JobState.FAILED))
     except (KeyboardInterrupt, JobException, TimeoutError) as e:
-        launcher.stop_all(force=True)
+        # The 'force' is passed to ray.cancel(future, force=force).
+        # If force=False, a KeyboardInterrupt will be raised in sglang_server.main(),
+        # allowing for a more thorough cleanup of all sglang-related processes.
+        # This is particularly important when using sglang's dp_attention,
+        # as it will leave residual processes that occupy GPU memory.
+        launcher.stop_all(force=False, pattern="llm_server")
+        # If force=True, the task is immediately killed, triggering the trainer to end the job.
+        # Note: For trainer processes, we use force=True because the trainer doesn't
+        # handle KeyboardInterrupt properly when force=False.
+        launcher.stop_all(force=True, pattern="trainer")
         recover_states = [JobState.FAILED]
         if isinstance(e, JobException):
             recover_this = (
