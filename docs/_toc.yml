@@ -15,10 +15,10 @@ parts:
     - file: tutorial/eval
     - file: tutorial/quickstart_legacy
     # - file: tutorial/troubleshooting
-  - caption: References
+  - caption: Best Practices
     chapters:
-    - file: references/benchmark
-    - file: references/reproduce
+    - file: best_practices/debugging
+    - file: best_practices/handling_oom
   - caption: Customization
     chapters:
     - file: customization/dataset
@@ -27,6 +27,10 @@ parts:
   - caption: Contributing
     chapters:
     - file: contrib
+  - caption: References
+    chapters:
+    - file: references/benchmark
+    - file: references/reproduce
   - caption: Customization (Legacy)
     chapters:
     - file: legacy/customization/dataset

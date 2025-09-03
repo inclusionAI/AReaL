@@ -56,13 +56,13 @@ python3 -m areal.launcher.local examples/lite/gsm8k_grpo.py \
     +sglang.attention_backend=triton
 ```
 
-::::{important}
-We're currently refactoring from legacy AReaL to AReaL-lite, which
-introduces some configuration differences. We provide a **config converter** to transfer
-old AReaL config into AReaL-lite YAML file for users' convenience.
-[Click here](#switching-from-legacy-areal-to-areal-lite) to learn how to use the
-**config converter**.
-::::
+> We're currently refactoring from legacy AReaL to AReaL-lite, which introduces some
+> configuration differences. We provide a **config converter** to transfer old AReaL
+> config into AReaL-lite YAML file for users' convenience.
+> [Click here](#switching-from-legacy-areal-to-areal-lite) to learn how to use the
+> **config converter**.
+
+(distributed-experiments-with-ray-or-slurm)=
 
 ## Distributed Experiments with Ray or Slurm
 
@@ -93,8 +93,8 @@ Additional references:
 
 - For more options for launchers, check `LauncherConfig` in
   [areal/api/cli_args.py](https://github.com/inclusionAI/AReaL/blob/main/areal/api/cli_args.py).
-- [Ray cluster setup guide](./installation.md#optional-launch-ray-cluster-for-distributed-training)
-  for a guide on how to set up a ray cluster.
+- Ray cluster setup guide (see installation.md for distributed setup) for a guide on how
+  to set up a ray cluster.
 
 > **Important Notes**:
 >
@@ -110,6 +110,8 @@ Additional references:
 > **Notes**: Before launching distributed experiments, please check if your `allocation_mode` matches your cluster configuration. Make sure #GPUs allocated by `allocation_mode` equals to `cluster.n_nodes * cluster.n_gpus_per_node`.
 > **Note**: Ray and Slurm launchers only work for distributed experiments with more than 1 node (`cluster.n_nodes > 1`). They allocate GPUs for training and generation at the granularity of **nodes**, which means the number of GPUs allocated for generation and training must be integer multiples of `cluster.n_gpus_per_node`.
 -->
+
+(switching-from-legacy-areal-to-areal-lite)=
 
 ## Switching from legacy AReaL to AReaL-lite
 
