@@ -14,15 +14,11 @@ parts:
     - file: tutorial/openai_workflows
     - file: tutorial/eval
     - file: tutorial/quickstart_legacy
-    - file: tutorial/troubleshooting
+    # - file: tutorial/troubleshooting
   - caption: Best Practices
     chapters:
     - file: best_practices/debugging
     - file: best_practices/handling_oom
-  - caption: References
-    chapters:
-    - file: references/benchmark
-    - file: references/reproduce
   - caption: Customization
     chapters:
     - file: customization/dataset
@@ -31,6 +27,10 @@ parts:
   - caption: Contributing
     chapters:
     - file: contrib
+  - caption: References
+    chapters:
+    - file: references/benchmark
+    - file: references/reproduce
   - caption: Customization (Legacy)
     chapters:
     - file: legacy/customization/dataset

@@ -1,33 +1,38 @@
 # Debugging Guide
 
-This guide outlines best practices for debugging training applications based on AReaL.
-We focus on two key components: the agent's generation logic (`RolloutWorkflow`) and
-custom reinforcement learning (RL) algorithms.
+Here's how to debug AReaL training applications, focusing on `RolloutWorkflow` and
+custom RL algorithms.
 
 ## Debugging `RolloutWorkflow` with a Persistent Inference Server
 
-To debug the agent's generation logic in isolation, you can launch an inference server
-as a **standalone, persistent process**. This approach allows you to repeatedly test the
-agent's behavior without the overhead of relaunching the server for each debug session.
+The trick is to launch a **standalone, persistent inference server** for your agent's
+generation logic. This way, you can test repeatedly without restarting the server each
+time.
+
+**Why this works well:**
+
+- **Lightweight** - Your debug program only needs CPU while inference runs on GPU
+- **IDE friendly** - Works perfectly with VS Code's Python debugger
+- **Fast iterations** - No need to restart servers between debugging sessions
 
 ### 1. Launch the Standalone SGLang Server
 
-Start the SGLang server with `allocation_mode` configured for inference only (e.g.,
-`sglang.d4p1t1`):
+First, start your SGLang server with an inference-only `allocation_mode` like
+`sglang.d4p1t1`:
 
 ```bash
-nohup python -m areal.launcher.local examples/lite/gsm8k_grpo.py --config examples/lite/configs/gsm8k_grpo.yaml allocation_mode=sglang.d4p1t1 > llm_server.log 2>&1 &
+nohup python -m areal.launcher.local examples/lite/gsm8k_grpo.py \
+    --config examples/lite/configs/gsm8k_grpo.yaml \
+    allocation_mode=sglang.d4p1t1 > llm_server.log 2>&1 &
 ```
 
-**Note:** Only the `allocation_mode` and inference server configurations (e.g.,
-`sglang`) are relevant for debugging. The remaining configurations in
-`examples/lite/configs/gsm8k_grpo.yaml` can be ignored, so you can use our provided
-example scripts as-is.
+**Note:** For debugging purposes, only the `allocation_mode` and `sglang` configs
+matter. You can ignore everything else in the example YAML file.
 
-Once launched, you can find the server addresses in the log output:
+Once it's running, you'll find the server address in the log:
 
 ```
-LLM inference server launched at: AREAL_LLM_SERVER_ADDRS=10.11.16.244:20082,10.11.16.244:24145,10.11.16.244:30422,10.11.16.244:40325
+LLM inference server launched at: AREAL_LLM_SERVER_ADDRS=127.0.0.1:20082
 ```
 
 ### 2. Run Your Debug Program
@@ -61,37 +66,40 @@ torch.save(generated_data, os.path.join(dump_dir, "batch_data.pt"))
 rollout.destroy()
 ```
 
-Execute your debug script by passing the server addresses via the
-`AREAL_LLM_SERVER_ADDRS` environment variable:
+Now run your debug script, passing the server address through the environment:
 
 ```bash
-AREAL_LLM_SERVER_ADDRS=10.11.16.244:20082,10.11.16.244:24145,10.11.16.244:30422,10.11.16.244:40325 python agent_debug.py --config agent_debug.yaml rollout.enable_rollout_tracing=True
+AREAL_LLM_SERVER_ADDRS=127.0.0.1:20082 \
+    python agent_debug.py --config agent_debug.yaml \
+    rollout.enable_rollout_tracing=True
 ```
-
-**Key Benefits:**
-
-- While inference servers run on GPUs, this debugging program only requires CPU and a
-  single process
-- You can use the built-in Python debugger in VS Code
-- If your debugging program encounters errors and exits, the inference servers remain
-  running
-- You can repeatedly execute the debug command until your workflow functions correctly
-- No need to relaunch the inference server between debugging iterations
 
 ## Debugging Custom RL Algorithms
 
-::::{note} If you're using an algorithm already implemented in AReaL (e.g., GRPO), you
-can skip this section. ::::
+::::{note} If you're using existing AReaL algorithms like GRPO, you can skip this
+section. ::::
 
-### Steps for RL Algorithm Debugging
+For custom RL algorithms, you can debug them just like offline training (think SFT) by
+using pre-generated data instead of running inference.
 
-1. **Configure allocation mode** to exclude SGLang inference:
+**This approach is great because:**
+
+- **No inference servers** - You don't need to manage any servers
+- **Faster iterations** - Skip the expensive data collection step
+- **Reproducible** - Use the same data across debugging sessions
+- **Isolated testing** - Focus purely on your RL logic
+
+### 1. Configure Allocation Mode
+
+First, turn off SGLang inference in your config:
 
 ```yaml
 allocation_mode: d4p1t1
 ```
 
-2. **Create your RL debugging script** using the previously generated data:
+### 2. Create Your RL Debug Script
+
+Then create your debug script that loads the pre-generated data:
 
 ```python
 # Create dataset and dataloaders
@@ -118,16 +126,3 @@ torch.cuda.synchronize()
 # Your custom algorithm logic here
 ...
 ```
-
-### Benefits of This Approach
-
-Debugging RL algorithms this way is similar to debugging offline training algorithms
-(e.g., SFT):
-
-- **No inference server required** - eliminates the overhead of launching and managing
-  inference servers
-- **Faster iteration cycles** - skip the expensive data collection phase during
-  debugging
-- **Reproducible debugging** - use the same generated data across multiple debugging
-  sessions
-- **Isolated testing** - debug your RL logic independently of the rollout workflow

@@ -1,72 +1,62 @@
-# Troubleshooting Out-of-Memory (OOM) Issues
+# Handling OOM Issues
 
-Out-of-Memory (OOM) errors are one of the most common challenges when running
-reinforcement learning training at scale. This guide provides practical solutions to
-diagnose and resolve OOM issues across all stages of your AReaL workflow: generation,
-training, and weight updates.
+OOM errors are pretty common when you're doing large-scale RL training. Here's how to
+tackle them across generation, training, and weight updates in your AReaL workflows.
 
 ## Understanding Memory Usage
 
-Before diving into solutions, it's essential to understand which parameters most
-significantly impact memory consumption in AReaL:
+Before jumping into fixes, let's understand which parameters actually matter for memory
+usage:
 
 ### Core Parameters
 
-- **`allocation_mode`**: Controls how inference and training workloads are distributed
-  across GPUs. Different parallelism strategies have vastly different memory
-  requirement. For example, tensor parallelism typically uses less memory per GPU than
-  data parallelism for large models.
+- **`allocation_mode`**: How you split inference and training across GPUs. For large
+  models, tensor parallelism typically uses less memory per GPU than data parallelism.
 
-- **`train_dataset.max_length`**: The maximum prompt length in your training dataset.
-  Longer prompts require more memory during both generation and training phases.
+- **`train_dataset.max_length`**: Your maximum prompt length. Longer prompts = more
+  memory.
 
-- **`gconfig.max_new_tokens`**: Maximum tokens to generate per prompt. Combined with
-  `max_length`, this determines the total sequence length and significantly impacts
-  memory usage.
+- **`gconfig.max_new_tokens`**: How many tokens to generate per prompt. This plus
+  `max_length` gives you your total sequence length.
 
-- **`actor.mb_spec.max_tokens_per_mb`**: The maximum tokens processed per micro-batch
-  during forward/backward passes. This is your primary lever for controlling training
-  memory usage. The minimum safe value is
-  `train_dataset.max_length + gconfig.max_new_tokens`.
+- **`actor.mb_spec.max_tokens_per_mb`**: Tokens per micro-batch during forward/backward
+  passes. This is your main knob for controlling training memory. Can't go below
+  `max_length + max_new_tokens`.
 
-- **`max_concurrent_rollouts`**: Number of parallel generation requests sent to
-  inference servers. Higher values improve throughput but consume more memory.
+- **`max_concurrent_rollouts`**: How many generation requests you run in parallel. More
+  requests = better throughput but higher memory usage.
 
 ### Engine-Specific Parameters
 
-- **Inference Engine**: Parameters like `sglang.mem_fraction_static` control how SGLang
-  allocates GPU memory. See the [SGLang Documentation](https://docs.sglang.ai/) for
-  detailed tuning options.
+- **Inference Engine**: `sglang.mem_fraction_static` controls how much GPU memory SGLang
+  uses. Check the [SGLang docs](https://docs.sglang.ai/) for more tuning options.
 
-- **Training Engine**: FSDP sharding strategies and other PyTorch settings affect
-  training memory usage. Refer to the
-  [FSDP Documentation](https://docs.pytorch.org/docs/stable/fsdp.html) for advanced
-  configuration.
+- **Training Engine**: FSDP sharding and other PyTorch settings also impact memory
+  usage. The [FSDP docs](https://docs.pytorch.org/docs/stable/fsdp.html) have more
+  details.
 
-::::{note} The `train_dataset.batch_size` parameter doesn't directly impact peak memory
-usage. Focus on the parameters listed above when troubleshooting OOM issues. ::::
+:::{note} Don't worry about `train_dataset.batch_size` - it doesn't actually affect peak
+memory usage. Stick to the parameters above when troubleshooting OOM issues. :::
 
 ## Resolving Generation OOM Errors
 
-If you encounter OOM errors during the inference/generation phase (typically visible in
-`llm_server.log`), try these solutions in order of effectiveness:
+When you hit generation OOM errors (you'll see them in `llm_server.log`), here's what to
+try:
 
 ### 1. Reduce Concurrent Rollouts (Most Effective)
 
-Lower the `max_concurrent_rollouts` parameter to reduce the number of parallel
-generation requests:
+Lower the number of parallel generation requests:
 
 ```yaml
 max_concurrent_rollouts: 200  # Try reducing from default values like 256
 ```
 
-This is usually the most effective solution as it directly reduces the memory pressure
-on inference servers.
+This is usually your best bet since it directly reduces memory pressure on the inference
+servers.
 
 ### 2. Adjust Parallelism Strategy
 
-Modify your `allocation_mode` to increase tensor parallelism, which distributes model
-weights across more GPUs:
+Try increasing tensor parallelism to spread your model weights across more GPUs:
 
 ```yaml
 # Before: sglang.d4+d4 (4 data parallel processes)
@@ -74,29 +64,28 @@ weights across more GPUs:
 allocation_mode: sglang.d2t2+d4
 ```
 
-However, a larger tensor parallelism degree will harm generation throughput.
+Just keep in mind that higher tensor parallelism will slow down your generation
+throughput.
 
 ### 3. Tune SGLang Parameters
 
-Fine-tune memory allocation for the SGLang inference engine:
+You can also tweak how SGLang allocates memory:
 
 ```yaml
 sglang:
   mem_fraction_static: 0.8  # Reduce from 0.9 to leave more memory headroom
 ```
 
-For more advanced SGLang tuning options, consult the
-[SGLang Documentation](https://docs.sglang.ai/).
+Check out the [SGLang docs](https://docs.sglang.ai/) for more advanced tuning options.
 
 ## Resolving Training OOM Errors
 
-OOM errors during the training phase require different strategies focused on reducing
-the memory footprint of gradient computation and model updates.
+Training OOM errors are trickier - you need to reduce the memory footprint of gradient
+computation and model updates.
 
 ### 1. Optimize Micro-batch Size
 
-Set `max_tokens_per_mb` to its minimum safe value to reduce memory usage per training
-step:
+Your first move: set `max_tokens_per_mb` as low as safely possible:
 
 ```yaml
 actor:
@@ -104,52 +93,52 @@ actor:
     max_tokens_per_mb: 4096  # train_dataset.max_length + gconfig.max_new_tokens
 ```
 
-For multi-turn conversations, calculate this as:
+For multi-turn conversations, calculate it like this:
 
 ```
 max_tokens_per_mb = <longest_conversation_length> + gconfig.max_new_tokens
 ```
 
-This value heavily depends on your `RolloutWorkflow` implementation.
+The exact value will depend on how your `RolloutWorkflow` is implemented.
 
 ### 2. Enable Ulysses Sequence Parallelism
 
-When context lengths are very long and you cannot reduce `max_tokens_per_mb` further,
-enable Ulysses sequence parallelism to distribute long sequences across multiple GPUs:
+If you're dealing with really long contexts and can't reduce `max_tokens_per_mb` any
+further, try Ulysses sequence parallelism to spread sequences across multiple GPUs:
 
 ```yaml
 fsdp:
   ulysses_sp_size: 2  # or 4, 8 depending on your setup
 ```
 
-::::{important} `ulysses_sp_size` must be a common divisor of both your FSDP parallelism
-degree and the model's number of attention heads.
+:::{important} Just remember: `ulysses_sp_size` needs to divide evenly into both your
+FSDP parallelism degree and your model's attention heads.
 
-For example, with 40 attention heads and allocation mode `d32`:
+For example, with 40 attention heads and `d32` allocation mode:
 
-- Valid values: `1, 2, 4, 8`
-- Invalid values: `16, 32` (exceed attention head constraints) ::::
+- These work: `1, 2, 4, 8`
+- These don't: `16, 32` (too many for the attention heads) :::
 
 ## Resolving Weight Update OOM Errors
 
-Weight updates can consume significant additional memory, especially when using
-NCCL-based synchronization (the default method).
+Weight updates can eat up a lot of memory, especially when using NCCL synchronization
+(which is the default).
 
 ### 1. Switch to Disk-Based Updates
 
-Replace memory-intensive NCCL updates with disk-based weight synchronization:
+The easiest fix is switching from NCCL to disk-based weight synchronization:
 
 ```python
 # Instead of NCCL-based updates
 weight_update_meta = WeightUpdateMeta.from_disk(config.saver)
 ```
 
-See the [Weight Updates Guide](../lite/gsm8k_grpo.md) (specifically the "Transferring
-Weights to Inference Servers" section) for detailed implementation instructions.
+Check the "Transferring Weights to Inference Servers" section in the
+[Weight Updates Guide](../lite/gsm8k_grpo.md) for the full implementation details.
 
 ### 2. Reduce Memory Buffer Size
 
-If staying with NCCL updates, reduce the memory buffer used for weight chunking:
+If you want to stick with NCCL, try reducing the memory buffer size for weight chunking:
 
 ```python
 # In WeightUpdateMeta.from_fsdp_nccl() calls
