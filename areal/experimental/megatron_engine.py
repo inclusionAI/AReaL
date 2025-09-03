@@ -386,9 +386,7 @@ class MegatronEngine(TrainEngine):
             max_workers=None,
         )
 
-    def prepare_mb_list(
-        self, input_: TensorDict, forward_only: bool = True
-    ) -> MicroBatchList:
+    def prepare_mb_list(self, input_: TensorDict) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
         if isinstance(input_, dict):
             input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
@@ -398,8 +396,10 @@ class MegatronEngine(TrainEngine):
         cp_size = self.parallel_strategy.context_parallel_size
         tp_size = self.parallel_strategy.tensor_parallel_size
         # Split the input tensor dict into micro-batches
+        # NOTE: Here we use 2*pp_size in forward to align logprob precision
+        # TODO: Performance check
         min_n_mbs = (
-            1 if forward_only else 2 * pp_size
+            2 * pp_size if pp_size > 1 else 1
         )  # avoid pipeline bubbles in training
         # NOTE: self.config.mb_spec.max_tokens_per_mb determines
         # the expected **total** number of tokens per micro-batch **in the forward pass**.
@@ -473,7 +473,7 @@ class MegatronEngine(TrainEngine):
         self.optimizer.zero_grad()
         self.model.zero_grad_buffer()
         # Assume input_ is identical across context and model parallel group
-        mb_list = self.prepare_mb_list(input_, forward_only=False)
+        mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
         total_loss_weight = torch.tensor(
@@ -561,7 +561,7 @@ class MegatronEngine(TrainEngine):
     ) -> torch.Tensor | None:
         assert self.model is not None, "Model is not initialized."
         # Assume input_ is identical across context and model parallel group
-        mb_list = self.prepare_mb_list(input_, forward_only=False)
+        mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
         total_loss_weight = torch.tensor(
