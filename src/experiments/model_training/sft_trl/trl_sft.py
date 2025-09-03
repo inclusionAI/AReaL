@@ -77,7 +77,9 @@ from trl import (
 )
 
 
-def main(script_args: ScriptArguments, sft_config: SFTConfig, model_config: ModelConfig):
+def main(
+    script_args: ScriptArguments, sft_config: SFTConfig, model_config: ModelConfig
+):
     ################
     # Model init kwargs & Tokenizer
     ################
@@ -93,11 +95,15 @@ def main(script_args: ScriptArguments, sft_config: SFTConfig, model_config: Mode
     )
 
     # Create model
-    model = AutoModelForCausalLM.from_pretrained(model_config.model_name_or_path, **model_kwargs)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_config.model_name_or_path, **model_kwargs
+    )
 
     # Create tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
-        model_config.model_name_or_path, trust_remote_code=model_config.trust_remote_code, use_fast=True
+        model_config.model_name_or_path,
+        trust_remote_code=model_config.trust_remote_code,
+        use_fast=True,
     )
 
     # Set default chat template if needed
@@ -118,7 +124,9 @@ def main(script_args: ScriptArguments, sft_config: SFTConfig, model_config: Mode
         model=model,
         args=sft_config,
         train_dataset=dataset[script_args.dataset_train_split].select(range(10)),
-        eval_dataset=dataset[script_args.dataset_test_split].select(range(10)) if sft_config.eval_strategy != "no" else None,
+        eval_dataset=dataset[script_args.dataset_test_split].select(range(10))
+        if sft_config.eval_strategy != "no"
+        else None,
         processing_class=tokenizer,
         peft_config=get_peft_config(model_config),
     )
@@ -137,7 +145,9 @@ def main(script_args: ScriptArguments, sft_config: SFTConfig, model_config: Mode
 def make_parser(subparsers: argparse._SubParsersAction = None):
     dataclass_types = (ScriptArguments, SFTConfig, ModelConfig)
     if subparsers is not None:
-        parser = subparsers.add_parser("sft", help="Run the SFT training script", dataclass_types=dataclass_types)
+        parser = subparsers.add_parser(
+            "sft", help="Run the SFT training script", dataclass_types=dataclass_types
+        )
     else:
         parser = TrlParser(dataclass_types)
     return parser
@@ -148,5 +158,7 @@ if __name__ == "__main__":
     # When using the trl cli, this script may be run with additional arguments, corresponding accelerate arguments.
     # To ensure that their parsing does not interfere with the script arguments, parse the arguments with
     # `return_remaining_strings=True`, then ignore the remaining strings.
-    script_args, sft_config, model_args, _ = parser.parse_args_and_config(return_remaining_strings=True)
+    script_args, sft_config, model_args, _ = parser.parse_args_and_config(
+        return_remaining_strings=True
+    )
     main(script_args, sft_config, model_args)

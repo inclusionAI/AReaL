@@ -17,6 +17,22 @@ clean:
 test:
 	pytest tests/
 
+## Check code style with ruff (linting and formatting)
+.PHONY: lint
+lint:
+	ruff check .
+	ruff format --check .
+
+## Fix code style issues with ruff
+.PHONY: format
+format:
+	ruff check . --fix
+	ruff format .
+
+## Check and fix code style (combined target)
+.PHONY: style
+style: format
+
 
 ## Start the Environment CLI for interacting with domain environments
 .PHONY: env-cli

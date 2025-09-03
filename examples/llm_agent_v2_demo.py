@@ -20,10 +20,20 @@ from tau2.environment.tool import Tool, as_tool
 def get_user_info(user_id: str) -> str:
     """Get user information from the database."""
     users_db = {
-        "123": {"name": "John Doe", "email": "john@example.com", "status": "active", "plan": "premium"},
-        "456": {"name": "Jane Smith", "email": "jane@example.com", "status": "suspended", "plan": "basic"}
+        "123": {
+            "name": "John Doe",
+            "email": "john@example.com",
+            "status": "active",
+            "plan": "premium",
+        },
+        "456": {
+            "name": "Jane Smith",
+            "email": "jane@example.com",
+            "status": "suspended",
+            "plan": "basic",
+        },
     }
-    
+
     if user_id in users_db:
         return json.dumps(users_db[user_id])
     else:
@@ -34,33 +44,41 @@ def update_user_status(user_id: str, new_status: str) -> str:
     """Update user account status."""
     valid_statuses = ["active", "suspended", "pending"]
     if new_status not in valid_statuses:
-        return json.dumps({"error": f"Invalid status. Must be one of: {valid_statuses}"})
-    
-    return json.dumps({
-        "user_id": user_id,
-        "old_status": "suspended", 
-        "new_status": new_status,
-        "updated": True,
-        "timestamp": "2024-01-15T10:30:00Z"
-    })
+        return json.dumps(
+            {"error": f"Invalid status. Must be one of: {valid_statuses}"}
+        )
+
+    return json.dumps(
+        {
+            "user_id": user_id,
+            "old_status": "suspended",
+            "new_status": new_status,
+            "updated": True,
+            "timestamp": "2024-01-15T10:30:00Z",
+        }
+    )
 
 
-def send_notification(user_id: str, message: str, notification_type: str = "email") -> str:
+def send_notification(
+    user_id: str, message: str, notification_type: str = "email"
+) -> str:
     """Send notification to user."""
-    return json.dumps({
-        "user_id": user_id,
-        "message": message,
-        "type": notification_type,
-        "sent": True,
-        "notification_id": f"notif_{user_id}_{notification_type}"
-    })
+    return json.dumps(
+        {
+            "user_id": user_id,
+            "message": message,
+            "type": notification_type,
+            "sent": True,
+            "notification_id": f"notif_{user_id}_{notification_type}",
+        }
+    )
 
 
 # Create tools
 tools = [
     as_tool(get_user_info),
     as_tool(update_user_status),
-    as_tool(send_notification)
+    as_tool(send_notification),
 ]
 
 # Domain policy
@@ -82,41 +100,45 @@ Customer Service Policy:
 
 def demonstrate_enhanced_reasoning():
     """Demonstrate the enhanced reasoning capabilities."""
-    
+
     # Initialize the enhanced agent
     agent = LLMAgentV2(
         tools=tools,
         domain_policy=DOMAIN_POLICY,
         llm="gpt-4",  # You'd use your actual model here
-        enable_self_consistency=True
+        enable_self_consistency=True,
     )
-    
+
     print("=== LLMAgentV2 Enhanced Reasoning Demo ===\n")
-    
+
     # Get initial state
     state = agent.get_init_state()
-    
+
     # Simulate a complex user request
     user_message = UserMessage(
-        role="user", 
-        content="Hi, my account (ID: 456) was suspended but I think it was a mistake. Can you please reactivate it and let me know when it's done?"
+        role="user",
+        content="Hi, my account (ID: 456) was suspended but I think it was a mistake. Can you please reactivate it and let me know when it's done?",
     )
-    
+
     print("User Request:")
     print(f"'{user_message.content}'\n")
-    
+
     print("System Prompt Structure:")
     print("✓ Role and Objective clearly defined")
-    print("✓ Core Agentic Principles (Persistence, Planning, Tool Mastery, Reflection, Verification)")
+    print(
+        "✓ Core Agentic Principles (Persistence, Planning, Tool Mastery, Reflection, Verification)"
+    )
     print("✓ Enhanced reasoning formats for complex tasks")
     print("✓ Error recovery protocols")
     print("✓ Self-consistency checking guidelines")
-    print("✓ Systematic workflow (Understand → Analyze → Plan → Execute → Reflect → Persist → Verify)")
+    print(
+        "✓ Systematic workflow (Understand → Analyze → Plan → Execute → Reflect → Persist → Verify)"
+    )
     print()
-    
-    # The actual LLM call would happen here, but for demo purposes, 
+
+    # The actual LLM call would happen here, but for demo purposes,
     # let's show what the enhanced output format would look like:
-    
+
     print("Expected Enhanced Reasoning Output Format:")
     print("""
 Analysis:
@@ -142,45 +164,45 @@ This approach follows policy by verifying user info first, addresses the complet
 Action:
 {"name": "get_user_info", "arguments": {"user_id": "456"}}
 """)
-    
+
     # Demonstrate reasoning analysis
     print("\n=== Key Improvements Over Original Agent ===")
     print()
     print("1. **Multi-Step Reasoning Structure:**")
     print("   - Analysis: Problem decomposition")
-    print("   - Planning: Step-by-step approach") 
+    print("   - Planning: Step-by-step approach")
     print("   - Execution Reasoning: Action justification")
     print("   - Verification: Self-consistency check")
     print()
-    
+
     print("2. **Agentic Workflow Principles:**")
     print("   - Persistence: Won't stop until issue is resolved")
     print("   - Planning: Plans next 2-3 steps ahead")
     print("   - Tool Mastery: Uses tools vs. guessing")
     print("   - Reflection: Learns from tool results")
     print()
-    
+
     print("3. **Enhanced Error Handling:**")
     print("   - Acknowledges errors explicitly")
     print("   - Tries alternative strategies")
     print("   - Has clear escalation paths")
     print()
-    
+
     print("4. **Context Management:**")
     print("   - Optimizes long conversations automatically")
     print("   - Preserves important tool results and reasoning")
     print("   - Tracks reasoning history for analysis")
     print()
-    
+
     print("5. **Self-Consistency Features:**")
     print("   - Built-in accuracy checking")
     print("   - Policy compliance verification")
     print("   - Tool usage optimization")
     print()
-    
+
     # Show reasoning analysis capabilities
     print("=== Reasoning Analysis Capabilities ===")
-    
+
     # Simulate some reasoning history
     state.reasoning_history = [
         {
@@ -189,22 +211,22 @@ Action:
                 "analysis": "User wants account reactivation for ID 456",
                 "planning": "Check user info, update status, notify user",
                 "execution": "Getting user information first",
-                "verification": "Appropriate first step per policy"
+                "verification": "Appropriate first step per policy",
             },
-            "message_type": "tool_call"
+            "message_type": "tool_call",
         },
         {
             "turn": 2,
             "reasoning": {
-                "analysis": "User account is suspended, reactivation seems legitimate", 
+                "analysis": "User account is suspended, reactivation seems legitimate",
                 "planning": "Update status to active, send notification",
                 "execution": "Updating account status",
-                "verification": "Following policy requirements"
+                "verification": "Following policy requirements",
             },
-            "message_type": "tool_call"
-        }
+            "message_type": "tool_call",
+        },
     ]
-    
+
     reasoning_summary = agent.get_reasoning_summary(state)
     print("\nReasoning Summary:")
     print(json.dumps(reasoning_summary, indent=2))
@@ -212,9 +234,9 @@ Action:
 
 def show_comparison_with_original():
     """Show side-by-side comparison of original vs enhanced prompting."""
-    
+
     print("\n=== Original vs Enhanced Prompting Comparison ===\n")
-    
+
     print("ORIGINAL AGENT PROMPT:")
     print("─" * 50)
     print("""
@@ -224,7 +246,7 @@ I need to help the user with their account reactivation.
 Action:
 {"name": "get_user_info", "arguments": {"user_id": "456"}}
 """)
-    
+
     print("\nENHANCED AGENT PROMPT:")
     print("─" * 50)
     print("""
@@ -254,10 +276,10 @@ Verification:
 Action:
 {"name": "get_user_info", "arguments": {"user_id": "456"}}
 """)
-    
+
     print("\nKEY DIFFERENCES:")
     print("• Enhanced version breaks down the complete problem first")
-    print("• Plans multiple steps ahead vs. single-step thinking")  
+    print("• Plans multiple steps ahead vs. single-step thinking")
     print("• Self-verifies reasoning for accuracy and policy compliance")
     print("• More systematic and less likely to miss requirements")
     print("• Provides transparency into AI decision-making process")
@@ -266,7 +288,7 @@ Action:
 if __name__ == "__main__":
     demonstrate_enhanced_reasoning()
     show_comparison_with_original()
-    
+
     print("\n=== How to Use LLMAgentV2 ===")
     print("""
 # Basic Usage:
@@ -287,5 +309,5 @@ response, new_state = agent.generate_next_message(user_message, state)
 reasoning_summary = agent.get_reasoning_summary(new_state)
 print(f"Enhanced reasoning steps: {reasoning_summary['enhanced_reasoning_count']}")
 """)
-    
+
     print("\n✅ Demo completed! The enhanced agent is ready for testing.")

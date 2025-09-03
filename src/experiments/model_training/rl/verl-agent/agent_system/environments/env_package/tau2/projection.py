@@ -31,7 +31,7 @@ def tau2_projection(actions: List[str]):
             actions[i] = extracted_action
             valids[i] = 1
 
-        except:
+        except Exception:
             extracted_action = actions[i][-100:]
             valids[i] = 0
             actions[i] = extracted_action

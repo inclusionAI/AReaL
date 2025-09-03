@@ -10,7 +10,7 @@ LITELLM_PREFIX = "vllm"
 
 # litellm._turn_on_debug()
 
-model = "Qwen/Qwen2.5-1.5B-Instruct" # Not mapped by litellm yet...
+model = "Qwen/Qwen2.5-1.5B-Instruct"  # Not mapped by litellm yet...
 model = "Qwen/Qwen2.5-3B-Instruct"
 
 # Check if VLLM server is running
@@ -42,17 +42,17 @@ test_tool = {
             "properties": {
                 "location": {
                     "type": "string",
-                    "description": "The city and state, e.g. San Francisco, CA"
+                    "description": "The city and state, e.g. San Francisco, CA",
                 },
                 "unit": {
                     "type": "string",
                     "enum": ["celsius", "fahrenheit"],
-                    "description": "The temperature unit to use"
-                }
+                    "description": "The temperature unit to use",
+                },
             },
-            "required": ["location"]
-        }
-    }
+            "required": ["location"],
+        },
+    },
 }
 
 litellm_model_name = f"{LITELLM_PREFIX}/{model}"
@@ -64,7 +64,7 @@ try:
     response = completion(
         model=litellm_model_name,
         messages=[{"role": "user", "content": "What is the capital of France?"}],
-        api_base=BASE_URL
+        api_base=BASE_URL,
     )
     print(response.choices[0].message.content)
     print("✅ Expected: Direct response without tool calls")
@@ -190,4 +190,4 @@ except Exception as e:
 
 
 print("\n=== Test Summary ===")
-print("VLLM integration tests completed!") 
+print("VLLM integration tests completed!")

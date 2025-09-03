@@ -372,6 +372,19 @@ To run the test suite use the command
 make test
 ```
 
+## Code Style
+To ensure your code follows the project's style guidelines, use these commands:
+
+```sh
+# Check code style (linting and formatting)
+make lint
+
+# Fix code style issues automatically
+make format
+```
+
+The project uses [Ruff](https://github.com/astral-sh/ruff) for both linting and formatting. Configuration is in `pyproject.toml`.
+
 ## Config
 
 To configure the framework, see the [config](src/tau2/config.py) file.

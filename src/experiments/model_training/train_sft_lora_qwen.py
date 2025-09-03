@@ -1,4 +1,10 @@
-from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments, Trainer, DataCollatorForLanguageModeling
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    TrainingArguments,
+    Trainer,
+    DataCollatorForLanguageModeling,
+)
 from datasets import load_dataset
 from peft import get_peft_model, LoraConfig, TaskType
 import torch
@@ -12,7 +18,7 @@ model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
     device_map="auto",
     load_in_4bit=True,  # Set to False if not using QLoRA
-    trust_remote_code=True
+    trust_remote_code=True,
 )
 
 # Apply LoRA config
@@ -29,12 +35,14 @@ model = get_peft_model(model, lora_config)
 # Load dataset (example: Alpaca format)
 dataset = load_dataset("tatsu-lab/alpaca", split="train[:1000]")  # sample subset
 
+
 # Preprocess
 def preprocess(example):
     prompt = example["instruction"] + "\n" + example["input"]
     target = example["output"]
     full_text = prompt + "\n" + target
     return tokenizer(full_text, truncation=True, max_length=1024, padding="max_length")
+
 
 tokenized_dataset = dataset.map(preprocess, remove_columns=dataset.column_names)
 

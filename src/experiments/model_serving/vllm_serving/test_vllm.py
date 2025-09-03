@@ -39,22 +39,20 @@ Examples:
   python test_vllm.py Qwen/Qwen2.5-14B         # Test specific model
   python test_vllm.py --debug                   # Enable debug mode with default model
   python test_vllm.py --debug Qwen/Qwen2.5-14B  # Enable debug mode with specific model
-        """
+        """,
     )
-    
+
     parser.add_argument(
         "model_name",
         nargs="?",
         default=DEFAULT_MODEL,
-        help=f"Name of the model to test (default: {DEFAULT_MODEL})"
+        help=f"Name of the model to test (default: {DEFAULT_MODEL})",
     )
-    
+
     parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug mode for litellm"
+        "--debug", action="store_true", help="Enable debug mode for litellm"
     )
-    
+
     return parser.parse_args()
 
 
@@ -75,7 +73,6 @@ def test_completion(
 ) -> Optional[dict]:
     """Test completion endpoint using litellm"""
     try:
-
         # Create the model name for litellm
         litellm_model_name = f"{VLLM_PREFIX}/{model_name}"
 
@@ -172,7 +169,7 @@ def main():
     """Main function to run all tests"""
     # Parse command line arguments
     args = parse_arguments()
-    
+
     if args.debug:
         litellm._turn_on_debug()
         console.print("[yellow]Debug mode enabled[/yellow]")

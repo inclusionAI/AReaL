@@ -19,13 +19,11 @@ import torch
 import numpy as np
 from functools import partial
 import os
-from functools import partial
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Optional
 
-import numpy as np
 
 from agent_system.environments.base import EnvironmentManagerBase, to_numpy
-from agent_system.environments.prompts import *
+from agent_system.environments.prompts import * # noqa: F403
 from agent_system.memory import SimpleMemory
 
 from tau2.data_model.tasks import Task

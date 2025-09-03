@@ -209,14 +209,19 @@ def check_self_hosted_model(model: str) -> tuple[bool, Optional[str], Optional[s
     ollama_prefix = "ollama"
     if model.startswith(vllm_prefix):
         if VLLM_API_BASE is None:
-            raise ValueError("HOSTED_VLLM_API_BASE is not set. Set to 127.0.0.1:8000/v1 if you are running vLLM locally with default settings.")
+            raise ValueError(
+                "HOSTED_VLLM_API_BASE is not set. Set to 127.0.0.1:8000/v1 if you are running vLLM locally with default settings."
+            )
         return True, "vllm", VLLM_API_BASE
     elif model.startswith(ollama_prefix):
         if OLLAMA_API_BASE is None:
-            raise ValueError("OLLAMA_API_BASE is not set. Set to http://127.0.0.1:11434 if you are running ollama locally with default settings.")
+            raise ValueError(
+                "OLLAMA_API_BASE is not set. Set to http://127.0.0.1:11434 if you are running ollama locally with default settings."
+            )
         return True, "ollama", OLLAMA_API_BASE
     else:
         return False, None, None
+
 
 def generate(
     model: str,
