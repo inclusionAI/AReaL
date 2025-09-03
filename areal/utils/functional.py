@@ -146,6 +146,7 @@ def ppo_actor_loss_fn(
         1.0 - eps_clip,
         1.0 + eps_clip if eps_clip_higher is None else eps_clip_higher,
     )
+
     pg_loss1 = -advantages * ratio
     pg_loss2 = -advantages * clipped_ratio
     clip_mask = pg_loss1.detach() < pg_loss2.detach()
