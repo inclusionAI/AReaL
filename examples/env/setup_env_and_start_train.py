@@ -29,7 +29,8 @@ def run_command_by_ssh(
         res = ""
         err = stderr.read().decode()
     ssh_client.close()
-    return res,err,exit_status
+    return res, err, exit_status
+
 
 def setup_mount_nas(
     private_key_file: str,
@@ -38,11 +39,16 @@ def setup_mount_nas(
     username: str,
     nas_url: str,
 ):
-    cmd = 'mkdir -p /storage;mount -t nfs -o vers=4,minorversion=0,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport {}:/ /storage'.format(nas_url)
-    res, err, exit_status = run_command_by_ssh(private_key_file,hostname,port,username,cmd)
+    cmd = "mkdir -p /storage;mount -t nfs -o vers=4,minorversion=0,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport {}:/ /storage".format(
+        nas_url
+    )
+    res, err, exit_status = run_command_by_ssh(
+        private_key_file, hostname, port, username, cmd
+    )
     if exit_status != 0:
         print(err)
-        raise Exception('fail to mount_nas')
+        raise Exception("fail to mount_nas")
+
 
 def setup_download_codes(
     private_key_file: str,
@@ -50,11 +56,14 @@ def setup_download_codes(
     port: int,
     username: str,
 ):
-    cmd = 'apt install -y git || yum install -y git || dnf install -y git;mkdir -p /storage/codes;cd /storage/codes/;test -d AReaL || git clone https://github.com/inclusionAI/AReaL'
-    res, err, exit_status = run_command_by_ssh(private_key_file,hostname,port,username,cmd)
+    cmd = "apt install -y git || yum install -y git || dnf install -y git;mkdir -p /storage/codes;cd /storage/codes/;test -d AReaL || git clone https://github.com/inclusionAI/AReaL"
+    res, err, exit_status = run_command_by_ssh(
+        private_key_file, hostname, port, username, cmd
+    )
     if exit_status != 0:
         print(err)
-        raise Exception('fail to download codes')
+        raise Exception("fail to download codes")
+
 
 def setup_install_dependency(
     private_key_file: str,
@@ -62,11 +71,13 @@ def setup_install_dependency(
     port: int,
     username: str,
 ):
-    cmd = 'bash /storage/codes/AReaL/examples/env/scripts/install-dependency.sh'
-    res, err, exit_status = run_command_by_ssh(private_key_file,hostname,port,username,cmd)
+    cmd = "bash /storage/codes/AReaL/examples/env/scripts/install-dependency.sh"
+    res, err, exit_status = run_command_by_ssh(
+        private_key_file, hostname, port, username, cmd
+    )
     if exit_status != 0:
         print(err)
-        raise Exception('fail to install dependency')
+        raise Exception("fail to install dependency")
 
 
 def setup_download_dataset(
@@ -75,11 +86,14 @@ def setup_download_dataset(
     port: int,
     username: str,
 ):
-    cmd = 'bash /storage/codes/AReaL/examples/env/scripts/download-dataset.sh'
-    res, err, exit_status = run_command_by_ssh(private_key_file,hostname,port,username,cmd)
+    cmd = "bash /storage/codes/AReaL/examples/env/scripts/download-dataset.sh"
+    res, err, exit_status = run_command_by_ssh(
+        private_key_file, hostname, port, username, cmd
+    )
     if exit_status != 0:
         print(err)
-        raise Exception('fail to download dataset')
+        raise Exception("fail to download dataset")
+
 
 def setup_download_model(
     private_key_file: str,
@@ -87,11 +101,14 @@ def setup_download_model(
     port: int,
     username: str,
 ):
-    cmd = 'bash /storage/codes/AReaL/examples/env/scripts/download-model.sh'
-    res, err, exit_status = run_command_by_ssh(private_key_file,hostname,port,username,cmd)
+    cmd = "bash /storage/codes/AReaL/examples/env/scripts/download-model.sh"
+    res, err, exit_status = run_command_by_ssh(
+        private_key_file, hostname, port, username, cmd
+    )
     if exit_status != 0:
         print(err)
-        raise Exception('fail to download model')
+        raise Exception("fail to download model")
+
 
 def setup_start_ray_header(
     private_key_file: str,
@@ -100,10 +117,13 @@ def setup_start_ray_header(
     username: str,
 ):
     cmd = 'mkdir -p /storage/ray;cp /storage/codes/AReaL/examples/cluster_config_on_ray.json /storage/ray/cluster_config_on_ray.json; docker run -d --name r1-ray-head --privileged --gpus all --network host --shm-size 700g -v /storage:/storage ghcr.io/inclusionai/areal-runtime:v0.1.0 /bin/bash -c "ray start --head --port=6379 && tail -f /dev/null"'
-    res, err, exit_status = run_command_by_ssh(private_key_file,hostname,port,username,cmd)
+    res, err, exit_status = run_command_by_ssh(
+        private_key_file, hostname, port, username, cmd
+    )
     if exit_status != 0:
         print(err)
-        raise Exception('fail to start ray header')
+        raise Exception("fail to start ray header")
+
 
 def setup_start_ray_worker(
     private_key_file: str,
@@ -112,11 +132,16 @@ def setup_start_ray_worker(
     username: str,
     header_hostname: str,
 ):
-    cmd = 'RAY_HEAD_IP={};docker run -d --name r1-ray-worker --privileged --gpus all --network host --shm-size 700g -v /storage:/storage ghcr.io/inclusionai/areal-runtime:v0.1.0 /bin/bash -c "ray start --address=$RAY_HEAD_IP:6379 && tail -f /dev/null"'.format(header_hostname)
-    res, err, exit_status = run_command_by_ssh(private_key_file,hostname,port,username,cmd)
+    cmd = 'RAY_HEAD_IP={};docker run -d --name r1-ray-worker --privileged --gpus all --network host --shm-size 700g -v /storage:/storage ghcr.io/inclusionai/areal-runtime:v0.1.0 /bin/bash -c "ray start --address=$RAY_HEAD_IP:6379 && tail -f /dev/null"'.format(
+        header_hostname
+    )
+    res, err, exit_status = run_command_by_ssh(
+        private_key_file, hostname, port, username, cmd
+    )
     if exit_status != 0:
         print(err)
-        raise Exception('fail to start ray worker')
+        raise Exception("fail to start ray worker")
+
 
 def setup_start_traning(
     train_param: str,
@@ -125,11 +150,16 @@ def setup_start_traning(
     port: int,
     username: str,
 ):
-    cmd = 'docker exec r1-ray-head /bin/bash -c "cd /storage/codes/AReaL;mkdir -p /storage/ray/train_batch_logs/;nohup bash ./examples/train_batch_{}.sh &> /storage/ray/train_batch_logs/{}.log &"'.format(train_param,train_param)
-    res, err, exit_status = run_command_by_ssh(private_key_file,hostname,port,username,cmd)
+    cmd = 'docker exec r1-ray-head /bin/bash -c "cd /storage/codes/AReaL;mkdir -p /storage/ray/train_batch_logs/;nohup bash ./examples/train_batch_{}.sh &> /storage/ray/train_batch_logs/{}.log &"'.format(
+        train_param, train_param
+    )
+    res, err, exit_status = run_command_by_ssh(
+        private_key_file, hostname, port, username, cmd
+    )
     if exit_status != 0:
         print(err)
-        raise Exception('fail to start train')
+        raise Exception("fail to start train")
+
 
 # setup running environment
 def setup(args):
@@ -138,12 +168,14 @@ def setup(args):
     if args.train_param != "":
         node_required = int(re.findall(r"\d+", args.train_param)[-1])
         if node_required > total_nodes:
-            print("training needs {} node but {} found".format(node_required,total_nodes))
+            print(
+                "training needs {} node but {} found".format(node_required, total_nodes)
+            )
             return
     # mount nas if needed
     if args.nas_url != "":
         print("starting mount nas")
-        for index in range(0,total_nodes):
+        for index in range(0, total_nodes):
             private_key_file = args.private_key_file
             hostname = args.hostnames[index]
             port = args.ssh_port
@@ -165,7 +197,7 @@ def setup(args):
     )
     # install dependency
     print("starting install dependency")
-    for index in range(0,total_nodes):
+    for index in range(0, total_nodes):
         private_key_file = args.private_key_file
         hostname = args.hostnames[index]
         port = args.ssh_port
@@ -203,7 +235,7 @@ def setup(args):
     # start ray worker if needed
     if total_nodes > 1:
         print("starting ray worker")
-        for index in range(1,total_nodes):
+        for index in range(1, total_nodes):
             private_key_file = args.private_key_file
             hostname = args.hostnames[index]
             port = args.ssh_port
@@ -225,9 +257,10 @@ def setup(args):
             args.private_key_file,
             args.hostnames[0],
             args.ssh_port,
-            args.username
+            args.username,
         )
         print("training process started")
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -271,12 +304,12 @@ def main():
     parser_setup.add_argument(
         "--train_param",
         help="",
-        choices=["","1.5B_n1","1.5B_n4","1.5B_n16","7B_n4","7B_n16"],
+        choices=["", "1.5B_n1", "1.5B_n4", "1.5B_n16", "7B_n4", "7B_n16"],
         default="",
         type=str,
     )
     parser_setup.set_defaults(func=setup)
-    
+
     args = parser.parse_args()
     args.func(args)
 

@@ -1,13 +1,21 @@
 # Algorithm, Interface & Backends
 
 ## Overview
+
 ![](algo_interface.png)
 
-Model Interfaces define the computations that can be performed, such as training, inference, and generation. They provide abstract classes and implementations that decouple specific algorithms (e.g., PPO, SFT) from model backends (Megatron, SGLang, vLLM). Algorithm developpers may be more interested in adding customized model interfaces. 
+Model Interfaces define the computations that can be performed, such as training,
+inference, and generation. They provide abstract classes and implementations that
+decouple specific algorithms (e.g., PPO, SFT) from model backends (Megatron, SGLang,
+vLLM). Algorithm developpers may be more interested in adding customized model
+interfaces.
 
-Model backends integrate external libraries to wrap over the model as a `PipelinableEngine`, such that they can provide efficient distributed training and inference capabilities. 
+Model backends integrate external libraries to wrap over the model as a
+`PipelinableEngine`, such that they can provide efficient distributed training and
+inference capabilities.
 
 ## Registeration
+
 Backends and interfaces have similar registeration protocols:
 
 ```python
@@ -25,10 +33,16 @@ interface = make_interface(interface_config)
 ```
 
 ## Customization
-### Interfaces
-An interface implementation essentially processes the data and loss function (e.g., reward clipping, computing GAEs) required by a `PipelinableEngine`,  calls the actual execution method such as `PipelinableEngine.train_step`, and then runs some post-processing according to the data protocol.
 
-Custom interfaces can be created by subclassing the `ModelInterface` class and implementing the required methods for the desired training paradigm.
+### Interfaces
+
+An interface implementation essentially processes the data and loss function (e.g.,
+reward clipping, computing GAEs) required by a `PipelinableEngine`, calls the actual
+execution method such as `PipelinableEngine.train_step`, and then runs some
+post-processing according to the data protocol.
+
+Custom interfaces can be created by subclassing the `ModelInterface` class and
+implementing the required methods for the desired training paradigm.
 
 Example:
 
@@ -65,13 +79,15 @@ model_api.register_interface("custom", CustomInterface)
 
 Required methods vary based on the interface purpose:
 
-+ For training interfaces: `train_step()` and `save()`
-+ For inference-only interfaces: `inference()`
-+ For generation interfaces: `generate()`
+- For training interfaces: `train_step()` and `save()`
+- For inference-only interfaces: `inference()`
+- For generation interfaces: `generate()`
 
-The interface can be configured in the experiment configuration file, e.g., `ppo_math_exp.py`. Please refer to xxx how to run unittests on your implementation.
+The interface can be configured in the experiment configuration file, e.g.,
+`ppo_math_exp.py`. Please refer to xxx how to run unittests on your implementation.
 
 ### Backends
+
 Backend requires implementing the `_initialize`method. Example:
 
 ```python
@@ -90,14 +106,14 @@ register_backend("fsdp", FSDPBackend)
 ```
 
 ## Existing Implementations
+
 ### Interfaces
-+ `ppo_interface.py`: Implemetation of PPO actor and critic.
-+ `sft_interface.py`: Implementation of SFT.
+
+- `ppo_interface.py`: Implemetation of PPO actor and critic.
+- `sft_interface.py`: Implementation of SFT.
 
 ### Backends
-+ `megatron.py`: Training wrapper based on Megatron Core's `DistributedDataParallel`
-+ `sglang.py`: A wrapper over a SGLang HTTP server for batched generation.
-+ `vllm.py`: Deprecated SPMD vLLM backend.
 
-
-
+- `megatron.py`: Training wrapper based on Megatron Core's `DistributedDataParallel`
+- `sglang.py`: A wrapper over a SGLang HTTP server for batched generation.
+- `vllm.py`: Deprecated SPMD vLLM backend.

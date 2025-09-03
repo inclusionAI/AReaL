@@ -111,8 +111,8 @@ class MultiTurnWorkflow(RolloutWorkflow):
 > in a "prompt" column, you could get input token IDs with
 > `self.tokenizer.encode(data["prompt"])`.
 
-> **Note**: The `rid` field in `ModelRequest` is the request ID. Requests with the same ID
-> will reuse the LLM inference server's KV caches for better efficiency.
+> **Note**: The `rid` field in `ModelRequest` is the request ID. Requests with the same
+> ID will reuse the LLM inference server's KV caches for better efficiency.
 
 ### Handling Multi-turn Conversations
 

@@ -157,9 +157,9 @@ class RemoteSGLangEngine:
         return future
 ```
 
-`agenerate` takes an `ModelRequest` with `input_ids` of **a single prompt** and generation
-hyperparameters, and returns the final generation result, an `ModelResponse` with
-`output_tokens` and other outputs. Since the generation could be interrupted,
+`agenerate` takes an `ModelRequest` with `input_ids` of **a single prompt** and
+generation hyperparameters, and returns the final generation result, an `ModelResponse`
+with `output_tokens` and other outputs. Since the generation could be interrupted,
 `agenerate` iteratively prepares payload, sends requests and receives responses until
 the generation finishes.
 

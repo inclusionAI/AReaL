@@ -1,6 +1,4 @@
-
-
-## <span style="color:red">[Warning]: The configurations in this dir were originally designed for synchronous training. To run them asynchronously, please adjust the following parameters: </span>
+## <span style="color:red">\[Warning\]: The configurations in this dir were originally designed for synchronous training. To run them asynchronously, please adjust the following parameters: </span>
 
 ```
   ppo.recompute_logprob=true

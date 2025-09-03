@@ -1,18 +1,19 @@
 ---
 name: Doc
 about: Report incorrect or missing information in the documentation
-title: "[Doc]"
+title: '[Doc]'
 labels: documentation
 assignees: ''
-
 ---
 
 ## Description
 
-A clear and concise description of the documentation issue. 
+A clear and concise description of the documentation issue.
 
-**Issue Type**:  
+**Issue Type**:
+
 <!-- Check all that apply -->
+
 - [ ] Missing documentation
 - [ ] Incorrect information
 - [ ] Unclear or confusing
@@ -24,6 +25,7 @@ A clear and concise description of the documentation issue.
 What should the documentation say or include?
 
 ## Current Behavior
+
 What does it currently say or lack?
 
 ## Additional Context

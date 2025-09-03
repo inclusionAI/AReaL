@@ -73,7 +73,7 @@ def process_data(prompts_data: List[Dict], id2info: Dict, output_path: Path) -> 
 def main():
     """
     Command line entry point
-    
+
     Example usage:
     python math_process.py \
       --prompts_path ./input/prompts.jsonl \
