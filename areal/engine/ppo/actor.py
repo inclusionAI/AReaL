@@ -160,6 +160,9 @@ class PPOActor:
             "correct_n_seqs": (reward_score > 0).bool(),
             "incorrect_n_seqs": (reward_score <= 0).bool(),
         }
+        if self.config.log_agent_stats:
+            agent_denominator = (data["begin_of_trajectory"] > 0).bool()
+            result_denominators["agent"] = agent_denominator
         global_denominators = dict(
             n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
             n_tokens=torch.ones_like(loss_mask, dtype=torch.bool),
@@ -202,6 +205,12 @@ class PPOActor:
         if self.config.behav_imp_weight_cap is not None:
             scalars["behav_imp_weight_cap"] = self.config.behav_imp_weight_cap
         stats_tracker.scalar(**scalars)
+
+        if self.config.log_agent_stats:
+            stats_tracker.stat(
+                **{k: data[k].float() for k in self.config.log_agent_stats_keys},
+                denominator="agent",
+            )
 
         global_stats = stats_tracker.export(reduce_group=self.engine.parallelism_group)
         for k in global_denominators:
