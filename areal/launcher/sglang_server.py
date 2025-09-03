@@ -100,7 +100,8 @@ class SGLangServerWrapper:
             n_servers_per_proc = n_servers_per_node
             server_idx_offset = 0
 
-        paths_env = os.getenv("AREAL_SGLANG_MODEL_PATHS")
+        paths_env = os.getenv("AREAL_SGLANG_MODEL_PATHS", None)
+        logger.warning(f"Received paths env: {paths_env}")
         per_proc_paths = expand_model_paths(
             n_servers_per_proc,
             paths_env.split(',') if paths_env else None,

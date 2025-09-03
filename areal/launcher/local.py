@@ -283,6 +283,7 @@ def local_main(config, run_id: int = 0):
         model_paths = expand_model_paths(
             alloc_mode.gen_dp_size, config.actor.paths, config.sglang.model_path
         )
+        logger.warning(f"The expanded model paths are: {model_paths}")
         for i in range(alloc_mode.gen_dp_size):
             config.sglang.random_seed = base_seed + i
             config.sglang.model_path = model_paths[i]

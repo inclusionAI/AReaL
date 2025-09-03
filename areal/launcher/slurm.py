@@ -117,6 +117,7 @@ class SlurmLauncher:
         )
         if isinstance(cmd, str):
             cmd = [cmd]
+        logger.warning(f"Received array job: {cmd}.")
         assert len(cmd) == count, (
             f"Command length {len(cmd)} does not match the job count {count}. "
             "Please provide a command for each job in the array."
@@ -438,13 +439,14 @@ def slurm_main(config, run_id: int = 0):
         sglang_server_cmd_template = f"python3 -m areal.launcher.sglang_server {' '.join(sys.argv[2:])} sglang.random_seed={{seed}}"
         for i in range(n_sglang_nodes):
             model_paths = all_model_paths[i * n_servers_per_node: (i + 1) * n_servers_per_node]
-            paths_env = ', '.join(model_paths)
+            paths_env = ','.join(model_paths) 
             sglang_cmd = (
-                f"AREAL_SGLANG_MODEL_PATHS={paths_env} "
-                + sglang_server_cmd_template.format(
+                # f"AREAL_SGLANG_MODEL_PATHS={paths_env} " + 
+                sglang_server_cmd_template.format(
                     seed=base_seed + i * n_servers_per_node
                 )
             )
+            # logger.warning(f"Added sglang cmd prompt: {sglang_cmd}.")
             sglang_cmds.append(sglang_cmd)
 
         launcher.submit_array(
@@ -459,10 +461,12 @@ def slurm_main(config, run_id: int = 0):
             srun_additional_args=config.launcher.slurm.srun_additional_args,
             container_image=config.launcher.slurm.inference_server_image,
             container_mounts=config.launcher.slurm.mount,
-            env_vars=get_env_vars(
-                config.cluster.cluster_name,
-                config.launcher.inference_server_env_vars,
-            ),
+            env_vars=dict(
+                **get_env_vars(
+                    config.cluster.cluster_name,
+                    config.launcher.inference_server_env_vars,
+                ),
+            )
         )
         # Get SGLang server addresses by name resolve
         try:
