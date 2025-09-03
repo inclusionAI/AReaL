@@ -14,7 +14,7 @@ parts:
     - file: tutorial/openai_workflows
     - file: tutorial/eval
     - file: tutorial/quickstart_legacy
-    # - file: tutorial/troubleshooting
+    - file: tutorial/troubleshooting
   - caption: Best Practices
     chapters:
     - file: best_practices/debugging
