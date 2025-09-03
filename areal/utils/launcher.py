@@ -2,7 +2,7 @@ import getpass
 import os
 import pathlib
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from areal.api.io_struct import AllocationMode, AllocationType
 from realhf.base import logging, name_resolve, names
@@ -78,6 +78,37 @@ def wait_sglang_server_addrs(
                 f"Expected {n_sglang_servers} servers, found {len(sglang_addrs)}."
             )
     return sglang_addrs
+
+
+def expand_model_paths(
+    n_servers: int, paths: Optional[List[str]], default_path: str
+) -> List[str]:
+    """Expand the provided model paths to match the number of servers.
+
+    If ``paths`` is ``None`` or empty, ``default_path`` will be repeated for
+    ``n_servers`` times. Otherwise each path in ``paths`` will be repeated
+    ``n_servers // len(paths)`` times, and the remaining slots will be filled
+    with the last path.
+
+    Args:
+        n_servers: Total number of SGLang servers to launch.
+        paths: Optional list of model checkpoint paths.
+        default_path: Fallback model path when ``paths`` is not provided.
+
+    Returns:
+        A list of model paths whose length equals ``n_servers``.
+    """
+
+    if not paths:
+        return [default_path] * n_servers
+
+    repeat = n_servers // len(paths)
+    remainder = n_servers % len(paths)
+    expanded: List[str] = []
+    for idx, p in enumerate(paths):
+        count = repeat + (remainder if idx == len(paths) - 1 else 0)
+        expanded.extend([p] * count)
+    return expanded
 
 
 def validate_config_for_distributed_launcher(config):

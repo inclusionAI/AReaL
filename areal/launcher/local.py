@@ -19,7 +19,7 @@ from areal.api.cli_args import (
     to_structured_cfg,
 )
 from areal.api.io_struct import AllocationMode, AllocationType
-from areal.utils.launcher import get_env_vars
+from areal.utils.launcher import get_env_vars, expand_model_paths
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.recover import check_if_recover
 from realhf.base import gpu_utils, logging, name_resolve, names
@@ -280,8 +280,12 @@ def local_main(config, run_id: int = 0):
         ports = find_free_ports(alloc_mode.gen_dp_size * 2, port_range=(10000, 50000))
         host_ip = gethostip()
         host = "localhost" if not config.sglang.enable_metrics else host_ip
+        model_paths = expand_model_paths(
+            alloc_mode.gen_dp_size, config.actor.paths, config.sglang.model_path
+        )
         for i in range(alloc_mode.gen_dp_size):
             config.sglang.random_seed = base_seed + i
+            config.sglang.model_path = model_paths[i]
             cmd = SGLangConfig.build_cmd(
                 config.sglang,
                 host=host,

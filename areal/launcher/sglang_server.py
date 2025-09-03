@@ -16,7 +16,7 @@ from areal.api.cli_args import (
     to_structured_cfg,
 )
 from areal.api.io_struct import AllocationMode
-from areal.utils.launcher import TRITON_CACHE_PATH
+from areal.utils.launcher import TRITON_CACHE_PATH, expand_model_paths
 from areal.utils.network import find_free_ports, gethostip
 from realhf.base import logging, name_resolve, names
 
@@ -100,13 +100,19 @@ class SGLangServerWrapper:
             n_servers_per_proc = n_servers_per_node
             server_idx_offset = 0
 
+        paths_env = os.getenv("AREAL_SGLANG_MODEL_PATHS")
+        per_proc_paths = expand_model_paths(
+            n_servers_per_proc,
+            paths_env.split(',') if paths_env else None,
+            self.config.model_path,
+        )
         # Separate ports used by each server in the same node
         # ports range (10000, 50000)
         ports_per_server = 40000 // n_servers_per_node
         launch_server_args = []
         server_addresses = []
-        for server_local_idx in range(
-            server_idx_offset, server_idx_offset + n_servers_per_proc
+        for idx, server_local_idx in enumerate(
+            range(server_idx_offset, server_idx_offset + n_servers_per_proc)
         ):
             port_range = (
                 server_local_idx * ports_per_server + 10000,
@@ -118,6 +124,7 @@ class SGLangServerWrapper:
             host_ip = gethostip()
 
             base_gpu_id = (server_local_idx - server_idx_offset) * gpus_per_server
+            self.config.model_path = per_proc_paths[idx]
             cmd = SGLangConfig.build_cmd(
                 self.config,
                 tp_size=self.allocation_mode.gen_tp_size,

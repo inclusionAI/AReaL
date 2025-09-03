@@ -20,6 +20,7 @@ from areal.utils.launcher import (
     get_env_vars,
     validate_config_for_distributed_launcher,
     wait_sglang_server_addrs,
+    expand_model_paths,
 )
 from areal.utils.recover import check_if_recover
 from areal.utils.slurm import (
@@ -433,10 +434,16 @@ def slurm_main(config, run_id: int = 0):
         n_servers_per_node = max(n_sglang_servers // n_sglang_nodes, 1)
 
         base_seed = config.sglang.random_seed
+        all_model_paths = expand_model_paths(n_sglang_servers, config.actor.paths, config.sglang.model_path)
         sglang_server_cmd_template = f"python3 -m areal.launcher.sglang_server {' '.join(sys.argv[2:])} sglang.random_seed={{seed}}"
         for i in range(n_sglang_nodes):
-            sglang_cmd = sglang_server_cmd_template.format(
-                seed=base_seed + i * n_servers_per_node
+            model_paths = all_model_paths[i * n_servers_per_node: (i + 1) * n_servers_per_node]
+            paths_env = ', '.join(model_paths)
+            sglang_cmd = (
+                f"AREAL_SGLANG_MODEL_PATHS={paths_env} "
+                + sglang_server_cmd_template.format(
+                    seed=base_seed + i * n_servers_per_node
+                )
             )
             sglang_cmds.append(sglang_cmd)
 

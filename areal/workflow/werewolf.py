@@ -245,7 +245,7 @@ class WerewolfWorkflow(RolloutWorkflow):
                     )
                     agent_answer_tasks.append(engine.agenerate(a_req))
 
-            # Teacher also answers for data (with priviledged thoughts data)
+            # Teacher also answers for data (with priviledged data)
             thought_str = ""
             alive_agents = env._alive_list()
             alive_roles = env.role_type
@@ -256,9 +256,11 @@ class WerewolfWorkflow(RolloutWorkflow):
                 last_thought = agent_thoughts.get(f"{agt} ({_role})", "")
                 if last_thought != "":
                     if thought_str == "":
-                        thought_str = "You know secretly that: "
-                    thought_str += f"{agt} ({_role}) thought in the last round: {last_thought}."
-            
+                        thought_str = "You know for sure that: "
+                    thought_str += f"{agt} (who is a {_role}) thought in the last round: {last_thought}."
+            if thought_str != "":
+                thought_str += "You may use the information above to make deductions."
+
             teacher_answer_tasks = []
             if (not use_opp_generation) and self.teacher_rollout: # TODO: Check whether or not use opp_gen
                 for qi, q in enumerate(self_questions):
@@ -356,6 +358,8 @@ class WerewolfWorkflow(RolloutWorkflow):
             )
             t_env_step_total += time.perf_counter() - t0
 
+            format_reward_scale = (env.answer_format_record[0] / env.answer_format_record[1])
+            reward_list = [rew * format_reward_scale for rew in reward_list]
             vill_total += float(reward_list[0])
             were_total += float(reward_list[1])
 
@@ -493,7 +497,7 @@ class WerewolfWorkflow(RolloutWorkflow):
                     {
                         "agent": current_agent,
                         "role": current_role,
-                        "QAs": [{"question": self_questions[i], "answer": teacher_answers[i] if i < len(teacher_answers) else ""} for i in range(len(self_questions))],
+                        "QAs": [{"question": self_questions[i], "priviledged info": thought_str, "answer": teacher_answers[i] if i < len(teacher_answers) else ""} for i in range(len(self_questions))],
                     }
                 )
 
@@ -514,25 +518,25 @@ class WerewolfWorkflow(RolloutWorkflow):
         # ---- finalize timing aggregates ----
         avg_div = max(1, turns_done)
         timing_vals = [
-            # t_qgen_total,                 # 18: total time generating questions
-            # t_qgen_decode_total,          # 19: total time decoding questions
-            # t_agent_answer_total,         # 20: total time answering (agent) incl. decodes
-            # t_teacher_answer_total,       # 21: total time answering (teacher)
-            # t_action_build_total,         # 22: total time building action prompt (+tokenize build)
-            # t_action_gen_total,           # 23: total time generating action
-            # t_action_decode_total,        # 24: total time decoding action
-            # t_env_step_total,             # 25: total env.step time
-            # t_summary_agent_total,        # 26: total time generating agent summary
-            # t_summary_teacher_total,      # 27: total time generating teacher summary
-            # t_pack_tensors_total,         # 28: total time packing tensors
-            # t_tokenize_total,             # 29: total time spent in tokenizer.apply_chat_template
+            # t_qgen_total,                 # 19: total time generating questions
+            # t_qgen_decode_total,          # 20: total time decoding questions
+            # t_agent_answer_total,         # 21: total time answering (agent) incl. decodes
+            # t_teacher_answer_total,       # 22: total time answering (teacher)
+            # t_action_build_total,         # 23: total time building action prompt (+tokenize build)
+            # t_action_gen_total,           # 24: total time generating action
+            # t_action_decode_total,        # 25: total time decoding action
+            # t_env_step_total,             # 26: total env.step time
+            # t_summary_agent_total,        # 27: total time generating agent summary
+            # t_summary_teacher_total,      # 28: total time generating teacher summary
+            # t_pack_tensors_total,         # 29: total time packing tensors
+            # t_tokenize_total,             # 30: total time spent in tokenizer.apply_chat_template
             # Averages per turn (useful to monitor)
-            t_qgen_total / avg_div,               # 30: avg qgen
-            t_agent_answer_total / avg_div,       # 31: avg agent answers
-            t_teacher_answer_total / avg_div,     # 32: avg teacher answers
-            t_action_gen_total / avg_div,         # 33: avg action gen
-            # t_env_step_total / avg_div,           # 34: avg env step
-            (t_summary_agent_total / avg_div),    # 35: avg agent summary
+            t_qgen_total / avg_div,               # 31: avg qgen
+            t_agent_answer_total / avg_div,       # 32: avg agent answers
+            t_teacher_answer_total / avg_div,     # 33: avg teacher answers
+            t_action_gen_total / avg_div,         # 34: avg action gen
+            # t_env_step_total / avg_div,           # 35: avg env step
+            (t_summary_agent_total / avg_div),    # 36: avg agent summary
         ]
 
         logging_vals = [
@@ -554,7 +558,8 @@ class WerewolfWorkflow(RolloutWorkflow):
             stats.get("witch_correct_poisons", 0),  # 15
             stats.get("hunter_shots", 0),           # 16
             stats.get("hunter_correct_shots", 0),   # 17
-        ] + timing_vals                              # 18+ timing slots as documented above
+            env.answer_format_record[0] / env.answer_format_record[1], # 18
+        ] + timing_vals                              # 19+ timing slots as documented above
 
         log_tensor = torch.tensor(logging_vals, dtype=torch.float32).unsqueeze(0)
         if results:

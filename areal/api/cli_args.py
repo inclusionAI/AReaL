@@ -178,6 +178,10 @@ class DeepSpeedAutoTPEngineConfig:
 class TrainEngineConfig:
     experiment_name: str = MISSING
     trial_name: str = MISSING
+    paths: Optional[List[str]] = field(
+        default=None,
+        metadata={"help": "Optional list of model paths for inference."}
+    )
     path: str = field(default="", metadata={"help": "Path to HuggingFace checkpoint"})
     attn_impl: str = field(
         default="flash_attention_2",

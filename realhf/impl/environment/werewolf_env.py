@@ -47,6 +47,7 @@ class WerewolfEnv(EnvironmentService):
         self.agent_role: str = ""
         self.turn_order: List[str] = []
         self.current_agent_idx = 0
+        self.answer_format_record: List[int] = [10 ,10]  # Records the (#correctly formatted answers, # all answers)
         self.phase_player_list: List[str] = []  # Records the players who shall act in current phase
         self.phase_actions: Dict[str, str] = {}  # Records the actions performed in one phase
         self.phase_info: str = "" # Holds the info from last phase, to be distributed to all agents
@@ -59,6 +60,7 @@ class WerewolfEnv(EnvironmentService):
         self.witch_poison = True
         self.await_hunter = False
         self.player_memory: Dict[str, List[str]] = {}
+
         self.repeat_rules = repeat_rules
         self.trajectory: List[str] = []
         self.rules = (
@@ -138,6 +140,7 @@ class WerewolfEnv(EnvironmentService):
         self.hunter_player = None
         self.player_memory = {p: [] for p in self.roles}
         self.trajectory = []
+        self.answer_format_record = [10, 10]
         self.stats: Dict[str, int] = {
             "vill_wins": 0,
             "were_wins": 0,
@@ -189,6 +192,7 @@ class WerewolfEnv(EnvironmentService):
         self.hunter_player = None
         self.player_memory = {p: [] for p in self.roles}
         self.trajectory = []
+        self.answer_format_record = [10, 10]
         self.stats: Dict[str, int] = {
             "vill_wins": 0,
             "were_wins": 0,
@@ -228,12 +232,13 @@ class WerewolfEnv(EnvironmentService):
         self.trajectory.append(f"Initial setup -> {setup_info}")
         return obs, guide, {}
 
-    def _format_reward(self, text: str) -> float:
+    def _format_reward(self, text: str) -> None:
         has_think = "<think>" in text and "</think>" in text
         m = re.findall(r"<answer>(.*?)</answer>", text, re.DOTALL)
+        self.answer_format_record[1] += 2
         if len(m) >= 1:
-            return 0.1 if has_think else 0.05
-        return 0.05 if has_think else 0.0
+            self.answer_format_record[0] += (2 if has_think else 1)
+        self.answer_format_record[0] += (1 if has_think else 0)
 
     def _action_reward(self, role: str, action: str) -> List[float]:
         """Assign rewards for meaningful actions."""
@@ -419,10 +424,10 @@ class WerewolfEnv(EnvironmentService):
                 done = True
                 if winner == "werewolf":
                     self.stats["were_wins"] += 1
-                    reward[1] += 3.0
+                    reward[1] += 5.0
                 else:
                     self.stats["vill_wins"] += 1
-                    reward[0] += 3.0
+                    reward[0] += 5.0
                 info += f"Game over. {winner} win."
             else:
                 # Check if hunter shall act
@@ -447,10 +452,10 @@ class WerewolfEnv(EnvironmentService):
                 done = True
                 if winner == "werewolf":
                     self.stats["were_wins"] += 1
-                    reward[1] += 3.0
+                    reward[1] += 5.0
                 else:
                     self.stats["vill_wins"] += 1
-                    reward[0] += 3.0
+                    reward[0] += 5.0
                 info += f"Game over. {winner} win."
             else:
                 self.phase = "night"
@@ -476,7 +481,8 @@ class WerewolfEnv(EnvironmentService):
     async def step(self, action: Tuple[str, List[str]]):
         qid, acts = action
         text = acts[0] if isinstance(acts, list) and acts else ""
-        reward = [self._format_reward(text), self._format_reward(text)] # Villager, werewolves
+        self._format_reward(text)
+        reward = [0, 0] # villagers, werewolves
         m = re.findall(r"<answer>(.*?)</answer>", text, re.DOTALL)
         ans = m[-1].strip().lower() if m else ""
 
