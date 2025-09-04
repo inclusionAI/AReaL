@@ -350,7 +350,7 @@ ref:
       hidden_dropout: 0.0
       hidden_size: 2048
       init_method_std: 0.006
-      load: /storage/xukuan.xk/repos/antnlp/personal/pretrained_models/ring-moe-v2-sft-general700w_longcot200w_0725/iter_0028869
+      load: /storage/yuyan/model/nlp/aystem-test-ring-moe-v2-sft-general700w_longcot200w_0725_iter_0028869
       log_loss_scale_to_tensorboard: false
       log_num_zeros_in_grad: true
       log_params_norm: true
@@ -419,7 +419,7 @@ ref:
       recompute_num_layers: 5
       rotary_base: 600000
       rotary_percent: 0.5
-      save: /mnt/asystem-s3/common/users/senlin.zsl/experiments/2025-07-19_14-32-43/experiments/models/mcore_ckpt_32/asystem_moe_mini
+      save: /dnn_training_sys/users/xinyu.kxy/experiments/2025-08-20_20-04-37/experiments/models/mcore_ckpt_32/asystem_moe_mini
       save_interval: 1
       seed: 42
       seq_length: 16384
