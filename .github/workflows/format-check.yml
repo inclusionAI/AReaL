@@ -23,7 +23,7 @@ jobs:
       - name: Check autoflake formatting
         run: |
           autoflake --check areal/
-          autoflake --check examples/lite/
+          autoflake --check examples/
 
       - name: Check Python formatting with isort
         run: isort --check-only .

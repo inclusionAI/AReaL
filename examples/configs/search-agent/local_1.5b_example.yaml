@@ -1,4 +1,4 @@
-experiment_name: asearcher-7b-zero-local
+experiment_name: asearcher-1.5b-zero-local
 trial_name: run1
 
 cluster:
@@ -92,7 +92,6 @@ ref:
   backend: fsdp
 
 # SGLang
-server_only: false
 sglang:
   model_path: ${actor.path}
   random_seed: ${seed}
@@ -119,7 +118,7 @@ saver:
   freq_steps: 10
   freq_secs: 3600
 
-checkpointer:
+recover:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}

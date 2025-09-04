@@ -43,7 +43,7 @@ repos:
           - -r
           - --remove-all-unused-imports
           - --remove-unused-variables
-        files: ^(areal/|examples/lite/).*\.py$
+        files: ^(areal/|examples/).*\.py$
 
   - repo: https://github.com/pycqa/isort
     rev: 6.0.1

@@ -258,6 +258,12 @@ class PPOActorConfig(TrainEngineConfig):
     eps_clip: float = field(
         default=0.2, metadata={"help": "Clipping factor for policy ratio"}
     )
+    eps_clip_higher: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "Clipping factor (higher value) for policy ratio. Defaults is None. When eps_clip_higher is setted (decouppled), eps_clip will be used as the lower value."
+        },
+    )
     c_clip: Optional[float] = field(
         default=None,
         metadata={
@@ -318,6 +324,16 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={
             "help": "We filter out the tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing the loss, must be > 1.0, use_decoupled_loss must be true"
         },
+    )
+
+    # Logging Agent Trajectories
+    log_agent_stats: bool = field(
+        default=False,
+        metadata={"help": "Log stats for agent trajectories"},
+    )
+    log_agent_stats_keys: List[str] = field(
+        default_factory=lambda: [],
+        metadata={"help": "Keys of log stats for agent trajectories"},
     )
 
 
