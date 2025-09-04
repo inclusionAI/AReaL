@@ -612,18 +612,6 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 "Input queue full. Please increase queue_size.",
             )
 
-    def submit_batch(
-        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
-    ) -> None:
-        try:
-            self.input_queue.put_nowait(data, workflow)
-        except Full:
-            raise FrameworkError(
-                "FrameworkError",
-                "InferenceWorkError",
-                "Input queue full. Please increase queue_size.",
-            )
-
     def wait(
         self,
         count: int,

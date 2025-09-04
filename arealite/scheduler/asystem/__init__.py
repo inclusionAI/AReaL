@@ -1,5 +1,4 @@
 import json
-import logging
 import signal
 import time
 from dataclasses import asdict
@@ -11,6 +10,7 @@ import requests
 from arealite.scheduler.base import Scheduler, SchedulingConfig, Worker
 from arealite.scheduler.rpc.rpc_client import RPCClient
 from arealite.utils.errors import FrameworkError
+from realhf.base import logging
 
 try:
     import cloudpickle
