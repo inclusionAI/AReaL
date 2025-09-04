@@ -19,24 +19,34 @@ Evaluation utilities and analysis tools:
 ### 🚀 [model_serving/](model_serving/)
 Production-ready model serving solutions:
 
+📖 **Main Documentation**: [model_serving/README.md](model_serving/README.md)
+
 #### [ollama_serving/](model_serving/ollama_serving/)
 - Multi-GPU Ollama cluster with nginx load balancing
 - Production-ready setup with health monitoring
 - **Drop-in replacement** running on standard Ollama port (11434)
+
+📖 **Documentation**: [model_serving/ollama_serving/README.md](model_serving/ollama_serving/README.md)
 
 #### [vllm_serving/](model_serving/vllm_serving/)
 - Comprehensive vLLM server management with parallelism support
 - Tensor, pipeline, and data parallelism configurations
 - Tool calling support and GPU optimization
 
+📖 **Documentation**: [model_serving/vllm_serving/README.md](model_serving/vllm_serving/README.md)
+
 #### [litellm_proxy/](model_serving/litellm_proxy/)
 - Unified API interface to various LLM providers
 - OpenAI-compatible endpoints
 - Environment-based configuration management
 
+📖 **Documentation**: [model_serving/litellm_proxy/README.md](model_serving/litellm_proxy/README.md)
+
 #### [external_providers/](model_serving/external_providers/)
 - Test scripts for external model providers (Together AI, Baseten)
 - Integration examples and API testing utilities
+
+📖 **Documentation**: [model_serving/external_providers/README.md](model_serving/external_providers/README.md)
 
 ### 🎯 [model_training/](model_training/)
 Complete model training pipelines and utilities:
@@ -46,14 +56,20 @@ Complete model training pipelines and utilities:
 - Conversion to OpenAI format for popular training frameworks
 - Token analysis and truncation optimization tools
 
+📖 **Documentation**: [model_training/dataset_prep/README.md](model_training/dataset_prep/README.md)
+
 #### [data/](model_training/data/)
 - Pre-processed training datasets from tau2 evaluations
 - Contains trajectories from GPT-4.1-mini, o4-mini, and Claude-3.5-Sonnet
 - Train/test splits with successful trajectory filtering
 
+📖 **Documentation**: [model_training/data/README.md](model_training/data/README.md)
+
 #### [sft_trl/](model_training/sft_trl/) *(Deprecated)*
 - Supervised Fine-Tuning using HuggingFace TRL framework
 - Multi-GPU training configurations with Accelerate
+
+📖 **Documentation**: [model_training/sft_trl/README.md](model_training/sft_trl/README.md)
 
 #### [rl/](model_training/rl/)
 Reinforcement Learning training frameworks:
@@ -63,16 +79,23 @@ Reinforcement Learning training frameworks:
 - Requires 4x A100 GPUs (80GB)
 - Integration with tau2 gym environment
 
+📖 **Documentation**: [model_training/rl/verl-agent/README_tau.md](model_training/rl/verl-agent/README_tau.md)
+
 ##### [areal/](model_training/rl/areal/)
 - **GRPO (Group Relative Policy Optimization)** on tau2-bench
 - Multi-GPU distributed training
 - LoRA support for efficient fine-tuning
+
+📖 **Documentation**: [model_training/rl/areal/README_grpo_tau2.md](model_training/rl/areal/README_grpo_tau2.md)
+
 
 ### 🤖 [agents/](agents/)
 Enhanced experimental agent implementations:
 - **LLMAgentV2**: State-of-the-art agent with enhanced prompting techniques from 2024-2025 research
 - Features: Multi-step reasoning, agentic workflows, enhanced error handling, context optimization
 - **Drop-in replacement** for the original LLMAgent with backward compatibility
+
+📖 **Documentation**: [agents/README_V2.md](agents/README_V2.md)
 
 
 ## Quick Start
