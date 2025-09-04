@@ -44,7 +44,7 @@ actor:
   gradient_checkpointing: false
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_gpu: 4096
+    max_tokens_per_mb: 4096
   optimizer:
     type: adam
     lr: 2e-6
@@ -56,6 +56,8 @@ actor:
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
   backend: fsdp
+  fsdp:
+    ulysses_sp_size: 1
 
   group_size: ${gconfig.n_samples}
   group_adv_norm: false
@@ -76,9 +78,11 @@ ref:
   init_from_scratch: false
   dtype: ${actor.dtype}
   mb_spec:
-    max_tokens_per_gpu: 4096
+    max_tokens_per_mb: 4096
   optimizer: null
   backend: fsdp
+  fsdp:
+    ulysses_sp_size: 1
 
 # SGLang
 sglang:

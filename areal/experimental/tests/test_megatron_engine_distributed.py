@@ -3,7 +3,7 @@ import subprocess
 import pytest
 import torch
 
-from areal.experimental.api.io_struct import AllocationMode
+from areal.api.alloc_mode import AllocationMode
 from areal.utils.network import find_free_ports
 
 
@@ -61,4 +61,6 @@ def test_qwen3moe_expert_parallel(tmp_path_factory):
     if torch.cuda.device_count() < 4:
         pytest.skip("Qwen3 MoE expert parallel requires 4 GPUs to run")
     output = tmp_path_factory.mktemp("test_output") / "qwen3moe_expert_parallel.out"
-    _run_test_with_torchrun("qwen3moe", "d1p1t2c2/d1p1t1e4", output=str(output))
+    _run_test_with_torchrun(
+        "qwen3moe", "attn:d1p1t2c2|ffn:d1p1t1e4", output=str(output)
+    )

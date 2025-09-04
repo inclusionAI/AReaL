@@ -8,12 +8,12 @@ import torch.distributed as dist
 from megatron.core import parallel_state as mpu
 from torchdata.stateful_dataloader import StatefulDataLoader
 
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.api.cli_args import ExperimentalGRPOConfig as GRPOConfig
-from areal.experimental.api.io_struct import AllocationMode
 from areal.experimental.megatron_actor import MegatronPPOActor
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import broadcast_tensor_container

@@ -7,6 +7,7 @@ import torch
 from tensordict import TensorDict
 from transformers import AutoTokenizer
 
+from areal.api.alloc_mode import AllocationMode
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 from areal.experimental.api.cli_args import (
     ExperimentalTrainEngineConfig as TrainEngineConfig,
@@ -15,7 +16,6 @@ from areal.experimental.api.cli_args import (
     MegatronEngineConfig,
     OptimizerConfig,
 )
-from areal.experimental.api.io_struct import AllocationMode
 from areal.experimental.megatron_engine import MegatronEngine
 from areal.utils import logging
 from areal.utils.device import log_gpu_stats
@@ -24,6 +24,8 @@ logger = logging.getLogger("MegatronEngine Test")
 
 VOCAB_SIZE = 100
 MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+if not os.path.exists(MODEL_PATH):
+    MODEL_PATH = "Qwen/Qwen3-1.7B"
 
 
 @pytest.fixture(scope="module")

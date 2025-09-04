@@ -47,7 +47,7 @@ actor:
   trial_name: ${trial_name}
   path: Qwen/Qwen3-0.6B
   mb_spec:
-    max_tokens_per_gpu: 4096
+    max_tokens_per_mb: 4096
   optimizer: {}
 
   group_size: ${gconfig.n_samples}
@@ -56,4 +56,4 @@ ref:
   trial_name: ${trial_name}
   path: ${actor.path}
   mb_spec:
-    max_tokens_per_gpu: 4096
+    max_tokens_per_mb: 4096

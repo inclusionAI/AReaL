@@ -21,7 +21,7 @@ model:
   gradient_checkpointing: false
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_gpu: 4096
+    max_tokens_per_mb: 4096
   optimizer:
     type: adam
     lr: 2e-5

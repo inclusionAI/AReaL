@@ -5,6 +5,9 @@ from abc import ABC
 from datetime import datetime
 from typing import List
 
+import torch
+import torch.distributed as dist
+
 INFINITE_DURATION = 60 * 60 * 24 * 365 * 1000
 
 
@@ -13,13 +16,20 @@ class FrequencyControl:
     frequency."""
 
     def __init__(
-        self, frequency_seconds=None, frequency_steps=None, initial_value=False
+        self,
+        frequency_seconds: int | None = None,
+        frequency_steps: int | None = None,
+        initial_value: bool = False,
+        group: dist.ProcessGroup | None = None,
     ):
         """Initialization method of FrequencyControl.
         Args:
             frequency_seconds: Minimal interval between two trigger.
             frequency_steps: Minimal number of steps between two triggers.
             initial_value: In true, the first call of check() returns True.
+            group: If torch distributed is initialized, time intervals will be synchronized
+                across processes in the specified distributed group. If group is None, the
+                default process group will be used.
 
         NOTE:
             - If both frequency_seconds and frequency_steps are None, the checking will always return False except
@@ -29,6 +39,7 @@ class FrequencyControl:
         """
         self.frequency_seconds = frequency_seconds
         self.frequency_steps = frequency_steps
+        self.group = group
         self.__start_time = datetime.now()
         self.__steps = 0
         self.__last_time = datetime.now()
@@ -100,11 +111,19 @@ class FrequencyControl:
             self.__interval_steps = self.__steps - self.__last_steps
             if self.frequency_steps is None and self.frequency_seconds is None:
                 return False
-            if (
-                self.frequency_seconds is not None
-                and self.__interval_seconds < self.frequency_seconds
-            ):
-                return False
+            if self.frequency_seconds is not None:
+                if dist.is_initialized():
+                    interval_seconds = torch.tensor(
+                        self.__interval_seconds, device="cuda"
+                    )
+                    dist.all_reduce(
+                        interval_seconds, op=dist.ReduceOp.MAX, group=self.group
+                    )
+                    self.__interval_seconds = interval_seconds.item()
+                # We pass time check if the interval second in any process
+                # is larger than self.frequency_seconds.
+                if interval_seconds < self.frequency_seconds:
+                    return False
             if (
                 self.frequency_steps is not None
                 and self.__interval_steps < self.frequency_steps
@@ -124,11 +143,14 @@ class EpochStepTimeFreqCtl:
     freq_epoch: int | None
     freq_step: int | None
     freq_sec: int | None
+    group: dist.ProcessGroup | None = None
 
     def __post_init__(self):
         self.epoch_ctl = FrequencyControl(frequency_steps=self.freq_epoch)
         self.step_ctl = FrequencyControl(frequency_steps=self.freq_step)
-        self.time_ctl = FrequencyControl(frequency_seconds=self.freq_sec)
+        self.time_ctl = FrequencyControl(
+            frequency_seconds=self.freq_sec, group=self.group
+        )
 
     def check(self, epochs: int, steps: int):
         x, y, z = (

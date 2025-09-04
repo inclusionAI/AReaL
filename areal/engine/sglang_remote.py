@@ -425,16 +425,16 @@ async def ainit_weights_update_group(
     request_timeout: float,
 ):
     assert meta.alloc_mode is not None
-    if meta.alloc_mode.gen_pp_size != 1:
+    if meta.alloc_mode.gen.pp_size != 1:
         raise NotImplementedError(
             "NCCL weight update with PP size > 1 is not implemented yet."
         )
-    rank_offset = 1 + server_idx * meta.alloc_mode.gen_tp_size
+    rank_offset = 1 + server_idx * meta.alloc_mode.gen.tp_size
     payload = {
         "master_address": meta.nccl_master_address,
         "master_port": str(meta.nccl_master_port),
         "rank_offset": rank_offset,
-        "world_size": meta.alloc_mode.gen_world_size + 1,
+        "world_size": meta.alloc_mode.gen.world_size + 1,
         "backend": "nccl",
         "group_name": meta.nccl_group_name,
     }

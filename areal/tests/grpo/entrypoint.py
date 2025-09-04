@@ -11,8 +11,9 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 import areal.api.cli_args as cli_args
 import areal.dataset
 import areal.utils.seeding as seeding
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig
-from areal.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
+from areal.api.io_struct import FinetuneSpec, WeightUpdateMeta
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.reward.math_parser import process_results

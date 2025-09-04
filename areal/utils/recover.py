@@ -2,7 +2,7 @@ import dataclasses
 import json
 import os
 import pickle
-from typing import Dict
+from typing import Dict, List
 
 import torch
 import torch.distributed as dist
@@ -33,7 +33,7 @@ class RecoverInfo:
     saver_info: Dict
     evaluator_info: Dict
     stats_logger_info: Dict
-    dataloader_info: Dict
+    dataloader_info: Dict | List[Dict]
     checkpoint_info: Dict
 
     def dump(self, dump_dir: str):
@@ -41,9 +41,18 @@ class RecoverInfo:
         # 1. step_info.json: contains the recover info
         # 2. *_info.json or *_info.pkl: contains other informantion required for recover.
 
-        # To avoid contention, do not dump on multiple ranks
-        if dist.is_initialized() and dist.get_rank() != 0:
-            return
+        if dist.is_initialized():
+            # Since dataloader state is different across distributed ranks,
+            # we need to all gather the dataloader state from all ranks.
+            # In this situation, saved dataloader_info is a list of states from all ranks.
+            dataloader_info = [None for _ in range(dist.get_world_size())]
+            dist.all_gather_object(dataloader_info, self.dataloader_info)
+
+            # To avoid contention, do not dump on multiple ranks
+            if dist.get_rank() != 0:
+                return
+        else:
+            dataloader_info = self.dataloader_info
 
         os.makedirs(dump_dir, exist_ok=True)
         step_info_path = os.path.join(dump_dir, "step_info.json")
@@ -68,7 +77,7 @@ class RecoverInfo:
 
         dataloader_info_path = os.path.join(dump_dir, "dataloader_info.pkl")
         with open(dataloader_info_path, "wb") as f:
-            pickle.dump(self.dataloader_info, f)
+            pickle.dump(dataloader_info, f)
 
     @classmethod
     def load(cls, load_dir: str):
@@ -103,6 +112,15 @@ class RecoverInfo:
             dataloader_info_path = os.path.join(load_dir, "dataloader_info.pkl")
             with open(dataloader_info_path, "rb") as f:
                 dataloader_info = pickle.load(f)
+                if isinstance(dataloader_info, list):
+                    # If dataloader_info a list, it means it is saved from a distributed run.
+                    if dist.is_initialized():
+                        # Loading dataloader states in a distributed context.
+                        assert dist.get_world_size() == len(dataloader_info), (
+                            f"Dataloader info list length {len(dataloader_info)} does not match "
+                            f"the world size {dist.get_world_size()}."
+                        )
+                        dataloader_info = dataloader_info[dist.get_rank()]
 
             return cls(
                 last_step_info=last_step_info,

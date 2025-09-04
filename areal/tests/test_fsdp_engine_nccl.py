@@ -6,13 +6,14 @@ import time
 import pytest
 import requests
 
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
     InferenceEngineConfig,
     OptimizerConfig,
     SGLangConfig,
     TrainEngineConfig,
 )
-from areal.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
+from areal.api.io_struct import FinetuneSpec, WeightUpdateMeta
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.utils import network

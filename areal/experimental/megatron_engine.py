@@ -16,24 +16,16 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from tensordict import TensorDict
 
+from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
 from areal.api.cli_args import MicroBatchSpec
 from areal.api.engine_api import FinetuneSpec, TrainEngine
+from areal.api.io_struct import ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.experimental.api.cli_args import (
     ExperimentalTrainEngineConfig as TrainEngineConfig,
 )
-from areal.experimental.api.io_struct import (
-    MegatronParallelStrategy,
-    ParallelStrategy,
-    ParamSpec,
-    SaveLoadMeta,
-    WeightUpdateMeta,
-)
 from areal.experimental.model.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.experimental.model.hf_save import save_weights_to_hf_with_mbridge_fast
-from areal.experimental.model.registry import (
-    make_hf_and_mcore_config,
-    make_mcore_model,
-)
+from areal.experimental.model.registry import make_hf_and_mcore_config, make_mcore_model
 from areal.experimental.utils.mcore.packed_context_parallel import (
     packed_context_parallel_forward,
 )
@@ -387,9 +379,7 @@ class MegatronEngine(TrainEngine):
             max_workers=None,
         )
 
-    def prepare_mb_list(
-        self, input_: TensorDict, forward_only: bool = True
-    ) -> MicroBatchList:
+    def prepare_mb_list(self, input_: TensorDict) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
         if isinstance(input_, dict):
             input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
@@ -399,18 +389,19 @@ class MegatronEngine(TrainEngine):
         cp_size = self.parallel_strategy.context_parallel_size
         tp_size = self.parallel_strategy.tensor_parallel_size
         # Split the input tensor dict into micro-batches
+        # NOTE: Here we use 2*pp_size in forward to align logprob precision
+        # TODO: Performance check
         min_n_mbs = (
-            1 if forward_only else 2 * pp_size
+            2 * pp_size if pp_size > 1 else 1
         )  # avoid pipeline bubbles in training
-        # NOTE: self.config.mb_spec.max_tokens_per_gpu determines
-        # the expected number of tokens per micro-batch **in the forward pass on a GPU**.
+        # NOTE: self.config.mb_spec.max_tokens_per_mb determines
+        # the expected **total** number of tokens per micro-batch **in the forward pass**.
         # The micro batch list splitted here will be splitted to each
         # context parallel rank, so the total number of tokens per
-        # micro-batch here will be `max_tokens_per_gpu * cp_size`.
+        # GPU in a forward pass here will be `max_tokens_per_mb / cp_size`.
         mb_spec = MicroBatchSpec.new(
             self.config.mb_spec,
             n_mbs=max(min_n_mbs, self.config.mb_spec.n_mbs),
-            _context_parallel_size=cp_size,
         )
         mb_list = split_padded_tensor_dict_into_mb_list(
             input_,
@@ -419,8 +410,8 @@ class MegatronEngine(TrainEngine):
         )
         mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
         # NOTE: Pad micro-batches to:
-        # 1. Reduce GPU memory fragmentation, pad memory usage to GPU page size or
-        #    max_tokens_per_gpu
+        # 1. Reduce GPU memory fragmentation, pad actual # tokens per mb to integer multiples
+        #  of GPU page size or max_tokens_per_mb
         # 2. Align sequence lengths to integer multiples of `align_to_multiple_of=tp_size*cp_size*2`
         #    to satisfy the requirement of Megatron parallelism.
         align_to_multiple_of = tp_size * cp_size * 2 if cp_size > 1 else tp_size
@@ -475,7 +466,7 @@ class MegatronEngine(TrainEngine):
         self.optimizer.zero_grad()
         self.model.zero_grad_buffer()
         # Assume input_ is identical across context and model parallel group
-        mb_list = self.prepare_mb_list(input_, forward_only=False)
+        mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
         total_loss_weight = torch.tensor(
@@ -563,7 +554,7 @@ class MegatronEngine(TrainEngine):
     ) -> torch.Tensor | None:
         assert self.model is not None, "Model is not initialized."
         # Assume input_ is identical across context and model parallel group
-        mb_list = self.prepare_mb_list(input_, forward_only=False)
+        mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
         total_loss_weight = torch.tensor(

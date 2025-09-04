@@ -67,6 +67,7 @@ dependencies = [
     "PyYAML",
     "hydra-core==1.4.0.dev1",
     "packaging",
+    "lark",
     "tabulate",
     "gymnasium>=1.1.1",
     "torchdata",
