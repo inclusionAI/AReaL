@@ -1,6 +1,7 @@
 experiment_name: xss-tau2-debug
 trial_name: trial0
 allocation_mode: sglang.d16p1t1+d16p1t1
+max_context_length: 32768
 cluster:
   fileroot: /tmp/areal/experiments
   n_nodes: 4
@@ -38,7 +39,7 @@ actor:
   gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_gpu: 32768
+    max_tokens_per_mb: ${max_context_length}
   pad_to_maximum: true
   optimizer:
     type: adam
@@ -72,7 +73,7 @@ ref:
   disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
-    max_tokens_per_gpu: 32768
+    max_tokens_per_mb: ${max_context_length}
   pad_to_maximum: true
   optimizer: null
   backend: fsdp
@@ -84,7 +85,7 @@ sglang:
   skip_tokenizer_init: true
   dtype: ${actor.dtype}
   max_running_requests: null
-  context_length: 32768
+  context_length: ${max_context_length}
   mem_fraction_static: 0.8
 
 # datasets

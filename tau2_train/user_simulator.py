@@ -16,7 +16,7 @@ from .environment.tool import Tool
 
 from .utils import DATA_DIR
 from .utils.llm_utils import to_litellm_messages
-from openai import OpenAI, RateLimitError, APIError
+from openai import OpenAI, RateLimitError, APIError, BadRequestError
 import time
 
 from loguru import logger
@@ -55,13 +55,24 @@ def get_global_user_sim_guidelines(use_tools: bool = False) -> str:
             user_sim_guidelines = fp.read()
     return user_sim_guidelines
 
-def create_with_retry(client, max_retries=5, initial_delay=1, backoff_factor=2, **kwargs):
+def create_with_retry(client, max_retries=5, initial_delay=1, is_eval=False, backoff_factor=2, **kwargs):
     retries = 0
     delay = initial_delay
     
     while retries <= max_retries:
         try:
             return client.chat.completions.create(**kwargs)
+        except BadRequestError as e:
+            if "is longer than the model's context length" in e.message:
+                if is_eval:
+                    raise e
+                else:
+                    return {
+                        "error": "reach length limit."
+                    }
+            else:
+                raise e
+
         except (RateLimitError, APIError) as e:
             retries += 1
             if retries > max_retries:
@@ -144,14 +155,16 @@ class UserSimulator:
         tools: Optional[list[Tool]] = None,
         instructions: Optional[UserInstructions] = None,
         llm: Optional[str] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         llm_args: Optional[dict] = None,
     ):
         self.instructions = instructions
         #####
         # TODO
         self.llm_client = OpenAI(
-            api_key="empty",
-            base_url="http://10.11.16.251:8000/v1/"
+            api_key=api_key,
+            base_url=base_url
         )
         #####
         self.tools = tools
@@ -207,6 +220,7 @@ class UserSimulator:
             STOP in message.content
             or TRANSFER in message.content
             or OUT_OF_SCOPE in message.content
+            or "reach length limit" in message.content
         )
 
     def generate_next_message(
@@ -251,8 +265,11 @@ class UserSimulator:
             **self.llm_args,
         )
 
-        response = response.choices[0]
-        user_response = response.message.content
+        if isinstance(response, dict) and "error" in response:
+            user_response = response["error"]
+        else:
+            response = response.choices[0]
+            user_response = response.message.content
 
         user_message = UserMessage(
             role="user",

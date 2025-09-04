@@ -69,6 +69,7 @@ class LLMAgent:
         gconfig,
         domain_policy,
         tools,
+        max_context_length = 32768
     ):
         """
         Initialize the LLMAgent.
@@ -81,6 +82,7 @@ class LLMAgent:
 
         self.domain_policy = domain_policy
         self.tools = tools
+        self.max_context_length = max_context_length
         self.stop = False
 
     @property
@@ -142,7 +144,7 @@ class LLMAgent:
                 tools=tools,
                 toeknize=True,
             )
-        max_new_tokens = min(self.gconfig.max_new_tokens, 32768 - len(input_ids) - 1)
+        max_new_tokens = min(self.gconfig.max_new_tokens, self.max_context_length - len(input_ids) - 1)
         if max_new_tokens <= 0:
             self.stop = True
             assistant_message = AssistantMessage(
@@ -178,6 +180,7 @@ class LLMAgent:
         tools = [self.convert_dict_to_tool(raw_tool) for raw_tool in tools] if tools else None
         
         parser = FunctionCallParser(tools=tools, tool_call_parser="qwen25")
+        completion_str = completion_str.split("</think>")[-1]
         normal_text, calls = parser.parse_non_stream(completion_str)
 
         tool_calls = []

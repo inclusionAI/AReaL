@@ -271,7 +271,7 @@ class EvaluationCriteria(BaseModel):
         list[RewardType],
         Field(
             description="The basis of the reward. This will be used to determine the reward for the task.",
-            default_factory=lambda: [RewardType.DB, RewardType.COMMUNICATE],
+            default_factory=lambda: [RewardType.DB, RewardType.ENV_ASSERTION, RewardType.COMMUNICATE, RewardType.ACTION, RewardType.NL_ASSERTION],
         ),
     ]
 

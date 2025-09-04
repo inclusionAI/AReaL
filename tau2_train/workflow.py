@@ -18,6 +18,7 @@ import sys
 import torch
 from tensordict import TensorDict
 from transformers import PreTrainedTokenizerFast
+import numpy as np
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
@@ -45,6 +46,7 @@ from dataclasses import dataclass, field
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from loguru import logger
+logger.remove()
 
 from areal.api.workflow_api import RolloutWorkflow
 from areal.api.cli_args import GRPOConfig
@@ -76,29 +78,51 @@ class Tau2Workflow(RolloutWorkflow):
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
         user_model: str = "/storage/openpsi/models/Qwen__Qwen2.5-72B-Instruct/",
+        user_api_key: str = "empty",
+        user_base_url: str = "",
         max_num_turns: int = 128,
+        max_context_length: int = 32768,
         n_trajs: int = 1,
         dump_dir: str | None = None,
+        eval_model: str | None = None,
+        eval_api_key: str | None = None,
+        eval_base_url: str | None = None,
     ):
         self.gconfig = gconfig
         self.tokenizer = tokenizer
-        self.user_model = user_model
         self.dump_dir = dump_dir
         self.max_num_turns = max_num_turns
         self.n_trajs = n_trajs
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
+        self.max_context_length = max_context_length
+
+        self.user_model = user_model
+        self.user_api_key = user_api_key
+        self.user_base_url = user_base_url
+
+        self.eval_model = eval_model or user_model
+        self.eval_api_key = eval_api_key or user_api_key
+        self.eval_base_url = eval_base_url or user_base_url
 
     async def collect_agent_trajectory(self, engine, task):
         
         environment = get_environment()
-        agent = LLMAgent(engine, self.tokenizer, self.gconfig, environment.get_policy(), environment.get_tools())
+        agent = LLMAgent(
+            engine, 
+            self.tokenizer, 
+            self.gconfig, 
+            environment.get_policy(), 
+            environment.get_tools(),
+            max_context_length=self.max_context_length - 100
+        )
         user = UserSimulator(
             instructions=task.user_scenario,
-            llm=self.user_model
+            llm=self.user_model,
+            api_key=self.user_api_key,
+            base_url=self.user_base_url,
         )
 
-        old_task = copy.deepcopy(task)
         orchestrator = Orchestrator(
             "airline",
             agent=agent,
@@ -113,6 +137,9 @@ class Tau2Workflow(RolloutWorkflow):
             task=task,
             simulation=simulation,
             evaluation_type="all",
+            llm=self.eval_model,
+            api_key=self.eval_api_key,
+            base_url=self.eval_base_url
         )
         
         messagaes = orchestrator.get_trajectory()
@@ -120,7 +147,25 @@ class Tau2Workflow(RolloutWorkflow):
         
         # TODO  calculate reward
         reward = reward_info.reward
-        ##
+
+        try:
+            reward = reward_info.db_check.db_reward
+            if len(reward_info.action_checks) > 0:
+                reward *= np.mean([x.action_reward for x in reward_info.action_checks])
+            if len(reward_info.nl_assertions) > 0:
+                reward *= np.mean([x.met for x in reward_info.nl_assertions])
+
+            print(
+            "[debug] reward info: ", task.id,
+            reward_info.db_check.db_reward,
+            [x.action_reward for x in reward_info.action_checks],
+            [x.met for x in reward_info.nl_assertions]
+        )
+
+        except Exception as e:
+            print("[debug] reward info: ", e, reward_info)
+            reward = 0
+        #
         return messagaes, traj_records, reward
 
     async def arun_episode(self, engine: InferenceEngine, raw_data=None):
@@ -156,7 +201,7 @@ class Tau2Workflow(RolloutWorkflow):
                     # reward
                     rewards=torch.tensor([float(reward)]),
                 )
-                if len(loss_mask) <= 32768:
+                if len(loss_mask) <= self.max_context_length:
                     results.append(TensorDict(res, batch_size=[1]))
         
         if self.dump_dir is not None:
@@ -168,8 +213,11 @@ class Tau2Workflow(RolloutWorkflow):
             ) as f:
                 for i, (messages, _, score) in enumerate(trajs):
                     f.write(json.dumps(dict(messages=messages, reward=score, traj_idx=i)) + "\n")
-
-        return concat_padded_tensors(results)
+        
+        if len(results) == 0:
+            return None
+        else:
+            return concat_padded_tensors(results)
 
 @dataclass
 class TauRLConfig(GRPOConfig):
@@ -183,6 +231,33 @@ class TauRLConfig(GRPOConfig):
         default=1,
         metadata={
             "help": "We could collect multiple trajectories for a single query. By default n_trajs=1."
+        }
+    )
+    user_model: str = field(
+        default="/storage/openpsi/models/Qwen__Qwen2.5-72B-Instruct/",
+        metadata={
+            "help": "Model name for user simulation."
+        }
+    )
+
+    user_api_key: str = field(
+        default="empty",
+        metadata={
+            "help": "api_key for user simulation model"
+        }
+    )
+
+    user_base_url: str = field(
+        default="http://33.180.164.231:30000/v1/",
+        metadata={
+            "help": "base_url for user simulation model"
+        }
+    )
+
+    max_context_length: int = field(
+        default=32768,
+        metadata={
+            "help": "Maximum context length of the trained model"
         }
     )
 
@@ -227,7 +302,6 @@ def main(args):
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
-    print("-" * 100, os.environ["LOCAL_RANK"], flush=True)
     actor.initialize(None, ft_spec)
     ref = None
 
@@ -235,13 +309,20 @@ def main(args):
     # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
-    weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
-            AllocationMode.from_str(config.allocation_mode), actor
+    
+    # weight_update_meta = [
+    #     WeightUpdateMeta.from_fsdp_nccl(
+    #         AllocationMode.from_str(config.allocation_mode), actor
+    #     )
+    # ]
+    # dist.broadcast_object_list(weight_update_meta, src=0)
+    # weight_update_meta = weight_update_meta[0]
+
+    weight_update_meta = WeightUpdateMeta.from_disk(
+            config.experiment_name,
+            config.trial_name,
+            config.cluster.fileroot
         )
-    ]
-    dist.broadcast_object_list(weight_update_meta, src=0)
-    weight_update_meta = weight_update_meta[0]
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -256,9 +337,13 @@ def main(args):
         ),
         max_num_turns=config.max_turns,
         n_trajs=config.n_trajs,
+        user_model=config.user_model,
+        user_api_key=config.user_api_key,
+        user_base_url=config.user_base_url,
+        max_context_length=config.max_context_length,
     )
 
-   # Run training.
+    # Run training.
     saver = Saver(config.saver, ft_spec)
     stats_logger = StatsLogger(config.stats_logger, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
@@ -331,8 +416,10 @@ def main(args):
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
+        # pause inference for updating weights, save, and evaluation
+        rollout.pause()
+
         with stats_tracker.record_timing("update_weights"):
-            rollout.pause()
             if dist.get_rank() == 0:
                 future = rollout.update_weights(weight_update_meta)
             actor.upload_weights(weight_update_meta)
@@ -340,7 +427,7 @@ def main(args):
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
             torch.cuda.synchronize()
-            rollout.resume()
+
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
 
@@ -387,9 +474,21 @@ def main(args):
                 tokenizer=tokenizer,
             )
 
+        dist.barrier(device_ids=[actor.device.index])
+        torch.cuda.synchronize()
+
+        # Upload statistics to the logger (e.g., wandb)
+        stats[0].update(stats_tracker.export_all(reduce_group=actor.parallelism_group))
         stats_logger.commit(epoch, step, global_step, stats)
 
+        dist.barrier(device_ids=[actor.device.index])
+        torch.cuda.synchronize()
+
+        # Resume rollout
+        rollout.resume()
+
     stats_logger.close()
+
     rollout.destroy()
     if ref is not None:
         ref.destroy()

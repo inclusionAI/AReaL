@@ -8,7 +8,23 @@ from tau2_train.utils.llm_utils import to_litellm_messages
 from tau2_train.user_simulator import create_with_retry
 from openai import OpenAI
 from loguru import logger
+import re
 
+def extract_json(text, min_length=5):
+    code_pattern = r"(?i)```(?:json|JSON)?\s*\n?(.*?)\n?```"
+    code_blocks = re.findall(code_pattern, text, re.DOTALL)
+    valid_blocks = []
+    for block in code_blocks:
+        clean_block = block.strip()
+        if len(clean_block) < min_length:
+            continue
+
+        valid_blocks.append(clean_block)
+
+    if not valid_blocks:
+        # logger.warning(f"failed to extract python code from {text}")
+        return None
+    return valid_blocks[-1]
 
 class NLAssertionsEvaluator:
     """
@@ -20,6 +36,9 @@ class NLAssertionsEvaluator:
         cls,
         task: Task,
         full_trajectory: list[Message],
+        llm_name: str,
+        api_key: str,
+        base_url: str,
     ) -> RewardInfo:
         """
         Calculate the reward for the simulation by using an LLM to evaluate whether the trajectory adheres to all the natural-language assertions
@@ -41,7 +60,8 @@ class NLAssertionsEvaluator:
             )
 
         nl_assertions_checks = cls.evaluate_nl_assertions(
-            full_trajectory, nl_assertions
+            full_trajectory, nl_assertions,
+            llm_name, api_key, base_url,
         )
 
         # Calculate reward: 1 if all expectations are met, 0 otherwise
@@ -59,6 +79,9 @@ class NLAssertionsEvaluator:
         cls,
         trajectory: list[Message],
         nl_assertions: list[str],
+        llm_name: str,
+        api_key: str,
+        base_url: str
     ) -> list[NLAssertionCheck]:
         """
         Evaluate whether the trajectory meets each expected outcome.
@@ -116,21 +139,31 @@ class NLAssertionsEvaluator:
         ]
         
         llm_client = OpenAI(
-            api_key="empty",
-            base_url="http://10.11.16.251:8000/v1/"
+            api_key=api_key,
+            base_url=base_url
         )
 
         messages = to_litellm_messages(messages)
 
-        response = create_with_retry(
-            llm_client,
-            model="/storage/openpsi/models/Qwen__Qwen2.5-72B-Instruct/",
-            messages=messages,
-        )
+        try:
+            response = create_with_retry(
+                llm_client,
+                model=llm_name,
+                messages=messages,
+                is_eval=True,
+            )
+        except:
+            return []
 
         ## TODO
         try:
-            result_data = json.loads(response.choices[0].message.content)
+            if "```" in response.choices[0].message.content:
+                logger.info(response.choices[0].message.content)
+                content = extract_json(response.choices[0].message.content)
+            else:
+                content = response.choices[0].message.content
+
+            result_data = json.loads(content)
             return [
                 NLAssertionCheck(
                     nl_assertion=result["expectedOutcome"],
