@@ -324,7 +324,7 @@ For all the details see the domains [README](src/tau2/domains/README.md).
 #### View domain-specific policy and API docs:
 Run the following command to see the domain policy and API documentation.
 ```bash
-tau2 env <domain>
+tau2 domain <domain>
 ```
 
 Then visit http://127.0.0.1:8004/redoc
