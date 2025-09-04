@@ -295,8 +295,6 @@ def main(args):
         tokenizer_path=config.tokenizer_path,
     )
 
-    current_model_version = 0
-
     for epoch in range(recover_epoch, epoch_num):
         data_generator = iter(dataloader)
         start_step = recover_step if can_recover and epoch == recover_epoch else 0
@@ -319,7 +317,7 @@ def main(args):
                     path=f"/storage/openpsi/checkpoints/{config.experiment_name}/{config.trial_name}",
                     alloc_mode=None,
                     comm_backend=None,
-                    model_version=current_model_version
+                    model_version=global_step
                 )
 
                 with (
@@ -377,7 +375,7 @@ def main(args):
 
                 with (stats_tracker.scope("training_data"),):
                     calc_training_data_metrics(rollout_res)
-                    calc_training_data_version_metrics(rollout_res, current_model_version)
+                    calc_training_data_version_metrics(rollout_res, global_step)
 
                 with(stats_tracker.record_timing("post_data_process")):
                     rollout_res_dict = rollout_res.to_dict()
@@ -478,8 +476,6 @@ def main(args):
                         logger.info(
                             f"notify_train_end_event succeeded, step: {step}, epoch: {epoch}"
                         )
-            
-            current_model_version += 1
 
             metric = stats_tracker.export()
             stats_logger.commit(epoch, step, global_step, metric)

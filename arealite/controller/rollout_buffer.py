@@ -168,7 +168,7 @@ class RolloutBuffer(object):
             self.ready_to_train_sample_num = 0
             return all_samples
 
-    def save(self, path: str) -> None:
+    def state_dict(self) -> Dict[str, Any]:
         with self.lock_:
             data = {
                 "train_batch_size": self.train_batch_size,
@@ -180,16 +180,15 @@ class RolloutBuffer(object):
                 "ready_to_train_sample_num": self.ready_to_train_sample_num,
                 "buffer": self.buffer,
             }
-            torch.save(data, path)
+            return data
 
-    def load(self, path: str) -> None:
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         with self.lock_:
-            data = torch.load(path)
-            self.train_batch_size = data["train_batch_size"]
-            self.batch_size_exceeding_num = data["batch_size_exceeding_num"]
-            self.group_size = data["group_size"]
-            self.mini_samples_per_group = data["mini_samples_per_group"]
-            self.staleness_version = data["staleness_version"]
-            self.current_size = data["current_size"]
-            self.ready_to_train_sample_num = data["ready_to_train_sample_num"]
-            self.buffer = data["buffer"]
+            self.train_batch_size = state_dict["train_batch_size"]
+            self.batch_size_exceeding_num = state_dict["batch_size_exceeding_num"]
+            self.group_size = state_dict["group_size"]
+            self.mini_samples_per_group = state_dict["mini_samples_per_group"]
+            self.staleness_version = state_dict["staleness_version"]
+            self.current_size = state_dict["current_size"]
+            self.ready_to_train_sample_num = state_dict["ready_to_train_sample_num"]
+            self.buffer = state_dict["buffer"]

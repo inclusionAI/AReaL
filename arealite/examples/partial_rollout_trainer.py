@@ -138,6 +138,13 @@ def main(args):
         sampler=ShuffleSampler(train_dataset),
         collate_fn=custom_collate_fn,
     )
+    rollout_buffer = RolloutBuffer(
+        train_batch_size=training_real_batch_size,
+        batch_size_exceeding_num=config.partial_rollout.batch_size_exceeding_num,
+        group_size=group_size,
+        mini_samples_per_group=config.partial_rollout.mini_samples_per_group,
+        staleness_version=config.partial_rollout.staleness_version,
+    )
 
     ############################## recover #########################################
     recover_meta_info_path = config.recover.recover_meta_info_path
@@ -163,6 +170,7 @@ def main(args):
     latest_recover = latest_checkpoint.Recover(config.recover)
     if can_recover:
         dataloader.load_state_dict(recover_meta_info.dataloader_state)
+        rollout_buffer.load_state_dict(recover_meta_info.rollout_buffer_state)
         config.actor.hybrid_engine.recover_dir = recover_meta_info.checkpoint_path
 
     periodic_recover = periodic_checkpoint.Recover(config.recover)
@@ -303,13 +311,6 @@ def main(args):
             f"config.partial_rollout.mini_samples_per_group {config.partial_rollout.mini_samples_per_group} must be equal to group_size {group_size}"
         )
         config.partial_rollout.mini_samples_per_group = group_size
-    rollout_buffer = RolloutBuffer(
-        train_batch_size=training_real_batch_size,
-        batch_size_exceeding_num=config.partial_rollout.batch_size_exceeding_num,
-        group_size=group_size,
-        mini_samples_per_group=config.partial_rollout.mini_samples_per_group,
-        staleness_version=config.partial_rollout.staleness_version,
-    )
 
     def add_res_to_rollout_buffer_callback(res: List[TensorDict]):
         assert isinstance(
@@ -328,8 +329,6 @@ def main(args):
 
     rollout.register_callback_to_all_worker("wait_at_least_no_concat", add_res_to_rollout_buffer_callback, batch_count=8, timeout=4, no_response_timeout=100)
 
-    current_model_version = 0
-
     # start to train
     for epoch in range(recover_epoch, epoch_num):
         data_generator = iter(dataloader)
@@ -347,7 +346,7 @@ def main(args):
                     stats_tracker.scope("prepare_datas")
                 ):
                     expire_sample_num = rollout_buffer.expire_stale_samples(
-                        current_version=current_model_version
+                        current_version=global_step
                     )
                     stats_tracker.scalar(**{"expire_sample_num": expire_sample_num})
                     batch_data = rollout_buffer.pop_all_cached_samples()
@@ -377,7 +376,7 @@ def main(args):
                     path=f"/storage/openpsi/checkpoints/{config.experiment_name}/{config.trial_name}",
                     alloc_mode=None,
                     comm_backend=None,
-                    model_version=current_model_version
+                    model_version=global_step
                 )
 
                 with (
@@ -458,7 +457,7 @@ def main(args):
 
                 with (stats_tracker.scope("training_data"),):
                     calc_training_data_metrics(rollout_res)
-                    calc_training_data_version_metrics(rollout_res, current_model_version)
+                    calc_training_data_version_metrics(rollout_res, global_step)
 
                     with(stats_tracker.record_timing("post_data_process")):
                         rollout_res_dict = rollout_res.to_dict()
@@ -538,7 +537,8 @@ def main(args):
                                 step,
                                 global_step,
                                 dataloader.state_dict(),
-                                "latest_checkpoint",
+                                rollout_buffer_state=rollout_buffer.state_dict(),
+                                name="latest_checkpoint",
                                 disable_save_hf=config.recover.latest_disable_save_hf,
                             )
                             logger.info(
@@ -560,7 +560,8 @@ def main(args):
                                 step,
                                 global_step,
                                 dataloader.state_dict(),
-                                "periodic_checkpoint",
+                                rollout_buffer_state=rollout_buffer.state_dict(),
+                                name="periodic_checkpoint",
                                 disable_save_hf=config.recover.periodic_disable_save_hf,
                             )
                             logger.info(
@@ -578,8 +579,6 @@ def main(args):
                         logger.info(
                             f"notify_train_end_event succeeded, step: {step}, epoch: {epoch}"
                         )
-
-            current_model_version += 1
 
             metric = stats_tracker.export()
             stats_logger.commit(epoch, step, global_step, metric)

@@ -23,6 +23,7 @@ class RecoverInfo:
     epoch_step: int = 0
     global_step: int = 0
     dataloader_state: dict = dataclasses.field(default_factory=dict)
+    rollout_buffer_state: dict = dataclasses.field(default_factory=dict)
     hf_path: str = ""
     checkpoint_path: str = ""
 
@@ -73,6 +74,7 @@ class Recover:
         step: int,
         global_step: int,
         dataloader_state: dict,
+        rollout_buffer_state: dict = {},
         name: str = "latest_checkpoint",
         tokenizer: PreTrainedTokenizerFast | None = None,
         base_model_path: str | None = None,
@@ -125,7 +127,7 @@ class Recover:
         logger.info(f"Saved checkpoint to {target_dir} success.")
 
         # save meta info
-        self.save_meta_info(epoch, step, global_step, dataloader_state, name)
+        self.save_meta_info(epoch, step, global_step, dataloader_state, rollout_buffer_state, name)
 
         # Create/update symlink
         symlink_path = self.get_save_checkpoint_path(symlink_name)
@@ -165,6 +167,7 @@ class Recover:
         step: int,
         global_step: int,
         dataloader_state: dict,
+        rollout_buffer_state: dict,
         name: str = "latest_checkpoint",
     ):
         # Determine meta name based on global_step parity
@@ -184,6 +187,7 @@ class Recover:
             epoch_step=step,
             global_step=global_step,
             dataloader_state=dataloader_state,
+            rollout_buffer_state=rollout_buffer_state,
             hf_path=hf_path,
             checkpoint_path=checkpoint_path,
         )
