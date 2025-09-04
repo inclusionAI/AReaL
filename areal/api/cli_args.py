@@ -343,7 +343,7 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={"help": "Log stats for agent trajectories"},
     )
     log_agent_stats_keys: List[str] = field(
-        default_factory=lambda: ["num_llm_gens"],
+        default_factory=lambda: [],
         metadata={"help": "Keys of log stats for agent trajectories"},
     )
 
