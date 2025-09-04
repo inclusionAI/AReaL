@@ -396,7 +396,7 @@ class RemoteHybridTrainWorker(TrainEngine):
             headers = {"Content-Type": "application/json"}
             payload = {"event": event, "global_step": global_step}
             response = requests.post(
-                target_url, data=json.dumps(payload), headers=headers, timeout=60
+                target_url, data=json.dumps(payload), headers=headers, timeout=600
             )
             if response.status_code != 200:
                 raise EngineError(
