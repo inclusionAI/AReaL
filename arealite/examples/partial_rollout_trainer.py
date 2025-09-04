@@ -78,6 +78,12 @@ def main(args):
     )
     group_size = config.gconfig.n_samples
     config.gconfig.n_samples = 1
+    training_real_batch_size = config.train_bs_n_seqs * group_size
+    if config.partial_rollout.mini_samples_per_group != group_size:
+        logger.warning(
+            f"config.partial_rollout.mini_samples_per_group {config.partial_rollout.mini_samples_per_group} must be equal to group_size {group_size}"
+        )
+        config.partial_rollout.mini_samples_per_group = group_size
 
     # Print full config
     logger.info(
@@ -303,14 +309,6 @@ def main(args):
         gconfig=config.gconfig,
         tokenizer_path=config.tokenizer_path,
     )
-
-    # Partial Rollout Initilization
-    training_real_batch_size = config.train_bs_n_seqs * group_size
-    if config.partial_rollout.mini_samples_per_group != group_size:
-        logger.warning(
-            f"config.partial_rollout.mini_samples_per_group {config.partial_rollout.mini_samples_per_group} must be equal to group_size {group_size}"
-        )
-        config.partial_rollout.mini_samples_per_group = group_size
 
     def add_res_to_rollout_buffer_callback(res: List[TensorDict]):
         assert isinstance(
