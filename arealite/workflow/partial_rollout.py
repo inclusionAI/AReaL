@@ -94,8 +94,7 @@ class PartialRolloutWorkflow(RolloutWorkflow):
             - stop_reason: Literal["length", "stop", "interrupt", "abort"] = "stop"
         """
         seq = resp.input_tokens + resp.output_tokens
-        previous_logprobs = []
-        logprobs = previous_logprobs + resp.output_logprobs
+        logprobs = [0] * resp.input_len + resp.output_logprobs
         prompt_mask = [1] * resp.input_len + [0] * resp.output_len
         output_version = resp.output_versions[0]
         versions = [output_version] * (resp.input_len + resp.output_len)
