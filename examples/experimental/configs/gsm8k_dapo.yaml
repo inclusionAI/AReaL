@@ -1,4 +1,4 @@
-experiment_name: gsm8k-grpo
+experiment_name: gsm8k-dapo
 trial_name: trial0
 allocation_mode: sglang.d1p1t1+d1p1t1
 cluster:
