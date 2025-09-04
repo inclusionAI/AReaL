@@ -65,7 +65,7 @@ Complete model training pipelines and utilities:
 
 📖 **Documentation**: [model_training/data/README.md](model_training/data/README.md)
 
-#### [sft_trl/](model_training/sft_trl/) *(Deprecated)*
+#### [sft_trl/](model_training/sft_trl/)
 - Supervised Fine-Tuning using HuggingFace TRL framework
 - Multi-GPU training configurations with Accelerate
 
