@@ -161,8 +161,12 @@ class PPOActor:
             "incorrect_n_seqs": (reward_score <= 0).bool(),
         }
         if self.config.log_agent_stats:
-            assert ("begin_of_trajectory" in data), ("'begin_of_trajectory' is expected to log agent statistics")
-            assert (len(self.config.log_agent_stats_keys) > 0), ("`log_agent_stats_keys` should not be empty when log_agent_stats=True")
+            assert (
+                "begin_of_trajectory" in data
+            ), "'begin_of_trajectory' is expected to log agent statistics"
+            assert (
+                len(self.config.log_agent_stats_keys) > 0
+            ), "`log_agent_stats_keys` should not be empty when log_agent_stats=True"
             agent_denominator = (data["begin_of_trajectory"] > 0).bool()
             result_denominators["agent"] = agent_denominator
         global_denominators = dict(
