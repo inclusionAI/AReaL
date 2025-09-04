@@ -319,6 +319,13 @@ class PPOActorConfig(TrainEngineConfig):
             "help": "We filter out the tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing the loss, must be > 1.0, use_decoupled_loss must be true"
         },
     )
+    # Advanced Options
+    dynamic_sampling: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable dynamic sampling (within DAPO). If enabled, the group with same reward will be filtered out."
+        },
+    )
 
 
 @dataclass
@@ -826,7 +833,7 @@ def parse_cli_args(argv: List[str]):
     args, overrides = parser.parse_known_args(argv)
     # Initialize hydra config
     config_file = Path(args.config).absolute()
-    assert config_file.exists()
+    assert config_file.exists(), f"Config file {config_file} does not exist."
     # hydra only recognize relative paths
     relpath = Path(os.path.relpath(str(config_file), Path(__file__).parent.absolute()))
     hydra_init(config_path=str(relpath.parent), job_name="app", version_base=None)
