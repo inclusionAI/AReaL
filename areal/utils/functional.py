@@ -3,6 +3,7 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 import torch
 import torch.distributed as dist
+from tensordict import TensorDict
 
 
 @torch.compile
@@ -184,3 +185,29 @@ def ppo_actor_loss_fn(
         stat["behave_approx_kl"] = behav_kl
         stat["behave_mask"] = behav_mask
     return pg_loss, stat
+
+
+def reward_overlong_penalty(
+    data: TensorDict,
+    overlong_tokens: int,
+    overlong_penalty_factor: float,
+    max_response_length: int,
+) -> torch.Tensor:
+    reward_score = data["rewards"]
+    input_ids = data["input_ids"]
+    attn_mask = data["attention_mask"]
+    seq_lengths = (attn_mask.sum(dim=-1) - 2).long()
+    batch_size = input_ids.shape[0]
+    for sample_idx in range(batch_size):
+        reward_score_cur = reward_score[sample_idx]
+        seq_lengths_cur = seq_lengths[sample_idx]
+        expected_len = max_response_length - overlong_tokens
+        exceed_len = seq_lengths_cur - expected_len
+        overlong_reward = min(
+            -exceed_len / overlong_tokens * overlong_penalty_factor, 0
+        )
+        reward_score_cur += overlong_reward
+        reward_score[sample_idx] = reward_score_cur
+
+    data["rewards"] = reward_score
+    return data

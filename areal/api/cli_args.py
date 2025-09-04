@@ -287,6 +287,22 @@ class PPOActorConfig(TrainEngineConfig):
     reward_clip: float = field(
         default=20.0, metadata={"help": "Maximum absolute value for reward clipping"}
     )
+    overlong_reward_penalty: bool = field(
+        default=False,
+        metadata={"help": "penalty for overlong sequences. used within DAPO."},
+    )
+    overlong_tokens: Optional[int] = field(
+        default=None,
+        metadata={"help": "The numbers of token in the tail will receive a penalty"},
+    )
+    overlong_penalty_factor: Optional[float] = field(
+        default=None,
+        metadata={"help": "The numbers of token in the tail will receive a penalty"},
+    )
+    context_length: Optional[int] = field(
+        default=32768,
+        metadata={"help": "Maximum context length for generation (include multi-turn)"},
+    )
     mask_no_eos_with_zero: bool = field(
         default=False,
         metadata={
@@ -804,6 +820,9 @@ class BaseExperimentConfig:
             "For benchmarking purposes only. None indicates normal training."
         },
     )
+    context_length: int = field(
+        default=32768, metadata={"help": "Maximum length of the context."}
+    )
     tokenizer_path: str = field(default="")
 
     train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
@@ -842,7 +861,7 @@ def parse_cli_args(argv: List[str]):
     args, overrides = parser.parse_known_args(argv)
     # Initialize hydra config
     config_file = Path(args.config).absolute()
-    assert config_file.exists()
+    assert config_file.exists(), f"Config file {config_file} does not exist."
     # hydra only recognize relative paths
     relpath = Path(os.path.relpath(str(config_file), Path(__file__).parent.absolute()))
     hydra_init(config_path=str(relpath.parent), job_name="app", version_base=None)

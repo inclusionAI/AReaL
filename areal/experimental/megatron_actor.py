@@ -18,6 +18,7 @@ from areal.utils.functional import (
     gather_logprobs_entropy,
     masked_normalization,
     ppo_actor_loss_fn,
+    reward_overlong_penalty,
 )
 
 
@@ -78,7 +79,33 @@ class PPOActor:
             bs, device=data["input_ids"].device, dtype=torch.long
         )
 
-        # Compute rewards using the reward function in synchronous RLVR pipeline.
+        # ------------------Reward Calculating Start------------------
+        # TODO:rewrite the reward into "reward" class __call__ method should be good. Like VeRL does.
+
+        # Reward Penalty on length
+        if self.config.overlong_reward_penalty:
+            context_length = self.config.context_length
+            overlong_tokens = self.config.overlong_tokens
+            overlong_penalty_factor = self.config.overlong_penalty_factor
+            max_response_length = self.config.context_length
+
+            if context_length is None:
+                raise ValueError(
+                    "context_length should be provided when overlong_reward_penalty is enabled"
+                )
+
+            assert (
+                overlong_tokens < context_length
+            ), "To enable overlong_reward_penalty, the value of overlong_tokens should be much smaller than context_length"
+
+            data = reward_overlong_penalty(
+                data,
+                overlong_tokens=overlong_tokens,
+                overlong_penalty_factor=overlong_penalty_factor,
+                max_response_length=max_response_length,
+            )
+
+        # Reward Scaling
         reward_score = data["rewards"]
         reward_score = (reward_score + self.reward_bias) * self.reward_scaling
         reward_score = torch.clip(
@@ -89,6 +116,7 @@ class PPOActor:
                 s = slice(i * self.group_size, (i + 1) * self.group_size)
                 r = reward_score[s]
                 reward_score[s] = (r - r.mean()) / (r.std() + 1e-9)
+        # ------------------Reward Calculating End------------------
 
         loss_mask = data["loss_mask"].float()
         loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
