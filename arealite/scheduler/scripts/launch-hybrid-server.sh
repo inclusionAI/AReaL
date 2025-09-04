@@ -24,7 +24,9 @@ export NODE_ID=$((${WORKER_INDEX} / 8))
 
 #mkdir -p /tmp${WORKER_SHARE_DIR}
 
+WORKER_LOG_DIR=${WORKER_LOG_DIR}/${UUID}
 mkdir -p ${WORKER_LOG_DIR}
+
 WORKER_LOG_FILE=${WORKER_LOG_DIR}/${WORKER_TYPE}-${WORKER_INDEX}.log
 
 LOCAL_WORKER_DIR=/home/admin/logs/experiment/

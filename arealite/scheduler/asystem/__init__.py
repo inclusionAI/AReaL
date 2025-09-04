@@ -67,6 +67,10 @@ class AsystemScheduler(Scheduler):
         self.extra_envs["TRIAL_NAME"] = (
             f"{self.trial_name}"
         )
+        # 设置 env，用于区分 Failover 前后的不同实验
+        self.extra_envs["UUID"] = (
+            f"{self.uuid}"
+        )
 
         # 信号捕获是为了手动跑 trainer.py 增加的功能，用来在 trainer 退出时清理相关 Job
         signal.signal(signal.SIGINT, self.batch_cleanup_jobs)
