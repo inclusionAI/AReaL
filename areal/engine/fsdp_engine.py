@@ -325,10 +325,6 @@ class FSDPEngine(BaseHFEngine):
                             mb_lists[src].mbs,
                         )
                     ):
-                        self.model.set_requires_gradient_sync(
-                            src == sp_world_size - 1 and i == len(mb_lists[src].mbs) - 1
-                        )
-
                         input_ids = padded_mb_input["input_ids"]
                         position_ids = padded_mb_input.get("position_ids", None)
 
@@ -389,7 +385,6 @@ class FSDPEngine(BaseHFEngine):
             for i, (pad_length, padded_mb_input, mb_input) in enumerate(
                 zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
             ):
-                self.model.set_requires_gradient_sync(i == len(mb_list.mbs) - 1)
                 outputs = self.model(**padded_mb_input)
 
                 logits = outputs.logits.squeeze(0)
