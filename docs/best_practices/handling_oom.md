@@ -59,9 +59,9 @@ servers.
 Try increasing tensor parallelism to spread your model weights across more GPUs:
 
 ```yaml
-# Before: sglang.d4+d4 (4 data parallel processes)
-# After: sglang.d2t2+d4 (2 data parallel, 2 tensor parallel)
-allocation_mode: sglang.d2t2+d4
+# Before: sglang:d4+fsdp:d4 (4 data parallel processes)
+# After: sglang:d2t2+fsdp:d4 (2 data parallel, 2 tensor parallel)
+allocation_mode: sglang:d2t2+fsdp:d4
 ```
 
 Just keep in mind that higher tensor parallelism will slow down your generation
@@ -107,17 +107,18 @@ If you're dealing with really long contexts and can't reduce `max_tokens_per_mb`
 further, try Ulysses sequence parallelism to spread sequences across multiple GPUs:
 
 ```yaml
-fsdp:
-  ulysses_sp_size: 2  # or 4, 8 depending on your setup
+# Before: sglang:d4+fsdp:d4 (4 data parallel processes)
+# After: sglang:d4+fsdp:d2c2 (2 data parallel, 2 ulysses context parallel)
+allocation_mode: sglang:d4+fsdp:d2c2
 ```
 
-> Just remember: `ulysses_sp_size` needs to divide evenly into both your FSDP
-> parallelism degree and your model's attention heads.
+> Just remember: Ulysses context parallel size needs to divide evenly into your model's
+> attention heads.
 >
-> For example, with 40 attention heads and `d32` allocation mode:
+> For example, with 40 attention heads:
 >
 > - These work: `1, 2, 4, 8`
-> - These don't: `16, 32` (too many for the attention heads)
+> - These don't: `16, 32`
 
 ## Resolving Weight Update OOM Errors
 
