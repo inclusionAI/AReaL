@@ -1,9 +1,11 @@
 import math
+from collections import defaultdict
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor import DTensor
 from transformers import PreTrainedModel
 
 from areal.utils import logging, pkg_version
@@ -50,11 +52,29 @@ def fsdp2_clip_grad_norm_(
     else:
         # prevent generators from being exhausted
         parameters = list(parameters)
-    grads = [p.grad for p in parameters if p.grad is not None]
-    total_norm = _get_total_norm(grads, norm_type, error_if_nonfinite, foreach)
-    total_norm = total_norm.to(torch.cuda.current_device(), non_blocking=True)
 
-    _clip_grads_with_norm_(parameters, max_norm, total_norm, foreach)
+    # parameters and grads will have different device meshes
+    # if both FSDP2 and tensor parallel are applied.
+    params_by_mesh = defaultdict(list)
+    grads_by_mesh = defaultdict(list)
+    for p in parameters:
+        if p.grad is not None:
+            grad = p.grad
+            if isinstance(grad, DTensor):
+                params_by_mesh[grad.device_mesh].append(p)
+                grads_by_mesh[grad.device_mesh].append(grad)
+            else:
+                params_by_mesh[grad.device].append(p)
+                grads_by_mesh[grad.device].append(grad)
+
+    total_norm = torch.tensor(0.0, device=torch.cuda.current_device())
+    for key, grads in grads_by_mesh.items():
+        norm = _get_total_norm(grads, norm_type, error_if_nonfinite, foreach)
+        norm = norm.to(torch.cuda.current_device(), non_blocking=True)
+        total_norm += norm
+
+    for key, params in params_by_mesh.items():
+        _clip_grads_with_norm_(params, max_norm, total_norm, foreach)
     return total_norm
 
 

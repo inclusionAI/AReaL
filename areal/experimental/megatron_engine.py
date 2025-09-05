@@ -76,6 +76,17 @@ class MegatronEngine(TrainEngine):
         self.checkpointer = None
         self.seed = 0
 
+    def current_data_parallel_head(self) -> int:
+        """Get the rank of the head of the current data parallel group."""
+        assert self.initialized
+        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
+        return ranks[0]
+
+    def is_data_parallel_head(self) -> bool:
+        assert self.initialized
+        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
+        return ranks[0] == self.rank
+
     def initialize(
         self,
         addr: str | None,
@@ -623,17 +634,6 @@ class MegatronEngine(TrainEngine):
         with stats_tracker.DEFAULT_TRACKER.disable_scope():
             stats_tracker.scalar(**stats)
         return None
-
-    def current_data_parallel_head(self) -> int:
-        """Get the rank of the head of the current data parallel group."""
-        assert self.initialized
-        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
-        return ranks[0]
-
-    def is_data_parallel_head(self) -> bool:
-        assert self.initialized
-        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
-        return ranks[0] == self.rank
 
     @torch.no_grad()
     def forward(

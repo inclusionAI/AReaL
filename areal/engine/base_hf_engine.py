@@ -17,6 +17,7 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
+from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import FinetuneSpec, TrainEngine
 from areal.utils import logging
@@ -112,7 +113,7 @@ class BaseHFEngine(TrainEngine):
         assert self.initialized
         return self._parallelism_group
 
-    def create_process_group(self):
+    def create_process_group(self, parallel_strategy: ParallelStrategy):
         # Required by NCCL weight update group for SGLang
         os.environ["NCCL_CUMEM_ENABLE"] = "0"
         os.environ["NCCL_NVLS_ENABLE"] = "0"
