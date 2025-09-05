@@ -70,12 +70,9 @@ class CountDownWorkflow(RolloutWorkflow):
         self.rollout_stat_scope = rollout_stat_scope
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
-    
+
     async def arun_episode(self, engine: InferenceEngine, data):
-        input_ids = self.tokenizer.encode(
-            data["query"],
-            add_special_tokens=False
-        )
+        input_ids = self.tokenizer.encode(data["query"], add_special_tokens=False)
 
         n_samples = self.gconfig.n_samples
         req = ModelRequest(
@@ -124,7 +121,7 @@ class CountDownWorkflow(RolloutWorkflow):
                 rewards=torch.tensor([float(reward)]),
             )
             results.append(TensorDict(res, batch_size=[1]))
-        
+
         # logger.info(f"numbers: {data['numbers']} target: {data['target']} rewards: {rewards}")
 
         # if all([r<0.2 for r in rewards]):
@@ -159,6 +156,7 @@ class CountDownWorkflow(RolloutWorkflow):
 
         return concat_padded_tensors(results)
 
+
 def get_countdown_dataset(dataset_path, rank, world_size):
     dataset = load_dataset(
         path="json",
@@ -166,6 +164,7 @@ def get_countdown_dataset(dataset_path, rank, world_size):
         data_files=dataset_path,
     )
     return split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+
 
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
