@@ -49,7 +49,7 @@ def evaluate_equation(equation_str):
         # Evaluate the equation with restricted globals and locals
         result = eval(equation_str, {"__builtins__": None}, {})
         return result
-    except Exception as e:
+    except Exception:
         return None
 
 
