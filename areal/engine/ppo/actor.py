@@ -77,7 +77,6 @@ class PPOActor:
             context_length = self.config.context_length
             overlong_tokens = self.config.overlong_tokens
             overlong_penalty_factor = self.config.overlong_penalty_factor
-            max_response_length = self.config.context_length
 
             if context_length is None:
                 raise ValueError(
@@ -92,7 +91,7 @@ class PPOActor:
                 data,
                 overlong_tokens=overlong_tokens,
                 overlong_penalty_factor=overlong_penalty_factor,
-                max_response_length=max_response_length,
+                max_response_length=context_length,
             )
 
         # Reward Scaling

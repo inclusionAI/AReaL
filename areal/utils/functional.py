@@ -233,6 +233,7 @@ def dynamic_sampling(data: TensorDict, group_size: int) -> TensorDict:
     )
 
 
+# code modified from VERL: https://github.com/volcengine/verl/blob/main/verl/workers/reward_manager/dapo.py
 def reward_overlong_penalty(
     data: TensorDict,
     overlong_tokens: int,
@@ -242,7 +243,7 @@ def reward_overlong_penalty(
     reward_score = data["rewards"]
     input_ids = data["input_ids"]
     attn_mask = data["attention_mask"]
-    seq_lengths = (attn_mask.sum(dim=-1) - 2).long()
+    seq_lengths = (attn_mask.sum(dim=-1)).long()
     batch_size = input_ids.shape[0]
     for sample_idx in range(batch_size):
         reward_score_cur = reward_score[sample_idx]
