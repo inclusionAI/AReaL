@@ -1,7 +1,5 @@
 import re
 import random
-import ast
-import operator
 
 
 def extract_solution(solution_str):
