@@ -341,6 +341,13 @@ class PPOActorConfig(TrainEngineConfig):
             "help": "We filter out the tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing the loss, must be > 1.0, use_decoupled_loss must be true"
         },
     )
+    # Advanced Options
+    dynamic_sampling: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable dynamic sampling (within DAPO). If enabled, the group with same reward will be filtered out."
+        },
+    )
 
     # Logging Agent Trajectories
     log_agent_stats: bool = field(

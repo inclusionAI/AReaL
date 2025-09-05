@@ -1,3 +1,4 @@
+import warnings
 from typing import Dict, Optional, Tuple
 
 import numpy as np
@@ -185,6 +186,51 @@ def ppo_actor_loss_fn(
         stat["behave_approx_kl"] = behav_kl
         stat["behave_mask"] = behav_mask
     return pg_loss, stat
+
+
+def dynamic_sampling(data: TensorDict, group_size: int) -> TensorDict:
+    # When calling, make sure the samples from same group are adjacent
+
+    # Get the rewards tensor which has shape [batch_size]
+    rewards = data["rewards"]
+    batch_size = rewards.shape[0]
+
+    # if the group size can not divisible by the group size
+    if batch_size % group_size != 0:
+        warnings.warn(
+            "The group size is not divisible by the batch size. Return the original data"
+        )
+        return data
+
+    # Calculate number of groups (must be divisible)
+    num_groups = batch_size // group_size
+
+    # Reshape rewards to (num_groups, group_size) for group-wise operations
+    rewards_reshaped = rewards.view(num_groups, group_size)
+
+    # Check if all elements in each group are equal to the first element
+    all_equal = (rewards_reshaped == rewards_reshaped[:, 0:1]).all(dim=1)
+
+    # Create mask for groups to keep (where not all rewards are equal)
+    valid_groups = ~all_equal
+
+    # Expand the group mask to individual samples
+    mask = valid_groups.repeat_interleave(group_size)
+
+    # In case all group is filtered out, return the original data (although not gradient in this case)
+    if not mask.any():
+        return data
+
+    # stat metric
+    n_group_keeped = valid_groups.sum().item()
+    n_group_filtered = num_groups - n_group_keeped
+
+    # Apply mask to the TensorDict to create a new filtered TensorDict
+    # TensorDict supports indexing operations that apply to all contained tensors
+    return data[mask], dict(
+        n_group_keeped=n_group_keeped,
+        n_group_filtered=n_group_filtered,
+    )
 
 
 def reward_overlong_penalty(
