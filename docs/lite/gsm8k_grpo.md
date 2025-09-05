@@ -388,10 +388,12 @@ specified by the configuration.
 
 ```python
 actor = FSDPPPOActor(config=config.actor)
+actor.create_process_group()
 actor.initialize(None, ft_spec)
 ref = None
 if config.actor.kl_ctl > 0 and config.ref is not None:
     ref = FSDPPPOActor(config=config.ref)
+    ref.create_process_group()
     ref.initialize(None, ft_spec)
 ```
 

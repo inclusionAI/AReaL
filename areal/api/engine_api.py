@@ -44,6 +44,34 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     @property
+    def data_parallel_group(self) -> dist.ProcessGroup:
+        """The data parallel communication group of this engine."""
+        raise NotImplementedError()
+
+    @property
+    def data_parallel_rank(self) -> int:
+        """The rank of the current process in the data parallel group."""
+        raise NotImplementedError()
+
+    @property
+    def data_parallel_world_size(self) -> int:
+        """The world size of the data parallel group."""
+        raise NotImplementedError()
+
+    def current_data_parallel_head(self) -> int:
+        """Get the current data parallel head rank."""
+        raise NotImplementedError()
+
+    def is_data_parallel_head(self) -> bool:
+        """Check if the current rank is the data parallel head of current engine."""
+        raise NotImplementedError()
+
+    @property
+    def context_and_model_parallel_group(self) -> dist.ProcessGroup:
+        """The context and model parallel communication group of this engine."""
+        raise NotImplementedError()
+
+    @property
     def parallelism_group(self) -> dist.ProcessGroup:
         """The global communication group of this engine."""
         raise NotImplementedError()
@@ -125,10 +153,6 @@ class TrainEngine(abc.ABC):
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Run the forward pass or inference on the model. Note that it is gradient-free."""
-        raise NotImplementedError()
-
-    def is_data_parallel_head(self) -> bool:
-        """Check if the current rank is the data parallel head of current engine."""
         raise NotImplementedError()
 
 

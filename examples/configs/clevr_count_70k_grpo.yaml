@@ -56,8 +56,6 @@ actor:
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
   backend: fsdp
-  fsdp:
-    ulysses_sp_size: 1
 
   group_size: ${gconfig.n_samples}
   group_adv_norm: false
@@ -81,8 +79,6 @@ ref:
     max_tokens_per_mb: 4096
   optimizer: null
   backend: fsdp
-  fsdp:
-    ulysses_sp_size: 1
 
 # SGLang
 sglang:

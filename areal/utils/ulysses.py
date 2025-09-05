@@ -58,7 +58,6 @@ def gather_seq_scatter_heads(
     group = get_ulysses_sequence_parallel_group() if group is None else group
     if not group:
         return x
-    get_ulysses_sequence_parallel_rank(group)
     sp_world = get_ulysses_sequence_parallel_world_size(group)
     x = SeqAllToAll.apply(group, x, head_dim, seq_dim)
     if unpadded_dim_size and unpadded_dim_size % sp_world != 0:
@@ -79,7 +78,6 @@ def gather_heads_scatter_seq(
     group = get_ulysses_sequence_parallel_group() if group is None else group
     if not group:
         return x
-    get_ulysses_sequence_parallel_rank(group)
     dim_size = x.size(seq_dim)
     sp_world = get_ulysses_sequence_parallel_world_size(group)
     if dim_size % sp_world != 0:
@@ -130,15 +128,14 @@ def all_to_all_tensor(
     gather_dim: int,
     group: Optional[dist.ProcessGroup] = None,
     async_op: bool = False,
-):
+) -> Tensor:
     group = get_ulysses_sequence_parallel_group() if group is None else group
-    seq_world_size = dist.get_world_size(group)
-    dist.get_rank(group)
+    sp_world_size = dist.get_world_size(group)
     input_list = [
         t.contiguous()
-        for t in torch.tensor_split(local_input, seq_world_size, scatter_dim)
+        for t in torch.tensor_split(local_input, sp_world_size, scatter_dim)
     ]
-    output_list = [torch.empty_like(input_list[0]) for _ in range(seq_world_size)]
+    output_list = [torch.empty_like(input_list[0]) for _ in range(sp_world_size)]
     comm = dist.all_to_all(output_list, input_list, group=group, async_op=async_op)
     if async_op:
 
@@ -169,7 +166,9 @@ class SeqAllToAll(torch.autograd.Function):
         return all_to_all_tensor(local_input, scatter_dim, gather_dim, group, async_op)
 
     @staticmethod
-    def backward(ctx: Any, *grad_output: Tensor) -> tuple[None, Tensor, None, None]:
+    def backward(
+        ctx: Any, *grad_output: Tensor
+    ) -> tuple[None, Tensor, None, None, None, None]:
         input_t = (
             torch.cat(grad_output[1:], dim=ctx.gather_dim).contiguous()
             if ctx.async_op
