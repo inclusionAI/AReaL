@@ -61,6 +61,7 @@ class BaseHFEngine(TrainEngine):
         self.initialized = False
         self.own_global_group = False
         self._parallelism_group: dist.ProcessGroup
+        self.mp_group: dist.ProcessGroup
         self.weight_update_group_initialized = False
 
         self.model_config = AutoConfig.from_pretrained(
@@ -83,6 +84,30 @@ class BaseHFEngine(TrainEngine):
         return self
 
     @property
+    def data_parallel_group(self) -> dist.ProcessGroup:
+        assert self.initialized
+        return self._parallelism_group
+
+    @property
+    def data_parallel_rank(self) -> int:
+        return dist.get_rank()
+
+    @property
+    def data_parallel_world_size(self) -> int:
+        return self.world_size
+
+    def current_data_parallel_head(self) -> int:
+        return dist.get_rank()
+
+    def is_data_parallel_head(self) -> bool:
+        return True
+
+    @property
+    def context_and_model_parallel_group(self) -> dist.ProcessGroup:
+        assert self.initialized
+        return self.mp_group
+
+    @property
     def parallelism_group(self) -> dist.ProcessGroup:
         assert self.initialized
         return self._parallelism_group
@@ -101,6 +126,8 @@ class BaseHFEngine(TrainEngine):
             )
             self.own_global_group = True
         self._parallelism_group = dist.new_group()
+        # Each process is its own model parallel group.
+        self.mp_group = dist.new_group([dist.get_rank()])
 
     def create_device_model(self):
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
@@ -222,6 +249,7 @@ class BaseHFEngine(TrainEngine):
         gc.collect()
         torch.cuda.empty_cache()
         gc.collect()
+        dist.destroy_process_group(self.context_and_model_parallel_group)
         dist.destroy_process_group(self.parallelism_group)
         if self.own_global_group:
             dist.destroy_process_group()
@@ -517,6 +545,3 @@ class BaseHFEngine(TrainEngine):
         unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
         reordered = reorder_list(unpacked, mb_list.backward_indices)
         return pad_and_stack_tensors_along_first_dim(reordered)
-
-    def is_data_parallel_head(self):
-        return True

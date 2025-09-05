@@ -15,6 +15,7 @@ import areal.utils.stats_tracker as stats_tracker
 from areal.api.cli_args import SFTConfig
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.sft.lm_engine import FSDPLMEngine
+from areal.utils.data import broadcast_tensor_container
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 
 
@@ -22,17 +23,21 @@ def main() -> None:
     config, _ = cli_args.load_expr_config(sys.argv[1:], SFTConfig)
     assert isinstance(config, SFTConfig)
 
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
     rank = int(os.environ.get("RANK", "0"))
 
     seeding.set_random_seed(config.seed, str(rank))
+    allocation_mode = AllocationMode.from_str(config.allocation_mode)
+    parallel_strategy = allocation_mode.train
+
+    engine = FSDPLMEngine(config=config.model)
+    engine.create_process_group(parallel_strategy=parallel_strategy)
 
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
 
     train_dataset = areal.dataset.get_custom_dataset(
         path=config.train_dataset.path,
-        rank=rank,
-        world_size=world_size,
+        rank=engine.data_parallel_rank,
+        world_size=engine.data_parallel_world_size,
         type="sft",
         split="train",
         tokenizer=tokenizer,
@@ -41,7 +46,7 @@ def main() -> None:
 
     train_dataloader = StatefulDataLoader(
         cast(torch.utils.data.Dataset, train_dataset),
-        batch_size=config.train_dataset.batch_size // world_size,
+        batch_size=config.train_dataset.batch_size // engine.data_parallel_world_size,
         collate_fn=areal.utils.data.pad_sequences_to_tensors,
     )
     assert train_dataloader.batch_size is not None
@@ -51,7 +56,6 @@ def main() -> None:
         dataset_size=len(train_dataloader) * train_dataloader.batch_size,
         train_batch_size=train_dataloader.batch_size,
     )
-    engine = FSDPLMEngine(config=config.model)
     engine.initialize(
         addr=None,
         ft_spec=ft_spec,
@@ -68,10 +72,16 @@ def main() -> None:
             ):
                 break
 
+            data = broadcast_tensor_container(
+                data,
+                src_rank=engine.current_data_parallel_head(),
+                group=engine.context_and_model_parallel_group,
+            )
+
             engine.train_lm(data)
             engine.step_lr_scheduler()
 
-            stat = stats_tracker.export(reduce_group=engine.parallelism_group)
+            stat = stats_tracker.export(reduce_group=engine.data_parallel_group)
             losses.append(stat["loss/avg"])
 
             global_step += 1

@@ -71,13 +71,18 @@ class RemoteSGLangEngine(InferenceEngine):
         except requests.exceptions.RequestException as e:
             return False
 
-    def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None = None):
+    def initialize(
+        self,
+        addr: str | None,
+        ft_spec: FinetuneSpec | None = None,
+        train_data_parallel_size: int | None = None,
+    ):
         logger.info("Waiting for server ready...")
         for addr_ in self.addresses:
             self._wait_for_server(addr_)
         logger.info("Servers are all ready!")
         self.executor = ProcessPoolExecutor(max_workers=1)
-        self.workflow_executor.initialize()
+        self.workflow_executor.initialize(train_data_parallel_size)
 
     def destroy(self):
         self.workflow_executor.destroy()

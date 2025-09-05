@@ -67,6 +67,7 @@ def _ulysses_flash_attention_forward(
     return attn_output
 
 
+# NOTE: For vision models, inputs_embeds will be sliced instead of input_ids.
 def patch_vlm_for_ulysses_input_slicing(model_class: type):
     def _create_ulysses_wrapped_decoder_forward(original_forward):
         def ulysses_wrapped_decoder_forward(self, *args, **kwargs):

@@ -74,7 +74,18 @@ class WorkflowExecutor:
 
         self.rollout_stat = RolloutStat()
 
-    def initialize(self):
+    def initialize(self, train_data_parallel_size: int | None = None):
+        if train_data_parallel_size is not None:
+            self.dp_world_size = train_data_parallel_size
+        else:
+            if dist.is_initialized():
+                if not mpu.is_initialized():
+                    self.dp_world_size = dist.get_world_size()
+                else:
+                    self.dp_world_size = mpu.get_data_parallel_world_size()
+            else:
+                self.dp_world_size = 1
+
         self.rollout_tasks: Dict[str, asyncio.Task] = {}
         self.rollout_thread = threading.Thread(
             target=self._rollout_thread, daemon=True
@@ -86,24 +97,16 @@ class WorkflowExecutor:
         self.rollout_thread.join()
 
     def get_capacity(self):
-        if dist.is_initialized():
-            if not mpu.is_initialized():
-                world_size = dist.get_world_size()
-            else:
-                world_size = mpu.get_data_parallel_world_size()
-        else:
-            world_size = 1
-
         with self.lock:
             max_concurrent_rollouts = max(
-                1, self.config.max_concurrent_rollouts // world_size
+                1, self.config.max_concurrent_rollouts // self.dp_world_size
             )
             capacity = max_concurrent_rollouts - len(self.rollout_tasks)
             # Staleness control
             version = self.inference_engine.get_version()
             ofp = self.config.max_head_offpolicyness
             sample_cnt = self.rollout_stat.accepted + self.rollout_stat.running
-            consumer_bs = max(1, self.config.consumer_batch_size // world_size)
+            consumer_bs = max(1, self.config.consumer_batch_size // self.dp_world_size)
             capacity = min(capacity, (ofp + version + 1) * consumer_bs - sample_cnt)
         return capacity
 

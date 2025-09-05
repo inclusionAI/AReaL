@@ -107,8 +107,8 @@ Our training scripts will automatically download the dataset (openai/gsm8k) and 
 
 ```bash
 python3 -m areal.launcher.local \
-  examples/lite/gsm8k_grpo.py \
-  --config examples/lite/configs/gsm8k_grpo.yaml
+  examples/gsm8k_grpo.py \
+  --config examples/configs/gsm8k_grpo.yaml
 ```
 
 On a Ray cluster with 2 nodes & 8 GPUs each node, runs (remember to change paths in the
@@ -116,8 +116,8 @@ YAML file to your own shared storage):
 
 ```bash
 python3 -m areal.launcher.ray \
-  examples/lite/gsm8k_grpo.py \
-  --config examples/lite/configs/gsm8k_grpo.yaml \
+  examples/gsm8k_grpo.py \
+  --config examples/configs/gsm8k_grpo.yaml \
   cluster.n_nodes=2 \
   cluster.n_gpus_per_node=8
 ```
@@ -128,7 +128,7 @@ python3 -m areal.launcher.ray \
 Evaluation (on a single node):
 
 ```
-python3 -m areal.launcher.local examples/lite/eval.py --config examples/lite/configs/eval.yaml
+python3 -m areal.launcher.local examples/eval.py --config examples/configs/eval.yaml
 ```
 -->
 
@@ -143,9 +143,9 @@ from files from `examples` folder, or generated when you run your experiments in
 `<fileroot>/<expr_name>/<trial_name>` folder. Runs:
 
 ```bash
-python examples/lite/config_converter.py \
+python examples/config_converter.py \
   --convert_src AReaL --src_config_path <path_to_areal_yaml> \
-  --template_path examples/lite/configs/gsm8k_grpo.yaml \
+  --template_path examples/configs/gsm8k_grpo.yaml \
   --output_path <output_yaml>
 ```
 

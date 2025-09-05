@@ -18,6 +18,7 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.reward.math_parser import process_results
 from areal.utils import seeding
+from areal.utils.data import broadcast_tensor_container
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
@@ -31,17 +32,21 @@ def main() -> None:
     config, _ = cli_args.load_expr_config(sys.argv[1:], GRPOConfig)
     assert isinstance(config, GRPOConfig)
 
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
     rank = int(os.environ.get("RANK", "0"))
 
     seeding.set_random_seed(config.seed, str(rank))
+    allocation_mode = AllocationMode.from_str(config.allocation_mode)
+    parallel_strategy = allocation_mode.train
+
+    actor = FSDPPPOActor(config=config.actor)
+    actor.create_process_group(parallel_strategy=parallel_strategy)
 
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
 
     train_dataset = areal.dataset.get_custom_dataset(
         path=config.train_dataset.path,
-        rank=rank,
-        world_size=world_size,
+        rank=actor.data_parallel_rank,
+        world_size=actor.data_parallel_world_size,
         type="rl",
         split="train",
         tokenizer=tokenizer,
@@ -50,7 +55,7 @@ def main() -> None:
 
     train_dataloader = StatefulDataLoader(
         cast(torch.utils.data.Dataset, train_dataset),
-        batch_size=config.train_dataset.batch_size // world_size,
+        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
         collate_fn=lambda x: x,
     )
     assert train_dataloader.batch_size is not None
@@ -62,12 +67,16 @@ def main() -> None:
     )
 
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(None, ft_spec)
+    rollout.initialize(
+        None,
+        ft_spec,
+        train_data_parallel_size=parallel_strategy.dp_size,
+    )
 
-    actor = FSDPPPOActor(config=config.actor)
     actor.initialize(None, ft_spec)
 
     ref = FSDPPPOActor(config=config.ref)
+    ref.create_process_group(parallel_strategy=parallel_strategy)
     ref.initialize(None, ft_spec)
 
     weight_update_meta = [
@@ -103,8 +112,15 @@ def main() -> None:
             ):
                 break
 
-            batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
-            batch = batch.to(actor.device)
+            batch = None
+            if actor.is_data_parallel_head():
+                batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
+                batch = batch.to(actor.device)
+            batch = broadcast_tensor_container(
+                batch,
+                src_rank=actor.current_data_parallel_head(),
+                group=actor.context_and_model_parallel_group,
+            )
 
             dist.barrier(device_ids=[actor.device.index])
             torch.cuda.synchronize()

@@ -37,7 +37,6 @@ def main(args):
     config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
-    world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")

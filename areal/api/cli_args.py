@@ -166,12 +166,6 @@ class FSDPWrapPolicy:
 
 @dataclass
 class FSDPEngineConfig:
-    ulysses_sp_size: int = field(
-        default=1,
-        metadata={
-            "help": "Ulysses sequence parallel size (default: 1)",
-        },
-    )
     wrap_policy: Optional[FSDPWrapPolicy] = field(
         default=None,
         metadata={"help": "FSDP wrap policy, specifying model layers to wrap."},
@@ -331,6 +325,16 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={
             "help": "Enable dynamic sampling (within DAPO). If enabled, the group with same reward will be filtered out."
         },
+    )
+
+    # Logging Agent Trajectories
+    log_agent_stats: bool = field(
+        default=False,
+        metadata={"help": "Log stats for agent trajectories"},
+    )
+    log_agent_stats_keys: List[str] = field(
+        default_factory=lambda: [],
+        metadata={"help": "Keys of log stats for agent trajectories"},
     )
 
     # Logging Agent Trajectories

@@ -50,7 +50,7 @@ docker run -it --name areal-node1 \
    /bin/bash
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
-bash examples/env/scripts/setup-container-deps.sh
+bash examples/env/setup-container-deps.sh
 ```
 
 ### Option 2: Custom Environment Installation
@@ -70,11 +70,11 @@ conda activate areal
 ```bash
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
-bash examples/env/scripts/setup-pip-deps.sh
+bash examples/env/setup-pip-deps.sh
 ```
 
 <!-- NO SGLang patch now
-> The SGLang patch is applied via `examples/env/scripts/setup-container-deps.sh` or `examples/env/scripts/setup-pip-deps.sh`. To confirm whether it has been applied, run `git status` in the `/sglang` directory (for Docker) or `AReaL/sglang` (for custom setups).
+> The SGLang patch is applied via `examples/env/setup-container-deps.sh` or `examples/env/setup-pip-deps.sh`. To confirm whether it has been applied, run `git status` in the `/sglang` directory (for Docker) or `AReaL/sglang` (for custom setups).
 -->
 
 ## (Optional) Launch Ray Cluster for Distributed Training
