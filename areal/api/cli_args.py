@@ -518,6 +518,9 @@ class InferenceEngineConfig:
     request_retries: int = field(
         default=3, metadata={"help": "Number of retries for failed requests."}
     )
+    n_sglang_servers: int = field(
+        default=1, metadata={"help": "Minimum number of expected SGLang servers."}
+    )
 
 
 @dataclass

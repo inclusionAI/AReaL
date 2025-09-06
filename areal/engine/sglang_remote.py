@@ -24,6 +24,7 @@ from areal.api.io_struct import (
 from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
+from areal.utils.launcher import wait_sglang_server_addrs
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,9 @@ class RemoteSGLangEngine(InferenceEngine):
         # Maintain the addresses for the recent 128 requests
         self.rid_queue = []
 
-        self.addresses = os.getenv("AREAL_LLM_SERVER_ADDRS").split(",")
+        self.addresses = wait_sglang_server_addrs(
+            config.experiment_name, config.trial_name, config.n_sglang_servers
+        )
 
         if not self.addresses:
             raise RuntimeError("No configured SGLang servers.")
