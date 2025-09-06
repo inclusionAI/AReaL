@@ -140,7 +140,7 @@ class WerewolfEnv(EnvironmentService):
         self.hunter_player = None
         self.player_memory = {p: [] for p in self.roles}
         self.trajectory = []
-        self.answer_format_record = [10, 10]
+        self.answer_format_record = [70, 70]
         self.stats: Dict[str, int] = {
             "vill_wins": 0,
             "were_wins": 0,
@@ -192,7 +192,7 @@ class WerewolfEnv(EnvironmentService):
         self.hunter_player = None
         self.player_memory = {p: [] for p in self.roles}
         self.trajectory = []
-        self.answer_format_record = [10, 10]
+        self.answer_format_record = [70, 70]
         self.stats: Dict[str, int] = {
             "vill_wins": 0,
             "were_wins": 0,
@@ -238,7 +238,8 @@ class WerewolfEnv(EnvironmentService):
         self.answer_format_record[1] += 2
         if len(m) >= 1:
             self.answer_format_record[0] += (2 if has_think else 1)
-        self.answer_format_record[0] += (1 if has_think else 0)
+        else:
+            self.answer_format_record[0] += (1 if has_think else 0)
 
     def _action_reward(self, role: str, action: str) -> List[float]:
         """Assign rewards for meaningful actions."""
@@ -424,10 +425,10 @@ class WerewolfEnv(EnvironmentService):
                 done = True
                 if winner == "werewolf":
                     self.stats["were_wins"] += 1
-                    reward[1] += 5.0
+                    reward[1] += 14.0
                 else:
                     self.stats["vill_wins"] += 1
-                    reward[0] += 5.0
+                    reward[0] += 14.0
                 info += f"Game over. {winner} win."
             else:
                 # Check if hunter shall act
@@ -452,10 +453,10 @@ class WerewolfEnv(EnvironmentService):
                 done = True
                 if winner == "werewolf":
                     self.stats["were_wins"] += 1
-                    reward[1] += 5.0
+                    reward[1] += 14.0
                 else:
                     self.stats["vill_wins"] += 1
-                    reward[0] += 5.0
+                    reward[0] += 14.0
                 info += f"Game over. {winner} win."
             else:
                 self.phase = "night"
