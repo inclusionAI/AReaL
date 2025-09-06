@@ -1,9 +1,10 @@
-import re
 import itertools
-import random
-import sys
 import pathlib
+import random
+import re
+import sys
 from typing import Dict
+
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
