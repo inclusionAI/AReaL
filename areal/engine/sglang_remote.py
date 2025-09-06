@@ -1,5 +1,4 @@
 import asyncio
-import os
 import random
 import shutil
 import time
