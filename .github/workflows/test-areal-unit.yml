@@ -26,7 +26,7 @@ jobs:
           python-version: "3.12"
 
       - run: |
-          source examples/env/scripts/setup-pip-deps.sh
+          source examples/env/setup-pip-deps.sh
 
       - name: Wait for 2 free GPUs
         timeout-minutes: 7200

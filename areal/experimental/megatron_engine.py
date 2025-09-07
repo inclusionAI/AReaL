@@ -10,10 +10,13 @@ import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
+from megatron.core.distributed import DistributedDataParallel as DDP
+from megatron.core.distributed import finalize_model_grads
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.utils import get_model_config
 from tensordict import TensorDict
 
 from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
@@ -115,6 +118,16 @@ class MegatronEngine(TrainEngine):
 
         if self.config.disable_dropout:
             disable_dropout_in_model(self.model)
+
+        model_config = get_model_config(self.model)
+        if isinstance(self.model, DDP) and self.mcore_config.ddp.overlap_grad_reduce:
+            model_config.no_sync_func = self.model.no_sync
+        if (
+            self.mcore_config.ddp.overlap_param_gather
+            and self.mcore_config.ddp.align_param_gather
+        ):
+            model_config.param_sync_func = self.model.start_param_sync
+        model_config.finalize_model_grads_func = finalize_model_grads
 
         self.create_optimizer(ft_spec)
         self.initialized = True
@@ -443,17 +456,6 @@ class MegatronEngine(TrainEngine):
     def step_lr_scheduler(self):
         assert self.lr_scheduler is not None, "LR Scheduler is not initialized."
         self.lr_scheduler.step(1)
-
-    def _current_data_parallel_head(self) -> int:
-        """Get the rank of the head of the current data parallel group."""
-        assert self.initialized
-        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
-        return ranks[0]
-
-    def is_data_parallel_head(self) -> bool:
-        assert self.initialized
-        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
-        return ranks[0] == self.rank
 
     def train_batch(
         self,

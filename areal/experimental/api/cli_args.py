@@ -8,9 +8,6 @@ class DistributedDataParallelConfig:
     """
 
     grad_reduce_in_fp32: bool = True
-    # NOTE: Currently overlap_grad_reduce can only be set to False,
-    # otherwise error `Cannot set grad twice` will be raised when doing backward pass.
-    # TODO: modify GPTModel config to support overlap_grad_reduce=True
     overlap_grad_reduce: bool = False
     overlap_param_gather: bool = False
     align_param_gather: bool = False

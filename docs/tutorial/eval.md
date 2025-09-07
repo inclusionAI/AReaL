@@ -21,7 +21,7 @@ conda activate areal-eval
 Install dependencies:
 
 ```bash
-bash examples/env/scripts/setup-eval-pip-deps.sh
+bash examples/env/setup-eval-pip-deps.sh
 ```
 
 ### Run Evaluation

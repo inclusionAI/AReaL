@@ -210,7 +210,14 @@ class ParallelStrategy:
         )
 
 
-# TODO: Add FSDP parallel strategy.
+@dataclass
+class FSDPParallelStrategy(ParallelStrategy):
+    """FSDP parallel strategy."""
+
+    @staticmethod
+    def parallelism_eq(this, other):
+        """Compare FSDP parallelism configurations."""
+        return super().parallelism_eq(this, other)
 
 
 @dataclass

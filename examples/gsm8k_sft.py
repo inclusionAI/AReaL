@@ -8,58 +8,59 @@ from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
 from areal.engine.sft.lm_engine import FSDPLMEngine
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import pad_sequences_to_tensors
+from areal.utils.data import broadcast_tensor_container, pad_sequences_to_tensors
 from areal.utils.evaluator import Evaluator
-from areal.utils.hf_utils import load_hf_processor_and_tokenizer
+from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
 
-def main_sft():
-    config, _ = load_expr_config(sys.argv[1:], SFTConfig)
+def main(args):
+    config, _ = load_expr_config(args, SFTConfig)
     config: SFTConfig
 
     rank = int(os.getenv("RANK"))
-    world_size = int(os.getenv("WORLD_SIZE"))
 
     seeding.set_random_seed(config.seed, f"trainer{rank}")
+    allocation_mode = AllocationMode.from_str(config.allocation_mode)
+    parallel_strategy = allocation_mode.train
 
-    processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
+    engine = FSDPLMEngine(config=config.model)
+    engine.create_process_group(parallel_strategy=parallel_strategy)
+
+    tokenizer = load_hf_tokenizer(config.tokenizer_path)
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
-        rank=rank,
-        world_size=world_size,
+        rank=engine.data_parallel_rank,
+        world_size=engine.data_parallel_world_size,
         split="train",
         max_length=config.train_dataset.max_length,
         type=config.train_dataset.type,
         tokenizer=tokenizer,
-        processor=processor,
     )
     valid_dataset = get_custom_dataset(
         path=config.valid_dataset.path,
-        rank=rank,
-        world_size=world_size,
+        rank=engine.data_parallel_rank,
+        world_size=engine.data_parallel_world_size,
         split="test",
         max_length=config.valid_dataset.max_length,
         type=config.valid_dataset.type,
         tokenizer=tokenizer,
-        processor=processor,
     )
 
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         train_dataset,
-        batch_size=config.train_dataset.batch_size // world_size,
+        batch_size=config.train_dataset.batch_size // engine.data_parallel_world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
         collate_fn=pad_sequences_to_tensors,
         drop_last=config.train_dataset.drop_last,
     )
-
     valid_dataloader = StatefulDataLoader(
         valid_dataset,
-        batch_size=config.valid_dataset.batch_size // world_size,
+        batch_size=config.valid_dataset.batch_size // engine.data_parallel_world_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
         collate_fn=pad_sequences_to_tensors,
@@ -72,7 +73,6 @@ def main_sft():
         dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
         train_batch_size=config.train_dataset.batch_size,
     )
-    engine = FSDPLMEngine(config=config.model)
     engine.initialize(None, ft_spec)
 
     # Run training.
@@ -95,6 +95,8 @@ def main_sft():
     )
 
     total_epochs = config.total_train_epochs
+    len(train_dataloader)
+
     global_step = 0
     for epoch in range(total_epochs):
         for step, data in enumerate(train_dataloader):
@@ -108,6 +110,13 @@ def main_sft():
                 steps_per_epoch=len(train_dataloader),
             )
 
+            # NOTE: data are identical across model+context parallel group
+            data = broadcast_tensor_container(
+                data,
+                src_rank=engine.current_data_parallel_head(),
+                group=engine.context_and_model_parallel_group,
+            )
+
             with (
                 stats_tracker.record_timing("train_step"),
                 stats_tracker.scope("sft"),
@@ -117,14 +126,7 @@ def main_sft():
                 stats_tracker.scalar(**stats)
 
             with stats_tracker.record_timing("save"):
-                saver.save(
-                    engine,
-                    epoch,
-                    step,
-                    global_step,
-                    tokenizer=tokenizer,
-                    processor=processor,
-                )
+                saver.save(engine, epoch, step, global_step, tokenizer=tokenizer)
 
             with stats_tracker.record_timing("eval"):
                 # No need to log anything. Logging will be handled outside
@@ -150,14 +152,13 @@ def main_sft():
                     stats_logger,
                     train_dataloader,
                     tokenizer=tokenizer,
-                    processor=processor,
                 )
 
             stats_logger.commit(
                 epoch,
                 step,
                 global_step,
-                stats_tracker.export(reduce_group=engine.parallelism_group),
+                stats_tracker.export(reduce_group=engine.data_parallel_group),
             )
             global_step += 1
 
@@ -166,4 +167,4 @@ def main_sft():
 
 
 if __name__ == "__main__":
-    main_sft()
+    main(sys.argv[1:])

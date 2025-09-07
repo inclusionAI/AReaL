@@ -1,3 +1,4 @@
+import dataclasses
 import os
 import time
 from datetime import datetime
@@ -15,11 +16,11 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.device_mesh import init_device_mesh
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
+from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import FinetuneSpec
 from areal.api.io_struct import ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.engine.base_hf_engine import BaseHFEngine
-from areal.models.sharding.fsdp_ulysses import FSDPUlyssesShardingManager
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.utils import datapack, logging, name_resolve, names, pkg_version
 from areal.utils.data import (
@@ -33,15 +34,13 @@ from areal.utils.fsdp import (
     CPUOffloadPolicy,
     MixedPrecisionPolicy,
     apply_fsdp2,
-    create_fsdp_device_mesh,
     fsdp2_clip_grad_norm_,
     fsdp2_load_full_state_dict,
 )
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
     get_ulysses_sequence_parallel_group,
-    get_ulysses_sequence_parallel_rank,
-    get_ulysses_sequence_parallel_world_size,
+    set_ulysses_sequence_parallel_group,
     ulysses_pad,
     ulysses_pad_and_slice_inputs,
 )
@@ -53,9 +52,100 @@ class FSDPEngine(BaseHFEngine):
     def __init__(self, config: TrainEngineConfig):
         super().__init__(config)
         # FSDP options
+        self.fsdp_device_mesh = None
         self.mixed_precision_policy = None
-        self.device_mesh = None
         self.cpu_offload = None
+
+        self.dp_world_size = None
+        self.sp_world_size = None
+
+        self.rank = None
+        self.dp_head = None
+        self.dp_rank = None
+
+        self.dp_group = None
+        self.sp_group = None
+        self.mp_group = None
+
+    @property
+    def data_parallel_group(self) -> dist.ProcessGroup:
+        assert self.dp_group is not None
+        return self.dp_group
+
+    @property
+    def data_parallel_rank(self) -> int:
+        assert self.dp_rank is not None
+        return self.dp_rank
+
+    @property
+    def data_parallel_world_size(self) -> int:
+        assert self.dp_world_size is not None
+        return self.dp_world_size
+
+    def current_data_parallel_head(self) -> int:
+        assert self.dp_head is not None
+        return self.dp_head
+
+    def is_data_parallel_head(self) -> bool:
+        return self.rank == self.dp_head
+
+    @property
+    def context_and_model_parallel_group(self) -> dist.ProcessGroup:
+        assert self.mp_group is not None
+        return self.mp_group
+
+    def _make_parallel_strategy(
+        self, parallel_strategy: ParallelStrategy
+    ) -> FSDPParallelStrategy:
+        return FSDPParallelStrategy(
+            **dataclasses.asdict(parallel_strategy),
+        )
+
+    def create_process_group(self, parallel_strategy: ParallelStrategy):
+        super().create_process_group()
+
+        self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
+
+        self.dp_world_size = self.parallel_strategy.data_parallel_size
+        # This is Ulysses sequence parallelism
+        self.sp_world_size = self.parallel_strategy.context_parallel_size
+
+        logger.info(
+            f"Initializing device mesh with DP{self.dp_world_size} and SP{self.sp_world_size}"
+        )
+
+        # Initialize the mesh using both DP and SP for sharding.
+        # For example, d4c2 allocation mode will shard the model into 8 parts
+        fsdp_world_size = self.dp_world_size * self.sp_world_size
+        self.fsdp_device_mesh = init_device_mesh(
+            "cuda", mesh_shape=(fsdp_world_size,), mesh_dim_names=("fsdp",)
+        )
+
+        self.rank = dist.get_rank()
+
+        self.nd_device_mesh = init_device_mesh(
+            "cuda",
+            mesh_shape=(self.dp_world_size, self.sp_world_size),
+            mesh_dim_names=("dp", "sp"),
+        )
+
+        self.dp_group = self.nd_device_mesh["dp"].get_group()
+        self.sp_group = self.nd_device_mesh["sp"].get_group()
+        self.mp_group = self.sp_group
+
+        self.dp_head = self.nd_device_mesh["sp"].mesh.flatten().tolist()[0]
+        self.dp_rank = dist.get_rank(self.dp_group)
+
+        current_sp_group = get_ulysses_sequence_parallel_group()
+        if current_sp_group is not None:
+            current_sp_group_ranks = dist.get_process_group_ranks(current_sp_group)
+            sp_group_ranks = dist.get_process_group_ranks(self.sp_group)
+            if current_sp_group_ranks != sp_group_ranks:
+                raise RuntimeError(
+                    f"Ulysses sequence parallel group mismatch: current ranks {current_sp_group_ranks} v.s. new ranks {sp_group_ranks}"
+                )
+        else:
+            set_ulysses_sequence_parallel_group(self.sp_group)
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
         # Initialize distributed enviroments and load model.
@@ -65,42 +155,13 @@ class FSDPEngine(BaseHFEngine):
             "torch", "2.4.0"
         ), f"areal only supports FSDP2, which requires torch>=2.4.0"
 
-        # Create process group
-        self.create_process_group()
-
-        # Create device mesh
-        self.device_mesh = create_fsdp_device_mesh(self.world_size, self.world_size)
-
-        # Create Ulysses device mesh
-        self.ulysses_device_mesh = None
-        self.ulysses_sp_size = self.config.fsdp.ulysses_sp_size
-        if self.world_size % self.ulysses_sp_size != 0:
-            raise ValueError(
-                f"FSDP's world_size ({self.world_size}) must be divisible by ulysses_sp_size ({self.ulysses_sp_size})!"
-            )
-        dp = self.world_size // self.ulysses_sp_size
-        if self.ulysses_sp_size > 1:
-            self.ulysses_device_mesh = init_device_mesh(
-                "cuda",
-                mesh_shape=(dp, self.ulysses_sp_size),
-                mesh_dim_names=("dp", "sp"),
-            )
-            logger.info(
-                f"Created FSDP Engine with Ulysses sequence parallelism (SP={self.ulysses_sp_size})"
-            )
-
-        # This sharding manager is mainly used to save/restore distributed groups
-        self.ulysses_sharding_manager = FSDPUlyssesShardingManager(
-            self.ulysses_device_mesh
-        )
-
         # Create device model
         self.create_device_model()
 
         # Monkey patch: replace attention's forward() with Ulysses variant.
         apply_monkey_patch(
             model=self.model,
-            ulysses_sp_size=self.ulysses_sp_size,
+            ulysses_sp_size=self.sp_world_size,
         )
 
         # sharding_strategy = ShardingStrategy.FULL_SHARD
@@ -114,7 +175,7 @@ class FSDPEngine(BaseHFEngine):
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
         fsdp_kwargs = {
-            "mesh": self.device_mesh,
+            "mesh": self.fsdp_device_mesh,
             "mp_policy": self.mixed_precision_policy,
             "offload_policy": self.cpu_offload,
             "reshard_after_forward": True,
@@ -296,6 +357,7 @@ class FSDPEngine(BaseHFEngine):
 
         self.optimizer.zero_grad()
         mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
 
         total_loss_weight = torch.tensor(
             sum([loss_weight_fn(mb) for mb in mb_list.mbs]),
@@ -306,103 +368,63 @@ class FSDPEngine(BaseHFEngine):
         dist.all_reduce(total_loss_weight)
 
         # Process microbatches with gradient accumulation
-        if self.ulysses_sp_size > 1:
-            with self.ulysses_sharding_manager:
-                get_ulysses_sequence_parallel_rank()
-                sp_world_size = get_ulysses_sequence_parallel_world_size()
-                sp_group = get_ulysses_sequence_parallel_group()
-                dp_world_size = self.world_size // sp_world_size
+        for i, (pad_length, padded_mb_input, mb_input) in enumerate(
+            zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
+        ):
+            if self.sp_world_size > 1:
+                input_ids = padded_mb_input["input_ids"]
+                position_ids = padded_mb_input.get("position_ids", None)
 
-                mb_lists = [None for _ in range(sp_world_size)]
-                dist.all_gather_object(mb_lists, mb_list, group=sp_group)
-                mb_lists = [mb.to(self.device) for mb in mb_lists]
+                if self.is_vision_model:
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad(input_ids, position_ids, sp_size=self.sp_world_size)
+                else:
+                    # Pad and slice the inputs
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad_and_slice_inputs(
+                        input_ids,
+                        position_ids,
+                        sp_size=self.sp_world_size,
+                    )
 
-                for src in range(sp_world_size):
-                    for i, (pad_length, padded_mb_input, mb_input) in enumerate(
-                        zip(
-                            mb_lists[src].padding_lengths,
-                            mb_lists[src].padded_mbs,
-                            mb_lists[src].mbs,
-                        )
-                    ):
-                        self.model.set_requires_gradient_sync(
-                            src == sp_world_size - 1 and i == len(mb_lists[src].mbs) - 1
-                        )
+                if (
+                    ulysses_position_ids is not None
+                    and not ulysses_position_ids.is_contiguous()
+                ):
+                    ulysses_position_ids = ulysses_position_ids.contiguous()
 
-                        input_ids = padded_mb_input["input_ids"]
-                        position_ids = padded_mb_input.get("position_ids", None)
+                inputs = padded_mb_input.copy()
+                inputs["input_ids"] = ulysses_input_ids
+                if ulysses_position_ids is not None:
+                    inputs["position_ids"] = ulysses_position_ids
+            else:
+                inputs = padded_mb_input
 
-                        if self.is_vision_model:
-                            # NOTE: For vision models, inputs_embeds will be sliced instead of input_ids.
-                            #       Please refer to patch_vlm_for_ulysses_input_slicing() in
-                            #       areal/models/transformers/ulyssess_patch.py
-                            (
-                                ulysses_input_ids,
-                                ulysses_position_ids,
-                                ulysses_pad_size,
-                            ) = ulysses_pad(
-                                input_ids, position_ids, sp_size=sp_world_size
-                            )
-                        else:
-                            # Pad and slice the inputs
-                            (
-                                ulysses_input_ids,
-                                ulysses_position_ids,
-                                ulysses_pad_size,
-                            ) = ulysses_pad_and_slice_inputs(
-                                input_ids, position_ids, sp_size=sp_world_size
-                            )
+            outputs = self.model(**inputs)
 
-                        if not ulysses_position_ids.is_contiguous():
-                            ulysses_position_ids = ulysses_position_ids.contiguous()
+            logits = outputs.logits.squeeze(0)
+            if self.sp_world_size > 1:
+                # Gather and remove Ulysses padding
+                gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
+                logits = torch.cat(gathered_logits, dim=0)
+                logits = logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
+            # Remove original padding
+            logits = logits[:-pad_length] if pad_length > 0 else logits
+            loss = loss_fn(logits, mb_input)
+            loss_scale = loss_weight_fn(mb_input) / total_loss_weight
 
-                        ulysses_mb_input = padded_mb_input.copy()
-                        ulysses_mb_input["input_ids"] = ulysses_input_ids
-                        if ulysses_position_ids is not None:
-                            ulysses_mb_input["position_ids"] = ulysses_position_ids
+            # Scale loss for accumulation
+            # To reverse the gradient averaging for SP groups
+            loss_scale *= self.dp_world_size
 
-                        # NOTE: Only null attention mask is supported
-                        attention_mask = ulysses_mb_input.get("attention_mask", None)
-                        assert attention_mask is not None, "Attention mask is missing"
-                        assert attention_mask.get("full_attention", None) is None
-
-                        outputs = self.model(**ulysses_mb_input)
-
-                        logits = outputs.logits.squeeze(0)
-                        gathered_logits = dist_F.all_gather(logits, group=sp_group)
-                        full_logits = torch.cat(gathered_logits, dim=0)
-                        if ulysses_pad_size > 0:
-                            full_logits = full_logits[:-ulysses_pad_size]
-                        # Remove original padding
-                        if pad_length > 0:
-                            full_logits = full_logits[:-pad_length]
-
-                        loss = loss_fn(full_logits, mb_input)
-                        loss_scale = loss_weight_fn(mb_input) / total_loss_weight
-
-                        # To reverse the gradient averaging for SP groups
-                        loss_scale *= dp_world_size
-
-                        loss *= loss_scale
-                        loss.backward()
-        else:
-            for i, (pad_length, padded_mb_input, mb_input) in enumerate(
-                zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
-            ):
-                self.model.set_requires_gradient_sync(i == len(mb_list.mbs) - 1)
-                outputs = self.model(**padded_mb_input)
-
-                logits = outputs.logits.squeeze(0)
-                logits = logits[:-pad_length] if pad_length > 0 else logits
-                loss = loss_fn(logits, mb_input)
-                loss_scale = loss_weight_fn(mb_input) / total_loss_weight
-
-                # Scale loss for accumulation
-                # Revert gradient averaging across dp ranks
-                loss_scale *= self.world_size
-
-                loss *= loss_scale
-                loss.backward()
+            loss *= loss_scale
+            loss.backward()
 
         # NOTE: grad norm clip function is different
 
@@ -432,8 +454,9 @@ class FSDPEngine(BaseHFEngine):
         loss_weight_fn: Callable[[TensorDict], float],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
-        input_ = input_.to(self.device)
         mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
+
         total_loss_weight = torch.tensor(
             sum([loss_weight_fn(mb) for mb in mb_list.mbs]), dtype=torch.float32
         )
@@ -442,82 +465,60 @@ class FSDPEngine(BaseHFEngine):
         total_loss = 0.0
         total_weight = 0.0
 
-        if self.ulysses_sp_size > 1:
-            with self.ulysses_sharding_manager:
-                get_ulysses_sequence_parallel_rank()
-                sp_world_size = get_ulysses_sequence_parallel_world_size()
-                sp_group = get_ulysses_sequence_parallel_group()
+        for pad_length, padded_mb_input, mb_input in zip(
+            mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
+        ):
+            if self.sp_world_size > 1:
+                input_ids = padded_mb_input["input_ids"]
+                position_ids = padded_mb_input.get("position_ids", None)
 
-                mb_lists = [None for _ in range(sp_world_size)]
-                dist.all_gather_object(mb_lists, mb_list, group=sp_group)
-                mb_lists = [mb.to(self.device) for mb in mb_lists]
+                if self.is_vision_model:
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad(input_ids, position_ids, sp_size=self.sp_world_size)
+                else:
+                    # Pad and slice the inputs
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad_and_slice_inputs(
+                        input_ids,
+                        position_ids,
+                        sp_size=self.sp_world_size,
+                    )
 
-                for src in range(sp_world_size):
-                    for pad_length, padded_mb_input, mb_input in zip(
-                        mb_lists[src].padding_lengths,
-                        mb_lists[src].padded_mbs,
-                        mb_lists[src].mbs,
-                    ):
-                        input_ids = padded_mb_input["input_ids"]
-                        position_ids = padded_mb_input.get("position_ids", None)
+                if (
+                    ulysses_position_ids is not None
+                    and not ulysses_position_ids.is_contiguous()
+                ):
+                    ulysses_position_ids = ulysses_position_ids.contiguous()
 
-                        if self.is_vision_model:
-                            # NOTE: For vision models, inputs_embeds will be sliced instead of input_ids.
-                            #       Please refer to patch_vlm_for_ulysses_input_slicing() in
-                            #       areal/models/transformers/ulyssess_patch.py
-                            (
-                                ulysses_input_ids,
-                                ulysses_position_ids,
-                                ulysses_pad_size,
-                            ) = ulysses_pad(
-                                input_ids, position_ids, sp_size=sp_world_size
-                            )
-                        else:
-                            # Pad and slice the inputs
-                            (
-                                ulysses_input_ids,
-                                ulysses_position_ids,
-                                ulysses_pad_size,
-                            ) = ulysses_pad_and_slice_inputs(
-                                input_ids, position_ids, sp_size=sp_world_size
-                            )
+                inputs = padded_mb_input.copy()
+                inputs["input_ids"] = ulysses_input_ids
+                if ulysses_position_ids is not None:
+                    inputs["position_ids"] = ulysses_position_ids
+            else:
+                inputs = padded_mb_input
 
-                        if not ulysses_position_ids.is_contiguous():
-                            ulysses_position_ids = ulysses_position_ids.contiguous()
+            outputs = self.model(**inputs)
 
-                        ulysses_mb_input = padded_mb_input.copy()
-                        ulysses_mb_input["input_ids"] = ulysses_input_ids
-                        if ulysses_position_ids is not None:
-                            ulysses_mb_input["position_ids"] = ulysses_position_ids
+            logits = outputs.logits.squeeze(0)
+            if self.sp_world_size > 1:
+                # Gather and remove Ulysses padding
+                gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
+                logits = torch.cat(gathered_logits, dim=0)
+                logits = logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
+            # Remove original padding
+            logits = logits[:-pad_length] if pad_length > 0 else logits
+            loss = loss_fn(logits, mb_input)
 
-                        outputs = self.model(**ulysses_mb_input)
-
-                        logits = outputs.logits.squeeze(0)
-                        gathered_logits = dist_F.all_gather(logits, group=sp_group)
-                        full_logits = torch.cat(gathered_logits, dim=0)
-                        if ulysses_pad_size > 0:
-                            full_logits = full_logits[:-ulysses_pad_size]
-                        # Remove original padding
-                        if pad_length > 0:
-                            full_logits = full_logits[:-pad_length]
-
-                        loss = loss_fn(full_logits, mb_input)
-                        loss_scale = loss_weight_fn(mb_input) / total_loss_weight
-                        total_loss += loss.item() * loss_scale
-                        total_weight += loss_scale
-        else:
-            for pad_length, padded_mb_input, mb_input in zip(
-                mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
-            ):
-                outputs = self.model(**padded_mb_input)
-                logits = outputs.logits.squeeze(0)
-                logits = logits[:-pad_length] if pad_length > 0 else logits
-                loss = loss_fn(logits, mb_input)
-
-                # Simple weight calculation (could be improved)
-                loss_scale = loss_weight_fn(mb_input) / total_loss_weight
-                total_loss += loss.item() * loss_scale
-                total_weight += loss_scale
+            # Simple weight calculation (could be improved)
+            loss_scale = loss_weight_fn(mb_input) / total_loss_weight
+            total_loss += loss.item() * loss_scale
+            total_weight += loss_scale
 
         return torch.tensor(total_loss / total_weight)
 
@@ -530,94 +531,69 @@ class FSDPEngine(BaseHFEngine):
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""
-        input_ = input_.to(self.device)
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
         mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
 
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
 
         results = []
 
-        if self.ulysses_sp_size > 1:
-            with self.ulysses_sharding_manager:
-                sp_rank = get_ulysses_sequence_parallel_rank()
-                sp_world_size = get_ulysses_sequence_parallel_world_size()
-                sp_group = get_ulysses_sequence_parallel_group()
+        for pad_length, padded_mb_input, mb_input in zip(
+            mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
+        ):
+            if self.sp_world_size > 1:
+                input_ids = padded_mb_input["input_ids"]
+                position_ids = padded_mb_input.get("position_ids", None)
 
-                mb_lists = [None for _ in range(sp_world_size)]
-                dist.all_gather_object(mb_lists, mb_list, group=sp_group)
-                mb_lists = [mb.to(self.device) for mb in mb_lists]
-
-                for src in range(sp_world_size):
-                    for pad_length, padded_mb_input, mb_input in zip(
-                        mb_lists[src].padding_lengths,
-                        mb_lists[src].padded_mbs,
-                        mb_lists[src].mbs,
-                    ):
-                        input_ids = padded_mb_input["input_ids"]
-                        position_ids = padded_mb_input.get("position_ids", None)
-
-                        if self.is_vision_model:
-                            # NOTE: For vision models, inputs_embeds will be sliced instead of input_ids.
-                            #       Please refer to patch_vlm_for_ulysses_input_slicing() in
-                            #       areal/models/transformers/ulyssess_patch.py
-                            (
-                                ulysses_input_ids,
-                                ulysses_position_ids,
-                                ulysses_pad_size,
-                            ) = ulysses_pad(
-                                input_ids, position_ids, sp_size=sp_world_size
-                            )
-                        else:
-                            # Pad and slice the inputs
-                            (
-                                ulysses_input_ids,
-                                ulysses_position_ids,
-                                ulysses_pad_size,
-                            ) = ulysses_pad_and_slice_inputs(
-                                input_ids, position_ids, sp_size=sp_world_size
-                            )
-
-                        if not ulysses_position_ids.is_contiguous():
-                            ulysses_position_ids = ulysses_position_ids.contiguous()
-
-                        ulysses_mb_input = padded_mb_input.copy()
-                        ulysses_mb_input["input_ids"] = ulysses_input_ids
-                        if ulysses_position_ids is not None:
-                            ulysses_mb_input["position_ids"] = ulysses_position_ids
-
-                        outputs = self.model(**ulysses_mb_input)
-
-                        logits = outputs.logits.squeeze(0)
-                        gathered_logits = dist_F.all_gather(logits, group=sp_group)
-                        full_logits = torch.cat(gathered_logits, dim=0)
-                        if ulysses_pad_size > 0:
-                            full_logits = full_logits[:-ulysses_pad_size]
-                        # Remove original padding
-                        if pad_length > 0:
-                            full_logits = full_logits[:-pad_length]
-
-                        if post_hook:
-                            result = post_hook(full_logits, mb_input)
-                        else:
-                            result = full_logits
-
-                        if sp_rank == src:
-                            results.append(result)
-        else:
-            for pad_length, padded_mb_input, mb_input in zip(
-                mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
-            ):
-                outputs = self.model(**padded_mb_input)
-                logits = outputs.logits.squeeze(0)
-                logits = logits[:-pad_length] if pad_length > 0 else logits
-
-                if post_hook:
-                    result = post_hook(logits, mb_input)
-                    results.append(result)
+                if self.is_vision_model:
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad(input_ids, position_ids, sp_size=self.sp_world_size)
                 else:
-                    results.append(logits)
+                    # Pad and slice the inputs
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad_and_slice_inputs(
+                        input_ids,
+                        position_ids,
+                        sp_size=self.sp_world_size,
+                    )
+
+                if (
+                    ulysses_position_ids is not None
+                    and not ulysses_position_ids.is_contiguous()
+                ):
+                    ulysses_position_ids = ulysses_position_ids.contiguous()
+
+                inputs = padded_mb_input.copy()
+                inputs["input_ids"] = ulysses_input_ids
+                if ulysses_position_ids is not None:
+                    inputs["position_ids"] = ulysses_position_ids
+            else:
+                inputs = padded_mb_input
+
+            outputs = self.model(**inputs)
+
+            logits = outputs.logits.squeeze(0)
+            if self.sp_world_size > 1:
+                # Gather and remove Ulysses padding
+                gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
+                logits = torch.cat(gathered_logits, dim=0)
+                logits = logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
+            # Remove original padding
+            logits = logits[:-pad_length] if pad_length > 0 else logits
+
+            if post_hook:
+                result = post_hook(logits, mb_input)
+                results.append(result)
+            else:
+                results.append(logits)
 
         res = aggregate_fn(results)
         output_seqlens = [output_seqlens[i] for i in mb_list.forward_indices]

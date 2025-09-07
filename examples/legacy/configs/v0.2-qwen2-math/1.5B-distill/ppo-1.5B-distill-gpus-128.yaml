@@ -1,4 +1,4 @@
-experiment_name: ppo-1.5B-distill-gpus-32
+experiment_name: ppo-1.5B-distill-gpus-128
 trial_name: 512x16
 mode: ray
 wandb:
@@ -6,8 +6,8 @@ wandb:
 metric_discovery_port: 17997
 recover_mode: auto
 recover_retries: 10
-allocation_mode: 'sglang.d16p1m1+d8p2m1'
-n_nodes: 4
+allocation_mode: 'sglang.d64p1m1+d32p2m1'
+n_nodes: 16
 n_gpus_per_node: 8
 cache_clear_freq: 1
 exp_ctrl:

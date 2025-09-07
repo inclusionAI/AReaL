@@ -251,7 +251,9 @@ class PPOActor:
                 denominator="agent",
             )
 
-        global_stats = stats_tracker.export(reduce_group=self.engine.parallelism_group)
+        global_stats = stats_tracker.export(
+            reduce_group=self.engine.data_parallel_group
+        )
         for k in global_denominators:
             keys = list(global_stats.keys())
             for k2 in keys:
@@ -282,7 +284,7 @@ class PPOActor:
             )
             stats_tracker.scalar(**train_stat)
             all_stats.append(
-                stats_tracker.export(reduce_group=self.engine.parallelism_group)
+                stats_tracker.export(reduce_group=self.engine.data_parallel_group)
             )
         all_stats[0].update(global_stats)
         return all_stats

@@ -2,9 +2,9 @@
 
 This guide introduces how AReaL-lite runs the GRPO algorithm on the GSM8K dataset, using
 the training script
-[examples/lite/gsm8k_grpo.py](https://github.com/inclusionAI/AReaL/blob/main/examples/lite/gsm8k_grpo.py)
+[examples/gsm8k_grpo.py](https://github.com/inclusionAI/AReaL/blob/main/examples/gsm8k_grpo.py)
 and configuration file
-[examples/lite/configs/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/lite/configs/gsm8k_grpo.yaml).
+[examples/configs/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/configs/gsm8k_grpo.yaml).
 
 ## How AReaL-lite Works
 
@@ -157,9 +157,9 @@ class RemoteSGLangEngine:
         return future
 ```
 
-`agenerate` takes an `ModelRequest` with `input_ids` of **a single prompt** and generation
-hyperparameters, and returns the final generation result, an `ModelResponse` with
-`output_tokens` and other outputs. Since the generation could be interrupted,
+`agenerate` takes an `ModelRequest` with `input_ids` of **a single prompt** and
+generation hyperparameters, and returns the final generation result, an `ModelResponse`
+with `output_tokens` and other outputs. Since the generation could be interrupted,
 `agenerate` iteratively prepares payload, sends requests and receives responses until
 the generation finishes.
 
@@ -388,10 +388,12 @@ specified by the configuration.
 
 ```python
 actor = FSDPPPOActor(config=config.actor)
+actor.create_process_group()
 actor.initialize(None, ft_spec)
 ref = None
 if config.actor.kl_ctl > 0 and config.ref is not None:
     ref = FSDPPPOActor(config=config.ref)
+    ref.create_process_group()
     ref.initialize(None, ft_spec)
 ```
 
