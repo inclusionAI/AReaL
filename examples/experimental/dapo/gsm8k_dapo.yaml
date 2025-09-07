@@ -1,6 +1,6 @@
 experiment_name: gsm8k-dapo
 trial_name: trial0
-allocation_mode: sglang.d4p1t1+d4p1t1
+allocation_mode: sglang:d4 + fsdp:d4
 cluster:
   fileroot: /tmp/areal/experiments
   n_nodes: 1
