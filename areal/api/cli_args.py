@@ -16,6 +16,30 @@ from areal.utils.fs import get_user_tmp
 
 
 @dataclass
+class AdvNormConfig:
+    """Configuration for advantage normalization."""
+
+    mean_level: str = field(
+        default="batch",
+        metadata={
+            "help": "mean_level for advantage normalization. options: batch, group, none"
+        },
+    )
+    std_level: str = field(
+        default="batch",
+        metadata={
+            "help": "std_level for advantage normalization. options: batch, group, none"
+        },
+    )
+    mode: bool = field(
+        default=True, metadata={"help": "whether to use advantage normalization"}
+    )
+    group_size: int = field(
+        default=1, metadata={"help": "group_size for advantage normalization"}
+    )
+
+
+@dataclass
 class MicroBatchSpec:
     """Specification for splitting micro-batches during training."""
 
@@ -227,6 +251,7 @@ class TrainEngineConfig:
     optimizer: Optional[OptimizerConfig] = field(
         default=None, metadata={"help": "Optimizer configuration"}
     )
+
     backend: str = ""
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
     ds_auto_tp: DeepSpeedAutoTPEngineConfig = field(
@@ -239,12 +264,6 @@ class PPOActorConfig(TrainEngineConfig):
     # Core PPO/GRPO Parameters
     group_size: int = field(
         default=1, metadata={"help": "Number of sequences in each group"}
-    )
-    group_adv_norm: bool = field(
-        default=False,
-        metadata={
-            "help": "Normalize advantages within each prompt group rather than globally"
-        },
     )
     ppo_n_minibatches: int = field(
         default=4, metadata={"help": "Number of minibatches for each PPO update"}
@@ -295,9 +314,15 @@ class PPOActorConfig(TrainEngineConfig):
     gae_lambda: float = field(
         default=1.0, metadata={"help": "Lambda parameter for GAE"}
     )
-    adv_norm: bool = field(
-        default=True, metadata={"help": "Enable advantage normalization globally"}
-    )
+    # adv_norm: bool = field(
+    #     default=True, metadata={"help": "Enable advantage normalization globally"}
+    # )
+    # group_adv_norm: bool = field(
+    #     default=False,
+    #     metadata={
+    #         "help": "Normalize advantages within each prompt group rather than globally"
+    #     },
+    # )
 
     # KL Control
     kl_ctl: float = field(default=0.1, metadata={"help": "KL divergence coefficient"})
@@ -345,6 +370,9 @@ class PPOActorConfig(TrainEngineConfig):
     log_agent_stats_keys: List[str] = field(
         default_factory=lambda: [],
         metadata={"help": "Keys of log stats for agent trajectories"},
+    )
+    adv_norm: AdvNormConfig = field(
+        default_factory=AdvNormConfig, metadata={"help": "Optimizer configuration"}
     )
 
 

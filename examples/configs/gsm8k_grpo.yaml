@@ -1,6 +1,6 @@
 experiment_name: gsm8k-grpo
 trial_name: trial0
-allocation_mode: sglang.d4p1t1+d4p1t1
+allocation_mode: sglang.d1p1t1+d1p1t1
 cluster:
   fileroot: /tmp/areal/experiments
   n_nodes: 1
@@ -32,7 +32,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen2.5-1.5B-Instruct
+  path: /mnt/nvme0n1/model_dir/Qwen2.5-1.5B
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: false
@@ -52,7 +52,6 @@ actor:
   backend: fsdp
 
   group_size: ${gconfig.n_samples}
-  group_adv_norm: false
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -63,6 +62,13 @@ actor:
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
   dynamic_sampling: false
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+    mode: true
+    group_size: ${gconfig.n_samples}
+
+
 
 ref:
   experiment_name: ${experiment_name}
@@ -84,7 +90,7 @@ sglang:
   dtype: ${actor.dtype}
   max_running_requests: null
   context_length: 32768
-  mem_fraction_static: 0.8
+  mem_fraction_static: 0.3
 
 # datasets
 train_dataset:
