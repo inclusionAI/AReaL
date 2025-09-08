@@ -184,8 +184,9 @@ class LLMAgent:
         try:
             normal_text, calls = parser.parse_non_stream(completion_str)
         except Exception as e:
-            print("[deubg]: sglang tool parse ", completion_str)
-            raise e
+            print("[debug]: sglang tool parser", completion_str)
+            normal_text = completion_str
+            calls = []
 
         tool_calls = []
         for single_call in calls:

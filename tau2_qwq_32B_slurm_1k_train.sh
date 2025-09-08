@@ -10,12 +10,10 @@ python3 -m areal.launcher.slurm tau2_train/workflow.py \
     cluster.name_resolve.nfs_record_root=/storage/openpsi/experiments/name_resolve \
     launcher.slurm.trainer_image=/storage/openpsi/images/areal-25.02-v0.3.0.post2-v3.sif \
     launcher.slurm.inference_server_image=/storage/openpsi/images/areal-25.02-v0.3.0.post2-v3.sif  \
-    allocation_mode=sglang.d8p1t4+d32p1t1 \
+    allocation_mode=sglang:d8p1t4+fsdp:d4c8 \
     train_dataset.batch_size=128 \
     cluster.n_nodes=8 \
     cluster.n_gpus_per_node=8 \
-    +actor.fsdp.ulysses_sp_size=8 \
-    +ref.fsdp.ulysses_sp_size=8 \
     gconfig.max_new_tokens=8192 \
     max_context_length=32768 \
     +user_base_url="http://33.180.164.182:30000/v1/" \
