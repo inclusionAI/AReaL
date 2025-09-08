@@ -296,15 +296,20 @@ def main(args):
         yaml.dump(asdict(config), file, default_flow_style=False, sort_keys=True)
 
     rank = int(os.getenv("RANK"))
-    world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
+    allocation_mode = AllocationMode.from_str(config.allocation_mode)
+    parallel_strategy = allocation_mode.train
+
+    # Initialize train engine
+    actor = FSDPPPOActor(config=config.actor)
+    actor.create_process_group(parallel_strategy=parallel_strategy)
 
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
-        get_tau2_dataset(config.train_dataset.path, tokenizer, rank, world_size),
-        batch_size=config.train_dataset.batch_size // world_size,
+        get_tau2_dataset(config.train_dataset.path, tokenizer, rank, actor.data_parallel_world_size),
+        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -312,7 +317,7 @@ def main(args):
     )
 
     valid_dataloader = StatefulDataLoader(
-        get_tau2_dataset(config.valid_dataset.path, tokenizer, rank, world_size),
+        get_tau2_dataset(config.valid_dataset.path, tokenizer, rank, actor.data_parallel_world_size),
         batch_size=1,
         shuffle=False,
         num_workers=config.valid_dataset.num_workers,
@@ -327,14 +332,14 @@ def main(args):
 
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(None, ft_spec)
+    rollout.initialize(
+        None, ft_spec, train_data_parallel_size=parallel_strategy.dp_size
+    )
     eval_rollout = RemoteSGLangEngine(copy.deepcopy(config.rollout))
     # NOTE: eval does not have any offpolicyness control
     eval_rollout.config.max_head_offpolicyness = int(1e12)
     eval_rollout.initialize(None, ft_spec)
 
-    # Initialize train engine
-    actor = FSDPPPOActor(config=config.actor)
     actor.initialize(None, ft_spec)
     ref = None
 
@@ -452,12 +457,20 @@ def main(args):
         rollout.resume()
 
         with stats_tracker.record_timing("rollout"):
-            if config.async_training:
-                batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
-            else:
-                batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
-
-        batch = batch.to(actor.device)
+            batch = None
+            if actor.is_data_parallel_head():
+                if config.async_training:
+                    batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
+                else:
+                    batch = rollout.rollout_batch(
+                        next(data_generator), workflow=workflow
+                    )
+                batch = batch.to(actor.device)
+            batch = broadcast_tensor_container(
+                batch,
+                src_rank=actor.current_data_parallel_head(),
+                group=actor.context_and_model_parallel_group,
+            )
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
         torch.cuda.synchronize()
@@ -523,7 +536,9 @@ def main(args):
         torch.cuda.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
-        stats[0].update(stats_tracker.export_all(reduce_group=actor.parallelism_group))
+        stats[0].update(
+            stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+        )
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])
