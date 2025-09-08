@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 from megatron.core.distributed import DistributedDataParallel as DDP
@@ -21,7 +21,7 @@ logger = logging.getLogger("areal.experimental.model.registry")
 # Model registry for different architectures
 def make_hf_and_mcore_config(
     hf_path: str, dtype: torch.dtype, bridge=None
-) -> TransformerConfig:
+) -> Tuple[PretrainedConfig, TransformerConfig]:
     if bridge is not None:
         hf_config = bridge.hf_config
         hf_config._name_or_path = hf_path
@@ -60,8 +60,11 @@ def make_mcore_model(
 ) -> GPTModel:
     if bridge is not None:
         model = bridge.get_model(
-            wrap_with_ddp=True,
+            # TODO: Add DDP options when supporting training
+            wrap_with_ddp=mcore_config.wrap_with_ddp,
             ddp_config=dataclasses.asdict(mcore_config.ddp),
+            use_torch_fsdp2=mcore_config.use_torch_fsdp2,
+            use_custom_fsdp=mcore_config.use_custom_fsdp,
             fp16=tf_config.fp16,
             bf16=tf_config.bf16,
             use_precision_aware_optimizer=mcore_config.use_precision_aware_optimizer,
@@ -99,45 +102,4 @@ def make_mcore_model(
             ddp_config=ddp_config,
             module=model,
             disable_bucketing=False,
-        )
-
-
-def load_from_hf(
-    hf_config: PretrainedConfig,
-    load_path: str,
-    model: torch.nn.Module,
-    bridge=None,
-):
-    if bridge is not None:
-        # TODO: when supporting VPP, model should be a list
-        models = [model]
-        bridge.load_weights(
-            models=models,
-            weights_path=load_path,
-        )
-    else:
-        raise NotImplementedError(
-            "Loading hf model into Megatron model requires mbridge."
-        )
-
-
-def save_to_hf(
-    hf_config: PretrainedConfig,
-    save_path: str,
-    model: torch.nn.Module,
-    bridge=None,
-):
-    if bridge is not None:
-        # TODO: when supporting VPP, model should be a list
-        if bridge.safetensor_io is None:
-            assert hf_config._name_or_path
-            bridge.safetensor_io = bridge._get_safetensor_io(hf_config._name_or_path)
-        models = [model]
-        return bridge.save_weights(
-            models=models,
-            weights_path=save_path,
-        )
-    else:
-        raise NotImplementedError(
-            "Saving Megatron model into hf model requires mbridge."
         )

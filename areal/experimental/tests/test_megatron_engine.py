@@ -7,6 +7,7 @@ import torch
 from tensordict import TensorDict
 from transformers import AutoTokenizer
 
+from areal.api.alloc_mode import AllocationMode
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 from areal.experimental.api.cli_args import (
     ExperimentalTrainEngineConfig as TrainEngineConfig,
@@ -23,6 +24,8 @@ logger = logging.getLogger("MegatronEngine Test")
 
 VOCAB_SIZE = 100
 MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+if not os.path.exists(MODEL_PATH):
+    MODEL_PATH = "Qwen/Qwen3-1.7B"
 
 
 @pytest.fixture(scope="module")
@@ -80,9 +83,11 @@ def engine():
         optimizer=OptimizerConfig(),
         megatron=MegatronEngineConfig(),
     )
+    alloc_mode = AllocationMode.from_str("d1p1t1")
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
     engine = MegatronEngine(config)
-    engine.initialize(addr=None, ft_spec=ft_spec)
+    engine.create_process_group(alloc_mode.train)
+    engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
     logger.info(f"mcore GPTModel initialized: {engine.model}")
     log_gpu_stats("initialize")
     yield engine
@@ -97,7 +102,7 @@ def test_simple_forward(engine, mock_input):
 def test_simple_train(engine, mock_input):
     engine.train()
     train_result = engine.train_batch(
-        mock_input, loss_fn=mock_loss_fn, loss_weight_fn=None
+        mock_input, loss_fn=mock_loss_fn, loss_weight_fn=lambda x: 1
     )
     engine.step_lr_scheduler()
     logger.info(f"Train done, result={train_result}")
@@ -112,6 +117,32 @@ def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
         weight_format="hf",
         tokenizer=tokenizer,
         with_optim=False,
+        base_model_path=None,
+    )
+
+    old = engine.forward(input_=mock_input)
+    start = time.perf_counter()
+    engine.save(save_load_meta)
+    logger.info(f"Save done, time cost: {time.perf_counter() - start:.4f} seconds.")
+    for name, param in engine.model.named_parameters():
+        param.zero_()
+
+    start = time.perf_counter()
+    engine.load(save_load_meta)
+    logger.info(f"Load done, time cost: {time.perf_counter() - start:.4f} seconds.")
+    new = engine.forward(input_=mock_input)
+    assert torch.allclose(old, new)
+
+
+@torch.no_grad()
+def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+    path = tmp_path_factory.mktemp("megatron_engine_dcp_test")
+    save_load_meta = SaveLoadMeta(
+        path=path,
+        weight_format="dcp",
+        tokenizer=tokenizer,
+        with_optim=True,
         base_model_path=None,
     )
 

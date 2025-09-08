@@ -54,13 +54,13 @@ asyncio
 aiohttp>=3.11.10
 httpx>=0.28.1
 etcd3
-protobuf<3.21
 rich
 orjson>=3.10.16
 flask
 setuptools>=62.3.0,<75.9
 func_timeout
 jupyter-book
+lark
 uvloop>=0.21.0
 uvicorn>=0.34.2
 fastapi>=0.115.12
@@ -80,3 +80,4 @@ pybase64
 msgspec
 transformers==4.54.0
 openai==1.99.6
+sh

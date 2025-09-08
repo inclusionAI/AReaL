@@ -1,14 +1,18 @@
 import os
+import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
 from typing import List, Optional, Tuple
 
+import psutil
 import requests
 
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
     ClusterSpecConfig,
     NameResolveConfig,
@@ -16,12 +20,51 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
-from areal.api.io_struct import AllocationMode
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import TRITON_CACHE_PATH
 from areal.utils.network import find_free_ports, gethostip
 
 logger = logging.getLogger("SGLangServer Wrapper")
+
+
+# Copied from SGLang
+def kill_process_tree(parent_pid, include_parent: bool = True, skip_pid: int = None):
+    """Kill the process and all its child processes."""
+    # Remove sigchld handler to avoid spammy logs.
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+
+    if parent_pid is None:
+        parent_pid = os.getpid()
+        include_parent = False
+
+    try:
+        itself = psutil.Process(parent_pid)
+    except psutil.NoSuchProcess:
+        return
+
+    children = itself.children(recursive=True)
+    for child in children:
+        if child.pid == skip_pid:
+            continue
+        try:
+            child.kill()
+        except psutil.NoSuchProcess:
+            pass
+
+    if include_parent:
+        try:
+            if parent_pid == os.getpid():
+                itself.kill()
+                sys.exit(0)
+
+            itself.kill()
+
+            # Sometime processes cannot be killed with SIGKILL (e.g, PID=1 launched by kubernetes),
+            # so we send an additional signal to kill them.
+            itself.send_signal(signal.SIGQUIT)
+        except psutil.NoSuchProcess:
+            pass
 
 
 def launch_server_cmd(command: str) -> subprocess.Popen:
@@ -30,6 +73,7 @@ def launch_server_cmd(command: str) -> subprocess.Popen:
     """
     # Replace newline continuations and split the command string.
     command = command.replace("\\\n", " ").replace("\\", " ")
+    logger.info(f"Launch command: {command}")
     parts = command.split()
     _env = os.environ.copy()
     # To avoid DirectoryNotEmpty error caused by triton
@@ -87,17 +131,29 @@ class SGLangServerWrapper:
 
     def run(self):
         gpus_per_server = self.allocation_mode.gen_instance_size
+        cross_nodes = False
         if gpus_per_server > self.n_gpus_per_node:
-            raise NotImplementedError("Cross-node SGLang is not supported")
+            assert (
+                gpus_per_server % self.n_gpus_per_node == 0
+            ), "Cross-nodes SGLang only supports utilizing all gpus in one node"
+            cross_nodes = True
+            node_rank = int(os.environ["AREAL_SGLANG_MULTI_NODE_RANK"])
+            master_addr = os.environ["AREAL_SGLANG_MULTI_NODE_MASTER_ADDR"]
+            master_port = int(os.environ["AREAL_SGLANG_MULTI_NODE_MASTER_PORT"])
+        else:
+            node_rank = 0
+            master_addr = None
+            master_port = None
 
         n_servers_per_node = max(1, self.n_gpus_per_node // gpus_per_server)
+        n_nodes_per_server = max(1, gpus_per_server // self.n_gpus_per_node)
+
         if "CUDA_VISIBLE_DEVICES" in os.environ:
             visible = os.getenv("CUDA_VISIBLE_DEVICES").split(",")
             n_visible_devices = len(visible)
             n_servers_per_proc = max(1, n_visible_devices // gpus_per_server)
-            server_idx_offset = int(visible[0]) // gpus_per_server
+            server_idx_offset = min(list(map(int, visible))) // gpus_per_server
         else:
-            n_visible_devices = self.n_gpus_per_node
             n_servers_per_proc = n_servers_per_node
             server_idx_offset = 0
 
@@ -106,6 +162,7 @@ class SGLangServerWrapper:
         ports_per_server = 40000 // n_servers_per_node
         launch_server_args = []
         server_addresses = []
+        base_random_seed = self.config.random_seed
         for server_local_idx in range(
             server_idx_offset, server_idx_offset + n_servers_per_proc
         ):
@@ -115,19 +172,28 @@ class SGLangServerWrapper:
             )
             server_port, dist_init_port = find_free_ports(2, port_range)
 
-            dist_init_addr = f"localhost:{dist_init_port}"
+            if cross_nodes:
+                n_nodes = n_nodes_per_server
+                dist_init_addr = f"{master_addr}:{master_port}"
+            else:
+                n_nodes = 1
+                dist_init_addr = f"localhost:{dist_init_port}"
+
             host_ip = gethostip()
 
             base_gpu_id = (server_local_idx - server_idx_offset) * gpus_per_server
+            self.config.random_seed = base_random_seed + server_local_idx
             cmd = SGLangConfig.build_cmd(
                 self.config,
-                tp_size=self.allocation_mode.gen_tp_size,
+                tp_size=self.allocation_mode.gen.tp_size,
                 base_gpu_id=base_gpu_id,
                 host=host_ip,
                 port=server_port,
                 dist_init_addr=dist_init_addr,
+                n_nodes=n_nodes,
+                node_rank=node_rank,
             )
-            launch_server_args.append((cmd, host_ip, server_port))
+            launch_server_args.append((cmd, host_ip, server_port, node_rank))
             server_addresses.append(f"http://{host_ip}:{server_port}")
 
         with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
@@ -155,16 +221,17 @@ class SGLangServerWrapper:
 
             time.sleep(1)
 
-    def launch_one_server(self, cmd, host_ip, server_port):
+    def launch_one_server(self, cmd, host_ip, server_port, node_rank):
         server_process = launch_server_cmd(cmd)
         wait_for_server(f"http://{host_ip}:{server_port}")
-        name = names.gen_servers(self.experiment_name, self.trial_name)
-        name_resolve.add_subentry(name, f"{host_ip}:{server_port}")
+        if node_rank == 0:
+            name = names.gen_servers(self.experiment_name, self.trial_name)
+            name_resolve.add_subentry(name, f"{host_ip}:{server_port}")
         logger.info(f"SGLang server launched at: http://{host_ip}:{server_port}")
         return server_process
 
 
-def main(argv):
+def launch_sglang_server(argv):
     config, _ = parse_cli_args(argv)
     config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
@@ -185,6 +252,13 @@ def main(argv):
         n_gpus_per_node=config.cluster.n_gpus_per_node,
     )
     sglang_server.run()
+
+
+def main(argv):
+    try:
+        launch_sglang_server(argv)
+    finally:
+        kill_process_tree(os.getpid())
 
 
 if __name__ == "__main__":

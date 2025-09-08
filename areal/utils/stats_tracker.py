@@ -61,6 +61,13 @@ class DistributedStatsTracker:
         return "/".join(self.scope_stack + [key])
 
     @contextmanager
+    def disable_scope(self):
+        tmp = self.scope_stack
+        self.scope_stack = []
+        yield
+        self.scope_stack = tmp
+
+    @contextmanager
     def record_timing(self, key):
         start_time = time.perf_counter()
         try:

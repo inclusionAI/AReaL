@@ -6,7 +6,7 @@ import pathlib
 import time
 from typing import Dict, Optional
 
-from areal.api.io_struct import AllocationMode, AllocationType
+from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.utils import logging, name_resolve, names
 
 logger = logging.getLogger("Launcher Utils")
@@ -39,7 +39,7 @@ NA132_ENVIRONS = {
     "NCCL_DEBUG": "WARN",
     "NCCL_DEBUG_SUBSYS": "INIT,TUNING,GRAPH",
 }
-SGLANG_SERVER_WAIT_TIMEOUT_SECONDS = 180
+SGLANG_SERVER_WAIT_TIMEOUT_SECONDS = 360
 
 
 def get_env_vars(
@@ -123,17 +123,14 @@ def validate_config_for_distributed_launcher(config):
     allocation_mode = AllocationMode.from_str(allocation_mode)
     if allocation_mode.type_ == AllocationType.DECOUPLED_TRAIN:
         assert (
-            allocation_mode.gen_world_size + allocation_mode.train_world_size
+            allocation_mode.gen.world_size + allocation_mode.train.world_size
             == n_nodes * n_gpus_per_node
         ), (
-            f"#GPUs required for allocation mode {allocation_mode.gen_world_size + allocation_mode.train_world_size} "
+            f"#GPUs required for allocation mode {allocation_mode.gen.world_size + allocation_mode.train.world_size} "
             f"is not equal to #GPUs in the config {n_nodes * n_gpus_per_node}."
         )
     if allocation_mode.gen_backend == "sglang":
         # Launcher should launch SGLang servers according to allocation mode.
         assert (
-            allocation_mode.gen_pp_size == 1
+            allocation_mode.gen.pp_size == 1
         ), "Pipeline generation in SGLang is not supported for now."
-        assert (
-            allocation_mode.gen_tp_size <= config.cluster.n_gpus_per_node
-        ), "Currently only support SGLang TP size less <= #GPUs per node."

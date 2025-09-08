@@ -17,6 +17,10 @@ def is_qwen2_vl_model(model_type):
 def is_vila_model(model_type):
     return model_type in ["vila",]
 
+def is_qwen3_moe_model(model_type):
+    return model_type in ["qwen3_moe"]
+
+
 # Copied from trl
 def disable_dropout_in_model(model: torch.nn.Module) -> None:
     for module in model.modules():

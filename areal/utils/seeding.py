@@ -26,8 +26,9 @@ def set_random_seed(base_seed: int, key: str) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
+        # NOTE: Here we does not call `manual_seed_all`.
+        # Because when launching with torchrun `manual_seed_all` will set seed for all GPUs.
         torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
 
 
 def get_seed() -> int:

@@ -28,7 +28,7 @@ class MicroBatchSpec:
     max_tokens_per_mb: Optional[int] = field(
         default=None,
         metadata={
-            "help": "Maximum tokens per micro-batch. When set, n_mbs becomes the minimum number of micro-batches",
+            "help": "Maximum tokens per micro-batch for each forward pass. When set, n_mbs becomes the minimum number of micro-batches.",
         },
     )
 
@@ -252,6 +252,12 @@ class PPOActorConfig(TrainEngineConfig):
     eps_clip: float = field(
         default=0.2, metadata={"help": "Clipping factor for policy ratio"}
     )
+    eps_clip_higher: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "Clipping factor (higher value) for policy ratio. Defaults is None. When eps_clip_higher is setted (decouppled), eps_clip will be used as the lower value."
+        },
+    )
     c_clip: Optional[float] = field(
         default=None,
         metadata={
@@ -313,6 +319,33 @@ class PPOActorConfig(TrainEngineConfig):
             "help": "We filter out the tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing the loss, must be > 1.0, use_decoupled_loss must be true"
         },
     )
+    # Advanced Options
+    dynamic_sampling: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable dynamic sampling (within DAPO). If enabled, the group with same reward will be filtered out."
+        },
+    )
+
+    # Logging Agent Trajectories
+    log_agent_stats: bool = field(
+        default=False,
+        metadata={"help": "Log stats for agent trajectories"},
+    )
+    log_agent_stats_keys: List[str] = field(
+        default_factory=lambda: [],
+        metadata={"help": "Keys of log stats for agent trajectories"},
+    )
+
+    # Logging Agent Trajectories
+    log_agent_stats: bool = field(
+        default=False,
+        metadata={"help": "Log stats for agent trajectories"},
+    )
+    log_agent_stats_keys: List[str] = field(
+        default_factory=lambda: [],
+        metadata={"help": "Keys of log stats for agent trajectories"},
+    )
 
 
 @dataclass
@@ -360,6 +393,8 @@ class SGLangConfig:
     cpu_offload_gb: int = 0
     dtype: str = "bfloat16"
     kv_cache_dtype: str = "auto"
+    dp_size: int = 1  # only used for dp attention
+    ep_size: int = 1
     # logging
     log_level: str = "warning"
     log_level_http: Optional[str] = "warning"
@@ -380,6 +415,8 @@ class SGLangConfig:
         host,
         port,
         dist_init_addr: Optional[str] = None,
+        n_nodes: int = 1,
+        node_rank: int = 0,
     ):
         args = SGLangConfig.build_args(
             sglang_config=sglang_config,
@@ -388,6 +425,8 @@ class SGLangConfig:
             host=host,
             port=port,
             dist_init_addr=dist_init_addr,
+            n_nodes=n_nodes,
+            node_rank=node_rank,
         )
 
         # convert to flags
@@ -411,6 +450,8 @@ class SGLangConfig:
         host,
         port,
         dist_init_addr: Optional[str] = None,
+        n_nodes: int = 1,
+        node_rank: int = 0,
     ):
 
         args: Dict = conf_as_dict(sglang_config)
@@ -428,8 +469,8 @@ class SGLangConfig:
             tp_size=tp_size,
             # Because we have set CUDA_VISIBLE_DEVICES to a single GPU in each process
             base_gpu_id=base_gpu_id,
-            nnodes=1,
-            node_rank=0,
+            nnodes=n_nodes,
+            node_rank=node_rank,
             # initialization addresses and ports
             dist_init_addr=dist_init_addr,
             **args,
@@ -663,6 +704,7 @@ class DatasetConfig:
     reward_fn: Optional[str] = field(
         default=None,
     )
+    max_length: Optional[int] = None
 
 
 @dataclass
@@ -811,7 +853,7 @@ def parse_cli_args(argv: List[str]):
     args, overrides = parser.parse_known_args(argv)
     # Initialize hydra config
     config_file = Path(args.config).absolute()
-    assert config_file.exists()
+    assert config_file.exists(), f"Config file {config_file} does not exist."
     # hydra only recognize relative paths
     relpath = Path(os.path.relpath(str(config_file), Path(__file__).parent.absolute()))
     hydra_init(config_path=str(relpath.parent), job_name="app", version_base=None)

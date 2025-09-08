@@ -1,33 +1,49 @@
+import dataclasses
 import os
 import time
 from datetime import datetime
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
+import torch.distributed.nn.functional as dist_F
 from tensordict import TensorDict
 from torch.distributed._tensor import DTensor
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
 )
+from torch.distributed.device_mesh import init_device_mesh
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
+from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import FinetuneSpec
 from areal.api.io_struct import ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.engine.base_hf_engine import BaseHFEngine
+from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.utils import datapack, logging, name_resolve, names, pkg_version
+from areal.utils.data import (
+    pack_tensor_dict,
+    pad_and_stack_tensors_along_first_dim,
+    reorder_list,
+    unpack_sequence,
+)
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.fsdp import (
     CPUOffloadPolicy,
     MixedPrecisionPolicy,
     apply_fsdp2,
-    create_fsdp_device_mesh,
     fsdp2_clip_grad_norm_,
     fsdp2_load_full_state_dict,
 )
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
+from areal.utils.ulysses import (
+    get_ulysses_sequence_parallel_group,
+    set_ulysses_sequence_parallel_group,
+    ulysses_pad,
+    ulysses_pad_and_slice_inputs,
+)
 
 logger = logging.getLogger("FSDPEngine")
 
@@ -36,34 +52,130 @@ class FSDPEngine(BaseHFEngine):
     def __init__(self, config: TrainEngineConfig):
         super().__init__(config)
         # FSDP options
+        self.fsdp_device_mesh = None
         self.mixed_precision_policy = None
-        self.device_mesh = None
         self.cpu_offload = None
+
+        self.dp_world_size = None
+        self.sp_world_size = None
+
+        self.rank = None
+        self.dp_head = None
+        self.dp_rank = None
+
+        self.dp_group = None
+        self.sp_group = None
+        self.mp_group = None
+
+    @property
+    def data_parallel_group(self) -> dist.ProcessGroup:
+        assert self.dp_group is not None
+        return self.dp_group
+
+    @property
+    def data_parallel_rank(self) -> int:
+        assert self.dp_rank is not None
+        return self.dp_rank
+
+    @property
+    def data_parallel_world_size(self) -> int:
+        assert self.dp_world_size is not None
+        return self.dp_world_size
+
+    def current_data_parallel_head(self) -> int:
+        assert self.dp_head is not None
+        return self.dp_head
+
+    def is_data_parallel_head(self) -> bool:
+        return self.rank == self.dp_head
+
+    @property
+    def context_and_model_parallel_group(self) -> dist.ProcessGroup:
+        assert self.mp_group is not None
+        return self.mp_group
+
+    def _make_parallel_strategy(
+        self, parallel_strategy: ParallelStrategy
+    ) -> FSDPParallelStrategy:
+        return FSDPParallelStrategy(
+            **dataclasses.asdict(parallel_strategy),
+        )
+
+    def create_process_group(self, parallel_strategy: ParallelStrategy):
+        super().create_process_group()
+
+        self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
+
+        self.dp_world_size = self.parallel_strategy.data_parallel_size
+        # This is Ulysses sequence parallelism
+        self.sp_world_size = self.parallel_strategy.context_parallel_size
+
+        logger.info(
+            f"Initializing device mesh with DP{self.dp_world_size} and SP{self.sp_world_size}"
+        )
+
+        # Initialize the mesh using both DP and SP for sharding.
+        # For example, d4c2 allocation mode will shard the model into 8 parts
+        fsdp_world_size = self.dp_world_size * self.sp_world_size
+        self.fsdp_device_mesh = init_device_mesh(
+            "cuda", mesh_shape=(fsdp_world_size,), mesh_dim_names=("fsdp",)
+        )
+
+        self.rank = dist.get_rank()
+
+        self.nd_device_mesh = init_device_mesh(
+            "cuda",
+            mesh_shape=(self.dp_world_size, self.sp_world_size),
+            mesh_dim_names=("dp", "sp"),
+        )
+
+        self.dp_group = self.nd_device_mesh["dp"].get_group()
+        self.sp_group = self.nd_device_mesh["sp"].get_group()
+        self.mp_group = self.sp_group
+
+        self.dp_head = self.nd_device_mesh["sp"].mesh.flatten().tolist()[0]
+        self.dp_rank = dist.get_rank(self.dp_group)
+
+        current_sp_group = get_ulysses_sequence_parallel_group()
+        if current_sp_group is not None:
+            current_sp_group_ranks = dist.get_process_group_ranks(current_sp_group)
+            sp_group_ranks = dist.get_process_group_ranks(self.sp_group)
+            if current_sp_group_ranks != sp_group_ranks:
+                raise RuntimeError(
+                    f"Ulysses sequence parallel group mismatch: current ranks {current_sp_group_ranks} v.s. new ranks {sp_group_ranks}"
+                )
+        else:
+            set_ulysses_sequence_parallel_group(self.sp_group)
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
         # Initialize distributed enviroments and load model.
         assert addr is None, "FSDPEngine does not support remote initialization."
+        assert ft_spec is not None, "FSDPEngine requires FinetuneSpec to initialize."
         assert pkg_version.is_version_greater_or_equal(
             "torch", "2.4.0"
         ), f"areal only supports FSDP2, which requires torch>=2.4.0"
 
-        self.create_process_group()
+        # Create device model
         self.create_device_model()
 
-        # Wrap with FSDP2
+        # Monkey patch: replace attention's forward() with Ulysses variant.
+        apply_monkey_patch(
+            model=self.model,
+            ulysses_sp_size=self.sp_world_size,
+        )
+
+        # sharding_strategy = ShardingStrategy.FULL_SHARD
         # Simple auto wrap policy
         self.mixed_precision_policy = MixedPrecisionPolicy(
             param_dtype=getattr(torch, self.config.dtype),
             reduce_dtype=getattr(torch, self.config.grad_reduce_dtype),
             cast_forward_inputs=True,
         )
-        self.device_mesh = create_fsdp_device_mesh(self.world_size, self.world_size)
-        # sharding_strategy = ShardingStrategy.FULL_SHARD
         self.cpu_offload = (
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
         fsdp_kwargs = {
-            "mesh": self.device_mesh,
+            "mesh": self.fsdp_device_mesh,
             "mp_policy": self.mixed_precision_policy,
             "offload_policy": self.cpu_offload,
             "reshard_after_forward": True,
@@ -170,7 +282,7 @@ class FSDPEngine(BaseHFEngine):
         if dist.get_rank() == 0:
             self.weight_update_group = init_custom_process_group(
                 backend="nccl",
-                world_size=meta.alloc_mode.gen_world_size + 1,
+                world_size=meta.alloc_mode.gen.world_size + 1,
                 init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
                 rank=0,
                 group_name=meta.nccl_group_name,
@@ -193,9 +305,7 @@ class FSDPEngine(BaseHFEngine):
                 else:
                     tensor = param.data
                 if dist.get_rank() == 0:
-                    logger.debug(
-                        f"Broadcasting {name} with shape {tensor.shape}", flush=True
-                    )
+                    logger.debug(f"Broadcasting {name} with shape {tensor.shape}")
                     dist.broadcast(tensor, src=0, group=self.weight_update_group)
                 del tensor
             dist.barrier(device_ids=[self.device.index])
@@ -247,9 +357,12 @@ class FSDPEngine(BaseHFEngine):
 
         self.optimizer.zero_grad()
         mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
 
         total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs]), dtype=torch.float32
+            sum([loss_weight_fn(mb) for mb in mb_list.mbs]),
+            dtype=torch.float32,
+            device=self.device,
         )
         assert total_loss_weight != 0
         dist.all_reduce(total_loss_weight)
@@ -258,17 +371,57 @@ class FSDPEngine(BaseHFEngine):
         for i, (pad_length, padded_mb_input, mb_input) in enumerate(
             zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
         ):
-            self.model.set_requires_gradient_sync(i == len(mb_list.mbs) - 1)
-            outputs = self.model(**padded_mb_input)
+            if self.sp_world_size > 1:
+                input_ids = padded_mb_input["input_ids"]
+                position_ids = padded_mb_input.get("position_ids", None)
+
+                if self.is_vision_model:
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad(input_ids, position_ids, sp_size=self.sp_world_size)
+                else:
+                    # Pad and slice the inputs
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad_and_slice_inputs(
+                        input_ids,
+                        position_ids,
+                        sp_size=self.sp_world_size,
+                    )
+
+                if (
+                    ulysses_position_ids is not None
+                    and not ulysses_position_ids.is_contiguous()
+                ):
+                    ulysses_position_ids = ulysses_position_ids.contiguous()
+
+                inputs = padded_mb_input.copy()
+                inputs["input_ids"] = ulysses_input_ids
+                if ulysses_position_ids is not None:
+                    inputs["position_ids"] = ulysses_position_ids
+            else:
+                inputs = padded_mb_input
+
+            outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
+            if self.sp_world_size > 1:
+                # Gather and remove Ulysses padding
+                gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
+                logits = torch.cat(gathered_logits, dim=0)
+                logits = logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
+            # Remove original padding
             logits = logits[:-pad_length] if pad_length > 0 else logits
             loss = loss_fn(logits, mb_input)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
 
             # Scale loss for accumulation
-            # Revert gradient averaging across dp ranks
-            loss_scale *= self.world_size
+            # To reverse the gradient averaging for SP groups
+            loss_scale *= self.dp_world_size
 
             loss *= loss_scale
             loss.backward()
@@ -292,3 +445,158 @@ class FSDPEngine(BaseHFEngine):
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
             lr=current_lr,
         )
+
+    @torch.no_grad()
+    def eval_batch(
+        self,
+        input_: TensorDict,
+        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
+        loss_weight_fn: Callable[[TensorDict], float],
+    ) -> torch.Tensor | None:
+        """Evaluate on a batch."""
+        mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
+
+        total_loss_weight = torch.tensor(
+            sum([loss_weight_fn(mb) for mb in mb_list.mbs]), dtype=torch.float32
+        )
+        assert total_loss_weight != 0
+
+        total_loss = 0.0
+        total_weight = 0.0
+
+        for pad_length, padded_mb_input, mb_input in zip(
+            mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
+        ):
+            if self.sp_world_size > 1:
+                input_ids = padded_mb_input["input_ids"]
+                position_ids = padded_mb_input.get("position_ids", None)
+
+                if self.is_vision_model:
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad(input_ids, position_ids, sp_size=self.sp_world_size)
+                else:
+                    # Pad and slice the inputs
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad_and_slice_inputs(
+                        input_ids,
+                        position_ids,
+                        sp_size=self.sp_world_size,
+                    )
+
+                if (
+                    ulysses_position_ids is not None
+                    and not ulysses_position_ids.is_contiguous()
+                ):
+                    ulysses_position_ids = ulysses_position_ids.contiguous()
+
+                inputs = padded_mb_input.copy()
+                inputs["input_ids"] = ulysses_input_ids
+                if ulysses_position_ids is not None:
+                    inputs["position_ids"] = ulysses_position_ids
+            else:
+                inputs = padded_mb_input
+
+            outputs = self.model(**inputs)
+
+            logits = outputs.logits.squeeze(0)
+            if self.sp_world_size > 1:
+                # Gather and remove Ulysses padding
+                gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
+                logits = torch.cat(gathered_logits, dim=0)
+                logits = logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
+            # Remove original padding
+            logits = logits[:-pad_length] if pad_length > 0 else logits
+            loss = loss_fn(logits, mb_input)
+
+            # Simple weight calculation (could be improved)
+            loss_scale = loss_weight_fn(mb_input) / total_loss_weight
+            total_loss += loss.item() * loss_scale
+            total_weight += loss_scale
+
+        return torch.tensor(total_loss / total_weight)
+
+    @torch.no_grad()
+    def forward(
+        self,
+        input_: TensorDict,
+        output_seqlens: List[int] | None = None,
+        post_hook: Callable[[torch.Tensor, TensorDict], Any] | None = None,
+        aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
+    ) -> Any | None:
+        """Forward pass with optional post-processing."""
+        cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
+        mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
+
+        if output_seqlens is None:
+            output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
+
+        results = []
+
+        for pad_length, padded_mb_input, mb_input in zip(
+            mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
+        ):
+            if self.sp_world_size > 1:
+                input_ids = padded_mb_input["input_ids"]
+                position_ids = padded_mb_input.get("position_ids", None)
+
+                if self.is_vision_model:
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad(input_ids, position_ids, sp_size=self.sp_world_size)
+                else:
+                    # Pad and slice the inputs
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad_and_slice_inputs(
+                        input_ids,
+                        position_ids,
+                        sp_size=self.sp_world_size,
+                    )
+
+                if (
+                    ulysses_position_ids is not None
+                    and not ulysses_position_ids.is_contiguous()
+                ):
+                    ulysses_position_ids = ulysses_position_ids.contiguous()
+
+                inputs = padded_mb_input.copy()
+                inputs["input_ids"] = ulysses_input_ids
+                if ulysses_position_ids is not None:
+                    inputs["position_ids"] = ulysses_position_ids
+            else:
+                inputs = padded_mb_input
+
+            outputs = self.model(**inputs)
+
+            logits = outputs.logits.squeeze(0)
+            if self.sp_world_size > 1:
+                # Gather and remove Ulysses padding
+                gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
+                logits = torch.cat(gathered_logits, dim=0)
+                logits = logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
+            # Remove original padding
+            logits = logits[:-pad_length] if pad_length > 0 else logits
+
+            if post_hook:
+                result = post_hook(logits, mb_input)
+                results.append(result)
+            else:
+                results.append(logits)
+
+        res = aggregate_fn(results)
+        output_seqlens = [output_seqlens[i] for i in mb_list.forward_indices]
+        unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
+        reordered = reorder_list(unpacked, mb_list.backward_indices)
+        return pad_and_stack_tensors_along_first_dim(reordered)

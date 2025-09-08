@@ -14,6 +14,7 @@ def get_custom_dataset(
     world_size: int,
     type: str = "sft",
     split: Optional[str] = None,
+    max_length: Optional[int] = None,
     tokenizer: Optional["PreTrainedTokenizerFast"] = None,
     processor: Optional["ProcessorMixin"] = None,
     **kwargs,
@@ -22,34 +23,74 @@ def get_custom_dataset(
     if "gsm8k" in path and type == "sft":
         from .gsm8k import get_gsm8k_sft_dataset
 
-        return get_gsm8k_sft_dataset(path, split, tokenizer, rank, world_size, **kwargs)
+        return get_gsm8k_sft_dataset(
+            path=path,
+            split=split,
+            tokenizer=tokenizer,
+            rank=rank,
+            world_size=world_size,
+            max_length=max_length,
+            **kwargs,
+        )
     elif "gsm8k" in path and type == "rl":
         from .gsm8k import get_gsm8k_rl_dataset
 
-        return get_gsm8k_rl_dataset(path, split, rank, world_size, **kwargs)
+        return get_gsm8k_rl_dataset(
+            path=path,
+            split=split,
+            tokenizer=tokenizer,
+            rank=rank,
+            world_size=world_size,
+            max_length=max_length,
+            **kwargs,
+        )
     elif "clevr_count_70k" in path and type == "sft":
         from .clevr_count_70k import get_clevr_count_70k_sft_dataset
 
         return get_clevr_count_70k_sft_dataset(
-            path, split, processor, rank, world_size, **kwargs
+            path=path,
+            split=split,
+            processor=processor,
+            rank=rank,
+            world_size=world_size,
+            max_length=max_length,
+            **kwargs,
         )
     elif "clevr_count_70k" in path and type == "rl":
         from .clevr_count_70k import get_clevr_count_70k_rl_dataset
 
         return get_clevr_count_70k_rl_dataset(
-            path, split, processor, rank, world_size, **kwargs
+            path=path,
+            split=split,
+            processor=processor,
+            rank=rank,
+            world_size=world_size,
+            max_length=max_length,
+            **kwargs,
         )
     elif "geometry3k" in path and type == "sft":
         from .geometry3k import get_geometry3k_sft_dataset
 
         return get_geometry3k_sft_dataset(
-            path, split, processor, rank, world_size, **kwargs
+            path=path,
+            split=split,
+            processor=processor,
+            rank=rank,
+            world_size=world_size,
+            max_length=max_length,
+            **kwargs,
         )
     elif "geometry3k" in path and type == "rl":
         from .geometry3k import get_geometry3k_rl_dataset
 
         return get_geometry3k_rl_dataset(
-            path, split, processor, rank, world_size, **kwargs
+            path=path,
+            split=split,
+            processor=processor,
+            rank=rank,
+            world_size=world_size,
+            max_length=max_length,
+            **kwargs,
         )
     else:
         raise ValueError(

@@ -71,13 +71,18 @@ class RemoteSGLangEngine(InferenceEngine):
         except requests.exceptions.RequestException as e:
             return False
 
-    def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None = None):
+    def initialize(
+        self,
+        addr: str | None,
+        ft_spec: FinetuneSpec | None = None,
+        train_data_parallel_size: int | None = None,
+    ):
         logger.info("Waiting for server ready...")
         for addr_ in self.addresses:
             self._wait_for_server(addr_)
         logger.info("Servers are all ready!")
         self.executor = ProcessPoolExecutor(max_workers=1)
-        self.workflow_executor.initialize()
+        self.workflow_executor.initialize(train_data_parallel_size)
 
     def destroy(self):
         self.workflow_executor.destroy()
@@ -358,7 +363,7 @@ def update_weights_from_disk(
                 addr=addr,
                 session=session,
                 endpoint="/update_weights_from_disk",
-                payload=dict(model_path=str(path)),
+                payload=dict(model_path=str(path), abort_all_request=True),
                 method="POST",
                 max_retries=request_retries,
                 timeout=request_timeout,
@@ -403,7 +408,7 @@ def update_weights_from_distributed(
                         "dtypes": [pspec.dtype for pspec in nccl_param_specs],
                         "shapes": [pspec.shape for pspec in nccl_param_specs],
                         "group_name": meta.nccl_group_name,
-                        "abort_all_request": True
+                        "abort_all_requests": True,
                     },
                     method="POST",
                     max_retries=1,
@@ -425,16 +430,16 @@ async def ainit_weights_update_group(
     request_timeout: float,
 ):
     assert meta.alloc_mode is not None
-    if meta.alloc_mode.gen_pp_size != 1:
+    if meta.alloc_mode.gen.pp_size != 1:
         raise NotImplementedError(
             "NCCL weight update with PP size > 1 is not implemented yet."
         )
-    rank_offset = 1 + server_idx * meta.alloc_mode.gen_tp_size
+    rank_offset = 1 + server_idx * meta.alloc_mode.gen.tp_size
     payload = {
         "master_address": meta.nccl_master_address,
         "master_port": str(meta.nccl_master_port),
         "rank_offset": rank_offset,
-        "world_size": meta.alloc_mode.gen_world_size + 1,
+        "world_size": meta.alloc_mode.gen.world_size + 1,
         "backend": "nccl",
         "group_name": meta.nccl_group_name,
     }

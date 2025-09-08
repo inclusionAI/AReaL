@@ -123,7 +123,7 @@ pipelines:
 - **`workflow/rlvr.py`**: RLVR workflow that utilizes an `InferenceEngine` to sample
   multiple responses for each prompt
 
-#### 4. Entry Point Layer (`examples/lite/`)
+#### 4. Entry Point Layer (`examples/`)
 
 The entry point layer composes customization layer implementations to create complete RL
 training pipelines. While we provide several reference examples, users have complete
@@ -145,8 +145,8 @@ parameters for hyperparameter searches or other experimental needs:
 
 ```bash
 # Launch with Ray launcher: 4 nodes (4 GPUs each), 3 nodes for generation, 1 node for training
-python3 -m areal.launcher.ray examples/lite/gsm8k_grpo.py \
-    --config examples/lite/configs/gsm8k_grpo.yaml \
+python3 -m areal.launcher.ray examples/gsm8k_grpo.py \
+    --config examples/configs/gsm8k_grpo.yaml \
     experiment_name=<your_experiment_name> \
     trial_name=<your_trial_name> \
     allocation_mode=sglang.d12p1t1+d4p1t1 \
@@ -154,8 +154,8 @@ python3 -m areal.launcher.ray examples/lite/gsm8k_grpo.py \
     cluster.n_gpus_per_node=4
 
 # Launch with Slurm launcher: 16 nodes (8 GPUs each), 12 nodes for generation, 4 nodes for training
-python3 -m areal.launcher.slurm examples/lite/gsm8k_grpo.py \
-    --config examples/lite/configs/gsm8k_grpo.yaml \
+python3 -m areal.launcher.slurm examples/gsm8k_grpo.py \
+    --config examples/configs/gsm8k_grpo.yaml \
     experiment_name=<your_experiment_name> \
     trial_name=<your_trial_name> \
     allocation_mode=sglang.d96p1t1+d32p1t1 \

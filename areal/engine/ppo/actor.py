@@ -10,6 +10,7 @@ from areal.engine.fsdp_engine import FSDPEngine
 from areal.utils import stats_tracker
 from areal.utils.data import split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import (
+    dynamic_sampling,
     gather_logprobs,
     gather_logprobs_entropy,
     masked_normalization,
@@ -39,6 +40,7 @@ class PPOActor:
         self.mask_no_eos_with_zero = config.mask_no_eos_with_zero
 
         self.temperature = config.temperature
+        self.dynamic_sampling = config.dynamic_sampling
 
     @torch.no_grad()
     def compute_logp(
@@ -149,6 +151,10 @@ class PPOActor:
         data["logprobs"] = old_logp
 
     def ppo_update(self, data: TensorDict) -> List[Dict[str, float]]:
+
+        if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
+            data, sampling_stat = dynamic_sampling(data, self.group_size)
+
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]
@@ -160,6 +166,15 @@ class PPOActor:
             "correct_n_seqs": (reward_score > 0).bool(),
             "incorrect_n_seqs": (reward_score <= 0).bool(),
         }
+        if self.config.log_agent_stats:
+            assert (
+                "begin_of_trajectory" in data
+            ), "'begin_of_trajectory' is expected to log agent statistics"
+            assert (
+                len(self.config.log_agent_stats_keys) > 0
+            ), "`log_agent_stats_keys` should not be empty when log_agent_stats=True"
+            agent_denominator = (data["begin_of_trajectory"] > 0).bool()
+            result_denominators["agent"] = agent_denominator
         global_denominators = dict(
             n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
             n_tokens=torch.ones_like(loss_mask, dtype=torch.bool),
@@ -203,7 +218,15 @@ class PPOActor:
             scalars["behav_imp_weight_cap"] = self.config.behav_imp_weight_cap
         stats_tracker.scalar(**scalars)
 
-        global_stats = stats_tracker.export(reduce_group=self.engine.parallelism_group)
+        if self.config.log_agent_stats:
+            stats_tracker.stat(
+                **{k: data[k].float() for k in self.config.log_agent_stats_keys},
+                denominator="agent",
+            )
+
+        global_stats = stats_tracker.export(
+            reduce_group=self.engine.data_parallel_group
+        )
         for k in global_denominators:
             keys = list(global_stats.keys())
             for k2 in keys:
@@ -226,6 +249,7 @@ class PPOActor:
                     grpo_loss_fn,
                     temperature=self.temperature,
                     eps_clip=self.config.eps_clip,
+                    eps_clip_higher=self.config.eps_clip_higher,
                     c_clip=self.config.c_clip,
                     behav_imp_weight_cap=self.config.behav_imp_weight_cap,
                 ),
@@ -233,7 +257,7 @@ class PPOActor:
             )
             stats_tracker.scalar(**train_stat)
             all_stats.append(
-                stats_tracker.export(reduce_group=self.engine.parallelism_group)
+                stats_tracker.export(reduce_group=self.engine.data_parallel_group)
             )
         all_stats[0].update(global_stats)
         return all_stats
@@ -262,6 +286,7 @@ def grpo_loss_fn(
     input_data: Dict,
     temperature: float,
     eps_clip: float,
+    eps_clip_higher: float | None,
     c_clip: float | None,
     behav_imp_weight_cap: float | None,
 ):
@@ -282,6 +307,7 @@ def grpo_loss_fn(
         old_logprobs=old_logp,
         advantages=advantages,
         eps_clip=eps_clip,
+        eps_clip_higher=eps_clip_higher,
         loss_mask=loss_mask,
         c_clip=c_clip,
         proximal_logprobs=prox_logp,
