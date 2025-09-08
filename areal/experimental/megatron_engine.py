@@ -276,7 +276,7 @@ class MegatronEngine(TrainEngine):
     def parallelism_group(self) -> dist.ProcessGroup:
         assert self.initialized
         return self._parallelism_group
-    
+
     @property
     def context_and_model_parallel_group(self) -> dist.ProcessGroup:
         assert self.initialized
