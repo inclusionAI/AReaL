@@ -430,7 +430,8 @@ def main(args):
 
                     with stats_tracker.record_timing("latest_recover_save"):
                         if (
-                            global_step % config.recover.latest_save_interval == 0
+                            config.recover.latest_save_interval is not None
+                            and global_step % config.recover.latest_save_interval == 0
                             or global_step == config.total_train_steps
                         ):
                             logger.info(
@@ -451,7 +452,8 @@ def main(args):
 
                     with stats_tracker.record_timing("periodic_recover_save"):
                         if (
-                            global_step > 0
+                            config.recover.periodic_save_interval is not None
+                            and global_step > 0
                             and global_step % config.recover.periodic_save_interval == 0
                             or global_step == config.total_train_steps
                         ):
