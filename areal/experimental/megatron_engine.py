@@ -72,7 +72,6 @@ class MegatronEngine(TrainEngine):
         self.rank = None
         self.world_size = None
         self.rank_generator = None
-        self.context_and_model_parallel_group = None
         self.checkpointer = None
         self.seed = 0
 
@@ -87,6 +86,7 @@ class MegatronEngine(TrainEngine):
         if self.parallel_strategy is None:
             self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
         self._parallelism_group = dist.new_group()
+        self._context_and_model_parallel_group = None
         self._init_context_and_model_parallel_group()
         self.seed = seed
 
@@ -193,7 +193,7 @@ class MegatronEngine(TrainEngine):
                 group_desc="CONTEXT_AND_MODEL_PARALLEL_GROUP",
             )
             if dp_rank == mpu.get_data_parallel_rank():
-                self.context_and_model_parallel_group = group
+                self._context_and_model_parallel_group = group
 
     def create_optimizer(self, ft_spec: FinetuneSpec):
         if self.optimizer_config is None:
@@ -276,6 +276,11 @@ class MegatronEngine(TrainEngine):
     def parallelism_group(self) -> dist.ProcessGroup:
         assert self.initialized
         return self._parallelism_group
+    
+    @property
+    def context_and_model_parallel_group(self) -> dist.ProcessGroup:
+        assert self.initialized
+        return self._context_and_model_parallel_group
 
     def destroy(self):
         if hasattr(self, "optimizer"):
