@@ -1,19 +1,24 @@
 WANDB_API_KEY=local-e94a768686930cfc13051e562b807fc2d56bc4dd  \
 WANDB_BASE_URL=http://8.150.1.98:8080 \
-SERPER_API_KEY=607608ef262aa0020bd69512b4c6a60eb53fb4a5 \
-JINA_API_KEY=jina_89db187a69f44004ae58fd7ff1615232FbzlayNZYcsAHd7zW3-1H8KGXmIF \
 PYTHONPATH="modules/AReaL/" \
 python3 -m areal.launcher.slurm tau2_train/workflow.py \
     --config tau2_train/train_debug.yaml \
-    experiment_name=xss-tau2-1.5B-train-v4 \
-    trial_name=trial-1 \
+    experiment_name=xss-tau2-qwq_32B-train-1k \
+    trial_name=trial-10 \
     cluster.fileroot=/storage/openpsi/experiments \
     cluster.name_resolve.type=nfs \
     cluster.name_resolve.nfs_record_root=/storage/openpsi/experiments/name_resolve \
     launcher.slurm.trainer_image=/storage/openpsi/images/areal-25.02-v0.3.0.post2-v3.sif \
     launcher.slurm.inference_server_image=/storage/openpsi/images/areal-25.02-v0.3.0.post2-v3.sif  \
-    allocation_mode=sglang.d32p1t1+d32p1t1 \
+    allocation_mode=sglang.d8p1t4+d32p1t1 \
+    train_dataset.batch_size=128 \
     cluster.n_nodes=8 \
     cluster.n_gpus_per_node=8 \
-    train_dataset.path=/storage/openpsi/users/xushusheng.xss/data/agent_training/tau_bench/tau_airline_mt_dialogs_v0_format_fix.jsonl \
-    actor.path=/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct/
+    +actor.fsdp.ulysses_sp_size=8 \
+    +ref.fsdp.ulysses_sp_size=8 \
+    gconfig.max_new_tokens=8192 \
+    max_context_length=32768 \
+    +user_base_url="http://33.180.164.182:30000/v1/" \
+    train_dataset.path=/storage/openpsi/users/xushusheng.xss/data/agent_training/tau_bench/merge_0904.jsonl \
+    valid_dataset.path=/storage/openpsi/users/xushusheng.xss/data/agent_eval/airline.jsonl \
+    actor.path=/storage/openpsi/models/QwQ-32B_4a5818f42bce3e62 \

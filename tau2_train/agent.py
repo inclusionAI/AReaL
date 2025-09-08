@@ -181,7 +181,11 @@ class LLMAgent:
         
         parser = FunctionCallParser(tools=tools, tool_call_parser="qwen25")
         completion_str = completion_str.split("</think>")[-1]
-        normal_text, calls = parser.parse_non_stream(completion_str)
+        try:
+            normal_text, calls = parser.parse_non_stream(completion_str)
+        except Exception as e:
+            print("[deubg]: sglang tool parse ", completion_str)
+            raise e
 
         tool_calls = []
         for single_call in calls:

@@ -41,7 +41,7 @@ from areal.api.cli_args import (
     load_expr_config,
 )
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -68,6 +68,8 @@ from areal.api.io_struct import (
     StepInfo
 )
 
+import yaml
+
 
 worker_id = uuid.uuid4().hex[:4]
 logger = logging.getLogger(f"Tau @ {worker_id}")
@@ -83,6 +85,7 @@ class Tau2Workflow(RolloutWorkflow):
         max_num_turns: int = 128,
         max_context_length: int = 32768,
         n_trajs: int = 1,
+        reward_type: str = "all",
         dump_dir: str | None = None,
         eval_model: str | None = None,
         eval_api_key: str | None = None,
@@ -104,6 +107,8 @@ class Tau2Workflow(RolloutWorkflow):
         self.eval_model = eval_model or user_model
         self.eval_api_key = eval_api_key or user_api_key
         self.eval_base_url = eval_base_url or user_base_url
+
+        self.reward_type = reward_type
 
     async def collect_agent_trajectory(self, engine, task):
         
@@ -146,26 +151,30 @@ class Tau2Workflow(RolloutWorkflow):
         traj_records = agent.records
         
         # TODO  calculate reward
-        reward = reward_info.reward
 
-        try:
-            reward = reward_info.db_check.db_reward
-            if len(reward_info.action_checks) > 0:
-                reward *= np.mean([x.action_reward for x in reward_info.action_checks])
-            if len(reward_info.nl_assertions) > 0:
-                reward *= np.mean([x.met for x in reward_info.nl_assertions])
+        if self.reward_type == "db":
+            reward = reward_info.db_check.db_reward if reward_info.db_check is not None else 0
+        elif self.reward_type == "all":
+            try:
+                reward = reward_info.db_check.db_reward
+                if len(reward_info.action_checks) > 0:
+                    reward *= np.mean([x.action_reward for x in reward_info.action_checks])
+                if len(reward_info.nl_assertions) > 0:
+                    reward *= np.mean([x.met for x in reward_info.nl_assertions])
 
-            print(
-            "[debug] reward info: ", task.id,
-            reward_info.db_check.db_reward,
-            [x.action_reward for x in reward_info.action_checks],
-            [x.met for x in reward_info.nl_assertions]
-        )
+                print(
+                "[debug] reward info: ", task.id,
+                reward_info.db_check.db_reward,
+                [x.action_reward for x in reward_info.action_checks],
+                [x.met for x in reward_info.nl_assertions]
+            )
 
-        except Exception as e:
-            print("[debug] reward info: ", e, reward_info)
-            reward = 0
-        #
+            except Exception as e:
+                print("[debug] reward info: ", e, reward_info)
+                reward = 0
+        else:
+            raise NotImplementedError
+
         return messagaes, traj_records, reward
 
     async def arun_episode(self, engine: InferenceEngine, raw_data=None):
@@ -222,7 +231,7 @@ class Tau2Workflow(RolloutWorkflow):
 @dataclass
 class TauRLConfig(GRPOConfig):
     max_turns: int = field(
-        default=10,
+        default=32,
         metadata={
             "help": "maximum number of turns for search agent"
         }
@@ -260,6 +269,13 @@ class TauRLConfig(GRPOConfig):
             "help": "Maximum context length of the trained model"
         }
     )
+    
+    reward_type: str = field(
+        default="all",
+        metadata={
+            "help": "Reward type for training or evaluation. Options: db, all"
+        }
+    )
 
 def get_tau2_dataset(dataset_path, tokenizer, rank, world_size):
     dataset = load_dataset(
@@ -274,6 +290,10 @@ def get_tau2_dataset(dataset_path, tokenizer, rank, world_size):
 def main(args):
     config, _ = load_expr_config(args, TauRLConfig)
     config: TauRLConfig
+
+    with open(os.path.join(StatsLogger.get_log_path(config.stats_logger), "config.yaml"), 'w') as file:
+        print("save config.yaml in", os.path.join(StatsLogger.get_log_path(config.stats_logger)))
+        yaml.dump(asdict(config), file, default_flow_style=False, sort_keys=True)
 
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
@@ -290,6 +310,15 @@ def main(args):
         collate_fn=lambda x: x,
         drop_last=config.train_dataset.drop_last,
     )
+
+    valid_dataloader = StatefulDataLoader(
+        get_tau2_dataset(config.valid_dataset.path, tokenizer, rank, world_size),
+        batch_size=1,
+        shuffle=False,
+        num_workers=config.valid_dataset.num_workers,
+        collate_fn=lambda x: x,
+        drop_last=False,
+    )
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
         dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
@@ -299,6 +328,10 @@ def main(args):
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(None, ft_spec)
+    eval_rollout = RemoteSGLangEngine(copy.deepcopy(config.rollout))
+    # NOTE: eval does not have any offpolicyness control
+    eval_rollout.config.max_head_offpolicyness = int(1e12)
+    eval_rollout.initialize(None, ft_spec)
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
@@ -341,6 +374,22 @@ def main(args):
         user_api_key=config.user_api_key,
         user_base_url=config.user_base_url,
         max_context_length=config.max_context_length,
+        reward_type=config.reward_type,
+    )
+
+    eval_workflow = Tau2Workflow(
+        gconfig=config.gconfig,
+        tokenizer=tokenizer,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated-eval"
+        ),
+        max_num_turns=config.max_turns,
+        n_trajs=4,
+        user_model=config.user_model,
+        user_api_key=config.user_api_key,
+        user_base_url=config.user_base_url,
+        max_context_length=config.max_context_length,
+        reward_type="db"
     )
 
     # Run training.
@@ -378,6 +427,29 @@ def main(args):
             epoch_step=step,
             steps_per_epoch=steps_per_epoch,
         )
+
+        rollout.pause()
+        dist.barrier(device_ids=[actor.device.index])
+        with stats_tracker.record_timing("eval"):
+
+            def evaluate_fn():
+                # Stats are logged in the workflow
+                # and will be exported later
+                cnt = 0
+                for data in valid_dataloader:
+                    for item in data:
+                        eval_rollout.submit(item, eval_workflow)
+                        cnt += 1
+                eval_rollout.wait(cnt, timeout=None)
+
+            evaluator.evaluate(
+                evaluate_fn,
+                epoch,
+                step,
+                global_step,
+            )
+        dist.barrier(device_ids=[actor.device.index])
+        rollout.resume()
 
         with stats_tracker.record_timing("rollout"):
             if config.async_training:
@@ -430,38 +502,11 @@ def main(args):
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
+            eval_rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
 
-        # with stats_tracker.record_timing("eval"):
-
-        #     def evaluate_fn():
-        #         rollout.pause()
-        #         cnt = 0
-        #         for data in valid_dataloader:
-        #             for item in data:
-        #                 eval_rollout.submit(item, workflow)
-        #                 cnt += 1
-        #         batch = eval_rollout.wait(cnt, timeout=None)
-        #         rewards = batch["rewards"].float().to(actor.device)
-        #         with stats_tracker.scope("grpo-eval"):
-        #             stats_tracker.denominator(
-        #                 n_seqs=torch.ones(
-        #                     rewards.shape[0],
-        #                     device=rewards.device,
-        #                     dtype=torch.bool,
-        #                 )
-        #             )
-        #             stats_tracker.stat(task_reward=rewards, denominator="n_seqs")
-        #         rollout.resume()
-
-        #     evaluator.evaluate(
-        #         evaluate_fn,
-        #         epoch,
-        #         step,
-        #         global_step,
-        #     )
 
         with stats_tracker.record_timing("checkpoint_for_recover"):
             recover_handler.dump(
@@ -488,7 +533,7 @@ def main(args):
         rollout.resume()
 
     stats_logger.close()
-
+    eval_rollout.destroy()
     rollout.destroy()
     if ref is not None:
         ref.destroy()

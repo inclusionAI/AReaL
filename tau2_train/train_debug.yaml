@@ -94,7 +94,15 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/users/xushusheng.xss/data/xss_tau_mock_dataset.jsonl
+  path: "/storage/openpsi/users/xushusheng.xss/data/agent_eval/airline.jsonl"
+  type: rl
+
+valid_dataset:
+  batch_size: 16
+  shuffle: false
+  pin_memory: true
+  num_workers: 4
+  path: "/storage/openpsi/users/xushusheng.xss/data/agent_eval/airline.jsonl"
   type: rl
 
 # Utilities
@@ -107,20 +115,20 @@ saver:
   freq_secs: null
 
 recover:
-  mode: disabled
+  mode: auto
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   freq_epochs: 1
   freq_steps: null
-  freq_secs: 3600
+  freq_secs: 600
 
 evaluator:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   freq_epochs: 1
-  freq_steps: null
+  freq_steps: 4
   freq_secs: null
 
 stats_logger:

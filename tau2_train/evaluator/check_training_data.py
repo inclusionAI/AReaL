@@ -7,9 +7,12 @@ from tau2_train.data_model.simulation import DBCheck, EnvAssertionCheck, RewardI
 
 from loguru import logger
 
-# fname = "/storage/openpsi/users/xushusheng.xss/data/agent_training/tau_bench/tau_airline_mt_dialogs_0902_new_format_fixs.jsonl"
+fname = "/storage/openpsi/users/xushusheng.xss/data/agent_training/tau_bench/tau_airline_mt_dialogs_0902_new_format_fixs.jsonl"
 # fname = "tau2_train/data/tau2/domains/airline/tasks.json"
-fname = "/storage/openpsi/users/xushusheng.xss/data/agent_training/tau_bench/tau_airline_mt_dialogs_0903_all_format_fixs.jsonl"
+# fname = "/storage/openpsi/users/xushusheng.xss/data/agent_training/tau_bench/tau_airline_mt_dialogs_0903_all_format_fixs.jsonl"
+# fname = "tau2_train/data/tau2/domains/airline/no_op_task.jsonl"
+# fname = "tau2_train/data/tau2/domains/airline/op_task.jsonl"
+# fname = "/storage/openpsi/users/xushusheng.xss/data/agent_training/tau_bench/tau_airline_mt_dialogs_v0_format_fix.jsonl"
 
 
 def load_data(fname):
