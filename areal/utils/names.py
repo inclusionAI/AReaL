@@ -26,3 +26,11 @@ def gen_servers(experiment_name, trial_name):
 
 def update_weights_from_disk(experiment_name, trial_name, model_version):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/update_weights_from_disk/{model_version}"
+
+
+def load_lora_adapter(experiment_name, trial_name, model_version):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/load_lora_adapter/{model_version}"
+
+
+def unload_lora_adapter(experiment_name, trial_name, model_version):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/unload_lora_adapter/{model_version}"

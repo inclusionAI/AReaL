@@ -36,6 +36,7 @@ from areal.utils.fsdp import (
     apply_fsdp2,
     fsdp2_clip_grad_norm_,
     fsdp2_load_full_state_dict,
+    init_device_mesh,
 )
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
@@ -174,11 +175,20 @@ class FSDPEngine(BaseHFEngine):
         self.cpu_offload = (
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
+        self.reshard_after_forward = True
+
+        # mesh_shape=(self.world_size, 1) in FSDP2 is same as NO_Shard in FSDP.
+        # Lora use NO_Shard FSDP here
+        if self.config.peft_type != "None":
+            self.device_mesh = init_device_mesh("cuda", mesh_shape=(self.world_size, 1), mesh_dim_names=("replicate", "shard"))
+            self.cpu_offload = False
+            self.reshard_after_forward = False
+
         fsdp_kwargs = {
             "mesh": self.fsdp_device_mesh,
             "mp_policy": self.mixed_precision_policy,
             "offload_policy": self.cpu_offload,
-            "reshard_after_forward": True,
+            "reshard_after_forward": self.reshard_after_forward,
         }
         tik = time.perf_counter()
         apply_fsdp2(self.model, fsdp_kwargs, self.config.fsdp.wrap_policy)
@@ -227,10 +237,22 @@ class FSDPEngine(BaseHFEngine):
         options = StateDictOptions(full_state_dict=True, cpu_offload=True)
         state_dict = get_model_state_dict(self.model, options=options)
 
+        def filter_lora_weights(original_state_dict):
+            from collections import OrderedDict
+            filtered_state_dict = OrderedDict(
+                (key, value) for key, value in original_state_dict.items() 
+                if "lora" in key.lower()
+            )
+            return filtered_state_dict
+        
         # save huggingface model on rank 0
         if dist.get_rank() == 0:
             os.makedirs(path, exist_ok=True)
-            self.model.save_pretrained(path, state_dict=state_dict)
+            if self.config.peft_type != "None":
+                lora_dict = filter_lora_weights(state_dict)
+                self.model.save_pretrained(path, state_dict=lora_dict)
+            else:
+                self.model.save_pretrained(path, state_dict=state_dict)
             self.model_config.save_pretrained(path)
             if tokenizer is not None:
                 tokenizer.save_pretrained(path)
@@ -264,11 +286,26 @@ class FSDPEngine(BaseHFEngine):
             self._save_model_to_hf(meta.path, self.tokenizer, self.processor)
             # dist.barrier() are called when _save_model_to_hf finished
             if dist.get_rank() == 0:
-                update_name = names.update_weights_from_disk(
-                    self.config.experiment_name,
-                    self.config.trial_name,
-                    self.get_version(),
-                )
+                if self.config.peft_type != "None":
+                    update_name = names.load_lora_adapter(
+                        self.config.experiment_name,
+                        self.config.trial_name,
+                        self.get_version(),
+                    )
+                    name_resolve.add(
+                        update_name, str(datetime.now().timestamp()), keepalive_ttl=120
+                    )
+                    update_name = names.unload_lora_adapter(
+                        self.config.experiment_name,
+                        self.config.trial_name,
+                        self.get_version(),
+                    )
+                else:
+                    update_name = names.update_weights_from_disk(
+                        self.config.experiment_name,
+                        self.config.trial_name,
+                        self.get_version(),
+                    )
                 name_resolve.add(
                     update_name, str(datetime.now().timestamp()), keepalive_ttl=120
                 )
