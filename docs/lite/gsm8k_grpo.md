@@ -2,9 +2,9 @@
 
 This guide introduces how AReaL-lite runs the GRPO algorithm on the GSM8K dataset, using
 the training script
-[examples/gsm8k_grpo.py](https://github.com/inclusionAI/AReaL/blob/main/examples/gsm8k_grpo.py)
+[examples/gsm8k/gsm8k_grpo.py](https://github.com/inclusionAI/AReaL/blob/main/examples/gsm8k/gsm8k_grpo.py)
 and configuration file
-[examples/configs/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/configs/gsm8k_grpo.yaml).
+[examples/gsm8k/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/gsm8k/gsm8k_grpo.yaml).
 
 ## How AReaL-lite Works
 

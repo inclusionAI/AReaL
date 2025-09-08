@@ -16,7 +16,7 @@ In the SFT example, we see that the loaded data is directly passed to the `train
 method:
 
 ```python
-# examples/gsm8k_sft.py
+# examples/gsm8k/gsm8k_sft.py
 def main(args):
     ...
     # Create dataset and dataloaders
@@ -62,7 +62,7 @@ In the GRPO example, the loaded data is passed to the `InferenceEngine`, rather 
 `TrainEngine`:
 
 ```python
-# examples/gsm8k_ppo.py
+# examples/gsm8k/gsm8k_ppo.py
 def main(args):
     ...
     # Create dataset and dataloaders

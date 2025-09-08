@@ -21,8 +21,8 @@ First, start your SGLang server with an inference-only `allocation_mode` like
 `sglang.d4p1t1`:
 
 ```bash
-nohup python -m areal.launcher.local examples/gsm8k_grpo.py \
-    --config examples/configs/gsm8k_grpo.yaml \
+nohup python -m areal.launcher.local examples/gsm8k/gsm8k_grpo.py \
+    --config examples/gsm8k/gsm8k_grpo.yaml \
     allocation_mode=sglang.d4p1t1 > llm_server.log 2>&1 &
 ```
 
