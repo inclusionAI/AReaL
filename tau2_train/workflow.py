@@ -308,7 +308,7 @@ def main(args):
 
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
-        get_tau2_dataset(config.train_dataset.path, tokenizer, rank, actor.data_parallel_world_size),
+        get_tau2_dataset(config.train_dataset.path, tokenizer, actor.data_parallel_rank, actor.data_parallel_world_size),
         batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
@@ -317,7 +317,7 @@ def main(args):
     )
 
     valid_dataloader = StatefulDataLoader(
-        get_tau2_dataset(config.valid_dataset.path, tokenizer, rank, actor.data_parallel_world_size),
+        get_tau2_dataset(config.valid_dataset.path, tokenizer, actor.data_parallel_rank, actor.data_parallel_world_size),
         batch_size=1,
         shuffle=False,
         num_workers=config.valid_dataset.num_workers,
