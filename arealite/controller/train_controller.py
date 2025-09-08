@@ -96,7 +96,7 @@ class DistributedTrainController(TrainController):
         )
         engineSpec.env_vars["ENGINE_PACKAGE_PATH"] = engine_path
         engineSpec.env_vars["WORKER_IMAGE"] = (
-            "/storage/openpsi/images/hybrid-engine-13680179-20250902202456.sif"
+            "/storage/openpsi/images/hybrid-engine-13680179-20250905155406.sif"
         )
         engineSpec.env_vars["WORKER_LOG_DIR"] = (
             "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
@@ -119,7 +119,6 @@ class DistributedTrainController(TrainController):
         engineSpec.env_vars["NVTE_FUSED_ATTN"] = "0"
         engineSpec.env_vars["NCCL_MAX_NCHANNELS"] = "16"
         engineSpec.env_vars["NCCL_DEBUG_SUBSYS"] = "INIT,TUNING,GRAPH"
-        engineSpec.env_vars["CUDA_LAUNCH_BLOCKING"] = "1"
         engineSpec.env_vars["USE_AREAL_LITE"] = "1"
 
         engineSpec.env_vars["NCCL_SOCKET_IFNAME"] = "bond0"
