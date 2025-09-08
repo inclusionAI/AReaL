@@ -314,15 +314,6 @@ class PPOActorConfig(TrainEngineConfig):
     gae_lambda: float = field(
         default=1.0, metadata={"help": "Lambda parameter for GAE"}
     )
-    # adv_norm: bool = field(
-    #     default=True, metadata={"help": "Enable advantage normalization globally"}
-    # )
-    # group_adv_norm: bool = field(
-    #     default=False,
-    #     metadata={
-    #         "help": "Normalize advantages within each prompt group rather than globally"
-    #     },
-    # )
 
     # KL Control
     kl_ctl: float = field(default=0.1, metadata={"help": "KL divergence coefficient"})
