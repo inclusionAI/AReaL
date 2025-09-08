@@ -44,6 +44,7 @@ class DistributedTrainController(TrainController):
         self.tp_size = self.allocate_mode.train_tp_size
         self.pp_size = self.allocate_mode.train_pp_size
         self.enable_colocate_mode = self.config.enable_colocate_mode
+        self.storage_prefix = config.storage_prefix
 
     def initialize(self, *args, **kwargs):
         """Initialize environments for distributed training and load models."""
@@ -75,7 +76,8 @@ class DistributedTrainController(TrainController):
             "/storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif"
         )
         workerSpec.env_vars["WORKER_LOG_DIR"] = (
-            "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
+            "{storage_prefix}/experiments/logs/root/{experiment_name}/{trial_name}".format(
+                storage_prefix=self.storage_prefix,
                 experiment_name=self.config.experiment_name,
                 trial_name=self.config.trial_name,
             )
@@ -99,7 +101,8 @@ class DistributedTrainController(TrainController):
             "/storage/openpsi/images/hybrid-engine-13680179-20250905155406.sif"
         )
         engineSpec.env_vars["WORKER_LOG_DIR"] = (
-            "/storage/openpsi/experiments/logs/root/{experiment_name}/{trial_name}".format(
+            "{storage_prefix}/experiments/logs/root/{experiment_name}/{trial_name}".format(
+                storage_prefix=self.storage_prefix,
                 experiment_name=self.config.experiment_name,
                 trial_name=self.config.trial_name,
             )
@@ -114,7 +117,7 @@ class DistributedTrainController(TrainController):
         engineSpec.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
         engineSpec.env_vars["NCCL_DEBUG"] = "WARNING"
         engineSpec.env_vars["ASTRA_SHARED_PATH"] = (
-            f"/storage/openpsi/astate_shared_storage"
+            f"{self.storage_prefix}/astate_shared_storage"
         )
         engineSpec.env_vars["NVTE_FUSED_ATTN"] = "0"
         engineSpec.env_vars["NCCL_MAX_NCHANNELS"] = "16"

@@ -144,6 +144,7 @@ class TrainControllerConfig:
     trial_name: str = MISSING
     enable_colocate_mode: bool = False
     group_size: int = 0
+    storage_prefix: str = "/storage/openpsi"
 
 
 @dataclass
@@ -381,6 +382,7 @@ class RolloutControllerConfig:
     trial_name: str = MISSING
     enable_colocate_mode: bool = False
     group_size: int = 0
+    storage_prefix: str = "/storage/openpsi"
 
 
 @dataclass
@@ -596,6 +598,7 @@ class BaseExperimentConfig:
     train_bs_n_seqs: int = field(
         default=64, metadata={"help": "Training batch size in number of sequences"}
     )
+    storage_prefix: str = field(default="/storage/openpsi")
 
 
 # FSDP

@@ -193,6 +193,7 @@ def main(args):
             trial_name=config.trial_name,
             allocation_mode=config.allocation_mode,
             enable_colocate_mode=config.enable_colocate_mode,
+            storage_prefix=config.storage_prefix,
         ),
         scheduler,
     )
@@ -204,6 +205,7 @@ def main(args):
             allocation_mode=config.allocation_mode,
             enable_colocate_mode=config.enable_colocate_mode,
             group_size=config.actor.hybrid_engine.group_size,
+            storage_prefix=config.storage_prefix,
         ),
         scheduler,
     )
@@ -223,6 +225,7 @@ def main(args):
                 allocation_mode=config.allocation_mode,
                 enable_colocate_mode=False,
                 group_size=config.actor.hybrid_engine.group_size,
+                storage_prefix=config.storage_prefix,
             ),
             scheduler,
         )
