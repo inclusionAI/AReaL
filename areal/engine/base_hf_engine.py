@@ -5,6 +5,11 @@ from typing import Any, Callable, Dict, List
 
 import torch
 import torch.distributed as dist
+from peft import (
+    LoraConfig,
+    TaskType,
+    get_peft_model,
+)
 from tensordict import TensorDict
 from transformers import (
     AutoConfig,
@@ -40,7 +45,6 @@ from areal.utils.model import (
     is_qwen3_moe_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
-from peft import LoraConfig, TaskType, get_peft_model, AdaLoraConfig, AdaLoraModel, LoHaConfig
 
 logger = logging.getLogger("Base HF Engine")
 
@@ -72,12 +76,17 @@ class BaseHFEngine(TrainEngine):
         self.is_vision_model = self.model_config.model_type in VALID_VISION_MODELS
 
         if config.peft_type != "None":
+
             def convert_to_regular_types(obj):
                 """Convert Hydra configs and other special types to regular Python types."""
                 from omegaconf import DictConfig, ListConfig
 
                 if isinstance(obj, (ListConfig, DictConfig)):
-                    return {k: convert_to_regular_types(v) for k, v in obj.items()} if isinstance(obj, DictConfig) else list(obj)
+                    return (
+                        {k: convert_to_regular_types(v) for k, v in obj.items()}
+                        if isinstance(obj, DictConfig)
+                        else list(obj)
+                    )
                 elif isinstance(obj, (list, tuple)):
                     return [convert_to_regular_types(x) for x in obj]
                 elif isinstance(obj, dict):
@@ -208,11 +217,12 @@ class BaseHFEngine(TrainEngine):
             model.gradient_checkpointing_enable(
                 gradient_checkpointing_kwargs={"use_reentrant": False}
             )
-            
+
         if self.config.peft_type == "lora":
-            model = get_peft_model(model, 
+            model = get_peft_model(
+                model,
                 LoraConfig(**self.lora_config),
-                autocast_adapter_dtype = False,
+                autocast_adapter_dtype=False,
             )
 
             # Make sure we don't require gradients on non-lora params
@@ -220,7 +230,8 @@ class BaseHFEngine(TrainEngine):
                 for name, param in model.named_parameters():
                     if ".lora_A." in name or ".lora_B." in name:
                         param.requires_grad_(True)
-                    else: param.requires_grad_(False)
+                    else:
+                        param.requires_grad_(False)
 
             model.print_trainable_parameters()
 

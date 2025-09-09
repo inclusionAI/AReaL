@@ -180,7 +180,11 @@ class FSDPEngine(BaseHFEngine):
         # mesh_shape=(self.world_size, 1) in FSDP2 is same as NO_Shard in FSDP.
         # Lora use NO_Shard FSDP here
         if self.config.peft_type != "None":
-            self.device_mesh = init_device_mesh("cuda", mesh_shape=(self.world_size, 1), mesh_dim_names=("replicate", "shard"))
+            self.device_mesh = init_device_mesh(
+                "cuda",
+                mesh_shape=(self.world_size, 1),
+                mesh_dim_names=("replicate", "shard"),
+            )
             self.cpu_offload = False
             self.reshard_after_forward = False
 
@@ -239,12 +243,14 @@ class FSDPEngine(BaseHFEngine):
 
         def filter_lora_weights(original_state_dict):
             from collections import OrderedDict
+
             filtered_state_dict = OrderedDict(
-                (key, value) for key, value in original_state_dict.items() 
+                (key, value)
+                for key, value in original_state_dict.items()
                 if "lora" in key.lower()
             )
             return filtered_state_dict
-        
+
         # save huggingface model on rank 0
         if dist.get_rank() == 0:
             os.makedirs(path, exist_ok=True)

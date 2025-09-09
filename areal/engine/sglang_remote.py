@@ -257,7 +257,7 @@ class RemoteSGLangEngine(InferenceEngine):
                 raise RuntimeError(
                     f"Experiment and trial names must be set for disk-based weight updates."
                 )
-            
+
             if self.config.use_lora:
                 fut = self.executor.submit(
                     unload_lora_adapter,
@@ -269,7 +269,7 @@ class RemoteSGLangEngine(InferenceEngine):
                     self.config.request_retries,
                     self.config.request_timeout,
                 )
-            
+
                 def callback_1(fut):
                     fut = self.executor.submit(
                         load_lora_adapter,
@@ -281,7 +281,7 @@ class RemoteSGLangEngine(InferenceEngine):
                         self.config.request_retries,
                         self.config.request_timeout,
                     )
-                    
+
                     fut.add_done_callback(callback)
 
                 def callback(fut):
@@ -309,8 +309,9 @@ class RemoteSGLangEngine(InferenceEngine):
                 fut.add_done_callback(callback)
         else:
             raise NotImplementedError(f"Unsupported weight update type: {meta.type}")
-        
+
         if self.config.use_lora == False:
+
             def callback(fut):
                 for addr in self.addresses:
                     res = requests.post(f"http://{addr}/continue_generation")
@@ -415,6 +416,7 @@ def update_weights_from_disk(
 
     return uvloop.run(_fn())
 
+
 def load_lora_adapter(
     experiment_name,
     trial_name,
@@ -448,7 +450,7 @@ def load_lora_adapter(
                 addr=addr,
                 session=session,
                 endpoint="/load_lora_adapter",
-                payload=dict(lora_name="lora_1",lora_path=str(path)),
+                payload=dict(lora_name="lora_1", lora_path=str(path)),
                 method="POST",
                 max_retries=request_retries,
                 timeout=request_timeout,
@@ -462,6 +464,7 @@ def load_lora_adapter(
         )
 
     return uvloop.run(_fn())
+
 
 def unload_lora_adapter(
     experiment_name,
@@ -510,6 +513,7 @@ def unload_lora_adapter(
         )
 
     return uvloop.run(_fn())
+
 
 def update_weights_from_distributed(
     meta: WeightUpdateMeta,
