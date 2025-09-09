@@ -434,14 +434,19 @@ def main(args):
                         )
 
                     with stats_tracker.record_timing("main"):
+                        batch_len = len(batch_data)
                         logger.info(
-                            f"start to rollout, step: {step}, epoch: {epoch}, batch_data len: {len(batch_data)}"
+                            f"start to rollout, step: {step}, epoch: {epoch}, batch_data len: {batch_len}"
                         )
 
                         with stats_tracker.record_timing("partial_rollout"):
                             rollout.submit(batch_data, workflow=workflow)
                             while not rollout_buffer.is_sufficient():
                                 time.sleep(0.1)
+
+                            abort_query_num = batch_len - rollout_buffer.get_current_size()
+                            stats_tracker.scalar(**{"abort_query_num": abort_query_num,
+                                                    "abort_query_ratio": abort_query_num / batch_len})
 
                             rollout_res = rollout_buffer.pop_batched_rollout_res()
 
