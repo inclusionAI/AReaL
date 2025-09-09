@@ -57,6 +57,7 @@ class AsystemScheduler(Scheduler):
         self.rpc_client = RPCClient()
         # 每次实验生成一个uuid
         self.uuid = str(time.time_ns())
+        self.timestamp = time.strftime("%Y_%m_%d_%H_%M_%S")
         self.extra_envs["CLUSTER_NAME"] = (
             f"{self.expr_name}_{self.trial_name}_{self.uuid}"
         )
@@ -69,7 +70,7 @@ class AsystemScheduler(Scheduler):
         )
         # 设置 env，用于区分 Failover 前后的不同实验
         self.extra_envs["UUID"] = (
-            f"{self.uuid}"
+            f"{self.timestamp}"
         )
 
         # 信号捕获是为了手动跑 trainer.py 增加的功能，用来在 trainer 退出时清理相关 Job

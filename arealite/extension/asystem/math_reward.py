@@ -73,6 +73,9 @@ async def reward_fn(
         answers,
     )
 
+    # logger.info(
+    #     f"task: {task}, completion: {completion}, query_id: {query_id}, reward: {format_rewards}"
+    # )
     return format_rewards[0]
 
     # labels = math_verify([solutions], [completion], [query_id])
