@@ -905,7 +905,9 @@ def all_gather_tensor_container(data, group=None) -> List:
         return list(zip(*data))
 
     if isinstance(data, (dict, TensorDict)):
-        results = {k: all_gather_tensor_container(v, group=group) for k, v in data.items()}
+        results = {
+            k: all_gather_tensor_container(v, group=group) for k, v in data.items()
+        }
         results = [
             {k: v[i] for k, v in results.items()}
             for i in range(dist.get_world_size(group))
