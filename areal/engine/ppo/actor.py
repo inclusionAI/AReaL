@@ -514,7 +514,6 @@ class AdvNorm:
     def _compute_mean(
         x: torch.Tensor,
         mask: Optional[torch.Tensor],
-        unbiased: bool,
         high_precision: bool,
         all_reduce: bool,
         reduce_group,

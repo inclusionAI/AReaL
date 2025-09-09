@@ -19,6 +19,13 @@ from areal.utils.fs import get_user_tmp
 class NormConfig:
     """Configuration for advantage normalization."""
 
+    # TODO: add common fields of adv_norm and reward_norm
+
+
+@dataclass
+class AdvNormConfig(NormConfig):
+    """Advanced configuration for advantage normalization."""
+
     mean_level: str = field(
         default="batch",
         metadata={
@@ -34,11 +41,6 @@ class NormConfig:
     group_size: int = field(
         default=1, metadata={"help": "group_size for advantage normalization"}
     )
-
-
-@dataclass
-class AdvNormConfig(NormConfig):
-    """Advanced configuration for advantage normalization."""
 
 
 @dataclass
