@@ -67,14 +67,14 @@ def fsdp2_clip_grad_norm_(
                 params_by_mesh[grad.device].append(p)
                 grads_by_mesh[grad.device].append(grad)
 
-    norms = []
-    for key, grads in grads_by_mesh.items():
-        norm = _get_total_norm(grads, norm_type, error_if_nonfinite, foreach)
-        norms.append(norm.item())
+    norms = [
+        _get_total_norm(grads, norm_type, error_if_nonfinite, foreach).item()
+        for _, grads in grads_by_mesh.items()
+    ]
     # vector_norm is from _get_total_norm
     total_norm = torch.linalg.vector_norm(torch.tensor(norms), norm_type)
 
-    for key, params in params_by_mesh.items():
+    for _, params in params_by_mesh.items():
         _clip_grads_with_norm_(params, max_norm, total_norm, foreach)
     return total_norm
 
