@@ -107,8 +107,8 @@ Our training scripts will automatically download the dataset (openai/gsm8k) and 
 
 ```bash
 python3 -m areal.launcher.local \
-  examples/gsm8k/gsm8k_grpo.py \
-  --config examples/gsm8k/gsm8k_grpo.yaml
+  examples/math/gsm8k_grpo.py \
+  --config examples/math/gsm8k_grpo.yaml
 ```
 
 On a Ray cluster with 2 nodes & 8 GPUs each node, runs (remember to change paths in the
@@ -116,8 +116,8 @@ YAML file to your own shared storage):
 
 ```bash
 python3 -m areal.launcher.ray \
-  examples/gsm8k/gsm8k_grpo.py \
-  --config examples/gsm8k/gsm8k_grpo.yaml \
+  examples/math/gsm8k_grpo.py \
+  --config examples/math/gsm8k_grpo.yaml \
   cluster.n_nodes=2 \
   cluster.n_gpus_per_node=8
 ```
@@ -145,7 +145,7 @@ from files from `examples` folder, or generated when you run your experiments in
 ```bash
 python examples/config_converter.py \
   --convert_src AReaL --src_config_path <path_to_areal_yaml> \
-  --template_path examples/gsm8k/gsm8k_grpo.yaml \
+  --template_path examples/math/gsm8k_grpo.yaml \
   --output_path <output_yaml>
 ```
 

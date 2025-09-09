@@ -10,16 +10,16 @@ function-based rewards. Ensure you've completed
 To run the experiment, you will need:
 
 - Training script:
-  [examples/gsm8k/gsm8k_grpo.py](https://github.com/inclusionAI/AReaL/blob/main/examples/gsm8k/gsm8k_grpo.py)
+  [examples/math/gsm8k_grpo.py](https://github.com/inclusionAI/AReaL/blob/main/examples/math/gsm8k_grpo.py)
 - Config YAML:
-  [examples/gsm8k/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/gsm8k/gsm8k_grpo.yaml)
+  [examples/math/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/math/gsm8k_grpo.yaml)
 
 Our training scripts will automatically download the dataset (openai/gsm8k) and model
 (Qwen/Qwen2-1.5B-Instruct). To run the example with default configuration, execute from
 the repository directory:
 
 ```
-python3 -m areal.launcher.local examples/gsm8k/gsm8k_grpo.py --config examples/gsm8k/gsm8k_grpo.yaml experiment_name=<your experiment name> trial_name=<your trial name>
+python3 -m areal.launcher.local examples/math/gsm8k_grpo.py --config examples/math/gsm8k_grpo.yaml experiment_name=<your experiment name> trial_name=<your trial name>
 ```
 
 > **Note**: The command above uses `LocalLauncher`, which only works for a single node
@@ -33,7 +33,7 @@ All available configuration options are listed in
 To customize the experiment (models, resources, algorithm options), you can:
 
 1. Edit the YAML file directly at
-   [examples/gsm8k/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/gsm8k/gsm8k_grpo.yaml).
+   [examples/math/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/math/gsm8k_grpo.yaml).
 1. Add command-line options:
    - For existing options in the YAML file, directly add the option:
      `actor.path=Qwen/Qwen3-1.7B`.
@@ -44,8 +44,8 @@ For example, here is the command to launch a customized configuration, based on 
 GSM8K GRPO example:
 
 ```
-python3 -m areal.launcher.local examples/gsm8k/gsm8k_grpo.py \
-    --config examples/gsm8k/gsm8k_grpo.yaml \
+python3 -m areal.launcher.local examples/math/gsm8k_grpo.py \
+    --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
     allocation_mode=sglang.d2p1t1+d2p1t1 \
@@ -71,8 +71,8 @@ your Ray or Slurm cluster, launch experiments similarly to `LocalLauncher`:
 
 ```
 # Launch with Ray launcher. 4 nodes (4 GPUs each), 3 nodes for generation, 1 node for training.
-python3 -m areal.launcher.ray examples/gsm8k/gsm8k_grpo.py \
-    --config examples/gsm8k/gsm8k_grpo.yaml \
+python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
+    --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
     allocation_mode=sglang.d12p1t1+d4p1t1 \
@@ -80,8 +80,8 @@ python3 -m areal.launcher.ray examples/gsm8k/gsm8k_grpo.py \
     cluster.n_gpus_per_node=4 \
 
 # Launch with Slurm launcher. 16 nodes (8 GPUs each), 12 nodes for generation, 4 nodes for training
-python3 -m areal.launcher.slurm examples/gsm8k/gsm8k_grpo.py \
-    --config examples/gsm8k/gsm8k_grpo.yaml \
+python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py \
+    --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
     allocation_mode=sglang.d96p1t1+d32p1t1 \
@@ -121,7 +121,7 @@ from files from `examples` folder, or generated when you run your experiments in
 `<fileroot>/<expr_name>/<trial_name>` folder. Runs:
 
 ```bash
-python examples/config_converter.py --convert_src AReaL --src_config_path <path_to_areal_yaml> --template_path examples/gsm8k/gsm8k_grpo.yaml --output_path <output_yaml>
+python examples/config_converter.py --convert_src AReaL --src_config_path <path_to_areal_yaml> --template_path examples/math/gsm8k_grpo.yaml --output_path <output_yaml>
 ```
 
 Then you should be able to run experiments with your old settings on AReaL-lite!
