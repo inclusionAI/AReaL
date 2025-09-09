@@ -16,7 +16,7 @@ from areal.utils.fs import get_user_tmp
 
 
 @dataclass
-class AdvNormConfig:
+class NormConfig:
     """Configuration for advantage normalization."""
 
     mean_level: str = field(
@@ -31,12 +31,20 @@ class AdvNormConfig:
             "help": "std_level for advantage normalization. options: batch, group, none"
         },
     )
-    mode: bool = field(
-        default=True, metadata={"help": "whether to use advantage normalization"}
-    )
     group_size: int = field(
         default=1, metadata={"help": "group_size for advantage normalization"}
     )
+
+
+@dataclass
+class AdvNormConfig(NormConfig):
+    """Advanced configuration for advantage normalization."""
+
+
+@dataclass
+class RewardNormConfig(NormConfig):
+    # TODO: implement reward normalization
+    pass
 
 
 @dataclass
@@ -362,8 +370,8 @@ class PPOActorConfig(TrainEngineConfig):
         default_factory=lambda: [],
         metadata={"help": "Keys of log stats for agent trajectories"},
     )
-    adv_norm: AdvNormConfig = field(
-        default_factory=AdvNormConfig, metadata={"help": "Optimizer configuration"}
+    adv_norm: Optional[NormConfig] = field(
+        default=None, metadata={"help": "Optimizer configuration, default is None"}
     )
 
 

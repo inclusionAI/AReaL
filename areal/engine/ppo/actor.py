@@ -35,7 +35,7 @@ class PPOActor:
 
         self.kl_ctl = config.kl_ctl
 
-        self.adv_norm = AdvNorm(config.adv_norm)
+        self.adv_norm = AdvNorm(config.adv_norm) if config.adv_norm else None
 
         self.discount = config.discount
         self.gae_lambda = config.gae_lambda
@@ -132,7 +132,7 @@ class PPOActor:
         advantages = torch.stack(advantages_reversed[::-1], dim=1)
 
         # Optionally perform advantage normalization.
-        if self.adv_norm.mode == True:
+        if self.adv_norm is not None:
             advantages = self.adv_norm(advantages, loss_mask)
 
         # Store data in the dict.
@@ -374,7 +374,9 @@ class AdvNorm:
         self,
         advNorm_cfg,
     ):
-        self.mode = advNorm_cfg.mode
+        if advNorm_cfg is None:
+            return None
+
         if advNorm_cfg.mean_level not in {"batch", "group", "none"}:
             raise ValueError(
                 f"mean_level must be 'batch', 'group' or 'none', got {advNorm_cfg.mean_level}"
@@ -416,8 +418,6 @@ class AdvNorm:
         Returns:
             normalized advantages (same shape, dtype=float32)
         """
-        if not self.mode:
-            return advantages
 
         bs = advantages.size(0)
 
@@ -527,15 +527,12 @@ class AdvNorm:
             factor = torch.tensor(
                 np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
             )
+            x_sum = x.sum(dim=dim, keepdim=True)
         else:
             mask = mask.to(dtype)
             x_masked = x * mask
             factor = mask.sum(dim, keepdim=True)
             x_sum = x_masked.sum(dim=dim, keepdim=True)
-        if mask is not None:
-            pass
-        else:
-            x_sum = x.sum(dim=dim, keepdim=True)
 
         if dist.is_initialized() and all_reduce:
             dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)

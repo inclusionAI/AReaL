@@ -63,9 +63,8 @@ actor:
   behav_imp_weight_cap: 5.0
   dynamic_sampling: false
   adv_norm:
-    mean_level: batch
-    std_level: batch
-    mode: true
+    mean_level: group
+    std_level: group
     group_size: ${gconfig.n_samples}
 
 
