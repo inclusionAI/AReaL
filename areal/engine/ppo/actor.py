@@ -433,7 +433,9 @@ class AdvNorm:
                     all_reduce=True,  # follow original code
                     reduce_group=reduce_group,
                 )
-            else:  # group
+            else:  # group or none
+                if self.mean_level == "none":
+                    return advantages.float()
                 adv_list = []
                 for i in range(0, bs // self.group_size):
                     s = slice(i * self.group_size, (i + 1) * self.group_size)
@@ -454,11 +456,17 @@ class AdvNorm:
 
         # Cases: mean and std levels differ, or std_level is None
 
+        # Early return for no normalization case
+        if self.mean_level == "none" and self.std_level == "none":
+            return advantages.float()
+
         # Step 1: Compute mean
         if self.mean_level == "batch":
             mean = self._compute_mean(
-                advantages, loss_mask, unbiased, high_precision, True, reduce_group
+                advantages, loss_mask, high_precision, True, reduce_group
             )
+            # Expand batch mean to match input shape for mixed normalization
+            mean = mean.expand_as(advantages)
         elif self.mean_level == "group":
             mean = torch.zeros_like(advantages)
             for i in range(0, bs // self.group_size):
@@ -466,10 +474,10 @@ class AdvNorm:
                 adv = advantages[s]
                 m = loss_mask[s] if loss_mask is not None else None
                 group_mean = self._compute_mean(
-                    adv, m, unbiased, high_precision, False, reduce_group
+                    adv, m, high_precision, False, reduce_group
                 )
-                mean[s] = group_mean
-        else:
+                mean[s] = group_mean.expand_as(adv)
+        else:  # mean_level == "none"
             mean = torch.zeros_like(advantages)
 
         # Subtract mean
@@ -489,13 +497,15 @@ class AdvNorm:
                 True,
                 reduce_group,
             )
+            # Expand batch std to match input shape
+            std = std.expand_as(advantages)
         else:  # group
             std = torch.zeros_like(advantages)
             for i in range(0, bs // self.group_size):
                 s = slice(i * self.group_size, (i + 1) * self.group_size)
                 adv = advantages[s]
                 m = loss_mask[s] if loss_mask is not None else None
-                group_mean_slice = mean[s]  # already computed
+                group_mean_slice = mean[s]  # already computed and expanded
                 group_std = self._compute_std(
                     adv,
                     m,
@@ -505,7 +515,7 @@ class AdvNorm:
                     False,
                     reduce_group,
                 )
-                std[s] = group_std
+                std[s] = group_std.expand_as(adv)
 
         # Normalize
         return (x_centered / (std + eps)).float()

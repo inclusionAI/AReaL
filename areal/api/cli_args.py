@@ -372,7 +372,7 @@ class PPOActorConfig(TrainEngineConfig):
         default_factory=lambda: [],
         metadata={"help": "Keys of log stats for agent trajectories"},
     )
-    adv_norm: Optional[NormConfig] = field(
+    adv_norm: Optional[AdvNormConfig] = field(
         default=None, metadata={"help": "Optimizer configuration, default is None"}
     )
 
