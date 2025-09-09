@@ -476,9 +476,11 @@ class MegatronEngine(TrainEngine):
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs]),
-            dtype=torch.float32,
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
@@ -564,9 +566,11 @@ class MegatronEngine(TrainEngine):
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs]),
-            dtype=torch.float32,
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)

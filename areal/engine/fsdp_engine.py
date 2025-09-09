@@ -359,10 +359,11 @@ class FSDPEngine(BaseHFEngine):
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs]),
-            dtype=torch.float32,
-            device=self.device,
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32, device=self.device)
         )
         assert total_loss_weight != 0
         dist.all_reduce(total_loss_weight)
@@ -457,8 +458,11 @@ class FSDPEngine(BaseHFEngine):
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs]), dtype=torch.float32
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
 
