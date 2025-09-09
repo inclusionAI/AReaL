@@ -90,6 +90,10 @@ def get_countdown_dataset(dataset_path, rank, world_size):
     return split_dataset_by_node(dataset, rank=rank, world_size=world_size)
 ```
 
+## Training Curves
+
+<img align="center" alt="training curve" src="countdown_training_curve.png" width="100%">
+
 ## 📁 Project Structure
 
 ```
