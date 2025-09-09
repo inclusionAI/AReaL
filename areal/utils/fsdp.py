@@ -71,7 +71,8 @@ def fsdp2_clip_grad_norm_(
     for key, grads in grads_by_mesh.items():
         norm = _get_total_norm(grads, norm_type, error_if_nonfinite, foreach)
         norm = norm.to(torch.cuda.current_device(), non_blocking=True)
-        total_norm += norm
+        total_norm += norm**2
+    total_norm = total_norm**0.5
 
     for key, params in params_by_mesh.items():
         _clip_grads_with_norm_(params, max_norm, total_norm, foreach)
