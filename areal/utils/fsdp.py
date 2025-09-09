@@ -70,9 +70,9 @@ def fsdp2_clip_grad_norm_(
     norms = []
     for key, grads in grads_by_mesh.items():
         norm = _get_total_norm(grads, norm_type, error_if_nonfinite, foreach)
-        norms.append(norm.to(torch.cuda.current_device(), non_blocking=True))
+        norms.append(norm.item())
     # vector_norm is from _get_total_norm
-    total_norm = torch.linalg.vector_norm(torch.stack(norms), norm_type)
+    total_norm = torch.linalg.vector_norm(torch.tensor(norms), norm_type)
 
     for key, params in params_by_mesh.items():
         _clip_grads_with_norm_(params, max_norm, total_norm, foreach)
