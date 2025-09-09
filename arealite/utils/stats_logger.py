@@ -29,6 +29,11 @@ class StatsLogger:
         # wandb init, connect to remote wandb host
         if self.config.wandb.mode != "disabled":
             wandb.login()
+
+        suffix = self.config.wandb.id_suffix
+        if suffix == "timestamp":
+            suffix = time.strftime("%Y_%m_%d_%H_%M_%S")
+
         wandb.init(
             mode=self.config.wandb.mode,
             entity=self.config.wandb.entity,
@@ -42,7 +47,7 @@ class StatsLogger:
             config=self.config.wandb.config,
             dir=self.get_log_path(self.config),
             force=True,
-            id=f"{self.config.experiment_name}_{self.config.trial_name}_train",
+            id=f"{self.config.experiment_name}_{self.config.trial_name}_{suffix}",
             resume="allow",
             settings=wandb.Settings(start_method="fork"),
         )

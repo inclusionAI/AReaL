@@ -49,7 +49,7 @@ from arealite.extension.asystem.math_reward import reward_fn
 from arealite.scheduler.asystem import AsystemScheduler
 from arealite.recover import periodic_checkpoint, latest_checkpoint
 from arealite.dataset.utils import ShuffleSampler
-from arealite.utils.metric import calc_training_data_metrics, calc_training_data_version_metrics
+from arealite.utils.metric import calc_training_data_metrics, calc_training_data_version_metrics, calc_training_data_group_metrics
 from arealite.controller.rollout_buffer import RolloutBuffer
 
 from realhf.base import logging, stats_tracker
@@ -311,6 +311,8 @@ def main(args):
         reward_fn=reward_fn,
         gconfig=config.gconfig,
         tokenizer_path=config.tokenizer_path,
+        exp_name=config.experiment_name,
+        trial_name=config.trial_name,
     )
 
     def add_res_to_rollout_buffer_callback(res: List[TensorDict]):
@@ -458,6 +460,7 @@ def main(args):
 
                 with (stats_tracker.scope("training_data"),):
                     calc_training_data_metrics(rollout_res)
+                    calc_training_data_group_metrics(rollout_res, group_size)
                     calc_training_data_version_metrics(rollout_res, global_step)
 
                     with(stats_tracker.record_timing("post_data_process")):

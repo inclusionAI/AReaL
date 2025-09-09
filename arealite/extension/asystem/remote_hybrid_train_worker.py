@@ -650,6 +650,7 @@ class RemoteHybridTrainWorker(TrainEngine):
             n_seqs = len(input_lens)
             reward_score_grpo = reward_score.clone().detach()
             new_reward_score = reward_score_grpo
+            
             for i in range(n_seqs // self.config.group_size):
                 group_rewards = reward_score[
                     i * self.config.group_size : (i + 1) * self.config.group_size
@@ -661,8 +662,8 @@ class RemoteHybridTrainWorker(TrainEngine):
                 reward_score_grpo[
                     i * self.config.group_size : (i + 1) * self.config.group_size
                 ] = normed_rewards
-
-            logger.info(f"process_training_data new_reward_score: {new_reward_score}")
+            
+            logger.info(f"[RemoteHypridTrainWorker] process_training_data new_reward_score: {new_reward_score}")
 
         # Compute rewards and GAEs.
         use_kl_in_loss = self.config.loss_configs.get("use_kl_in_loss", False)

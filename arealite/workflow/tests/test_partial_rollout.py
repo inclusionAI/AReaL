@@ -13,7 +13,7 @@ from arealite.workflow.partial_rollout import PartialRolloutWorkflow
 class DummyTokenizer(PreTrainedTokenizerFast):
     def __init__(self):
         self.eos_token_id = 0
-        pass
+        self.pad_token_id = 0
 
     def decode(self, ids, clean_up_tokenization_spaces=False, skip_special_tokens=True):
         return " ".join([str(i) for i in ids])
@@ -78,6 +78,7 @@ def dummy_gconfig():
         n_samples = 1
         max_new_tokens = 2
         min_new_tokens = 1
+        max_tokens = 10
         greedy = True
         top_p = 1.0
         top_k = 0

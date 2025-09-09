@@ -67,7 +67,9 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         self.rollout_stat = RolloutStat()
 
         self._version = 0
-        logger.info(f"class __init__ success...")
+        self._rank = None
+        self._step = None
+        logger.info("[RemoteHybridInferenceWorker] class __init__ success...")
 
     def initialize(self, initialize_cfg: RemoteHypidInferenceInitConfig):
         logger.info(f"begin exec initialize, config: {initialize_cfg}")
@@ -138,8 +140,12 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     result = response.json()
                     logger.info(f"initialize success, response: {result}")
             except Exception as e:
-                raise EngineError("InferenceEngineError", "InitializeError", e)
+                logger.error(f"[RemoteHybridInferenceWorker] initialize failed: {str(e)}, response is {response.text}")
+                raise
 
+        if initialize_cfg.global_ranks:
+            self._rank = initialize_cfg.global_ranks[0]
+            
         self.exiting = threading.Event()
         self.paused = threading.Event()
         self.lock = threading.Lock()
@@ -164,6 +170,18 @@ class RemoteHybridInferenceWorker(InferenceEngine):
     def get_version(self):
         with self.lock:
             return self._version
+            
+    def get_rank(self):
+        with self.lock:
+            return self._rank
+            
+    def get_step(self):
+        with self.lock:
+            return self._step
+            
+    def set_step(self, step):
+        with self.lock:
+            self._step = step
 
     def _rollout_thread(self):
         """Thread that runs the rollout loop."""
@@ -199,7 +217,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 ):
                     data, workflow = self.input_queue.get_nowait()
 
-                    logger.info(f"Get data from puller: {data}")
+                    # logger.info(f"Get data from puller: {data}")
                     task = asyncio.create_task(
                         (
                             workflow.arun_episodes(self, data)
@@ -318,7 +336,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             "return_logprob": True,
             "stream": False,
         }
-        logger.info(f"generate payload {payload}")
+        logger.info(f"[RemoteHybridInferenceWorker] generate sampling_params: {sample_params}")
         # Make request
         start_time = time.perf_counter()
         accumulated_output_tokens = []
@@ -475,8 +493,6 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         return capacity
 
     def update_weights(self, meta):
-        # executor = ThreadPoolExecutor(max_workers=1)
-        # return executor.submit(self._update_weights, meta)
         self._update_weights(meta)
         return True
 
@@ -657,7 +673,9 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 self.result_cache[count:],
             )
 
-        logger.info(f"wait, get all results len: {len(results)}, details: {results}")
+        logger.info(
+            f"[RemoteHybridInferenceWorker] wait, get all results len: {len(results)}"
+        )
         group_size = 1
         if len(results) > 0:
             group_size = int(results[0]["input_ids"].shape[0])
@@ -666,7 +684,6 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         padded = concat_padded_tensors(results)
         if isinstance(padded, dict):
             padded = TensorDict(padded, batch_size=[bs])
-        logger.info(f"wait, padded type: {type(padded)}, padded: {padded}")
         return padded
 
     def wait_at_least_no_concat(
@@ -761,10 +778,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         """
         if event not in ["rollout_start", "rollout_end"]:
             raise ValueError(f"Invalid event type: {event}")
-
-        logger.info(
-            f"Sending inference {event} notification at global_step: {global_step}"
-        )
+            
+        logger.info(f"[RemoteHybridInferenceWorker] Sending inference {event} notification at global_step: {global_step}")
+        
+        self._step = global_step
+        
         try:
             target_url = f"http://{self.addresses[0]}/events"
             headers = {"Content-Type": "application/json"}

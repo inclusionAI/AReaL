@@ -45,7 +45,7 @@ from arealite.extension.asystem.math_reward import reward_fn
 from arealite.scheduler.asystem import AsystemScheduler
 from arealite.recover import periodic_checkpoint, latest_checkpoint
 from arealite.dataset.utils import ShuffleSampler
-from arealite.utils.metric import calc_training_data_metrics, calc_training_data_version_metrics
+from arealite.utils.metric import calc_training_data_metrics, calc_training_data_version_metrics, calc_training_data_group_metrics
 
 from realhf.base import logging, stats_tracker
 
@@ -167,6 +167,7 @@ def main(args):
             fileroot=config.stats_logger.fileroot,
             wandb=WandBConfig(
                 mode=config.stats_logger.wandb.mode,
+                id_suffix=config.stats_logger.wandb.id_suffix,
             ),
             tensorboard=TensorBoardConfig(path=config.stats_logger.tensorboard.path),
         ),
@@ -296,6 +297,8 @@ def main(args):
         reward_fn=reward_fn,
         gconfig=config.gconfig,
         tokenizer_path=config.tokenizer_path,
+        exp_name=config.experiment_name,
+        trial_name=config.trial_name,
     )
 
     for epoch in range(recover_epoch, epoch_num):
@@ -378,6 +381,7 @@ def main(args):
 
                 with (stats_tracker.scope("training_data"),):
                     calc_training_data_metrics(rollout_res)
+                    calc_training_data_group_metrics(rollout_res, config.gconfig.n_samples)
                     calc_training_data_version_metrics(rollout_res, global_step)
 
                 with(stats_tracker.record_timing("post_data_process")):

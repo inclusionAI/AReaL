@@ -1,6 +1,8 @@
 import asyncio
 import uuid
 from typing import Any, Dict, List
+import os
+import json
 
 import torch
 from tensordict import NonTensorData, TensorDict
@@ -10,7 +12,7 @@ from arealite.api.cli_args import GenerationHyperparameters
 from arealite.api.io_struct import LLMRequest, LLMResponse
 from arealite.api.workflow_api import RolloutWorkflow
 from realhf.api.core.data_api import RL_TASKS, load_hf_tokenizer
-
+from arealite.utils.util import worker_dump_rollout_output
 
 class PartialRolloutWorkflow(RolloutWorkflow):
     def __init__(
@@ -19,6 +21,8 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast = None,
         tokenizer_path: str = None,
+        exp_name: str = None,
+        trial_name: str = None,
     ):
         if tokenizer is None and tokenizer_path is None:
             raise ValueError(
@@ -28,6 +32,10 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         self.gconfig = gconfig
         self.tokenizer = tokenizer if tokenizer is not None else None
         self.tokenizer_path = tokenizer_path
+        self._step = None
+        self._rank = None
+        self.exp_name = exp_name
+        self.trial_name = trial_name
 
     async def _compute_reward(self, 
                               prompt,
@@ -124,9 +132,24 @@ class PartialRolloutWorkflow(RolloutWorkflow):
         )
 
         task_id = RL_TASKS.index(data["task"][0])
-        print(
-            f"[PartialRolloutWorkflow][New Prompt] data {data_name_id}, task: {data['task'][0]}, reward: {reward}, stop_reason: {resp.stop_reason}, input_ids {input_ids},  prompt: {prompt_text}, completion: {completion}, completion_tokens: {resp.output_tokens}, solutions: {data['solutions'][0]}"
-        )
+        sample_info = {
+            "prompt": prompt_text,
+            "completion": completion,
+            "reward": reward,
+            "solutions": data.get("solutions", []),
+            "task": data["task"][0],
+            "task_id": task_id,
+            "input_tokens": resp.input_tokens,
+            "output_tokens": resp.output_tokens,
+            "output_logprobs": resp.output_logprobs,
+            "seq_len": len(seq),
+            "versions": versions,
+            "query_id": data['query_id'][0],
+            "stop_reason": resp.stop_reason,
+        }
+
+        worker_dump_rollout_output(sample_info=sample_info)
+
         res = dict(
             # unsqueeze to add an additional batch dimension
             input_ids=torch.tensor(seq).unsqueeze(
@@ -257,9 +280,25 @@ class PartialRolloutWorkflow(RolloutWorkflow):
             reward = data["previous_rewards"][0]
 
         task_id = RL_TASKS.index(data["task"][0])
-        print(
-            f"[PartialRolloutWorkflow][Reapply] data {data_name_id}, task: {data['task'][0]}, reward: {reward}, stop_reason: {stop_reason}, input_ids {input_ids},  prompt: {prompt_text}, completion: {completion}, completion_tokens: {completion_ids}, solutions: {data['solutions'][0]}"
-        )
+
+        sample_info = {
+            "prompt": prompt_text,
+            "completion": completion,
+            "reward": reward,
+            "solutions": data.get("solutions", []),
+            "task": data["task"][0],
+            "task_id": task_id,
+            "input_tokens": resp.input_tokens,
+            "output_tokens": resp.output_tokens,
+            "output_logprobs": resp.output_logprobs,
+            "seq_len": len(seq),
+            "versions": versions,
+            "query_id": data['query_id'][0],
+            "stop_reason": stop_reason,
+        }
+
+        worker_dump_rollout_output(sample_info=sample_info)
+
         res = dict(
             # unsqueeze to add an additional batch dimension
             input_ids=torch.tensor(seq).unsqueeze(
@@ -315,10 +354,12 @@ class PartialRolloutWorkflow(RolloutWorkflow):
 
         if data.get("previous_ids") is None:
             # new prompt
-            return await self._run_new_prompt_task(engine, data)
+            res = await self._run_new_prompt_task(engine, data)
         else:
             # reapply
-            return await self._run_reapply_task(engine, data)
+            res = await self._run_reapply_task(engine, data)
+
+        return res
 
     async def arun_episodes(self, engine, data_list) -> List[TensorDict]:
         raise NotImplementedError

@@ -1,5 +1,7 @@
 import asyncio
 import uuid
+import os
+import json
 
 import torch
 from tensordict import TensorDict
@@ -10,9 +12,8 @@ from arealite.api.io_struct import LLMRequest
 from arealite.api.workflow_api import RolloutWorkflow
 from arealite.utils.padding import concat_padded_tensors
 from realhf.api.core.data_api import RL_TASKS, load_hf_tokenizer
-from realhf.base import logging
-
-logger = logging.getLogger("RLVR")
+from arealite.utils.padding import concat_padded_tensors
+from arealite.utils.util import worker_dump_rollout_output
 
 
 class RLVRWorkflow(RolloutWorkflow):
@@ -22,6 +23,8 @@ class RLVRWorkflow(RolloutWorkflow):
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast = None,
         tokenizer_path: str = None,
+        exp_name: str = None,
+        trial_name: str = None,
     ):
         if tokenizer is None and tokenizer_path is None:
             raise ValueError("Either tokenizer or tokenizer_path must be provided")
@@ -30,6 +33,10 @@ class RLVRWorkflow(RolloutWorkflow):
         self.gconfig = gconfig
         self.tokenizer = tokenizer if tokenizer is not None else None
         self.tokenizer_path = tokenizer_path
+        self._step = None
+        self._rank = None
+        self.exp_name = exp_name
+        self.trial_name = trial_name
 
     async def arun_episode(self, engine, data):
         if self.tokenizer is None:
@@ -64,6 +71,7 @@ class RLVRWorkflow(RolloutWorkflow):
         )
         resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
         results = []
+
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0] * resp.input_len + resp.output_logprobs
@@ -91,9 +99,25 @@ class RLVRWorkflow(RolloutWorkflow):
                 **data,
             )
             task_id = RL_TASKS.index(data["task"][0])
-            print(
-                f"[RLVRWorkflow] prompt: {text}, completion: {completion}, solutions: {data["solutions"][0]}"
-            )
+            
+            sample_info = {
+                "prompt": text,
+                "completion": completion,
+                "reward": reward,
+                "solutions": data.get("solutions", []),
+                "task": data["task"][0],
+                "task_id": task_id,
+                "input_tokens": resp.input_tokens,
+                "output_tokens": resp.output_tokens,
+                "output_logprobs": resp.output_logprobs,
+                "seq_len": len(seq),
+                "versions": versions,
+                "query_id": data['query_id'][0],
+                "stop_reason": resp.stop_reason
+            }
+            
+            worker_dump_rollout_output(sample_info=sample_info)
+
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(
@@ -108,7 +132,7 @@ class RLVRWorkflow(RolloutWorkflow):
                 task_ids=torch.tensor([task_id]),
                 seq_no_eos_mask=torch.tensor([seq_no_eos_mask]),
             )
-            results.append(TensorDict(res, batch_size=[1]))
+            results.append(TensorDict(res, batch_size=[1]))            
 
         return concat_padded_tensors(results)
 
@@ -152,6 +176,7 @@ class RLVRWorkflow(RolloutWorkflow):
 
         resps = await engine.agenerate_batch(reqs)
         results = []
+
         for index, resp in enumerate(resps):
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0] * resp.input_len + resp.output_logprobs
@@ -180,10 +205,27 @@ class RLVRWorkflow(RolloutWorkflow):
                 completion_ids=resp.output_tokens,
                 **data,
             )
+            
             task_id = RL_TASKS.index(data["task"][0])
-            print(
-                f"[RLVRWorkflow] prompt: {text}, completion: {completion}, solutions: {data['query_id'][0]}"
-            )
+            
+            sample_info = {
+                "prompt": text,
+                "completion": completion,
+                "reward": reward,
+                "solutions": data.get("solutions", []),
+                "task": data["task"][0],
+                "task_id": task_id,
+                "input_tokens": resp.input_tokens,
+                "output_tokens": resp.output_tokens,
+                "output_logprobs": resp.output_logprobs,
+                "seq_len": len(seq),
+                "versions": versions,
+                "query_id": data['query_id'][0],
+                "stop_reason": resp.stop_reason
+            }
+            
+            worker_dump_rollout_output(sample_info=sample_info)
+
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(
@@ -199,5 +241,4 @@ class RLVRWorkflow(RolloutWorkflow):
                 seq_no_eos_mask=torch.tensor([seq_no_eos_mask]),
             )
             results.append(TensorDict(res, batch_size=[1]))
-
         return concat_padded_tensors(results)

@@ -433,6 +433,7 @@ class WandBConfig:
     notes: Optional[str] = None
     tags: Optional[List[str]] = None
     config: Optional[Dict] = None
+    id_suffix: Optional[str] = "train"
 
 
 @dataclass

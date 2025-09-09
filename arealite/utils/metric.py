@@ -53,6 +53,42 @@ def calc_training_data_metrics(padded: TensorDict):
     eos_seqlen = padded["seqlen"][padded["seq_no_eos_mask"].bool().logical_not()].float().mean()
     stats_tracker.scalar(**{"eos_seqlen": eos_seqlen.item()})
 
+def calc_training_data_group_metrics(padded: TensorDict, group_size: int):
+    # 全对全错比例
+    # sample 按分组放置在一起
+    perfect_group_num = 0
+    failed_group_num = 0
+
+    group_by_task = {}
+    batch_size = padded.batch_size[0]
+    task_num = batch_size // group_size
+    for i in range(task_num):
+        task_id = padded["task_ids"][i * group_size].item()
+        if task_id not in group_by_task:
+            group_by_task[task_id] = {"perfect": 0, "failed": 0, "total": 0}
+        group_by_task[task_id]["total"] += 1
+        group_rewards = padded["rewards"][i * group_size: (i + 1) * group_size]
+        if (group_rewards > 0).all():
+            perfect_group_num += 1
+            group_by_task[task_id]["perfect"] += 1
+        if (group_rewards <= 0).all():
+            failed_group_num += 1
+            group_by_task[task_id]["failed"] += 1
+
+    stats_tracker.scalar(**{"perfect_group_ratio": perfect_group_num / task_num,
+                            "perfect_group_num": perfect_group_num,
+                            "failed_group_num": failed_group_num,
+                            "failed_group_ratio": failed_group_num / task_num})
+    
+    for task_id, v in group_by_task.items():
+        task_name = RL_TASKS[int(task_id)]
+        stats_tracker.scalar(**{f"{task_name}_perfect_group_ratio": v["perfect"] / v["total"],
+                                f"{task_name}_failed_group_ratio": v["failed"] / v["total"],
+                                f"{task_name}_perfect_group_num": v["perfect"],
+                                f"{task_name}_failed_group_num": v["failed"],
+                                f"{task_name}_total_group_num": v["total"]})
+
+
 def calc_training_data_version_metrics(padded: TensorDict, current_model_version: int):
     batch_size = torch.tensor(padded.batch_size)
 
