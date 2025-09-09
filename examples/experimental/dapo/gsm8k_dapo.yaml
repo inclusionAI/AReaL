@@ -12,7 +12,6 @@ seed: 1
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
 async_training: true
-context_length: 32768
 
 rollout:
   experiment_name: ${experiment_name}
@@ -26,14 +25,14 @@ rollout:
 gconfig:
   n_samples: 4
   min_new_tokens: 0
-  max_new_tokens: 1024
+  max_new_tokens: 4096
   greedy: false
   temperature: 1.0
 
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen2.5-1.5B-Instruct
+  path: Qwen/Qwen2.5-1.5B
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: false
@@ -51,8 +50,6 @@ actor:
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
   backend: fsdp
-  fsdp:
-    ulysses_sp_size: 1
   group_size: ${gconfig.n_samples}
   group_adv_norm: false
   eps_clip: 0.2
@@ -61,9 +58,9 @@ actor:
   reward_scaling: 10.0
   reward_bias: -0.5
   overlong_reward_penalty: true
-  overlong_tokens: 1024
+  overlong_tokens: 512
+  max_new_tokens: ${gconfig.max_new_tokens}
   overlong_penalty_factor: 1.0
-  context_length: ${context_length}
   kl_ctl: 0.0
   ppo_n_minibatches: 1
   recompute_logprob: true
@@ -82,8 +79,6 @@ ref:
     max_tokens_per_mb: 10240
   optimizer: null
   backend: fsdp
-  fsdp:
-    ulysses_sp_size: 1
 
 # SGLang
 sglang:
@@ -92,7 +87,7 @@ sglang:
   skip_tokenizer_init: true
   dtype: ${actor.dtype}
   max_running_requests: null
-  context_length: ${context_length}
+  context_length: 32768
   mem_fraction_static: 0.8
 
 # datasets

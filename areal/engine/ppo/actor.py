@@ -72,24 +72,15 @@ class PPOActor:
         # TODO:rewrite the reward into "reward" class __call__ method should be good. Like VeRL does.
         # Reward Penalty on length
         if self.config.overlong_reward_penalty:
-            context_length = self.config.context_length
+
             overlong_tokens = self.config.overlong_tokens
             overlong_penalty_factor = self.config.overlong_penalty_factor
-
-            if context_length is None:
-                raise ValueError(
-                    "context_length should be provided when overlong_reward_penalty is enabled"
-                )
-
-            assert (
-                overlong_tokens < context_length
-            ), "To enable overlong_reward_penalty, the value of overlong_tokens should be much smaller than context_length"
 
             data = reward_overlong_penalty(
                 data,
                 overlong_tokens=overlong_tokens,
                 overlong_penalty_factor=overlong_penalty_factor,
-                max_response_length=context_length,
+                max_response_length=self.config.max_new_tokens,
             )
 
         # Reward Scaling

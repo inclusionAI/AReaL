@@ -293,10 +293,6 @@ class PPOActorConfig(TrainEngineConfig):
         default=None,
         metadata={"help": "The numbers of token in the tail will receive a penalty"},
     )
-    context_length: Optional[int] = field(
-        default=32768,
-        metadata={"help": "Maximum context length for generation (include multi-turn)"},
-    )
     mask_no_eos_with_zero: bool = field(
         default=False,
         metadata={
@@ -361,6 +357,11 @@ class PPOActorConfig(TrainEngineConfig):
     log_agent_stats_keys: List[str] = field(
         default_factory=lambda: [],
         metadata={"help": "Keys of log stats for agent trajectories"},
+    )
+    # Others
+    max_new_tokens: int = field(
+        default=1024,
+        metadata={"help": "Maximum number of new tokens to generate"},
     )
 
 
@@ -830,9 +831,6 @@ class BaseExperimentConfig:
             "help": "Terminate training after consuming this number of samples. "
             "For benchmarking purposes only. None indicates normal training."
         },
-    )
-    context_length: int = field(
-        default=32768, metadata={"help": "Maximum length of the context."}
     )
     tokenizer_path: str = field(default="")
 
