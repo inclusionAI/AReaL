@@ -233,6 +233,16 @@ class TrainEngineConfig:
         default_factory=DeepSpeedAutoTPEngineConfig
     )
 
+    # Lora
+    lora_rank: int = field(default=32, metadata={"help": "lora_rank"})
+    lora_alpha: int = field(default=16, metadata={"help": "lora alpha"})
+    target_modules: str = field(
+        default="all-linear", metadata={"help": "lora target_modules"}
+    )
+    peft_type: str = field(
+        default="None", metadata={"help": "peft method type, include lora, ..."}
+    )
+
 
 @dataclass
 class PPOActorConfig(TrainEngineConfig):
@@ -422,6 +432,7 @@ class SGLangConfig:
     # The interval (in decoding iterations) to log throughput
     # and update prometheus metrics
     decode_log_interval: int = 1
+    lora_paths: str = ""
 
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
@@ -472,6 +483,8 @@ class SGLangConfig:
     ):
 
         args: Dict = conf_as_dict(sglang_config)
+        if sglang_config.lora_paths != "":
+            args = dict(max_loras_per_batch=1, lora_backend="triton", **args)
         args = dict(
             host=host,
             port=port,
@@ -535,6 +548,7 @@ class InferenceEngineConfig:
     request_retries: int = field(
         default=3, metadata={"help": "Number of retries for failed requests."}
     )
+    use_lora: bool = field(default=False)
 
 
 @dataclass
