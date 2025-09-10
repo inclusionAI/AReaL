@@ -24,6 +24,9 @@ parts:
     - file: customization/dataset
     - file: customization/agent
     - file: customization/algorithm
+  - caption: Advanced Usage
+    chapters:
+    - file: advanced_usage/server_addresses
   - caption: Contributing
     chapters:
     - file: contrib

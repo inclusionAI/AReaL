@@ -79,13 +79,13 @@ class RemoteSGLangEngine(InferenceEngine):
         else:
             # When addr is not provided, fallback to reading addrs from env var
             self.addresses = os.getenv("AREAL_LLM_SERVER_ADDRS").split(",")
-        for addr_ in self.addresses:
-            self._wait_for_server(addr_)
         if not self.addresses:
             raise RuntimeError(
                 "No configured SGLang servers. Please pass in SGLang server addresses by arguments "
-                "for `RemoteSGLangEngine.initialize` or environment variable."
+                "for `RemoteSGLangEngine.initialize` or environment variable `AREAL_LLM_SERVER_ADDRS`."
             )
+        for addr_ in self.addresses:
+            self._wait_for_server(addr_)
         logger.info("Servers are all ready!")
         self.executor = ProcessPoolExecutor(max_workers=1)
         self.workflow_executor.initialize(train_data_parallel_size)
