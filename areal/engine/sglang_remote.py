@@ -39,8 +39,8 @@ class RemoteSGLangEngine(InferenceEngine):
         # Maintain the addresses for the recent 128 requests
         self.rid_queue = []
         self.addresses = []
+        self.server_idx = 0
 
-        self.server_idx = random.randint(0, len(self.addresses) - 1)
         self.distributed_weight_update_initialized = False
         self._version = 0
 
@@ -95,6 +95,7 @@ class RemoteSGLangEngine(InferenceEngine):
         self.logger.info("Waiting for server ready...")
         for addr_ in self.addresses:
             self._wait_for_server(addr_)
+        self.server_idx = random.randint(0, len(self.addresses) - 1)
         self.logger.info("Servers are all ready!")
         self.executor = ProcessPoolExecutor(max_workers=1)
         self.workflow_executor.initialize(
