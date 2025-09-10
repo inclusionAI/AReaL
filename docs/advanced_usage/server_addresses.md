@@ -23,37 +23,39 @@ def main(args):
     rollout.initialize(addr=addresses, ft_spec=ft_spec)
 ```
 
-## Recording Server Addresses by Name Resolve
+## Retrieving Server Addresses by `wait_sglang_server_addrs`
 
-AReaL also provides a key-value store called name resolve, whose backend could be shared
-storage, distributed KV store service such as `etcd` or key-value store in ray. You can
-use name resolve to record inference server addresses and retrive them in the training
-script easily.
+For convenience, AReaL launchers could launch SGLang servers and automatically record
+their addresses with key-value storage. AReaL provides a utility function named
+`wait_sglang_server_addrs` to retrive these addresses easily in the training script.
 
-When launching inference server:
+For example, use the launcher with `LLM_SERVER_ONLY` allocation mode to launch inference
+servers:
 
-```python
-from areal.utils import name_resolve
-server_addr = "192.168.0.11"
-... # launch your inference server with server_addr
-# after server ready
-name = "xxx/xxx" # or anything else for a key
-name_resolve.add_subentry(name, server_addr)
+```bash
+# SLURM launcher for example, you could use other launchers.
+python3 -m areal.launcher.slurm my_script.py --config sglang_server.yaml allocation_mode=sglang.d4 experiment_name=sglang-server trial_name=xxx
 ```
 
-In the training script:
+Then in your training script, you could retrieve SGLang server addresses using
+`areal.utils.launcher.wait_sglang_server_addrs` and corresponding experiment and trial
+names.
 
 ```python
-from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.utils import name_resolve
+from areal.utils.launcher import wait_sglang_server_addrs
+from areal.utils import names, name_resolve
+from areal.api.alloc_mode import AllocationMode
 
 def main(args):
+    config, _ = load_expr_config(args, ...)
     ...
-    # Retrive SGLang servers addresses recorded by name_resolve.
-    name = "xxx/xxx" # or anything else you have set when recording server addresses
-    addresses = name_resolve.get_subtree(name)
-    rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(addr=addresses, ft_spec=ft_spec)
+    allocation_mode = AllocationMode.from_str(config.allocation_mode)
+    n_sglang_servers = allocation_mode.gen.data_parallel_size
+    addresses = wait_sglang_server_addrs(
+        config.experiment_name
+        config.trial_name,
+        n_sglang_servers,
+    )
 ```
 
 ## An LLM Judge Example
@@ -64,6 +66,7 @@ using multiple remote inference engines with different server addresses.
 ```python
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.openai import ArealOpenAI
+from areal.api.alloc_mode import AllocationMode
 
 rollout_engine = RemoteSGLangEngine(config.actor)
 # Use addresses in `AREAL_LLM_SERVER_ADDRS`, set by launchers
@@ -71,10 +74,14 @@ rollout_engine.initialize(None, ft_spec)
 
 # Collect server addresses for LLM judge manually
 addresses = ["192.168.0.10", "192.168.0.11", "192.168.0.12", "192.168.0.13"]
-# or, collect server addresses by name resolve in AReaL
-from areal.utils import name_resolve
-name = "xxx/llm_judge" # or anything else you have set when recording server addresses
-addresses = name_resolve.get_subtree(name)
+# or, collect server addresses by `wait_sglang_server_addrs`
+allocation_mode = AllocationMode.from_str(config.allocation_mode)
+n_sglang_servers = allocation_mode.gen.data_parallel_size
+addresses = wait_sglang_server_addrs(
+    config.experiment_name
+    config.trial_name,
+    n_sglang_servers,
+)
 
 llm_judge_engine = RemoteSGLangEngine(config.llm_judge)
 llm_judge_engine.initialize(addresses, ft_spec)
