@@ -3,12 +3,14 @@ import os
 import random
 import shutil
 import time
+import uuid
 from concurrent.futures import Future, ProcessPoolExecutor
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
 import requests
+import torch.distributed as dist
 import uvloop
 from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -24,9 +26,6 @@ from areal.api.io_struct import (
 from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
-
-logger = logging.getLogger(__name__)
-
 
 RID_CACHE_SIZE = 128
 
@@ -69,11 +68,20 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def initialize(
         self,
-        addr: str | List[str] | None,
+        engine_id: Optional[str] = None,
+        addr: str | List[str] | None = None,
         ft_spec: FinetuneSpec | None = None,
         train_data_parallel_size: int | None = None,
     ):
-        logger.info("Waiting for server ready...")
+        if engine_id is None:
+            if dist.is_initialized():
+                engine_id = str(dist.get_rank())
+            else:
+                engine_id = uuid.uuid4().hex
+        self.engine_id = engine_id
+        self.logger = logging.getLogger(f"[SGLang Remote Engine Rank {engine_id}]")
+
+        self.logger.info("Waiting for server ready...")
         if addr:
             self.addresses = addr if isinstance(addr, list) else [addr]
         else:
@@ -84,11 +92,14 @@ class RemoteSGLangEngine(InferenceEngine):
                 "No configured SGLang servers. Please pass in SGLang server addresses by arguments "
                 "for `RemoteSGLangEngine.initialize` or environment variable `AREAL_LLM_SERVER_ADDRS`."
             )
+
         for addr_ in self.addresses:
             self._wait_for_server(addr_)
-        logger.info("Servers are all ready!")
+        self.logger.info("Servers are all ready!")
         self.executor = ProcessPoolExecutor(max_workers=1)
-        self.workflow_executor.initialize(train_data_parallel_size)
+        self.workflow_executor.initialize(
+            logger=self.logger, train_data_parallel_size=train_data_parallel_size
+        )
 
     def destroy(self):
         self.workflow_executor.destroy()
@@ -241,6 +252,7 @@ class RemoteSGLangEngine(InferenceEngine):
         for addr in self.addresses:
             res = requests.post(f"http://{addr}/pause_generation")
             res.raise_for_status()
+        tik = time.perf_counter()
         fut = Future()
         if meta.type == "nccl":
             fut = self.executor.submit(
@@ -252,6 +264,9 @@ class RemoteSGLangEngine(InferenceEngine):
             )
 
             def callback(fut):
+                self.logger.info(
+                    f"Distributed update weights done in {time.perf_counter() - tik}s"
+                )
                 self.distributed_weight_update_initialized = True
 
             fut.add_done_callback(callback)
@@ -274,6 +289,11 @@ class RemoteSGLangEngine(InferenceEngine):
             )
 
             def callback(fut):
+                respond_time = fut.result()
+                self.logger.info(
+                    f"Loading weights from disk done in {(time.perf_counter() - tik):.2f}s. "
+                    f"Respond time: {respond_time:.2f}s."
+                )
                 shutil.rmtree(meta.path, ignore_errors=True)
 
             fut.add_done_callback(callback)
@@ -346,15 +366,11 @@ def update_weights_from_disk(
     request_timeout,
 ):
     async def _fn():
-        # Wait for model checkpoints of meta.version
         update_name = names.update_weights_from_disk(
             experiment_name, trial_name, model_version
         )
         save_timestamp = float(name_resolve.wait(update_name, timeout=120))
         load_timestamp = datetime.now().timestamp()
-        logger.info(
-            f"Begin update weights from {path}, responded in {(load_timestamp - save_timestamp):.2f}s"
-        )
         session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(
                 total=request_timeout,
@@ -378,9 +394,7 @@ def update_weights_from_disk(
         ]
         await asyncio.gather(*jobs)
         await session.close()
-        logger.info(
-            f"Loading weights done in {(datetime.now().timestamp() - load_timestamp):.2f}s"
-        )
+        return load_timestamp - save_timestamp
 
     return uvloop.run(_fn())
 
@@ -396,7 +410,6 @@ def update_weights_from_distributed(
     ]
 
     async def _fn():
-        tik = time.perf_counter()
         if init_group:
             await asyncio.gather(
                 *[
@@ -423,8 +436,6 @@ def update_weights_from_distributed(
                 for addr in addresses
             ]
         )
-
-        logger.info(f"Distributed update weights done in {time.perf_counter() - tik}s")
 
     return uvloop.run(_fn())
 

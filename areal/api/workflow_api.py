@@ -24,8 +24,6 @@ from areal.utils.data import concat_padded_tensors
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
 
-logger = logging.getLogger("areal.workflow_api")
-
 
 ROLLOUT_POLL_WAIT_TIME = 0.05
 
@@ -74,7 +72,11 @@ class WorkflowExecutor:
 
         self.rollout_stat = RolloutStat()
 
-    def initialize(self, train_data_parallel_size: int | None = None):
+    def initialize(self, logger=None, train_data_parallel_size: int | None = None):
+        if logger is None:
+            logger = logging.getLogger("WorkflowExecutor")
+        self.logger = logger
+
         if train_data_parallel_size is not None:
             self.dp_world_size = train_data_parallel_size
         else:
@@ -133,7 +135,7 @@ class WorkflowExecutor:
                     and self.input_queue.qsize() > 0
                 ):
                     data, workflow = self.input_queue.get_nowait()
-                    logger.debug(f"Get data from puller: {data}")
+                    self.logger.debug(f"Get data from puller: {data}")
                     task = asyncio.create_task(
                         workflow.arun_episode(self.inference_engine, data),
                         name=str(rid),
@@ -143,7 +145,7 @@ class WorkflowExecutor:
                     self.rollout_stat.submitted += 1
                     self.rollout_stat.running += 1
                     if self.config.enable_rollout_tracing:
-                        logger.info(
+                        self.logger.info(
                             f"Submit rollout rid {rid}. "
                             f"Submit: {self.rollout_stat.submitted}, "
                             f"running: {self.rollout_stat.running}, "
@@ -180,7 +182,7 @@ class WorkflowExecutor:
                         self.rollout_stat.accepted += 1
                         self.rollout_stat.running -= 1
                         if self.config.enable_rollout_tracing:
-                            logger.info(
+                            self.logger.info(
                                 f"Finish rollout {task_rid}. "
                                 f"Submit: {self.rollout_stat.submitted}, "
                                 f"running: {self.rollout_stat.running}, "
@@ -237,13 +239,13 @@ class WorkflowExecutor:
                         should_accept is None or should_accept(timed_result.data)
                     ):
                         if self.config.enable_rollout_tracing:
-                            logger.info(
+                            self.logger.info(
                                 f"Accept rollout result. accepted/count = {len(self.result_cache)}/{count}"
                             )
                         self.result_cache.append(timed_result)
                     else:
                         if self.config.enable_rollout_tracing:
-                            logger.info(f"Rollout is rejected.")
+                            self.logger.info(f"Rollout is rejected.")
                         with self.lock:
                             self.rollout_stat.accepted -= 1
                 except queue.Empty:
@@ -260,7 +262,7 @@ class WorkflowExecutor:
                 f"Timed out waiting for {count} rollouts, " f"only received {accepted}."
             )
         if self.config.enable_rollout_tracing:
-            logger.info(
+            self.logger.info(
                 f"Rollout results are ready! accepted/count = {accepted}/{count}"
             )
         self.result_cache.sort(key=lambda x: x.t)
