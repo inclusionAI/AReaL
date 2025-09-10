@@ -153,6 +153,12 @@ class StalenessManager:
                     f"running: {self.rollout_stat.running}, "
                     f"accepted: {self.rollout_stat.accepted}."
                 )
+            return {
+                "submitted": self.rollout_stat.submitted,
+                "max_capacity": self.max_capacity,
+                "running": self.rollout_stat.running,
+                "accepted": self.rollout_stat.accepted,
+            }
 
 
 class StalenessManagerServer:
@@ -218,6 +224,8 @@ class WorkflowExecutor:
 
         self.inference_engine = inference_engine
 
+        self.is_distributed = False
+
         self.staleness_manager = None
         self.staleness_manager_host = None
         self.staleness_manager_port = None
@@ -230,25 +238,42 @@ class WorkflowExecutor:
 
         self.local_rollout_stat = RolloutStat()
 
+        self.global_accepted = 0
+
     def initialize(
         self,
         logger=None,
         data_parallel_group: Optional[dist.ProcessGroup] = None,
+        context_and_model_parallel_group: Optional[dist.ProcessGroup] = None,
     ):
         if logger is None:
             logger = logging.getLogger("WorkflowExecutor")
         self.logger = logger
+        self.is_distributed = dist.is_initialized()
 
-        if dist.is_initialized():
+        if self.is_distributed:
             self.dp_world_size = dist.get_world_size(group=data_parallel_group)
             self.dp_group = data_parallel_group
+            self.mp_group = context_and_model_parallel_group
+            self.mp_world_size = dist.get_world_size(
+                group=context_and_model_parallel_group
+            )
+            if self.mp_world_size * self.dp_world_size > dist.get_world_size():
+                raise RuntimeError(
+                    f"Invalid process groups provided: "
+                    f"dp world size {self.dp_world_size} "
+                    f"* mp-cp world size {self.mp_world_size} > "
+                    f"global world size {dist.get_world_size()}"
+                )
         else:
-            self.dp_world_size = 1
-            self.dp_group = None
+            self.dp_world_size = self.mp_world_size = 1
+            self.dp_group = self.mp_group = None
 
         # Initialize staleness manager on rank 0
         # and share the address via torch distributed
-        is_rank_zero = (not dist.is_initialized()) or (dist.get_rank() == 0)
+        is_rank_zero = (not self.is_distributed) or (
+            dist.get_rank(group=self.dp_group) == 0
+        )
 
         # Check environment variable for server address
         env_server_addr = os.environ.get("AREAL_STALENESS_SERVER_ADDR")
@@ -258,7 +283,7 @@ class WorkflowExecutor:
                 self.staleness_manager_port = int(port_str)
                 logger.info(f"Using staleness server from env var: {env_server_addr}")
             else:
-                if dist.is_initialized():
+                if self.is_distributed:
                     # Find free port and get host IP
                     # Will broadcast the address via pytorch
                     self.staleness_manager_host = network.gethostip()
@@ -294,7 +319,7 @@ class WorkflowExecutor:
             self.staleness_manager_url = f"http://{env_server_addr}"
         else:
             # Broadcast server address via PyTorch distributed
-            if dist.is_initialized():
+            if self.is_distributed:
                 if is_rank_zero:
                     obj_lis = [
                         f"{self.staleness_manager_host}:{self.staleness_manager_port}"
@@ -376,11 +401,13 @@ class WorkflowExecutor:
 
     def release_capacity(self, completed: int, accepted: int):
         """Release capacity back to the server."""
-        requests.post(
+        response = requests.post(
             f"{self.staleness_manager_url}/release_capacity",
             json={"completed": completed, "accepted": accepted},
             timeout=2.0,
         )
+        response.raise_for_status()
+        return response.json()
 
     def _rollout_thread(self):
         """Thread that runs the rollout loop."""
@@ -496,9 +523,17 @@ class WorkflowExecutor:
     def wait(
         self,
         count: int,
+        global_count: Optional[int] = None,
         timeout: float | None = None,
         should_accept: Callable | None = None,
     ) -> TensorDict:
+        """Wait until #results >= `count` locally *AND* #results >= `global_count` globally.
+
+        Allows for imbalanced data distribution across data parallel ranks.
+        """
+        prev_accepted = self.global_accepted
+        cur_global_accepted = -1
+
         tik = time.perf_counter()
         timeout = timeout or float(7 * 24 * 3600)
         while not self.exiting.is_set() and time.perf_counter() - tik < timeout:
@@ -507,39 +542,54 @@ class WorkflowExecutor:
                 _accepted = _completed = 0
                 try:
                     timed_result = self.output_queue.get_nowait()
-                    _completed += 1
-                    if timed_result.data is not None and (
-                        should_accept is None or should_accept(timed_result.data)
-                    ):
-                        if self.config.enable_rollout_tracing:
-                            self.logger.info(
-                                f"Accept rollout result. accepted/count = {len(self.result_cache)}/{count}"
-                            )
-                        _accepted += 1
-                        self.result_cache.append(timed_result)
-                    else:
-                        if self.config.enable_rollout_tracing:
-                            self.logger.info(f"Rollout is rejected.")
-                        with self.lock:
-                            self.local_rollout_stat.accepted -= 1
-                    self.release_capacity(completed=_completed, accepted=_accepted)
                 except queue.Empty:
                     break
-            if len(self.result_cache) >= count:
+                _completed += 1
+
+                if timed_result.data is not None and (
+                    should_accept is None or should_accept(timed_result.data)
+                ):
+                    # Check whether should accept. If so, increase accept counter.
+                    if self.config.enable_rollout_tracing:
+                        self.logger.info(
+                            f"Accept rollout result. "
+                            f"accepted/count = {len(self.result_cache)}/{count}"
+                        )
+                    _accepted += 1
+                    self.result_cache.append(timed_result)
+                else:
+                    # otherwise reject
+                    if self.config.enable_rollout_tracing:
+                        self.logger.info(f"Rollout is rejected.")
+                    with self.lock:
+                        self.local_rollout_stat.accepted -= 1
+                cur_global_accepted = self.release_capacity(
+                    completed=_completed, accepted=_accepted
+                )["accepted"]
+            if (
+                len(self.result_cache) >= count
+                and global_count is not None
+                and cur_global_accepted - prev_accepted >= global_count
+            ):
                 break
             else:
                 time.sleep(ROLLOUT_POLL_WAIT_TIME)
         accepted = len(self.result_cache)
         if self.exiting.is_set():
             raise RuntimeError("Rollout engine is exiting, cannot wait for results.")
-        if accepted < count:
+        if accepted < count or (
+            global_count is not None and cur_global_accepted < global_count
+        ):
             raise TimeoutError(
-                f"Timed out waiting for {count} rollouts, " f"only received {accepted}."
+                f"Timed out waiting for {count} local rollouts/{global_count} global rollouts, "
+                f"only received {accepted}."
             )
         if self.config.enable_rollout_tracing:
             self.logger.info(
                 f"Rollout results are ready! accepted/count = {accepted}/{count}"
             )
+        if global_count is not None:
+            self.global_accepted += global_count
         self.result_cache.sort(key=lambda x: x.t)
         results, self.result_cache = (
             self.result_cache[:count],
@@ -585,7 +635,10 @@ class WorkflowExecutor:
                     )
             try:
                 return self.wait(
-                    dataloader.batch_size, timeout=1, should_accept=should_accept
+                    count=0,
+                    global_count=dataloader.batch_size * self.dp_world_size,
+                    timeout=1,
+                    should_accept=should_accept,
                 )
             except TimeoutError:
                 pass

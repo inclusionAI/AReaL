@@ -21,6 +21,7 @@ from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.recover import RecoverHandler
+from areal.utils.redistributor import redistribute
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.vision_rlvr import VisionRLVRWorkflow
@@ -210,6 +211,12 @@ def main(args):
                         next(data_generator), workflow=workflow
                     )
                 batch = batch.to(actor.device)
+                if config.async_training or config.redistribute_rollout:
+                    batch = redistribute(
+                        batch,
+                        group=actor.data_parallel_group,
+                        granularity=config.actor.group_size,
+                    ).data
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),

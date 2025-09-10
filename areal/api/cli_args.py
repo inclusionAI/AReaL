@@ -854,6 +854,13 @@ class SFTConfig(BaseExperimentConfig):
 @dataclass
 class GRPOConfig(BaseExperimentConfig):
     async_training: bool = field(default=True)
+    redistribute_rollout: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to redistribute rollouts across DP ranks to balance trajectories. "
+            "Recommended to be True for multi-turn experiments."
+        },
+    )
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )

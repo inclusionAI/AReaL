@@ -34,11 +34,12 @@ from areal.api.workflow_api import RolloutWorkflow
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import concat_padded_tensors
+from areal.utils.data import broadcast_tensor_container, concat_padded_tensors
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
+from areal.utils.redistributor import redistribute
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
@@ -162,26 +163,31 @@ def main(args):
     config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
-    world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
+    allocation_mode = AllocationMode.from_str(config.allocation_mode)
+    parallel_strategy = allocation_mode.train
+
+    # Initialize train engine
+    actor = FSDPPPOActor(config=config.actor)
+    actor.create_process_group(parallel_strategy=parallel_strategy)
 
     train_dataset = get_countdown_dataset(
         dataset_path=config.train_dataset.path,
         rank=rank,
-        world_size=world_size,
+        world_size=actor.data_parallel_world_size,
     )
     valid_dataset = get_countdown_dataset(
         dataset_path=config.valid_dataset.path,
         rank=rank,
-        world_size=world_size,
+        world_size=actor.data_parallel_world_size,
     )
 
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         train_dataset,
-        batch_size=config.train_dataset.batch_size // world_size,
+        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -189,7 +195,7 @@ def main(args):
     )
     valid_dataloader = StatefulDataLoader(
         valid_dataset,
-        batch_size=config.valid_dataset.batch_size // world_size,
+        batch_size=config.valid_dataset.batch_size // actor.data_parallel_world_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -203,18 +209,19 @@ def main(args):
 
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(None, ft_spec)
+    rollout.initialize(
+        None, ft_spec, train_data_parallel_size=parallel_strategy.dp_size
+    )
     eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
     # NOTE: eval does not have any offpolicyness control
     eval_rollout.config.max_head_offpolicyness = int(1e12)
     eval_rollout.initialize(None, ft_spec)
 
-    # Initialize train engine
-    actor = FSDPPPOActor(config=config.actor)
     actor.initialize(None, ft_spec)
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
         ref = FSDPPPOActor(config=config.ref)
+        ref.create_process_group(parallel_strategy=parallel_strategy)
         ref.initialize(None, ft_spec)
 
     # NOTE: Weight update meta only requires address and free port of rank 0,
@@ -287,12 +294,30 @@ def main(args):
         )
 
         with stats_tracker.record_timing("rollout"):
-            if config.async_training:
-                batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
-            else:
-                batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
-
-        batch = batch.to(actor.device)
+            # NOTE: Megatron will ignore inputs from non data parallel heads.
+            # However, methods such as `compute_advantages` and `ppo_update`
+            # still requires data integrity to be called on every training process.
+            # Therefore, we still need to broadcast batch across context+model parallel group.
+            batch = None
+            if actor.is_data_parallel_head():
+                if config.async_training:
+                    batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
+                else:
+                    batch = rollout.rollout_batch(
+                        next(data_generator), workflow=workflow
+                    )
+                batch = batch.to(actor.device)
+                if config.async_training or config.redistribute_rollout:
+                    batch = redistribute(
+                        batch,
+                        group=actor.data_parallel_group,
+                        granularity=config.actor.group_size,
+                    ).data
+            batch = broadcast_tensor_container(
+                batch,
+                src_rank=actor.current_data_parallel_head(),
+                group=actor.context_and_model_parallel_group,
+            )
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
         torch.cuda.synchronize()
