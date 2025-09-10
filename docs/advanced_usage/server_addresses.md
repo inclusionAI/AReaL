@@ -56,6 +56,8 @@ def main(args):
         config.trial_name,
         n_sglang_servers,
     )
+    rollout = RemoteSGLangEngine(config.rollout)
+    rollout.initialize(addr=addresses, ft_spec=ft_spec)
 ```
 
 ## An LLM Judge Example
