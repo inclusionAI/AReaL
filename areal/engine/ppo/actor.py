@@ -17,6 +17,7 @@ from areal.utils.functional import (
     gather_logprobs_entropy,
     masked_normalization,
     ppo_actor_loss_fn,
+    reward_overlong_penalty,
 )
 
 
@@ -70,7 +71,21 @@ class PPOActor:
             bs, device=data["input_ids"].device, dtype=torch.long
         )
 
-        # Compute rewards using the reward function in synchronous RLVR pipeline.
+        # TODO:rewrite the reward into "reward" class __call__ method should be good. Like VeRL does.
+        # Reward Penalty on length
+        if self.config.overlong_reward_penalty:
+
+            overlong_tokens = self.config.overlong_tokens
+            overlong_penalty_factor = self.config.overlong_penalty_factor
+
+            data = reward_overlong_penalty(
+                data,
+                overlong_tokens=overlong_tokens,
+                overlong_penalty_factor=overlong_penalty_factor,
+                max_response_length=self.config.max_new_tokens,
+            )
+
+        # Reward Scaling
         reward_score = data["rewards"]
         reward_score = (reward_score + self.reward_bias) * self.reward_scaling
         reward_score = torch.clip(

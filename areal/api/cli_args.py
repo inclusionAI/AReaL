@@ -310,6 +310,18 @@ class PPOActorConfig(TrainEngineConfig):
     reward_clip: float = field(
         default=20.0, metadata={"help": "Maximum absolute value for reward clipping"}
     )
+    overlong_reward_penalty: bool = field(
+        default=False,
+        metadata={"help": "penalty for overlong sequences. used within DAPO."},
+    )
+    overlong_tokens: Optional[int] = field(
+        default=None,
+        metadata={"help": "The numbers of token in the tail will receive a penalty"},
+    )
+    overlong_penalty_factor: Optional[float] = field(
+        default=None,
+        metadata={"help": "The numbers of token in the tail will receive a penalty"},
+    )
     mask_no_eos_with_zero: bool = field(
         default=False,
         metadata={
@@ -371,6 +383,11 @@ class PPOActorConfig(TrainEngineConfig):
     log_agent_stats_keys: List[str] = field(
         default_factory=lambda: [],
         metadata={"help": "Keys of log stats for agent trajectories"},
+    )
+    # Others
+    max_new_tokens: int = field(
+        default=1024,
+        metadata={"help": "Maximum number of new tokens to generate"},
     )
     adv_norm: Optional[AdvNormConfig] = field(
         default=None, metadata={"help": "Optimizer configuration, default is None"}

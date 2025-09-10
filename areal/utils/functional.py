@@ -231,3 +231,29 @@ def dynamic_sampling(data: TensorDict, group_size: int) -> TensorDict:
         n_group_keeped=n_group_keeped,
         n_group_filtered=n_group_filtered,
     )
+
+
+# code modified from VERL: https://github.com/volcengine/verl/blob/main/verl/workers/reward_manager/dapo.py
+def reward_overlong_penalty(
+    data: TensorDict,
+    overlong_tokens: int,
+    overlong_penalty_factor: float,
+    max_response_length: int,
+) -> torch.Tensor:
+    reward_score = data["rewards"]
+    input_ids = data["input_ids"]
+    response_lengths = (data["loss_mask"].sum(dim=-1)).long()
+    batch_size = input_ids.shape[0]
+    for sample_idx in range(batch_size):
+        reward_score_cur = reward_score[sample_idx]
+        response_length_cur = response_lengths[sample_idx]
+        expected_len = max_response_length - overlong_tokens
+        exceed_len = response_length_cur - expected_len
+        overlong_reward = min(
+            -exceed_len / overlong_tokens * overlong_penalty_factor, 0
+        )
+        reward_score_cur += overlong_reward
+        reward_score[sample_idx] = reward_score_cur
+
+    data["rewards"] = reward_score
+    return data

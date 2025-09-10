@@ -17,6 +17,7 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
+from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import FinetuneSpec, TrainEngine
 from areal.utils import logging
@@ -112,7 +113,7 @@ class BaseHFEngine(TrainEngine):
         assert self.initialized
         return self._parallelism_group
 
-    def create_process_group(self):
+    def create_process_group(self, parallel_strategy: ParallelStrategy):
         # Required by NCCL weight update group for SGLang
         os.environ["NCCL_CUMEM_ENABLE"] = "0"
         os.environ["NCCL_NVLS_ENABLE"] = "0"
@@ -430,8 +431,11 @@ class BaseHFEngine(TrainEngine):
         self.optimizer.zero_grad()
         mb_list = self.prepare_mb_list(input_)
 
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs]), dtype=torch.float32
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
         dist.all_reduce(total_loss_weight)
@@ -487,8 +491,11 @@ class BaseHFEngine(TrainEngine):
         """Evaluate on a batch."""
         input_ = input_.to(self.device)
         mb_list = self.prepare_mb_list(input_)
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs]), dtype=torch.float32
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
 

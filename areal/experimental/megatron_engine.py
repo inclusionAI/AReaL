@@ -75,6 +75,17 @@ class MegatronEngine(TrainEngine):
         self.checkpointer = None
         self.seed = 0
 
+    def current_data_parallel_head(self) -> int:
+        """Get the rank of the head of the current data parallel group."""
+        assert self.initialized
+        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
+        return ranks[0]
+
+    def is_data_parallel_head(self) -> bool:
+        assert self.initialized
+        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
+        return ranks[0] == self.rank
+
     def initialize(
         self,
         addr: str | None,
@@ -476,9 +487,11 @@ class MegatronEngine(TrainEngine):
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs]),
-            dtype=torch.float32,
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
@@ -564,9 +577,11 @@ class MegatronEngine(TrainEngine):
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs]),
-            dtype=torch.float32,
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
@@ -628,17 +643,6 @@ class MegatronEngine(TrainEngine):
         with stats_tracker.DEFAULT_TRACKER.disable_scope():
             stats_tracker.scalar(**stats)
         return None
-
-    def current_data_parallel_head(self) -> int:
-        """Get the rank of the head of the current data parallel group."""
-        assert self.initialized
-        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
-        return ranks[0]
-
-    def is_data_parallel_head(self) -> bool:
-        assert self.initialized
-        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
-        return ranks[0] == self.rank
 
     @torch.no_grad()
     def forward(
