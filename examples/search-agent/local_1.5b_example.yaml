@@ -65,7 +65,7 @@ actor:
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
   log_agent_stats: true
-  log_agent_stats_keys: 
+  log_agent_stats_keys:
     - num_input_tokens
     - num_output_tokens
     - num_llm_gens
@@ -147,6 +147,6 @@ launcher:
   inference_server_mem_per_gpu: 153600
   trainer_cpus_per_gpu: 15
   trainer_mem_per_gpu: 153600
-  
+
 
 max_turns: 32
