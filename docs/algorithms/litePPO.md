@@ -34,19 +34,6 @@ We only list the different parameters from GRPO here:
 
 ## Example Usage
 
-<style>
-    .tip-box {
-        border: 1px solid #ccc;
-        padding: 10px;
-        background-color: #f9f9f9;
-        border-radius: 5px;
-        margin: 10px 0;
-    }
-    .tip-box strong {
-        color: #333;
-    }
-</style>
-
 > The algorithm is experimental and may not be stable.
 
 We recommend to change the parameter within the configuration file
