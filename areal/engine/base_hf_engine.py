@@ -430,8 +430,11 @@ class BaseHFEngine(TrainEngine):
         self.optimizer.zero_grad()
         mb_list = self.prepare_mb_list(input_)
 
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs]), dtype=torch.float32
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
         dist.all_reduce(total_loss_weight)
@@ -487,8 +490,11 @@ class BaseHFEngine(TrainEngine):
         """Evaluate on a batch."""
         input_ = input_.to(self.device)
         mb_list = self.prepare_mb_list(input_)
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs]), dtype=torch.float32
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
 
