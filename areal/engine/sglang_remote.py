@@ -18,7 +18,6 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
-    FinetuneSpec,
     ModelRequest,
     ModelResponse,
     WeightUpdateMeta,
@@ -70,7 +69,6 @@ class RemoteSGLangEngine(InferenceEngine):
         self,
         engine_id: Optional[str] = None,
         addr: str | List[str] | None = None,
-        ft_spec: FinetuneSpec | None = None,
         train_data_parallel_size: int | None = None,
     ):
         if engine_id is None:

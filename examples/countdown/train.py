@@ -203,11 +203,11 @@ def main(args):
 
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(None, ft_spec)
+    rollout.initialize()
     eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
     # NOTE: eval does not have any offpolicyness control
     eval_rollout.config.max_head_offpolicyness = int(1e12)
-    eval_rollout.initialize(None, ft_spec)
+    eval_rollout.initialize()
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
