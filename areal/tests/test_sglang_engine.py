@@ -90,7 +90,7 @@ def test_remote_sglang_rollout(sglang_server, n_samples):
     )
     os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
     engine = RemoteSGLangEngine(config)
-    engine.initialize(None, None)
+    engine.initialize()
 
     gconfig = GenerationHyperparameters(
         max_new_tokens=16, greedy=False, n_samples=n_samples
@@ -129,7 +129,7 @@ def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
     )
     os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
     engine = RemoteSGLangEngine(config)
-    engine.initialize(None, None)
+    engine.initialize()
 
     gconfig = GenerationHyperparameters(
         max_new_tokens=2, greedy=False, n_samples=n_samples
@@ -204,7 +204,7 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
     config = InferenceEngineConfig(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
     os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
     inf_engine = RemoteSGLangEngine(config)
-    inf_engine.initialize(None, None)
+    inf_engine.initialize()
     inf_engine.set_version(100)
     engine.set_version(100)
     # test update weights
