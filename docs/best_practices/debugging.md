@@ -48,7 +48,7 @@ train_dataloader = StatefulDataLoader(...)
 
 # Initialize inference engine - reads server addresses from environment variable
 rollout = RemoteSGLangEngine(config.rollout)
-rollout.initialize(None, None)
+rollout.initialize()
 
 # Create rollout workflow
 workflow = MyWorkflow(...)

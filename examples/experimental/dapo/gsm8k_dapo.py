@@ -89,13 +89,11 @@ def main(args):
 
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(
-        None, ft_spec, train_data_parallel_size=parallel_strategy.dp_size
-    )
+    rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
     eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
     # NOTE: eval does not have any offpolicyness control
     eval_rollout.config.max_head_offpolicyness = int(1e12)
-    eval_rollout.initialize(None, ft_spec)
+    eval_rollout.initialize()
 
     actor.initialize(None, ft_spec)
     ref = None
