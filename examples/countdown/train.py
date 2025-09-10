@@ -288,9 +288,17 @@ def main(args):
 
         with stats_tracker.record_timing("rollout"):
             if config.async_training:
-                batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
+                batch = rollout.prepare_batch(
+                    train_dataloader,
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
             else:
-                batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
+                batch = rollout.rollout_batch(
+                    next(data_generator),
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
 
         batch = batch.to(actor.device)
         # Create barrier to synchronize all rollout processes.

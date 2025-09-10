@@ -338,7 +338,11 @@ def prepare_batch(
         ):
             data = next(self.data_generator)
             for item in data:
-                self.submit(item, workflow=workflow, workflow_builder=workflow_builder)
+                self.submit(
+                    item,
+                    workflow=workflow,
+                    workflow_builder=workflow_builder,
+                )
         try:
             return self.wait(
                 dataloader.batch_size, timeout=1, should_accept=should_accept
