@@ -37,7 +37,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Efficient-Large-Model/NVILA-Lite-2B-hf-0626
+  path: Qwen/Qwen2.5-VL-3B-Instruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
@@ -96,7 +96,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/data/clevr_count_70k/
+  path: BUAADreamer/clevr_count_70k
   type: rl
   reward_fn: ${train_dataset.path}
 

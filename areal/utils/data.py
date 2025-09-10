@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from einops import rearrange
-from tensordict import TensorDict
+from tensordict import TensorDict, NonTensorStack
 
 from areal.api.cli_args import MicroBatchSpec
 from areal.utils import datapack, logging
@@ -473,6 +473,9 @@ def split_padded_tensor_dict_into_mb_list(
     if "multi_modal_input" in data:
         multi_modal_input = data["multi_modal_input"]
 
+        if multi_modal_input.__len__() == 1 and isinstance(multi_modal_input[0],list):
+            multi_modal_input=multi_modal_input[0]
+
         # Prepare the pixel_values and image_grid_thw for each group
         multi_modal_input_split = []
 
@@ -488,6 +491,8 @@ def split_padded_tensor_dict_into_mb_list(
     # organize splitted micro batches
     assert len(mbs) == len(splitted_lens), (len(mbs), len(splitted_lens))
     for i, (mb, lens) in enumerate(zip(mbs, splitted_lens)):
+        if "multi_modal_input" in mb and not isinstance(mb["multi_modal_input"],NonTensorStack):
+            mb["multi_modal_input"]=NonTensorStack(mb["multi_modal_input"])
         results.append(TensorDict(**mb, **not_to_split))
 
     return MicroBatchList(
