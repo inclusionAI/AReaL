@@ -81,7 +81,6 @@ class RemoteSGLangEngine(InferenceEngine):
         self.engine_id = engine_id
         self.logger = logging.getLogger(f"[SGLang Remote Engine Rank {engine_id}]")
 
-        self.logger.info("Waiting for server ready...")
         if addr:
             self.addresses = addr if isinstance(addr, list) else [addr]
         else:
@@ -93,6 +92,7 @@ class RemoteSGLangEngine(InferenceEngine):
                 "for `RemoteSGLangEngine.initialize` or environment variable `AREAL_LLM_SERVER_ADDRS`."
             )
 
+        self.logger.info("Waiting for server ready...")
         for addr_ in self.addresses:
             self._wait_for_server(addr_)
         self.logger.info("Servers are all ready!")
