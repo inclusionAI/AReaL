@@ -237,7 +237,6 @@ class WorkflowExecutor:
             self.dp_world_size = 1
             self.dp_group = None
 
-        self.dp_world_size = data_parallel_group
         # Initialize staleness manager on rank 0
         # and share the address via torch distributed
         is_rank_zero = (not dist.is_initialized()) or (dist.get_rank() == 0)
