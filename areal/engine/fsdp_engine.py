@@ -1,4 +1,5 @@
 import dataclasses
+import math
 import os
 import time
 from datetime import datetime
@@ -39,7 +40,7 @@ from areal.utils.fsdp import (
     CPUOffloadPolicy,
     MixedPrecisionPolicy,
     apply_fsdp2,
-    fsdp2_clip_grad_norm_,
+    fsdp2_clip_grad_norm,
     fsdp2_load_full_state_dict,
 )
 from areal.utils.model import VALID_VISION_MODELS
@@ -146,9 +147,7 @@ class FSDPEngine(BaseHFEngine):
         self.dp_head = nd_device_mesh["mp"].mesh[0].item()
         self.dp_rank = dist.get_rank(self.dp_group)
 
-        self.logger.info(
-            f"Rank {self.rank} with DP head {self.dp_head} and DP rank {self.dp_rank}"
-        )
+        self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
 
         current_sp_group = get_ulysses_sequence_parallel_group()
         if current_sp_group is not None:
@@ -433,6 +432,7 @@ class FSDPEngine(BaseHFEngine):
         assert self.optimizer is not None
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
+        assert self.fsdp_tp_device_mesh is not None
 
         self.optimizer.zero_grad()
         mb_list = self.prepare_mb_list(input_)
@@ -507,11 +507,13 @@ class FSDPEngine(BaseHFEngine):
             loss.backward()
 
         # NOTE: grad norm clip function is different
-        grad_norm = fsdp2_clip_grad_norm_(
-            self.model.parameters(), max_norm=self.optimizer_config.gradient_clipping
+        grad_norm = fsdp2_clip_grad_norm(
+            self.model.parameters(),
+            self.fsdp_tp_device_mesh,
+            max_norm=self.optimizer_config.gradient_clipping,
         )
 
-        if not torch.isfinite(grad_norm):
+        if not math.isfinite(grad_norm):
             self.optimizer.zero_grad()
             update_successful = False
         else:

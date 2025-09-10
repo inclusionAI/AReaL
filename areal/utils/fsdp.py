@@ -1,16 +1,15 @@
 import math
-from collections import defaultdict
+from typing import List
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed import ProcessGroup
+from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.tensor import DTensor
 from transformers import PreTrainedModel
 
 from areal.utils import logging, pkg_version
-
-logger = logging.getLogger("FSDPEngine")
 
 if pkg_version.is_version_greater_or_equal("torch", "2.6.0"):
     from torch.distributed.fsdp import (
@@ -18,22 +17,27 @@ if pkg_version.is_version_greater_or_equal("torch", "2.6.0"):
         MixedPrecisionPolicy,
         fully_shard,
     )
-elif pkg_version.is_version_greater_or_equal("torch", "2.4.0"):
-    from torch.distributed._composable.fsdp import (
-        CPUOffloadPolicy,
-        MixedPrecisionPolicy,
-        fully_shard,
-    )
 else:
     raise ModuleNotFoundError(
-        "Current PyTorch version < 2.4.0 is not supported for FSDPEngine."
+        "Current PyTorch version < 2.6.0 is not supported for FSDPEngine."
     )
+
+
+try:
+    import amp_C
+    from apex.multi_tensor_apply import multi_tensor_applier
+
+    l2_norm_impl = amp_C.multi_tensor_l2norm
+    multi_tensor_scale_impl = amp_C.multi_tensor_scale
+except ImportError:
+    raise ImportError("Please install the correct version of NVIDIA Apex and amp_C.")
+
 
 __all__ = [
     "CPUOffloadPolicy",
     "MixedPrecisionPolicy",
     "fully_shard",
-    "fsdp2_clip_grad_norm_",
+    "fsdp2_clip_grad_norm",
     "create_fsdp_device_mesh",
     "apply_fsdp2",
     "fsdp2_load_full_state_dict",
@@ -41,42 +45,153 @@ __all__ = [
 ]
 
 
-def fsdp2_clip_grad_norm_(
-    parameters, max_norm, norm_type=2.0, error_if_nonfinite=False, foreach=None
-):
-    """torch.nn.utils.clip_grad_norm_ cann't run on cpu parameter DTensor"""
-    from torch.nn.utils.clip_grad import _clip_grads_with_norm_, _get_total_norm
+logger = logging.getLogger("FSDPEngine")
 
-    if isinstance(parameters, torch.Tensor):
-        parameters = [parameters]
-    else:
-        # prevent generators from being exhausted
-        parameters = list(parameters)
 
-    # parameters and grads will have different device meshes
-    # if both FSDP2 and tensor parallel are applied.
-    params_by_mesh = defaultdict(list)
-    grads_by_mesh = defaultdict(list)
-    for p in parameters:
-        if p.grad is not None:
-            grad = p.grad
-            if isinstance(grad, DTensor):
-                params_by_mesh[grad.device_mesh].append(p)
-                grads_by_mesh[grad.device_mesh].append(grad)
-            else:
-                params_by_mesh[grad.device].append(p)
-                grads_by_mesh[grad.device].append(grad)
+def to_local_if_dtensor(tensor: torch.Tensor | DTensor) -> torch.Tensor:
+    with torch.no_grad():
+        return tensor.to_local() if isinstance(tensor, DTensor) else tensor
 
-    norms = [
-        _get_total_norm(grads, norm_type, error_if_nonfinite, foreach).item()
-        for _, grads in grads_by_mesh.items()
+
+def device_mesh_has_dim(mesh: DeviceMesh, dim_name: str) -> bool:
+    return mesh.mesh_dim_names is not None and dim_name in mesh.mesh_dim_names
+
+
+def is_param_not_tensor_parallel_duplicate(param, tensor_parallel_rank: int):
+    return (
+        isinstance(param, DTensor) and device_mesh_has_dim(param.device_mesh, "tp")
+    ) or tensor_parallel_rank == 0
+
+
+def get_main_grads_for_grad_norm(
+    params, tensor_parallel_rank: int
+) -> List[torch.Tensor]:
+    return [
+        param.grad
+        for param in params
+        if param.grad is not None
+        and is_param_not_tensor_parallel_duplicate(param, tensor_parallel_rank)
     ]
-    # vector_norm is from _get_total_norm
-    total_norm = torch.linalg.vector_norm(torch.tensor(norms), norm_type)
 
-    for _, params in params_by_mesh.items():
-        _clip_grads_with_norm_(params, max_norm, total_norm, foreach)
+
+# Adapted from Megatron-LM
+def get_grad_norm_fp32(
+    grads_for_norm: List[torch.Tensor] | torch.Tensor,
+    data_parallel_group: ProcessGroup,
+    model_parallel_group: ProcessGroup,
+    norm_type: float = 2.0,
+) -> float:
+    if isinstance(grads_for_norm, torch.Tensor):
+        grads_for_norm = [grads_for_norm]
+
+    grads_for_norm = [to_local_if_dtensor(grad) for grad in grads_for_norm]
+
+    norm_type = float(norm_type)
+    total_norm = 0.0
+
+    if not grads_for_norm:
+        return 0.0
+
+    device = torch.cuda.current_device()
+
+    if norm_type == torch.inf:
+        norms = [grad.abs().max() for grad in grads_for_norm]
+        total_norm = torch.max(torch.stack(norms)) if norms else 0.0
+        total_norm_cuda = torch.tensor(
+            [float(total_norm)], dtype=torch.float, device=device
+        )
+        if data_parallel_group:
+            torch.distributed.all_reduce(
+                total_norm_cuda,
+                op=torch.distributed.ReduceOp.MAX,
+                group=data_parallel_group,
+            )
+        torch.distributed.all_reduce(
+            total_norm_cuda,
+            op=torch.distributed.ReduceOp.MAX,
+            group=model_parallel_group,
+        )
+        total_norm = total_norm_cuda[0].item()
+    else:
+        if norm_type == 2.0:
+            dummy_overflow_buf = torch.tensor([0], dtype=torch.int, device=device)
+            grad_norm, _ = multi_tensor_applier(
+                l2_norm_impl,
+                dummy_overflow_buf,
+                [grads_for_norm],
+                False,
+            )
+            total_norm = grad_norm**norm_type
+        else:
+            for grad in grads_for_norm:
+                grad_norm = torch.norm(grad, norm_type)
+                total_norm += grad_norm**norm_type
+
+        if data_parallel_group:
+            torch.distributed.all_reduce(
+                total_norm, op=torch.distributed.ReduceOp.SUM, group=data_parallel_group
+            )
+        torch.distributed.all_reduce(
+            total_norm,
+            op=torch.distributed.ReduceOp.SUM,
+            group=model_parallel_group,
+        )
+        total_norm = total_norm.item() ** (1.0 / norm_type)
+
     return total_norm
+
+
+# Adapted from Megatron-LM
+def clip_grad_by_total_norm_fp32(
+    parameters: List[torch.Tensor] | torch.Tensor,
+    max_norm: int | float,
+    total_norm: float,
+):
+    params = []
+    grads = []
+    for param in parameters:
+        if param.grad is not None:
+            assert param.grad.type() == "torch.cuda.FloatTensor"
+            params.append(param)
+            grads.append(to_local_if_dtensor(param.grad).detach())
+
+    clip_coeff = max_norm / (total_norm + 1.0e-6)
+    if clip_coeff < 1.0:
+        dummy_overflow_buf = torch.tensor([0], dtype=torch.int, device="cuda")
+        multi_tensor_applier(
+            multi_tensor_scale_impl, dummy_overflow_buf, [grads, grads], clip_coeff
+        )
+
+
+def fsdp2_clip_grad_norm(
+    parameters,
+    nd_device_mesh: DeviceMesh,
+    max_norm: float,
+    norm_type: float = 2.0,
+) -> float:
+    assert device_mesh_has_dim(nd_device_mesh, "fsdp") and device_mesh_has_dim(
+        nd_device_mesh, "tp"
+    ), "fsdp2_clip_grad_norm requires a ['fsdp', 'tp'] device mesh."
+
+    if norm_type <= 0 and norm_type != float("inf"):
+        raise ValueError(
+            f"Invalid norm_type {norm_type}. Must be a positive float or inf."
+        )
+
+    fsdp_group = nd_device_mesh["fsdp"].get_group()
+    tp_group = nd_device_mesh["tp"].get_group()
+    tensor_parallel_rank = dist.get_rank(tp_group)
+
+    grads_for_norm = get_main_grads_for_grad_norm(parameters, tensor_parallel_rank)
+
+    grad_norm = get_grad_norm_fp32(
+        grads_for_norm, fsdp_group, tp_group, norm_type=norm_type
+    )
+
+    if parameters:
+        clip_grad_by_total_norm_fp32(parameters, max_norm, grad_norm)
+
+    return grad_norm
 
 
 def create_fsdp_device_mesh(shard_size, world_size):
