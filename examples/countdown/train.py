@@ -299,10 +299,16 @@ def main(args):
             batch = None
             if actor.is_data_parallel_head():
                 if config.async_training:
-                    batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
+                    batch = rollout.prepare_batch(
+                        train_dataloader,
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
                 else:
                     batch = rollout.rollout_batch(
-                        next(data_generator), workflow=workflow
+                        next(data_generator),
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
                     )
                 batch = batch.to(actor.device)
                 if config.async_training or config.redistribute_rollout:

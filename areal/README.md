@@ -521,6 +521,7 @@ def rollout_batch(
     data: List[Dict[str, Any]],
     workflow: Optional["RolloutWorkflow"] = None,
     workflow_builder: Optional[Callable] = None,
+    should_accept: Callable | None = None,
 ) -> TensorDict:
     """Submit a batch of requests to the inference engine and wait for the results."""
     for item in data:
@@ -530,7 +531,9 @@ def rollout_batch(
 def prepare_batch(
     self,
     dataloader: StatefulDataLoader,
-    workflow: "RolloutWorkflow",
+    workflow: Optional["RolloutWorkflow"] = None,
+    workflow_builder: Optional[Callable] = None,
+    should_accept: Callable | None = None,
 ):
     """Prepare batch for asynchronous processing."""
     # Implementation details...

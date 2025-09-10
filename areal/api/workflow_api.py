@@ -603,11 +603,12 @@ class WorkflowExecutor:
         data: List[Dict[str, Any]],
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
     ) -> TensorDict:
         """Submit a batch of requests to the inference engine and wait for the results."""
         for item in data:
             self.submit(item, workflow, workflow_builder)
-        return self.wait(count=len(data))
+        return self.wait(count=len(data), should_accept=should_accept)
 
     def prepare_batch(
         self,

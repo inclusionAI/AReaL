@@ -332,8 +332,14 @@ class RemoteSGLangEngine(InferenceEngine):
         data: List[Dict[str, Any]],
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
     ) -> TensorDict:
-        return self.workflow_executor.rollout_batch(data, workflow, workflow_builder)
+        return self.workflow_executor.rollout_batch(
+            data=data,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
+            should_accept=should_accept,
+        )
 
     def prepare_batch(
         self,
@@ -343,7 +349,10 @@ class RemoteSGLangEngine(InferenceEngine):
         should_accept: Callable | None = None,
     ):
         return self.workflow_executor.prepare_batch(
-            dataloader, workflow, workflow_builder, should_accept
+            dataloader=dataloader,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
+            should_accept=should_accept,
         )
 
     def pause(self):
