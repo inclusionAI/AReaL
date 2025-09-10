@@ -1,14 +1,17 @@
 import argparse
+import copy
 import os
+import tempfile
 from typing import Optional
 
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
 from tensordict import TensorDict
+from transformers import AutoTokenizer
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.io_struct import FinetuneSpec
+from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.experimental.api.cli_args import (
     ExperimentalTrainEngineConfig as TrainEngineConfig,
@@ -34,6 +37,14 @@ HF_MODEL_PATHS = {
 for model_type, path in MODEL_PATHS.items():
     if not os.path.exists(path):
         MODEL_PATHS[model_type] = HF_MODEL_PATHS[model_type]
+
+
+def write_result(out: str, succ: bool):
+    with open(out, "w") as f:
+        if succ:
+            f.write("Passed")
+        else:
+            f.write("Failed")
 
 
 def all_gather_logits(logits, input_data):
@@ -94,7 +105,7 @@ def make_engine(model_type, allocation_mode, mb_spec, init_optimizer=False):
     return engine
 
 
-def make_fsdp_engine(model_type, mb_spec, init_optimizer=False):
+def make_fsdp_engine(model_type, allocation_mode, mb_spec, init_optimizer=False):
     engine_config = TrainEngineConfig(
         experiment_name=f"test",
         trial_name="test",
@@ -102,8 +113,14 @@ def make_fsdp_engine(model_type, mb_spec, init_optimizer=False):
         path=MODEL_PATHS[model_type],
         optimizer=OptimizerConfig() if init_optimizer else None,
     )
+    alloc_mode = AllocationMode.from_str(allocation_mode)
+    # ignore other parallel strategy (not supported in fsdp)
+    alloc_mode.train.data_parallel_size = (
+        alloc_mode.train.world_size // alloc_mode.train.context_parallel_size
+    )
     engine = FSDPEngine(engine_config)
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
+    engine.create_process_group(parallel_strategy=alloc_mode.train)
     engine.initialize(None, ft_spec)
     return engine
 
@@ -143,7 +160,7 @@ def test_forward(model_type: str, alloc_mode: str, output: Optional[str] = None)
     ), "Logits should be the same across all model parallel ranks."
 
     # make FSDP engine, and check if the difference between FSDP and megatron engine
-    fsdp_engine = make_fsdp_engine("qwen3", mb_spec)
+    fsdp_engine = make_fsdp_engine("qwen3", alloc_mode, mb_spec)
     fsdp_logits = fsdp_engine.forward(
         input_=input_,
         post_hook=None,
@@ -194,11 +211,7 @@ def test_forward(model_type: str, alloc_mode: str, output: Optional[str] = None)
 
     print(f"Test: test_forward(model_type={model_type}, alloc_mode={alloc_mode}) Done.")
     if rank == 0 and output is not None:
-        with open(output, "w") as f:
-            if not failed:
-                f.write("Passed")
-            else:
-                f.write("Failed")
+        write_result(output, not failed)
 
 
 def mock_loss_fn(logits: torch.Tensor, input_data) -> torch.Tensor:
@@ -240,7 +253,181 @@ def test_train(model_type: str, alloc_mode: str, output: Optional[str] = None):
     engine.destroy()
     engine.destroy_process_groups()
 
+    if rank == 0 and output is not None:
+        write_result(output, True)
     print(f"Test: test_train(model_type={model_type}, alloc_mode={alloc_mode}) Done.")
+
+
+def test_train_dcp_save_load(
+    model_type: str, alloc_mode: str, output: Optional[str] = None
+):
+
+    print(
+        f"running test_train_dcp_save_load(model_type={model_type} alloc_mode={alloc_mode})"
+    )
+    rank = int(os.environ["RANK"])
+
+    base_dir = tempfile.gettempdir()
+    path = os.path.join(base_dir, "megatron_engine_train_dcp_test")
+    if rank == 0:
+        os.makedirs(path, exist_ok=True)
+
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATHS[model_type])
+
+    mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
+    engine = make_engine(model_type, alloc_mode, mb_spec, init_optimizer=True)
+
+    seeding.set_random_seed(0, key=f"trainer{rank}")
+
+    input_ = mock_input(batch_size=16, max_seqlen=128, device=engine.device)
+    print(f"rank {rank} is_data_parallel_head()={engine.is_data_parallel_head()}")
+    bcasted_input = broadcast_tensor_container(
+        input_,
+        src_rank=engine.current_data_parallel_head(),
+        group=engine.context_and_model_parallel_group,
+    )
+
+    save_load_meta = SaveLoadMeta(
+        path=path,
+        weight_format="dcp",
+        tokenizer=tokenizer,
+        with_optim=True,
+        base_model_path=None,
+    )
+
+    # train step 1
+    train_result = engine.train_batch(
+        input_=bcasted_input,
+        loss_fn=mock_loss_fn,
+        loss_weight_fn=lambda x: x["cu_seqlens"][-1],
+    )
+
+    print(f"final rank {rank} train_result: {train_result}")
+
+    torch.cuda.synchronize()
+    dist.barrier()
+
+    # save checkpoint for recover
+    engine.save(save_load_meta)
+
+    # train step 2
+    engine.train_batch(
+        input_=bcasted_input,
+        loss_fn=mock_loss_fn,
+        loss_weight_fn=lambda x: x["cu_seqlens"][-1],
+    )
+
+    with torch.no_grad():
+        engine.eval()
+        params = copy.deepcopy(dict(engine.model.named_parameters()))
+
+        for p in engine.model.parameters():
+            p.data.zero_()
+
+        # recover
+        engine.load(save_load_meta)
+
+    engine.train()
+    # train step 2 after recover
+    engine.train_batch(
+        input_=bcasted_input,
+        loss_fn=mock_loss_fn,
+        loss_weight_fn=lambda x: x["cu_seqlens"][-1],
+    )
+
+    torch.cuda.synchronize()
+    dist.barrier()
+
+    with torch.no_grad():
+        engine.eval()
+        succ = True
+        for name, param in engine.model.named_parameters():
+            if not torch.allclose(param, params[name]):
+                diff = torch.abs(params[name] - param)
+                print(
+                    f"rank {rank} diff of {name}: {diff}, max(diff)={torch.max(diff)} avg(diff)={torch.mean(diff)}, count(diff)={torch.count_nonzero(diff)}"
+                )
+                succ = False
+        assert succ, "Weights should be same after recover"
+
+    torch.cuda.synchronize()
+    dist.barrier()
+
+    engine.destroy()
+    engine.destroy_process_groups()
+
+    if output:
+        write_result(output, True)
+
+    print(
+        f"Test: test_train_dcp_save_load(model_type={model_type}, alloc_mode={alloc_mode}) Done."
+    )
+
+
+def test_simple_dcp_save_load(
+    model_type: str, alloc_mode: str, output: Optional[str] = None
+):
+
+    print(
+        f"running test_simple_dcp_save_load(model_type={model_type} alloc_mode={alloc_mode})"
+    )
+    rank = int(os.environ["RANK"])
+
+    base_dir = tempfile.gettempdir()
+    path = os.path.join(base_dir, "megatron_engine_simple_dcp_test")
+    if rank == 0:
+        os.makedirs(path, exist_ok=True)
+
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATHS[model_type])
+
+    mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
+    engine = make_engine(model_type, alloc_mode, mb_spec, init_optimizer=True)
+
+    seeding.set_random_seed(0, key=f"trainer{rank}")
+
+    input_ = mock_input(batch_size=16, max_seqlen=128, device=engine.device)
+    print(f"rank {rank} is_data_parallel_head()={engine.is_data_parallel_head()}")
+
+    save_load_meta = SaveLoadMeta(
+        path=path,
+        weight_format="dcp",
+        tokenizer=tokenizer,
+        with_optim=False,
+        base_model_path=None,
+    )
+
+    with torch.no_grad():
+        engine.eval()
+        params = copy.deepcopy(dict(engine.model.named_parameters()))
+        engine.save(save_load_meta)
+
+        for p in engine.model.parameters():
+            p.data.zero_()
+
+        engine.load(save_load_meta)
+
+        succ = True
+        for name, param in engine.model.named_parameters():
+            if not torch.allclose(param, params[name]):
+                diff = torch.abs(params[name] - param)
+                print(
+                    f"rank {rank} diff of {name}: {diff}, max(diff)={torch.max(diff)} avg(diff)={torch.mean(diff)}, count(diff)={torch.count_nonzero(diff)}"
+                )
+                succ = False
+        assert succ, "Weights should be same after recover"
+
+    torch.cuda.synchronize()
+    dist.barrier()
+
+    engine.destroy()
+    engine.destroy_process_groups()
+
+    if output:
+        write_result(output, True)
+
+    print(
+        f"Test: test_simple_dcp_save_load(model_type={model_type}, alloc_mode={alloc_mode}) Done."
+    )
 
 
 def main():
@@ -267,7 +454,7 @@ def main():
     parser.add_argument(
         "--test_type",
         type=str,
-        choices=["forward", "train"],
+        choices=["forward", "train", "simple_dcp_save_load", "train_dcp_save_load"],
         default="forward",
         help="Type of test to run: 'forward' or 'train'",
     )
@@ -276,8 +463,18 @@ def main():
     print(args)
     if args.test_type == "train":
         test_train(args.model_type, args.allocation_mode, output=args.output)
-    else:
+    elif args.test_type == "forward":
         test_forward(args.model_type, args.allocation_mode, output=args.output)
+    elif args.test_type == "simple_dcp_save_load":
+        test_simple_dcp_save_load(
+            args.model_type, args.allocation_mode, output=args.output
+        )
+    elif args.test_type == "train_dcp_save_load":
+        test_train_dcp_save_load(
+            args.model_type, args.allocation_mode, output=args.output
+        )
+    else:
+        raise NotImplementedError()
 
 
 if __name__ == "__main__":

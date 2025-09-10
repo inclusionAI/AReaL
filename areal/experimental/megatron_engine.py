@@ -21,8 +21,8 @@ from tensordict import TensorDict
 
 from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
 from areal.api.cli_args import MicroBatchSpec
-from areal.api.engine_api import FinetuneSpec, TrainEngine
-from areal.api.io_struct import ParamSpec, SaveLoadMeta, WeightUpdateMeta
+from areal.api.engine_api import TrainEngine
+from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.experimental.api.cli_args import (
     ExperimentalTrainEngineConfig as TrainEngineConfig,
 )
@@ -50,8 +50,6 @@ from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
-logger = logging.getLogger("MegatronEngine")
-
 
 class MegatronEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
@@ -72,9 +70,19 @@ class MegatronEngine(TrainEngine):
         self.rank = None
         self.world_size = None
         self.rank_generator = None
-        self.context_and_model_parallel_group = None
         self.checkpointer = None
         self.seed = 0
+
+    def current_data_parallel_head(self) -> int:
+        """Get the rank of the head of the current data parallel group."""
+        assert self.initialized
+        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
+        return ranks[0]
+
+    def is_data_parallel_head(self) -> bool:
+        assert self.initialized
+        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
+        return ranks[0] == self.rank
 
     def initialize(
         self,
@@ -87,6 +95,7 @@ class MegatronEngine(TrainEngine):
         if self.parallel_strategy is None:
             self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
         self._parallelism_group = dist.new_group()
+        self._context_and_model_parallel_group = None
         self._init_context_and_model_parallel_group()
         self.seed = seed
 
@@ -99,7 +108,7 @@ class MegatronEngine(TrainEngine):
         self.tokenizer = load_hf_tokenizer(self.config.path)
         self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
         self.bridge.dtype = self.dtype
-        logger.info(
+        self.logger.info(
             "Using mbridge to create models and hf model save/load in MegatronEngine."
         )
 
@@ -171,6 +180,8 @@ class MegatronEngine(TrainEngine):
         # Set megatron model parallel seed
         tensor_parallel.model_parallel_cuda_manual_seed(self.seed)
 
+        self.logger = logging.getLogger(f"[Megatron Engine Rank {dist.get_rank()}]")
+
     def _init_context_and_model_parallel_group(self):
         # Initialize context and model parallel groups, which are only used in AReaL
         # for data distribution
@@ -193,7 +204,7 @@ class MegatronEngine(TrainEngine):
                 group_desc="CONTEXT_AND_MODEL_PARALLEL_GROUP",
             )
             if dp_rank == mpu.get_data_parallel_rank():
-                self.context_and_model_parallel_group = group
+                self._context_and_model_parallel_group = group
 
     def create_optimizer(self, ft_spec: FinetuneSpec):
         if self.optimizer_config is None:
@@ -276,6 +287,11 @@ class MegatronEngine(TrainEngine):
     def parallelism_group(self) -> dist.ProcessGroup:
         assert self.initialized
         return self._parallelism_group
+
+    @property
+    def context_and_model_parallel_group(self) -> dist.ProcessGroup:
+        assert self.initialized
+        return self._context_and_model_parallel_group
 
     def destroy(self):
         if hasattr(self, "optimizer"):
@@ -435,7 +451,7 @@ class MegatronEngine(TrainEngine):
             align_sequences=True,
             align_to_multiple_of=align_to_multiple_of,
         )
-        logger.info(
+        self.logger.info(
             f"Microbatch #tokens (rank {dist.get_rank()}): {mb_list.group_lens}, aligned to: {mb_list.align_to_lengths}, "
             f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}."
         )
@@ -471,9 +487,11 @@ class MegatronEngine(TrainEngine):
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs]),
-            dtype=torch.float32,
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
@@ -559,9 +577,11 @@ class MegatronEngine(TrainEngine):
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs]),
-            dtype=torch.float32,
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
@@ -623,17 +643,6 @@ class MegatronEngine(TrainEngine):
         with stats_tracker.DEFAULT_TRACKER.disable_scope():
             stats_tracker.scalar(**stats)
         return None
-
-    def current_data_parallel_head(self) -> int:
-        """Get the rank of the head of the current data parallel group."""
-        assert self.initialized
-        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
-        return ranks[0]
-
-    def is_data_parallel_head(self) -> bool:
-        assert self.initialized
-        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
-        return ranks[0] == self.rank
 
     @torch.no_grad()
     def forward(

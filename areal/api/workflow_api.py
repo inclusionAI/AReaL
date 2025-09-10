@@ -27,8 +27,6 @@ from areal.utils.data import concat_padded_tensors
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
 
-logger = logging.getLogger("areal.workflow_api")
-
 
 ROLLOUT_POLL_WAIT_TIME = 0.05
 
@@ -83,6 +81,9 @@ def create_capacity_app(staleness_manager: "StalenessManager") -> FastAPI:
         return {"status": "healthy"}
 
     return app
+
+
+slogger = logging.getLogger("StalenessManager")
 
 
 class StalenessManager:
@@ -145,7 +146,7 @@ class StalenessManager:
             assert completed <= self.rollout_stat.running
             self.rollout_stat.running -= completed
             if self.enable_rollout_tracing:
-                logger.info(
+                slogger.info(
                     f"Finish {completed} rollouts. "
                     f"Accepted: {accepted}/{completed} ({accepted/completed:.2%}). "
                     f"Submit: {self.rollout_stat.submitted}, "
@@ -182,14 +183,14 @@ class StalenessManagerServer:
                 self.server.run()
             except Exception as e:
                 if not self._shutdown_event.is_set():
-                    logger.error(f"Staleness server error: {e}")
+                    slogger.error(f"Staleness server error: {e}")
 
         self.server_thread = threading.Thread(target=run_server, daemon=True)
         self.server_thread.start()
 
         # Wait for server to start
         time.sleep(0.5)
-        logger.info(f"Staleness server started on {self.host}:{self.port}")
+        slogger.info(f"Staleness server started on {self.host}:{self.port}")
 
     def stop(self):
         """Stop the staleness manager gracefully."""
@@ -229,7 +230,15 @@ class WorkflowExecutor:
 
         self.local_rollout_stat = RolloutStat()
 
-    def initialize(self, data_parallel_group: Optional[dist.ProcessGroup] = None):
+    def initialize(
+        self,
+        logger=None,
+        data_parallel_group: Optional[dist.ProcessGroup] = None,
+    ):
+        if logger is None:
+            logger = logging.getLogger("WorkflowExecutor")
+        self.logger = logger
+
         if dist.is_initialized():
             self.dp_world_size = dist.get_world_size(group=data_parallel_group)
             self.dp_group = data_parallel_group
@@ -314,7 +323,7 @@ class WorkflowExecutor:
         self.rollout_thread.join()
         if self.staleness_manager:
             self.staleness_manager.stop()
-            logger.info("Staleness server stopped")
+            self.logger.info("Staleness server stopped")
 
     def get_local_capacity(self):
         with self.lock:
@@ -357,12 +366,12 @@ class WorkflowExecutor:
                 result = response.json()
                 return result.get("granted", 0)
             else:
-                logger.warning(
+                self.logger.warning(
                     f"Capacity request failed with status {response.status_code}: {response.text}"
                 )
                 return 0
         except Exception as e:
-            logger.warning(f"Capacity request failed with exception: {e}")
+            self.logger.warning(f"Capacity request failed with exception: {e}")
             return 0
 
     def release_capacity(self, completed: int, accepted: int):
@@ -398,7 +407,7 @@ class WorkflowExecutor:
                         and self.input_queue.qsize() > 0
                     ):
                         data, workflow = self.input_queue.get_nowait()
-                        logger.debug(f"Get data from puller: {data}")
+                        self.logger.debug(f"Get data from puller: {data}")
                         task = asyncio.create_task(
                             workflow.arun_episode(self.inference_engine, data),
                             name=str(rid),
@@ -408,7 +417,7 @@ class WorkflowExecutor:
                         self.local_rollout_stat.submitted += 1
                         self.local_rollout_stat.running += 1
                         if self.config.enable_rollout_tracing:
-                            logger.info(
+                            self.logger.info(
                                 f"Submit rollout rid {rid}. "
                                 f"Submit: {self.local_rollout_stat.submitted}, "
                                 f"running: {self.local_rollout_stat.running}, "
@@ -444,7 +453,7 @@ class WorkflowExecutor:
                         self.local_rollout_stat.accepted += 1
                         self.local_rollout_stat.running -= 1
                         if self.config.enable_rollout_tracing:
-                            logger.info(
+                            self.logger.info(
                                 f"Finish rollout {task_rid}. "
                                 f"Submit: {self.local_rollout_stat.submitted}, "
                                 f"running: {self.local_rollout_stat.running}, "
@@ -503,14 +512,14 @@ class WorkflowExecutor:
                         should_accept is None or should_accept(timed_result.data)
                     ):
                         if self.config.enable_rollout_tracing:
-                            logger.info(
+                            self.logger.info(
                                 f"Accept rollout result. accepted/count = {len(self.result_cache)}/{count}"
                             )
                         _accepted += 1
                         self.result_cache.append(timed_result)
                     else:
                         if self.config.enable_rollout_tracing:
-                            logger.info(f"Rollout is rejected.")
+                            self.logger.info(f"Rollout is rejected.")
                         with self.lock:
                             self.local_rollout_stat.accepted -= 1
                     self.release_capacity(completed=_completed, accepted=_accepted)
@@ -528,7 +537,7 @@ class WorkflowExecutor:
                 f"Timed out waiting for {count} rollouts, " f"only received {accepted}."
             )
         if self.config.enable_rollout_tracing:
-            logger.info(
+            self.logger.info(
                 f"Rollout results are ready! accepted/count = {accepted}/{count}"
             )
         self.result_cache.sort(key=lambda x: x.t)

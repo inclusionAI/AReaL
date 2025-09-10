@@ -901,11 +901,13 @@ def all_gather_tensor_container(data, group=None) -> List:
         return [_unpad_unflatten(y, shape) for y, shape in zip(ys, shapes)]
 
     if isinstance(data, list):
-        data = [all_gather_tensor_container(d) for d in data]
+        data = [all_gather_tensor_container(d, group=group) for d in data]
         return list(zip(*data))
 
     if isinstance(data, (dict, TensorDict)):
-        results = {k: all_gather_tensor_container(v) for k, v in data.items()}
+        results = {
+            k: all_gather_tensor_container(v, group=group) for k, v in data.items()
+        }
         results = [
             {k: v[i] for k, v in results.items()}
             for i in range(dist.get_world_size(group))
