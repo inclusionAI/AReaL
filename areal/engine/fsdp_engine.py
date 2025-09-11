@@ -45,7 +45,6 @@ from areal.utils.fsdp import (
 from areal.utils.model import VALID_VISION_MODELS
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
-    get_ulysses_sequence_parallel_group,
     set_ulysses_sequence_parallel_group,
     ulysses_pad,
     ulysses_pad_and_slice_inputs,
@@ -106,8 +105,12 @@ class FSDPEngine(BaseHFEngine):
             **dataclasses.asdict(parallel_strategy),
         )
 
-    def create_process_group(self, parallel_strategy: ParallelStrategy):
+    def create_process_group(
+        self, parallel_strategy: Optional[ParallelStrategy] = None
+    ):
         super().create_process_group(parallel_strategy)
+        if parallel_strategy is None:
+            parallel_strategy = ParallelStrategy()
 
         self.logger = logging.getLogger(f"[FSDP Engine Rank {dist.get_rank()}]")
 
@@ -149,17 +152,6 @@ class FSDPEngine(BaseHFEngine):
         self.logger.info(
             f"Rank {self.rank} with DP head {self.dp_head} and DP rank {self.dp_rank}"
         )
-
-        current_sp_group = get_ulysses_sequence_parallel_group()
-        if current_sp_group is not None:
-            current_sp_group_ranks = dist.get_process_group_ranks(current_sp_group)
-            sp_group_ranks = dist.get_process_group_ranks(self.sp_group)
-            if current_sp_group_ranks != sp_group_ranks:
-                raise RuntimeError(
-                    f"Ulysses sequence parallel group mismatch: current ranks {current_sp_group_ranks} v.s. new ranks {sp_group_ranks}"
-                )
-        else:
-            set_ulysses_sequence_parallel_group(self.sp_group)
 
     def apply_tensor_parallel(self, device_mesh: DeviceMesh):
         try:
@@ -433,6 +425,7 @@ class FSDPEngine(BaseHFEngine):
         assert self.optimizer is not None
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
+        set_ulysses_sequence_parallel_group(self.sp_group)
 
         self.optimizer.zero_grad()
         mb_list = self.prepare_mb_list(input_)
@@ -535,6 +528,7 @@ class FSDPEngine(BaseHFEngine):
         """Evaluate on a batch."""
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
+        set_ulysses_sequence_parallel_group(self.sp_group)
 
         total_loss_weight = (
             sum([loss_weight_fn(mb) for mb in mb_list.mbs])
@@ -616,6 +610,7 @@ class FSDPEngine(BaseHFEngine):
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
+        set_ulysses_sequence_parallel_group(self.sp_group)
 
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()

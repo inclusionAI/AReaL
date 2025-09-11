@@ -1,11 +1,12 @@
 import gc
 import os
 import time
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
 from tensordict import TensorDict
+from torch.distributed.distributed_c10d import _get_default_group
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -86,7 +87,7 @@ class BaseHFEngine(TrainEngine):
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
         assert self.initialized
-        return self._parallelism_group
+        return _get_default_group()
 
     @property
     def data_parallel_rank(self) -> int:
@@ -110,9 +111,11 @@ class BaseHFEngine(TrainEngine):
     @property
     def parallelism_group(self) -> dist.ProcessGroup:
         assert self.initialized
-        return self._parallelism_group
+        return _get_default_group()
 
-    def create_process_group(self, parallel_strategy: ParallelStrategy):
+    def create_process_group(
+        self, parallel_strategy: Optional[ParallelStrategy] = None
+    ):
         # Required by NCCL weight update group for SGLang
         os.environ["NCCL_CUMEM_ENABLE"] = "0"
         os.environ["NCCL_NVLS_ENABLE"] = "0"
@@ -125,7 +128,6 @@ class BaseHFEngine(TrainEngine):
                 timeout=NCCL_DEFAULT_TIMEOUT,
             )
             self.own_global_group = True
-        self._parallelism_group = dist.new_group()
         # Each process is its own model parallel group.
         self.mp_group = dist.new_group([dist.get_rank()])
 
@@ -253,9 +255,9 @@ class BaseHFEngine(TrainEngine):
         gc.collect()
         torch.cuda.empty_cache()
         gc.collect()
+        non_trivial_world = dist.get_world_size() > 1
         dist.destroy_process_group(self.context_and_model_parallel_group)
-        dist.destroy_process_group(self.parallelism_group)
-        if self.own_global_group:
+        if self.own_global_group and non_trivial_world:
             dist.destroy_process_group()
         self.initialized = False
 

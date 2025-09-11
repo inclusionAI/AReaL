@@ -149,7 +149,11 @@ class MegatronEngine(TrainEngine):
             **dataclasses.asdict(parallel_strategy),
         )
 
-    def create_process_group(self, parallel_strategy: ParallelStrategy):
+    def create_process_group(
+        self, parallel_strategy: Optional[ParallelStrategy] = None
+    ):
+        if parallel_strategy is None:
+            parallel_strategy = ParallelStrategy()
         assert not dist.is_initialized()
         # TODO: Change engine_api.py and FSDPEngine API to seperate create_process_group
         # from engine initialize when moving out of experimental.

@@ -347,10 +347,25 @@ def main(args):
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
 
+        with stats_tracker.record_timing("checkpoint_for_recover"):
+            recover_handler.dump(
+                actor,
+                step_info,
+                saver,
+                evaluator,
+                stats_logger,
+                train_dataloader,
+                tokenizer=tokenizer,
+                processor=processor,
+            )
+
+        dist.barrier(device_ids=[actor.device.index])
+        torch.cuda.synchronize()
+
         with stats_tracker.record_timing("eval"):
 
             def evaluate_fn():
-                # Stats are logged in the workflow
+                # Stats are logged in workflow
                 # and will be exported later
                 cnt = 0
                 for data in valid_dataloader:
@@ -364,17 +379,6 @@ def main(args):
                 epoch,
                 step,
                 global_step,
-            )
-
-        with stats_tracker.record_timing("checkpoint_for_recover"):
-            recover_handler.dump(
-                actor,
-                step_info,
-                saver,
-                evaluator,
-                stats_logger,
-                train_dataloader,
-                tokenizer=tokenizer,
             )
 
         dist.barrier(device_ids=[actor.device.index])

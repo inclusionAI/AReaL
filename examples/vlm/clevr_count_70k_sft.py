@@ -1,8 +1,11 @@
 import os
 import sys
 
+import torch
+import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
@@ -136,6 +139,21 @@ def main_sft():
                     processor=processor,
                 )
 
+            with stats_tracker.record_timing("checkpoint_for_recover"):
+                recover_handler.dump(
+                    engine,
+                    step_info,
+                    saver,
+                    evaluator,
+                    stats_logger,
+                    train_dataloader,
+                    tokenizer=tokenizer,
+                    processor=processor,
+                )
+
+            dist.barrier(device_ids=[engine.device.index])
+            torch.cuda.synchronize()
+
             with stats_tracker.record_timing("eval"):
                 # No need to log anything. Logging will be handled outside
                 # via stats_tracker.export().
@@ -151,17 +169,8 @@ def main_sft():
                     global_step,
                 )
 
-            with stats_tracker.record_timing("checkpoint_for_recover"):
-                recover_handler.dump(
-                    engine,
-                    step_info,
-                    saver,
-                    evaluator,
-                    stats_logger,
-                    train_dataloader,
-                    tokenizer=tokenizer,
-                    processor=processor,
-                )
+            dist.barrier(device_ids=[engine.device.index])
+            torch.cuda.synchronize()
 
             stats_logger.commit(
                 epoch,

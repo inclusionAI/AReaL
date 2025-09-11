@@ -1,6 +1,8 @@
 import os
 import sys
 
+import torch
+import torch.distributed as dist
 from megatron.core import parallel_state as mpu
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -132,8 +134,24 @@ def main(args):
             with stats_tracker.record_timing("save"):
                 saver.save(engine, epoch, step, global_step, tokenizer=tokenizer)
 
-            with stats_tracker.record_timing("eval"):
+            with stats_tracker.record_timing("checkpoint_for_recover"):
+                recover_handler.dump(
+                    engine,
+                    step_info,
+                    saver,
+                    evaluator,
+                    stats_logger,
+                    train_dataloader,
+                    tokenizer=tokenizer,
+                    processor=processor,
+                )
 
+            dist.barrier(device_ids=[engine.device.index])
+            torch.cuda.synchronize()
+
+            with stats_tracker.record_timing("eval"):
+                # No need to log anything. Logging will be handled outside
+                # via stats_tracker.export().
                 def evaluate_fn():
                     with stats_tracker.scope("sft-eval"):
                         for data in valid_dataloader:
@@ -146,16 +164,8 @@ def main(args):
                     global_step,
                 )
 
-            with stats_tracker.record_timing("checkpoint_for_recover"):
-                recover_handler.dump(
-                    engine,
-                    step_info,
-                    saver,
-                    evaluator,
-                    stats_logger,
-                    train_dataloader,
-                    tokenizer=tokenizer,
-                )
+            dist.barrier(device_ids=[engine.device.index])
+            torch.cuda.synchronize()
 
             stats.update(
                 stats_tracker.export_all(reduce_group=mpu.get_data_parallel_group())
