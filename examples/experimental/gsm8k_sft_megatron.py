@@ -4,6 +4,7 @@ import sys
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
+from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
@@ -118,18 +119,23 @@ def main(args):
                 epoch_step=step,
                 steps_per_epoch=len(train_dataloader),
             )
+            print(11111111)
             # NOTE: data are identical across model+context parallel group
+            data: TensorDict
+            data = data.to(torch.cuda.current_device())
             data = broadcast_tensor_container(
                 data,
                 src_rank=engine.current_data_parallel_head(),
                 group=engine.context_and_model_parallel_group,
             )
+            print(2222222222222)
             with (
                 stats_tracker.record_timing("train_step"),
                 stats_tracker.scope("sft"),
             ):
                 stats = engine.train_lm(data)
                 engine.step_lr_scheduler()
+            print(3333333333)
 
             with stats_tracker.record_timing("save"):
                 saver.save(engine, epoch, step, global_step, tokenizer=tokenizer)
@@ -143,11 +149,11 @@ def main(args):
                     stats_logger,
                     train_dataloader,
                     tokenizer=tokenizer,
-                    processor=processor,
                 )
 
             dist.barrier(device_ids=[engine.device.index])
             torch.cuda.synchronize()
+            print(4444444444)
 
             with stats_tracker.record_timing("eval"):
                 # No need to log anything. Logging will be handled outside
@@ -166,12 +172,14 @@ def main(args):
 
             dist.barrier(device_ids=[engine.device.index])
             torch.cuda.synchronize()
+            print(5555555555)
 
             stats.update(
                 stats_tracker.export_all(reduce_group=mpu.get_data_parallel_group())
             )
             stats_logger.commit(epoch, step, global_step, stats)
             global_step += 1
+            print(666666666)
 
     stats_logger.close()
     engine.destroy()

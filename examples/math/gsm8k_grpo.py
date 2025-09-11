@@ -251,7 +251,6 @@ def main(args):
                 stats_logger,
                 train_dataloader,
                 tokenizer=tokenizer,
-                processor=processor,
             )
 
         dist.barrier(device_ids=[actor.device.index])

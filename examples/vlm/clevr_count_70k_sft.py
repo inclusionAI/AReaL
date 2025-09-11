@@ -3,6 +3,7 @@ import sys
 
 import torch
 import torch.distributed as dist
+from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
@@ -115,6 +116,8 @@ def main_sft():
             )
 
             # NOTE: data are identical across model+context parallel group
+            data: TensorDict
+            data = data.to(torch.cuda.current_device())
             data = broadcast_tensor_container(
                 data,
                 src_rank=engine.current_data_parallel_head(),

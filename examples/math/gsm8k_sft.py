@@ -3,6 +3,7 @@ import sys
 
 import torch
 import torch.distributed as dist
+from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
@@ -98,7 +99,6 @@ def main(args):
     )
 
     total_epochs = config.total_train_epochs
-    len(train_dataloader)
 
     global_step = 0
     for epoch in range(total_epochs):
@@ -114,6 +114,8 @@ def main(args):
             )
 
             # NOTE: data are identical across model+context parallel group
+            data: TensorDict
+            data = data.to(torch.cuda.current_device())
             data = broadcast_tensor_container(
                 data,
                 src_rank=engine.current_data_parallel_head(),
@@ -140,7 +142,6 @@ def main(args):
                     stats_logger,
                     train_dataloader,
                     tokenizer=tokenizer,
-                    processor=processor,
                 )
 
             dist.barrier(device_ids=[engine.device.index])
