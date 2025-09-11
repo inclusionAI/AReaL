@@ -136,6 +136,8 @@ class DistributedTrainController(TrainController):
         engineSpec.env_vars["NCCL_SET_THREAD_NAME"] = "1"
         engineSpec.env_vars["NCCL_IB_QPS_PER_CONNECTION"] = "8"
         engineSpec.env_vars["NCCL_SET_THREAD_NAME"] = "1"
+        # FIXME @fenghui @xuantai: if not add CUDA_LAUNCH_BLOCKING, bailing max expr(960 gpu) will hang in train batch stage
+        engineSpec.env_vars["CUDA_LAUNCH_BLOCKING"] = "1"
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
