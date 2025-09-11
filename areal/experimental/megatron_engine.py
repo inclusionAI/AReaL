@@ -149,9 +149,7 @@ class MegatronEngine(TrainEngine):
             **dataclasses.asdict(parallel_strategy),
         )
 
-    def create_process_group(
-        self, parallel_strategy: ParallelStrategy | None = None
-    ):
+    def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
         assert not dist.is_initialized()

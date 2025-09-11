@@ -105,9 +105,7 @@ class FSDPEngine(BaseHFEngine):
             **dataclasses.asdict(parallel_strategy),
         )
 
-    def create_process_group(
-        self, parallel_strategy: ParallelStrategy | None = None
-    ):
+    def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         super().create_process_group(parallel_strategy)
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
