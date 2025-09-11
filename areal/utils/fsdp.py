@@ -24,13 +24,39 @@ else:
 
 
 try:
-    import amp_C
-    from apex.multi_tensor_apply import multi_tensor_applier
+    from transformer_engine.pytorch.optimizers import (
+        multi_tensor_applier,
+        multi_tensor_l2norm,
+        multi_tensor_scale,
+    )
 
-    l2_norm_impl = amp_C.multi_tensor_l2norm
-    multi_tensor_scale_impl = amp_C.multi_tensor_scale
+    l2_norm_impl = multi_tensor_l2norm
+    multi_tensor_scale_impl = multi_tensor_scale
 except ImportError:
-    raise ImportError("Please install the correct version of NVIDIA Apex and amp_C.")
+    try:
+        import amp_C
+        from apex.multi_tensor_apply import multi_tensor_applier
+
+        l2_norm_impl = amp_C.multi_tensor_l2norm
+        multi_tensor_scale_impl = amp_C.multi_tensor_scale
+    except ImportError:
+        import warnings
+
+        warnings.warn(
+            f"Transformer Engine and Apex are not installed. "
+            "Falling back to local implementations of multi_tensor_applier, "
+            "multi_tensor_l2norm, and multi_tensor_scale"
+        )
+
+        from .multi_tensor_apply import (
+            local_multi_tensor_applier,
+            local_multi_tensor_l2_norm,
+            local_multi_tensor_scale,
+        )
+
+        multi_tensor_applier = local_multi_tensor_applier
+        l2_norm_impl = local_multi_tensor_l2_norm
+        multi_tensor_scale_impl = local_multi_tensor_scale
 
 
 __all__ = [
