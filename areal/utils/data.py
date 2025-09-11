@@ -925,17 +925,7 @@ def all_gather_tensor_container(data, group=None) -> List:
 
 
 def broadcast_tensor_container(data, src_rank=0, group=None):
-    is_source_rank = dist.get_rank() == src_rank
-    
-    # Move data to GPU for NCCL backend on source rank
-    if is_source_rank and group is not None and isinstance(data, (dict, TensorDict)):
-        try:
-            if dist.get_backend(group) == dist.Backend.NCCL:
-                data = data.to(torch.cuda.current_device()) if hasattr(data, 'to') else data
-        except (RuntimeError, AttributeError):
-            pass
-    
-    if not is_source_rank:
+    if dist.get_rank() != src_rank:
         metadata = [None]
         dist.broadcast_object_list(metadata, src=src_rank, group=group)
         data_type, info = metadata[0]
@@ -951,17 +941,10 @@ def broadcast_tensor_container(data, src_rank=0, group=None):
             ]
         elif data_type == "dict":
             keys = info
-            result = {
+            return {
                 k: broadcast_tensor_container(None, src_rank=src_rank, group=group)
                 for k in keys
             }
-
-            if "attention_mask" in result and hasattr(result.get("attention_mask"), 'shape'):
-                try:
-                    result = TensorDict(result, batch_size=result["attention_mask"].shape[0])
-                except (ImportError, NameError, KeyError, AttributeError):
-                    pass
-            return result
         elif data_type == "object":
             to_broadcast = [None]
             dist.broadcast_object_list(to_broadcast, src=src_rank, group=group)
@@ -985,20 +968,12 @@ def broadcast_tensor_container(data, src_rank=0, group=None):
                 for d in data
             ]
         elif isinstance(data, (dict, TensorDict)):
-            is_tensor_dict = isinstance(data, TensorDict)
             metadata = [("dict", list(data.keys()))]
             dist.broadcast_object_list(metadata, src=src_rank, group=group)
-            result = {
+            return {
                 k: broadcast_tensor_container(v, src_rank=src_rank, group=group)
                 for k, v in data.items()
             }
-            # Restore TensorDict type if original was TensorDict
-            if is_tensor_dict:
-                try:
-                    result = TensorDict(result, batch_size=data.batch_size)
-                except (ImportError, NameError, AttributeError):
-                    pass
-            return result
         else:
             metadata = [("object", None)]
             dist.broadcast_object_list(metadata, src=src_rank, group=group)

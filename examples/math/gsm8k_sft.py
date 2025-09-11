@@ -1,6 +1,7 @@
 import os
 import sys
 
+from torch import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import SFTConfig, load_expr_config
@@ -8,7 +9,7 @@ from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
 from areal.engine.sft.lm_engine import FSDPLMEngine
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container, pad_sequences_to_tensors
+from areal.utils.data import broadcast_tensor_container, pad_sequences_to_tensors, to_device
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
@@ -112,11 +113,16 @@ def main(args):
 
             # NOTE: data are identical across model+context parallel group
             data = broadcast_tensor_container(
-                data,
+                to_device(data, engine.current_device),
                 src_rank=engine.current_data_parallel_head(),
                 group=engine.context_and_model_parallel_group,
             )
 
+            if not isinstance(data, TensorDict):
+                if "attention_mask" in data:
+                    batch_size = data["attention_mask"].shape[0]
+                    data = TensorDict(data, batch_size=batch_size)
+            
             with (
                 stats_tracker.record_timing("train_step"),
                 stats_tracker.scope("sft"),
