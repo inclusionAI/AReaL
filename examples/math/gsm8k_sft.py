@@ -126,7 +126,7 @@ def main(args):
                 if "attention_mask" in data:
                     batch_size = data["attention_mask"].shape[0]
                     data = TensorDict(data, batch_size=batch_size)
-            
+
             with (
                 stats_tracker.record_timing("train_step"),
                 stats_tracker.scope("sft"),
