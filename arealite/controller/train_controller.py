@@ -182,7 +182,7 @@ class DistributedTrainController(TrainController):
                 for f in futures:
                     f.cancel()
                 raise RuntimeError(
-                    f"Failed to initialize worker_index: {worker_index}, rank_info: {rank_info}, error: {e}"
+                    f"Failed to initialize worker_index: {worker_index}, error: {e}"
                 )
         # todo: 不能写死remote megatron, 让engine抽象出接口
 

@@ -113,7 +113,7 @@ class RemoteHybridTrainWorker(TrainEngine):
                 f"target_url: {target_url}, rank: {global_rank}, target_url: {target_url}"
             )
             response = requests.post(
-                target_url, data=json.dumps(payload), headers=headers, timeout=7200
+                target_url, data=json.dumps(payload), headers=headers, timeout=3600
             )
             logger.info(f"initialize finished send request to megatron server")
             if response.status_code == 200:
@@ -177,7 +177,7 @@ class RemoteHybridTrainWorker(TrainEngine):
                     target_url,
                     data=json.dumps({"path": meta.path}),
                     headers=headers,
-                    timeout=7200,
+                    timeout=3600,
                 )
                 if response.status_code == 200:
                     logger.info("upload_weights success")
@@ -234,7 +234,7 @@ class RemoteHybridTrainWorker(TrainEngine):
             target_url = f"http://{self.megatron_addr}/save"
             headers = {"Content-Type": "application/json"}
             response = requests.post(
-                target_url, data=json.dumps(payload), headers=headers, timeout=7200
+                target_url, data=json.dumps(payload), headers=headers, timeout=3600
             )
             if response.status_code == 200:
                 logger.info(f"save hf request exec success, save_dir: {meta.path}")
@@ -433,7 +433,7 @@ class RemoteHybridTrainWorker(TrainEngine):
             data = serialize_and_compress(payload)
             logger.info("send train_batch request to megatron worker.")
             response = requests.post(
-                target_url, data=data, headers=headers, timeout=7200
+                target_url, data=data, headers=headers, timeout=3600
             )
             if response.status_code == 200:
                 logger.info(
@@ -490,7 +490,7 @@ class RemoteHybridTrainWorker(TrainEngine):
             data = serialize_and_compress(payload)
             logger.info("send train_batch request to megatron worker....")
             response = requests.post(
-                target_url, data=data, headers=headers, timeout=7200
+                target_url, data=data, headers=headers, timeout=3600
             )
             if response.status_code == 200:
                 logger.info(
@@ -965,7 +965,7 @@ class RemoteHybridTrainWorker(TrainEngine):
             data = serialize_and_compress(payload)
             logger.info("send compute_logprobs request to megatron worker....")
             response = requests.post(
-                target_url, data=data, headers=headers, timeout=7200
+                target_url, data=data, headers=headers, timeout=3600
             )
             if response.status_code == 200:
                 sequence_sample_logp = cloudpickle.loads(response.content)

@@ -128,7 +128,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                         url,
                         headers={"Content-Type": "application/json"},
                         json=body,
-                        timeout=7200,
+                        timeout=3600,
                     )
                 )
 
@@ -141,7 +141,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     logger.info(f"initialize success, response: {result}")
             except Exception as e:
                 logger.error(f"[RemoteHybridInferenceWorker] initialize failed: {str(e)}, response is {response.text}")
-                raise
+                raise EngineError(
+                    "InferenceEngineError",
+                    "InitializeError",
+                    f"rank{global_rank}, unexpected error: {e}",
+                )
 
         if initialize_cfg.global_ranks:
             self._rank = initialize_cfg.global_ranks[0]

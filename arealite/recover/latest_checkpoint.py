@@ -228,9 +228,7 @@ class Recover:
             return True, recover_info
         except FileNotFoundError:
             logger.warning(f"Recover info not found at {path}")
-            raise FrameworkError(
-                "FrameworkError", "RecoverError", f"Recover info not found at {path}"
-            )
+            return False, None
         except Exception as e:
             logger.error(f"Failed to load recover info from {path}: {str(e)}")
-            raise FrameworkError("FrameworkError", "RecoverError", e)
+            return False, None

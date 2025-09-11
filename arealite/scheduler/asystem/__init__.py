@@ -91,6 +91,15 @@ class AsystemScheduler(Scheduler):
                 logger.error(f"Error stopping job {job_uid}: {e}")
         logger.info(f"signum {signum} received: handle_signals finished")
 
+    def cleanup_jobs(self):
+        for job_name, job_uid in self.submitted_jobs.items():
+            try:
+                self.stop_job(job_uid)
+                logger.info(f"Stopped job: {job_uid}")
+            except Exception as e:
+                logger.error(f"Error stopping job {job_uid}: {e}")
+        logger.info(f"scheduler cleanup_jobs finished")
+
     def _build_rpc_client(self, config):
         pass
 

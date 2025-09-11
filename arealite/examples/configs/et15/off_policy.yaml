@@ -104,7 +104,7 @@ rollout:
     show_time_cost: false
 
 actor:
-  hybrid_engine:
+  hybrid_engine: &actor_hybrid_engine
     experiment_name: ${experiment_name}
     trial_name: ${trial_name}
     group_size: ${gconfig.n_samples}
@@ -146,7 +146,7 @@ actor:
       temperature: 1.0
       reward_output_scaling: 0.5
       reward_output_bias: -1.0
-    remote_megatron_config:
+    remote_megatron_config: &actor_remote_megatron
       adam_beta1: 0.9
       adam_beta2: 0.999
       adam_eps: 1.0e-08
@@ -283,185 +283,18 @@ actor:
 
 ref:
   hybrid_engine:
-    experiment_name: ${experiment_name}
-    trial_name: ${trial_name}
-    group_size: ${gconfig.n_samples}
-    train_bs_n_seqs: ${train_bs_n_seqs}
-    max_tokens_per_mb: 16384
-    wrap_policy:
-      n_minibatches: 8
-      kl_ctl: 0.001
-      recompute_logp: true
-      adv_norm: false
-      discount: 1.0
-      gae_lambda: 1.0
-      eps_clip: 0.2
-      clip_ratio_low: 0.2
-      clip_ratio_high: 0.28
-      c_clip: null
-      value_eps_clip: 0.2
-      max_reward_clip: 5.0
-      disable_value: true
-      early_stop_kl: null
-      early_stop_imp_ratio: null
-      adaptive_kl_ctl: false
-      adaptive_kl_target: 6
-      adaptive_kl_horizon: 10000
-      enable_save: true
-      value_norm: true
-      value_norm_type: "exp"
-      value_norm_beta: 0.99995
-      value_norm_eps: 1e-5
-      group_size: 8
-      generation_size: null
-      mask_no_eos_with_zero: false
-      group_adv_norm: true
-      mask_too_long: false
-      use_dense_reward: false
-      reward_delta: true
-      token_normalize_scope: "global"
-      sample_reuse: 1
-      temperature: 1.0
-      reward_output_scaling: 0.5
-      reward_output_bias: -1.0
+    <<: *actor_hybrid_engine
     remote_megatron_config:
-      adam_beta1: 0.9
-      adam_beta2: 0.999
-      adam_eps: 1.0e-08
-      adaptive_layer_bias_update_strategy: sqrt
-      add_bias_linear: false
-      add_position_embedding: true
-      apply_rope_fusion: true
-      async_save: false
-      attention_backend: "flash"
-      attention_dropout: 0.0
-      attention_softmax_in_fp32: true
-      auto_detect_ckpt_format: true
-      bf16: true
-      clip_grad: 1.0
-      context_parallel_size: 1
-      cp_comm_type: "p2p"
-      cross_entropy_loss_fusion: false
-      distributed_backend: "nccl"
-      distributed_timeout_minutes: 600
-      enable_one_logger: false
-      expert_model_parallel_size: 16
-      ffn_hidden_size: 5120
-      first_k_dense_replace: 1
-      global_batch_size: 512
-      gradient_accumulation_fusion: true
-      group_query_attention: true
-      hidden_dropout: 0.0
-      hidden_size: 2048
-      init_method_std: 0.006
-      load: /storage/yuyan/model/nlp/aystem-test-ring-moe-v2-sft-general700w_longcot200w_0725_iter_0028869
-      log_loss_scale_to_tensorboard: false
-      log_num_zeros_in_grad: true
-      log_params_norm: true
-      log_throughput: true
-      log_timers_to_tensorboard: true
-      log_validation_ppl_to_tensorboard: true
-      lr: 3.0e-06
-      lr_decay_style: constant
-      lr_warmup_iters: 10
-      make_vocab_size_divisible_by: 128
-      masked_softmax_fusion: true
-      max_position_embeddings: 16384
-      micro_batch_size: 1
-      moe_ffn_hidden_size: 512
-      moe_grouped_gemm: true
-      moe_layer_freq:
-        - 0
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-        - 1
-      moe_per_layer_logging: true
-      moe_permute_fusion: true
-      moe_router_bias_update_rate: 0.00
-      moe_router_dtype: fp32
-      moe_router_enable_expert_bias: true
-      moe_router_group_topk: 4
-      moe_router_num_groups: 8
-      moe_router_score_function: sigmoid
-      moe_router_topk: 8
-      moe_router_topk_scaling_factor: 2.5
-      moe_shared_expert_intermediate_size: 512
-      moe_shared_expert_overlap: true
-      moe_token_dispatcher_type: alltoall
-      norm_epsilon: 1.0e-06
-      normalization: "RMSNorm"
-      num_attention_heads: 16
-      num_experts: 256
-      num_layers: 20
-      num_query_groups: 4
-      optim_normhead_fwd_alltoall: true
-      optimizer: "adam"
-      overlap_grad_reduce: true
-      overlap_p2p_comm: true
-      overlap_param_gather: false
+      <<: *actor_remote_megatron
       pipeline_model_parallel_size: 1
-      position_embedding_type: "rope"
-      qk_layernorm: true
-      recompute_granularity: "full"
-      recompute_method: "uniform"
-      recompute_num_layers: 5
-      rotary_base: 600000
-      rotary_percent: 0.5
-      save: /dnn_training_sys/users/xinyu.kxy/experiments/2025-08-20_20-04-37/experiments/models/mcore_ckpt_32/asystem_moe_mini
-      save_interval: 1
-      seed: 42
-      seq_length: 16384
-      sequence_parallel: true
-      skip_casting_dtype_for_param_pattern: '^expert_bias$|.+\.expert_bias$'
-      swiglu: true
       tensor_model_parallel_size: 1
-      tensorboard_log_interval: 1
-      tokenizer_model: ${tokenizer_path}
-      tokenizer_type: "HuggingFaceTokenizer"
-      train_iters: 100000
-      transformer_xl: false
-      unidirectional: true
-      untie_embeddings_and_output_weights: true
-      use_distributed_optimizer: true
-      use_flash_attn: true
-      use_init_chunk: true
-      use_mcore_models: true
-      use_norm_head: false
-      use_pack_lazy_loader: true
-      use_random_logits: true
-      use_rotary_position_embeddings: true
-      vocab_size: 157184
-      weight_decay: 0.01
-    loss_configs:
-      kl_ctl: ${ref.hybrid_engine.wrap_policy.kl_ctl}
-      adaptive_kl_target: 6
-      adaptive_kl_horizon: 10000
-      eps_clip: 0.2
-      temperature: 1
-      token_normalize_scope: "dp"
-      enable_offpolicy: ${ref.hybrid_engine.wrap_policy.recompute_logp}
-      use_kl_in_loss: true
-      kl_type: k1
+      context_parallel_size: 1
+      expert_model_parallel_size: 8
 
 recover:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
+  # recover_meta_info_path: ${storage_prefix}/experiments/recover/root/${experiment_name}/${trial_name}/metas/latest_checkpoint/recover_info.pkl
   recover_meta_info_path: ""
   enable_recover: true
   latest_disable_save_hf: true
