@@ -1,5 +1,6 @@
 import difflib
 import re
+from typing import Any, Dict, List, Tuple, TypedDict
 
 from arealite.extension.asystem.functioncall.base.utils import logger
 
@@ -56,10 +57,10 @@ def normalize_sr(patch: str) -> dict:
 
 
 def apply_code_change(
-    code_context: dict[str, str],
-    search_replace_dict: dict[str, list[tuple[str, str]]],
+    code_context: Dict[str, str],
+    search_replace_dict: Dict[str, list[tuple[str, str]]],
     silent: bool = True,
-) -> dict[str, str]:
+) -> Dict[str, str]:
     """
     Apply the search/replace edits to the code context.
 
@@ -75,17 +76,26 @@ def apply_code_change(
     for path, search_replaces in search_replace_dict.items():
         new_content = "\n" + code_context.get(path, "")
         for search, replace in search_replaces:
-            # Ensure search block can be matched
-            # "\n" + search to ensure the indentations are correct
-            if not silent and len(search) == len(replace) and search == replace:
-                logger.info("SWE Reward: Search and replace blocks are identical")
-            search = "\n" + search
-            replace = "\n" + replace
-            if not silent and search not in new_content:
-                logger.info(f"SWE Reward: Search block not found in the code: {search}")
-            new_content = new_content.replace(search, replace)
+            if search == "":
+                new_content = "\n" + replace
+            else:
+                # Ensure search block can be matched
+                # "\n" + search to ensure the indentations are correct
+                if not silent and len(search) == len(replace) and search == replace:
+                    logger.info("SWE Reward: Search and replace blocks are identical")
+                search = "\n" + search
+                replace = "\n" + replace
+                if not silent and search not in new_content:
+                    logger.info(f"SWE Reward: Search block not found in the code: {search}")
+                new_content = new_content.replace(search, replace)
         # Remove the leading "\n"
-        new_content_dict[path] = new_content[1:]
+        final_content = new_content[1:]
+        if len(final_content) > 1000000:  # 1M限制
+            final_content = code_context.get(path, '')
+            print(
+                f"SWE Reward: [apply_code_change] [WARNING] 最终文件过长，使用原始内容: {len(final_content)} 字符"
+            )
+        new_content_dict[path] = final_content
     return new_content_dict
 
 

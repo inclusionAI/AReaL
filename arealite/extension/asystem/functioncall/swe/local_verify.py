@@ -62,43 +62,45 @@ def normalize_sr(patch: str) -> Dict:
 
 def apply_code_change(
     code_context: Dict[str, str],
-    search_replace_Dict: Dict[str, List[Tuple[str, str]]],
+    search_replace_dict: Dict[str, List[Tuple[str, str]]],
     silent: bool = True,
 ) -> Dict[str, str]:
     """
     Apply the search/replace edits to the code context.
 
     Args:
-        code_context: A Dictionary containing the file path and the content of the code.
-        search_replace_Dict: A Dictionary mapping the file path to the search/replace edits.
+        code_context: A dictionary containing the file path and the content of the code.
+        search_replace_dict: A dictionary mapping the file path to the search/replace edits.
         silent: Whether to suppress the error messages.
 
     Returns:
-        A Dictionary containing the file path and the new content of the code.
+        A dictionary containing the file path and the new content of the code.
     """
-    new_content_Dict = dict[str, str]()
-    for path, search_replaces in search_replace_Dict.items():
+    new_content_dict = dict[str, str]()
+    for path, search_replaces in search_replace_dict.items():
         new_content = "\n" + code_context.get(path, "")
         for search, replace in search_replaces:
-            # Ensure search block can be matched
-            # "\n" + search to ensure the indentations are correct
-            if not silent and len(search) == len(replace) and search == replace:
-                logger.info("SWE Reward: Search and replace blocks are identical")
-            search = "\n" + search
-            replace = "\n" + replace
-            if not silent and search not in new_content:
-                logger.info(f"SWE Reward: Search block not found in the code: {search}")
-            new_content = new_content.replace(search, replace)
+            if search == "":
+                new_content = "\n" + replace
+            else:
+                # Ensure search block can be matched
+                # "\n" + search to ensure the indentations are correct
+                if not silent and len(search) == len(replace) and search == replace:
+                    logger.info("SWE Reward: Search and replace blocks are identical")
+                search = "\n" + search
+                replace = "\n" + replace
+                if not silent and search not in new_content:
+                    logger.info(f"SWE Reward: Search block not found in the code: {search}")
+                new_content = new_content.replace(search, replace)
         # Remove the leading "\n"
         final_content = new_content[1:]
-        if len(final_content) > 300000:  # 300KB限制
+        if len(final_content) > 1000000:  # 1M限制
+            final_content = code_context.get(path, '')
             print(
-                f"SWE Reward: [SR-PATCH] [WARNING] 最终文件过长，使用原始内容: {len(final_content)} 字符"
+                f"SWE Reward: [apply_code_change] [WARNING] 最终文件过长，使用原始内容: {len(final_content)} 字符"
             )
-            final_content = code_context[path]
-        new_content_Dict[path] = final_content
-    return new_content_Dict
-
+        new_content_dict[path] = final_content
+    return new_content_dict
 
 class ChangeSimilarity(TypedDict):
     path: str
