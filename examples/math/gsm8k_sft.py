@@ -153,6 +153,12 @@ def main(args):
                 def evaluate_fn():
                     with stats_tracker.scope("sft-eval"):
                         for data in valid_dataloader:
+                            data = data.to(torch.cuda.current_device())
+                            data = broadcast_tensor_container(
+                                data,
+                                src_rank=engine.current_data_parallel_head(),
+                                group=engine.context_and_model_parallel_group,
+                            )
                             engine.evaluate_lm(data)
 
                 evaluator.evaluate(

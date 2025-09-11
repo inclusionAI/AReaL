@@ -548,21 +548,25 @@ class MegatronEngine(TrainEngine):
         update_successful, grad_norm, _ = self.optimizer.step()
         current_lr = self.optimizer.param_groups[0]["lr"]
 
-        stats = [None]
-        if mpu.is_pipeline_last_stage():
-            stats = [stats_tracker.export(reduce_group=mpu.get_data_parallel_group())]
-        # broadcast stats to all ranks in context and model parallel group
-        dist.broadcast_object_list(
-            stats,
-            src=mpu.get_pipeline_model_parallel_last_rank(),
-            group=mpu.get_pipeline_model_parallel_group(),
-        )
-        stats = stats[0]
-        # TODO: currently if we export tracked stats here, stats will be exported twice.
-        # We need to: 1. Unify the way stats are tracked, through return value of `train_batch`
-        # or directly recorded by `stats_tracker`; 2. Find a way to properly handle stats broadcasting.
-        with stats_tracker.DEFAULT_TRACKER.disable_scope():
-            stats_tracker.scalar(**stats)
+        # TODO: refactor the following lines into engine.sync_stats
+        if mpu.get_pipeline_model_parallel_world_size() > 1:
+            stats = [None]
+            if mpu.is_pipeline_last_stage():
+                stats = [
+                    stats_tracker.export(
+                        reduce_group=mpu.get_data_parallel_group(), reset=False
+                    )
+                ]
+            # broadcast stats to all ranks in context and model parallel group
+            dist.broadcast_object_list(
+                stats,
+                src=mpu.get_pipeline_model_parallel_last_rank(),
+                group=mpu.get_pipeline_model_parallel_group(),
+            )
+            stats = stats[0]
+            if not mpu.is_pipeline_last_stage():
+                with stats_tracker.DEFAULT_TRACKER.disable_scope():
+                    stats_tracker.scalar(**stats)
         return dict(
             update_successful=float(update_successful),
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
@@ -634,18 +638,24 @@ class MegatronEngine(TrainEngine):
         )
 
         # TODO: refactor the following lines into engine.sync_stats
-        stats = [None]
-        if mpu.is_pipeline_last_stage():
-            stats = [stats_tracker.export(reduce_group=mpu.get_data_parallel_group())]
-        # broadcast stats to all ranks in context and model parallel group
-        dist.broadcast_object_list(
-            stats,
-            src=mpu.get_pipeline_model_parallel_last_rank(),
-            group=mpu.get_pipeline_model_parallel_group(),
-        )
-        stats = stats[0]
-        with stats_tracker.DEFAULT_TRACKER.disable_scope():
-            stats_tracker.scalar(**stats)
+        if mpu.get_pipeline_model_parallel_world_size() > 1:
+            stats = [None]
+            if mpu.is_pipeline_last_stage():
+                stats = [
+                    stats_tracker.export(
+                        reduce_group=mpu.get_data_parallel_group(), reset=False
+                    )
+                ]
+            # broadcast stats to all ranks in context and model parallel group
+            dist.broadcast_object_list(
+                stats,
+                src=mpu.get_pipeline_model_parallel_last_rank(),
+                group=mpu.get_pipeline_model_parallel_group(),
+            )
+            stats = stats[0]
+            if not mpu.is_pipeline_last_stage():
+                with stats_tracker.DEFAULT_TRACKER.disable_scope():
+                    stats_tracker.scalar(**stats)
         return None
 
     @torch.no_grad()
