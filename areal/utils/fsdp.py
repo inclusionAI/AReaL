@@ -58,9 +58,20 @@ def device_mesh_has_dim(mesh: DeviceMesh, dim_name: str) -> bool:
 
 
 def is_param_not_tensor_parallel_duplicate(param, tensor_parallel_rank: int):
-    return (
-        isinstance(param, DTensor) and device_mesh_has_dim(param.device_mesh, "tp")
-    ) or tensor_parallel_rank == 0
+    if tensor_parallel_rank == 0:
+        return True
+
+    if not isinstance(param, DTensor) or not device_mesh_has_dim(
+        param.device_mesh, "tp"
+    ):
+        return False
+
+    mesh = param.device_mesh
+    if mesh.mesh_dim_names:
+        placement = param.placements[mesh.mesh_dim_names.index("tp")]
+        return not placement.is_replicate()
+
+    return True
 
 
 def get_main_grads_for_grad_norm(
