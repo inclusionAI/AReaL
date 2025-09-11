@@ -9,7 +9,6 @@ from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.io_struct import (
-    FinetuneSpec,
     ModelRequest,
     ModelResponse,
     ParamSpec,
@@ -39,7 +38,7 @@ class Scheduling:
 
 class TrainEngine(abc.ABC):
 
-    def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
+    def initialize(self, *args, **kwargs):
         """Initialize environments for distributed training and load models."""
         raise NotImplementedError()
 
@@ -158,7 +157,7 @@ class TrainEngine(abc.ABC):
 
 class InferenceEngine(abc.ABC):
 
-    def initialize(self, addr: str | None, ft_spec):
+    def initialize(self, *args, **kwargs):
         """Initialize environments for distributed inference and load models."""
         raise NotImplementedError()
 
@@ -204,6 +203,7 @@ class InferenceEngine(abc.ABC):
         data: List[Dict[str, Any]],
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
     ) -> TensorDict:
         """Submit a batch of requests to the inference engine and wait for the results."""
         raise NotImplementedError()

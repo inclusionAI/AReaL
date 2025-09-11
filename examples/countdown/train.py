@@ -203,11 +203,11 @@ def main(args):
 
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(None, ft_spec)
+    rollout.initialize()
     eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
     # NOTE: eval does not have any offpolicyness control
     eval_rollout.config.max_head_offpolicyness = int(1e12)
-    eval_rollout.initialize(None, ft_spec)
+    eval_rollout.initialize()
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
@@ -288,9 +288,17 @@ def main(args):
 
         with stats_tracker.record_timing("rollout"):
             if config.async_training:
-                batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
+                batch = rollout.prepare_batch(
+                    train_dataloader,
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
             else:
-                batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
+                batch = rollout.rollout_batch(
+                    next(data_generator),
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
 
         batch = batch.to(actor.device)
         # Create barrier to synchronize all rollout processes.

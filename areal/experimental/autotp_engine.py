@@ -5,7 +5,8 @@ import torch.distributed as dist
 from safetensors.torch import save_file
 
 from areal.api.cli_args import TrainEngineConfig
-from areal.api.engine_api import FinetuneSpec, SaveLoadMeta, WeightUpdateMeta
+from areal.api.engine_api import SaveLoadMeta, WeightUpdateMeta
+from areal.api.io_struct import FinetuneSpec
 from areal.engine.base_hf_engine import BaseHFEngine
 from areal.utils import logging
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT

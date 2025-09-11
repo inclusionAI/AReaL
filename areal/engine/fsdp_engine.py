@@ -24,8 +24,7 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
-from areal.api.engine_api import FinetuneSpec
-from areal.api.io_struct import ParamSpec, SaveLoadMeta, WeightUpdateMeta
+from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.engine.base_hf_engine import BaseHFEngine
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.utils import datapack, logging, name_resolve, names, pkg_version
@@ -51,8 +50,6 @@ from areal.utils.ulysses import (
     ulysses_pad,
     ulysses_pad_and_slice_inputs,
 )
-
-logger = logging.getLogger("FSDPEngine")
 
 
 class FSDPEngine(BaseHFEngine):
@@ -112,6 +109,8 @@ class FSDPEngine(BaseHFEngine):
     def create_process_group(self, parallel_strategy: ParallelStrategy):
         super().create_process_group(parallel_strategy)
 
+        self.logger = logging.getLogger(f"[FSDP Engine Rank {dist.get_rank()}]")
+
         self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
 
         self.dp_world_size = self.parallel_strategy.data_parallel_size
@@ -119,7 +118,7 @@ class FSDPEngine(BaseHFEngine):
         self.sp_world_size = self.parallel_strategy.context_parallel_size
         self.tp_world_size = self.parallel_strategy.tensor_parallel_size
 
-        logger.info(
+        self.logger.info(
             f"Initializing device mesh with mode d{self.dp_world_size}s{self.sp_world_size}t{self.tp_world_size}."
         )
 
@@ -147,7 +146,7 @@ class FSDPEngine(BaseHFEngine):
         self.dp_head = nd_device_mesh["mp"].mesh[0].item()
         self.dp_rank = dist.get_rank(self.dp_group)
 
-        logger.info(
+        self.logger.info(
             f"Rank {self.rank} with DP head {self.dp_head} and DP rank {self.dp_rank}"
         )
 
@@ -184,7 +183,7 @@ class FSDPEngine(BaseHFEngine):
 
         if self.is_vision_model:
             if self.model_config.model_type not in VALID_VISION_MODELS:
-                logger.warning(
+                self.logger.warning(
                     f"Vision model type {self.model_config.model_type} not in supported list {VALID_VISION_MODELS}."
                 )
 
@@ -262,7 +261,7 @@ class FSDPEngine(BaseHFEngine):
         }
         tik = time.perf_counter()
         apply_fsdp2(self.model, fsdp_kwargs, self.config.fsdp.wrap_policy)
-        logger.info(f"Applying FSDP2 time: {time.perf_counter() - tik}")
+        self.logger.info(f"Applying FSDP2 time: {time.perf_counter() - tik}")
 
         self.create_optimizer(ft_spec)
         self.initialized = True
@@ -385,7 +384,7 @@ class FSDPEngine(BaseHFEngine):
                 else:
                     tensor = param.data
                 if dist.get_rank() == 0:
-                    logger.debug(f"Broadcasting {name} with shape {tensor.shape}")
+                    self.logger.debug(f"Broadcasting {name} with shape {tensor.shape}")
                     dist.broadcast(tensor, src=0, group=self.weight_update_group)
                 del tensor
             dist.barrier(device_ids=[self.device.index])

@@ -67,11 +67,7 @@ def main() -> None:
     )
 
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(
-        None,
-        ft_spec,
-        train_data_parallel_size=parallel_strategy.dp_size,
-    )
+    rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
     actor.initialize(None, ft_spec)
 

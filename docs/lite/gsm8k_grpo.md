@@ -314,7 +314,7 @@ class WorkflowExecutor:
 ```
 
 With this rollout thread running, the training script (the main thread) submits prompts
-into `input_queue` and collates rollout data from `output_queue` into training batches
+into `input_queue` and collects rollout data from `output_queue` into training batches
 with `prepare_batch` (for asynchronous RL) or `rollout_batch` (for synchronous RL). The
 following code shows the implementation of `prepare_batch`:
 
@@ -338,7 +338,11 @@ def prepare_batch(
         ):
             data = next(self.data_generator)
             for item in data:
-                self.submit(item, workflow=workflow, workflow_builder=workflow_builder)
+                self.submit(
+                    item,
+                    workflow=workflow,
+                    workflow_builder=workflow_builder,
+                )
         try:
             return self.wait(
                 dataloader.batch_size, timeout=1, should_accept=should_accept
@@ -368,10 +372,31 @@ data_generator = itertools.cycle(train_dataloader)
 for global_step in range(max_steps):
     # rollout batched training data for current step
     if config.async_training:
-        batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
+        batch = rollout.prepare_batch(train_dataloader, workflow=workflow, should_accept=lambda sample: True)
     else:
-        batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
+        batch = rollout.rollout_batch(next(data_generator), workflow=workflow, should_accept=lambda sample: True)
 ```
+
+You may notice that the above code creates a dummy lambda function for the
+`should_accept` argument. This optional argument can be used for dynamic filtering ---
+an important training technique used in many RL papers. With asynchronous rollout under
+the hood, dynamic filtering is quite straight-forward: once a rollout completes, we run
+this `should_accept` function on the collected sample to determine whether this rollout
+is accepted or not.
+
+For example, if we want to filter out samples that provide all-positive or all-negative
+rewards, you should write:
+
+```python
+batch = rollout.prepare_batch(train_dataloader,
+                              workflow=workflow,
+                              should_accept=lambda sample: sample['rewards'].mean() > 0 and sample['rewards'].mean() < 1)
+```
+
+However, we note that AReaL's implementation has a subtle difference from DAPO: we
+remain a constant batch size when dynamic filtering is enabled (i.e., we still wait
+until `batch_size` samples are accepted), while DAPO filter samples after collecting a
+complete batch, resulting variable batch sizes across training steps.
 
 If you want to use rollout workflows with custom reward functions or agentic tool
 calling, see [Customization: Rollout Workflows](../customization/agent.md) for more

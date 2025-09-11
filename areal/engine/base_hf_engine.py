@@ -19,7 +19,8 @@ from transformers import (
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
-from areal.api.engine_api import FinetuneSpec, TrainEngine
+from areal.api.engine_api import TrainEngine
+from areal.api.io_struct import FinetuneSpec
 from areal.utils import logging
 from areal.utils.data import (
     MicroBatchList,
@@ -41,8 +42,6 @@ from areal.utils.model import (
     is_qwen3_moe_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
-
-logger = logging.getLogger("Base HF Engine")
 
 
 class BaseHFEngine(TrainEngine):
@@ -130,6 +129,8 @@ class BaseHFEngine(TrainEngine):
         # Each process is its own model parallel group.
         self.mp_group = dist.new_group([dist.get_rank()])
 
+        self.logger = logging.getLogger(f"[HF Engine Rank {dist.get_rank()}]")
+
     def create_device_model(self):
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
@@ -187,7 +188,9 @@ class BaseHFEngine(TrainEngine):
             model.gradient_checkpointing_enable(
                 gradient_checkpointing_kwargs={"use_reentrant": False}
             )
-        logger.info(f"Model creation and loading time: {time.perf_counter() - tik}")
+        self.logger.info(
+            f"Model creation and loading time: {time.perf_counter() - tik}"
+        )
         self.model = model
 
     def create_optimizer(self, ft_spec: FinetuneSpec):
@@ -239,7 +242,7 @@ class BaseHFEngine(TrainEngine):
             raise ValueError(
                 f"Unknown lr scheduler type {self.optimizer_config.lr_scheduler_type}"
             )
-        logger.info(f"Create optimizer time: {time.perf_counter() - tik}")
+        self.logger.info(f"Create optimizer time: {time.perf_counter() - tik}")
 
     def destroy(self):
         """Destroy the engine and release GPU memory."""
@@ -328,7 +331,7 @@ class BaseHFEngine(TrainEngine):
             pad_value=0.0,
             pad_to_maximum=self.config.pad_to_maximum,
         )
-        logger.info(
+        self.logger.info(
             f"Microbatch #tokens (rank {dist.get_rank()}): {mb_list.group_lens}, "
             f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}"
         )
