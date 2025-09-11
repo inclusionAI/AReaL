@@ -3,7 +3,7 @@ import functools
 import gc
 import os
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List
 
 import mbridge
 import torch
@@ -150,7 +150,7 @@ class MegatronEngine(TrainEngine):
         )
 
     def create_process_group(
-        self, parallel_strategy: Optional[ParallelStrategy] = None
+        self, parallel_strategy: ParallelStrategy | None = None
     ):
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
@@ -371,7 +371,7 @@ class MegatronEngine(TrainEngine):
         path: str,
         tokenizer: Any | None = None,
         processor: Any | None = None,
-        base_model_path: Optional[str] = None,
+        base_model_path: str | None = None,
     ):
         assert self.model is not None, "Model is not initialized."
         os.makedirs(path, exist_ok=True)

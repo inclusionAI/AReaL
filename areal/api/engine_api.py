@@ -40,7 +40,7 @@ class Scheduling:
 class TrainEngine(abc.ABC):
 
     def create_process_group(
-        self, parallel_strategy: Optional[ParallelStrategy] = None
+        self, parallel_strategy: ParallelStrategy | None = None
     ):
         """Initialize PyTorch distributed communication groups."""
         raise NotImplementedError()

@@ -1,7 +1,7 @@
 import gc
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List
 
 import torch
 import torch.distributed as dist
@@ -114,7 +114,7 @@ class BaseHFEngine(TrainEngine):
         return _get_default_group()
 
     def create_process_group(
-        self, parallel_strategy: Optional[ParallelStrategy] = None
+        self, parallel_strategy: ParallelStrategy | None = None
     ):
         # Required by NCCL weight update group for SGLang
         os.environ["NCCL_CUMEM_ENABLE"] = "0"
