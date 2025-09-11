@@ -10,7 +10,7 @@ enable_colocate_mode: true
 storage_prefix: "/storage/openpsi"
 tokenizer_path: "/storage/yuyan/xingbu.lsc/output_models/ring-moe-v2-sft-general700w_longcot200w_0725/hf_ckpts/28869_kz"
 train_dataset:
-  path: "/storage/openpsi/codes/meijun.mei/swe/context_combined_sandbox_jun.jsonl"
+  path: "/storage/yuyan/xukuan.xk/repos/antnlp/personal/llm/benchmark/moe_lite_math_0527_merge_train_areal.jsonl"
   shuffle: true
   max_prompt_len: 1024
 scheduler:
