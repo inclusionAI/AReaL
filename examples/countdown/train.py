@@ -17,7 +17,11 @@ from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PreTrainedTokenizerFast
 
-from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
+from areal.api.cli_args import (
+    GenerationHyperparameters,
+    GRPOConfig,
+    load_expr_config,
+)
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     AllocationMode,
