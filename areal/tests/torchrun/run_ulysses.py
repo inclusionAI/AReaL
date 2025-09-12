@@ -105,6 +105,14 @@ def run_ulysses_correctness_test():
         attention_mask=None,
         position_ids=position_ids_sliced,
         position_embeddings=position_embeddings_sliced,
+        cu_seq_lens_q=torch.arange(
+            0, (batch_size + 1) * seq_len, seq_len, dtype=torch.int32, device=device
+        ),
+        cu_seq_lens_k=torch.arange(
+            0, (batch_size + 1) * seq_len, seq_len, dtype=torch.int32, device=device
+        ),
+        max_length_q=seq_len,
+        max_length_k=seq_len,
     )
 
     output_list = [torch.empty_like(output_sp_sliced) for _ in range(world_size)]

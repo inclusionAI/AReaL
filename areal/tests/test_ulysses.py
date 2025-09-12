@@ -19,9 +19,11 @@ def _run_test_with_torchrun(world_size):
                 "areal/tests/torchrun/run_ulysses.py",
             ],
             check=True,
+            capture_output=True,
+            text=True,
         )
     except subprocess.CalledProcessError as e:
-        pytest.fail(f"Test failed with error: {e.stderr.decode()}")
+        pytest.fail(f"Test failed with error: {e.stderr}")
 
 
 @pytest.mark.multi_gpu

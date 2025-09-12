@@ -8,6 +8,7 @@ import torch.distributed as dist
 from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
+from areal.api.alloc_mode import ParallelStrategy
 from areal.api.io_struct import (
     ModelRequest,
     ModelResponse,
@@ -37,6 +38,10 @@ class Scheduling:
 
 
 class TrainEngine(abc.ABC):
+
+    def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
+        """Initialize PyTorch distributed communication groups."""
+        raise NotImplementedError()
 
     def initialize(self, *args, **kwargs):
         """Initialize environments for distributed training and load models."""
