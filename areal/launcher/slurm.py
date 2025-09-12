@@ -23,7 +23,6 @@ from areal.utils.launcher import (
     JobInfo,
     JobState,
     get_env_vars,
-    validate_config_for_distributed_launcher,
     wait_sglang_server_addrs,
 )
 from areal.utils.recover import check_if_recover
@@ -33,6 +32,7 @@ from areal.utils.slurm import (
     SRUN_CMD_TEMPLATE,
     cancel_jobs,
     query_jobs,
+    validate_config_for_slurm_launcher,
 )
 
 logger = logging.getLogger("SlurmLauncher")
@@ -404,7 +404,7 @@ def slurm_main(config, run_id: int = 0):
     config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
-    validate_config_for_distributed_launcher(config)
+    validate_config_for_slurm_launcher(config)
     is_recover_run = check_if_recover(config.recover, run_id)
     logger.info(
         f"SlurmLauncher: experiment_name={config.experiment_name}, "
