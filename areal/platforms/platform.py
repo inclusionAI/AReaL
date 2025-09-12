@@ -108,7 +108,7 @@ class Platform:
         Returns:
             dict: A dictionary of environment variable key-value pairs.
         """
-        raise NotImplementedError
+        raise NotImplementedError()
 
     @classmethod
     def update_env_vars_for_visible_devices(
