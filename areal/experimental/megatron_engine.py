@@ -33,7 +33,7 @@ from areal.experimental.utils.mcore.packed_context_parallel import (
     packed_context_parallel_forward,
 )
 from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
-from areal.utils import logging, name_resolve, names, stats_tracker
+from areal.utils import logging, name_resolve, names
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
@@ -546,25 +546,6 @@ class MegatronEngine(TrainEngine):
         update_successful, grad_norm, _ = self.optimizer.step()
         current_lr = self.optimizer.param_groups[0]["lr"]
 
-        # TODO: refactor the following lines into engine.sync_stats
-        if mpu.get_pipeline_model_parallel_world_size() > 1:
-            stats = [None]
-            if mpu.is_pipeline_last_stage():
-                stats = [
-                    stats_tracker.export(
-                        reduce_group=mpu.get_data_parallel_group(), reset=False
-                    )
-                ]
-            # broadcast stats to all ranks in context and model parallel group
-            dist.broadcast_object_list(
-                stats,
-                src=mpu.get_pipeline_model_parallel_last_rank(),
-                group=mpu.get_pipeline_model_parallel_group(),
-            )
-            stats = stats[0]
-            if not mpu.is_pipeline_last_stage():
-                with stats_tracker.DEFAULT_TRACKER.disable_scope():
-                    stats_tracker.scalar(**stats)
         return dict(
             update_successful=float(update_successful),
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
@@ -635,25 +616,6 @@ class MegatronEngine(TrainEngine):
             forward_only=True,
         )
 
-        # TODO: refactor the following lines into engine.sync_stats
-        if mpu.get_pipeline_model_parallel_world_size() > 1:
-            stats = [None]
-            if mpu.is_pipeline_last_stage():
-                stats = [
-                    stats_tracker.export(
-                        reduce_group=mpu.get_data_parallel_group(), reset=False
-                    )
-                ]
-            # broadcast stats to all ranks in context and model parallel group
-            dist.broadcast_object_list(
-                stats,
-                src=mpu.get_pipeline_model_parallel_last_rank(),
-                group=mpu.get_pipeline_model_parallel_group(),
-            )
-            stats = stats[0]
-            if not mpu.is_pipeline_last_stage():
-                with stats_tracker.DEFAULT_TRACKER.disable_scope():
-                    stats_tracker.scalar(**stats)
         return None
 
     @torch.no_grad()
