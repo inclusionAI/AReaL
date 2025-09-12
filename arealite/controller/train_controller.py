@@ -98,7 +98,7 @@ class DistributedTrainController(TrainController):
         )
         engineSpec.env_vars["ENGINE_PACKAGE_PATH"] = engine_path
         engineSpec.env_vars["WORKER_IMAGE"] = (
-            "/storage/openpsi/images/hybrid-engine-13680179-20250905155406.sif"
+            "/storage/openpsi/images/hybrid-engine-13680179-20250912123425.sif"
         )
         engineSpec.env_vars["WORKER_LOG_DIR"] = (
             "{storage_prefix}/experiments/logs/root/{experiment_name}/{trial_name}".format(
