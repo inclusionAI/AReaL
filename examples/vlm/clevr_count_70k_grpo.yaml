@@ -38,7 +38,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen2.5-VL-3B-Instruct
+  path: Qwen/Qwen2.5-VL-3B-Instruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: false
@@ -96,7 +96,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/data/clevr_count_70k/
+  path: BUAADreamer/clevr_count_70k
   type: rl
 
 valid_dataset:
@@ -104,7 +104,7 @@ valid_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/data/clevr_count_70k/
+  path: BUAADreamer/clevr_count_70k
   type: rl
 
 # Utilities

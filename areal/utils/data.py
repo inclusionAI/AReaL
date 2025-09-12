@@ -60,7 +60,7 @@ def pad_sequences_to_tensors(
 ) -> TensorDict:
     if not sequence_list:
         return TensorDict()
-    skip_keys = {"pixel_values", "image_grid_thw"}
+    skip_keys = {"pixel_values", "image_grid_thw", "token_type_ids"}
     max_length = max(
         len(seq)
         for item in sequence_list

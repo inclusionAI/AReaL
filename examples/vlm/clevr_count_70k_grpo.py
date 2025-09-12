@@ -3,7 +3,7 @@ import os
 import re
 import sys
 from copy import deepcopy
-
+from tensordict import TensorDict
 import torch
 import torch.distributed as dist
 from torch.utils.data import Subset
@@ -219,6 +219,7 @@ def main(args):
                 src_rank=actor.current_data_parallel_head(),
                 group=actor.context_and_model_parallel_group,
             )
+            batch=TensorDict(batch)
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
         torch.cuda.synchronize()

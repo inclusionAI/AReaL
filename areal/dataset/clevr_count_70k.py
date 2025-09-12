@@ -116,6 +116,8 @@ def get_clevr_count_70k_rl_dataset(
         ]
         if "qwen" in processor.image_processor.image_processor_type.lower():
             image_token = "<|vision_start|><|image_pad|><|vision_end|>"
+        elif "gemma" in processor.image_processor.image_processor_type.lower():
+            image_token = "<start_of_image><image_soft_token><end_of_image>"
         else:
             image_token = processor.image_token if processor is not None else "<image>"
         system_prompt = {

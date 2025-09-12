@@ -374,7 +374,7 @@ class BaseHFEngine(TrainEngine):
                 image_grid_thw_list = [
                     item["image_grid_thw"]
                     for item in mb["multi_modal_input"]
-                    if "image_grid_thw" in item
+                    if "image_grid_thw" in item 
                 ]
                 if image_grid_thw_list:
                     mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
@@ -382,7 +382,7 @@ class BaseHFEngine(TrainEngine):
                 pixel_values_list = [
                     item["pixel_values"]
                     for item in mb["multi_modal_input"]
-                    if "pixel_values" in item
+                    if "pixel_values" in item 
                 ]
                 if pixel_values_list:
                     # Individual pixel_values shape: (#patches_per_sample, patch_size)
@@ -394,6 +394,16 @@ class BaseHFEngine(TrainEngine):
                     # - total_image_pad_tokens = total_patches // (merge_size**2)
                     mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
                     padded_mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
+                
+                # token_type_ids_list = [
+                #     item["token_type_ids"]
+                #     for item in mb["multi_modal_input"]
+                #     if "token_type_ids" in item and item["token_type_ids"] is not None
+                # ]
+                # if token_type_ids_list:
+                #     mb["token_type_ids"] = torch.cat(token_type_ids_list, dim=0)
+                #     padded_mb["token_type_ids"] = torch.cat(token_type_ids_list, dim=0)
+
                 video_grid_thw_list = [
                     item["video_grid_thw"]
                     for item in mb["multi_modal_input"]
