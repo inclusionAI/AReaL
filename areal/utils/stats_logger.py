@@ -78,7 +78,7 @@ class StatsLogger:
         if dist.is_initialized() and mpu.is_initialized():
             if mpu.get_pipeline_model_parallel_world_size() > 1:
                 # log info only exisst in last pipeline rank
-                broadcast_tensor_container(
+                data = broadcast_tensor_container(
                     data,
                     src_rank=mpu.get_pipeline_model_parallel_last_rank(),
                     group=mpu.get_pipeline_model_parallel_group(),
