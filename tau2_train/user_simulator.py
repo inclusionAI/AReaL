@@ -270,6 +270,9 @@ class UserSimulator:
         else:
             response = response.choices[0]
             user_response = response.message.content
+        
+        if user_response is None:
+            user_response = OUT_OF_SCOPE
 
         user_message = UserMessage(
             role="user",

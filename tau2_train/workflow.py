@@ -25,8 +25,9 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
-from areal.utils.data import concat_padded_tensors
+from areal.utils.data import concat_padded_tensors, broadcast_tensor_container
 from realhf.base import logging
+from areal.utils.redistributor import redistribute
 
 import json
 import torch.distributed as dist
@@ -371,7 +372,7 @@ def main(args):
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
+            StatsLogger.get_log_path(config.stats_logger), f"generated/rank_{rank}"
         ),
         max_num_turns=config.max_turns,
         n_trajs=config.n_trajs,
@@ -446,13 +447,13 @@ def main(args):
                         eval_rollout.submit(item, eval_workflow)
                         cnt += 1
                 eval_rollout.wait(cnt, timeout=None)
-
-            evaluator.evaluate(
-                evaluate_fn,
-                epoch,
-                step,
-                global_step,
-            )
+            if actor.is_data_parallel_head():
+                evaluator.evaluate(
+                    evaluate_fn,
+                    epoch,
+                    step,
+                    global_step,
+                )
         dist.barrier(device_ids=[actor.device.index])
         rollout.resume()
 
@@ -466,6 +467,7 @@ def main(args):
                         next(data_generator), workflow=workflow
                     )
                 batch = batch.to(actor.device)
+                batch = redistribute(batch, group=actor.data_parallel_group).data
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
@@ -474,9 +476,6 @@ def main(args):
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
         torch.cuda.synchronize()
-
-        from areal.utils.redistributor import redistribute
-        batch = redistribute(batch).data
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):

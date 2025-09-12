@@ -143,6 +143,7 @@ class LLMAgent:
                 add_generation_prompt=True,
                 tools=tools,
                 toeknize=True,
+                enable_thinking=True
             )
         max_new_tokens = min(self.gconfig.max_new_tokens, self.max_context_length - len(input_ids) - 1)
         if max_new_tokens <= 0:
@@ -180,7 +181,13 @@ class LLMAgent:
         tools = [self.convert_dict_to_tool(raw_tool) for raw_tool in tools] if tools else None
         
         parser = FunctionCallParser(tools=tools, tool_call_parser="qwen25")
-        completion_str = completion_str.split("</think>")[-1]
+        if "<think>" in self.tokenizer.get_chat_template():
+            if "</think>" in completion_str:
+                completion_str = completion_str.split("</think>")[-1]
+            else:
+                completion_str = ""
+                self.stop = True
+        completion_str = completion_str.replace(self.tokenizer.eos_token, "")
         try:
             normal_text, calls = parser.parse_non_stream(completion_str)
         except Exception as e:
@@ -195,6 +202,8 @@ class LLMAgent:
                 while isinstance(parameters, str):
                     parameters = json.loads(parameters)
             except:
+                parameters = {}
+            if parameters is None:
                 parameters = {}
             tool_calls.append(
                         ToolCall(
