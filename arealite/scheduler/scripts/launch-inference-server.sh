@@ -83,4 +83,4 @@ sync_copy() {
 sync_copy
 WORKER_IMAGE="/tmp/image_sglang.sif"
 echo "before start." >> ${WORKER_LOG_FILE}
-singularity --debug exec --nv --no-home --writable-tmpfs --bind /storage:/storage "${WORKER_IMAGE}" bash -c "export PATH=/opt/conda/bin:$PATH; export PYTHONPATH=${REAL_PACKAGE_PATH}:$PYTHONPATH;python -u inference_server.py" >> ${WORKER_LOG_FILE} 2>&1
+singularity --debug exec --nv --no-home --writable-tmpfs --bind /storage:/storage --bind /home/admin/logs:/home/admin/logs "${WORKER_IMAGE}" bash -c "export PATH=/opt/conda/bin:$PATH; export PYTHONPATH=${REAL_PACKAGE_PATH}:$PYTHONPATH;python -u inference_server.py" >> ${WORKER_LOG_FILE} 2>&1
