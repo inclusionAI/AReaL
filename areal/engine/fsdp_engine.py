@@ -699,9 +699,12 @@ class FSDPEngine(BaseHFEngine):
         loss = loss.backward()
 
         grad_norm = fsdp2_clip_grad_norm(
-            self.model.parameters(), max_norm=self.optimizer_config.gradient_clipping
+            self.model.parameters(),
+            self.fsdp_tp_device_mesh,
+            max_norm=self.optimizer_config.gradient_clipping,
         )
-        if not torch.isfinite(grad_norm):
+
+        if not math.isfinite(grad_norm):
             self.optimizer.zero_grad()
             update_successful = False
         else:
