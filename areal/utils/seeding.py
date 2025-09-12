@@ -6,6 +6,8 @@ import numpy as np
 import torch
 import transformers
 
+from areal.platforms import current_platform
+
 _SEED = None
 _BASE_SEED = None
 _SHUFFLER = None
@@ -25,10 +27,10 @@ def set_random_seed(base_seed: int, key: str) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
+    if current_platform.is_available():
         # NOTE: Here we does not call `manual_seed_all`.
         # Because when launching with torchrun `manual_seed_all` will set seed for all GPUs.
-        torch.cuda.manual_seed(seed)
+        current_platform.manual_seed(seed)
 
 
 def get_seed() -> int:
