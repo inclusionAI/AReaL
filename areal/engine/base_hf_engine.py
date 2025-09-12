@@ -1,6 +1,7 @@
 import gc
 import os
 import time
+import token
 from typing import Any, Callable, Dict, List
 
 import torch
@@ -367,18 +368,13 @@ class BaseHFEngine(TrainEngine):
             if is_qwen3_moe_model(self.model_config.model_type):
                 mb["attention_mask"] = None
                 padded_mb["attention_mask"] = None
+            elif "gemma" in self.model_config.model_type.lower():
+                mb["attention_mask"] = None
+                padded_mb["attention_mask"] = None
             else:
                 mb["attention_mask"] = dict(full_attention=None)
                 padded_mb["attention_mask"] = dict(full_attention=None)
             if "multi_modal_input" in mb:
-                image_grid_thw_list = [
-                    item["image_grid_thw"]
-                    for item in mb["multi_modal_input"]
-                    if "image_grid_thw" in item
-                ]
-                if image_grid_thw_list:
-                    mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
-                    padded_mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
                 pixel_values_list = [
                     item["pixel_values"]
                     for item in mb["multi_modal_input"]
@@ -394,10 +390,29 @@ class BaseHFEngine(TrainEngine):
                     # - total_image_pad_tokens = total_patches // (merge_size**2)
                     mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
                     padded_mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
+                
+                token_type_ids_list = [
+                    item["token_type_ids"]
+                    for item in mb["multi_modal_input"]
+                    if "token_type_ids" in item and item["token_type_ids"] is not None
+                ]
+                if token_type_ids_list:
+                    mb["token_type_ids"] = torch.cat(token_type_ids_list, dim=0)
+                    padded_mb["token_type_ids"] = torch.cat(token_type_ids_list, dim=0)
+                
+                image_grid_thw_list = [
+                    item["image_grid_thw"]
+                    for item in mb["multi_modal_input"]
+                    if "image_grid_thw" in item and item["image_grid_thw"] is not None
+                ]
+                if image_grid_thw_list:
+                    mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
+                    padded_mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
+                
                 video_grid_thw_list = [
                     item["video_grid_thw"]
                     for item in mb["multi_modal_input"]
-                    if "video_grid_thw" in item
+                    if "video_grid_thw" in item and item["video_grid_thw"] is not None
                 ]
                 if video_grid_thw_list:
                     mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)

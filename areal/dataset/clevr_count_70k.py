@@ -47,10 +47,13 @@ def get_clevr_count_70k_sft_dataset(
     def process_example(example, idx):
         # Add query_id column
         images = example["images"]
-        if "qwen" in processor.image_processor.image_processor_type.lower():
+        if '<|vision_start|>' in processor.tokenizer.all_special_tokens and '<|vision_end|>' in processor.tokenizer.all_special_tokens: #Qwen
             image_token = "<|vision_start|><|image_pad|><|vision_end|>"
+        elif '<start_of_image>' in processor.tokenizer.all_special_tokens and '<end_of_image>' in processor.tokenizer.all_special_tokens: #Gemma
+            image_token = "<start_of_image><image_soft_token><end_of_image>"
         else:
-            image_token = processor.image_token if processor is not None else "<image>"
+            image_token = processor.tokenizer.image_token if processor is not None else "<image>"
+
         example["problem"] = (
             example["problem"].replace("<image>", image_token).replace("different", "")
         )
@@ -114,23 +117,24 @@ def get_clevr_count_70k_rl_dataset(
         processed_images = [
             convert_image(image, 336 * 336) for image in sample["images"]
         ]
-        if "qwen" in processor.image_processor.image_processor_type.lower():
+        if '<|vision_start|>' in processor.tokenizer.all_special_tokens and '<|vision_end|>' in processor.tokenizer.all_special_tokens:
             image_token = "<|vision_start|><|image_pad|><|vision_end|>"
+        elif '<start_of_image>' in processor.tokenizer.all_special_tokens and '<end_of_image>' in processor.tokenizer.all_special_tokens:
+            image_token = "<start_of_image><image_soft_token><end_of_image>"
         else:
-            image_token = processor.image_token if processor is not None else "<image>"
+            image_token = processor.tokenizer.image_token if processor is not None else "<image>"
         system_prompt = {
             "role": "system",
             "content": (
-                "Solve the following question: count the number of items in the image and provide the final answer in [ ] format, ensuring that only the number is inside the brackets without any additional text or explanations. "
+                "Provide the final answer in [ ] format, ensuring that only the number is inside the brackets without any additional text or explanations. "
             ),
         }
-
+        sample["problem"]="<image>How many items are there in the image?"
         messages = [
             {
                 "role": "user",
                 "content": sample["problem"]
-                .replace("<image>", image_token)
-                .replace("different", ""),
+                .replace("<image>", image_token),
             }
         ]
         messages.insert(0, system_prompt)

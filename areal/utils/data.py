@@ -60,7 +60,7 @@ def pad_sequences_to_tensors(
 ) -> TensorDict:
     if not sequence_list:
         return TensorDict()
-    skip_keys = {"pixel_values", "image_grid_thw"}
+    skip_keys = {"pixel_values", "image_grid_thw","token_type_ids"}
     max_length = max(
         len(seq)
         for item in sequence_list
@@ -470,14 +470,14 @@ def split_padded_tensor_dict_into_mb_list(
     if "multi_modal_input" in data:
         multi_modal_input = data["multi_modal_input"]
 
-        # Prepare the pixel_values and image_grid_thw for each group
+        # Prepare the multi_modal_input for each group
         multi_modal_input_split = []
 
         for group_index in group_indices:
             group_pixel_multi_modal_input = [multi_modal_input[i] for i in group_index]
             # Stack pixel_values for each group (assuming pixel_values is a list of tensors)
             multi_modal_input_split.append(group_pixel_multi_modal_input)
-        # Pack the split pixel_values and image_grid_thw back into the data
+        # Pack the split multi_modal_input back into the data
         to_split["multi_modal_input"] = multi_modal_input_split
     mbs = dict_of_list2list_of_dict(to_split)
 
