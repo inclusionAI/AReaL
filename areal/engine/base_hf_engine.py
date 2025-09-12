@@ -42,6 +42,7 @@ from areal.utils.model import (
     is_qwen3_moe_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
+from areal.utils.reward_model import RewardModel
 
 
 class BaseHFEngine(TrainEngine):
@@ -69,6 +70,7 @@ class BaseHFEngine(TrainEngine):
             trust_remote_code=True,
         )
         self.is_vision_model = self.model_config.model_type in VALID_VISION_MODELS
+        self.is_reward_model = config.is_reward_model
 
         self.world_size = int(os.environ["WORLD_SIZE"])
 
@@ -181,6 +183,8 @@ class BaseHFEngine(TrainEngine):
                         torch_dtype=dtype,
                         attn_implementation=self.config.attn_impl,
                     )
+                if self.is_reward_model:
+                    model = RewardModel(model, self.tokenizer)
                 if self.config.disable_dropout:
                     disable_dropout_in_model(model)
 

@@ -833,6 +833,9 @@ class BaseExperimentConfig:
         },
     )
     tokenizer_path: str = field(default="")
+    is_reward_model: bool = field(
+        default=False, metadata={"help": "Whether the model is reward model or not"}
+    )
 
     train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
     valid_dataset: Optional[DatasetConfig] = field(default=None)
