@@ -698,7 +698,7 @@ class FSDPEngine(BaseHFEngine):
         loss = loss_fn(rewards, input_)
         loss = loss.backward()
 
-        grad_norm = fsdp2_clip_grad_norm_(
+        grad_norm = fsdp2_clip_grad_norm(
             self.model.parameters(), max_norm=self.optimizer_config.gradient_clipping
         )
         if not torch.isfinite(grad_norm):
