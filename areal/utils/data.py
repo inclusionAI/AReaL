@@ -98,32 +98,30 @@ def pad_sequences_to_tensors(
 def pairwise_pad_sequences_to_tensors(
     sequence_list: List[TensorDict], pad_value: float = 0.0
 ) -> TensorDict:
-    max_length = max(
-        len(seq)
-        for item in sequence_list
-        for _, seq in item.items()
-    )
+    max_length = max(len(seq) for item in sequence_list for _, seq in item.items())
 
     chosen_padded, rejected_padded = [], []
     chosen_attention, rejected_attention = [], []
     for item in sequence_list:
-        chosen_ids = item['chosen_ids']
-        rejected_ids = item['rejected_ids']
+        chosen_ids = item["chosen_ids"]
+        rejected_ids = item["rejected_ids"]
 
         if not torch.is_tensor(chosen_ids):
-            chosen_ids = torch.tensor(chosen_ids) 
+            chosen_ids = torch.tensor(chosen_ids)
         padded_chosen_ids = torch.nn.functional.pad(
             chosen_ids, (0, max_length - len(chosen_ids)), value=pad_value
         )
-        chosen_attention_mask = [1] * len(chosen_ids) + \
-                                [0] * (max_length - len(chosen_ids))
+        chosen_attention_mask = [1] * len(chosen_ids) + [0] * (
+            max_length - len(chosen_ids)
+        )
         if not torch.is_tensor(rejected_ids):
             rejected_ids = torch.tensor(rejected_ids)
         padded_rejected_ids = torch.nn.functional.pad(
             rejected_ids, (0, max_length - len(rejected_ids)), value=pad_value
         )
-        rejected_attention_mask = [1] * len(rejected_ids) + \
-                                  [0] * (max_length - len(rejected_ids))
+        rejected_attention_mask = [1] * len(rejected_ids) + [0] * (
+            max_length - len(rejected_ids)
+        )
 
         chosen_padded.append(padded_chosen_ids)
         rejected_padded.append(padded_rejected_ids)
@@ -131,9 +129,12 @@ def pairwise_pad_sequences_to_tensors(
         rejected_attention.append(rejected_attention_mask)
 
     result = {}
-    result['input_ids'] = torch.stack(chosen_padded + rejected_padded, dim=0)
-    result['attention_mask'] = torch.tensor(chosen_attention + rejected_attention,
-                                            dtype=torch.bool)
+    # chosen_ids : [:bs]
+    # rejected_ids : [bs:]
+    result["input_ids"] = torch.stack(chosen_padded + rejected_padded, dim=0)
+    result["attention_mask"] = torch.tensor(
+        chosen_attention + rejected_attention, dtype=torch.bool
+    )
     return TensorDict(result, batch_size=[result["attention_mask"].shape[0]])
 
 
