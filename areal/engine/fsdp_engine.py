@@ -199,7 +199,7 @@ class FSDPEngine(BaseHFEngine):
                 output_layouts=Shard(1),
                 use_local_output=False,
             ),
-            "layers.*.input_layernorm": SequenceParallel(sequence_dim=1),
+            "layers.*.input_layernorm": SequenceParallel(),
             # All-gather
             "layers.*.self_attn": PrepareModuleInput(
                 input_kwarg_layouts={"hidden_states": Shard(1)},
@@ -216,8 +216,8 @@ class FSDPEngine(BaseHFEngine):
             "layers.*.post_attention_layernorm": SequenceParallel(),
             # All-gather
             "layers.*.mlp": PrepareModuleInput(
-                input_layouts=(Shard(1)),
-                desired_input_layouts=(Replicate()),
+                input_layouts=Shard(1),
+                desired_input_layouts=Replicate(),
             ),
             "layers.*.mlp.gate_proj": ColwiseParallel(),
             "layers.*.mlp.up_proj": ColwiseParallel(),
