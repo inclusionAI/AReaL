@@ -69,6 +69,7 @@ class RemoteSGLangEngine(InferenceEngine):
         self,
         engine_id: Optional[str] = None,
         addr: str | List[str] | None = None,
+        manager_addr: Optional[str] = None,
         train_data_parallel_size: int | None = None,
     ):
         if engine_id is None:
@@ -97,7 +98,9 @@ class RemoteSGLangEngine(InferenceEngine):
         self.logger.info("Servers are all ready!")
         self.executor = ProcessPoolExecutor(max_workers=1)
         self.workflow_executor.initialize(
-            logger=self.logger, train_data_parallel_size=train_data_parallel_size
+            logger=self.logger,
+            manager_addr=manager_addr,
+            train_data_parallel_size=train_data_parallel_size,
         )
 
     def destroy(self):

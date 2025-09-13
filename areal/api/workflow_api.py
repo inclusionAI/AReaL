@@ -1,6 +1,5 @@
 import asyncio
 import itertools
-import os
 import queue
 import random
 import threading
@@ -14,6 +13,7 @@ import torch.distributed as dist
 import uvicorn
 import uvloop
 from fastapi import FastAPI
+from megatron.core import parallel_state as mpu
 from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -224,8 +224,6 @@ class WorkflowExecutor:
 
         self.inference_engine = inference_engine
 
-        self.is_distributed = False
-
         self.staleness_manager = None
         self.staleness_manager_host = None
         self.staleness_manager_port = None
@@ -243,101 +241,45 @@ class WorkflowExecutor:
     def initialize(
         self,
         logger=None,
-        data_parallel_group: Optional[dist.ProcessGroup] = None,
-        context_and_model_parallel_group: Optional[dist.ProcessGroup] = None,
+        manager_addr: Optional[str] = None,
+        train_data_parallel_size: Optional[int] = None,
     ):
         if logger is None:
             logger = logging.getLogger("WorkflowExecutor")
         self.logger = logger
-        self.is_distributed = dist.is_initialized()
 
-        if self.is_distributed:
-            self.dp_world_size = dist.get_world_size(group=data_parallel_group)
-            self.dp_group = data_parallel_group
-            self.mp_group = context_and_model_parallel_group
-            self.mp_world_size = dist.get_world_size(
-                group=context_and_model_parallel_group
-            )
-            if self.mp_world_size * self.dp_world_size > dist.get_world_size():
-                raise RuntimeError(
-                    f"Invalid process groups provided: "
-                    f"dp world size {self.dp_world_size} "
-                    f"* mp-cp world size {self.mp_world_size} > "
-                    f"global world size {dist.get_world_size()}"
-                )
+        if train_data_parallel_size is not None:
+            self.dp_world_size = train_data_parallel_size
         else:
-            self.dp_world_size = self.mp_world_size = 1
-            self.dp_group = self.mp_group = None
-
-        # Initialize staleness manager on rank 0
-        # and share the address via torch distributed
-        is_rank_zero = (not self.is_distributed) or (
-            dist.get_rank(group=self.dp_group) == 0
-        )
-
-        # Check environment variable for server address
-        env_server_addr = os.environ.get("AREAL_STALENESS_SERVER_ADDR")
-        if is_rank_zero:
-            if env_server_addr:
-                self.staleness_manager_host, port_str = env_server_addr.split(":")
-                self.staleness_manager_port = int(port_str)
-                logger.info(f"Using staleness server from env var: {env_server_addr}")
+            if dist.is_initialized():
+                if not mpu.is_initialized():
+                    self.dp_world_size = dist.get_world_size()
+                else:
+                    self.dp_world_size = mpu.get_data_parallel_world_size()
             else:
-                if self.is_distributed:
-                    # Find free port and get host IP
-                    # Will broadcast the address via pytorch
-                    self.staleness_manager_host = network.gethostip()
-                    self.staleness_manager_port = network.find_free_ports(1)[0]
-                else:
-                    # Unknown how to sync server addresses. Assume single-node single-process.
-                    self.staleness_manager_host = "127.0.0.1"
-                    self.staleness_manager_port = 11379
-                server_address = (
-                    f"{self.staleness_manager_host}:{self.staleness_manager_port}"
-                )
-                logger.info(
-                    f"AREAL_STALENESS_SERVER_ADDR not set. Using staleness server: {server_address}"
-                )
+                self.dp_world_size = 1
 
-            staleness_manager = StalenessManager(
-                max_capacity=self.config.max_concurrent_rollouts,
-                max_head_offpolicyness=self.config.max_head_offpolicyness,
-                consumer_batch_size=self.config.consumer_batch_size,
-                enable_rollout_tracing=self.config.enable_rollout_tracing,
-            )
-            self.staleness_manager = StalenessManagerServer(
-                self.staleness_manager_host,
-                self.staleness_manager_port,
-                staleness_manager,
-            )
-            self.staleness_manager.start()
+        if manager_addr is None and dist.is_initialized():
+            raise RuntimeError("manager_addr must be provided in distributed setting.")
+        if manager_addr is None:
+            manager_addr = f"localhost:{network.find_free_ports(1)[0]}"
+        self.staleness_manager_host, port_str = manager_addr.split(":")
+        self.staleness_manager_port = int(port_str)
 
-        if env_server_addr:
-            # Use environment variable
-            self.staleness_manager_host, port_str = env_server_addr.split(":")
-            self.staleness_manager_port = int(port_str)
-            self.staleness_manager_url = f"http://{env_server_addr}"
-        else:
-            # Broadcast server address via PyTorch distributed
-            if self.is_distributed:
-                if is_rank_zero:
-                    obj_lis = [
-                        f"{self.staleness_manager_host}:{self.staleness_manager_port}"
-                    ]
-                    # Broadcast the server address
-                    dist.broadcast_object_list(obj_lis, src=0, group=self.dp_group)
-                else:
-                    # Receive the server address
-                    obj_lis = [None]
-                    dist.broadcast_object_list(obj_lis, src=0, group=self.dp_group)
-                    server_address = obj_lis[0]
-                    self.staleness_manager_host, port_str = server_address.split(":")
-                    self.staleness_manager_port = int(port_str)
-                logger.info(f"Retrieved staleness server address: {server_address}")
+        logger.info(f"Using staleness server: {manager_addr}")
 
-            self.staleness_manager_url = (
-                f"http://{self.staleness_manager_host}:{self.staleness_manager_port}"
-            )
+        staleness_manager = StalenessManager(
+            max_capacity=self.config.max_concurrent_rollouts,
+            max_head_offpolicyness=self.config.max_head_offpolicyness,
+            consumer_batch_size=self.config.consumer_batch_size,
+            enable_rollout_tracing=self.config.enable_rollout_tracing,
+        )
+        self.staleness_manager = StalenessManagerServer(
+            self.staleness_manager_host,
+            self.staleness_manager_port,
+            staleness_manager,
+        )
+        self.staleness_manager.start()
 
         self.rollout_tasks: Dict[str, asyncio.Task] = {}
         self.rollout_thread = threading.Thread(target=self._rollout_thread, daemon=True)
