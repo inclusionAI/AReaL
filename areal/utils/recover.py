@@ -2,7 +2,7 @@ import dataclasses
 import json
 import os
 import pickle
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -15,7 +15,9 @@ from areal.platforms import current_platform
 from areal.utils import logging, timeutil
 from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
-from areal.utils.stats_logger import StatsLogger
+
+if TYPE_CHECKING:
+    from areal.utils.stats_logger import StatsLogger
 
 logger = logging.getLogger("recover")
 
@@ -168,7 +170,7 @@ class RecoverHandler:
         step_info: StepInfo,
         saver: Saver,
         evaluator: Evaluator,
-        stats_logger: StatsLogger,
+        stats_logger: "StatsLogger",
         dataloader: StatefulDataLoader,
         tokenizer: PreTrainedTokenizerFast | None = None,
         processor: AutoProcessor | None = None,
@@ -215,7 +217,7 @@ class RecoverHandler:
         engine: TrainEngine | Dict[str, TrainEngine],
         saver: Saver,
         evaluator: Evaluator,
-        stats_logger: StatsLogger,
+        stats_logger: "StatsLogger",
         dataloader: StatefulDataLoader,
         inference_engine: InferenceEngine | None = None,
         weight_update_meta: WeightUpdateMeta | None = None,

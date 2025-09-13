@@ -1,4 +1,6 @@
 import math
+from collections import defaultdict
+from functools import partial
 from typing import List
 
 import torch
@@ -6,7 +8,9 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import ProcessGroup
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
-from torch.distributed.tensor import DTensor
+from torch.distributed.tensor import DeviceMesh, DTensor, Replicate, distribute_module
+from torch.distributed.tensor.parallel import ParallelStyle
+from torch.distributed.tensor.placement_types import Placement
 from transformers import PreTrainedModel
 
 from areal.platforms import current_platform
@@ -69,10 +73,65 @@ __all__ = [
     "apply_fsdp2",
     "fsdp2_load_full_state_dict",
     "get_cosine_schedule_with_warmup",
+    "NoParallel",
 ]
 
 
 logger = logging.getLogger("FSDPEngine")
+
+
+# Copied from torchtiton.
+# NOTE: This is to achieve replicate computation on the gate module in the MoE router.
+# It does nothing other than (1) setting the module parameters as DTensors on the given mesh
+# and (2) inserting hooks to module boundary to change torch.Tensor to DTensor and back.
+# The reason we need this wrapping is to ensure all parameters are on the same 1D/2D mesh,
+# which is assumed by (1) gradient norm clipping, and (2) optimizer fused implementation.
+class NoParallel(ParallelStyle):
+    def __init__(
+        self,
+        *,
+        input_layout: Placement | None = None,
+        output_layout: Placement | None = None,
+        use_local_output: bool = True,
+    ):
+        super().__init__()
+        self.input_layout = input_layout or Replicate()
+        self.output_layout = output_layout or Replicate()
+        self.desired_input_layout = Replicate()
+        self.use_local_output = use_local_output
+
+    @staticmethod
+    def _prepare_input_fn(input_layout, desired_input_layout, mod, inputs, device_mesh):
+        # annotate module input placements/sharding with input_layouts
+        input_tensor = inputs[0]
+        if not isinstance(input_tensor, DTensor):
+            input_tensor = DTensor.from_local(
+                input_tensor, device_mesh, (input_layout,), run_check=False
+            )
+
+        if input_layout != desired_input_layout:
+            input_tensor = input_tensor.redistribute(
+                placements=(desired_input_layout,), async_op=True
+            )
+        return (input_tensor, *inputs[1:])
+
+    @staticmethod
+    def _prepare_output_fn(output_layout, use_local_output, mod, outputs, device_mesh):
+        if outputs.placements != (output_layout,):
+            outputs = outputs.redistribute(placements=(output_layout,), async_op=True)
+        # back to local tensor
+        return outputs.to_local() if use_local_output else outputs
+
+    def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
+        return distribute_module(
+            module,
+            device_mesh,
+            None,
+            partial(
+                self._prepare_input_fn, self.input_layout, self.desired_input_layout
+            ),
+            partial(self._prepare_output_fn, self.output_layout, self.use_local_output),
+        )
 
 
 def to_local_if_dtensor(tensor: torch.Tensor | DTensor) -> torch.Tensor:
@@ -185,22 +244,38 @@ def clip_grad_by_total_norm_fp32(
     max_norm: int | float,
     total_norm: float,
 ):
-    params = []
-    grads = []
+    # dtype -> grad
+    grads = defaultdict(list)
     for param in parameters:
         if param.grad is not None:
-            assert param.grad.type() == "torch.cuda.FloatTensor"
-            params.append(param)
-            grads.append(to_local_if_dtensor(param.grad).detach())
+            # For naive FSDP, lm_head has bf16 grad while others have fp32 grad
+            grad = to_local_if_dtensor(param.grad).detach()
+            grads[grad.dtype].append(grad)
 
+    assert len(grads) > 0, len(grads)
     clip_coeff = max_norm / (total_norm + 1.0e-6)
     if clip_coeff < 1.0:
-        dummy_overflow_buf = torch.tensor(
-            [0], dtype=torch.int, device=current_platform.device_type
-        )
-        multi_tensor_applier(
-            multi_tensor_scale_impl, dummy_overflow_buf, [grads, grads], clip_coeff
-        )
+        for dtype, _grads in grads.items():
+            dummy_overflow_buf = torch.tensor([0], dtype=torch.int, device=current_platform.device_type)
+            if dtype == torch.float32:
+                multi_tensor_applier(
+                    multi_tensor_scale_impl,
+                    dummy_overflow_buf,
+                    [_grads, _grads],
+                    clip_coeff,
+                )
+            else:
+                from .multi_tensor_apply import (
+                    local_multi_tensor_applier,
+                    local_multi_tensor_scale,
+                )
+
+                local_multi_tensor_applier(
+                    local_multi_tensor_scale,
+                    dummy_overflow_buf,
+                    [_grads, _grads],
+                    clip_coeff,
+                )
 
 
 def fsdp2_clip_grad_norm(

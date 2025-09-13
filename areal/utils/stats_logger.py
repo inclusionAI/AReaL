@@ -5,6 +5,7 @@ from typing import Dict, List
 
 import torch.distributed as dist
 import wandb
+from megatron.core import parallel_state as mpu
 from tensorboardX import SummaryWriter
 
 from areal.api.cli_args import StatsLoggerConfig
@@ -73,6 +74,16 @@ class StatsLogger:
             self.summary_writer.close()
 
     def commit(self, epoch: int, step: int, global_step: int, data: Dict | List[Dict]):
+        if dist.is_initialized() and mpu.is_initialized():
+            if mpu.get_pipeline_model_parallel_world_size() > 1:
+                # log info only exisst in last pipeline rank
+                data_list = [data]
+                dist.broadcast_object_list(
+                    data_list,
+                    src=mpu.get_pipeline_model_parallel_last_rank(),
+                    group=mpu.get_pipeline_model_parallel_group(),
+                )
+                data = data_list[0]
         if dist.is_initialized() and dist.get_rank() != 0:
             return
         logger.info(
