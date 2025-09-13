@@ -3,11 +3,14 @@ import enum
 import getpass
 import os
 import pathlib
+import subprocess
+import sys
 import time
+from pathlib import Path
 from typing import Dict, Optional
 
 from areal.api.alloc_mode import AllocationMode, AllocationType
-from areal.utils import logging, name_resolve, names
+from areal.utils import logging, name_resolve, names, pkg_version
 
 logger = logging.getLogger("Launcher Utils")
 
@@ -134,3 +137,32 @@ def validate_config_for_distributed_launcher(config):
         assert (
             allocation_mode.gen.pp_size == 1
         ), "Pipeline generation in SGLang is not supported for now."
+
+
+def apply_sglang_patch():
+    p = Path(os.path.dirname(__file__))
+    patch_path = str(
+        p.parent.parent
+        / "patch"
+        / "sglang"
+        / f"v{pkg_version.get_version('sglang')}.patch"
+    )
+
+    target_path = ""
+    sglang_meta = subprocess.check_output(
+        "python3 -m pip show sglang", shell=True
+    ).decode("ascii")
+    for line in sglang_meta.split("\n"):
+        line = line.strip()
+        if line.startswith("Editable project location: "):
+            target_path = str(Path(line.split(": ")[1]).parent)
+
+    if target_path:
+        proc = subprocess.Popen(
+            ["git", "apply", patch_path],
+            cwd=target_path,
+            stderr=sys.stdout,
+            stdout=sys.stdout,
+        )
+        proc.wait()
+        logger.info(f"Applied SGLang patch {patch_path} to {target_path}")

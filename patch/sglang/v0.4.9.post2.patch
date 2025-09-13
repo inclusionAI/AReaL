@@ -1,0 +1,497 @@
+锘縟iff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/srt/model_executor/model_runner.py
+index 051f2b75e..b1ea1a140 100644
+--- a/python/sglang/srt/model_executor/model_runner.py
++++ b/python/sglang/srt/model_executor/model_runner.py
+@@ -239,6 +239,7 @@ class ModelRunner:
+         self._model_update_group = {}
+ 
+     def initialize(self, min_per_gpu_memory: float):
++        logger.info("SGLang v0.4.9.post2 is patched with customized weight loading.")
+         server_args = self.server_args
+ 
+         self.memory_saver_adapter = TorchMemorySaverAdapter.create(
+@@ -698,8 +699,11 @@ class ModelRunner:
+ 
+         target_device = torch.device(self.device)
+         self.model_config.model_path = model_path
+-        load_config = LoadConfig(load_format=load_format)
+-
++        load_config = LoadConfig(
++            load_format=load_format,
++            # XXX: This should be in function args, passed in by requests
++            model_loader_extra_config=self.server_args.model_loader_extra_config,
++        )
+         # Only support DefaultModelLoader for now
+         loader = get_model_loader(load_config)
+         if not isinstance(loader, DefaultModelLoader):
+@@ -713,7 +717,7 @@ class ModelRunner:
+             return iter
+ 
+         def model_load_weights(model, iter):
+-            DefaultModelLoader.load_weights_and_postprocess(model, iter, target_device)
++            DefaultModelLoader.load_weights_and_postprocess(model, iter, target_device, load_config=load_config)
+             return model
+ 
+         with set_default_torch_dtype(self.model_config.dtype):
+@@ -733,7 +737,7 @@ class ModelRunner:
+                 iter = get_weight_iter(self.model_config)
+                 self.model = model_load_weights(self.model, iter)
+                 return False, message
+-
++        
+         self.model = model
+         self.server_args.model_path = model_path
+         self.server_args.load_format = load_format
+diff --git a/python/sglang/srt/model_loader/loader.py b/python/sglang/srt/model_loader/loader.py
+index 733e6df9e..579b91640 100644
+--- a/python/sglang/srt/model_loader/loader.py
++++ b/python/sglang/srt/model_loader/loader.py
+@@ -233,7 +233,7 @@ class DefaultModelLoader(BaseModelLoader):
+     def __init__(self, load_config: LoadConfig):
+         super().__init__(load_config)
+         extra_config = load_config.model_loader_extra_config
+-        allowed_keys = {"enable_multithread_load", "num_threads"}
++        allowed_keys = {"enable_multithread_load", "num_threads", "enable_fast_load"}
+         unexpected_keys = set(extra_config.keys()) - allowed_keys
+ 
+         if unexpected_keys:
+@@ -354,6 +354,9 @@ class DefaultModelLoader(BaseModelLoader):
+     ) -> Generator[Tuple[str, torch.Tensor], None, None]:
+         """Get an iterator for the model weights based on the load format."""
+         extra_config = self.load_config.model_loader_extra_config
++        if extra_config.get("enable_fast_load"):
++            return source.model_or_path
++        
+         hf_folder, hf_weights_files, use_safetensors = self._prepare_weights(
+             source.model_or_path, source.revision, source.fall_back_to_pt
+         )
+@@ -396,8 +399,6 @@ class DefaultModelLoader(BaseModelLoader):
+                 )
+             else:
+                 weights_iterator = pt_weights_iterator(hf_weights_files)
+-
+-        # Apply the prefix.
+         return ((source.prefix + name, tensor) for (name, tensor) in weights_iterator)
+ 
+     def _get_all_weights(
+@@ -405,7 +406,6 @@ class DefaultModelLoader(BaseModelLoader):
+         model_config: ModelConfig,
+         model: nn.Module,
+     ) -> Generator[Tuple[str, torch.Tensor], None, None]:
+-
+         primary_weights = DefaultModelLoader.Source.init_new(model_config, model)
+         yield from self._get_weights_iterator(primary_weights)
+ 
+@@ -434,15 +434,23 @@ class DefaultModelLoader(BaseModelLoader):
+                     self.load_config,
+                 )
+ 
++        extra_config = self.load_config.model_loader_extra_config
++        if extra_config.get("enable_fast_load"):
++            weights_iter_or_path = model_config.model_path
++        else:
++            weights_iter_or_path = self._get_all_weights(model_config, model)
+         self.load_weights_and_postprocess(
+-            model, self._get_all_weights(model_config, model), target_device
++            model, weights_iter_or_path, target_device, load_config=self.load_config
+         )
+-
+         return model.eval()
+ 
+     @staticmethod
+-    def load_weights_and_postprocess(model, weights, target_device):
+-        model.load_weights(weights)
++    def load_weights_and_postprocess(model, weights, target_device, load_config=None):
++        extra_config = load_config.model_loader_extra_config
++        if extra_config.get("enable_fast_load"):
++            model.load_weights_from_path(weights)
++        else:
++            model.load_weights(weights)
+ 
+         for _, module in model.named_modules():
+             quant_method = getattr(module, "quant_method", None)
+@@ -455,7 +463,6 @@ class DefaultModelLoader(BaseModelLoader):
+                 with device_loading_context(module, target_device):
+                     quant_method.process_weights_after_loading(module)
+ 
+-
+ class LayeredModelLoader(DefaultModelLoader):
+     """Model loader that loads weights layer by layer so that one can quantize a
+     layer before loading another to make the peak memory envelope smaller."""
+diff --git a/python/sglang/srt/models/qwen3.py b/python/sglang/srt/models/qwen3.py
+index 9c3659839..57276c91f 100644
+--- a/python/sglang/srt/models/qwen3.py
++++ b/python/sglang/srt/models/qwen3.py
+@@ -374,7 +374,89 @@ class Qwen3ForCausalLM(nn.Module):
+     @property
+     def end_layer(self):
+         return self.model.end_layer
++    
++    @property
++    def stacked_params_mapping(self) -> List[Tuple[str, str, str]]:
++        return [
++            # (param_name, shard_name, shard_id)
++            ("qkv_proj", "q_proj", "q"),
++            ("qkv_proj", "k_proj", "k"),
++            ("qkv_proj", "v_proj", "v"),
++            ("gate_up_proj", "gate_proj", 0),
++            ("gate_up_proj", "up_proj", 1),
++        ]
++    
++    def _load_weights_with_worker(
++        self,
++        params: Dict[str, torch.nn.Parameter],
++        local_names: List[str],
++        filenames: List[str],
++        weight_path: str,
++    ):
++        import os
++        from sglang.srt.model_loader.weight_utils import default_weight_loader
++        from safetensors import safe_open
++        all_slices = {}
++        for filename in filenames:
++            safetensor_file = os.path.join(weight_path, filename)
++            with safe_open(safetensor_file, framework="pt", device="cpu") as f:
++                for name in f.keys():
++                    # all_slices[name] = f.get_slice(name)
++                    all_slices[name] = f.get_tensor(name)
++
++        for local_name in local_names:
++            # Skip loading extra bias for GPTQ models.
++            if local_name.endswith(".bias") and local_name not in params:
++                continue
++            # Handle special cases
++            if "rotary_emb.inv_freq" in local_name or "projector" in local_name:
++                continue
++            if "rotary_emb.cos_cached" in local_name or "rotary_emb.sin_cached" in local_name:
++                # Models trained using ColossalAI may include these tensors in
++                # the checkpoint. Skip them.
++                continue
++            if local_name.startswith("model.vision_tower") and local_name not in params:
++                continue
++
++            param = params[local_name]
++            # Handle weight tying
++            if self.config.tie_word_embeddings and "lm_head.weight" in local_name:
++                if self.pp_group.world_size > 1 and self.pp_group.is_last_rank:
++                    local_name = "model.embed_tokens.weight"
+ 
++            loaded = False
++            for param_name, shard_name, shard_id in self.stacked_params_mapping:
++                if param_name not in local_name:
++                    continue
++                # If local_name weight is sharded into multiple keys
++                weight_loader = param.weight_loader
++                slice_name = local_name.replace(param_name, shard_name)
++                loaded_weight = all_slices[slice_name]
++                weight_loader(param, loaded_weight, shard_id)
++                loaded = True
++            
++            if not loaded:
++                # If local_name weight is not sharded
++                if local_name in all_slices:
++                    loaded_weight = all_slices[local_name]
++                    weight_loader = getattr(
++                        param, "weight_loader", default_weight_loader
++                    )
++                    weight_loader(param, loaded_weight)
++                else:
++                    raise KeyError(f"Cannot find weight {local_name} in the loaded slices.")
++    
++    def load_weights_from_path(self, path: str):
++        # Customized weights loading from a given path of huggingface model
++        from sglang.srt.models.utils.load import load_weights_with_hf_path_fast
++        load_weights_with_hf_path_fast(
++            model=self,
++            weight_path=path,
++            load_weights_with_worker_fn=self._load_weights_with_worker,
++            stacked_params_mapping=self.stacked_params_mapping,
++            tie_word_embeddings=self.config.tie_word_embeddings,
++        )
++        
+     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
+         stacked_params_mapping = [
+             # (param_name, shard_name, shard_id)
+@@ -422,11 +504,11 @@ class Qwen3ForCausalLM(nn.Module):
+             for param_name, weight_name, shard_id in stacked_params_mapping:
+                 if weight_name not in name:
+                     continue
+-                name = name.replace(weight_name, param_name)
++                _name = name.replace(weight_name, param_name)
+                 # Skip loading extra bias for GPTQ models.
+-                if name.endswith(".bias") and name not in params_dict:
++                if _name.endswith(".bias") and _name not in params_dict:
+                     continue
+-                param = params_dict[name]
++                param = params_dict[_name]
+                 weight_loader = param.weight_loader
+                 weight_loader(param, loaded_weight, shard_id)
+                 break
+diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
+index 7c7c7551b..14f2ca7f1 100644
+--- a/python/sglang/srt/models/qwen3_moe.py
++++ b/python/sglang/srt/models/qwen3_moe.py
+@@ -771,6 +771,116 @@ class Qwen3MoeForCausalLM(nn.Module):
+         else:
+             self.model.layers_to_capture = [val + 1 for val in layer_ids]
+ 
++    @property
++    def stacked_params_mapping(self) -> List[Tuple[str, str, str]]:
++        return [
++            # (param_name, shard_name, shard_id)
++            ("qkv_proj", "q_proj", "q"),
++            ("qkv_proj", "k_proj", "k"),
++            ("qkv_proj", "v_proj", "v"),
++            ("gate_up_proj", "gate_proj", 0),
++            ("gate_up_proj", "up_proj", 1),
++        ]
++    
++    @property
++    def expert_params_mapping(self) -> List[Tuple[str, str, int, str]]:
++        return get_moe_impl_class().make_expert_params_mapping(
++            ckpt_gate_proj_name="gate_proj",
++            ckpt_down_proj_name="down_proj",
++            ckpt_up_proj_name="up_proj",
++            num_experts=self.config.num_experts,
++        )
++
++    def _load_weights_with_worker(
++        self,
++        params: Dict[str, torch.nn.Parameter],
++        local_names: List[str],
++        filenames: List[str],
++        weight_path: str,
++    ):
++        import os
++        from sglang.srt.model_loader.weight_utils import default_weight_loader
++        from safetensors import safe_open
++        all_slices = {}
++        for filename in filenames:
++            safetensor_file = os.path.join(weight_path, filename)
++            with safe_open(safetensor_file, framework="pt", device="cpu") as f:
++                for name in f.keys():
++                    # all_slices[name] = f.get_slice(name)
++                    all_slices[name] = f.get_tensor(name)
++
++        for local_name in local_names:
++            # Skip loading extra bias for GPTQ models.
++            if local_name.endswith(".bias") and local_name not in params:
++                continue
++            # Handle special cases
++            if "rotary_emb.inv_freq" in local_name or "projector" in local_name:
++                continue
++            if "rotary_emb.cos_cached" in local_name or "rotary_emb.sin_cached" in local_name:
++                # Models trained using ColossalAI may include these tensors in
++                # the checkpoint. Skip them.
++                continue
++            if local_name.startswith("model.vision_tower") and local_name not in params:
++                continue
++
++            param = params[local_name]
++            # Handle weight tying
++            if self.config.tie_word_embeddings and "lm_head.weight" in local_name:
++                if self.pp_group.world_size > 1 and self.pp_group.is_last_rank:
++                    local_name = "model.embed_tokens.weight"
++
++            loaded = False
++            for param_name, shard_name, shard_id in self.stacked_params_mapping:
++                if param_name not in local_name:
++                    continue
++                if "mlp.experts" in local_name:
++                    # Skip experts here, handled below
++                    continue
++                # If local_name weight is sharded into multiple keys
++                weight_loader = param.weight_loader
++                slice_name = local_name.replace(param_name, shard_name)
++                loaded_weight = all_slices[slice_name]
++                weight_loader(param, loaded_weight, shard_id)
++                loaded = True
++            
++            for param_name, shard_name, expert_id, shard_id in self.expert_params_mapping:
++                if param_name not in local_name:
++                    continue
++                # If local_name weight is sharded into multiple keys
++                weight_loader = param.weight_loader
++                slice_name = local_name.replace(param_name, shard_name)
++                loaded_weight = all_slices[slice_name]
++                weight_loader(
++                    param,
++                    loaded_weight,
++                    local_name,
++                    shard_id=shard_id,
++                    expert_id=expert_id,
++                )
++                loaded = True
++            
++            if not loaded:
++                # If local_name weight is not sharded
++                if local_name in all_slices:
++                    loaded_weight = all_slices[local_name]
++                    weight_loader = getattr(
++                        param, "weight_loader", default_weight_loader
++                    )
++                    weight_loader(param, loaded_weight)
++                else:
++                    raise KeyError(f"Cannot find weight {local_name} in the loaded slices.")
++                
++    def load_weights_from_path(self, path: str):
++        # Customized weights loading from a given path of huggingface model
++        from sglang.srt.models.utils.load import load_weights_with_hf_path_fast
++        load_weights_with_hf_path_fast(
++            model=self,
++            weight_path=path,
++            load_weights_with_worker_fn=self._load_weights_with_worker,
++            stacked_params_mapping=self.stacked_params_mapping,
++            expert_params_mapping=self.expert_params_mapping,
++        )
++
+     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
+         stacked_params_mapping = [
+             # (param_name, shard_name, shard_id)
+diff --git a/python/sglang/srt/models/utils/load.py b/python/sglang/srt/models/utils/load.py
+new file mode 100644
+index 000000000..2baa1ba4e
+--- /dev/null
++++ b/python/sglang/srt/models/utils/load.py
+@@ -0,0 +1,140 @@
++import os
++import json
++from glob import glob
++from concurrent.futures import ThreadPoolExecutor
++from collections import defaultdict
++from typing import Tuple, List, Dict, Callable
++
++import torch
++from safetensors import safe_open
++
++from transformers.utils.hub import cached_file
++
++from sglang.srt.model_loader.weight_utils import default_weight_loader
++
++def get_actual_hf_path(weight_path: str):
++    return os.path.dirname(cached_file(weight_path, "config.json"))
++                
++
++def load_weights_with_hf_path_fast(
++    model: torch.nn.Module, 
++    weight_path: str, 
++    load_weights_with_worker_fn: Callable,
++    stacked_params_mapping: List[Tuple[str, str, str]] | None = None,
++    expert_params_mapping: List[Tuple[str, str, str]] | None = None,
++    tie_word_embeddings: bool = False,
++    max_workers: int = None,
++):
++    if not os.path.exists(weight_path):
++        weight_path = get_actual_hf_path(weight_path)
++    index_file = os.path.join(weight_path, "model.safetensors.index.json")
++    index = {}
++    if os.path.exists(index_file):
++        with open(index_file, "r") as f:
++            index = json.load(f)["weight_map"]
++    else:
++        # Search all safetensors files
++        safetensor_files = glob(os.path.join(weight_path, "*.safetensors"))
++        # If there are safetensors files
++        if safetensor_files:
++            # Iterate through each safetensors file
++            for safetensor_file in safetensor_files:
++                with safe_open(safetensor_file, framework="pt", device="cpu") as f:
++                    for k in f.keys():
++                        index[k] = safetensor_file
++        else:
++            raise FileNotFoundError("No safetensors found in the model path to load.")
++
++    params = dict(model.named_parameters())
++    local_names = list(params.keys())
++
++    worker_args = []
++
++    # local name -> set of filenames that contains the weight
++    local_to_file_map = defaultdict(set)
++    # model.layers.31.mlp.experts
++    for local_name in local_names:
++        hf_names = []
++        if "mlp.experts" not in local_name and stacked_params_mapping is not None:
++            for param_name, shard_name, _ in stacked_params_mapping:
++                if param_name in local_name:
++                    hf_names.append(local_name.replace(param_name, shard_name))
++        if expert_params_mapping is not None:
++            for param_name, shard_name, _, _ in expert_params_mapping:
++                if param_name in local_name:
++                    hf_names.append(local_name.replace(param_name, shard_name))
++        if tie_word_embeddings and "lm_head.weight" in local_name:
++            hf_names.append("model.embed_tokens.weight")
++        if len(hf_names) == 0:
++            hf_names.append(local_name)
++        for name in hf_names:
++            filename = index[name]
++            if filename not in local_to_file_map[local_name]:
++                local_to_file_map[local_name].add(filename)
++
++    # Use union find to create local_name groups with no file conflicts
++    parent = {name: name for name in local_names}
++    weight_groups = {name: [name] for name in local_names}
++    file_groups = {name: local_to_file_map[name] for name in local_names}
++    roots = [name for name in local_names]
++    ranks = {name: 0 for name in local_names}
++    def find(x):
++        if parent[x] != x:
++            parent[x] = find(parent[x])
++        return parent[x]
++    
++    def union(x, y):
++        root_x = find(x)
++        root_y = find(y)
++        if root_x != root_y:
++            if ranks[root_x] > ranks[root_y]:
++                parent[root_y] = root_x
++                roots.remove(root_y)
++            elif ranks[root_x] < ranks[root_y]:
++                parent[root_x] = root_y
++                roots.remove(root_x)
++            else:
++                parent[root_y] = root_x
++                roots.remove(root_y)
++                ranks[root_x] += 1
++            # Merge file groups
++            file_groups[root_x].update(file_groups[root_y])
++            file_groups[root_y] = file_groups[root_x]
++            # Merge weight groups
++            weight_groups[root_x].extend(weight_groups[root_y])
++            weight_groups[root_y] = weight_groups[root_x]
++            return True
++        return False
++
++    for i, weight1 in enumerate(local_names):
++        for weight2 in local_names[i+1:]:
++            # If two weights share any files, they conflict
++            if any(fn in file_groups[weight1] for fn in file_groups[weight2]):
++                union(weight1, weight2)
++                    
++    grouped_local_names = [weight_groups[root] for root in roots]
++    grouped_filenames = [list(file_groups[root]) for root in roots]
++
++    if max_workers is None:
++        # assume all GPUs are used by SGLang servers
++        max_workers = min(8, max(1, os.cpu_count() // torch.cuda.device_count()))
++
++    for local_names, filenames in zip(grouped_local_names, grouped_filenames):
++        worker_args.append(
++            dict(
++                params=params,
++                local_names=local_names,
++                filenames=filenames,
++                weight_path=weight_path,
++            )
++        )
++
++    max_workers = min(max_workers, len(worker_args))
++    with ThreadPoolExecutor(max_workers=max_workers) as executor:
++        results = executor.map(
++            lambda kwargs: load_weights_with_worker_fn(**kwargs), worker_args
++        )
++        # Consume all results to make result all tasks complete
++        for _ in results:
++            pass
++            
+\ No newline at end of file
