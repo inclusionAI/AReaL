@@ -1,7 +1,10 @@
 import os
 import sys
 
+import torch
+import torch.distributed as dist
 from megatron.core import parallel_state as mpu
+from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
@@ -117,6 +120,8 @@ def main(args):
                 steps_per_epoch=len(train_dataloader),
             )
             # NOTE: data are identical across model+context parallel group
+            data: TensorDict
+            data = data.to(torch.cuda.current_device())
             data = broadcast_tensor_container(
                 data,
                 src_rank=engine.current_data_parallel_head(),
@@ -132,20 +137,6 @@ def main(args):
             with stats_tracker.record_timing("save"):
                 saver.save(engine, epoch, step, global_step, tokenizer=tokenizer)
 
-            with stats_tracker.record_timing("eval"):
-
-                def evaluate_fn():
-                    with stats_tracker.scope("sft-eval"):
-                        for data in valid_dataloader:
-                            engine.evaluate_lm(data)
-
-                evaluator.evaluate(
-                    evaluate_fn,
-                    epoch,
-                    step,
-                    global_step,
-                )
-
             with stats_tracker.record_timing("checkpoint_for_recover"):
                 recover_handler.dump(
                     engine,
@@ -156,6 +147,33 @@ def main(args):
                     train_dataloader,
                     tokenizer=tokenizer,
                 )
+
+            dist.barrier(device_ids=[engine.device.index])
+            torch.cuda.synchronize()
+
+            with stats_tracker.record_timing("eval"):
+                # No need to log anything. Logging will be handled outside
+                # via stats_tracker.export().
+                def evaluate_fn():
+                    with stats_tracker.scope("sft-eval"):
+                        for data in valid_dataloader:
+                            data = data.to(torch.cuda.current_device())
+                            data = broadcast_tensor_container(
+                                data,
+                                src_rank=engine.current_data_parallel_head(),
+                                group=engine.context_and_model_parallel_group,
+                            )
+                            engine.evaluate_lm(data)
+
+                evaluator.evaluate(
+                    evaluate_fn,
+                    epoch,
+                    step,
+                    global_step,
+                )
+
+            dist.barrier(device_ids=[engine.device.index])
+            torch.cuda.synchronize()
 
             stats.update(
                 stats_tracker.export_all(reduce_group=mpu.get_data_parallel_group())
