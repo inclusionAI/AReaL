@@ -496,6 +496,7 @@ class MegatronEngine(TrainEngine):
             .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
+        dist.all_reduce(total_loss_weight, group=mpu.get_data_parallel_group())
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
         micro_batch_generator = iter(mb_list.padded_mbs)
         forward_step_count = 0
@@ -571,6 +572,7 @@ class MegatronEngine(TrainEngine):
             .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
+        dist.all_reduce(total_loss_weight, group=mpu.get_data_parallel_group())
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
         micro_batch_generator = iter(mb_list.padded_mbs)
         forward_step_count = 0
@@ -599,7 +601,8 @@ class MegatronEngine(TrainEngine):
                 # automatically recorded by stats_tracker
                 loss = loss_fn(output, input_)
                 loss_scale = loss_weight_fn(input_) / total_loss_weight
-                loss_scale *= mpu.get_data_parallel_world_size()
+                # eval_batch does not run backward, the grad will not be averaged over DP group
+                # so we shouldn't multiple dp_size in loss_scale
                 loss *= loss_scale
                 return loss, {}
 

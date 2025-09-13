@@ -42,6 +42,7 @@ from areal.utils.distributed import init_custom_process_group
 from areal.utils.fsdp import (
     CPUOffloadPolicy,
     MixedPrecisionPolicy,
+    NoParallel,
     apply_fsdp2,
     fsdp2_clip_grad_norm,
     fsdp2_load_full_state_dict,
@@ -198,6 +199,9 @@ class FSDPEngine(BaseHFEngine):
             "layers.*.self_attn.q_proj": ColwiseParallel(),
             "layers.*.self_attn.k_proj": ColwiseParallel(),
             "layers.*.self_attn.v_proj": ColwiseParallel(),
+            # special q/k norm for qwen3
+            "layers.*.self_attn.k_norm": NoParallel(),
+            "layers.*.self_attn.q_norm": NoParallel(),
             # Reduce in RowwiseParallel, Scatter by Shard(1)
             "layers.*.self_attn.o_proj": RowwiseParallel(
                 output_layouts=Shard(1),
@@ -478,7 +482,7 @@ class FSDPEngine(BaseHFEngine):
             .to(dtype=torch.float32, device=self.device)
         )
         assert total_loss_weight != 0
-        dist.all_reduce(total_loss_weight)
+        dist.all_reduce(total_loss_weight, group=self.dp_group)
 
         # Process microbatches with gradient accumulation
         for i, (pad_length, padded_mb_input, mb_input) in enumerate(
@@ -541,7 +545,7 @@ class FSDPEngine(BaseHFEngine):
 
         # NOTE: grad norm clip function is different
         grad_norm = fsdp2_clip_grad_norm(
-            self.model.parameters(),
+            list(self.model.parameters()),
             self.fsdp_tp_device_mesh,
             max_norm=self.optimizer_config.gradient_clipping,
         )
@@ -579,9 +583,9 @@ class FSDPEngine(BaseHFEngine):
             .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
+        dist.all_reduce(total_loss_weight, group=self.dp_group)
 
-        total_loss = 0.0
-        total_weight = 0.0
+        total_loss = torch.zeros(1, device=self.device, dtype=torch.float32)
 
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
@@ -635,10 +639,13 @@ class FSDPEngine(BaseHFEngine):
 
             # Simple weight calculation (could be improved)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
-            total_loss += loss.item() * loss_scale
-            total_weight += loss_scale
+            # eval_batch does not run backward, the grad will not be averaged over DP group
+            # so we shouldn't multiple dp_size in loss_scale
+            total_loss += loss.clone().detach() * loss_scale
 
-        return torch.tensor(total_loss / total_weight)
+        dist.all_reduce(total_loss, group=self.dp_group)
+
+        return total_loss
 
     @torch.no_grad()
     def forward(
