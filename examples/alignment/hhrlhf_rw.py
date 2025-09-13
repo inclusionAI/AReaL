@@ -1,17 +1,15 @@
-import os
 import sys
 
-from megatron.core import parallel_state as mpu
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
-from areal.experimental.api.cli_args import ExperimentalSFTConfig as SFTConfig
 from areal.engine.rw.rw_engine import FSDPRWEngine
-from areal.utils import seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container, pairwise_pad_sequences_to_tensors
+from areal.experimental.api.cli_args import ExperimentalSFTConfig as SFTConfig
+from areal.utils import stats_tracker
+from areal.utils.data import pairwise_pad_sequences_to_tensors
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
@@ -23,10 +21,10 @@ def main(args):
     config, _ = load_expr_config(args, SFTConfig)
     config: SFTConfig
 
-    #rank = int(os.getenv("RANK"))
+    # rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
-    #seeding.set_random_seed(config.seed, f"trainer{rank}")
+    # seeding.set_random_seed(config.seed, f"trainer{rank}")
 
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
@@ -57,7 +55,6 @@ def main(args):
     train_dataloader = StatefulDataLoader(
         train_dataset,
         batch_size=config.train_dataset.batch_size,
-        #mpu.get_data_parallel_world_size(),
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
         collate_fn=pairwise_pad_sequences_to_tensors,
@@ -66,7 +63,6 @@ def main(args):
     valid_dataloader = StatefulDataLoader(
         valid_dataset,
         batch_size=config.valid_dataset.batch_size,
-        #mpu.get_data_parallel_world_size(),
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
         collate_fn=pairwise_pad_sequences_to_tensors,
@@ -79,9 +75,7 @@ def main(args):
         dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
         train_batch_size=config.train_dataset.batch_size,
     )
-    engine.initialize(
-        None, ft_spec
-    )
+    engine.initialize(None, ft_spec)
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
@@ -148,9 +142,7 @@ def main(args):
                     tokenizer=tokenizer,
                 )
 
-            stats.update(
-                stats_tracker.export_all()
-            )
+            stats.update(stats_tracker.export_all())
             stats_logger.commit(epoch, step, global_step, stats)
             global_step += 1
 
