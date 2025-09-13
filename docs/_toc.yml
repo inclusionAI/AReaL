@@ -31,6 +31,12 @@ parts:
     chapters:
     - file: references/benchmark
     - file: references/reproduce
+  - caption: Algorithms
+    chapters:
+    - file: algorithms/grpo
+    - file: algorithms/dapo
+    - file: algorithms/dr.GRPO
+    - file: algorithms/litePPO
   - caption: Customization (Legacy)
     chapters:
     - file: legacy/customization/dataset
