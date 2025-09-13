@@ -11,6 +11,7 @@ from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
 from omegaconf import MISSING, DictConfig, OmegaConf
 
+from areal.platforms import current_platform
 from areal.utils import name_resolve, pkg_version
 from areal.utils.fs import get_user_tmp
 
@@ -480,7 +481,7 @@ class SGLangConfig:
             tokenizer_mode="auto",
             load_format="auto",
             trust_remote_code=True,
-            device="cuda",
+            device=current_platform.device_type,
             is_embedding=False,
             # Other runtime options
             tp_size=tp_size,
