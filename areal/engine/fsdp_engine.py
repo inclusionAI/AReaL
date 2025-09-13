@@ -1,4 +1,5 @@
 import dataclasses
+import math
 import os
 import time
 from datetime import datetime
@@ -7,17 +8,20 @@ from typing import Any, Callable, Dict, List, Optional
 import torch
 import torch.distributed as dist
 import torch.distributed.nn.functional as dist_F
+import torch.nn as nn
 from tensordict import TensorDict
-from torch.distributed._tensor import DTensor
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
 )
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
-from torch.distributed.tensor import Replicate
+from torch.distributed.tensor import DTensor, Replicate, Shard
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
+    ParallelStyle,
+    PrepareModuleInput,
     RowwiseParallel,
+    SequenceParallel,
     parallelize_module,
 )
 from transformers import AutoProcessor, PreTrainedTokenizerFast
@@ -39,7 +43,7 @@ from areal.utils.fsdp import (
     CPUOffloadPolicy,
     MixedPrecisionPolicy,
     apply_fsdp2,
-    fsdp2_clip_grad_norm_,
+    fsdp2_clip_grad_norm,
     fsdp2_load_full_state_dict,
 )
 from areal.utils.model import VALID_VISION_MODELS
@@ -147,9 +151,7 @@ class FSDPEngine(BaseHFEngine):
         self.dp_head = nd_device_mesh["mp"].mesh[0].item()
         self.dp_rank = dist.get_rank(self.dp_group)
 
-        self.logger.info(
-            f"Rank {self.rank} with DP head {self.dp_head} and DP rank {self.dp_rank}"
-        )
+        self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
 
     def apply_tensor_parallel(self, device_mesh: DeviceMesh):
         try:
@@ -171,43 +173,82 @@ class FSDPEngine(BaseHFEngine):
                 f"num_attention_heads {num_attention_heads} and num_key_value_heads {num_key_value_heads} must be divisible by tensor_parallel_size {self.tp_world_size}"
             )
 
+        # For root module
+        root_tp_plan: dict[str, ParallelStyle] = {
+            # All-gather
+            "lm_head": ColwiseParallel(
+                input_layouts=Shard(1),
+                output_layouts=Replicate(),
+            ),
+        }
+
+        # For model or model.language_model
+        model_tp_plan: dict[str, ParallelStyle] = {
+            "embed_tokens": RowwiseParallel(
+                input_layouts=Replicate(),
+                output_layouts=Shard(1),
+                use_local_output=False,
+            ),
+            "layers.*.input_layernorm": SequenceParallel(),
+            # All-gather
+            "layers.*.self_attn": PrepareModuleInput(
+                input_kwarg_layouts={"hidden_states": Shard(1)},
+                desired_input_kwarg_layouts={"hidden_states": Replicate()},
+            ),
+            "layers.*.self_attn.q_proj": ColwiseParallel(),
+            "layers.*.self_attn.k_proj": ColwiseParallel(),
+            "layers.*.self_attn.v_proj": ColwiseParallel(),
+            # Reduce in RowwiseParallel, Scatter by Shard(1)
+            "layers.*.self_attn.o_proj": RowwiseParallel(
+                output_layouts=Shard(1),
+                use_local_output=False,
+            ),
+            "layers.*.post_attention_layernorm": SequenceParallel(),
+            # All-gather
+            "layers.*.mlp": PrepareModuleInput(
+                input_layouts=Shard(1),
+                desired_input_layouts=Replicate(),
+            ),
+            "layers.*.mlp.gate_proj": ColwiseParallel(),
+            "layers.*.mlp.up_proj": ColwiseParallel(),
+            # Reduce in RowwiseParallel, Scatter by Shard(1)
+            "layers.*.mlp.down_proj": RowwiseParallel(
+                output_layouts=Shard(1),
+                use_local_output=False,
+            ),
+            "norm": SequenceParallel(),
+        }
+
+        if not isinstance(self.model.model, nn.Module):
+            raise RuntimeError("Model does not have the required submodule 'model'.")
+
         if self.is_vision_model:
             if self.model_config.model_type not in VALID_VISION_MODELS:
                 self.logger.warning(
                     f"Vision model type {self.model_config.model_type} not in supported list {VALID_VISION_MODELS}."
                 )
 
-            # NOTE: skip the visual part for now
-            tp_plan = {
-                "model.language_model.embed_tokens": ColwiseParallel(
-                    output_layouts=Replicate()
-                ),
-                "model.language_model.layers.*.self_attn.q_proj": ColwiseParallel(),
-                "model.language_model.layers.*.self_attn.k_proj": ColwiseParallel(),
-                "model.language_model.layers.*.self_attn.v_proj": ColwiseParallel(),
-                "model.language_model.layers.*.self_attn.o_proj": RowwiseParallel(),
-                "model.language_model.layers.*.mlp.gate_proj": ColwiseParallel(),
-                "model.language_model.layers.*.mlp.up_proj": ColwiseParallel(),
-                "model.language_model.layers.*.mlp.down_proj": RowwiseParallel(),
-                "lm_head": ColwiseParallel(output_layouts=Replicate()),
-            }
+            if isinstance(self.model.model.language_model, nn.Module):
+                parallelize_module(
+                    self.model.model.language_model,
+                    device_mesh=device_mesh,
+                    parallelize_plan=model_tp_plan,
+                )
+            else:
+                self.logger.warning(
+                    f"Vision model does not have the required submodule 'model.language_model'."
+                )
         else:
-            tp_plan = {
-                "model.embed_tokens": ColwiseParallel(output_layouts=Replicate()),
-                "model.layers.*.self_attn.q_proj": ColwiseParallel(),
-                "model.layers.*.self_attn.k_proj": ColwiseParallel(),
-                "model.layers.*.self_attn.v_proj": ColwiseParallel(),
-                "model.layers.*.self_attn.o_proj": RowwiseParallel(),
-                "model.layers.*.mlp.gate_proj": ColwiseParallel(),
-                "model.layers.*.mlp.up_proj": ColwiseParallel(),
-                "model.layers.*.mlp.down_proj": RowwiseParallel(),
-                "lm_head": ColwiseParallel(output_layouts=Replicate()),
-            }
+            parallelize_module(
+                self.model.model,
+                device_mesh=device_mesh,
+                parallelize_plan=model_tp_plan,
+            )
 
         self.model = parallelize_module(
             self.model,
             device_mesh=device_mesh,
-            parallelize_plan=tp_plan,
+            parallelize_plan=root_tp_plan,
         )
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
@@ -423,6 +464,7 @@ class FSDPEngine(BaseHFEngine):
         assert self.optimizer is not None
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
+        assert self.fsdp_tp_device_mesh is not None
         set_ulysses_sequence_parallel_group(self.sp_group)
 
         self.optimizer.zero_grad()
@@ -498,11 +540,13 @@ class FSDPEngine(BaseHFEngine):
             loss.backward()
 
         # NOTE: grad norm clip function is different
-        grad_norm = fsdp2_clip_grad_norm_(
-            self.model.parameters(), max_norm=self.optimizer_config.gradient_clipping
+        grad_norm = fsdp2_clip_grad_norm(
+            self.model.parameters(),
+            self.fsdp_tp_device_mesh,
+            max_norm=self.optimizer_config.gradient_clipping,
         )
 
-        if not torch.isfinite(grad_norm):
+        if not math.isfinite(grad_norm):
             self.optimizer.zero_grad()
             update_successful = False
         else:
