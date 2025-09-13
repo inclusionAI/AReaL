@@ -256,7 +256,9 @@ def clip_grad_by_total_norm_fp32(
     clip_coeff = max_norm / (total_norm + 1.0e-6)
     if clip_coeff < 1.0:
         for dtype, _grads in grads.items():
-            dummy_overflow_buf = torch.tensor([0], dtype=torch.int, device=current_platform.device_type)
+            dummy_overflow_buf = torch.tensor(
+                [0], dtype=torch.int, device=current_platform.device_type
+            )
             if dtype == torch.float32:
                 multi_tensor_applier(
                     multi_tensor_scale_impl,
