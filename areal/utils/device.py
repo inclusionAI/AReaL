@@ -6,6 +6,7 @@ from typing import Tuple
 import torch
 import torch.distributed as dist
 
+from areal.platforms import current_platform
 from areal.utils import logging
 
 logger = logging.getLogger(__file__)
@@ -43,9 +44,9 @@ def gpu_count():
         return 0
     elif platform.system() == "Windows":
         try:
-            import torch
+            pass
 
-            return torch.cuda.device_count()
+            return current_platform.device_count()
         except ImportError:
             return 0
     else:

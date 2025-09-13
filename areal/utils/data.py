@@ -12,6 +12,7 @@ from einops import rearrange
 from tensordict import TensorDict
 
 from areal.api.cli_args import MicroBatchSpec
+from areal.platforms import current_platform
 from areal.utils import datapack, logging
 
 logger = logging.getLogger("data utils")
@@ -905,7 +906,9 @@ def broadcast_tensor(tensor: torch.Tensor | None, src_rank=0, group=None):
         dtype = metadata["dtype"]
         device_type = metadata["device_type"]
         device = (
-            torch.device("cpu") if device_type == "cpu" else torch.cuda.current_device()
+            torch.device("cpu")
+            if device_type == "cpu"
+            else current_platform.current_device()
         )
         # Create tensor with the received shape and dtype
         tensor = torch.empty(tensor_shape, dtype=dtype, device=device)

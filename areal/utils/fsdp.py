@@ -9,6 +9,7 @@ from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.tensor import DTensor
 from transformers import PreTrainedModel
 
+from areal.platforms import current_platform
 from areal.utils import logging, pkg_version
 
 if pkg_version.is_version_greater_or_equal("torch", "2.6.0"):
@@ -129,7 +130,7 @@ def get_grad_norm_fp32(
     if not grads_for_norm:
         return 0.0
 
-    device = torch.cuda.current_device()
+    device = current_platform.current_device()
 
     if norm_type == torch.inf:
         norms = [grad.abs().max() for grad in grads_for_norm]
@@ -194,7 +195,9 @@ def clip_grad_by_total_norm_fp32(
 
     clip_coeff = max_norm / (total_norm + 1.0e-6)
     if clip_coeff < 1.0:
-        dummy_overflow_buf = torch.tensor([0], dtype=torch.int, device="cuda")
+        dummy_overflow_buf = torch.tensor(
+            [0], dtype=torch.int, device=current_platform.device_type
+        )
         multi_tensor_applier(
             multi_tensor_scale_impl, dummy_overflow_buf, [grads, grads], clip_coeff
         )
@@ -234,11 +237,13 @@ def fsdp2_clip_grad_norm(
 def create_fsdp_device_mesh(shard_size, world_size):
     if shard_size < 0 or shard_size >= world_size:
         device_mesh = init_device_mesh(
-            "cuda", mesh_shape=(world_size,), mesh_dim_names=("fsdp",)
+            current_platform.device_type,
+            mesh_shape=(world_size,),
+            mesh_dim_names=("fsdp",),
         )
     else:
         device_mesh = init_device_mesh(
-            "cuda",
+            current_platform.device_type,
             mesh_shape=(world_size // shard_size, shard_size),
             mesh_dim_names=("ddp", "fsdp"),
         )
@@ -299,7 +304,7 @@ def fsdp2_load_full_state_dict(
         set_model_state_dict,
     )
 
-    device = torch.cuda.current_device()
+    device = current_platform.current_device()
     model = model.to(device=device, non_blocking=True)
     cpu_offload = cpu_offload is not None
     options = StateDictOptions(

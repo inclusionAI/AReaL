@@ -21,6 +21,7 @@ from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import FinetuneSpec
+from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.data import (
     MicroBatchList,
@@ -123,7 +124,7 @@ class BaseHFEngine(TrainEngine):
             # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
             # otherwise initializing the NCCL weight update group will be wrong!
             dist.init_process_group(
-                backend="nccl",
+                backend=current_platform.communication_backend,
                 timeout=NCCL_DEFAULT_TIMEOUT,
             )
             self.own_global_group = True
@@ -134,7 +135,7 @@ class BaseHFEngine(TrainEngine):
         self.logger = logging.getLogger(f"[HF Engine Rank {dist.get_rank()}]")
 
     def create_device_model(self):
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        current_platform.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
 
         dtype = getattr(torch, self.config.dtype)
@@ -153,7 +154,7 @@ class BaseHFEngine(TrainEngine):
             )
 
             tik = time.perf_counter()
-            with torch.device("cuda"):
+            with torch.device(current_platform.device_type):
                 model = AutoModelForImageTextToText.from_pretrained(
                     pretrained_model_name_or_path=self.config.path,
                     trust_remote_code=True,
@@ -165,7 +166,7 @@ class BaseHFEngine(TrainEngine):
         else:
             self.tokenizer = load_hf_tokenizer(self.config.path)
             tik = time.perf_counter()
-            with torch.device("cuda"):
+            with torch.device(current_platform.device_type):
                 if self.config.init_from_scratch:
                     # initialize scratch model from config
                     # NOTE: VLM cannot directly load state dict using this
@@ -255,7 +256,7 @@ class BaseHFEngine(TrainEngine):
         if hasattr(self, "model"):
             del self.model
         gc.collect()
-        torch.cuda.empty_cache()
+        current_platform.empty_cache()
         gc.collect()
         dist.destroy_process_group(self.context_and_model_parallel_group)
         dist.destroy_process_group(self.parallelism_group)
