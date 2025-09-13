@@ -29,8 +29,6 @@ def main(args):
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
 
-    # Initialize Megatron parallel states
-    # NOTE: we assume all MegatronEngine has the same parallel strategy.
     engine = FSDPRWEngine(config=config.model)
     engine.create_process_group(parallel_strategy=parallel_strategy)
 
