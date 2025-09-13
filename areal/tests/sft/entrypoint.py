@@ -12,6 +12,7 @@ import areal.dataset
 import areal.utils.data
 import areal.utils.seeding as seeding
 import areal.utils.stats_tracker as stats_tracker
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import SFTConfig
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.sft.lm_engine import FSDPLMEngine

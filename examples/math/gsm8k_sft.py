@@ -3,6 +3,7 @@ import sys
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
