@@ -3,8 +3,10 @@ import os
 import sys
 from typing import List, cast
 
+import torch
 import torch.distributed as dist
 import torch.utils.data
+from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 import areal.api.cli_args as cli_args
@@ -12,6 +14,7 @@ import areal.dataset
 import areal.utils.data
 import areal.utils.seeding as seeding
 import areal.utils.stats_tracker as stats_tracker
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import SFTConfig
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.sft.lm_engine import FSDPLMEngine
@@ -72,6 +75,8 @@ def main() -> None:
             ):
                 break
 
+            data: TensorDict
+            data = data.to(torch.cuda.current_device())
             data = broadcast_tensor_container(
                 data,
                 src_rank=engine.current_data_parallel_head(),

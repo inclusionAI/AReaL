@@ -20,7 +20,9 @@ More information can be found in the [quickstart section](../tutorial/quickstart
   - Dataset:
     [AReaL-boba-106k](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-106k.jsonl)
 
-<span style="color:red">[Warning]: The configurations in `examples/configs/v0.2-qwen2-math` were originally designed for synchronous training. To run them asynchronously, please adjust the following parameters: </span>
+<span style="color:red">\[Warning\]: The configurations in
+`examples/configs/v0.2-qwen2-math` were originally designed for synchronous training. To
+run them asynchronously, please adjust the following parameters: </span>
 
 ```
   ppo.recompute_logprob=true
