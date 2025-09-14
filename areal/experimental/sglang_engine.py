@@ -4,11 +4,12 @@ import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from queue import Empty, Full, Queue
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import sglang as sgl
 import torch.distributed as dist
 from tensordict import TensorDict
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
@@ -18,10 +19,9 @@ from areal.api.io_struct import (
     RolloutStat,
     WeightUpdateMeta,
 )
+from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import logging, name_resolve, names, pkg_version
 
-if TYPE_CHECKING:
-    from areal.api.workflow_api import RolloutWorkflow
 logger = logging.getLogger(__name__)
 
 if pkg_version.is_available("sglang"):
@@ -64,11 +64,20 @@ class SGLangEngine(InferenceEngine):
 
         self._version = 0
 
+        self.workflow_executor = WorkflowExecutor(
+            config=config,
+            inference_engine=self,
+        )
+
     def initialize(self, addr: str | None, ft_spec: Optional[Dict[str, Any]] = None):
         self.engine = sgl.Engine(**self.engine_args)
 
         self.rollout_thread = threading.Thread(target=self._rollout_thread)
         self.rollout_thread.start()
+
+        self.workflow_executor.initialize(
+            logger=self.logger, train_data_parallel_size=train_data_parallel_size
+        )
 
     def destroy(self):
         self.exiting.set()
@@ -327,50 +336,55 @@ class SGLangEngine(InferenceEngine):
         else:
             raise NotImplementedError(f"Unsupported weight update type: {meta.type}")
 
-    def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:
-        try:
-            self.input_queue.put_nowait((data, workflow))
-        except Full:
-            raise RuntimeError("Input queue full. Please increase queue_size.")
-
-    def wait(self, count: int, timeout: float, should_accept: Callable) -> TensorDict:
-        tik = time.perf_counter()
-        accepted = len(self.result_cache)
-        while (
-            accepted < count
-            and not self.exiting.is_set()
-            and time.perf_counter() - tik < timeout
-        ):
-            try:
-                result = self.output_queue.get(timeout=ROLLOUT_POLL_WAIT_TIME)
-                if should_accept(result):
-                    self.result_cache.append(result)
-                    accepted += 1
-                else:
-                    with self.lock:
-                        self.rollout_stat.accepted -= 1
-            except Empty:
-                time.sleep(ROLLOUT_POLL_WAIT_TIME)
-        if self.exiting.is_set():
-            raise RuntimeError("Rollout engine is exiting, cannot wait for results.")
-        if accepted < count:
-            raise TimeoutError(
-                f"Timed out waiting for {count} rollouts, " f"only received {accepted}."
-            )
-        results, self.result_cache = (
-            self.result_cache[:count],
-            self.result_cache[count:],
+    def submit(
+        self,
+        data: Dict[str, Any],
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
+    ) -> None:
+        return self.workflow_executor.submit(
+            data,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
+            should_accept=should_accept,
         )
-        return TensorDict.cat(results, dim=0)
 
-    def rollout(
-        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
+        return self.workflow_executor.wait(count, timeout=timeout)
+
+    def rollout_batch(
+        self,
+        data: List[Dict[str, Any]],
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
     ) -> TensorDict:
-        """Submit a batch of requests to the inference engine and wait for the results."""
-        for item in data:
-            self.submit(item, workflow)
-        return self.wait(
-            count=len(data),
-            timeout=self.config.request_timeout,
-            should_accept=lambda x: True,
+        return self.workflow_executor.rollout_batch(
+            data=data,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
+            should_accept=should_accept,
         )
+
+    def prepare_batch(
+        self,
+        dataloader: StatefulDataLoader,
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
+    ):
+        return self.workflow_executor.prepare_batch(
+            dataloader=dataloader,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
+            should_accept=should_accept,
+        )
+
+    def pause(self):
+        """Pause request submission for async rollout. Used during evaluation to prevent data over generation."""
+        return self.workflow_executor.pause()
+
+    def resume(self):
+        """Resume request submission for async rollout."""
+        return self.workflow_executor.resume()
