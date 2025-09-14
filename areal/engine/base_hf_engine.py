@@ -255,9 +255,10 @@ class BaseHFEngine(TrainEngine):
         current_platform.empty_cache()
         gc.collect()
         non_trivial_world = dist.get_world_size() > 1
-        dist.destroy_process_group(self.context_and_model_parallel_group)
-        if self.own_global_group and non_trivial_world:
-            dist.destroy_process_group()
+        if non_trivial_world:
+            dist.destroy_process_group(self.context_and_model_parallel_group)
+            if self.own_global_group:
+                dist.destroy_process_group()
         self.initialized = False
 
     def save_optimizer_state(self, path: str):
