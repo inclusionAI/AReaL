@@ -14,6 +14,7 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPEngine
+from areal.platforms import current_platform
 
 MODEL_PATHS = {
     "qwen3": "/storage/openpsi/models/Qwen__Qwen3-1.7B/",
@@ -43,7 +44,7 @@ def setup_distributed_environment():
         world_size=world_size,
         rank=rank,
     )
-    torch.cuda.set_device(rank)
+    current_platform.set_device(rank)
 
 
 def mock_input(
@@ -110,14 +111,16 @@ def test_ulysses(model_type: str):
     batch_per_rank = 4  # for SP=2
     if rank == 0:
         full_input = mock_input(
-            device=torch.device("cuda:0"), batch_size=batch_size, max_seqlen=16
+            device=torch.device(f"{current_platform.device_type}:0"),
+            batch_size=batch_size,
+            max_seqlen=16,
         )
         full_input_list = [full_input]
     else:
         full_input_list = [None]
     dist.broadcast_object_list(full_input_list, src=0, group=dist.group.WORLD)
     full_input = full_input_list[0]
-    full_input = full_input.to(torch.device(f"cuda:{rank}"))
+    full_input = full_input.to(torch.device(f"{current_platform.device_type}:{rank}"))
 
     input_chunks = []
     for i in range(batch_size // batch_per_rank):

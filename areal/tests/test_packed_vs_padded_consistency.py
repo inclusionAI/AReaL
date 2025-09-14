@@ -8,6 +8,7 @@ from torch.testing import assert_close
 
 from areal.api.cli_args import TrainEngineConfig
 from areal.engine.base_hf_engine import BaseHFEngine
+from areal.platforms import current_platform
 from areal.utils.data import concat_padded_tensors
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.network import find_free_ports
@@ -37,7 +38,7 @@ def mock_padded_llm_data():
         )
         all_data.append(TensorDict(seq, batch_size=[1]))
 
-    return concat_padded_tensors(all_data).cuda()
+    return concat_padded_tensors(all_data).to(current_platform.device_type)
 
 
 QWEN3_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
@@ -172,13 +173,13 @@ def mock_padded_vlm_data(request):
 
         all_data.append(td)
 
-    padded_data = concat_padded_tensors(all_data).cuda()
+    padded_data = concat_padded_tensors(all_data).to(current_platform.device_type)
     if "multi_modal_input" in padded_data:
         for item in padded_data["multi_modal_input"]:
             if isinstance(item, dict):
                 for k, v in item.items():
                     if torch.is_tensor(v):
-                        item[k] = v.cuda()
+                        item[k] = v.to(current_platform.device_type)
     return padded_data
 
 

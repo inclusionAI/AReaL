@@ -2,6 +2,8 @@
 
 import torch
 
+from areal.platforms import current_platform
+
 
 def local_multi_tensor_applier(op, noop_flag_buffer, tensor_lists, *args):
     return op(2048 * 32, noop_flag_buffer, tensor_lists, *args)
@@ -14,7 +16,9 @@ def local_multi_tensor_l2_norm(chunk_size, noop_flag, tensor_lists, per_tensor, 
         [(torch.norm(tensor)) for tensor in tensor_list] for tensor_list in tensor_lists
     ]
     l2_reduced = torch.norm(torch.tensor(l2))
-    l2_cuda = torch.tensor([float(l2_reduced)], dtype=torch.float, device="cuda")
+    l2_cuda = torch.tensor(
+        [float(l2_reduced)], dtype=torch.float, device=current_platform.device_type
+    )
     return l2_cuda, None
 
 

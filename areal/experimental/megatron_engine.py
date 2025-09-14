@@ -33,6 +33,7 @@ from areal.experimental.utils.mcore.packed_context_parallel import (
     packed_context_parallel_forward,
 )
 from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
+from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.data import (
     MicroBatchList,
@@ -100,7 +101,7 @@ class MegatronEngine(TrainEngine):
         self.seed = seed
 
         assert addr is None, "FSDPEngine does not support remote initialization."
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        current_platform.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
         self.rank = int(os.environ["RANK"])
         self.world_size = int(os.environ["WORLD_SIZE"])
@@ -299,7 +300,7 @@ class MegatronEngine(TrainEngine):
         if hasattr(self, "model"):
             del self.model
         gc.collect()
-        torch.cuda.empty_cache()
+        current_platform.empty_cache()
         gc.collect()
         dist.destroy_process_group(self.parallelism_group)
         dist.destroy_process_group(self.context_and_model_parallel_group)
