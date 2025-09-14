@@ -298,7 +298,12 @@ class WorkflowExecutor:
     ) -> TensorDict:
         """Submit a batch of requests to the inference engine and wait for the results."""
         for item in data:
-            self.submit(item, workflow, workflow_builder, should_accept=should_accept)
+            self.submit(
+                data=item,
+                workflow=workflow,
+                workflow_builder=workflow_builder,
+                should_accept=should_accept,
+            )
         return self.wait(count=len(data))
 
     def prepare_batch(
