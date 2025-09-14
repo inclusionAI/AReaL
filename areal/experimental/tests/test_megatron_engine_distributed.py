@@ -27,9 +27,11 @@ def _run_test_with_torchrun(
                 f"--test_type={test_type}",
             ],
             check=True,
+            capture_output=True,
+            text=True,
         )
     except subprocess.CalledProcessError as e:
-        pytest.fail(f"Test failed with error: {e.stderr.decode()}")
+        pytest.fail(f"Test failed with error: {e.stderr}")
     with open(output, "r") as f:
         result = f.read().strip()
     assert result == "Passed", f"Test failed: {result}"

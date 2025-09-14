@@ -76,7 +76,7 @@ class StatsLogger:
     def commit(self, epoch: int, step: int, global_step: int, data: Dict | List[Dict]):
         if dist.is_initialized() and mpu.is_initialized():
             if mpu.get_pipeline_model_parallel_world_size() > 1:
-                # log info only exisst in last pipeline rank
+                # log info only exist in last pipeline rank
                 data_list = [data]
                 dist.broadcast_object_list(
                     data_list,

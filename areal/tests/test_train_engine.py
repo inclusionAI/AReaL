@@ -62,6 +62,7 @@ def get_engine(engine_type: str, model_path: str):
         optimizer=OptimizerConfig(),
     )
     engine = engine_cls(engine_config)
+    engine.create_process_group()
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
     engine.initialize(None, ft_spec)
     return engine
