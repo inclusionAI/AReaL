@@ -273,6 +273,21 @@ def main(args):
                 processor=processor,
             )
 
+        with stats_tracker.record_timing("checkpoint_for_recover"):
+            recover_handler.dump(
+                actor,
+                step_info,
+                saver,
+                evaluator,
+                stats_logger,
+                train_dataloader,
+                tokenizer=tokenizer,
+                processor=processor,
+            )
+
+        dist.barrier(device_ids=[actor.device.index])
+        torch.cuda.synchronize()
+
         with stats_tracker.record_timing("eval"):
 
             def evaluate_fn():
@@ -290,18 +305,6 @@ def main(args):
                 epoch,
                 step,
                 global_step,
-            )
-
-        with stats_tracker.record_timing("checkpoint_for_recover"):
-            recover_handler.dump(
-                actor,
-                step_info,
-                saver,
-                evaluator,
-                stats_logger,
-                train_dataloader,
-                tokenizer=tokenizer,
-                processor=processor,
             )
 
         dist.barrier(device_ids=[actor.device.index])

@@ -50,6 +50,7 @@ actor:
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
   backend: fsdp
+
   group_size: ${gconfig.n_samples}
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
@@ -63,11 +64,10 @@ actor:
   dynamic_sampling: false
   adv_norm:
     mean_level: group
-    std_level: group
+    std_level: batch
     group_size: ${gconfig.n_samples}
 
 
-  max_new_tokens: ${gconfig.max_new_tokens}
 
 ref:
   experiment_name: ${experiment_name}

@@ -3,8 +3,10 @@ import os
 import sys
 from typing import List, cast
 
+import torch
 import torch.distributed as dist
 import torch.utils.data
+from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 import areal.api.cli_args as cli_args
@@ -23,6 +25,10 @@ from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 def main() -> None:
     config, _ = cli_args.load_expr_config(sys.argv[1:], SFTConfig)
     assert isinstance(config, SFTConfig)
+    local_model_path = config.model.path.replace("/", "__")
+    local_model_path = os.path.join("/storage/openpsi/models", local_model_path)
+    if os.path.exists(local_model_path):
+        config.model.path = local_model_path
 
     rank = int(os.environ.get("RANK", "0"))
 
@@ -73,6 +79,8 @@ def main() -> None:
             ):
                 break
 
+            data: TensorDict
+            data = data.to(torch.cuda.current_device())
             data = broadcast_tensor_container(
                 data,
                 src_rank=engine.current_data_parallel_head(),
