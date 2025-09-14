@@ -1,7 +1,6 @@
 import os
 import sys
 
-import torch
 import torch.distributed as dist
 from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -11,6 +10,7 @@ from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
 from areal.engine.sft.lm_engine import FSDPLMEngine
+from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import broadcast_tensor_container, pad_sequences_to_tensors
 from areal.utils.evaluator import Evaluator
@@ -117,7 +117,7 @@ def main_sft():
 
             # NOTE: data are identical across model+context parallel group
             data: TensorDict
-            data = data.to(torch.cuda.current_device())
+            data = data.to(current_platform.current_device())
             data = broadcast_tensor_container(
                 data,
                 src_rank=engine.current_data_parallel_head(),
@@ -155,7 +155,7 @@ def main_sft():
                 )
 
             dist.barrier(device_ids=[engine.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
 
             with stats_tracker.record_timing("eval"):
                 # No need to log anything. Logging will be handled outside
@@ -163,7 +163,7 @@ def main_sft():
                 def evaluate_fn():
                     with stats_tracker.scope("sft-eval"):
                         for data in valid_dataloader:
-                            data = data.to(torch.cuda.current_device())
+                            data = data.to(current_platform.current_device())
                             data = broadcast_tensor_container(
                                 data,
                                 src_rank=engine.current_data_parallel_head(),
@@ -179,7 +179,7 @@ def main_sft():
                 )
 
             dist.barrier(device_ids=[engine.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
 
             stats_logger.commit(
                 epoch,

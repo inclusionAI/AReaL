@@ -254,7 +254,7 @@ def main(args):
             )
 
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         with stats_tracker.record_timing("eval"):
 
