@@ -342,11 +342,10 @@ def prepare_batch(
                     item,
                     workflow=workflow,
                     workflow_builder=workflow_builder,
+                    should_accept=should_accept,
                 )
         try:
-            return self.wait(
-                dataloader.batch_size, timeout=1, should_accept=should_accept
-            )
+            return self.wait(dataloader.batch_size, timeout=1)
         except TimeoutError:
             pass
 ```

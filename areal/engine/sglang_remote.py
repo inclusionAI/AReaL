@@ -313,20 +313,17 @@ class RemoteSGLangEngine(InferenceEngine):
         data: Dict[str, Any],
         workflow: Optional[RolloutWorkflow] = None,
         workflow_builder: Optional[Callable] = None,
-    ) -> None:
-        return self.workflow_executor.submit(data, workflow, workflow_builder)
-
-    def wait(
-        self,
-        count: int,
-        timeout: float | None = None,
         should_accept: Callable | None = None,
-    ) -> TensorDict:
-        return self.workflow_executor.wait(
-            count,
-            timeout=timeout,
+    ) -> None:
+        return self.workflow_executor.submit(
+            data,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
             should_accept=should_accept,
         )
+
+    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
+        return self.workflow_executor.wait(count, timeout=timeout)
 
     def rollout_batch(
         self,
