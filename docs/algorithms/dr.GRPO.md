@@ -24,7 +24,6 @@ For more details:
 
 We only list the different parameters from GRPO here:
 
-We only list the different parameters from GRPO here:
 
 - `actor.adv_norm.mean_level`: The level when calculate the mean of advantage. options:
   `group`,`batch` or `none`. In dr.GRPO, it is set to `group` by default.
