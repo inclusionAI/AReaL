@@ -17,7 +17,7 @@ tokenizer_path: ${model.path}
 model:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/gemma-3-12b-it/
+  path: /storage/openpsi/data/gemma-3-4b-it/models/LLM-Research/gemma-3-4b-it/
   dtype: bfloat16
   init_from_scratch: false
   gradient_checkpointing: false

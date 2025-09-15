@@ -41,16 +41,16 @@ def main_sft():
         tokenizer=tokenizer,
         processor=processor,
     )
-    valid_dataset = get_custom_dataset(
-        path=config.valid_dataset.path,
-        rank=engine.data_parallel_rank,
-        world_size=engine.data_parallel_world_size,
-        split="test",
-        max_length=config.valid_dataset.max_length,
-        type=config.valid_dataset.type,
-        tokenizer=tokenizer,
-        processor=processor,
-    )
+    # valid_dataset = get_custom_dataset(
+    #     path=config.valid_dataset.path,
+    #     rank=engine.data_parallel_rank,
+    #     world_size=engine.data_parallel_world_size,
+    #     split="test",
+    #     max_length=config.valid_dataset.max_length,
+    #     type=config.valid_dataset.type,
+    #     tokenizer=tokenizer,
+    #     processor=processor,
+    # )
 
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
@@ -62,14 +62,14 @@ def main_sft():
         drop_last=config.train_dataset.drop_last,
     )
 
-    valid_dataloader = StatefulDataLoader(
-        valid_dataset,
-        batch_size=config.valid_dataset.batch_size // engine.data_parallel_world_size,
-        shuffle=config.valid_dataset.shuffle,
-        num_workers=config.valid_dataset.num_workers,
-        collate_fn=pad_sequences_to_tensors,
-        drop_last=config.valid_dataset.drop_last,
-    )
+    # valid_dataloader = StatefulDataLoader(
+    #     valid_dataset,
+    #     batch_size=config.valid_dataset.batch_size // engine.data_parallel_world_size,
+    #     shuffle=config.valid_dataset.shuffle,
+    #     num_workers=config.valid_dataset.num_workers,
+    #     collate_fn=pad_sequences_to_tensors,
+    #     drop_last=config.valid_dataset.drop_last,
+    # )
 
     # Initialize engine
     ft_spec = FinetuneSpec(
@@ -137,20 +137,20 @@ def main_sft():
                     processor=processor,
                 )
 
-            with stats_tracker.record_timing("eval"):
-                # No need to log anything. Logging will be handled outside
-                # via stats_tracker.export().
-                def evaluate_fn():
-                    with stats_tracker.scope("sft-eval"):
-                        for data in valid_dataloader:
-                            engine.evaluate_lm(data)
+            # with stats_tracker.record_timing("eval"):
+            #     # No need to log anything. Logging will be handled outside
+            #     # via stats_tracker.export().
+            #     def evaluate_fn():
+            #         with stats_tracker.scope("sft-eval"):
+            #             for data in valid_dataloader:
+            #                 engine.evaluate_lm(data)
 
-                evaluator.evaluate(
-                    evaluate_fn,
-                    epoch,
-                    step,
-                    global_step,
-                )
+            #     evaluator.evaluate(
+            #         evaluate_fn,
+            #         epoch,
+            #         step,
+            #         global_step,
+            #     )
 
             with stats_tracker.record_timing("checkpoint_for_recover"):
                 recover_handler.dump(

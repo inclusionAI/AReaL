@@ -81,7 +81,6 @@ def get_clevr_count_70k_sft_dataset(
     dataset = dataset.map(
         lambda example, idx: process_example(example, idx),
         with_indices=True,
-        num_proc=64
     )
 
     def _process(example):
@@ -111,7 +110,7 @@ def get_clevr_count_70k_sft_dataset(
         return example
 
     dataset = dataset.map(
-        lambda x: _process(x), remove_columns=["images", "seq", "problem", "answer"], num_proc=64)
+        lambda x: _process(x), remove_columns=["images", "seq", "problem", "answer"])
 
     if max_length is not None:
         # Filter out sequences longer than max_length
@@ -130,7 +129,10 @@ def get_clevr_count_70k_rl_dataset(
     max_length: Optional[int] = None,
 ):
     dataset = load_dataset(path=path, split=split)
-
+    total_size = len(dataset)
+    subset_size = int(total_size * 0.01)
+    indices = random.sample(range(total_size), subset_size)
+    dataset = dataset.select(indices)
     def process(sample):
         # processed_images = [
         #     convert_image(image, 336 * 336) for image in sample["images"]
@@ -138,7 +140,7 @@ def get_clevr_count_70k_rl_dataset(
         system_prompt = {
             "role": "system",
             "content": [{"type": "text", "text":
-                "You are a helpful assistant. Solve the following question: count the number of items in the image and provide the final answer in [ ] format, ensuring that only the number is inside the brackets without any additional text or explanations. "
+                "You are a helpful assistant. Solve the following question and provide the final answer in [ ] format, ensuring that only the number is inside the brackets without any additional text or explanations. "
             }]
         }
 
@@ -157,7 +159,7 @@ def get_clevr_count_70k_rl_dataset(
         )
         return {"messages": messages, "images": sample["images"]}
 
-    dataset = dataset.map(process, num_proc=64).remove_columns(["problem"])
+    dataset = dataset.map(process).remove_columns(["problem"])
 
     # Filter out sequences longer than max_length if max_length is provided
     if max_length is not None:
