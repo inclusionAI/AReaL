@@ -74,39 +74,6 @@ def set_deterministic_algorithms(model_config):
     torch.use_deterministic_algorithms(True, warn_only=True)
 
 
-# def set_deterministic_algorithms(args):
-#     """
-#     args: Megatron args, acquired by get_args()
-#     """
-#     # Megatron's `deterministic_mode` arg is introduced after core_0.8.0 version.
-#     if is_megatron_version_bigger_than("0.8.0"):
-#         args.deterministic_mode = True
-#         args.use_flash_attn = False
-#         args.cross_entropy_loss_fusion = False
-
-#     if not is_torch_npu_available():
-#         # On GPU env, bias_dropout_fusion will effect the accuracy of loss and grad when resuming
-#         # training from a checkpoint. So if you want to use deterministic algorithms, set it to False.
-#         args.bias_dropout_fusion = False
-
-#     # Set env variables about deterministic mode
-#     if os.getenv("NVTE_ALLOW_NONDETERMINISTIC_ALGO", "1") != "0":
-#         logger.info("For deterministic algo, env [NVTE_ALLOW_NONDETERMINISTIC_ALGO] will be set to '0'.")
-#         os.environ["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
-
-#     all_reduce_choices = ["Tree", "Ring", "CollnetDirect", "CollnetChain", "^NVLS"]
-#     if os.getenv("NCCL_ALGO") not in all_reduce_choices:
-#         logger.info("For deterministic algo, env [NCCL_ALGO] will be set to 'Ring'.")
-#         os.environ["NCCL_ALGO"] = "Ring"
-
-#     cublas_workspace_config_choices = [":4096:8", ":16:8"]
-#     if os.getenv("CUBLAS_WORKSPACE_CONFIG") not in cublas_workspace_config_choices:
-#         logger.info("For deterministic algo, env [CUBLAS_WORKSPACE_CONFIG] will be set to ':4096:8'.")
-#         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-
-#     torch.use_deterministic_algorithms(True, warn_only=True)
-
-
 class MegatronEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
         self.config = config
