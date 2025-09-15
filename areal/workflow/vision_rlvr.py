@@ -104,7 +104,6 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 multi_modal_input=[
                     {
                         "pixel_values": processed_input["pixel_values"],
-                        "image_grid_thw": processed_input["image_grid_thw"],
                     }
                 ],
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
@@ -113,6 +112,10 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 # reward
                 rewards=torch.tensor([reward]),
             )
+            if "image_grid_thw" in processed_input:
+                res["multi_modal_input"][0]["image_grid_thw"] = processed_input[
+                    "image_grid_thw"
+                ]
             results.append(TensorDict(res, batch_size=[1]))
         if self.dump_dir is not None:
             dump_path = os.path.join(self.dump_dir, str(version))

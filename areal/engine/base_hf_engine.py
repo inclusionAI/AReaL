@@ -370,8 +370,10 @@ class BaseHFEngine(TrainEngine):
                 mb["attention_mask"] = None
                 padded_mb["attention_mask"] = None
             else:
-                mb["attention_mask"] = dict(full_attention=None)
-                padded_mb["attention_mask"] = dict(full_attention=None)
+                mb["attention_mask"] = dict(full_attention=None, sliding_attention=None)
+                padded_mb["attention_mask"] = dict(
+                    full_attention=None, sliding_attention=None
+                )
             if "multi_modal_input" in mb:
                 image_grid_thw_list = [
                     item["image_grid_thw"]

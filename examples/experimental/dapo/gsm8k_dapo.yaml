@@ -51,7 +51,6 @@ actor:
     warmup_steps_proportion: 0.001
   backend: fsdp
   group_size: ${gconfig.n_samples}
-  group_adv_norm: false
   eps_clip: 0.2
   eps_clip_higher: 0.28
   temperature: ${gconfig.temperature}
@@ -66,6 +65,10 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+    group_size: ${gconfig.n_samples}
 
 
 ref:

@@ -52,7 +52,6 @@ actor:
   backend: megatron
 
   group_size: ${gconfig.n_samples}
-  group_adv_norm: false
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -62,6 +61,10 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+    group_size: ${gconfig.n_samples}
 
 ref:
   experiment_name: ${experiment_name}

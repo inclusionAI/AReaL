@@ -38,7 +38,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen2.5-VL-3B-Instruct
+  path: /storage/openpsi/models/google__gemma-3-4b-it/
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: false
@@ -58,7 +58,6 @@ actor:
   backend: fsdp
 
   group_size: ${gconfig.n_samples}
-  group_adv_norm: false
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -68,6 +67,10 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+    group_size: ${gconfig.n_samples}
 
 ref:
   experiment_name: ${experiment_name}
@@ -96,7 +99,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/data/clevr_count_70k/
+  path: /storage/openpsi/data/BUAADreamer__clevr_count_70k/
   type: rl
 
 valid_dataset:
@@ -104,7 +107,7 @@ valid_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/data/clevr_count_70k/
+  path: /storage/openpsi/data/BUAADreamer__clevr_count_70k/
   type: rl
 
 # Utilities

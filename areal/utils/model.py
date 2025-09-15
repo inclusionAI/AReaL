@@ -18,6 +18,10 @@ def is_qwen3_moe_model(model_type):
     return model_type in ["qwen3_moe"]
 
 
+def is_gemma3_model(model_type):
+    return "gemma3" in model_type
+
+
 # Copied from trl
 def disable_dropout_in_model(model: torch.nn.Module) -> None:
     for module in model.modules():
