@@ -33,6 +33,7 @@ from areal.api.io_struct import (
 from areal.api.workflow_api import RolloutWorkflow
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
 from areal.utils.data import concat_padded_tensors
 from areal.utils.device import log_gpu_stats
@@ -203,11 +204,11 @@ def main(args):
 
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(None, ft_spec)
+    rollout.initialize()
     eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
     # NOTE: eval does not have any offpolicyness control
     eval_rollout.config.max_head_offpolicyness = int(1e12)
-    eval_rollout.initialize(None, ft_spec)
+    eval_rollout.initialize()
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
@@ -288,14 +289,22 @@ def main(args):
 
         with stats_tracker.record_timing("rollout"):
             if config.async_training:
-                batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
+                batch = rollout.prepare_batch(
+                    train_dataloader,
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
             else:
-                batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
+                batch = rollout.rollout_batch(
+                    next(data_generator),
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
 
         batch = batch.to(actor.device)
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -330,7 +339,7 @@ def main(args):
             if dist.get_rank() == 0:
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
@@ -339,10 +348,24 @@ def main(args):
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
 
+        with stats_tracker.record_timing("checkpoint_for_recover"):
+            recover_handler.dump(
+                actor,
+                step_info,
+                saver,
+                evaluator,
+                stats_logger,
+                train_dataloader,
+                tokenizer=tokenizer,
+            )
+
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
+
         with stats_tracker.record_timing("eval"):
 
             def evaluate_fn():
-                # Stats are logged in the workflow
+                # Stats are logged in workflow
                 # and will be exported later
                 cnt = 0
                 for data in valid_dataloader:
@@ -358,26 +381,15 @@ def main(args):
                 global_step,
             )
 
-        with stats_tracker.record_timing("checkpoint_for_recover"):
-            recover_handler.dump(
-                actor,
-                step_info,
-                saver,
-                evaluator,
-                stats_logger,
-                train_dataloader,
-                tokenizer=tokenizer,
-            )
-
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
         stats[0].update(stats_tracker.export_all(reduce_group=actor.parallelism_group))
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         # Resume rollout
         rollout.resume()

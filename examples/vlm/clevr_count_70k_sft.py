@@ -1,12 +1,16 @@
 import os
 import sys
 
+import torch.distributed as dist
+from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
 from areal.engine.sft.lm_engine import FSDPLMEngine
+from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import broadcast_tensor_container, pad_sequences_to_tensors
 from areal.utils.evaluator import Evaluator
@@ -112,6 +116,8 @@ def main_sft():
             )
 
             # NOTE: data are identical across model+context parallel group
+            data: TensorDict
+            data = data.to(current_platform.current_device())
             data = broadcast_tensor_container(
                 data,
                 src_rank=engine.current_data_parallel_head(),
@@ -136,21 +142,6 @@ def main_sft():
                     processor=processor,
                 )
 
-            with stats_tracker.record_timing("eval"):
-                # No need to log anything. Logging will be handled outside
-                # via stats_tracker.export().
-                def evaluate_fn():
-                    with stats_tracker.scope("sft-eval"):
-                        for data in valid_dataloader:
-                            engine.evaluate_lm(data)
-
-                evaluator.evaluate(
-                    evaluate_fn,
-                    epoch,
-                    step,
-                    global_step,
-                )
-
             with stats_tracker.record_timing("checkpoint_for_recover"):
                 recover_handler.dump(
                     engine,
@@ -162,6 +153,33 @@ def main_sft():
                     tokenizer=tokenizer,
                     processor=processor,
                 )
+
+            dist.barrier(device_ids=[engine.device.index])
+            current_platform.synchronize()
+
+            with stats_tracker.record_timing("eval"):
+                # No need to log anything. Logging will be handled outside
+                # via stats_tracker.export().
+                def evaluate_fn():
+                    with stats_tracker.scope("sft-eval"):
+                        for data in valid_dataloader:
+                            data = data.to(current_platform.current_device())
+                            data = broadcast_tensor_container(
+                                data,
+                                src_rank=engine.current_data_parallel_head(),
+                                group=engine.context_and_model_parallel_group,
+                            )
+                            engine.evaluate_lm(data)
+
+                evaluator.evaluate(
+                    evaluate_fn,
+                    epoch,
+                    step,
+                    global_step,
+                )
+
+            dist.barrier(device_ids=[engine.device.index])
+            current_platform.synchronize()
 
             stats_logger.commit(
                 epoch,

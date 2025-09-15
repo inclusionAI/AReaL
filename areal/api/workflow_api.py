@@ -24,8 +24,6 @@ from areal.utils.data import concat_padded_tensors
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
 
-logger = logging.getLogger("areal.workflow_api")
-
 
 ROLLOUT_POLL_WAIT_TIME = 0.05
 
@@ -50,6 +48,20 @@ class _TimedResult:
     data: TensorDict
 
 
+@dataclass
+class _RolloutTaskInput:
+    data: Dict[str, Any]
+    workflow: RolloutWorkflow
+    should_accept: Callable | None = None
+
+
+@dataclass
+class _RolloutTask:
+    create_time: int
+    task: asyncio.Task
+    task_input: _RolloutTaskInput
+
+
 class WorkflowExecutor:
 
     def __init__(
@@ -57,7 +69,7 @@ class WorkflowExecutor:
         config: InferenceEngineConfig,
         inference_engine: "InferenceEngine",
     ):
-        config.max_concurrent_rollouts = (
+        self.max_concurrent_rollouts = (
             config.max_concurrent_rollouts or config.consumer_batch_size
         )
         self.config = config
@@ -67,14 +79,18 @@ class WorkflowExecutor:
 
         self.inference_engine = inference_engine
 
-        qsize = config.queue_size or config.max_concurrent_rollouts * 16
+        qsize = config.queue_size or self.max_concurrent_rollouts * 16
         self.input_queue = queue.Queue(maxsize=qsize)
         self.output_queue = queue.Queue(maxsize=qsize)
         self.result_cache: List[_TimedResult] = []
 
         self.rollout_stat = RolloutStat()
 
-    def initialize(self, train_data_parallel_size: int | None = None):
+    def initialize(self, logger=None, train_data_parallel_size: int | None = None):
+        if logger is None:
+            logger = logging.getLogger("WorkflowExecutor")
+        self.logger = logger
+
         if train_data_parallel_size is not None:
             self.dp_world_size = train_data_parallel_size
         else:
@@ -86,7 +102,7 @@ class WorkflowExecutor:
             else:
                 self.dp_world_size = 1
 
-        self.rollout_tasks: Dict[str, asyncio.Task] = {}
+        self.rollout_tasks: Dict[str, _RolloutTask] = {}
         self.rollout_thread = threading.Thread(
             target=self._rollout_thread, daemon=True
         )  # set daemon=True to automatically exit when error occurs
@@ -99,7 +115,7 @@ class WorkflowExecutor:
     def get_capacity(self):
         with self.lock:
             max_concurrent_rollouts = max(
-                1, self.config.max_concurrent_rollouts // self.dp_world_size
+                1, self.max_concurrent_rollouts // self.dp_world_size
             )
             capacity = max_concurrent_rollouts - len(self.rollout_tasks)
             # Staleness control
@@ -119,7 +135,6 @@ class WorkflowExecutor:
 
     async def _rollout_thread_async(self):
         rollout_tasks = self.rollout_tasks
-        task_create_time = {}
         rid = 0
         try:
             while not self.exiting.is_set():
@@ -132,18 +147,20 @@ class WorkflowExecutor:
                     and not self.paused.is_set()
                     and self.input_queue.qsize() > 0
                 ):
-                    data, workflow = self.input_queue.get_nowait()
-                    logger.debug(f"Get data from puller: {data}")
+                    x = self.input_queue.get_nowait()
+                    x: _RolloutTaskInput
+                    self.logger.debug(f"Get data from puller: {x.data}")
                     task = asyncio.create_task(
-                        workflow.arun_episode(self.inference_engine, data),
+                        x.workflow.arun_episode(self.inference_engine, x.data),
                         name=str(rid),
                     )
-                    rollout_tasks[str(rid)] = task
-                    task_create_time[str(rid)] = time.monotonic_ns()
+                    rollout_tasks[str(rid)] = _RolloutTask(
+                        create_time=time.monotonic_ns(), task=task, task_input=x
+                    )
                     self.rollout_stat.submitted += 1
                     self.rollout_stat.running += 1
                     if self.config.enable_rollout_tracing:
-                        logger.info(
+                        self.logger.info(
                             f"Submit rollout rid {rid}. "
                             f"Submit: {self.rollout_stat.submitted}, "
                             f"running: {self.rollout_stat.running}, "
@@ -151,7 +168,7 @@ class WorkflowExecutor:
                         )
                     capacity -= 1
                     rid += 1
-                tasks = list(rollout_tasks.values())
+                tasks = [x.task for x in rollout_tasks.values()]
                 self.lock.release()
 
                 # Wait for rollout completion
@@ -175,23 +192,39 @@ class WorkflowExecutor:
                     assert traj is None or isinstance(traj, TensorDict), traj
                     task_rid = task.get_name()
                     with self.lock:
-                        rollout_tasks.pop(task_rid)
-                        create_time = task_create_time.pop(task_rid)
+                        task_obj = rollout_tasks.pop(task_rid)
                         self.rollout_stat.accepted += 1
                         self.rollout_stat.running -= 1
                         if self.config.enable_rollout_tracing:
-                            logger.info(
+                            self.logger.info(
                                 f"Finish rollout {task_rid}. "
                                 f"Submit: {self.rollout_stat.submitted}, "
                                 f"running: {self.rollout_stat.running}, "
                                 f"accepted: {self.rollout_stat.accepted}."
                             )
-                    try:
-                        self.output_queue.put_nowait(_TimedResult(create_time, traj))
-                    except queue.Full:
-                        raise RuntimeError(
-                            "Output queue full. Please increase queue_size."
-                        )
+
+                    task_input = task_obj.task_input
+                    if traj is not None and (
+                        task_input.should_accept is None
+                        or task_input.should_accept(traj)
+                    ):
+                        if self.config.enable_rollout_tracing:
+                            self.logger.info(
+                                f"Accept rollout result of task {task_rid}."
+                            )
+                        try:
+                            self.output_queue.put_nowait(
+                                _TimedResult(task_obj.create_time, traj)
+                            )
+                        except queue.Full:
+                            raise RuntimeError(
+                                "Output queue full. Please increase queue_size."
+                            )
+                    else:
+                        if self.config.enable_rollout_tracing:
+                            self.logger.info(f"Rollout is rejected.")
+                        with self.lock:
+                            self.rollout_stat.accepted -= 1
 
                 await asyncio.sleep(1)
         except Exception:
@@ -199,11 +232,11 @@ class WorkflowExecutor:
         finally:
             # Cancel remaining tasks
             with self.lock:
-                for task in rollout_tasks.values():
-                    if not task.done():
-                        task.cancel()
+                for task_obj in rollout_tasks.values():
+                    if not task_obj.task.done():
+                        task_obj.task.cancel()
                         try:
-                            await task
+                            await task_obj.task
                         except asyncio.CancelledError:
                             pass
 
@@ -212,20 +245,19 @@ class WorkflowExecutor:
         data: Dict[str, Any],
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
     ) -> None:
         try:
             if workflow is None:
                 workflow = workflow_builder()
-            self.input_queue.put_nowait((data, workflow))
+            x = _RolloutTaskInput(
+                data=data, workflow=workflow, should_accept=should_accept
+            )
+            self.input_queue.put_nowait(x)
         except queue.Full:
             raise RuntimeError("Input queue full. Please increase queue_size.")
 
-    def wait(
-        self,
-        count: int,
-        timeout: float | None = None,
-        should_accept: Callable | None = None,
-    ) -> TensorDict:
+    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
         tik = time.perf_counter()
         timeout = timeout or float(7 * 24 * 3600)
         while not self.exiting.is_set() and time.perf_counter() - tik < timeout:
@@ -233,19 +265,7 @@ class WorkflowExecutor:
                 # Drain all outputs.
                 try:
                     timed_result = self.output_queue.get_nowait()
-                    if timed_result.data is not None and (
-                        should_accept is None or should_accept(timed_result.data)
-                    ):
-                        if self.config.enable_rollout_tracing:
-                            logger.info(
-                                f"Accept rollout result. accepted/count = {len(self.result_cache)}/{count}"
-                            )
-                        self.result_cache.append(timed_result)
-                    else:
-                        if self.config.enable_rollout_tracing:
-                            logger.info(f"Rollout is rejected.")
-                        with self.lock:
-                            self.rollout_stat.accepted -= 1
+                    self.result_cache.append(timed_result)
                 except queue.Empty:
                     break
             if len(self.result_cache) >= count:
@@ -257,12 +277,10 @@ class WorkflowExecutor:
             raise RuntimeError("Rollout engine is exiting, cannot wait for results.")
         if accepted < count:
             raise TimeoutError(
-                f"Timed out waiting for {count} rollouts, " f"only received {accepted}."
+                f"Timed out waiting for {count} rollouts, only received {accepted}."
             )
         if self.config.enable_rollout_tracing:
-            logger.info(
-                f"Rollout results are ready! accepted/count = {accepted}/{count}"
-            )
+            self.logger.info(f"Rollout results are ready!")
         self.result_cache.sort(key=lambda x: x.t)
         results, self.result_cache = (
             self.result_cache[:count],
@@ -276,10 +294,16 @@ class WorkflowExecutor:
         data: List[Dict[str, Any]],
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
     ) -> TensorDict:
         """Submit a batch of requests to the inference engine and wait for the results."""
         for item in data:
-            self.submit(item, workflow, workflow_builder)
+            self.submit(
+                data=item,
+                workflow=workflow,
+                workflow_builder=workflow_builder,
+                should_accept=should_accept,
+            )
         return self.wait(count=len(data))
 
     def prepare_batch(
@@ -305,11 +329,10 @@ class WorkflowExecutor:
                         item,
                         workflow=workflow,
                         workflow_builder=workflow_builder,
+                        should_accept=should_accept,
                     )
             try:
-                return self.wait(
-                    dataloader.batch_size, timeout=1, should_accept=should_accept
-                )
+                return self.wait(dataloader.batch_size, timeout=1)
             except TimeoutError:
                 pass
 

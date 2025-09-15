@@ -12,6 +12,7 @@ from einops import rearrange
 from tensordict import TensorDict
 
 from areal.api.cli_args import MicroBatchSpec
+from areal.platforms import current_platform
 from areal.utils import datapack, logging
 
 logger = logging.getLogger("data utils")
@@ -862,7 +863,9 @@ def broadcast_tensor(tensor: torch.Tensor | None, src_rank=0, group=None):
         dtype = metadata["dtype"]
         device_type = metadata["device_type"]
         device = (
-            torch.device("cpu") if device_type == "cpu" else torch.cuda.current_device()
+            torch.device("cpu")
+            if device_type == "cpu"
+            else current_platform.current_device()
         )
         # Create tensor with the received shape and dtype
         tensor = torch.empty(tensor_shape, dtype=dtype, device=device)
@@ -945,6 +948,15 @@ def broadcast_tensor_container(data, src_rank=0, group=None):
                 k: broadcast_tensor_container(None, src_rank=src_rank, group=group)
                 for k in keys
             }
+        elif data_type == "tensordict":
+            batch_size, keys = info
+            return TensorDict(
+                {
+                    k: broadcast_tensor_container(None, src_rank=src_rank, group=group)
+                    for k in keys
+                },
+                batch_size=batch_size,
+            )
         elif data_type == "object":
             to_broadcast = [None]
             dist.broadcast_object_list(to_broadcast, src=src_rank, group=group)
@@ -967,13 +979,23 @@ def broadcast_tensor_container(data, src_rank=0, group=None):
                 broadcast_tensor_container(d, src_rank=src_rank, group=group)
                 for d in data
             ]
-        elif isinstance(data, (dict, TensorDict)):
+        elif isinstance(data, dict):
             metadata = [("dict", list(data.keys()))]
             dist.broadcast_object_list(metadata, src=src_rank, group=group)
             return {
                 k: broadcast_tensor_container(v, src_rank=src_rank, group=group)
                 for k, v in data.items()
             }
+        elif isinstance(data, TensorDict):
+            metadata = [("tensordict", (data.batch_size, list(data.keys())))]
+            dist.broadcast_object_list(metadata, src=src_rank, group=group)
+            return TensorDict(
+                {
+                    k: broadcast_tensor_container(v, src_rank=src_rank, group=group)
+                    for k, v in data.items()
+                },
+                batch_size=data.batch_size,
+            )
         else:
             metadata = [("object", None)]
             dist.broadcast_object_list(metadata, src=src_rank, group=group)

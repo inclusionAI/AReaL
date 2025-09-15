@@ -111,8 +111,8 @@ class MultiTurnWorkflow(RolloutWorkflow):
 > in a "prompt" column, you could get input token IDs with
 > `self.tokenizer.encode(data["prompt"])`.
 
-> **Note**: The `rid` field in `ModelRequest` is the request ID. Requests with the same ID
-> will reuse the LLM inference server's KV caches for better efficiency.
+> **Note**: The `rid` field in `ModelRequest` is the request ID. Requests with the same
+> ID will reuse the LLM inference server's KV caches for better efficiency.
 
 ### Handling Multi-turn Conversations
 
@@ -253,10 +253,11 @@ def main(args):
     data_generator = itertools.cycle(train_dataloader)
     for global_step in range(max_steps):
         with stats_tracker.record_timing("rollout"):
+            # the `should_accept` parameter is used for dynamic filtering
             if config.async_training:
-                batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
+                batch = rollout.prepare_batch(train_dataloader, workflow=workflow, should_accept=lambda sample: True)
             else:
-                batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
+                batch = rollout.rollout_batch(next(data_generator), workflow=workflow, should_accept=lambda sample: True)
         # ... continue with training loop ...
 ```
 

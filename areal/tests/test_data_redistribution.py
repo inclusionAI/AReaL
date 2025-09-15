@@ -49,9 +49,11 @@ def test_redistribute(world_size, granularity, tmp_path):
                 f"--granularity={granularity}",
             ],
             check=True,
+            capture_output=True,
+            text=True,
         )
     except subprocess.CalledProcessError as e:
-        pytest.fail(f"Test failed with error: {e.stderr.decode()}")
+        pytest.fail(f"Test failed with error: {e.stderr}")
 
     redistributed_data = []
     for i in range(world_size):

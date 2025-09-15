@@ -2,9 +2,8 @@ import dataclasses
 import json
 import os
 import pickle
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 
-import torch
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import AutoProcessor, PreTrainedTokenizerFast
@@ -12,10 +11,13 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.api.cli_args import RecoverConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta, StepInfo, WeightUpdateMeta
+from areal.platforms import current_platform
 from areal.utils import logging, timeutil
 from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
-from areal.utils.stats_logger import StatsLogger
+
+if TYPE_CHECKING:
+    from areal.utils.stats_logger import StatsLogger
 
 logger = logging.getLogger("recover")
 
@@ -168,7 +170,7 @@ class RecoverHandler:
         step_info: StepInfo,
         saver: Saver,
         evaluator: Evaluator,
-        stats_logger: StatsLogger,
+        stats_logger: "StatsLogger",
         dataloader: StatefulDataLoader,
         tokenizer: PreTrainedTokenizerFast | None = None,
         processor: AutoProcessor | None = None,
@@ -215,7 +217,7 @@ class RecoverHandler:
         engine: TrainEngine | Dict[str, TrainEngine],
         saver: Saver,
         evaluator: Evaluator,
-        stats_logger: StatsLogger,
+        stats_logger: "StatsLogger",
         dataloader: StatefulDataLoader,
         inference_engine: InferenceEngine | None = None,
         weight_update_meta: WeightUpdateMeta | None = None,
@@ -262,7 +264,7 @@ class RecoverHandler:
                 if dist.get_rank() == 0:
                     future.result()
                 dist.barrier(device_ids=[update_engine.device.index])
-                torch.cuda.synchronize()
+                current_platform.synchronize()
                 inference_engine.resume()
                 update_engine.set_version(global_step + 1)
                 inference_engine.set_version(global_step + 1)

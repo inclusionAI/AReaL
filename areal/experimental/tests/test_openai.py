@@ -87,7 +87,7 @@ def openai_client(sglang_server, tokenizer):
     )
     os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
     engine = RemoteSGLangEngine(config)
-    engine.initialize(None, None)
+    engine.initialize()
     yield ArealOpenAI(engine=engine, tokenizer=tokenizer, tool_call_parser="qwen25")
     engine.destroy()
 

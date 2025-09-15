@@ -157,7 +157,7 @@ The main training loop brings everything together:
 def main(args):
     # Initialize inference engine for rollouts
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(None, ft_spec)
+    rollout.initialize()
 
     # Initialize training engine
     actor = FSDPReinforceActor(config=config.actor)

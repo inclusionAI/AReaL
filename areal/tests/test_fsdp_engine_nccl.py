@@ -97,6 +97,7 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
         optimizer=OptimizerConfig(),
     )
     engine = FSDPEngine(engine_config)
+    engine.create_process_group()
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
     engine.initialize(None, ft_spec)
 
@@ -104,7 +105,7 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     config = InferenceEngineConfig(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
     config.server_addrs = [f"{HOST}:{PORT}"]
     remote_engine = RemoteSGLangEngine(config)
-    remote_engine.initialize(None, None)
+    remote_engine.initialize()
 
     # Get WeightUpdateMeta
     meta = WeightUpdateMeta.from_fsdp_nccl(
