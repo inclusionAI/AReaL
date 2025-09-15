@@ -1,6 +1,6 @@
 # Decoupled Clip and Dynamic Sampling Policy Optimization (DAPO)
 
-Last updated: Sep 11,2025
+Last updated: Sep 11, 2025
 
 Doc Author: [Ziyi ZENG](https://github.com/ZiyiTsang)
 
