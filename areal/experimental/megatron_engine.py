@@ -29,6 +29,7 @@ from areal.experimental.api.cli_args import (
 from areal.experimental.model.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.experimental.model.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.experimental.model.registry import make_hf_and_mcore_config, make_mcore_model
+from areal.experimental.utils.mcore.determinisitc import set_deterministic_algorithms
 from areal.experimental.utils.mcore.packed_context_parallel import (
     packed_context_parallel_forward,
 )
@@ -49,29 +50,6 @@ from areal.utils.data import (
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
-
-
-def set_deterministic_algorithms(model_config):
-    model_config.deterministic_mode = True
-    os.environ["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
-
-    all_reduce_choices = ["Tree", "Ring", "CollnetDirect", "CollnetChain", "^NVLS"]
-    if os.getenv("NCCL_ALGO") not in all_reduce_choices:
-        print(
-            f"Current NCCL_ALGO={os.getenv('NCCL_ALGO')} For deterministic algo, "
-            f"env [NCCL_ALGO] will be set to 'Ring'."
-        )
-        os.environ["NCCL_ALGO"] = "Ring"
-
-    cublas_workspace_config_choices = [":4096:8", ":16:8"]
-    if os.getenv("CUBLAS_WORKSPACE_CONFIG") not in cublas_workspace_config_choices:
-        print(
-            f"Current CUBLAS_WORKSPACE_CONFIG={os.getenv('CUBLAS_WORKSPACE_CONFIG')}. "
-            f"For deterministic algo, env [CUBLAS_WORKSPACE_CONFIG] will be set to ':4096:8'."
-        )
-        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-
-    torch.use_deterministic_algorithms(True, warn_only=True)
 
 
 class MegatronEngine(TrainEngine):
@@ -114,6 +92,7 @@ class MegatronEngine(TrainEngine):
         parallel_strategy: ParallelStrategy,
         seed: int = 0,
     ):
+
         # TODO: add parallel_strategy & seed in engine api when moving out of experimental
         if self.parallel_strategy is None:
             self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
@@ -152,6 +131,10 @@ class MegatronEngine(TrainEngine):
             disable_dropout_in_model(self.model)
 
         model_config = get_model_config(self.model)
+        # NOTE: It is recommended to set this option to True for RL training on MoE models for stability.
+        if self.mcore_config.use_deterministic_algorithms:
+            set_deterministic_algorithms(model_config)
+
         if isinstance(self.model, DDP) and self.mcore_config.ddp.overlap_grad_reduce:
             model_config.no_sync_func = self.model.no_sync
         if (
@@ -160,8 +143,6 @@ class MegatronEngine(TrainEngine):
         ):
             model_config.param_sync_func = self.model.start_param_sync
         model_config.finalize_model_grads_func = finalize_model_grads
-
-        set_deterministic_algorithms(model_config)
 
         self.create_optimizer(ft_spec)
         self.initialized = True
