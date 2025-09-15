@@ -129,10 +129,7 @@ def get_clevr_count_70k_rl_dataset(
     max_length: Optional[int] = None,
 ):
     dataset = load_dataset(path=path, split=split)
-    total_size = len(dataset)
-    subset_size = int(total_size * 0.01)
-    indices = random.sample(range(total_size), subset_size)
-    dataset = dataset.select(indices)
+
     def process(sample):
         # processed_images = [
         #     convert_image(image, 336 * 336) for image in sample["images"]
