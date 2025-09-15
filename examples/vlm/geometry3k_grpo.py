@@ -14,6 +14,7 @@ from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
+from areal.reward import get_custom_reward_fn
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.utils import seeding, stats_tracker
@@ -151,14 +152,14 @@ def main(args):
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
 
     workflow = VisionRLVRWorkflow(
-        reward_fn=clevr_count_70k_reward_fn,
+        reward_fn=get_custom_reward_fn(config.train_dataset.path),
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
     )
     eval_workflow = VisionRLVRWorkflow(
-        reward_fn=clevr_count_70k_reward_fn,
+        reward_fn=get_custom_reward_fn(config.train_dataset.path),
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,

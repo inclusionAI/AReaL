@@ -1,7 +1,7 @@
 import math
 from io import BytesIO
 from typing import Any, Dict, Optional, Union
-
+import random
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 from PIL.Image import Image as ImageObject
@@ -41,6 +41,10 @@ def get_clevr_count_70k_sft_dataset(
     },
     """
     dataset = load_dataset(path=path, split=split)
+    total_size = len(dataset)
+    subset_size = int(total_size * 0.01)
+    indices = random.sample(range(total_size), subset_size)
+    dataset = dataset.select(indices)
 
     tokenizer = processor.tokenizer
 
@@ -69,7 +73,7 @@ def get_clevr_count_70k_sft_dataset(
             messages, add_generation_prompt=True, tokenize=False
         )
 
-        sample["images"] = processed_images
+        sample["images"] = sample["images"]
         sample["seq"] = messages
 
         return sample
@@ -91,12 +95,14 @@ def get_clevr_count_70k_sft_dataset(
             return_attention_mask=False,
         )
 
-        example["input_ids"] = processed_input["input_ids"].squeeze(0)
-        example["pixel_values"] = processed_input["pixel_values"]
+        example["input_ids"] = processed_input["input_ids"].squeeze(0).tolist()
+        example["pixel_values"] = processed_input["pixel_values"].tolist()
+
         if "image_grid_thw" in processed_input:
-            example["image_grid_thw"] = processed_input["image_grid_thw"]
+            example["image_grid_thw"] = processed_input["image_grid_thw"].tolist()
         if "token_type_ids" in processed_input:
-            example["token_type_ids"] = processed_input["token_type_ids"]
+            example["token_type_ids"] = processed_input["token_type_ids"].tolist()
+
         answer_token = tokenizer.encode(example["answer"])
         loss_mask = [0] * (len(example["input_ids"]) - len(answer_token)) + [1] * len(
             answer_token
@@ -105,7 +111,7 @@ def get_clevr_count_70k_sft_dataset(
         return example
 
     dataset = dataset.map(
-        lambda x: _process(x), remove_columns=["images", "seq", "problem", "answer"])
+        lambda x: _process(x), remove_columns=["images", "seq", "problem", "answer"], num_proc=64)
 
     if max_length is not None:
         # Filter out sequences longer than max_length
