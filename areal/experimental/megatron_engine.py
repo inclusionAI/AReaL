@@ -92,7 +92,6 @@ class MegatronEngine(TrainEngine):
         parallel_strategy: ParallelStrategy,
         seed: int = 0,
     ):
-
         # TODO: add parallel_strategy & seed in engine api when moving out of experimental
         if self.parallel_strategy is None:
             self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
