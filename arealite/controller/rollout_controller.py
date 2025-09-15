@@ -182,7 +182,7 @@ class DistributedRolloutController(RolloutController):
         )
         engineSpec.env_vars["ENGINE_PACKAGE_PATH"] = engine_path
         engineSpec.env_vars["WORKER_IMAGE"] = (
-            "/storage/openpsi/images/hybrid-engine-13680179-20250912123425.sif"
+            "/storage/openpsi/images/hybrid-engine-13680179-20250912200412.sif"
         )
         engineSpec.env_vars["WORKER_LOG_DIR"] = (
             "{storage_prefix}/experiments/logs/root/{experiment_name}/{trial_name}".format(
@@ -220,7 +220,8 @@ class DistributedRolloutController(RolloutController):
         engineSpec.env_vars["NCCL_IB_QPS_PER_CONNECTION"] = "8"
         engineSpec.env_vars["NCCL_SET_THREAD_NAME"] = "1"
         # sglang need to specify NCCL version
-        engineSpec.env_vars["SGLANG_NCCL_SO_PATH"]="/opt/conda/lib/python3.10/site-packages/nvidia/nccl-amem/lib/libnccl.so.2"
+        # rollout_controller中不需要单独指定这个环境变量 因为这个镜像中只有一个nccl @卮言
+        # engineSpec.env_vars["SGLANG_NCCL_SO_PATH"]="/opt/conda/lib/python3.10/site-packages/nvidia/nccl-amem/lib/libnccl.so.2"
 
         scheduling_config.specs.append(workerSpec)
         scheduling_config.specs.append(engineSpec)
