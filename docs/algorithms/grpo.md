@@ -1,6 +1,6 @@
 # Group Relative Policy Optimization (GRPO)
 
-Last updated: Sep 11,2025
+Last updated: Sep 11, 2025
 
 Author: [Ziyi ZENG](https://github.com/ZiyiTsang)
 
