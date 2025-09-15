@@ -190,16 +190,12 @@ class InferenceEngine(abc.ABC):
         data: Dict[str, Any],
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
     ) -> None:
         """Asynchronously submit a request to the inference engine. Exits immediately."""
         raise NotImplementedError()
 
-    def wait(
-        self,
-        count: int,
-        timeout: float | None = None,
-        should_accept: Callable | None = None,
-    ) -> TensorDict:
+    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
         """Wait for a specified number of requests to complete, with a timeout."""
         raise NotImplementedError()
 
