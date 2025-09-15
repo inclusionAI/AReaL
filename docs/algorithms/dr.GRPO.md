@@ -1,6 +1,6 @@
 # Group Relative Policy Optimization Done Right (Dr.GRPO)
 
-Last updated: Sep 11,2025
+Last updated: Sep 11, 2025
 
 Doc Author: [Ziyi ZENG](https://github.com/ZiyiTsang)
 
