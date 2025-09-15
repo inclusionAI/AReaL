@@ -51,3 +51,15 @@ def is_version_less(package_name: str, target_version: str) -> bool:
     """
     installed_version = get_version(package_name)
     return compare_versions(installed_version, target_version) < 0
+
+
+def is_version_equal(package_name: str, target_version: str) -> bool:
+    """
+    Check if the installed version of a package is equal to the target version.
+
+    :param package_name: Name of the package.
+    :param target_version: Target version to compare against.
+    :return: True if the installed version is equal to the target version, False otherwise.
+    """
+    installed_version = get_version(package_name)
+    return compare_versions(installed_version, target_version) == 0

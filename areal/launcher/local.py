@@ -21,7 +21,13 @@ from areal.api.cli_args import (
 )
 from areal.utils import logging, name_resolve, names
 from areal.utils.device import gpu_count
-from areal.utils.launcher import JobException, JobInfo, JobState, get_env_vars
+from areal.utils.launcher import (
+    JobException,
+    JobInfo,
+    JobState,
+    apply_sglang_patch,
+    get_env_vars,
+)
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.recover import check_if_recover
 
@@ -132,6 +138,8 @@ class LocalLauncher:
                 + cmd[i]
             )
             c = f"{c} 2>&1 | tee -a {self.log_path_of(job_name)}"
+            # SGLang will somehow remove quotes in the command, so we need to escape the quotes
+            c = c.replace('"', '\\"')
             logger.info("Starting local process with command: %s", c)
             process = subprocess.Popen(c, shell=isinstance(c, str))
             self._jobs[f"{job_name}/{offset + i}"] = process
@@ -280,6 +288,9 @@ def local_main(config, run_id: int = 0):
         ports = find_free_ports(alloc_mode.gen.dp_size * 2, port_range=(10000, 50000))
         host_ip = gethostip()
         host = "localhost" if not config.sglang.enable_metrics else host_ip
+        # Directly apply sglang patch on local node since we do not use sglang_server.py
+        if config.sglang.if_apply_sglang_patch:
+            apply_sglang_patch()
         for i in range(alloc_mode.gen.dp_size):
             config.sglang.random_seed = base_seed + i
             cmd = SGLangConfig.build_cmd(
