@@ -89,7 +89,7 @@ class LocalLauncher:
             raise RuntimeError(
                 f"Local mode can only run when there is at least one GPU. "
                 f"{current_platform.device_control_env_var} is currently"
-                f" set to {os.environ[current_platform.device_control_env_var]}."
+                f" set to: `{os.environ.get(current_platform.device_control_env_var, '')}`."
             )
 
     @property
