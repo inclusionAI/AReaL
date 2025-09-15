@@ -129,6 +129,7 @@ def get_clevr_count_70k_rl_dataset(
     max_length: Optional[int] = None,
 ):
     dataset = load_dataset(path=path, split=split)
+    
 
     def process(sample):
         # processed_images = [
