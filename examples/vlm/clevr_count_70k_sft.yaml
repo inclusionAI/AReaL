@@ -1,9 +1,9 @@
 experiment_name: clevr_count_70k-sft
 trial_name: trial0
-
+allocation_mode: d8p1t1
 cluster:
   n_nodes: 1
-  n_gpus_per_node: 1
+  n_gpus_per_node: 8
   cluster_name: na132
   fileroot: /storage/openpsi/experiments
   name_resolve:
@@ -17,7 +17,7 @@ tokenizer_path: ${model.path}
 model:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen2-VL-7B
+  path: /storage/openpsi/data/gemma-3-4b-it/models/LLM-Research/gemma-3-4b-it
   dtype: bfloat16
   init_from_scratch: false
   gradient_checkpointing: false
@@ -39,7 +39,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/data/clevr_count_70k/
+  path: BUAADreamer/clevr_count_70k
   type: sft
 
 valid_dataset:
@@ -47,7 +47,7 @@ valid_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/data/clevr_count_70k/
+  path: BUAADreamer/clevr_count_70k
   type: sft
 
 # Utilities

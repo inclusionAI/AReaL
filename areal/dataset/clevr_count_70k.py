@@ -44,82 +44,10 @@ def get_clevr_count_70k_sft_dataset(
 
     tokenizer = processor.tokenizer
 
-    def process_example(example, idx):
-        # Add query_id column
-        images = example["images"]
-        if "qwen" in processor.image_processor.image_processor_type.lower():
-            image_token = "<|vision_start|><|image_pad|><|vision_end|>"
-        else:
-            image_token = processor.image_token if processor is not None else "<image>"
-        example["problem"] = (
-            example["problem"].replace("<image>", image_token).replace("different", "")
-        )
-        processed_images = []
-        for image in images:
-            processed_images.append(convert_image(image, 336 * 336))
-        example["images"] = processed_images
-        example["seq"] = example["problem"] + example["answer"] + tokenizer.eos_token
-
-        return example
-
-    dataset = dataset.map(
-        lambda example, idx: process_example(example, idx),
-        with_indices=True,
-    )
-
-    def _process(example):
-        text = example["seq"]
-        processed_input = processor(
-            text=[text],
-            images=example["images"],
-            padding=False,
-            return_tensors="pt",
-            return_length=True,
-            return_attention_mask=False,
-        )
-
-        example["input_ids"] = processed_input["input_ids"].squeeze(0)
-        example["pixel_values"] = processed_input["pixel_values"]
-        example["image_grid_thw"] = processed_input["image_grid_thw"]
-        answer_token = tokenizer.encode(example["answer"])
-        loss_mask = [0] * (len(example["input_ids"]) - len(answer_token)) + [1] * len(
-            answer_token
-        )
-        example["loss_mask"] = loss_mask
-        return example
-
-    dataset = dataset.map(
-        lambda x: _process(x), remove_columns=["images", "seq", "problem", "answer"]
-    )
-
-    if max_length is not None:
-        # Filter out sequences longer than max_length
-        dataset = dataset.filter(lambda x: len(x["input_ids"]) <= max_length)
-
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
-    return dataset
-
-
-def get_clevr_count_70k_rl_dataset(
-    path: str,
-    split: str,
-    processor,
-    rank: int,
-    world_size: int,
-    max_length: Optional[int] = None,
-):
-    dataset = load_dataset(path=path, split=split)
-
-    def process(sample):
-        processed_images = [
-            convert_image(image, 336 * 336) for image in sample["images"]
-        ]
-        if "qwen" in processor.image_processor.image_processor_type.lower():
-            image_token = "<|vision_start|><|image_pad|><|vision_end|>"
-        elif "gemma" in processor.image_processor.image_processor_type.lower():
-            image_token = "<start_of_image><image_soft_token><end_of_image>"
-        else:
-            image_token = processor.image_token if processor is not None else "<image>"
+    def process_example(sample, idx):
+        # processed_images = [
+        #     convert_image(image, 336 * 336) for image in sample["images"]
+        # ]
         system_prompt = {
             "role": "system",
             "content": [{"type": "text", "text":
@@ -140,7 +68,88 @@ def get_clevr_count_70k_rl_dataset(
         messages = processor.tokenizer.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=False
         )
-        return {"messages": messages, "images": processed_images}
+
+        sample["images"] = processed_images
+        sample["seq"] = messages
+
+        return sample
+
+    dataset = dataset.map(
+        lambda example, idx: process_example(example, idx),
+        with_indices=True,
+        num_proc=64
+    )
+
+    def _process(example):
+        text = example["seq"]
+        processed_input = processor(
+            text=[text],
+            images=example["images"],
+            padding=False,
+            return_tensors="pt",
+            return_length=True,
+            return_attention_mask=False,
+        )
+
+        example["input_ids"] = processed_input["input_ids"].squeeze(0)
+        example["pixel_values"] = processed_input["pixel_values"]
+        if "image_grid_thw" in processed_input:
+            example["image_grid_thw"] = processed_input["image_grid_thw"]
+        if "token_type_ids" in processed_input:
+            example["token_type_ids"] = processed_input["token_type_ids"]
+        answer_token = tokenizer.encode(example["answer"])
+        loss_mask = [0] * (len(example["input_ids"]) - len(answer_token)) + [1] * len(
+            answer_token
+        )
+        example["loss_mask"] = loss_mask
+        return example
+
+    dataset = dataset.map(
+        lambda x: _process(x), remove_columns=["images", "seq", "problem", "answer"])
+
+    if max_length is not None:
+        # Filter out sequences longer than max_length
+        dataset = dataset.filter(lambda x: len(x["input_ids"]) <= max_length)
+
+    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+    return dataset
+
+
+def get_clevr_count_70k_rl_dataset(
+    path: str,
+    split: str,
+    processor,
+    rank: int,
+    world_size: int,
+    max_length: Optional[int] = None,
+):
+    dataset = load_dataset(path=path, split=split)
+
+    def process(sample):
+        # processed_images = [
+        #     convert_image(image, 336 * 336) for image in sample["images"]
+        # ]
+        system_prompt = {
+            "role": "system",
+            "content": [{"type": "text", "text":
+                "You are a helpful assistant. Solve the following question: count the number of items in the image and provide the final answer in [ ] format, ensuring that only the number is inside the brackets without any additional text or explanations. "
+            }]
+        }
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": sample["problem"]}
+                ]
+            }
+        ]
+        messages.insert(0, system_prompt)
+        messages = processor.tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, tokenize=False
+        )
+        return {"messages": messages, "images": sample["images"]}
 
     dataset = dataset.map(process, num_proc=64).remove_columns(["problem"])
 
