@@ -18,7 +18,7 @@ $$ J\_{\\text{GRPO}}(\\theta) = \\mathbb{E}{\\substack{q \\sim P(Q), \\ {o_i}{i=
 \\sim \\pi\_{\\theta\_{\\text{old}}}(o|q)}} \\left\[ \\frac{1}{G} \\sum\_{i=1}^G
 \\sum\_{t=1}^{|o_i|} \\min\\left(r\_{i,t}(\\theta) \\hat{A}{i,t},
 \\text{clip}\\left(r{i,t}(\\theta), 1-\\epsilon, 1+\\epsilon\\right)
-\\hat{A}{i,t}\\right) - \\beta D{\\mathrm{KL}}\\left\[\\pi\_\\theta ,|,
+\\hat{A}{i,t}\\right) - \\beta D{\\mathrm{KL}}\\left\[\\pi\_\\theta |
 \\pi\_{\\text{ref}}\\right\] \\right\] $$
 
 where:
@@ -52,6 +52,6 @@ We recommend to change the parameter within the configuration file
 | **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py --config examples/math/gsm8k_grpo.yaml --<other_args_to_overwrite>`   |
 | **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py --config examples/math/gsm8k_grpo.yaml --<other_args_to_overwrite>` |
 
-## Example Usage
+## Baselines
 
 We still lack baseline, welcome to contribute!

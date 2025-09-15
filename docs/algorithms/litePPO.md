@@ -28,9 +28,9 @@ For more details:
 We only list the different parameters from GRPO here:
 
 - `actor.adv_norm.mean_level`: The level when calculate the mean of advantage. options:
-  `group`,`batch` or `none`.
+  `group`,`batch` or `none`. In litePPO, it is set to `group` as default.
 - `actor.adv_norm.std_level`: The level when calculate the std of advantage. options:
-  `group`,`batch` or `none`.
+  `group`,`batch` or `none`. In litePPO, it is set to `batch` as default.
 
 ## Example Usage
 
@@ -45,6 +45,6 @@ We recommend to change the parameter within the configuration file
 | **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_liteppo.py --config examples/math/gsm8k_liteppo.yaml --<other_args_to_overwrite>`   |
 | **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_liteppo.py --config examples/math/gsm8k_liteppo.yaml --<other_args_to_overwrite>` |
 
-## Example Usage
+## Baseline
 
 We still lack baseline, welcome to contribute!

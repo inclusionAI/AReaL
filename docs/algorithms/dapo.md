@@ -69,6 +69,6 @@ We recommend to change the parameter within the configuration file
 | **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_dapo.py --config examples/math/gsm8k_dapo.yaml --<other_args_to_overwrite>`   |
 | **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_dapo.py --config examples/math/gsm8k_dapo.yaml --<other_args_to_overwrite>` |
 
-## Example Usage
+## Baselines
 
 We still lack baseline, welcome to contribute!
