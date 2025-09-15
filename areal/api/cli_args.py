@@ -11,9 +11,10 @@ from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
 from omegaconf import MISSING, DictConfig, OmegaConf
 
-from areal.utils import name_resolve, pkg_version
+from areal.utils import name_resolve, pkg_version, logging
 from areal.utils.fs import get_user_tmp
 
+logger = logging.getLogger("CLI Args")
 
 @dataclass
 class MicroBatchSpec:
@@ -234,14 +235,30 @@ class TrainEngineConfig:
     )
 
     # Lora
+    use_lora: bool = False
     lora_rank: int = field(default=32, metadata={"help": "lora_rank"})
     lora_alpha: int = field(default=16, metadata={"help": "lora alpha"})
-    target_modules: str = field(
-        default="all-linear", metadata={"help": "lora target_modules"}
+    target_modules: List[str] | None = field(
+        default=None, metadata={"help": "lora target_modules"}
     )
-    peft_type: str = field(
-        default="None", metadata={"help": "peft method type, include lora, ..."}
+    peft_type: str | None = field(
+        default=None, metadata={"help": "peft method type, include lora, ..."}
     )
+
+    def __post_init__(self):
+        if self.use_lora:
+            if not self.peft_type:
+                self.peft_type = "lora"
+                logger.warning("Set the default peft_type to lora when use_lora is True")
+            elif self.peft_type.lower() != "lora":
+                self.peft_type = "lora"
+                logger.warning("Only support lora now!")
+            if not self.target_modules:
+                self.target_modules = "all-linear"
+                logger.warning("Set the default target_modules to all-linear when use_lora is True")
+        else:
+            self.peft_type = None
+            self.target_modules = None
 
 
 @dataclass
@@ -405,6 +422,14 @@ class SGLangConfig:
     kv_cache_dtype: str = "auto"
     dp_size: int = 1  # only used for dp attention
     ep_size: int = 1
+    # lora
+    enable_lora: bool | None = None
+    max_lora_rank: int | None = None
+    lora_target_modules: List[str] | None = None
+    lora_paths: List[str] | None = None
+    max_loaded_loras: int | None = None
+    max_loras_per_batch: int = 8
+    lora_backend: str = "triton"
     # logging
     log_level: str = "warning"
     log_level_http: Optional[str] = "warning"
@@ -415,7 +440,6 @@ class SGLangConfig:
     # The interval (in decoding iterations) to log throughput
     # and update prometheus metrics
     decode_log_interval: int = 1
-    lora_paths: str = ""
 
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
@@ -466,8 +490,6 @@ class SGLangConfig:
     ):
 
         args: Dict = conf_as_dict(sglang_config)
-        if sglang_config.lora_paths != "":
-            args = dict(max_loras_per_batch=1, lora_backend="triton", **args)
         args = dict(
             host=host,
             port=port,
@@ -531,7 +553,6 @@ class InferenceEngineConfig:
     request_retries: int = field(
         default=3, metadata={"help": "Number of retries for failed requests."}
     )
-    use_lora: bool = field(default=False)
 
 
 @dataclass

@@ -3,6 +3,11 @@ import os
 import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
+from peft import (
+    LoraConfig,
+    TaskType,
+    get_peft_model,
+)
 
 import torch
 import torch.distributed as dist
@@ -36,7 +41,6 @@ from areal.utils.fsdp import (
     apply_fsdp2,
     fsdp2_clip_grad_norm_,
     fsdp2_load_full_state_dict,
-    init_device_mesh,
 )
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
@@ -159,6 +163,9 @@ class FSDPEngine(BaseHFEngine):
         # Create device model
         self.create_device_model()
 
+        if self.config.use_lora:
+            self._apply_peft_wrapper()
+
         # Monkey patch: replace attention's forward() with Ulysses variant.
         apply_monkey_patch(
             model=self.model,
@@ -179,8 +186,8 @@ class FSDPEngine(BaseHFEngine):
 
         # mesh_shape=(self.world_size, 1) in FSDP2 is same as NO_Shard in FSDP.
         # Lora use NO_Shard FSDP here
-        if self.config.peft_type != "None":
-            self.device_mesh = init_device_mesh(
+        if self.config.use_lora:
+            self.fsdp_device_mesh = init_device_mesh(
                 "cuda",
                 mesh_shape=(self.world_size, 1),
                 mesh_dim_names=("replicate", "shard"),
@@ -200,6 +207,40 @@ class FSDPEngine(BaseHFEngine):
 
         self.create_optimizer(ft_spec)
         self.initialized = True
+
+    def _apply_peft_wrapper(self):
+        config = self.config
+        if "all-linear" in config.target_modules:
+            target_modules = "all-linear"
+        else:
+            target_modules = config.target_modules
+        peft_config = {
+            "task_type": TaskType.CAUSAL_LM,
+            "r": config.lora_rank,
+            "lora_alpha": config.lora_alpha,
+            "target_modules": target_modules,
+            "bias": "none",
+        }
+        if self.config.peft_type == "lora":
+            peft_config = LoraConfig(**peft_config)
+        else:
+            raise NotImplementedError()
+
+        self.model = get_peft_model(
+            self.model,
+            peft_config,
+            autocast_adapter_dtype=False,
+        )
+
+        # Make sure we don't require gradients on non-lora params
+        with torch.no_grad():
+            for name, param in self.model.named_parameters():
+                if ".lora_A." in name or ".lora_B." in name:
+                    param.requires_grad_(True)
+                else:
+                    param.requires_grad_(False)
+
+        self.model.print_trainable_parameters()
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
@@ -241,12 +282,12 @@ class FSDPEngine(BaseHFEngine):
         options = StateDictOptions(full_state_dict=True, cpu_offload=True)
         state_dict = get_model_state_dict(self.model, options=options)
 
-        def filter_lora_weights(original_state_dict):
+        def filter_lora_weights(state_dict):
             from collections import OrderedDict
 
             filtered_state_dict = OrderedDict(
                 (key, value)
-                for key, value in original_state_dict.items()
+                for key, value in state_dict.items()
                 if "lora" in key.lower()
             )
             return filtered_state_dict
@@ -254,11 +295,10 @@ class FSDPEngine(BaseHFEngine):
         # save huggingface model on rank 0
         if dist.get_rank() == 0:
             os.makedirs(path, exist_ok=True)
-            if self.config.peft_type != "None":
-                lora_dict = filter_lora_weights(state_dict)
-                self.model.save_pretrained(path, state_dict=lora_dict)
-            else:
-                self.model.save_pretrained(path, state_dict=state_dict)
+            logger.info(f"before filter: {state_dict.keys()}")
+            if self.config.use_lora:
+                state_dict = filter_lora_weights(state_dict)
+            self.model.save_pretrained(path, state_dict=state_dict)
             self.model_config.save_pretrained(path)
             if tokenizer is not None:
                 tokenizer.save_pretrained(path)
@@ -292,26 +332,11 @@ class FSDPEngine(BaseHFEngine):
             self._save_model_to_hf(meta.path, self.tokenizer, self.processor)
             # dist.barrier() are called when _save_model_to_hf finished
             if dist.get_rank() == 0:
-                if self.config.peft_type != "None":
-                    update_name = names.load_lora_adapter(
-                        self.config.experiment_name,
-                        self.config.trial_name,
-                        self.get_version(),
-                    )
-                    name_resolve.add(
-                        update_name, str(datetime.now().timestamp()), keepalive_ttl=120
-                    )
-                    update_name = names.unload_lora_adapter(
-                        self.config.experiment_name,
-                        self.config.trial_name,
-                        self.get_version(),
-                    )
-                else:
-                    update_name = names.update_weights_from_disk(
-                        self.config.experiment_name,
-                        self.config.trial_name,
-                        self.get_version(),
-                    )
+                update_name = names.update_weights_from_disk(
+                    self.config.experiment_name,
+                    self.config.trial_name,
+                    self.get_version(),
+                )
                 name_resolve.add(
                     update_name, str(datetime.now().timestamp()), keepalive_ttl=120
                 )

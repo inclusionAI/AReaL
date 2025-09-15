@@ -83,6 +83,7 @@ class RemoteSGLangEngine(InferenceEngine):
         logger.info("Servers are all ready!")
         self.executor = ProcessPoolExecutor(max_workers=1)
         self.workflow_executor.initialize(train_data_parallel_size)
+        self.lora_init = False
 
     def destroy(self):
         self.workflow_executor.destroy()
@@ -130,8 +131,10 @@ class RemoteSGLangEngine(InferenceEngine):
             "sampling_params": sample_params,
             "return_logprob": True,
             "stream": False,
-            "lora_path": "lora_1",
         }
+        if self.lora_init:
+            # payload["lora_path"] = f"lora_{self.get_version()}"
+            payload["lora_path"] = f"lora_1"
 
         # Make request
         start_time = time.perf_counter()
@@ -257,67 +260,47 @@ class RemoteSGLangEngine(InferenceEngine):
                 raise RuntimeError(
                     f"Experiment and trial names must be set for disk-based weight updates."
                 )
+            endpoints = ['update_weights_from_disk']
+            payloads = [dict(model_path=str(meta.path), abort_all_request=True)]
+            if meta.use_lora:
+                endpoints = []
+                payloads = []
+                # lora_name = f"lora_{self.get_version()}"
+                lora_name = f"lora_1"
+                if self.lora_init:
+                    endpoints.append('unload_lora_adapter')
+                    payloads.append(dict(lora_name=lora_name, abort_all_request=True))
+                else:
+                    self.lora_init = True
+                endpoints.append('load_lora_adapter')
+                payloads.append(dict(lora_name=lora_name, lora_path=str(meta.path)))
 
-            if self.config.use_lora:
-                fut = self.executor.submit(
-                    unload_lora_adapter,
-                    self.config.experiment_name,
-                    self.config.trial_name,
-                    self.get_version(),
-                    self.addresses,
-                    meta.path,
-                    self.config.request_retries,
-                    self.config.request_timeout,
-                )
+            fut = self.executor.submit(
+                update_weights_from_disk,
+                self.config.experiment_name,
+                self.config.trial_name,
+                self.get_version(),
+                self.addresses,
+                meta.path,
+                self.config.request_retries,
+                self.config.request_timeout,
+                endpoints,
+                payloads,
+            )
 
-                def callback_1(fut):
-                    fut = self.executor.submit(
-                        load_lora_adapter,
-                        self.config.experiment_name,
-                        self.config.trial_name,
-                        self.get_version(),
-                        self.addresses,
-                        meta.path,
-                        self.config.request_retries,
-                        self.config.request_timeout,
-                    )
+            def callback(fut):
+                shutil.rmtree(meta.path, ignore_errors=True)
 
-                    fut.add_done_callback(callback)
-
-                def callback(fut):
-                    shutil.rmtree(meta.path, ignore_errors=True)
-                    for addr in self.addresses:
-                        res = requests.post(f"http://{addr}/continue_generation")
-                        res.raise_for_status()
-
-                fut.add_done_callback(callback_1)
-            else:
-                fut = self.executor.submit(
-                    update_weights_from_disk,
-                    self.config.experiment_name,
-                    self.config.trial_name,
-                    self.get_version(),
-                    self.addresses,
-                    meta.path,
-                    self.config.request_retries,
-                    self.config.request_timeout,
-                )
-
-                def callback(fut):
-                    shutil.rmtree(meta.path, ignore_errors=True)
-
-                fut.add_done_callback(callback)
+            fut.add_done_callback(callback)
         else:
             raise NotImplementedError(f"Unsupported weight update type: {meta.type}")
 
-        if self.config.use_lora == False:
+        def callback(fut):
+            for addr in self.addresses:
+                res = requests.post(f"http://{addr}/continue_generation")
+                res.raise_for_status()
 
-            def callback(fut):
-                for addr in self.addresses:
-                    res = requests.post(f"http://{addr}/continue_generation")
-                    res.raise_for_status()
-
-            fut.add_done_callback(callback)
+        fut.add_done_callback(callback)
         return fut
 
     def submit(
@@ -376,6 +359,8 @@ def update_weights_from_disk(
     path,
     request_retries,
     request_timeout,
+    endpoints,
+    payloads,
 ):
     async def _fn():
         # Wait for model checkpoints of meta.version
@@ -385,7 +370,7 @@ def update_weights_from_disk(
         save_timestamp = float(name_resolve.wait(update_name, timeout=120))
         load_timestamp = datetime.now().timestamp()
         logger.info(
-            f"Begin update weights from {path}, responded in {(load_timestamp - save_timestamp):.2f}s"
+            f"Begin update weights from {path} with endpoints {' '.join(endpoints)}, responded in {(load_timestamp - save_timestamp):.2f}s"
         )
         session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(
@@ -396,124 +381,26 @@ def update_weights_from_disk(
             read_bufsize=1024 * 1024 * 10,
             connector=get_default_connector(),
         )
-        jobs = [
-            arequest_with_retry(
-                addr=addr,
-                session=session,
-                endpoint="/update_weights_from_disk",
-                payload=dict(model_path=str(path), abort_all_request=True),
-                method="POST",
-                max_retries=request_retries,
-                timeout=request_timeout,
-            )
-            for addr in addresses
-        ]
-        await asyncio.gather(*jobs)
+        for endpoint, payload in zip(endpoints, payloads):
+            jobs = [
+                arequest_with_retry(
+                    addr=addr,
+                    session=session,
+                    endpoint=f"/{endpoint}",
+                    payload=payload,
+                    method="POST",
+                    max_retries=request_retries,
+                    timeout=request_timeout,
+                )
+                for addr in addresses
+            ]
+            await asyncio.gather(*jobs)
         await session.close()
         logger.info(
             f"Loading weights done in {(datetime.now().timestamp() - load_timestamp):.2f}s"
         )
 
     return uvloop.run(_fn())
-
-
-def load_lora_adapter(
-    experiment_name,
-    trial_name,
-    model_version,
-    addresses,
-    path,
-    request_retries,
-    request_timeout,
-):
-    async def _fn():
-        # Wait for model checkpoints of meta.version
-        update_name = names.load_lora_adapter(
-            experiment_name, trial_name, model_version
-        )
-        save_timestamp = float(name_resolve.wait(update_name, timeout=120))
-        load_timestamp = datetime.now().timestamp()
-        logger.info(
-            f"Begin load weights from {path}, responded in {(load_timestamp - save_timestamp):.2f}s"
-        )
-        session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(
-                total=request_timeout,
-                sock_connect=request_timeout,
-                connect=request_timeout,
-            ),
-            read_bufsize=1024 * 1024 * 10,
-            connector=get_default_connector(),
-        )
-        jobs = [
-            arequest_with_retry(
-                addr=addr,
-                session=session,
-                endpoint="/load_lora_adapter",
-                payload=dict(lora_name="lora_1", lora_path=str(path)),
-                method="POST",
-                max_retries=request_retries,
-                timeout=request_timeout,
-            )
-            for addr in addresses
-        ]
-        await asyncio.gather(*jobs)
-        await session.close()
-        logger.info(
-            f"Loading weights done in {(datetime.now().timestamp() - load_timestamp):.2f}s"
-        )
-
-    return uvloop.run(_fn())
-
-
-def unload_lora_adapter(
-    experiment_name,
-    trial_name,
-    model_version,
-    addresses,
-    path,
-    request_retries,
-    request_timeout,
-):
-    async def _fn():
-        # Wait for model checkpoints of meta.version
-        update_name = names.unload_lora_adapter(
-            experiment_name, trial_name, model_version
-        )
-        save_timestamp = float(name_resolve.wait(update_name, timeout=120))
-        load_timestamp = datetime.now().timestamp()
-        logger.info(
-            f"Begin unload adapter {path}, responded in {(load_timestamp - save_timestamp):.2f}s"
-        )
-        session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(
-                total=request_timeout,
-                sock_connect=request_timeout,
-                connect=request_timeout,
-            ),
-            read_bufsize=1024 * 1024 * 10,
-            connector=get_default_connector(),
-        )
-        jobs = [
-            arequest_with_retry(
-                addr=addr,
-                session=session,
-                endpoint="/unload_lora_adapter",
-                payload=dict(lora_name="lora_1"),
-                method="POST",
-                max_retries=request_retries,
-                timeout=request_timeout,
-            )
-            for addr in addresses
-        ]
-        await asyncio.gather(*jobs)
-        await session.close()
-        logger.info(
-            f"Loading weights done in {(datetime.now().timestamp() - load_timestamp):.2f}s"
-        )
-
-    return uvloop.run(_fn())
-
 
 def update_weights_from_distributed(
     meta: WeightUpdateMeta,
