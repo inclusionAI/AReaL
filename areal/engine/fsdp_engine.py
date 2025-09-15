@@ -234,9 +234,10 @@ class FSDPEngine(BaseHFEngine):
                 )
 
             if isinstance(self.model.model.language_model, nn.Module):
-                # For vision-language models, the embedding layer is not sharded
-                # since the visual part uses it but without proper tensor parallelism.
-                # Meanwhile, the first transformer layer needs to shard the input.
+                # For vision-language models, avoid sharding the embedding layer because
+                # the visual components access it without tensor parallelism support.
+                # Instead, configure the first transformer layer to handle input
+                # sharding properly.
                 model_tp_plan.pop("embed_tokens", None)
                 model_tp_plan["layers.0"] = PrepareModuleInput(
                     input_layouts=Replicate(),
