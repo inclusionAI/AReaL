@@ -6,6 +6,7 @@ from copy import deepcopy
 from tensordict import TensorDict
 import torch
 import torch.distributed as dist
+import wandb
 from torch.utils.data import Subset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -36,7 +37,8 @@ def extract_answer(pred_str, data_name, use_last_number=True):
 
 def clevr_count_70k_reward_fn(
     prompt, completions, prompt_ids, completion_ids, answer, **kwargs
-):
+):  
+    
     sol = extract_answer(completions, data_name="")  # str number
     ans = answer
 
@@ -45,12 +47,18 @@ def clevr_count_70k_reward_fn(
     if ans is None:
         return 0
 
+    if float(sol.strip() == ans.strip()):
+       print(f"completions: {completions}, answer: {answer}")
+       return 1.0
+
     return float(sol.strip() == ans.strip())
 
 
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
+
+    wandb.init(project=config.stats_logger.wandb.project)
 
     rank = int(os.getenv("RANK"))
 
@@ -131,14 +139,10 @@ def main(args):
     # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
-    weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
-            AllocationMode.from_str(config.allocation_mode), actor
-        )
-    ]
-    # weight_update_meta = [WeightUpdateMeta.from_disk(config.saver)]
+    weight_update_meta = [WeightUpdateMeta.from_disk(config.saver.experiment_name,config.saver.trial_name,config.saver.fileroot)]
     dist.broadcast_object_list(weight_update_meta, src=0)
     weight_update_meta = weight_update_meta[0]
+
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -245,6 +249,8 @@ def main(args):
             stats_tracker.scope("grpo_actor"),
         ):
             stats = actor.ppo_update(batch)
+            wandb.log({"final_reward": stats[0]["grpo_actor/final_reward/avg"]})
+            wandb.log({"task_reward": stats[0]["grpo_actor/task_reward/avg"]})
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
@@ -252,6 +258,7 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
+            rollout.pause()
             if dist.get_rank() == 0:
                 future = rollout.update_weights(weight_update_meta)
             actor.upload_weights(weight_update_meta)
@@ -259,7 +266,7 @@ def main(args):
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
             torch.cuda.synchronize()
-
+            rollout.resume()
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
             eval_rollout.set_version(global_step + 1)
@@ -284,7 +291,9 @@ def main(args):
                     for item in data:
                         eval_rollout.submit(item, eval_workflow)
                         cnt += 1
-                eval_rollout.wait(cnt, timeout=None)
+                batch=eval_rollout.wait(cnt, timeout=None)
+                rewards = batch["rewards"].float().to(actor.device)
+                wandb.log({"eval_reward": rewards.mean().item()})
 
             evaluator.evaluate(
                 evaluate_fn,
@@ -326,6 +335,7 @@ def main(args):
     if ref is not None:
         ref.destroy()
     actor.destroy()
+    wandb.finish()
 
 
 if __name__ == "__main__":

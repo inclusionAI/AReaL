@@ -41,7 +41,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         self.processor = processor
 
     async def arun_episode(self, engine, data):
-
+        # breakpoint()
         processed_input = self.processor(
             images=data["images"],
             text=data["messages"],
@@ -95,20 +95,20 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
             rewards.append(reward)
-            multi_modal_input = [{
+            multi_modal_input = {
                 "pixel_values": processed_input["pixel_values"],
-            }]
+            }
             if "image_grid_thw" in processed_input:
-                multi_modal_input[0]["image_grid_thw"] = processed_input["image_grid_thw"]
+                multi_modal_input["image_grid_thw"] = processed_input["image_grid_thw"]
             if "token_type_ids" in processed_input:
-                multi_modal_input[0]["token_type_ids"] = processed_input["token_type_ids"]
+                multi_modal_input["token_type_ids"] = processed_input["token_type_ids"]
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),
                 loss_mask=torch.tensor(loss_mask).unsqueeze(0),
                 # We store multi_modal_input for each data point as a dict,
                 # This is a non-tensor-data stored in tensor dict
-                multi_modal_input=multi_modal_input,
+                multi_modal_input=[multi_modal_input],
                 logprobs=torch.tensor(logprobs).unsqueeze(0),
                 versions=torch.tensor(versions).unsqueeze(0),
                 attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),

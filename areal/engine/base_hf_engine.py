@@ -368,11 +368,14 @@ class BaseHFEngine(TrainEngine):
             if is_qwen3_moe_model(self.model_config.model_type):
                 mb["attention_mask"] = None
                 padded_mb["attention_mask"] = None
+            elif "gemma" in self.model_config.model_type.lower():
+                mb["attention_mask"] = None
+                padded_mb["attention_mask"] = None
             else:
                 mb["attention_mask"] = dict(full_attention=None)
                 padded_mb["attention_mask"] = dict(full_attention=None)
             if "multi_modal_input" in mb:
-                multi_modal_input=list_of_dict2dict_of_list(mb["multi_modal_input"])
+                multi_modal_input=list_of_dict2dict_of_list(list(mb["multi_modal_input"]))
                 
                 image_grid_thw_list = multi_modal_input.get("image_grid_thw", None)
                 if image_grid_thw_list is not None:

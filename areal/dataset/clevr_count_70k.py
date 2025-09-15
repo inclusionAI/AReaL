@@ -122,17 +122,18 @@ def get_clevr_count_70k_rl_dataset(
             image_token = processor.image_token if processor is not None else "<image>"
         system_prompt = {
             "role": "system",
-            "content": (
-                "Solve the following question: count the number of items in the image and provide the final answer in [ ] format, ensuring that only the number is inside the brackets without any additional text or explanations. "
-            ),
+            "content": [{"type": "text", "text":
+                "You are a helpful assistant. Solve the following question: count the number of items in the image and provide the final answer in [ ] format, ensuring that only the number is inside the brackets without any additional text or explanations. "
+            }]
         }
 
         messages = [
             {
                 "role": "user",
-                "content": sample["problem"]
-                .replace("<image>", image_token)
-                .replace("different", ""),
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": sample["problem"]}
+                ]
             }
         ]
         messages.insert(0, system_prompt)
@@ -141,7 +142,7 @@ def get_clevr_count_70k_rl_dataset(
         )
         return {"messages": messages, "images": processed_images}
 
-    dataset = dataset.map(process).remove_columns(["problem"])
+    dataset = dataset.map(process, num_proc=64).remove_columns(["problem"])
 
     # Filter out sequences longer than max_length if max_length is provided
     if max_length is not None:
