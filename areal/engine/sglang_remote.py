@@ -23,6 +23,7 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
+from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
 
@@ -312,20 +313,17 @@ class RemoteSGLangEngine(InferenceEngine):
         data: Dict[str, Any],
         workflow: Optional[RolloutWorkflow] = None,
         workflow_builder: Optional[Callable] = None,
-    ) -> None:
-        return self.workflow_executor.submit(data, workflow, workflow_builder)
-
-    def wait(
-        self,
-        count: int,
-        timeout: float | None = None,
         should_accept: Callable | None = None,
-    ) -> TensorDict:
-        return self.workflow_executor.wait(
-            count,
-            timeout=timeout,
+    ) -> None:
+        return self.workflow_executor.submit(
+            data,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
             should_accept=should_accept,
         )
+
+    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
+        return self.workflow_executor.wait(count, timeout=timeout)
 
     def rollout_batch(
         self,
@@ -465,7 +463,7 @@ async def ainit_weights_update_group(
         "master_port": str(meta.nccl_master_port),
         "rank_offset": rank_offset,
         "world_size": meta.alloc_mode.gen.world_size + 1,
-        "backend": "nccl",
+        "backend": current_platform.communication_backend,
         "group_name": meta.nccl_group_name,
     }
     res = await arequest_with_retry(

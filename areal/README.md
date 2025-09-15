@@ -498,20 +498,19 @@ def submit(
     data: Dict[str, Any],
     workflow: Optional["RolloutWorkflow"] = None,
     workflow_builder: Optional[Callable] = None,
+    should_accept: Callable | None = None,
 ) -> None:
     try:
         if workflow is None:
             workflow = workflow_builder()
-        self.input_queue.put_nowait((data, workflow))
+        x = _RolloutTaskInput(
+            data=data, workflow=workflow, should_accept=should_accept
+        )
+        self.input_queue.put_nowait(x)
     except queue.Full:
         raise RuntimeError("Input queue full. Please increase queue_size.")
 
-def wait(
-    self,
-    count: int,
-    timeout: float | None = None,
-    should_accept: Callable | None = None,
-) -> TensorDict:
+def wait(self, count: int, timeout: float | None = None) -> TensorDict:
     """Wait for specified number of results with optional filtering."""
     # Implementation details...
     pass

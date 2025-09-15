@@ -16,6 +16,7 @@ from areal.api.cli_args import GRPOConfig
 from areal.api.io_struct import FinetuneSpec, WeightUpdateMeta
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.platforms import current_platform
 from areal.reward.math_parser import process_results
 from areal.utils import seeding
 from areal.utils.data import broadcast_tensor_container
@@ -31,6 +32,10 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 def main() -> None:
     config, _ = cli_args.load_expr_config(sys.argv[1:], GRPOConfig)
     assert isinstance(config, GRPOConfig)
+    local_model_path = config.actor.path.replace("/", "__")
+    local_model_path = os.path.join("/storage/openpsi/models", local_model_path)
+    if os.path.exists(local_model_path):
+        config.actor.path = local_model_path
 
     rank = int(os.environ.get("RANK", "0"))
 
@@ -119,7 +124,7 @@ def main() -> None:
             )
 
             dist.barrier(device_ids=[actor.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
 
             batch["ref_logp"] = ref.compute_logp(batch)
 
@@ -137,7 +142,7 @@ def main() -> None:
             if future is not None:
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
             rollout.resume()
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)

@@ -6,8 +6,8 @@ import torch
 import torch.distributed as dist
 from tensordict import TensorDict
 
+from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import (
-    FSDPEngineConfig,
     MicroBatchSpec,
     OptimizerConfig,
     TrainEngineConfig,
@@ -88,11 +88,16 @@ def make_engine(model_type, mb_spec, ulysses_sp_size=1, init_optimizer=False):
         path=MODEL_PATHS[model_type],
         mb_spec=mb_spec,
         optimizer=OptimizerConfig() if init_optimizer else None,
-        fsdp=FSDPEngineConfig(ulysses_sp_size=ulysses_sp_size),
     )
     print(f"config = {config}")
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
     engine = FSDPEngine(config)
+    assert dist.get_world_size() >= ulysses_sp_size
+    parallel_strategy = ParallelStrategy(
+        data_parallel_size=dist.get_world_size() // ulysses_sp_size,
+        context_parallel_size=ulysses_sp_size,
+    )
+    engine.create_process_group(parallel_strategy=parallel_strategy)
     engine.initialize(addr=None, ft_spec=ft_spec)
     return engine
 
@@ -153,8 +158,6 @@ def test_ulysses(model_type: str):
                 loss_weight_fn=lambda x: x["cu_seqlens"][-1],
             )
         engine_golden.destroy()
-
-    dist.destroy_process_group()
 
 
 def main():

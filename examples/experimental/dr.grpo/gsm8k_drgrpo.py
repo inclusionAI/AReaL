@@ -4,16 +4,14 @@ import sys
 from copy import deepcopy
 
 import torch.distributed as dist
-from megatron.core import parallel_state as mpu
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import load_expr_config
+from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
+from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.experimental.api.cli_args import ExperimentalGRPOConfig as GRPOConfig
-from areal.experimental.megatron_actor import MegatronPPOActor
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import broadcast_tensor_container
@@ -43,22 +41,25 @@ def main(args):
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
 
-    actor = MegatronPPOActor(config=config.actor)
+    # Initialize train engine
+    actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
-        rank=mpu.get_data_parallel_rank(),
-        world_size=mpu.get_data_parallel_world_size(),
+        rank=actor.data_parallel_rank,
+        world_size=actor.data_parallel_world_size,
         split="train",
+        max_length=config.train_dataset.max_length,
         type=config.train_dataset.type,
         tokenizer=tokenizer,
     )
     valid_dataset = get_custom_dataset(
         path=config.valid_dataset.path,
-        rank=mpu.get_data_parallel_rank(),
-        world_size=mpu.get_data_parallel_world_size(),
+        rank=actor.data_parallel_rank,
+        world_size=actor.data_parallel_world_size,
         split="test",
+        max_length=config.valid_dataset.max_length,
         type=config.valid_dataset.type,
         tokenizer=tokenizer,
     )
@@ -66,8 +67,7 @@ def main(args):
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         train_dataset,
-        batch_size=config.train_dataset.batch_size
-        // mpu.get_data_parallel_world_size(),
+        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -75,8 +75,7 @@ def main(args):
     )
     valid_dataloader = StatefulDataLoader(
         valid_dataset,
-        batch_size=config.valid_dataset.batch_size
-        // mpu.get_data_parallel_world_size(),
+        batch_size=config.valid_dataset.batch_size // actor.data_parallel_world_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -90,29 +89,32 @@ def main(args):
 
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
+    rollout.initialize(
+        None, ft_spec, train_data_parallel_size=parallel_strategy.dp_size
+    )
     eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
     # NOTE: eval does not have any offpolicyness control
     eval_rollout.config.max_head_offpolicyness = int(1e12)
-    eval_rollout.initialize()
+    eval_rollout.initialize(None, ft_spec)
 
-    # Initialize train engine
-    actor.initialize(
-        None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
-    )
+    actor.initialize(None, ft_spec)
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
-        ref = MegatronPPOActor(config=config.ref)
-        ref.initialize(
-            None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
-        )
+        ref = FSDPPPOActor(config=config.ref)
+        ref.create_process_group(parallel_strategy=parallel_strategy)
+        ref.initialize(None, ft_spec)
 
-    # NOTE: megatron engine currently does not support nccl weight update
-    weight_update_meta = WeightUpdateMeta.from_disk(
-        config.experiment_name,
-        config.trial_name,
-        config.cluster.fileroot,
-    )
+    # NOTE: Weight update meta only requires address and free port of rank 0,
+    # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
+    # due to `engine.get_param_specs()`.
+    # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
+    weight_update_meta = [
+        WeightUpdateMeta.from_fsdp_nccl(
+            AllocationMode.from_str(config.allocation_mode), actor
+        )
+    ]
+    dist.broadcast_object_list(weight_update_meta, src=0)
+    weight_update_meta = weight_update_meta[0]
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -176,10 +178,6 @@ def main(args):
         )
 
         with stats_tracker.record_timing("rollout"):
-            # NOTE: Megatron will ignore inputs from non data parallel heads.
-            # However, methods such as `compute_advantages` and `ppo_update`
-            # still requires data integrity to be called on every training process.
-            # Therefore, we still need to broadcast batch across context+model parallel group.
             batch = None
             if actor.is_data_parallel_head():
                 if config.async_training:
@@ -240,24 +238,10 @@ def main(args):
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
 
-        with stats_tracker.record_timing("checkpoint_for_recover"):
-            recover_handler.dump(
-                actor,
-                step_info,
-                saver,
-                evaluator,
-                stats_logger,
-                train_dataloader,
-                tokenizer=tokenizer,
-            )
-
-        dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
-
         with stats_tracker.record_timing("eval"):
 
             def evaluate_fn():
-                # Stats are logged in workflow
+                # Stats are logged in the workflow
                 # and will be exported later
                 cnt = 0
                 for data in valid_dataloader:
@@ -273,12 +257,23 @@ def main(args):
                 global_step,
             )
 
+        with stats_tracker.record_timing("checkpoint_for_recover"):
+            recover_handler.dump(
+                actor,
+                step_info,
+                saver,
+                evaluator,
+                stats_logger,
+                train_dataloader,
+                tokenizer=tokenizer,
+            )
+
         dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
         stats[0].update(
-            stats_tracker.export_all(reduce_group=mpu.get_data_parallel_group())
+            stats_tracker.export_all(reduce_group=actor.data_parallel_group)
         )
         stats_logger.commit(epoch, step, global_step, stats)
 
@@ -294,7 +289,6 @@ def main(args):
     if ref is not None:
         ref.destroy()
     actor.destroy()
-    actor.destroy_process_groups()
 
 
 if __name__ == "__main__":
