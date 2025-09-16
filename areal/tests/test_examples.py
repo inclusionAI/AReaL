@@ -273,6 +273,7 @@ def test_vlm_grpo(tmp_path_factory):
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
             f"actor.path={model_path}",
+            timeout=600,  # loading the VLM dataset takes longer time
         )
     )
     assert success, f"CLEVR Count 70k GRPO example failed, return_code={return_code}"
@@ -306,6 +307,7 @@ def test_vlm_sft(tmp_path_factory):
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
             f"model.path={model_path}",
+            timeout=600,  # loading the VLM dataset takes longer time
         )
     )
     assert success, f"CLEVR Count 70k SFT example failed, return_code={return_code}"
