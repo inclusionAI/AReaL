@@ -251,8 +251,8 @@ def test_clevr_count_70k_grpo(tmp_path_factory):
     if not os.path.exists(dataset_path):
         dataset_path = "BUAADreamer/clevr_count_70k"
 
-    example_file = "examples/vision/clevr_count_70k_grpo.py"
-    config_name = "examples/vision/clevr_count_70k_grpo.yaml"
+    example_file = "examples/vlm/clevr_count_70k_grpo.py"
+    config_name = "examples/vlm/clevr_count_70k_grpo.yaml"
     loop = asyncio.get_event_loop()
     return_code, success = loop.run_until_complete(
         run_example(
@@ -286,8 +286,8 @@ def test_clevr_count_70k_sft(tmp_path_factory):
     if not os.path.exists(dataset_path):
         dataset_path = "BUAADreamer/clevr_count_70k"
 
-    example_file = "examples/vision/clevr_count_70k_sft.py"
-    config_name = "examples/vision/clevr_count_70k_sft.yaml"
+    example_file = "examples/vlm/clevr_count_70k_sft.py"
+    config_name = "examples/vlm/clevr_count_70k_sft.yaml"
     loop = asyncio.get_event_loop()
     return_code, success = loop.run_until_complete(
         run_example(
@@ -422,8 +422,8 @@ def test_gsm8k_drgrpo(tmp_path_factory):
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
 
-    example_file = "examples/experimental/dr.grpo/gsm8k_drgrp.py"
-    config_name = "examples/experimental/dr.grpo/gsm8k_drgrp.yaml"
+    example_file = "examples/experimental/dr.grpo/gsm8k_drgrpo.py"
+    config_name = "examples/experimental/dr.grpo/gsm8k_drgrpo.yaml"
     loop = asyncio.get_event_loop()
     return_code, success = loop.run_until_complete(
         run_example(
