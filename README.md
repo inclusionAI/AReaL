@@ -96,7 +96,7 @@ For comprehensive setup instructions, see
 
 ## Examples
 
-| Task                                        | Description                                                                  | Training/Evaluation Log                                            |
+| Task                                        | Description                                                                  | Performance                                                        |
 | ------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | **[Math](examples/math/)**                  | GSM8K mathematical problem solving                                           | TBA                                                                |
 | **[VLM Math](examples/vlm/)**               | CLEVR visual counting tasks                                                  | TBA                                                                |
