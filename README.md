@@ -24,7 +24,7 @@ like how you enjoy real-world milk tea (cheers).
   [multi-turn agentic rollout](<(https://inclusionai.github.io/AReaL/customization/agent.html)>)
   workflows within a single file, and smooth integration with other agentic tooling
   frameworks.
-- 🚀 **Scalability**: Through algorithm-system co-design, AReaL delivers fully
+- 🚀 **Scalability**: Through algorithm-system co-design, AReaL delivers **stable** fully
   asynchronous RL training with **industry-leading speed**. AReaL seamlessly adapts to
   diverse computational environments, scaling from a single node to 1,000+ GPUs.
 - 🔪 **Cutting-Edge Performance**: AReaL produces state-of-the-art
@@ -93,6 +93,15 @@ python3 -m areal.launcher.ray \
 
 For comprehensive setup instructions, see
 [our quickstart guide](https://inclusionai.github.io/AReaL/tutorial/quickstart.html).
+
+## Examples
+
+| Task                                        | Description                                                                  | Training/Evaluation Log                                            |
+| ------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| **[Math](examples/math/)**                  | GSM8K mathematical problem solving                                           | TBA                                                                |
+| **[VLM Math](examples/vlm/)**               | CLEVR visual counting tasks                                                  | TBA                                                                |
+| **[Simple Reasoning](examples/countdown/)** | Countdown numbers game with custom rewards                                   | [Training Curve](/examples/countdown/countdown_training_curve.png) |
+| **[Search Agent](examples/search-agent/)**  | End-to-end seach agent with search, browsing, and summarization capabilities | [ASearcher Repo](https://github.com/inclusionAI/ASearcher)         |
 
 ## Resources
 
