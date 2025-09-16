@@ -198,7 +198,7 @@ def get_clevr_count_70k_rl_dataset(
         dataset = _do_preprocess(path, split, processor, max_length)
 
     dist.barrier()
-    # Use 
+    # Use cache to load dataset
     dataset = _do_preprocess(path, split, processor, max_length)
 
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
