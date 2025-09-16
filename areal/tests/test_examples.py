@@ -49,6 +49,7 @@ def run_example(
         bufsize=1,  # Line buffered
     )
     start_time = time.monotonic()
+    cur_time = time.monotonic()
 
     while True:
         # Read line by line
@@ -73,6 +74,10 @@ def run_example(
             logger.error("Process timed out without successful result, terminating...")
             process.terminate()
             break
+
+        if time.monotonic() - cur_time > 1:
+            logger.info("checking")
+            cur_time = time.monotonic()
 
     return success
 
@@ -118,9 +123,9 @@ def test_countdown_example(tmp_path_factory):
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     tmp_path = tmp_path_factory.mktemp("countdown_data")
     data_path = tmp_path / "data/countdown/qwen"
-    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-3B-Instruct"
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen2.5-3B-Instruct"
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
     os.makedirs(data_path, exist_ok=True)
     test_file_path = data_path / "test_e.jsonl"
     train_file_path = data_path / "train_e.jsonl"
@@ -141,11 +146,14 @@ def test_countdown_example(tmp_path_factory):
         "gconfig.n_samples=2",
         "gconfig.max_new_tokens=128",
         "actor.mb_spec.max_tokens_per_mb=1024",
+        f"train_dataset.batch_size=16",
+        f"valid_dataset.batch_size=16",
         f"train_dataset.path={str(train_file_path)}",
         f"valid_dataset.path={str(test_file_path)}",
         "cluster.n_gpus_per_node=2",
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
+        "rollout.enable_rollout_tracing=true",
     )
     assert success, f"Countdown example failed."
