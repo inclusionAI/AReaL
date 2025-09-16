@@ -59,6 +59,7 @@ async def run_example(
 
     while True:
         # Read line by line
+        line = None
         try:
             line = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
         except asyncio.TimeoutError:
@@ -77,11 +78,14 @@ async def run_example(
             break
 
         # Check if process has terminated
-        if process.poll() is not None:
+        try:
+            return_code = asyncio.wait_for(process.wait(), timeout=0.1)
             logger.error(
                 f"Process terminated unexpectedly. STDERR: \n{process.stderr.read().decode()}"
             )
             break
+        except asyncio.TimeoutError:
+            pass
 
         # Check timeout
         if (time.monotonic() - start_time) > timeout:
