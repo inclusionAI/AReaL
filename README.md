@@ -9,8 +9,8 @@
 
 <img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
 
-AReaL is an open-source **fully asynchronous reinforcement learning training system**
-for large reasoning and agentic models, developed by **the AReaL Team at Ant Group**.
+AReaL is an open-source **fully asynchronous** reinforcement learning training system
+for large **reasoning and agentic models**, developed by the AReaL Team at Ant Group.
 Built upon the open-source project [ReaLHF](https://github.com/openpsi-project/ReaLHF),
 we are fully committed to open-source by providing training details, data, and
 infrastructure required to reproduce results along with the model itself. AReaL aims to
@@ -20,12 +20,10 @@ like how you enjoy real-world milk tea (cheers).
 
 **AReaL Highlights**
 
-- ⚡ **Flexibility**: Seamless customization for multi-turn agentic rollout workflows
-  within a single file, and smooth integration with other agentic tooling frameworks.
-  Check [here](https://inclusionai.github.io/AReaL/customization/agent.html) for rollout
-  customization and
-  [here](https://inclusionai.github.io/AReaL/customization/algorithm.html) for algorithm
-  customization.
+- ⚡ **Flexibility**: Seamless customization for
+  [multi-turn agentic rollout](<(https://inclusionai.github.io/AReaL/customization/agent.html)>)
+  workflows within a single file, and smooth integration with other agentic tooling
+  frameworks.
 - 🚀 **Scalability**: Through algorithm-system co-design, AReaL delivers fully
   asynchronous RL training with **industry-leading speed**. AReaL seamlessly adapts to
   diverse computational environments, scaling from a single node to 1,000+ GPUs.
