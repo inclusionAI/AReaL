@@ -32,7 +32,7 @@ our project just as you enjoy real-world milk tea (cheers).
   [search agents](https://github.com/inclusionAI/ASearcher) with exceptional
   capabilities.
 
-## News
+## 📰 News
 
 **\[2025/08/30\]** Introducing ASearcher, a state-of-the-art search agent built with
 AReaL's end-to-end asynchronous RL training. Check out the
@@ -69,7 +69,7 @@ state-of-the-art 7B and 32B models for mathematical reasoning. Check out our
 
 </details>
 
-## Getting Started
+## 🚀 Getting Started
 
 Our training scripts automatically download the required dataset (openai/gsm8k) and
 model (Qwen/Qwen2-1.5B-Instruct). To run on a single node:
@@ -103,7 +103,7 @@ For comprehensive setup instructions, see
 | **[Simple Reasoning](examples/countdown/)** | Countdown numbers game with custom rewards                                | [Training Curve](/examples/countdown/countdown_training_curve.png) |
 | **[Search Agent](examples/search-agent/)**  | An agent with end-to-end search, browsing, and summarization capabilities | [ASearcher Repo](https://github.com/inclusionAI/ASearcher)         |
 
-## Resources
+## 📖 Resources
 
 - [Documentation](https://inclusionai.github.io/AReaL/)
 - [Contributing](https://inclusionai.github.io/AReaL/contrib.html)
@@ -128,7 +128,7 @@ For comprehensive setup instructions, see
 - [Debugging Best Practices](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
 - [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
 
-## Future Roadmap
+## 🗺️ Future Roadmap
 
 - [2025 Q3 Roadmap](https://github.com/inclusionAI/AReaL/issues/257)
 
@@ -158,7 +158,7 @@ Our current research and development roadmap includes:
 - [x] Agentic capabilities with end-to-end RL
 - [ ] Stable RL training for larger MoE models
 
-## Acknowledgments
+## 🙏 Acknowledgments
 
 We gratefully acknowledge that major contributors are from the AReaL Team at Ant Group
 and the Institute for Interdisciplinary Information Sciences, Tsinghua University.
@@ -191,7 +191,7 @@ outstanding projects, including but not limited to
 [Light-R1](https://github.com/Qihoo360/Light-R1), and
 [DAPO](https://github.com/BytedTsinghua-SIA/DAPO).
 
-## Citation
+## 📄 Citation
 
 ```bibtex
 @inproceedings{mei2025real,
