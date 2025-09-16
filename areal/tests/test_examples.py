@@ -55,21 +55,18 @@ def run_example(
         stdout = result.stdout
         stderr = result.stderr
 
-        logger.info(f"STDOUT: ...{stdout[-10000:]}")  # Truncate long output
-
         # Check if the expected pattern is in the output
         success = bool(success_pattern.search(stdout))
 
         # Log the result
+        logger.info(f"STDOUT: ...{stdout[-10000:]}")  # Truncate long output
         if success:
             logger.info(f"✓ {example_file} with config {config_name} - SUCCESS")
         else:
             logger.warning(f"✗ {example_file} with config {config_name} - FAILED")
             logger.warning(f"Return code: {result.returncode}")
             if stderr:
-                logger.warning(
-                    f"STDERR: {stderr[:500]}..."
-                )  # Truncate long error messages
+                logger.warning(f"STDERR: {stderr}")  # Truncate long error messages
 
         return success, stdout, stderr
 
@@ -106,7 +103,8 @@ def test_countdown_example(tmp_path_factory):
     success, stdout, stderr = run_example(
         example_file,
         config_name,
-        "allocation_mode=sglang:d1+fsdp:d1" "gconfig.n_samples=2",
+        "allocation_mode=sglang:d1+fsdp:d1",
+        "gconfig.n_samples=2",
         "gconfig.max_new_tokens=128",
         "actor.mb_spec.max_tokens_per_mb=1024",
         f"train_dataset.path={str(train_file_path)}",
