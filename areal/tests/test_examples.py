@@ -241,15 +241,15 @@ def test_gsm8k_eval(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
-def test_clevr_count_70k_grpo(tmp_path_factory):
+def test_vlm_grpo(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
     if not os.path.exists(model_path):
         model_path = "Qwen/Qwen2.5-VL-3B-Instruct"
-    dataset_path = "/storage/openpsi/data/BUAADreamer__clevr_count_70k"
+    dataset_path = "/storage/openpsi/data/hiyouga__geometry3k"
     if not os.path.exists(dataset_path):
-        dataset_path = "BUAADreamer/clevr_count_70k"
+        dataset_path = "hiyouga/geometry3k"
 
     example_file = "examples/vlm/clevr_count_70k_grpo.py"
     config_name = "examples/vlm/clevr_count_70k_grpo.yaml"
@@ -276,15 +276,15 @@ def test_clevr_count_70k_grpo(tmp_path_factory):
 
 
 @pytest.mark.gpu
-def test_clevr_count_70k_sft(tmp_path_factory):
+def test_vlm_sft(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
     if not os.path.exists(model_path):
         model_path = "Qwen/Qwen2.5-VL-3B-Instruct"
-    dataset_path = "/storage/openpsi/data/BUAADreamer__clevr_count_70k"
+    dataset_path = "/storage/openpsi/data/hiyouga__geometry3k"
     if not os.path.exists(dataset_path):
-        dataset_path = "BUAADreamer/clevr_count_70k"
+        dataset_path = "hiyouga/geometry3k"
 
     example_file = "examples/vlm/clevr_count_70k_sft.py"
     config_name = "examples/vlm/clevr_count_70k_sft.yaml"
