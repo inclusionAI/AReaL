@@ -250,9 +250,9 @@ def test_vlm_grpo(tmp_path_factory):
     model_path = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
     if not os.path.exists(model_path):
         model_path = "Qwen/Qwen2.5-VL-3B-Instruct"
-    dataset_path = "/storage/openpsi/data/hiyouga__geometry3k"
+    dataset_path = "/storage/openpsi/data/BUAADreamer__clevr_count_70k"
     if not os.path.exists(dataset_path):
-        dataset_path = "hiyouga/geometry3k"
+        dataset_path = "BUAADreamer/clevr_count_70k"
 
     example_file = "examples/vlm/clevr_count_70k_grpo.py"
     config_name = "examples/vlm/clevr_count_70k_grpo.yaml"
@@ -285,9 +285,9 @@ def test_vlm_sft(tmp_path_factory):
     model_path = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
     if not os.path.exists(model_path):
         model_path = "Qwen/Qwen2.5-VL-3B-Instruct"
-    dataset_path = "/storage/openpsi/data/hiyouga__geometry3k"
+    dataset_path = "/storage/openpsi/data/BUAADreamer__clevr_count_70k"
     if not os.path.exists(dataset_path):
-        dataset_path = "hiyouga/geometry3k"
+        dataset_path = "BUAADreamer/clevr_count_70k"
 
     example_file = "examples/vlm/clevr_count_70k_sft.py"
     config_name = "examples/vlm/clevr_count_70k_sft.yaml"
