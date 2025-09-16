@@ -42,32 +42,23 @@ async def run_example(
 
     # Run the command with timeout
     success = False
-    # process = subprocess.Popen(
-    #     cmd,
-    #     stdout=subprocess.PIPE,
-    #     stderr=subprocess.STDOUT,  # Combine stderr with stdout
-    #     universal_newlines=True,  # Text mode
-    #     bufsize=1,  # Line buffered
-    # )
     process = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
     start_time = time.monotonic()
-    cur_time = time.monotonic()
 
     while True:
-        # Read line by line
+        # Read output by line
         line = None
         try:
             line = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
+            line = line.decode()
         except asyncio.TimeoutError:
             pass
 
-        # line = process.stdout.readline()
         if line:
-            print(f"line type {type(line)}")
             logger.info(f"[Example Output] {line.rstrip()}")
             # Check for success patterns
             success = bool(success_pattern.search(line))
@@ -79,7 +70,7 @@ async def run_example(
 
         # Check if process has terminated
         try:
-            return_code = asyncio.wait_for(process.wait(), timeout=0.1)
+            return_code = await asyncio.wait_for(process.wait(), timeout=0.1)
             logger.error(f"Process terminated unexpectedly. Return code: {return_code}")
             break
         except asyncio.TimeoutError:
@@ -91,47 +82,8 @@ async def run_example(
             process.terminate()
             break
 
-        if time.monotonic() - cur_time > 1:
-            logger.info("checking")
-            cur_time = time.monotonic()
-
     return_code = await process.wait()  # Wait for the child process to exit
     return return_code, success
-
-    # result = subprocess.run(
-    #     cmd,
-    #     capture_output=True,
-    #     text=True,
-    #     timeout=timeout,
-    # )
-
-    # stdout = result.stdout
-    # stderr = result.stderr
-
-    # Check if the expected pattern is in the output
-    #     success = bool(success_pattern.search(stdout))
-
-    #     # Log the result
-    #     logger.info(f"STDOUT: ...{stdout[-10000:]}")  # Truncate long output
-    #     if success:
-    #         logger.info(f"✓ {example_file} with config {config_name} - SUCCESS")
-    #     else:
-    #         logger.warning(f"✗ {example_file} with config {config_name} - FAILED")
-    #         logger.warning(f"Return code: {result.returncode}")
-    #         if stderr:
-    #             logger.warning(f"STDERR: {stderr}")  # Truncate long error messages
-
-    #     return success, stdout, stderr
-
-    # except subprocess.TimeoutExpired:
-    #     error_msg = f"Example {example_file} with config {config_name} timed out after {timeout} seconds"
-    #     logger.error(error_msg)
-    #     return False, "", error_msg
-
-    # except Exception as e:
-    #     error_msg = f"Error running {example_file} with config {config_name}: {str(e)}"
-    #     logger.error(error_msg)
-    #     return False, "", error_msg
 
 
 @pytest.mark.multi_gpu
