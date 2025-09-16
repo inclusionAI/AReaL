@@ -97,7 +97,7 @@ def get_clevr_count_70k_sft_dataset(
 
             example["input_ids"] = processed_input["input_ids"].squeeze(0)
             example["pixel_values"] = processed_input["pixel_values"]
-            example["image_grid_thw"] = processed_input["image_grid_thw"]
+            example["image_grid_thw"] = processed_input["image_grid_thw"].squeeze(0)
             answer_token = tokenizer.encode(example["answer"])
             loss_mask = [0] * (len(example["input_ids"]) - len(answer_token)) + [
                 1
