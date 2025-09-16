@@ -53,11 +53,15 @@ def run_example(
 
     while True:
         # Read line by line
-        line = process.stdout.readline()
-        if line:
-            logger.info(f"[Example Output] {line.rstrip()}")
+        try:
+            stdout, stderr = process.communicate(timeout=1)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
+        # line = process.stdout.readline()
+        if stdout:
+            logger.info(f"[Example Output] {stdout.rstrip()}")
             # Check for success patterns
-            success = bool(success_pattern.search(line))
+            success = bool(success_pattern.search(stdout))
 
         if success:
             logger.info(f"✓ {example_file} with config {config_name} - SUCCESS")
@@ -66,7 +70,7 @@ def run_example(
 
         # Check if process has terminated
         if process.poll() is not None:
-            logger.error(f"Process terminated unexpectedly. STDERR: \n{process.stderr}")
+            logger.error(f"Process terminated unexpectedly. STDERR: \n{stderr}")
             break
 
         # Check timeout
