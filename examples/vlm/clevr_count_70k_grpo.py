@@ -153,6 +153,9 @@ def main(args):
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
     )
     eval_workflow = VisionRLVRWorkflow(
         reward_fn=clevr_count_70k_reward_fn,
@@ -161,6 +164,9 @@ def main(args):
         processor=processor,
         enable_thinking=False,
         rollout_stat_scope="eval-rollout",
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated-eval"
+        ),
     )
 
     # Run training.

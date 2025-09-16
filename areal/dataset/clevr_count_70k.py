@@ -67,6 +67,7 @@ def get_clevr_count_70k_sft_dataset(
     dataset = dataset.map(
         lambda example, idx: process_example(example, idx),
         with_indices=True,
+        batch_size=512,
     )
 
     def _process(example):
@@ -94,7 +95,9 @@ def get_clevr_count_70k_sft_dataset(
         return example
 
     dataset = dataset.map(
-        lambda x: _process(x), remove_columns=["images", "seq", "problem", "answer"]
+        lambda x: _process(x),
+        remove_columns=["images", "seq", "problem", "answer"],
+        batch_size=512,
     )
 
     if max_length is not None:
@@ -146,7 +149,7 @@ def get_clevr_count_70k_rl_dataset(
         )
         return {"messages": messages, "images": processed_images}
 
-    dataset = dataset.map(process).remove_columns(["problem"])
+    dataset = dataset.map(process, batch_size=512).remove_columns(["problem"])
 
     # Filter out sequences longer than max_length if max_length is provided
     if max_length is not None:
