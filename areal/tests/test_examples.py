@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from typing import Tuple
@@ -65,7 +66,7 @@ async def run_example(
 
         if success:
             logger.info(f"✓ {example_file} with config {config_name} - SUCCESS")
-            process.kill()
+            process.send_signal(signal.SIGINT)  # Gracefully terminate the process
             break
 
         # Check if process has terminated
@@ -79,7 +80,7 @@ async def run_example(
         # Check timeout
         if (time.monotonic() - start_time) > timeout:
             logger.error("Process timed out without successful result, terminating...")
-            process.kill()
+            process.send_signal(signal.SIGINT)  # Gracefully terminate the process
             break
 
     return_code = await process.wait()  # Wait for the child process to exit
