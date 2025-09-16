@@ -126,7 +126,347 @@ def test_countdown_example(tmp_path_factory):
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
             f"actor.path={model_path}",
-            "rollout.enable_rollout_tracing=true",
         )
     )
     assert success, f"Countdown example failed, return_code={return_code}"
+
+
+@pytest.mark.multi_gpu
+def test_gsm8k_grpo(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+
+    example_file = "examples/math/gsm8k_grpo.py"
+    config_name = "examples/math/gsm8k_grpo.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+fsdp:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+        )
+    )
+    assert success, f"GSM8K GRPO example failed, return_code={return_code}"
+
+
+@pytest.mark.gpu
+def test_gsm8k_sft(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-1.7B"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen3-1.7B"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+
+    example_file = "examples/math/gsm8k_sft.py"
+    config_name = "examples/math/gsm8k_sft.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=d1",
+            "model.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=1",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"model.path={model_path}",
+        )
+    )
+    assert success, f"GSM8K SFT example failed, return_code={return_code}"
+
+
+@pytest.mark.gpu
+def test_gsm8k_eval(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+
+    example_file = "examples/math/gsm8k_eval.py"
+    config_name = "examples/math/gsm8k_grpo.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+eval",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=256",
+            f"valid_dataset.batch_size=16",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=1",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+        )
+    )
+    assert success, f"GSM8K Eval example failed, return_code={return_code}"
+
+
+@pytest.mark.multi_gpu
+def test_clevr_count_70k_grpo(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-VL-3B-Instruct"
+    dataset_path = "/storage/openpsi/data/clevr_count_70k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "BUAADreamer/clevr_count_70k"
+
+    example_file = "examples/vision/clevr_count_70k_grpo.py"
+    config_name = "examples/vision/clevr_count_70k_grpo.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+fsdp:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+        )
+    )
+    assert success, f"CLEVR Count 70k GRPO example failed, return_code={return_code}"
+
+
+@pytest.mark.gpu
+def test_clevr_count_70k_sft(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-VL-3B-Instruct"
+    dataset_path = "/storage/openpsi/data/clevr_count_70k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "BUAADreamer/clevr_count_70k"
+
+    example_file = "examples/vision/clevr_count_70k_sft.py"
+    config_name = "examples/vision/clevr_count_70k_sft.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=d1",
+            "model.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=1",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"model.path={model_path}",
+        )
+    )
+    assert success, f"CLEVR Count 70k SFT example failed, return_code={return_code}"
+
+
+@pytest.mark.multi_gpu
+def test_gsm8k_grpo_megatron(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+
+    example_file = "examples/experimental/gsm8k_grpo_megatron.py"
+    config_name = "examples/experimental/configs/gsm8k_grpo_megatron.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+megatron:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+        )
+    )
+    assert success, f"GSM8K GRPO Megatron example failed, return_code={return_code}"
+
+
+@pytest.mark.gpu
+def test_gsm8k_sft_megatron(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-1.7B"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen3-1.7B"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+
+    example_file = "examples/experimental/gsm8k_sft_megatron.py"
+    config_name = "examples/experimental/configs/gsm8k_sft_megatron.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=megatron:d1",
+            "model.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=1",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"model.path={model_path}",
+        )
+    )
+    assert success, f"GSM8K SFT Megatron example failed, return_code={return_code}"
+
+
+@pytest.mark.multi_gpu
+def test_gsm8k_dapo(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+
+    example_file = "examples/experimental/dapo/gsm8k_dapo.py"
+    config_name = "examples/experimental/dapo/gsm8k_dapo.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+fsdp:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+        )
+    )
+    assert success, f"GSM8K DAPO example failed, return_code={return_code}"
+
+
+@pytest.mark.multi_gpu
+def test_gsm8k_drgrpo(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+
+    example_file = "examples/experimental/dr.grpo/gsm8k_drgrp.py"
+    config_name = "examples/experimental/dr.grpo/gsm8k_drgrp.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+fsdp:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+        )
+    )
+    assert success, f"GSM8K DRGRP example failed, return_code={return_code}"
+
+
+@pytest.mark.multi_gpu
+def test_gsm8k_liteppo(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+
+    example_file = "examples/experimental/lite_ppo/gsm8k_liteppo.py"
+    config_name = "examples/experimental/lite_ppo/gsm8k_liteppo.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+fsdp:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+        )
+    )
+    assert success, f"GSM8K LitePPO example failed, return_code={return_code}"
