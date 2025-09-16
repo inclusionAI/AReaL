@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import shutil
@@ -12,7 +13,7 @@ from areal.utils import logging
 logger = logging.getLogger(__name__)
 
 
-def run_example(
+async def run_example(
     example_file: str, config_name: str, *additional_args, timeout: int = 300
 ) -> Tuple[bool, str, str]:
     """
@@ -41,12 +42,17 @@ def run_example(
 
     # Run the command with timeout
     success = False
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,  # Combine stderr with stdout
-        universal_newlines=True,  # Text mode
-        bufsize=1,  # Line buffered
+    # process = subprocess.Popen(
+    #     cmd,
+    #     stdout=subprocess.PIPE,
+    #     stderr=subprocess.STDOUT,  # Combine stderr with stdout
+    #     universal_newlines=True,  # Text mode
+    #     bufsize=1,  # Line buffered
+    # )
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
     )
     start_time = time.monotonic()
     cur_time = time.monotonic()
@@ -54,14 +60,16 @@ def run_example(
     while True:
         # Read line by line
         try:
-            stdout, stderr = process.communicate(timeout=1)
-        except subprocess.TimeoutExpired:
-            stdout, stderr = "", ""
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
+        except asyncio.TimeoutError:
+            pass
+
         # line = process.stdout.readline()
-        if stdout:
-            logger.info(f"[Example Output] {stdout.rstrip()}")
+        if line:
+            print(f"line type {type(line)}")
+            logger.info(f"[Example Output] {line.rstrip()}")
             # Check for success patterns
-            success = bool(success_pattern.search(stdout))
+            success = bool(success_pattern.search(line))
 
         if success:
             logger.info(f"✓ {example_file} with config {config_name} - SUCCESS")
@@ -70,7 +78,9 @@ def run_example(
 
         # Check if process has terminated
         if process.poll() is not None:
-            logger.error(f"Process terminated unexpectedly. STDERR: \n{stderr}")
+            logger.error(
+                f"Process terminated unexpectedly. STDERR: \n{process.stderr.read().decode()}"
+            )
             break
 
         # Check timeout
@@ -83,7 +93,8 @@ def run_example(
             logger.info("checking")
             cur_time = time.monotonic()
 
-    return success
+    return_code = await process.wait()  # Wait for the child process to exit
+    return return_code, success
 
     # result = subprocess.run(
     #     cmd,
@@ -143,21 +154,24 @@ def test_countdown_example(tmp_path_factory):
 
     example_file = "examples/countdown/train.py"
     config_name = "examples/countdown/train_config.yaml"
-    success = run_example(
-        example_file,
-        config_name,
-        "allocation_mode=sglang:d1+fsdp:d1",
-        "gconfig.n_samples=2",
-        "gconfig.max_new_tokens=128",
-        "actor.mb_spec.max_tokens_per_mb=1024",
-        f"train_dataset.batch_size=16",
-        f"valid_dataset.batch_size=16",
-        f"train_dataset.path={str(train_file_path)}",
-        f"valid_dataset.path={str(test_file_path)}",
-        "cluster.n_gpus_per_node=2",
-        f"cluster.fileroot={str(experiments_path)}",
-        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-        f"actor.path={model_path}",
-        "rollout.enable_rollout_tracing=true",
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+fsdp:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=128",
+            "actor.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={str(train_file_path)}",
+            f"valid_dataset.path={str(test_file_path)}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+            "rollout.enable_rollout_tracing=true",
+        )
     )
-    assert success, f"Countdown example failed."
+    assert success, f"Countdown example failed, return_code={return_code}"
