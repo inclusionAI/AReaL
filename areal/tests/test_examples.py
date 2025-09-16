@@ -93,7 +93,11 @@ def test_countdown_example(tmp_path_factory):
     train_file_path = data_path / "train_e.jsonl"
     # generate countdown dataset
     shutil.copy("examples/countdown/countdown.py", tmp_path)
-    subprocess.run(["python3", "countdown.py"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["python3", "countdown.py", "--num_samples=10000", "--eval_size=100"],
+        cwd=tmp_path,
+        check=True,
+    )
 
     example_file = "examples/countdown/countdown.py"
     config_name = "examples/countdown/countdown_test.yaml"
