@@ -123,6 +123,8 @@ For comprehensive setup instructions, see
 
 ## Future Roadmap
 
+- [2025 Q3 Roadmap](https://github.com/inclusionAI/AReaL/issues/257)
+
 AReaL is under active development with planned minor releases weekly and major releases
 monthly. We warmly welcome community engagement and contributions. We are also
 **actively hiring interns and full-time employees** with open positions in both the US
