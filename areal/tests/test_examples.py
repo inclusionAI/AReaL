@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from typing import Tuple
 
 import pytest
@@ -50,6 +51,8 @@ def run_example(
             capture_output=True,
             text=True,
             timeout=timeout,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
         )
 
         stdout = result.stdout
