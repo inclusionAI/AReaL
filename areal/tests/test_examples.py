@@ -65,7 +65,7 @@ async def run_example(
 
         if success:
             logger.info(f"✓ {example_file} with config {config_name} - SUCCESS")
-            process.terminate()
+            process.kill()
             break
 
         # Check if process has terminated
@@ -79,7 +79,7 @@ async def run_example(
         # Check timeout
         if (time.monotonic() - start_time) > timeout:
             logger.error("Process timed out without successful result, terminating...")
-            process.terminate()
+            process.kill()
             break
 
     return_code = await process.wait()  # Wait for the child process to exit
