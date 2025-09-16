@@ -118,6 +118,9 @@ def test_countdown_example(tmp_path_factory):
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     tmp_path = tmp_path_factory.mktemp("countdown_data")
     data_path = tmp_path / "data/countdown/qwen"
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-3B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-3B-Instruct"
     os.makedirs(data_path, exist_ok=True)
     test_file_path = data_path / "test_e.jsonl"
     train_file_path = data_path / "train_e.jsonl"
@@ -143,5 +146,6 @@ def test_countdown_example(tmp_path_factory):
         "cluster.n_gpus_per_node=2",
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
     )
     assert success, f"Countdown example failed."
