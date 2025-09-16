@@ -80,9 +80,7 @@ async def run_example(
         # Check if process has terminated
         try:
             return_code = asyncio.wait_for(process.wait(), timeout=0.1)
-            logger.error(
-                f"Process terminated unexpectedly. STDERR: \n{process.stderr.read().decode()}"
-            )
+            logger.error(f"Process terminated unexpectedly. Return code: {return_code}")
             break
         except asyncio.TimeoutError:
             pass
