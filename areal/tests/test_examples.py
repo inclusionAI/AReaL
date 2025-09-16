@@ -87,7 +87,8 @@ def test_countdown_example(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     tmp_path = tmp_path_factory.mktemp("countdown_data")
-    data_path = tmp_path_factory.mktemp("countdown_data/data/countdown/qwen")
+    data_path = tmp_path / "data/countdown/qwen"
+    os.makedirs(data_path, exist_ok=True)
     test_file_path = data_path / "test_e.jsonl"
     train_file_path = data_path / "train_e.jsonl"
     # generate countdown dataset
