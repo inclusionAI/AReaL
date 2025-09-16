@@ -64,7 +64,10 @@ async def run_example(
         try:
             line = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
             line = line.decode()
-        except asyncio.TimeoutError:
+        except (ValueError, asyncio.TimeoutError):
+            # NOTE: Here ValueError is raised when the input line is too long
+            # that exceeds the buffer size, which will happen if the experiment
+            # has tqdm progress bar output.
             pass
 
         if line:
