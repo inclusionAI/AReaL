@@ -94,7 +94,7 @@ python3 -m areal.launcher.ray \
 For comprehensive setup instructions, see
 [our quickstart guide](https://inclusionai.github.io/AReaL/tutorial/quickstart.html).
 
-## Examples
+## 📚 Examples
 
 | Task                                        | Description                                                               | Performance                                                        |
 | ------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------ |
