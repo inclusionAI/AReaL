@@ -247,7 +247,7 @@ def test_clevr_count_70k_grpo(tmp_path_factory):
     model_path = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
     if not os.path.exists(model_path):
         model_path = "Qwen/Qwen2.5-VL-3B-Instruct"
-    dataset_path = "/storage/openpsi/data/clevr_count_70k"
+    dataset_path = "/storage/openpsi/data/BUAADreamer__clevr_count_70k"
     if not os.path.exists(dataset_path):
         dataset_path = "BUAADreamer/clevr_count_70k"
 
@@ -282,7 +282,7 @@ def test_clevr_count_70k_sft(tmp_path_factory):
     model_path = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
     if not os.path.exists(model_path):
         model_path = "Qwen/Qwen2.5-VL-3B-Instruct"
-    dataset_path = "/storage/openpsi/data/clevr_count_70k"
+    dataset_path = "/storage/openpsi/data/BUAADreamer__clevr_count_70k"
     if not os.path.exists(dataset_path):
         dataset_path = "BUAADreamer/clevr_count_70k"
 
