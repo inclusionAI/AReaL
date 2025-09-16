@@ -441,7 +441,7 @@ if __name__ == "__main__":
     with open("./data/countdown/qwen/train_e.jsonl", "w") as f:
         for item in train_data:
             f.write(json.dumps(item) + "\n")
-    with open("./data/countdown/qwen/val_e.jsonl", "w") as f:
+    with open("./data/countdown/qwen/valid_e.jsonl", "w") as f:
         for item in val_data:
             f.write(json.dumps(item) + "\n")
     with open("./data/countdown/qwen/test_e.jsonl", "w") as f:
