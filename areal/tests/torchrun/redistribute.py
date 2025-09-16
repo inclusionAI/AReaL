@@ -7,6 +7,7 @@ import torch
 import torch.distributed as dist
 from tensordict import TensorDict
 
+from areal.platforms import current_platform
 from areal.utils.data import concat_padded_tensors
 from areal.utils.redistributor import redistribute
 
@@ -14,8 +15,8 @@ from areal.utils.redistributor import redistribute
 def main(args):
     dist.init_process_group("nccl")
     rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(rank)
-    device = f"cuda:{rank}"
+    current_platform.set_device(rank)
+    device = f"{current_platform.device_type}:{rank}"
 
     bs = random.randint(1, 10) * args.granularity
     prompt_lens = [random.randint(1, 10) for _ in range(bs)]

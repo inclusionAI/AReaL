@@ -1,7 +1,6 @@
 experiment_name: clevr_count_70k-grpo
 trial_name: trial1
 
-
 seed: 1
 total_train_epochs: 3
 tokenizer_path: ${actor.path}
@@ -10,8 +9,8 @@ async_training: true
 cluster:
   n_nodes: 1
   n_gpus_per_node: 8
-  cluster_name: na132
   fileroot: /storage/openpsi/experiments
+  cluster_name: na132
   name_resolve:
     type: nfs
     nfs_record_root: /storage/openpsi/experiments/name_resolve/clevr_count_70k-grpo
@@ -56,7 +55,6 @@ actor:
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
   backend: fsdp
-
   group_size: ${gconfig.n_samples}
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
@@ -67,16 +65,19 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
+  dynamic_sampling: false
   adv_norm:
-    mean_level: batch
-    std_level: batch
+    mean_level: group
+    std_level: group
     group_size: ${gconfig.n_samples}
+  max_new_tokens: ${gconfig.max_new_tokens}
 
 ref:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: ${actor.path}
   init_from_scratch: false
+  disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
     max_tokens_per_mb: 4096

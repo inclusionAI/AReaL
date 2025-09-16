@@ -9,6 +9,7 @@ from transformers.models.qwen2.modeling_qwen2 import (
 )
 
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
+from areal.platforms import current_platform
 from areal.utils.ulysses import set_ulysses_sequence_parallel_group
 
 
@@ -26,13 +27,13 @@ def setup_distributed_environment():
         world_size=world_size,
         rank=rank,
     )
-    torch.cuda.set_device(rank)
+    current_platform.set_device(rank)
 
 
 def run_ulysses_correctness_test():
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    device = torch.device(f"cuda:{rank}")
+    device = torch.device(f"{current_platform.device_type}:{rank}")
 
     seq_len = 2048
     batch_size = 1

@@ -29,10 +29,12 @@ from areal.experimental.api.cli_args import (
 from areal.experimental.model.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.experimental.model.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.experimental.model.registry import make_hf_and_mcore_config, make_mcore_model
+from areal.experimental.utils.mcore.determinisitc import set_deterministic_algorithms
 from areal.experimental.utils.mcore.packed_context_parallel import (
     packed_context_parallel_forward,
 )
 from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
+from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.data import (
     MicroBatchList,
@@ -100,7 +102,7 @@ class MegatronEngine(TrainEngine):
         self.seed = seed
 
         assert addr is None, "FSDPEngine does not support remote initialization."
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        current_platform.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
         self.rank = int(os.environ["RANK"])
         self.world_size = int(os.environ["WORLD_SIZE"])
@@ -129,6 +131,10 @@ class MegatronEngine(TrainEngine):
             disable_dropout_in_model(self.model)
 
         model_config = get_model_config(self.model)
+        # NOTE: It is recommended to set this option to True for RL training on MoE models for stability.
+        if self.mcore_config.use_deterministic_algorithms:
+            set_deterministic_algorithms(model_config)
+
         if isinstance(self.model, DDP) and self.mcore_config.ddp.overlap_grad_reduce:
             model_config.no_sync_func = self.model.no_sync
         if (
@@ -301,7 +307,7 @@ class MegatronEngine(TrainEngine):
         if hasattr(self, "model"):
             del self.model
         gc.collect()
-        torch.cuda.empty_cache()
+        current_platform.empty_cache()
         gc.collect()
         dist.destroy_process_group(self.parallelism_group)
         dist.destroy_process_group(self.context_and_model_parallel_group)

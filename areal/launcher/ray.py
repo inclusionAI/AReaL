@@ -22,6 +22,7 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
+from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import (
     JobException,
@@ -196,9 +197,9 @@ class RayLauncher:
 
             # manage environment variables
             env_vars = env_vars or {}
-            if "CUDA_VISIBLE_DEVICES" in env_vars:
+            if current_platform.device_control_env_var in env_vars:
                 logger.warning(
-                    "Setting CUDA_VISIBLE_DEVICES before running ray jobs may result in unexpected behavior."
+                    f"Setting {current_platform.device_control_env_var} before running ray jobs may result in unexpected behavior."
                 )
 
             node_id = i // tasks_per_node

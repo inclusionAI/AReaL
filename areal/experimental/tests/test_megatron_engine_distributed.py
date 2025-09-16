@@ -1,9 +1,9 @@
 import subprocess
 
 import pytest
-import torch
 
 from areal.api.alloc_mode import AllocationMode
+from areal.platforms import current_platform
 from areal.utils.network import find_free_ports
 
 
@@ -39,7 +39,7 @@ def _run_test_with_torchrun(
 
 @pytest.mark.multi_gpu
 def test_qwen3_tensor_parallel(tmp_path_factory):
-    if torch.cuda.device_count() < 2:
+    if current_platform.device_count() < 2:
         pytest.skip("tensor parallel requires 2 GPUs to run")
     output = tmp_path_factory.mktemp("test_output") / "qwen3_tensor_parallel.out"
     _run_test_with_torchrun("qwen3", "d1p1t2", test_type="forward", output=str(output))
@@ -47,7 +47,7 @@ def test_qwen3_tensor_parallel(tmp_path_factory):
 
 @pytest.mark.multi_gpu
 def test_qwen3_pipeline_parallel(tmp_path_factory):
-    if torch.cuda.device_count() < 2:
+    if current_platform.device_count() < 2:
         pytest.skip("pipeline parallel requires 2 GPUs to run")
     output = tmp_path_factory.mktemp("test_output") / "qwen3_pipeline_parallel.out"
     _run_test_with_torchrun("qwen3", "d1p2t1", test_type="forward", output=str(output))
@@ -55,7 +55,7 @@ def test_qwen3_pipeline_parallel(tmp_path_factory):
 
 @pytest.mark.multi_gpu
 def test_qwen3_context_parallel(tmp_path_factory):
-    if torch.cuda.device_count() < 2:
+    if current_platform.device_count() < 2:
         pytest.skip("context parallel requires 2 GPUs to run")
     output = tmp_path_factory.mktemp("test_output") / "qwen3_context_parallel.out"
     _run_test_with_torchrun(
@@ -65,7 +65,7 @@ def test_qwen3_context_parallel(tmp_path_factory):
 
 @pytest.mark.multi_gpu
 def test_qwen3moe_expert_parallel(tmp_path_factory):
-    if torch.cuda.device_count() < 4:
+    if current_platform.device_count() < 4:
         pytest.skip("Qwen3 MoE expert parallel requires 4 GPUs to run")
     output = tmp_path_factory.mktemp("test_output") / "qwen3moe_expert_parallel.out"
     _run_test_with_torchrun(
@@ -78,7 +78,7 @@ def test_qwen3moe_expert_parallel(tmp_path_factory):
 
 @pytest.mark.multi_gpu
 def test_qwen3_dcp_save_load(tmp_path_factory):
-    if torch.cuda.device_count() < 8:
+    if current_platform.device_count() < 8:
         pytest.skip("DCP save load requires 8 GPUs to run")
     output = tmp_path_factory.mktemp("test_output") / "qwen3_save_load.out"
     _run_test_with_torchrun(
@@ -91,7 +91,7 @@ def test_qwen3_dcp_save_load(tmp_path_factory):
 
 @pytest.mark.multi_gpu
 def test_qwen3moe_dcp_save_load(tmp_path_factory):
-    if torch.cuda.device_count() < 8:
+    if current_platform.device_count() < 8:
         pytest.skip("Qwen3 MoE DCP save load requires 8 GPUs to run")
     output = tmp_path_factory.mktemp("test_output") / "qwen3moe_save_load.out"
     _run_test_with_torchrun(

@@ -17,6 +17,7 @@ from areal.experimental.api.cli_args import (
     OptimizerConfig,
 )
 from areal.experimental.megatron_engine import MegatronEngine
+from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.device import log_gpu_stats
 
@@ -33,7 +34,7 @@ def mock_input(
     batch_size=5,
     min_seqlen=10,
     max_seqlen=20,
-    device="cuda:0",
+    device=current_platform.device_type,
 ) -> TensorDict:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
