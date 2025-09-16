@@ -137,27 +137,6 @@ monthly. We warmly welcome community engagement and contributions. We are also
 **actively hiring interns and full-time employees** with open positions in both the US
 and China.
 
-Our current research and development roadmap includes:
-
-### System Development
-
-- [x] Support for SGLang
-- [x] RL training with coding problems
-- [x] Asynchronous generation and RL training
-- [ ] Optimizations for distributed training: expert parallelism for MoE and zero-bubble
-  pipelining
-- [x] RL for vision-language models (VLM)
-- [x] Multi-turn agentic RL
-- [x] Function calling and tool use
-
-### Algorithm Development
-
-- [x] RL training recipes for 1.5B and 7B models
-- [x] A complete RL training recipe for 32B models
-- [ ] Sample-efficient multitask RL algorithms
-- [x] Agentic capabilities with end-to-end RL
-- [ ] Stable RL training for larger MoE models
-
 ## 🙏 Acknowledgments
 
 We gratefully acknowledge that major contributors are from the AReaL Team at Ant Group
