@@ -167,6 +167,12 @@ def main(args):
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
+    allocation_mode = AllocationMode.from_str(config.allocation_mode)
+    parallel_strategy = allocation_mode.train
+
+    # Create process groups
+    actor = FSDPPPOActor(config=config.actor)
+    actor.create_process_group(parallel_strategy=parallel_strategy)
 
     train_dataset = get_countdown_dataset(
         dataset_path=config.train_dataset.path,
@@ -211,11 +217,11 @@ def main(args):
     eval_rollout.initialize()
 
     # Initialize train engine
-    actor = FSDPPPOActor(config=config.actor)
     actor.initialize(None, ft_spec)
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
         ref = FSDPPPOActor(config=config.ref)
+        ref.create_process_group(parallel_strategy=parallel_strategy)
         ref.initialize(None, ft_spec)
 
     # NOTE: Weight update meta only requires address and free port of rank 0,
