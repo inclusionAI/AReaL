@@ -13,9 +13,15 @@ from areal.utils import logging
 
 logger = logging.getLogger(__name__)
 
+SUCCESS_PATTERN = re.compile(r"Epoch 1/\d+ Step 1/\d+ Train step 1/\d+ done\.")
+
 
 async def run_example(
-    example_file: str, config_name: str, *additional_args, timeout: int = 300
+    example_file: str,
+    config_name: str,
+    *additional_args,
+    timeout: int = 300,
+    success_pattern=SUCCESS_PATTERN,
 ) -> Tuple[bool, str, str]:
     """
     Run a single example and return the result.
@@ -23,11 +29,13 @@ async def run_example(
     Args:
         example_file: Path to the example file
         config_name: Name of the config to use
+        additional_args: Additional command line arguments
+        timeout: Timeout in seconds
+        success_pattern: Regex pattern to identify successful completion
 
     Returns:
         Tuple of (success, stdout, stderr)
     """
-    success_pattern = re.compile(r"Epoch 1/\d+ Step 1/\d+ Train step 1/\d+ done\.")
     # Construct the command
     cmd = [
         "python3",
@@ -226,6 +234,7 @@ def test_gsm8k_eval(tmp_path_factory):
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
             f"actor.path={model_path}",
+            success_pattern=re.compile(r"Evaluation results:\n"),
         )
     )
     assert success, f"GSM8K Eval example failed, return_code={return_code}"
