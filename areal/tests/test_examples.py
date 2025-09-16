@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from typing import Tuple
 
 import pytest
@@ -38,42 +39,77 @@ def run_example(
 
     logger.info(f"Running: {' '.join(cmd)}")
 
-    try:
-        # Run the command with timeout
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+    # Run the command with timeout
+    success = False
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,  # Combine stderr with stdout
+        universal_newlines=True,  # Text mode
+        bufsize=1,  # Line buffered
+    )
+    start_time = time.monotonic()
 
-        stdout = result.stdout
-        stderr = result.stderr
+    while True:
+        # Read line by line
+        line = process.stdout.readline()
+        if line:
+            logger.info(f"[Example Output] {line.rstrip()}")
+            # Check for success patterns
+            success = bool(success_pattern.search(line))
 
-        # Check if the expected pattern is in the output
-        success = bool(success_pattern.search(stdout))
-
-        # Log the result
-        logger.info(f"STDOUT: ...{stdout[-10000:]}")  # Truncate long output
         if success:
             logger.info(f"✓ {example_file} with config {config_name} - SUCCESS")
-        else:
-            logger.warning(f"✗ {example_file} with config {config_name} - FAILED")
-            logger.warning(f"Return code: {result.returncode}")
-            if stderr:
-                logger.warning(f"STDERR: {stderr}")  # Truncate long error messages
+            process.terminate()
+            break
 
-        return success, stdout, stderr
+        # Check if process has terminated
+        if process.poll() is not None:
+            logger.error(f"Process terminated unexpectedly. STDERR: \n{process.stderr}")
+            break
 
-    except subprocess.TimeoutExpired:
-        error_msg = f"Example {example_file} with config {config_name} timed out after {timeout} seconds"
-        logger.error(error_msg)
-        return False, "", error_msg
+        # Check timeout
+        if (time.monotonic() - start_time) > timeout:
+            logger.error("Process timed out without successful result, terminating...")
+            process.terminate()
+            break
 
-    except Exception as e:
-        error_msg = f"Error running {example_file} with config {config_name}: {str(e)}"
-        logger.error(error_msg)
-        return False, "", error_msg
+    return success
+
+    # result = subprocess.run(
+    #     cmd,
+    #     capture_output=True,
+    #     text=True,
+    #     timeout=timeout,
+    # )
+
+    # stdout = result.stdout
+    # stderr = result.stderr
+
+    # Check if the expected pattern is in the output
+    #     success = bool(success_pattern.search(stdout))
+
+    #     # Log the result
+    #     logger.info(f"STDOUT: ...{stdout[-10000:]}")  # Truncate long output
+    #     if success:
+    #         logger.info(f"✓ {example_file} with config {config_name} - SUCCESS")
+    #     else:
+    #         logger.warning(f"✗ {example_file} with config {config_name} - FAILED")
+    #         logger.warning(f"Return code: {result.returncode}")
+    #         if stderr:
+    #             logger.warning(f"STDERR: {stderr}")  # Truncate long error messages
+
+    #     return success, stdout, stderr
+
+    # except subprocess.TimeoutExpired:
+    #     error_msg = f"Example {example_file} with config {config_name} timed out after {timeout} seconds"
+    #     logger.error(error_msg)
+    #     return False, "", error_msg
+
+    # except Exception as e:
+    #     error_msg = f"Error running {example_file} with config {config_name}: {str(e)}"
+    #     logger.error(error_msg)
+    #     return False, "", error_msg
 
 
 @pytest.mark.multi_gpu
@@ -95,7 +131,7 @@ def test_countdown_example(tmp_path_factory):
 
     example_file = "examples/countdown/train.py"
     config_name = "examples/countdown/train_config.yaml"
-    success, stdout, stderr = run_example(
+    success = run_example(
         example_file,
         config_name,
         "allocation_mode=sglang:d1+fsdp:d1",
@@ -108,4 +144,4 @@ def test_countdown_example(tmp_path_factory):
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
     )
-    assert success, f"Countdown example failed. STDOUT: {stdout}, STDERR: {stderr}"
+    assert success, f"Countdown example failed."
