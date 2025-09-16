@@ -12,16 +12,16 @@
 AReaL is an open-source **fully asynchronous** reinforcement learning training system
 for large **reasoning and agentic models**, developed by the AReaL Team at Ant Group.
 Built upon the open-source project [ReaLHF](https://github.com/openpsi-project/ReaLHF),
-we are fully committed to open-source by providing training details, data, and
-infrastructure required to reproduce results along with the model itself. AReaL aims to
-help everyone build their own AI agents easily and affordably. Our team loves milk tea
-because it's delicious, customizable, and affordable. We hope you enjoy our project just
-like how you enjoy real-world milk tea (cheers).
+we are fully committed to open-source principles by providing training details, data,
+and infrastructure required to reproduce our results along with the models themselves.
+AReaL aims to help everyone build their own AI agents easily and affordably. Our team
+loves milk tea because it's delicious, customizable, and affordable. We hope you enjoy
+our project just as you enjoy real-world milk tea (cheers).
 
 **AReaL Highlights**
 
 - ⚡ **Flexibility**: Seamless customization for
-  [multi-turn agentic rollout](<(https://inclusionai.github.io/AReaL/customization/agent.html)>)
+  [multi-turn agentic rollout](https://inclusionai.github.io/AReaL/customization/agent.html)
   workflows within a single file, and smooth integration with other agentic tooling
   frameworks.
 - 🚀 **Scalability**: Through algorithm-system co-design, AReaL delivers **stable** fully
@@ -96,12 +96,12 @@ For comprehensive setup instructions, see
 
 ## Examples
 
-| Task                                        | Description                                                                  | Performance                                                        |
-| ------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| **[Math](examples/math/)**                  | GSM8K mathematical problem solving                                           | TBA                                                                |
-| **[VLM Math](examples/vlm/)**               | CLEVR visual counting tasks                                                  | TBA                                                                |
-| **[Simple Reasoning](examples/countdown/)** | Countdown numbers game with custom rewards                                   | [Training Curve](/examples/countdown/countdown_training_curve.png) |
-| **[Search Agent](examples/search-agent/)**  | End-to-end seach agent with search, browsing, and summarization capabilities | [ASearcher Repo](https://github.com/inclusionAI/ASearcher)         |
+| Task                                        | Description                                                               | Performance                                                        |
+| ------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| **[Math](examples/math/)**                  | GSM8K mathematical problem solving                                        | TBA                                                                |
+| **[VLM Math](examples/vlm/)**               | CLEVR visual counting tasks                                               | TBA                                                                |
+| **[Simple Reasoning](examples/countdown/)** | Countdown numbers game with custom rewards                                | [Training Curve](/examples/countdown/countdown_training_curve.png) |
+| **[Search Agent](examples/search-agent/)**  | An agent with end-to-end search, browsing, and summarization capabilities | [ASearcher Repo](https://github.com/inclusionAI/ASearcher)         |
 
 ## Resources
 
@@ -125,7 +125,7 @@ For comprehensive setup instructions, see
 
 ### Advanced Usage
 
-- [Debugging Best Practice](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
+- [Debugging Best Practices](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
 - [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
 
 ## Future Roadmap
