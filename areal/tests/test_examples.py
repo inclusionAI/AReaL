@@ -25,17 +25,12 @@ def run_example(
         Tuple of (success, stdout, stderr)
     """
     success_pattern = re.compile(r"Epoch 1/\d+ Step 1/\d+ Train step 1/\d+ done\.")
-    # Remove .py extension from example file for the command
-    example_name = (
-        os.path.splitext(example_file)[0].replace("/", ".").replace("\\", ".")
-    )
-
     # Construct the command
     cmd = [
         "python3",
         "-m",
         "areal.launcher.local",
-        example_name,
+        example_file,
         "--config",
         config_name,
     ]
