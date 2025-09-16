@@ -80,8 +80,6 @@ ref:
     max_tokens_per_mb: 10240
   optimizer: null
   backend: fsdp
-  fsdp:
-    ulysses_sp_size: 1
 
 # SGLang
 sglang:
