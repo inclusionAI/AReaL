@@ -8,6 +8,12 @@ from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 from PIL.Image import Image as ImageObject
 
+from areal.utils import logging
+
+logger = logging.getLogger(__name__)
+
+DATASET_NUM_PROC = 16
+
 
 def convert_image(
     image: Union[Dict[str, Any], ImageObject, str],
@@ -47,13 +53,14 @@ def get_clevr_count_70k_sft_dataset(
         path: str,
         split: str,
         processor,
-        max_length: Optional[int] = None,
+        max_length: int | None = None,
+        num_proc: int | None = None,
     ):
         dataset = load_dataset(path=path, split=split)
 
         tokenizer = processor.tokenizer
 
-        def process_example(example, idx):
+        def process_example(example):
             # Add query_id column
             images = example["images"]
             if "qwen" in processor.image_processor.image_processor_type.lower():
@@ -79,8 +86,7 @@ def get_clevr_count_70k_sft_dataset(
 
         num_proc = max(1, min(os.cpu_count(), 16))
         dataset = dataset.map(
-            lambda example, idx: process_example(example, idx),
-            with_indices=True,
+            lambda example: process_example(example),
             num_proc=num_proc,
         )
 
@@ -117,12 +123,21 @@ def get_clevr_count_70k_sft_dataset(
 
         return dataset
 
-    if rank == 0:
-        dataset = _do_preprocess(path, split, processor, max_length)
+    if dist.is_initialized():
+        # Use multi-processing to accelerate data-processing
+        # FIXME: processor process data extremely slowly in transformers > 4.53.1
+        num_proc = max(1, min(os.cpu_count(), DATASET_NUM_PROC))
+        logger.warning("Please set HF_HOME to your NFS directory")
+        if rank == 0:
+            # First process data in rank 0, and use HF cache to load pre-processed dataset in other ranks
+            dataset = _do_preprocess(path, split, processor, max_length, num_proc)
+        dist.barrier()
+    else:
+        # Do not use multi-processing (slow)
+        num_proc = None
 
-    dist.barrier()
-
-    dataset = _do_preprocess(path, split, processor, max_length)
+    # If use multiprocessing, it will load dataset in HF cache
+    dataset = _do_preprocess(path, split, processor, max_length, num_proc)
 
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset
@@ -137,7 +152,11 @@ def get_clevr_count_70k_rl_dataset(
     max_length: Optional[int] = None,
 ):
     def _do_preprocess(
-        path: str, split: str, processor, max_length: Optional[int] = None
+        path: str,
+        split: str,
+        processor,
+        max_length: int | None = None,
+        num_proc: int | None = None,
     ):
         dataset = load_dataset(path=path, split=split)
 
@@ -172,7 +191,6 @@ def get_clevr_count_70k_rl_dataset(
             )
             return {"messages": messages, "images": processed_images}
 
-        num_proc = max(1, min(os.cpu_count(), 16))
         dataset = dataset.map(process, num_proc=num_proc).remove_columns(["problem"])
 
         # Filter out sequences longer than max_length if max_length is provided
@@ -194,12 +212,21 @@ def get_clevr_count_70k_rl_dataset(
             dataset = dataset.filter(filter_length)
         return dataset
 
-    if rank == 0:
-        dataset = _do_preprocess(path, split, processor, max_length)
+    if dist.is_initialized():
+        # Use multi-processing to accelerate data-processing
+        # FIXME: processor process data extremely slowly in transformers > 4.53.1
+        num_proc = max(1, min(os.cpu_count(), DATASET_NUM_PROC))
+        logger.warning("Please set HF_HOME to your NFS directory")
+        if rank == 0:
+            # First process data in rank 0, and use HF cache to load pre-processed dataset in other ranks
+            dataset = _do_preprocess(path, split, processor, max_length, num_proc)
+        dist.barrier()
+    else:
+        # Do not use multi-processing (slow)
+        num_proc = None
 
-    dist.barrier()
-    # Use cache to load dataset
-    dataset = _do_preprocess(path, split, processor, max_length)
+    # If use multiprocessing, it will load dataset in HF cache
+    dataset = _do_preprocess(path, split, processor, max_length, num_proc)
 
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset
