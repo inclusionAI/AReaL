@@ -7,36 +7,41 @@
 <a href="./assets/wechat_qrcode.png" target="_blank"><img src="./assets/wechat_icon.png" width="20" style="vertical-align: middle;"> <b>WeChat (微信) Group</b></a> |
 </p>
 
-<img align="right" alt="ReaL" src="/assets/logo_lite.png" width="20%">
+<img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
 
-AReaL (Ant Reasoning RL) is an open-source **fully asynchronous reinforcement learning
-training system** for large reasoning models developed at **the RL Lab, Ant Research**.
-Built upon the open-source project [ReaLHF](https://github.com/openpsi-project/ReaLHF),
-we are fully committed to open-source by providing training details, data, and
-infrastructure required to reproduce results along with the model itself. AReaL aims to
-help everyone build their own AI agents easily and affordably. Our team loves milk tea
-because it's delicious, customizable, and affordable. We hope you enjoy our project just
-like how you enjoy real-world milk tea (cheers).
+AReaL is an open-source **fully asynchronous reinforcement learning training system**
+for large reasoning and agentic models developed by **the AReaL Team, Ant Group**. Built
+upon the open-source project [ReaLHF](https://github.com/openpsi-project/ReaLHF), we are
+fully committed to open-source by providing training details, data, and infrastructure
+required to reproduce results along with the model itself. AReaL aims to help everyone
+build their own AI agents easily and affordably. Our team loves milk tea because it's
+delicious, customizable, and affordable. We hope you enjoy our project just like how you
+enjoy real-world milk tea (cheers).
 
 **AReaL Highlights**
 
-- ⚡ <span style="color: red; font-weight: bold;">**\[NEW\] AReaL-lite:**</span> Our new
-  release AReaL-lite is a **light-weight** and **algorithm-first** codebase that
-  prioritizes better development experiences for AI researchers. As a result, AReaL-lite
-  delivers most AReaL functionalities while maintains its high performance with much
-  fewer lines of code. This allows users to build their own **agentic** training
-  workflows with minimal efforts.
-- 🔥 **Asynchronous RL**: With algorithm-system co-design, AReaL supports fully
-  asynchronous RL for **the fastest training speed**! Experimental support for
-  multi-turn agentic RL is also provided.
-- 🛠️ **Open & Reproducible**: We continuously release _all code, datasets, and training
-  recipes_ for RL training of LLMs.
-- 🚀 **Scalability**: AReaL can seamlessly adapt to different computational resource
-  settings, ranging from a single node to 1K GPUs.
-- 🔪 **Cutting-Edge Performance:** AReaL can produce models with cutting-edge reasoning
-  capabilities in math and coding. We are also actively working on agentic tasks.
+- ⚡ **Flexibility**: Smooth customization for multi-turn agentic rollout workflows
+  within a single file, and smooth integration with other agentic tooling framework.
+  Check [here](https://inclusionai.github.io/AReaL/customization/agent.html) for rollout
+  customization and
+  [here](https://inclusionai.github.io/AReaL/customization/algorithm.html) for algorithm
+  customization.
+- 🚀 **Scalability**: With algorithm-system co-design, AReaL supports fully asynchronous
+  RL for **the fastest training speed**! AReaL can seamlessly adapt to different
+  computational resource settings, ranging from a single node to 1K GPUs.
+- 🔪 **Cutting-Edge Performance:** AReaL can produce [math](/blog/AReaL_v0_2.md),
+  [coding](/blog/AReaL_v0_3.md), and
+  [search agents](https://github.com/inclusionAI/ASearcher) with cutting-edge
+  capabilities.
 
 ## News
+
+**\[2025/08/30\]** Introducing ASearcher, a state-of-the-art search agent built with
+AReaL's end-to-end asynchronous RL training. Checkout the
+[paper](https://arxiv.org/pdf/2508.07976) and the
+[open-source repo](https://github.com/inclusionAI/ASearcher)!
+
+<!--> TODO: fold the following news into a tab <!-->
 
 **\[2025/07/31\] (AReaL-lite)** We introduce AReaL-lite, a **light-weight** version of
 AReaL designed specifically for AI researchers and rapid prototyping. AReaL-lite
@@ -62,48 +67,10 @@ SOTA 7B and 32B models on math reasoning. Check our
 **\[2025/02/24\] (v0.1)** Our initial release includes reproducible results for 1.5B and
 7B LRMs. Check our [v0.1 technical blog](/blog/AReaL_v0_1.md).
 
-## AReaL-lite Release Highlights
-
-New highlights in AReaL-lite:
-
-- Instead of the *system-first* architecture in old AReaL, AReaL-lite follows an
-  **algorithm-first** API design that aims to provide the following key features:
-
-  - **Light-weight** & **easy-to-write** algorithm and training workflow customization.
-  - **Easy to scale up** without knowing system and infrastructure details.
-  - **Adaptable and plugable:** Smooth to integrate with other modern AI applications.
-
-  These features make AReaL-lite easy for AI researchers to adopt, understand, and
-  develop effectively and efficiently. To learn more about the design principles of
-  AReaL, please read the [AReaL-lite design doc](/areal/README.md)!
-
-- A much more *light-weight* codebase compared to old AReaL codebase with only **20%** #
-  lines of code, with a detailed
-  [code walkthrough](https://inclusionai.github.io/AReaL/lite/gsm8k_grpo.html) on an
-  GRPO-on-GSM8K example. Save your time & efforts for code reading!
-
-- Smoother customization for your own **algorithms** and **agentic & RLVR rollout** RL
-  within a single file! Check
-  [here](https://inclusionai.github.io/AReaL/customization/agent.html) for agent & RLVR
-  customization and
-  [here](https://inclusionai.github.io/AReaL/customization/algorithm.html) for algorithm
-  customization.
-
-Good old stuff from AReaL:
-
-- High performance and scalability with fully asynchronous RL training. Check our
-  [boba² (v0.3) blog](/blog/AReaL_v0_3.md) for details.
-
-- A single command line to launch an experiment, no matter on a single node or a
-  large-scale distributed cluster.
-
-Now, let us run an example experiment with AReaL-lite following the quickstart guide
-below!
-
-## Getting Started with AReaL-lite
+## Getting Started
 
 Our training scripts will automatically download the dataset (openai/gsm8k) and model
-(Qwen/Qwen2-1.5B-Instruct). On a single node, runs:
+(Qwen/Qwen2-1.5B-Instruct). On a single node, run:
 
 ```bash
 python3 -m areal.launcher.local \
@@ -122,46 +89,8 @@ python3 -m areal.launcher.ray \
   cluster.n_gpus_per_node=8
 ```
 
-<!-- not finished in this release -->
-
-<!--
-Evaluation (on a single node):
-
-```
-python3 -m areal.launcher.local examples/eval.py --config examples/configs/eval.yaml
-```
--->
-
-For more detailed guide on how to run experiments in AReaL-lite, please check out
+For more details, please check out
 [our quickstart guide](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)!
-
-## Switching from legacy AReaL to AReaL-lite
-
-We also provide a convenient script to convert your AReaL YAML config into AReaL-lite
-config in one command line. First you need to locate your AReaL config either modified
-from files from `examples` folder, or generated when you run your experiments in
-`<fileroot>/<expr_name>/<trial_name>` folder. Runs:
-
-```bash
-python examples/config_converter.py \
-  --convert_src AReaL --src_config_path <path_to_areal_yaml> \
-  --template_path examples/math/gsm8k_grpo.yaml \
-  --output_path <output_yaml>
-```
-
-Then you should be able to run experiments with your old settings on AReaL-lite!
-
-## AReaL-lite vs legacy AReaL
-
-AReaL-lite is an initiative to fully refactor AReaL, addressing historical issues such
-as redundant code and unnecessary system-level abstractions. Currently, AReaL-lite
-provides a lightweight codebase that enables fast prototyping for new RL training
-workflows and algorithms on a relatively small scale.
-
-For large-scale experiments (1K+ GPUs), we recommend using the battle-tested legacy
-AReaL (under directory `./realhf`) to ensure stability. In the future, we will continue
-developing AReaL-lite by expanding its APIs, migrating legacy features, introducing new
-functionality, and validating the system through large-scale experiments.
 
 ## Resources
 
@@ -183,12 +112,10 @@ functionality, and validating the system through large-scale experiments.
 - [Customize Agentic/RVLR rollout workflows with AReaL-lite](https://inclusionai.github.io/AReaL/customization/agent.html)
 - [Customize algorithms with AReaL-lite](https://inclusionai.github.io/AReaL/customization/algorithm.html)
 
-### AReaL Legacy
+### Advanced Usage
 
-For old AReaL documentation, check the legacy sections in our
-[documentation](https://inclusionai.github.io/AReaL/). To reproduce AReaL boba & boba²
-results, check our
-[reproduction guide with legacy AReaL](https://inclusionai.github.io/AReaL/references/reproduce.html).
+- [Debugging Best Practice](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
+- [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
 
 ## Future Plan
 
@@ -220,7 +147,7 @@ For the research and development plan already in place, please see the following
 
 ## Acknowledgement
 
-We would like to note that major contributors are from the RL Lab at Ant Research and
+We would like to note that major contributors are from the AReaL Team at Ant Group and
 the Institute for Interdisciplinary Information Sciences, Tsinghua University.
 
 Our team has also received invaluable assistance from the following groups (listed in
@@ -232,8 +159,8 @@ alphabetical order):
   seamless cooperation on many system-related aspects
 
 - The [SGLang team](https://github.com/sgl-project/sglang) for supporting customized
-  features for asynchronous RL training and their contributions during the development
-  of AReaL-lite
+  features for updating weights and their contributions during the development of
+  AReaL-lite
 
 - The Super Computing Technology (SCT) team at Ant Group, particularly for their
   expertise in large-scale cluster operations and maintenance
