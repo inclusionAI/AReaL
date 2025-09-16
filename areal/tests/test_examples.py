@@ -2,7 +2,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 from typing import Tuple
 
 import pytest
@@ -51,12 +50,12 @@ def run_example(
             capture_output=True,
             text=True,
             timeout=timeout,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
         )
 
         stdout = result.stdout
         stderr = result.stderr
+
+        logger.info(f"STDOUT: ...{stdout[-10000:]}")  # Truncate long output
 
         # Check if the expected pattern is in the output
         success = bool(success_pattern.search(stdout))
