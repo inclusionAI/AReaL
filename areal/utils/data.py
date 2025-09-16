@@ -1065,7 +1065,8 @@ def bcast_mb_list(
 def cycle_dataloader(dataloader: StatefulDataLoader):
     """Cycle through a dataloader indefinitely."""
     g = iter(dataloader)
-    try:
-        yield next(g)
-    except StopIteration:
-        g = iter(dataloader)
+    while True:
+        try:
+            yield next(g)
+        except StopIteration:
+            g = iter(dataloader)
