@@ -102,8 +102,8 @@ def test_countdown_example(tmp_path_factory):
         check=True,
     )
 
-    example_file = "examples/countdown/countdown.py"
-    config_name = "examples/countdown/countdown_test.yaml"
+    example_file = "examples/countdown/train.py"
+    config_name = "examples/countdown/train_config.yaml"
     success, stdout, stderr = run_example(
         example_file,
         config_name,
