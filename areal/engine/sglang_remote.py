@@ -280,18 +280,18 @@ class RemoteSGLangEngine(InferenceEngine):
                 raise RuntimeError(
                     f"Experiment and trial names must be set for disk-based weight updates."
                 )
-            endpoints = ['update_weights_from_disk']
+            endpoints = ["update_weights_from_disk"]
             payloads = [dict(model_path=str(meta.path), abort_all_request=True)]
             if meta.use_lora:
                 endpoints = []
                 payloads = []
                 lora_name = f"lora_{self.get_version()}"
                 if self.lora_init:
-                    endpoints.append('unload_lora_adapter')
+                    endpoints.append("unload_lora_adapter")
                     payloads.append(dict(lora_name=lora_name, abort_all_request=True))
                 else:
                     self.lora_init = True
-                endpoints.append('load_lora_adapter')
+                endpoints.append("load_lora_adapter")
                 payloads.append(dict(lora_name=lora_name, lora_path=str(meta.path)))
 
             fut = self.executor.submit(
@@ -425,6 +425,7 @@ def update_weights_from_disk(
         return load_timestamp - save_timestamp
 
     return uvloop.run(_fn())
+
 
 def update_weights_from_distributed(
     meta: WeightUpdateMeta,

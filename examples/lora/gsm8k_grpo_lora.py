@@ -113,7 +113,12 @@ def main(args):
     # ]
     # dist.broadcast_object_list(weight_update_meta, src=0)
     # weight_update_meta = weight_update_meta[0]
-    weight_update_meta = WeightUpdateMeta.from_disk(config.saver.experiment_name, config.saver.trial_name, config.saver.fileroot, use_lora=True)
+    weight_update_meta = WeightUpdateMeta.from_disk(
+        config.saver.experiment_name,
+        config.saver.trial_name,
+        config.saver.fileroot,
+        use_lora=True,
+    )
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:

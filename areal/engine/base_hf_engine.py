@@ -5,7 +5,6 @@ from typing import Any, Callable, Dict, List
 
 import torch
 import torch.distributed as dist
-
 from tensordict import TensorDict
 from torch.distributed.distributed_c10d import _get_default_group
 from transformers import (

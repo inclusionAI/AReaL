@@ -12,10 +12,11 @@ from hydra import initialize as hydra_init
 from omegaconf import MISSING, DictConfig, OmegaConf
 
 from areal.platforms import current_platform
-from areal.utils import name_resolve, pkg_version, logging
+from areal.utils import logging, name_resolve, pkg_version
 from areal.utils.fs import get_user_tmp
 
 logger = logging.getLogger("CLI Args")
+
 
 @dataclass
 class NormConfig:
@@ -285,13 +286,17 @@ class TrainEngineConfig:
         if self.use_lora:
             if not self.peft_type:
                 self.peft_type = "lora"
-                logger.warning("Set the default peft_type to lora when use_lora is True")
+                logger.warning(
+                    "Set the default peft_type to lora when use_lora is True"
+                )
             elif self.peft_type.lower() != "lora":
                 self.peft_type = "lora"
                 logger.warning("Only support lora now!")
             if not self.target_modules:
                 self.target_modules = "all-linear"
-                logger.warning("Set the default target_modules to all-linear when use_lora is True")
+                logger.warning(
+                    "Set the default target_modules to all-linear when use_lora is True"
+                )
         else:
             self.peft_type = None
             self.target_modules = None
@@ -537,7 +542,12 @@ class SGLangConfig:
     ):
         # Map "all-linear" to "all"
         if sglang_config.lora_target_modules:
-            sglang_config.lora_target_modules = list(map(lambda x: x.replace("-linear", ""), sglang_config.lora_target_modules))
+            sglang_config.lora_target_modules = list(
+                map(
+                    lambda x: x.replace("-linear", ""),
+                    sglang_config.lora_target_modules,
+                )
+            )
         args: Dict = conf_as_dict(sglang_config)
         args = dict(
             host=host,
