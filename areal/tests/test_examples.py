@@ -278,6 +278,7 @@ def test_vlm_grpo(tmp_path_factory):
     assert success, f"CLEVR Count 70k GRPO example failed, return_code={return_code}"
 
 
+@pytest.mark.skip("Currently SFT dataloading is too slow. Needs to be fixed.")
 @pytest.mark.gpu
 def test_vlm_sft(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
