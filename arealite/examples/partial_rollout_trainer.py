@@ -132,23 +132,13 @@ def main(args):
         allocate_mode = AllocationMode.from_str(allocation_mode)
 
         tokenizer = load_hf_tokenizer(config.tokenizer_path)
-        dataset = load_dataset("json",
-                             data_files=config.train_dataset.path,
-                             keep_in_memory=False,
-                             num_proc=os.cpu_count())
-
-        train_dataset = dataset["train"].filter(
-            lambda x: len(tokenizer.encode(x["prompt"])) <= config.train_dataset.max_prompt_len,
-            num_proc=os.cpu_count(),
-            batch_size=10000,
-        )
+        dataset = load_dataset("json", data_files=config.train_dataset.path)
+        train_dataset = dataset['train']
+        train_dataset = train_dataset.filter(
+            lambda x: len(tokenizer.encode(x["prompt"])) <= config.train_dataset.max_prompt_len)
         dataloader = StatefulDataLoader(
-            train_dataset,
-            batch_size=1,
-            sampler=ShuffleSampler(train_dataset),
-            collate_fn=custom_collate_fn,
-            num_workers=min(8, os.cpu_count()),
-        )
+            train_dataset, batch_size=1, sampler=ShuffleSampler(train_dataset), collate_fn=custom_collate_fn)
+
         rollout_buffer = RolloutBuffer(
             train_batch_size=training_real_batch_size,
             batch_size_exceeding_num=config.partial_rollout.batch_size_exceeding_num,
