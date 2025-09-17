@@ -251,7 +251,9 @@ class TrainEngineConfig:
     )
 
     # Training Backend Configuration
-    disable_dropout: bool = field(default=False)
+    disable_dropout: bool = field(
+        default=False, metadata={"help": "Disable dropout layers during training"}
+    )
     gradient_checkpointing: bool = field(
         default=True, metadata={"help": "Enable gradient checkpointing"}
     )
@@ -263,7 +265,9 @@ class TrainEngineConfig:
         default=None, metadata={"help": "Optimizer configuration"}
     )
 
-    backend: str = ""
+    backend: str = field(
+        default="", metadata={"help": "Training backend (refer to documentation)"}
+    )
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
     ds_auto_tp: DeepSpeedAutoTPEngineConfig = field(
         default_factory=DeepSpeedAutoTPEngineConfig
@@ -747,11 +751,15 @@ class DatasetConfig:
     num_workers: int = field(
         default=0, metadata={"help": "Number of worker processes for data loading"}
     )
-    drop_last: bool = field(default=True)
-    reward_fn: Optional[str] = field(
-        default=None,
+    drop_last: bool = field(
+        default=True, metadata={"help": "Drop the last incomplete batch"}
     )
-    max_length: Optional[int] = None
+    max_length: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Maximum token length of sequences in dataset. Longer sequences will be filtered out"
+        },
+    )
 
 
 @dataclass
@@ -883,7 +891,12 @@ class SFTConfig(BaseExperimentConfig):
 
 @dataclass
 class GRPOConfig(BaseExperimentConfig):
-    async_training: bool = field(default=True)
+    async_training: bool = field(
+        default=True,
+        metadata={
+            "help": "Enable asynchronous training between rollout and policy update"
+        },
+    )
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
