@@ -57,7 +57,7 @@ def main(args):
     # Initialize inference engine
     config.rollout.max_head_offpolicyness = int(1e12)
     eval_rollout = RemoteSGLangEngine(config.rollout)
-    eval_rollout.initialize(None, None)
+    eval_rollout.initialize()
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:

@@ -148,6 +148,7 @@ def load_weights_from_hf_with_mbridge_fast(
 ) -> None:
     weights_path = bridge._get_actual_hf_path(weights_path)
     index_file = os.path.join(weights_path, "model.safetensors.index.json")
+    manual_tie_word_embedding = False
     index = {}
     if os.path.exists(index_file):
         with open(index_file, "r") as f:
@@ -162,6 +163,12 @@ def load_weights_from_hf_with_mbridge_fast(
                 with safe_open(safetensor_file, framework="pt", device="cpu") as f:
                     for k in f.keys():
                         index[k] = safetensor_file
+                if (
+                    "model.embed_tokens.weight" in index
+                    and "lm_head.weight" not in index
+                ):
+                    manual_tie_word_embedding = True
+                    index["lm_head.weight"] = index["model.embed_tokens.weight"]
         else:
             raise FileNotFoundError("No safetensors found in the model path to load.")
 
@@ -180,6 +187,12 @@ def load_weights_from_hf_with_mbridge_fast(
             for k, v in local_to_global_map.items()
             if "_extra_state" not in k
         }
+        if manual_tie_word_embedding:
+            for k, v in local_to_hf_map.items():
+                if "lm_head.weight" in v:
+                    v.remove("lm_head.weight")
+                    if "model.embed_tokens.weight" not in v:
+                        v.append("model.embed_tokens.weight")
 
         local_to_file_map = defaultdict(list)
         for local_name, hf_names in local_to_hf_map.items():

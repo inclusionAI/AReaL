@@ -40,8 +40,9 @@ def redistribute(
     # Remove pad positions
     for d in all_data:
         l = d["attention_mask"].sum(-1).max().item()
+        attn_mask_shape = d["attention_mask"].shape
         for k, v in d.items():
-            if v.shape[:2] == d["attention_mask"].shape[:2]:
+            if v.shape[:2] == attn_mask_shape[:2]:
                 d[k] = v[:, :l]
 
     # No capacity limit leads to balanced partition across this group

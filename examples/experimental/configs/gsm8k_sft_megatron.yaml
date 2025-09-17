@@ -1,17 +1,19 @@
 experiment_name: gsm8k-sft-megatron
 trial_name: trial0
 
-allocation_mode: d2p2t2
-cluster:
-  fileroot: /tmp/areal/experiments
-  n_nodes: 1
-  n_gpus_per_node: 8
-  name_resolve:
-    type: nfs
-    nfs_record_root: /tmp/areal/name_resolve
 seed: 1
 total_train_epochs: 1
 tokenizer_path: ${model.path}
+
+cluster:
+  n_nodes: 1
+  n_gpus_per_node: 8
+  fileroot: /tmp/areal/experiments
+  name_resolve:
+    type: nfs
+    nfs_record_root: /tmp/areal/name_resolve
+
+allocation_mode: d2p2t2
 
 model:
   experiment_name: ${experiment_name}

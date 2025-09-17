@@ -1,8 +1,8 @@
 import subprocess
 
 import pytest
-import torch
 
+from areal.platforms import current_platform
 from areal.utils.network import find_free_ports
 
 
@@ -19,14 +19,16 @@ def _run_test_with_torchrun(world_size):
                 "areal/tests/torchrun/run_ulysses.py",
             ],
             check=True,
+            capture_output=True,
+            text=True,
         )
     except subprocess.CalledProcessError as e:
-        pytest.fail(f"Test failed with error: {e.stderr.decode()}")
+        pytest.fail(f"Test failed with error: {e.stderr}")
 
 
 @pytest.mark.multi_gpu
 @pytest.mark.parametrize("world_size", [2])
 def test_ulysses(world_size):
-    if torch.cuda.device_count() < world_size:
+    if current_platform.device_count() < world_size:
         pytest.skip(f"This test requires {world_size} gpus")
     _run_test_with_torchrun(world_size=world_size)

@@ -10,6 +10,7 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GenerationHyperparameters
+from areal.platforms import current_platform
 from areal.utils.network import find_free_ports, gethostip
 
 if TYPE_CHECKING:
@@ -135,7 +136,7 @@ class WeightUpdateMeta:
     ):
         param_specs = fsdp_engine.get_param_specs(weight_chunked_mem_mb)
         return cls(
-            type="nccl",
+            type=current_platform.communication_backend,
             alloc_mode=allocation_mode,
             nccl_master_address=gethostip(),
             nccl_master_port=find_free_ports(1)[0],

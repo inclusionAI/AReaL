@@ -1,23 +1,27 @@
 import os
 import sys
 
+import torch.distributed as dist
+from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
 from areal.engine.sft.lm_engine import FSDPLMEngine
+from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import broadcast_tensor_container, pad_sequences_to_tensors
 from areal.utils.evaluator import Evaluator
-from areal.utils.hf_utils import load_hf_processor_and_tokenizer
+from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
 
-def main_sft():
-    config, _ = load_expr_config(sys.argv[1:], SFTConfig)
+def main(args):
+    config, _ = load_expr_config(args, SFTConfig)
     config: SFTConfig
 
     rank = int(os.getenv("RANK"))
@@ -29,7 +33,7 @@ def main_sft():
     engine = FSDPLMEngine(config=config.model)
     engine.create_process_group(parallel_strategy=parallel_strategy)
 
-    processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
+    tokenizer = load_hf_tokenizer(config.tokenizer_path)
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
         rank=engine.data_parallel_rank,
@@ -38,7 +42,6 @@ def main_sft():
         max_length=config.train_dataset.max_length,
         type=config.train_dataset.type,
         tokenizer=tokenizer,
-        processor=processor,
     )
     valid_dataset = get_custom_dataset(
         path=config.valid_dataset.path,
@@ -48,7 +51,6 @@ def main_sft():
         max_length=config.valid_dataset.max_length,
         type=config.valid_dataset.type,
         tokenizer=tokenizer,
-        processor=processor,
     )
 
     # Create dataset and dataloaders
@@ -60,7 +62,6 @@ def main_sft():
         collate_fn=pad_sequences_to_tensors,
         drop_last=config.train_dataset.drop_last,
     )
-
     valid_dataloader = StatefulDataLoader(
         valid_dataset,
         batch_size=config.valid_dataset.batch_size // engine.data_parallel_world_size,
@@ -98,6 +99,7 @@ def main_sft():
     )
 
     total_epochs = config.total_train_epochs
+
     global_step = 0
     for epoch in range(total_epochs):
         for step, data in enumerate(train_dataloader):
@@ -112,6 +114,8 @@ def main_sft():
             )
 
             # NOTE: data are identical across model+context parallel group
+            data: TensorDict
+            data = data.to(current_platform.current_device())
             data = broadcast_tensor_container(
                 data,
                 src_rank=engine.current_data_parallel_head(),
@@ -127,29 +131,7 @@ def main_sft():
                 stats_tracker.scalar(**stats)
 
             with stats_tracker.record_timing("save"):
-                saver.save(
-                    engine,
-                    epoch,
-                    step,
-                    global_step,
-                    tokenizer=tokenizer,
-                    processor=processor,
-                )
-
-            with stats_tracker.record_timing("eval"):
-                # No need to log anything. Logging will be handled outside
-                # via stats_tracker.export().
-                def evaluate_fn():
-                    with stats_tracker.scope("sft-eval"):
-                        for data in valid_dataloader:
-                            engine.evaluate_lm(data)
-
-                evaluator.evaluate(
-                    evaluate_fn,
-                    epoch,
-                    step,
-                    global_step,
-                )
+                saver.save(engine, epoch, step, global_step, tokenizer=tokenizer)
 
             with stats_tracker.record_timing("checkpoint_for_recover"):
                 recover_handler.dump(
@@ -160,8 +142,34 @@ def main_sft():
                     stats_logger,
                     train_dataloader,
                     tokenizer=tokenizer,
-                    processor=processor,
                 )
+
+            dist.barrier(device_ids=[engine.device.index])
+            current_platform.synchronize()
+
+            with stats_tracker.record_timing("eval"):
+                # No need to log anything. Logging will be handled outside
+                # via stats_tracker.export().
+                def evaluate_fn():
+                    with stats_tracker.scope("sft-eval"):
+                        for data in valid_dataloader:
+                            data = data.to(current_platform.current_device())
+                            data = broadcast_tensor_container(
+                                data,
+                                src_rank=engine.current_data_parallel_head(),
+                                group=engine.context_and_model_parallel_group,
+                            )
+                            engine.evaluate_lm(data)
+
+                evaluator.evaluate(
+                    evaluate_fn,
+                    epoch,
+                    step,
+                    global_step,
+                )
+
+            dist.barrier(device_ids=[engine.device.index])
+            current_platform.synchronize()
 
             stats_logger.commit(
                 epoch,
@@ -176,4 +184,4 @@ def main_sft():
 
 
 if __name__ == "__main__":
-    main_sft()
+    main(sys.argv[1:])

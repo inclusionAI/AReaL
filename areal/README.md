@@ -145,8 +145,8 @@ parameters for hyperparameter searches or other experimental needs:
 
 ```bash
 # Launch with Ray launcher: 4 nodes (4 GPUs each), 3 nodes for generation, 1 node for training
-python3 -m areal.launcher.ray examples/gsm8k_grpo.py \
-    --config examples/configs/gsm8k_grpo.yaml \
+python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
+    --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your_experiment_name> \
     trial_name=<your_trial_name> \
     allocation_mode=sglang.d12p1t1+d4p1t1 \
@@ -154,8 +154,8 @@ python3 -m areal.launcher.ray examples/gsm8k_grpo.py \
     cluster.n_gpus_per_node=4
 
 # Launch with Slurm launcher: 16 nodes (8 GPUs each), 12 nodes for generation, 4 nodes for training
-python3 -m areal.launcher.slurm examples/gsm8k_grpo.py \
-    --config examples/configs/gsm8k_grpo.yaml \
+python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py \
+    --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your_experiment_name> \
     trial_name=<your_trial_name> \
     allocation_mode=sglang.d96p1t1+d32p1t1 \
@@ -498,20 +498,19 @@ def submit(
     data: Dict[str, Any],
     workflow: Optional["RolloutWorkflow"] = None,
     workflow_builder: Optional[Callable] = None,
+    should_accept: Callable | None = None,
 ) -> None:
     try:
         if workflow is None:
             workflow = workflow_builder()
-        self.input_queue.put_nowait((data, workflow))
+        x = _RolloutTaskInput(
+            data=data, workflow=workflow, should_accept=should_accept
+        )
+        self.input_queue.put_nowait(x)
     except queue.Full:
         raise RuntimeError("Input queue full. Please increase queue_size.")
 
-def wait(
-    self,
-    count: int,
-    timeout: float | None = None,
-    should_accept: Callable | None = None,
-) -> TensorDict:
+def wait(self, count: int, timeout: float | None = None) -> TensorDict:
     """Wait for specified number of results with optional filtering."""
     # Implementation details...
     pass
@@ -521,6 +520,7 @@ def rollout_batch(
     data: List[Dict[str, Any]],
     workflow: Optional["RolloutWorkflow"] = None,
     workflow_builder: Optional[Callable] = None,
+    should_accept: Callable | None = None,
 ) -> TensorDict:
     """Submit a batch of requests to the inference engine and wait for the results."""
     for item in data:
@@ -530,7 +530,9 @@ def rollout_batch(
 def prepare_batch(
     self,
     dataloader: StatefulDataLoader,
-    workflow: "RolloutWorkflow",
+    workflow: Optional["RolloutWorkflow"] = None,
+    workflow_builder: Optional[Callable] = None,
+    should_accept: Callable | None = None,
 ):
     """Prepare batch for asynchronous processing."""
     # Implementation details...

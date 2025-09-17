@@ -5,8 +5,10 @@ import torch.distributed as dist
 from safetensors.torch import save_file
 
 from areal.api.cli_args import TrainEngineConfig
-from areal.api.engine_api import FinetuneSpec, SaveLoadMeta, WeightUpdateMeta
+from areal.api.engine_api import SaveLoadMeta, WeightUpdateMeta
+from areal.api.io_struct import FinetuneSpec
 from areal.engine.base_hf_engine import BaseHFEngine
+from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.save_load import (
@@ -32,7 +34,7 @@ class DeepSpeedAutoTPEngine(BaseHFEngine):
 
         world_size = int(os.environ.get("WORLD_SIZE"))
         deepspeed.init_distributed(
-            dist_backend="nccl",
+            dist_backend=current_platform.communication_backend,
             world_size=world_size,
             timeout=NCCL_DEFAULT_TIMEOUT,
         )

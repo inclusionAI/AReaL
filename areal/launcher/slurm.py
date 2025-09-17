@@ -17,13 +17,13 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
+from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import (
     JobException,
     JobInfo,
     JobState,
     get_env_vars,
-    validate_config_for_distributed_launcher,
     wait_sglang_server_addrs,
 )
 from areal.utils.recover import check_if_recover
@@ -33,6 +33,7 @@ from areal.utils.slurm import (
     SRUN_CMD_TEMPLATE,
     cancel_jobs,
     query_jobs,
+    validate_config_for_slurm_launcher,
 )
 
 logger = logging.getLogger("SlurmLauncher")
@@ -161,8 +162,8 @@ class SlurmLauncher:
             env_vars = dict()
         n_gpus_per_task = n_gpus_per_node // ntasks_per_node
         assert (
-            "CUDA_VISIBLE_DEVICES" not in env_vars
-        ), "CUDA_VISIBLE_DEVICES should be automatically resolved by Launcher instead of manually assigned."
+            current_platform.device_control_env_var not in env_vars
+        ), f"{current_platform.device_control_env_var} should be automatically resolved by Launcher instead of manually assigned."
 
         srun_cmds = []
         for i in range(count):
@@ -404,7 +405,7 @@ def slurm_main(config, run_id: int = 0):
     config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
-    validate_config_for_distributed_launcher(config)
+    validate_config_for_slurm_launcher(config)
     is_recover_run = check_if_recover(config.recover, run_id)
     logger.info(
         f"SlurmLauncher: experiment_name={config.experiment_name}, "

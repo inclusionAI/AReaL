@@ -7,6 +7,7 @@ import torch
 import torch.distributed as dist
 
 from tensordict import TensorDict
+from torch.distributed.distributed_c10d import _get_default_group
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -18,8 +19,11 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
+from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
-from areal.api.engine_api import FinetuneSpec, TrainEngine
+from areal.api.engine_api import TrainEngine
+from areal.api.io_struct import FinetuneSpec
+from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.data import (
     MicroBatchList,
@@ -41,8 +45,6 @@ from areal.utils.model import (
     is_qwen3_moe_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
-
-logger = logging.getLogger("Base HF Engine")
 
 
 class BaseHFEngine(TrainEngine):
@@ -87,7 +89,7 @@ class BaseHFEngine(TrainEngine):
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
         assert self.initialized
-        return self._parallelism_group
+        return _get_default_group()
 
     @property
     def data_parallel_rank(self) -> int:
@@ -111,9 +113,9 @@ class BaseHFEngine(TrainEngine):
     @property
     def parallelism_group(self) -> dist.ProcessGroup:
         assert self.initialized
-        return self._parallelism_group
+        return _get_default_group()
 
-    def create_process_group(self):
+    def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         # Required by NCCL weight update group for SGLang
         os.environ["NCCL_CUMEM_ENABLE"] = "0"
         os.environ["NCCL_NVLS_ENABLE"] = "0"
@@ -122,16 +124,17 @@ class BaseHFEngine(TrainEngine):
             # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
             # otherwise initializing the NCCL weight update group will be wrong!
             dist.init_process_group(
-                backend="nccl",
+                backend=current_platform.communication_backend,
                 timeout=NCCL_DEFAULT_TIMEOUT,
             )
             self.own_global_group = True
-        self._parallelism_group = dist.new_group()
         # Each process is its own model parallel group.
         self.mp_group = dist.new_group([dist.get_rank()])
 
+        self.logger = logging.getLogger(f"[HF Engine Rank {dist.get_rank()}]")
+
     def create_device_model(self):
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        current_platform.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
 
         dtype = getattr(torch, self.config.dtype)
@@ -150,7 +153,7 @@ class BaseHFEngine(TrainEngine):
             )
 
             tik = time.perf_counter()
-            with torch.device("cuda"):
+            with torch.device(current_platform.device_type):
                 model = AutoModelForImageTextToText.from_pretrained(
                     pretrained_model_name_or_path=self.config.path,
                     trust_remote_code=True,
@@ -162,7 +165,7 @@ class BaseHFEngine(TrainEngine):
         else:
             self.tokenizer = load_hf_tokenizer(self.config.path)
             tik = time.perf_counter()
-            with torch.device("cuda"):
+            with torch.device(current_platform.device_type):
                 if self.config.init_from_scratch:
                     # initialize scratch model from config
                     # NOTE: VLM cannot directly load state dict using this
@@ -187,10 +190,9 @@ class BaseHFEngine(TrainEngine):
             model.gradient_checkpointing_enable(
                 gradient_checkpointing_kwargs={"use_reentrant": False}
             )
-
-        
-
-        logger.info(f"Model creation and loading time: {time.perf_counter() - tik}")
+        self.logger.info(
+            f"Model creation and loading time: {time.perf_counter() - tik}"
+        )
         self.model = model
 
     def create_optimizer(self, ft_spec: FinetuneSpec):
@@ -242,7 +244,7 @@ class BaseHFEngine(TrainEngine):
             raise ValueError(
                 f"Unknown lr scheduler type {self.optimizer_config.lr_scheduler_type}"
             )
-        logger.info(f"Create optimizer time: {time.perf_counter() - tik}")
+        self.logger.info(f"Create optimizer time: {time.perf_counter() - tik}")
 
     def destroy(self):
         """Destroy the engine and release GPU memory."""
@@ -251,10 +253,11 @@ class BaseHFEngine(TrainEngine):
         if hasattr(self, "model"):
             del self.model
         gc.collect()
-        torch.cuda.empty_cache()
+        current_platform.empty_cache()
         gc.collect()
-        dist.destroy_process_group(self.context_and_model_parallel_group)
-        dist.destroy_process_group(self.parallelism_group)
+        non_trivial_world = dist.get_world_size() > 1
+        if non_trivial_world:
+            dist.destroy_process_group(self.context_and_model_parallel_group)
         if self.own_global_group:
             dist.destroy_process_group()
         self.initialized = False
@@ -331,7 +334,7 @@ class BaseHFEngine(TrainEngine):
             pad_value=0.0,
             pad_to_maximum=self.config.pad_to_maximum,
         )
-        logger.info(
+        self.logger.info(
             f"Microbatch #tokens (rank {dist.get_rank()}): {mb_list.group_lens}, "
             f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}"
         )
@@ -434,8 +437,11 @@ class BaseHFEngine(TrainEngine):
         self.optimizer.zero_grad()
         mb_list = self.prepare_mb_list(input_)
 
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs]), dtype=torch.float32
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
         dist.all_reduce(total_loss_weight)
@@ -491,8 +497,11 @@ class BaseHFEngine(TrainEngine):
         """Evaluate on a batch."""
         input_ = input_.to(self.device)
         mb_list = self.prepare_mb_list(input_)
-        total_loss_weight = torch.tensor(
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs]), dtype=torch.float32
+        total_loss_weight = (
+            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .detach()
+            .clone()
+            .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
 

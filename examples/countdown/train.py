@@ -1,33 +1,161 @@
+import asyncio
 import itertools
 import os
 import sys
+import uuid
 from copy import deepcopy
 
+import aiofiles
+import aiofiles.os
+import colorama
 import torch
 import torch.distributed as dist
+from datasets import load_dataset
+from datasets.distributed import split_dataset_by_node
+from reward_score import compute_score
+from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
+from transformers import PreTrainedTokenizerFast
 
-from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
-from areal.dataset import get_custom_dataset
+from areal.api.cli_args import (
+    GenerationHyperparameters,
+    GRPOConfig,
+    load_expr_config,
+)
+from areal.api.engine_api import InferenceEngine
+from areal.api.io_struct import (
+    AllocationMode,
+    FinetuneSpec,
+    ModelRequest,
+    StepInfo,
+    WeightUpdateMeta,
+)
+from areal.api.workflow_api import RolloutWorkflow
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.utils import seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container
+from areal.platforms import current_platform
+from areal.utils import logging, seeding, stats_tracker
+from areal.utils.data import concat_padded_tensors
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
-from areal.workflow.rlvr import RLVRWorkflow
+
+worker_id = uuid.uuid4().hex[:4]
+
+logger = logging.getLogger(f"CountDown @ {worker_id}")
 
 
-def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    from areal.reward.math_parser import process_results
+class CountDownWorkflow(RolloutWorkflow):
+    def __init__(
+        self,
+        gconfig: GenerationHyperparameters,
+        tokenizer: PreTrainedTokenizerFast,
+        rollout_stat_scope: bool = "rollout",
+        dump_dir: str | None = None,
+    ):
+        self.gconfig = gconfig
+        self.tokenizer = tokenizer
+        self.dump_dir = dump_dir
+        self.rollout_stat_scope = rollout_stat_scope
+        if self.dump_dir is not None and not os.path.exists(self.dump_dir):
+            os.makedirs(self.dump_dir, exist_ok=True)
 
-    return int(process_results(completions, answer)[0])
+    async def arun_episode(self, engine: InferenceEngine, data):
+        input_ids = self.tokenizer.encode(data["query"], add_special_tokens=False)
+
+        n_samples = self.gconfig.n_samples
+        req = ModelRequest(
+            rid=uuid.uuid4().hex,
+            input_ids=input_ids,
+            gconfig=self.gconfig.new(n_samples=1),
+            tokenizer=self.tokenizer,
+        )
+        resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
+
+        version = engine.get_version()
+        prompt_strs = []
+        completions_strs = []
+        rewards = []
+        seqlens = []
+
+        results = []
+        for resp in resps:
+            seq = resp.input_tokens + resp.output_tokens
+            logprobs = [0.0] * resp.input_len + resp.output_logprobs
+            loss_mask = [0] * resp.input_len + [1] * resp.output_len
+            versions = [-1] * resp.input_len + resp.output_versions
+
+            prompt_str = self.tokenizer.decode(input_ids)
+            completions_str = self.tokenizer.decode(resp.output_tokens)
+            prompt_strs.append(prompt_str)
+            completions_strs.append(completions_str)
+            seqlens.append(len(seq))
+            reward = compute_score(
+                completions_str,
+                data,
+            )
+
+            # Log reward.
+            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+
+            rewards.append(reward)
+            res = dict(
+                # unsqueeze to add an additional batch dimension
+                input_ids=torch.tensor(seq).unsqueeze(0),
+                loss_mask=torch.tensor(loss_mask).unsqueeze(0),
+                logprobs=torch.tensor(logprobs).unsqueeze(0),
+                versions=torch.tensor(versions).unsqueeze(0),
+                attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
+                # reward
+                rewards=torch.tensor([float(reward)]),
+            )
+            results.append(TensorDict(res, batch_size=[1]))
+
+        # logger.info(f"numbers: {data['numbers']} target: {data['target']} rewards: {rewards}")
+
+        # if all([r<0.2 for r in rewards]):
+        #     return None
+
+        if self.dump_dir is not None:
+            dump_path = os.path.join(self.dump_dir, str(version))
+            await aiofiles.os.makedirs(dump_path, exist_ok=True)
+            # Get the unique identifier for this prompt
+            qid = None
+            for key in ["query_id", "id", "qid"]:
+                qid = data.get(key, None)
+                if qid is not None:
+                    break
+            qid = qid or uuid.uuid4().hex
+
+            # Dump rollout to file
+            file_path = os.path.join(dump_path, f"{qid}.txt")
+            async with aiofiles.open(file_path, "a") as f:
+                n_samples = self.gconfig.n_samples
+                for i, (p, c, r, sl) in enumerate(
+                    zip(prompt_strs, completions_strs, rewards, seqlens)
+                ):
+                    info = "\n".join(
+                        [
+                            f"idx: {i + 1} / {n_samples}, seqlen: {sl}, reward is {r}.",
+                            f"prompt is \n{colorama.Fore.YELLOW + colorama.Style.DIM}{p}{colorama.Style.RESET_ALL}",
+                            f"sequence is: \n{colorama.Fore.YELLOW + colorama.Style.DIM}{c}{colorama.Style.RESET_ALL}",
+                        ]
+                    )
+                    await f.write(info + "\n")
+
+        return concat_padded_tensors(results)
+
+
+def get_countdown_dataset(dataset_path, rank, world_size):
+    dataset = load_dataset(
+        path="json",
+        split="train",
+        data_files=dataset_path,
+    )
+    return split_dataset_by_node(dataset, rank=rank, world_size=world_size)
 
 
 def main(args):
@@ -35,39 +163,26 @@ def main(args):
     config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
+    world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
-    allocation_mode = AllocationMode.from_str(config.allocation_mode)
-    parallel_strategy = allocation_mode.train
 
-    # Initialize train engine
-    actor = FSDPPPOActor(config=config.actor)
-    actor.create_process_group(parallel_strategy=parallel_strategy)
-
-    train_dataset = get_custom_dataset(
-        path=config.train_dataset.path,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
-        split="train",
-        max_length=config.train_dataset.max_length,
-        type=config.train_dataset.type,
-        tokenizer=tokenizer,
+    train_dataset = get_countdown_dataset(
+        dataset_path=config.train_dataset.path,
+        rank=rank,
+        world_size=world_size,
     )
-    valid_dataset = get_custom_dataset(
-        path=config.valid_dataset.path,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
-        split="test",
-        max_length=config.valid_dataset.max_length,
-        type=config.valid_dataset.type,
-        tokenizer=tokenizer,
+    valid_dataset = get_countdown_dataset(
+        dataset_path=config.valid_dataset.path,
+        rank=rank,
+        world_size=world_size,
     )
 
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         train_dataset,
-        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
+        batch_size=config.train_dataset.batch_size // world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -75,7 +190,7 @@ def main(args):
     )
     valid_dataloader = StatefulDataLoader(
         valid_dataset,
-        batch_size=config.valid_dataset.batch_size // actor.data_parallel_world_size,
+        batch_size=config.valid_dataset.batch_size // world_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -89,19 +204,18 @@ def main(args):
 
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(
-        None, ft_spec, train_data_parallel_size=parallel_strategy.dp_size
-    )
+    rollout.initialize()
     eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
     # NOTE: eval does not have any offpolicyness control
     eval_rollout.config.max_head_offpolicyness = int(1e12)
-    eval_rollout.initialize(None, ft_spec)
+    eval_rollout.initialize()
 
+    # Initialize train engine
+    actor = FSDPPPOActor(config=config.actor)
     actor.initialize(None, ft_spec)
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
         ref = FSDPPPOActor(config=config.ref)
-        ref.create_process_group(parallel_strategy=parallel_strategy)
         ref.initialize(None, ft_spec)
 
     # NOTE: Weight update meta only requires address and free port of rank 0,
@@ -121,20 +235,16 @@ def main(args):
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-    workflow = RLVRWorkflow(
-        reward_fn=gsm8k_reward_fn,
+    workflow = CountDownWorkflow(
         gconfig=config.gconfig,
         tokenizer=tokenizer,
-        enable_thinking=False,
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
     )
-    eval_workflow = RLVRWorkflow(
-        reward_fn=gsm8k_reward_fn,
-        gconfig=config.gconfig.new(temperature=0.6),
+    eval_workflow = CountDownWorkflow(
+        gconfig=config.gconfig.new(temperature=1.0),
         tokenizer=tokenizer,
-        enable_thinking=False,
         rollout_stat_scope="eval-rollout",
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated-eval"
@@ -178,23 +288,23 @@ def main(args):
         )
 
         with stats_tracker.record_timing("rollout"):
-            batch = None
-            if actor.is_data_parallel_head():
-                if config.async_training:
-                    batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
-                else:
-                    batch = rollout.rollout_batch(
-                        next(data_generator), workflow=workflow
-                    )
-                batch = batch.to(actor.device)
-            batch = broadcast_tensor_container(
-                batch,
-                src_rank=actor.current_data_parallel_head(),
-                group=actor.context_and_model_parallel_group,
-            )
+            if config.async_training:
+                batch = rollout.prepare_batch(
+                    train_dataloader,
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
+            else:
+                batch = rollout.rollout_batch(
+                    next(data_generator),
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
+
+        batch = batch.to(actor.device)
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -229,7 +339,7 @@ def main(args):
             if dist.get_rank() == 0:
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
@@ -238,10 +348,24 @@ def main(args):
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
 
+        with stats_tracker.record_timing("checkpoint_for_recover"):
+            recover_handler.dump(
+                actor,
+                step_info,
+                saver,
+                evaluator,
+                stats_logger,
+                train_dataloader,
+                tokenizer=tokenizer,
+            )
+
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
+
         with stats_tracker.record_timing("eval"):
 
             def evaluate_fn():
-                # Stats are logged in the workflow
+                # Stats are logged in workflow
                 # and will be exported later
                 cnt = 0
                 for data in valid_dataloader:
@@ -257,28 +381,15 @@ def main(args):
                 global_step,
             )
 
-        with stats_tracker.record_timing("checkpoint_for_recover"):
-            recover_handler.dump(
-                actor,
-                step_info,
-                saver,
-                evaluator,
-                stats_logger,
-                train_dataloader,
-                tokenizer=tokenizer,
-            )
-
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
-        stats[0].update(
-            stats_tracker.export_all(reduce_group=actor.data_parallel_group)
-        )
+        stats[0].update(stats_tracker.export_all(reduce_group=actor.parallelism_group))
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         # Resume rollout
         rollout.resume()

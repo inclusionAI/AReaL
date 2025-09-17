@@ -11,10 +11,45 @@ from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
 from omegaconf import MISSING, DictConfig, OmegaConf
 
+from areal.platforms import current_platform
 from areal.utils import name_resolve, pkg_version, logging
 from areal.utils.fs import get_user_tmp
 
 logger = logging.getLogger("CLI Args")
+
+@dataclass
+class NormConfig:
+    """Configuration for advantage normalization."""
+
+    # TODO: add common fields of adv_norm and reward_norm
+
+
+@dataclass
+class AdvNormConfig(NormConfig):
+    """Advanced configuration for advantage normalization."""
+
+    mean_level: str = field(
+        default="batch",
+        metadata={
+            "help": "mean_level for advantage normalization. options: batch, group, none"
+        },
+    )
+    std_level: str = field(
+        default="batch",
+        metadata={
+            "help": "std_level for advantage normalization. options: batch, group, none"
+        },
+    )
+    group_size: int = field(
+        default=1, metadata={"help": "group_size for advantage normalization"}
+    )
+
+
+@dataclass
+class RewardNormConfig(NormConfig):
+    # TODO: implement reward normalization
+    pass
+
 
 @dataclass
 class MicroBatchSpec:
@@ -228,6 +263,7 @@ class TrainEngineConfig:
     optimizer: Optional[OptimizerConfig] = field(
         default=None, metadata={"help": "Optimizer configuration"}
     )
+
     backend: str = ""
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
     ds_auto_tp: DeepSpeedAutoTPEngineConfig = field(
@@ -267,12 +303,6 @@ class PPOActorConfig(TrainEngineConfig):
     group_size: int = field(
         default=1, metadata={"help": "Number of sequences in each group"}
     )
-    group_adv_norm: bool = field(
-        default=False,
-        metadata={
-            "help": "Normalize advantages within each prompt group rather than globally"
-        },
-    )
     ppo_n_minibatches: int = field(
         default=4, metadata={"help": "Number of minibatches for each PPO update"}
     )
@@ -308,6 +338,18 @@ class PPOActorConfig(TrainEngineConfig):
     reward_clip: float = field(
         default=20.0, metadata={"help": "Maximum absolute value for reward clipping"}
     )
+    overlong_reward_penalty: bool = field(
+        default=False,
+        metadata={"help": "penalty for overlong sequences. used within DAPO."},
+    )
+    overlong_tokens: Optional[int] = field(
+        default=None,
+        metadata={"help": "The numbers of token in the tail will receive a penalty"},
+    )
+    overlong_penalty_factor: Optional[float] = field(
+        default=None,
+        metadata={"help": "The numbers of token in the tail will receive a penalty"},
+    )
     mask_no_eos_with_zero: bool = field(
         default=False,
         metadata={
@@ -321,9 +363,6 @@ class PPOActorConfig(TrainEngineConfig):
     )
     gae_lambda: float = field(
         default=1.0, metadata={"help": "Lambda parameter for GAE"}
-    )
-    adv_norm: bool = field(
-        default=True, metadata={"help": "Enable advantage normalization globally"}
     )
 
     # KL Control
@@ -372,6 +411,14 @@ class PPOActorConfig(TrainEngineConfig):
     log_agent_stats_keys: List[str] = field(
         default_factory=lambda: [],
         metadata={"help": "Keys of log stats for agent trajectories"},
+    )
+    # Others
+    max_new_tokens: int = field(
+        default=1024,
+        metadata={"help": "Maximum number of new tokens to generate"},
+    )
+    adv_norm: Optional[AdvNormConfig] = field(
+        default=None, metadata={"help": "Optimizer configuration, default is None"}
     )
 
 
@@ -498,7 +545,7 @@ class SGLangConfig:
             tokenizer_mode="auto",
             load_format="auto",
             trust_remote_code=True,
-            device="cuda",
+            device=current_platform.device_type,
             is_embedding=False,
             # Other runtime options
             tp_size=tp_size,
@@ -760,11 +807,11 @@ class SlurmLauncherConfig:
     mount: str = field(
         default="/storage:/storage", metadata={"help": "Mount path for slurm."}
     )
-    trainer_image: str = field(
-        default="", metadata={"help": "slurm image for trainers."}
+    trainer_image: Optional[str] = field(
+        default=None, metadata={"help": "slurm image for trainers."}
     )
-    inference_server_image: str = field(
-        default="", metadata={"help": "slurm image for LLM inference."}
+    inference_server_image: Optional[str] = field(
+        default=None, metadata={"help": "slurm image for LLM inference."}
     )
 
 
