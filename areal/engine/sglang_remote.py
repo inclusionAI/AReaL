@@ -150,7 +150,7 @@ class RemoteSGLangEngine(InferenceEngine):
             "stream": False,
         }
         if self.lora_init:
-            payload["lora_path"] = f"lora_{self.get_version()}"
+            payload["lora_path"] = f"lora_1"
 
         # Make request
         start_time = time.perf_counter()
@@ -282,25 +282,17 @@ class RemoteSGLangEngine(InferenceEngine):
                 )
             endpoints = ["update_weights_from_disk"]
             payloads = [dict(model_path=str(meta.path), abort_all_request=True)]
+            lora_name = "lora_1"
             if meta.use_lora:
                 endpoints = []
                 payloads = []
                 if self.lora_init:
                     endpoints.append("unload_lora_adapter")
-                    payloads.append(
-                        dict(
-                            lora_name=f"lora_{self.get_version() - 1}",
-                            abort_all_request=True,
-                        )
-                    )
+                    payloads.append(dict(lora_name=lora_name, abort_all_request=True))
                 else:
                     self.lora_init = True
                 endpoints.append("load_lora_adapter")
-                payloads.append(
-                    dict(
-                        lora_name=f"lora_{self.get_version()}", lora_path=str(meta.path)
-                    )
-                )
+                payloads.append(dict(lora_name=lora_name, lora_path=str(meta.path)))
 
             fut = self.executor.submit(
                 update_weights_from_disk,
@@ -425,10 +417,12 @@ def update_weights_from_disk(
                     method="POST",
                     max_retries=request_retries,
                     timeout=request_timeout,
+                    verbose=True,
                 )
                 for addr in addresses
             ]
             await asyncio.gather(*jobs)
+            print(f"post endpoint {endpoint}")
         await session.close()
         return load_timestamp - save_timestamp
 
