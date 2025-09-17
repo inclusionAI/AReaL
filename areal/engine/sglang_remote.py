@@ -150,8 +150,7 @@ class RemoteSGLangEngine(InferenceEngine):
             "stream": False,
         }
         if self.lora_init:
-            # payload["lora_path"] = f"lora_{self.get_version()}"
-            payload["lora_path"] = f"lora_1"
+            payload["lora_path"] = f"lora_{self.get_version()}"
 
         # Make request
         start_time = time.perf_counter()
@@ -286,8 +285,7 @@ class RemoteSGLangEngine(InferenceEngine):
             if meta.use_lora:
                 endpoints = []
                 payloads = []
-                # lora_name = f"lora_{self.get_version()}"
-                lora_name = f"lora_1"
+                lora_name = f"lora_{self.get_version()}"
                 if self.lora_init:
                     endpoints.append('unload_lora_adapter')
                     payloads.append(dict(lora_name=lora_name, abort_all_request=True))

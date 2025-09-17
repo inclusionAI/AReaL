@@ -420,7 +420,6 @@ class FSDPEngine(BaseHFEngine):
         # save huggingface model on rank 0
         if dist.get_rank() == 0:
             os.makedirs(path, exist_ok=True)
-            logger.info(f"before filter: {state_dict.keys()}")
             if self.config.use_lora:
                 state_dict = filter_lora_weights(state_dict)
             self.model.save_pretrained(path, state_dict=state_dict)

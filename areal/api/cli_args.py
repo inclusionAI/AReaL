@@ -535,7 +535,9 @@ class SGLangConfig:
         n_nodes: int = 1,
         node_rank: int = 0,
     ):
-
+        # Map "all-linear" to "all"
+        if sglang_config.lora_target_modules:
+            sglang_config.lora_target_modules = list(map(lambda x: x.replace("-linear", ""), sglang_config.lora_target_modules))
         args: Dict = conf_as_dict(sglang_config)
         args = dict(
             host=host,
