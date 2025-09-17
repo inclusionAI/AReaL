@@ -131,7 +131,7 @@ class MegatronEngine(TrainEngine):
                     recompute_modules=self.mcore_config.recompute_modules,
                 )
             )
-            self.tf_config = TransformerConfig(tf_config_dict)
+            self.tf_config = TransformerConfig(**tf_config_dict)
 
         # initialize mcore (DDP Wrapped) GPTModel
         with self.device:
