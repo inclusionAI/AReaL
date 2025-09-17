@@ -417,12 +417,10 @@ def update_weights_from_disk(
                     method="POST",
                     max_retries=request_retries,
                     timeout=request_timeout,
-                    verbose=True,
                 )
                 for addr in addresses
             ]
             await asyncio.gather(*jobs)
-            print(f"post endpoint {endpoint}")
         await session.close()
         return load_timestamp - save_timestamp
 
