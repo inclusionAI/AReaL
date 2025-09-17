@@ -34,7 +34,11 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import concat_padded_tensors, cycle_dataloader
+from areal.utils.data import (
+    broadcast_tensor_container,
+    concat_padded_tensors,
+    cycle_dataloader,
+)
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -162,7 +166,6 @@ def main(args):
     config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
-    world_size = int(os.getenv("WORLD_SIZE"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
@@ -175,19 +178,19 @@ def main(args):
 
     train_dataset = get_countdown_dataset(
         dataset_path=config.train_dataset.path,
-        rank=rank,
-        world_size=world_size,
+        rank=actor.data_parallel_rank,
+        world_size=actor.data_parallel_world_size,
     )
     valid_dataset = get_countdown_dataset(
         dataset_path=config.valid_dataset.path,
-        rank=rank,
-        world_size=world_size,
+        rank=actor.data_parallel_rank,
+        world_size=actor.data_parallel_world_size,
     )
 
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         train_dataset,
-        batch_size=config.train_dataset.batch_size // world_size,
+        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -195,7 +198,7 @@ def main(args):
     )
     valid_dataloader = StatefulDataLoader(
         valid_dataset,
-        batch_size=config.valid_dataset.batch_size // world_size,
+        batch_size=config.valid_dataset.batch_size // actor.data_parallel_world_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -209,7 +212,7 @@ def main(args):
 
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize()
+    rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
     eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
     # NOTE: eval does not have any offpolicyness control
     eval_rollout.config.max_head_offpolicyness = int(1e12)
@@ -293,20 +296,26 @@ def main(args):
         )
 
         with stats_tracker.record_timing("rollout"):
-            if config.async_training:
-                batch = rollout.prepare_batch(
-                    train_dataloader,
-                    workflow=workflow,
-                    should_accept=lambda sample: True,
-                )
-            else:
-                batch = rollout.rollout_batch(
-                    next(data_generator),
-                    workflow=workflow,
-                    should_accept=lambda sample: True,
-                )
-
-        batch = batch.to(actor.device)
+            batch = None
+            if actor.is_data_parallel_head():
+                if config.async_training:
+                    batch = rollout.prepare_batch(
+                        train_dataloader,
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
+                else:
+                    batch = rollout.rollout_batch(
+                        next(data_generator),
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
+                batch = batch.to(actor.device)
+            batch = broadcast_tensor_container(
+                batch,
+                src_rank=actor.current_data_parallel_head(),
+                group=actor.context_and_model_parallel_group,
+            )
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
@@ -390,7 +399,9 @@ def main(args):
         current_platform.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
-        stats[0].update(stats_tracker.export_all(reduce_group=actor.parallelism_group))
+        stats[0].update(
+            stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+        )
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])
