@@ -138,7 +138,7 @@ def main(args):
                              num_proc=os.cpu_count())
 
         train_dataset = dataset["train"].filter(
-            lambda x: len(tokenizer.encode(x["prompt"])),
+            lambda x: len(tokenizer.encode(x["prompt"])) <= config.train_dataset.max_prompt_len,
             num_proc=os.cpu_count(),
             batch_size=10000,
         )
