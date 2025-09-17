@@ -1,6 +1,7 @@
 from areal.api.cli_args import *
 
 
+# TODO: Select useful options, add documentation string when moving out of experimental
 @dataclass
 class DistributedDataParallelConfig:
     """Configuration for Megatron's DistributedDataParallel.
@@ -52,6 +53,13 @@ class MegatronEngineConfig:
     # will produce the same output. However, it may have a performance impact.
     # It is recommended to set this option to True for RL training on MoE models for stability.
     use_deterministic_algorithms: bool = False
+
+    # Gradient checkpointing options, only effective when gradient_checkpointing=True
+    recompute_granularity: Optional[str] = "selective"
+    recompute_method: Optional[str] = None
+    recompute_num_layers: Optional[int] = None
+    distribute_saved_activations: Optional[bool] = None
+    recompute_modules: Optional[List[str]] = None
 
 
 @dataclass

@@ -16,6 +16,7 @@ from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.transformer import TransformerConfig
 from megatron.core.utils import get_model_config
 from tensordict import TensorDict
 
@@ -117,6 +118,18 @@ class MegatronEngine(TrainEngine):
         self.hf_config, self.tf_config = make_hf_and_mcore_config(
             self.config.path, dtype=self.dtype, bridge=self.bridge
         )
+        # Set gradient checkpointing options
+        if self.config.gradient_checkpointing:
+            # reconstruct TransformerConfig for __post_init__
+            self.tf_config = TransformerConfig(
+                **dataclasses.asdict(self.tf_config),
+                recompute_granularity=self.mcore_config.recompute_granularity,
+                recompute_method=self.mcore_config.recompute_method,
+                recompute_num_layers=self.mcore_config.recompute_num_layers,
+                distribute_saved_activations=self.mcore_config.distribute_saved_activations,
+                recompute_modules=self.mcore_config.recompute_modules,
+            )
+
         # initialize mcore (DDP Wrapped) GPTModel
         with self.device:
             self.model = make_mcore_model(
