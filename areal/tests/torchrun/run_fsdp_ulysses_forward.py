@@ -13,6 +13,7 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPEngine
+from areal.platforms import current_platform
 
 MODEL_PATHS = {
     "qwen3": "/storage/openpsi/models/Qwen__Qwen3-1.7B/",
@@ -42,7 +43,7 @@ def setup_distributed_environment():
         world_size=world_size,
         rank=rank,
     )
-    torch.cuda.set_device(rank)
+    current_platform.set_device(rank)
 
 
 def mock_input(
@@ -175,7 +176,7 @@ def test_ulysses(model_type: str):
         except AssertionError as e:
             print(f"AssertionError in torch.testing.assert_close: {e}")
 
-    torch.cuda.synchronize()
+    current_platform.synchronize()
     dist.barrier()
 
     engine_golden.destroy()

@@ -10,6 +10,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from einops import rearrange
 from tensordict import TensorDict
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import MicroBatchSpec
 from areal.platforms import current_platform
@@ -1102,3 +1103,13 @@ def bcast_mb_list(
         old_cu_seqlens_list=old_cu_seqlens_list,
         align_to_lengths=align_to_lengths,
     )
+
+
+def cycle_dataloader(dataloader: StatefulDataLoader):
+    """Cycle through a dataloader indefinitely."""
+    g = iter(dataloader)
+    while True:
+        try:
+            yield next(g)
+        except StopIteration:
+            g = iter(dataloader)

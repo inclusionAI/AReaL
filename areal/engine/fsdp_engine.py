@@ -201,8 +201,8 @@ class FSDPEngine(BaseHFEngine):
             "layers.*.self_attn.k_proj": ColwiseParallel(),
             "layers.*.self_attn.v_proj": ColwiseParallel(),
             # special q/k norm for qwen3
-            "layers.*.self_attn.k_norm": NoParallel(),
             "layers.*.self_attn.q_norm": NoParallel(),
+            "layers.*.self_attn.k_norm": NoParallel(),
             # Reduce in RowwiseParallel, Scatter by Shard(1)
             "layers.*.self_attn.o_proj": RowwiseParallel(
                 output_layouts=Shard(1),
@@ -234,6 +234,16 @@ class FSDPEngine(BaseHFEngine):
                 )
 
             if isinstance(self.model.model.language_model, nn.Module):
+                # For vision-language models, avoid sharding the embedding layer because
+                # the visual components access it without tensor parallelism support.
+                # Instead, configure the first transformer layer to handle input
+                # sharding properly.
+                model_tp_plan.pop("embed_tokens", None)
+                model_tp_plan["layers.0"] = PrepareModuleInput(
+                    input_layouts=Replicate(),
+                    desired_input_layouts=Shard(1),
+                )
+
                 parallelize_module(
                     self.model.model.language_model,
                     device_mesh=device_mesh,

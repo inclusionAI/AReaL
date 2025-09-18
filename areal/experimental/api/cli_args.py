@@ -46,6 +46,13 @@ class MegatronEngineConfig:
     async_save: bool = False
     use_checkpoint_opt_param_scheduler: bool = True
 
+    # Deterministic Option
+    # NOTE: This option forces torch to use deterministic algorithms,
+    # which makes sure that two forward passes with the same input
+    # will produce the same output. However, it may have a performance impact.
+    # It is recommended to set this option to True for RL training on MoE models for stability.
+    use_deterministic_algorithms: bool = False
+
 
 @dataclass
 class ExperimentalTrainEngineConfig(TrainEngineConfig):

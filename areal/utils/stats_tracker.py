@@ -8,6 +8,7 @@ from typing import Dict
 import torch
 import torch.distributed as dist
 
+from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.datapack import flat2d
 
@@ -186,8 +187,8 @@ class DistributedStatsTracker:
         elif reduce_type == ReduceType.MAX:
             result[key] = self._max_of(key, reduce_group)
         elif reduce_type == ReduceType.SCALAR:
-            if torch.cuda.is_initialized():
-                device = "cuda"
+            if current_platform.is_initialized():
+                device = current_platform.device_type
             else:
                 device = "cpu"
             value = torch.tensor(
