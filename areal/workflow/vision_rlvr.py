@@ -50,9 +50,6 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             return_tensors="pt",
         )
 
-        # if "vila" in self.processor.image_processor._processor_class.lower():
-        #     input_ids=self.processor.tokenizer.encode(data["messages"])
-        # else:
         input_ids = processed_input["input_ids"].tolist()[0]
 
         n_samples = self.gconfig.n_samples
