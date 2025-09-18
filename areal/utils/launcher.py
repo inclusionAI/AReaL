@@ -23,7 +23,7 @@ BASE_ENVIRONS = {
     "PYTORCH_KERNEL_CACHE_PATH": PYTORCH_KERNEL_CACHE_PATH,
     "TRITON_CACHE_DIR": TRITON_CACHE_PATH,
     "CUDA_DEVICE_MAX_CONNECTIONS": "1",
-    "PYTHONPATH": str(pathlib.Path(__file__).resolve().parent.parent.parent),
+    "PYTHONPATH": os.getenv("PYTHONPATH", ""),
 }
 NA132_ENVIRONS = {
     "NCCL_SOCKET_IFNAME": "bond0",
@@ -40,6 +40,7 @@ NA132_ENVIRONS = {
     "NCCL_DEBUG_SUBSYS": "INIT,TUNING,GRAPH",
 }
 SGLANG_SERVER_WAIT_TIMEOUT_SECONDS = 360
+VLLM_SERVER_WAIT_TIMEOUT_SECONDS = 360
 
 
 def get_env_vars(
@@ -116,6 +117,31 @@ def wait_sglang_server_addrs(
     return sglang_addrs
 
 
+def wait_vllm_server_addrs(
+    experiment_name: str,
+    trial_name: str,
+    n_vllm_servers: int,
+):
+    # Get vllm nodes, find the hosts
+    name = names.gen_servers(experiment_name, trial_name)
+    start = time.perf_counter()
+    while True:
+        vllm_addrs = name_resolve.get_subtree(name)
+        if len(vllm_addrs) >= n_vllm_servers:
+            logger.info(
+                f"Found {len(vllm_addrs)} vLLM servers: {', '.join(vllm_addrs)}"
+            )
+            break
+
+        time.sleep(1)
+        if time.perf_counter() - start > VLLM_SERVER_WAIT_TIMEOUT_SECONDS:
+            raise TimeoutError(
+                f"Timeout waiting for vLLM servers to be ready. "
+                f"Expected {n_vllm_servers} servers, found {len(vllm_addrs)}."
+            )
+    return vllm_addrs
+
+
 def validate_config_for_distributed_launcher(config):
     n_nodes = config.cluster.n_nodes
     n_gpus_per_node = config.cluster.n_gpus_per_node
@@ -134,3 +160,11 @@ def validate_config_for_distributed_launcher(config):
         assert (
             allocation_mode.gen.pp_size == 1
         ), "Pipeline generation in SGLang is not supported for now."
+    elif allocation_mode.gen_backend == "vllm":
+        # Launcher should launch vLLM servers according to allocation mode.
+        assert (
+            allocation_mode.gen.pp_size == 1
+        ), "Pipeline generation in vLLM is not supported for now."
+        assert (
+            allocation_mode.gen.tp_size <= config.cluster.n_gpus_per_node
+        ), "Currently only support vLLM TP size less <= #GPUs per node."

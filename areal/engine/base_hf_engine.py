@@ -44,6 +44,7 @@ from areal.utils.model import (
     is_qwen3_moe_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
+from areal.platforms import is_npu_available
 
 
 class BaseHFEngine(TrainEngine):
@@ -115,15 +116,19 @@ class BaseHFEngine(TrainEngine):
         return _get_default_group()
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
-        # Required by NCCL weight update group for SGLang
-        os.environ["NCCL_CUMEM_ENABLE"] = "0"
-        os.environ["NCCL_NVLS_ENABLE"] = "0"
+        if is_npu_available:
+            backend = "hccl"
+        else:
+            backend = current_platform.communication_backend
+            # Required by NCCL weight update group for SGLang
+            os.environ["NCCL_CUMEM_ENABLE"] = "0"
+            os.environ["NCCL_NVLS_ENABLE"] = "0"
         if not dist.is_initialized():
             # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
             # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
             # otherwise initializing the NCCL weight update group will be wrong!
             dist.init_process_group(
-                backend=current_platform.communication_backend,
+                backend=backend,
                 timeout=NCCL_DEFAULT_TIMEOUT,
             )
             self.own_global_group = True
@@ -152,7 +157,8 @@ class BaseHFEngine(TrainEngine):
             )
 
             tik = time.perf_counter()
-            with torch.device(current_platform.device_type):
+            device = current_platform.device_type
+            with torch.device(device):
                 model = AutoModelForImageTextToText.from_pretrained(
                     pretrained_model_name_or_path=self.config.path,
                     trust_remote_code=True,
@@ -164,7 +170,8 @@ class BaseHFEngine(TrainEngine):
         else:
             self.tokenizer = load_hf_tokenizer(self.config.path)
             tik = time.perf_counter()
-            with torch.device(current_platform.device_type):
+            device = current_platform.device_type
+            with torch.device(device):
                 if self.config.init_from_scratch:
                     # initialize scratch model from config
                     # NOTE: VLM cannot directly load state dict using this

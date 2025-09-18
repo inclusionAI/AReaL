@@ -6,6 +6,7 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from functools import partial
 from typing import Callable, List, Optional
+from pebble import ProcessPool
 
 from areal.utils import logging
 
@@ -34,6 +35,13 @@ def reward_fn(
     """
 
 
+def get_rw_executor(max_workers, interruptable_processpool):
+    if interruptable_processpool:
+        return ProcessPool(max_workers=max_workers)
+    else:
+        return ProcessPoolExecutor(max_workers=max_workers)
+
+
 class AsyncRewardWrapper:
     """
     Wraps a synchronous reward function to make it async with timeout handling.
@@ -51,17 +59,20 @@ class AsyncRewardWrapper:
         timeout_seconds: float = 15,
         max_workers: Optional[int] = None,
         max_retries: int = 3,
+        interruptable_processpool: Optional[bool] = None
     ):
         self.reward_fn = reward_fn
         self.timeout_seconds = timeout_seconds
         self.max_workers = max_workers
         self.max_retries = max_retries
         self._executor_key = max_workers
+        self.interruptable_processpool = interruptable_processpool
 
         with self._lock:
             if self._executor_key not in self._executors:
-                self._executors[self._executor_key] = ProcessPoolExecutor(
-                    max_workers=max_workers
+                self._executors[self._executor_key] = get_rw_executor(
+                    max_workers=max_workers,
+                    interruptable_processpool=interruptable_processpool,
                 )
                 self._instance_counts[self._executor_key] = 0
             self._instance_counts[self._executor_key] += 1
@@ -115,13 +126,22 @@ class AsyncRewardWrapper:
 
             loop = asyncio.get_event_loop()
             try:
-                return await asyncio.wait_for(
-                    loop.run_in_executor(
+                if self.interruptable_processpool:
+                    future = asyncio.wrap_future(
+                        executor.schedule(
+                        partial(self.reward_fn, *args, **kwargs),
+                        timeout=self.timeout_seconds,
+                    ))
+                else:
+                    future = loop.run_in_executor(
                         executor,
                         partial(self.reward_fn, *args, **kwargs),
-                    ),
+                    )
+                reward = await asyncio.wait_for(
+                    future,
                     timeout=self.timeout_seconds,
                 )
+                return reward
             except asyncio.TimeoutError:
                 logger.warning(
                     f"Computing reward timeout after {self.timeout_seconds}s. Set reward to 0."

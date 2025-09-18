@@ -126,6 +126,16 @@ class GenerationHyperparameters:
             )
         },
     )
+    max_workers: Optional[int] = field(
+        default=32,
+        metadata={"help": "Number of workers processing reward."}
+    )
+    interruptable_processpool: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "Using an interruptable process pool to process reward function or not."
+        },
+    )
 
     def new(self, **kwargs):
         args = asdict(self)
@@ -276,6 +286,12 @@ class PPOActorConfig(TrainEngineConfig):
     group_size: int = field(
         default=1, metadata={"help": "Number of sequences in each group"}
     )
+    group_adv_norm: bool = field(
+        default=False,
+        metadata={
+            "help": "Normalize advantages within each prompt group rather than globally"
+        },
+    )
     ppo_n_minibatches: int = field(
         default=4, metadata={"help": "Number of minibatches for each PPO update"}
     )
@@ -393,6 +409,90 @@ class PPOActorConfig(TrainEngineConfig):
     adv_norm: Optional[AdvNormConfig] = field(
         default=None, metadata={"help": "Optimizer configuration, default is None"}
     )
+
+
+@dataclass
+class vLLMConfig:
+    """Configuration for vLLM runtime.
+    """
+    model: str = ""
+    seed: int = 1
+    skip_tokenizer_init: bool = False
+    enforce_eager: bool = True
+    dtype: str = "bfloat16"
+    distributed_executor_backend = "mp"
+    # original
+    max_num_seqs: int = 256
+    # kv_cache_type: str = "auto"
+    block_size: int = 16
+    swap_space: int = 4
+    cpu_offload_gb: float = 0
+    max_seq_len_to_capture: int = 32768
+    disable_sliding_window: bool = True
+    # NOTE: Defaults max_model_len to 32k because a larger value
+    # will enable chunked prefill in vLLM, which will cause
+    # evalution performance degeneration.
+    max_model_len: Optional[int] = 32768
+    enable_chunked_prefill: bool = False
+    # NOTE: Setting enable_prefix_caching to False
+    # because it will reuse the block after
+    # model weights are updated. Using v0.7.2 reset_prefix_cache
+    # will fix this issue.
+    enable_prefix_caching: bool = False
+    gpu_memory_utilization: float = 0.9
+    worker_extension_cls: str = "areal.launcher.vllm_worker_extension.VLLMWorkerExtension"
+    enable_sleep_mode: bool = False
+    # additional_engine_args: Dict = field(default_factory=dict)
+    @staticmethod
+    def build_args(
+        vllm_config: "vLLMConfig",
+        tp_size,
+        host,
+        port,
+        dist_init_addr: Optional[str] = None,
+    ):
+        from realhf.experiments.common.utils import asdict as conf_as_dict
+        args: Dict = conf_as_dict(vllm_config)
+        args = dict(
+            host=host,
+            port=port,
+            # Model and tokenizer
+            tokenizer=vllm_config.model,
+            load_format="auto",
+            trust_remote_code=True,
+            tensor_parallel_size=tp_size,
+            **args,
+        )
+        return args
+    @staticmethod
+    def build_cmd(
+        vllm_config: "vLLMConfig",
+        tp_size,
+        base_gpu_id,
+        host,
+        port,
+        dist_init_addr: Optional[str] = None,
+    ):
+        # TODO base_gpu_id ?
+        args = vLLMConfig.build_args(
+            vllm_config=vllm_config,
+            tp_size=tp_size,
+            host=host,
+            port=port,
+            dist_init_addr=dist_init_addr,
+        )
+        # convert to flags
+        flags = []
+        for k, v in args.items():
+            if v is None or v is False or v == "":
+                continue
+            if v is True:
+                flags.append(f"--{k.replace('_','-')}")
+            elif isinstance(v, list):
+                flags.append(f"--{k.replace('_','-')} {' '.join(map(str, v))}")
+            else:
+                flags.append(f"--{k.replace('_','-')} {v}")
+        return f"python3 -m areal.launcher.areal_vllm_server {' '.join(flags)}"
 
 
 @dataclass
@@ -863,6 +963,7 @@ class BaseExperimentConfig:
         },
     )
     tokenizer_path: str = field(default="")
+    weight_update_mode: str = field(default="disk")
 
     train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
     valid_dataset: Optional[DatasetConfig] = field(default=None)
@@ -873,6 +974,7 @@ class BaseExperimentConfig:
     recover: RecoverConfig = field(default_factory=RecoverConfig)
 
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
+    vllm: vLLMConfig = field(default_factory=vLLMConfig)
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
 
 
