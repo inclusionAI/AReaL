@@ -74,10 +74,11 @@ def pad_sequences_to_tensors(
         padded = []
         if key == "multi_modal_input":
             for i in range(len(sequence_list)):
-                item = sequence_list[i][key][0]
-                for k, v in item.items():
-                    if not torch.is_tensor(v):
-                        item[k] = torch.tensor(v)
+                if sequence_list[i][key]:
+                    item = sequence_list[i][key][0]
+                    for k, v in item.items():
+                        if not torch.is_tensor(v):
+                            item[k] = torch.tensor(v)
             # list concat
             result[key] = sum(
                 [sequence_list[i][key] for i in range(len(sequence_list))], []
