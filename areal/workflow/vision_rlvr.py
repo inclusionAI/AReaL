@@ -50,10 +50,10 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             return_tensors="pt",
         )
 
-        if "vila" in self.processor.image_processor._processor_class.lower():
-            input_ids=self.processor.tokenizer.encode(data["messages"], add_special_tokens=False)
-        else:
-            input_ids = processed_input["input_ids"].tolist()[0]
+        # if "vila" in self.processor.image_processor._processor_class.lower():
+        #     input_ids=self.processor.tokenizer.encode(data["messages"])
+        # else:
+        input_ids = processed_input["input_ids"].tolist()[0]
 
         n_samples = self.gconfig.n_samples
 
@@ -122,6 +122,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             )
             
             results.append(TensorDict(res, batch_size=[1]))
+
         if self.dump_dir is not None:
             dump_path = os.path.join(self.dump_dir, str(version))
             await aiofiles.os.makedirs(dump_path, exist_ok=True)

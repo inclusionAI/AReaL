@@ -63,6 +63,7 @@ class PPOActor:
         )
 
     def compute_advantages(self, data: TensorDict) -> None:
+        breakpoint()
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
         batch_indices = torch.arange(
