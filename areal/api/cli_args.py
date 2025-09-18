@@ -434,6 +434,7 @@ class SGLangConfig:
     enable_memory_saver: bool = False
     allow_auto_truncate: bool = False
     attention_backend: Optional[str] = "fa3"
+    enable_multimodal: bool = False
     sampling_backend: Optional[str] = None
     context_length: Optional[int] = 32768
     mem_fraction_static: Optional[float] = 0.9

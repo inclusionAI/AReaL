@@ -119,14 +119,18 @@ def main(args):
                 epoch_step=step,
                 steps_per_epoch=len(train_dataloader),
             )
-            # NOTE: data are identical across model+context parallel group
-            data: TensorDict
-            data = data.to(current_platform.current_device())
-            data = broadcast_tensor_container(
-                data,
-                src_rank=engine.current_data_parallel_head(),
-                group=engine.context_and_model_parallel_group,
-            )
+            with stats_tracker.record_timing("to_device"):
+                # NOTE: data are identical across model+context parallel group
+                data: TensorDict
+                data = data.to(current_platform.current_device())
+
+            with stats_tracker.record_timing("bcast"):
+                data = broadcast_tensor_container(
+                    data,
+                    src_rank=engine.current_data_parallel_head(),
+                    group=engine.context_and_model_parallel_group,
+                )
+
             with (
                 stats_tracker.record_timing("train_step"),
                 stats_tracker.scope("sft"),

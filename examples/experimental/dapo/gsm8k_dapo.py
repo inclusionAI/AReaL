@@ -258,14 +258,17 @@ def main(args):
         with stats_tracker.record_timing("eval"):
 
             def evaluate_fn():
-                # Stats are logged in workflow
-                # and will be exported later
-                cnt = 0
-                for data in valid_dataloader:
-                    for item in data:
-                        eval_rollout.submit(item, eval_workflow)
-                        cnt += 1
-                eval_rollout.wait(cnt, timeout=None)
+                if actor.is_data_parallel_head():
+                    # Stats are logged in workflow
+                    # and will be exported later
+                    cnt = 0
+                    for data in valid_dataloader:
+                        for item in data:
+                            eval_rollout.submit(item, eval_workflow)
+                            cnt += 1
+                    eval_rollout.wait(cnt, timeout=None)
+                dist.barrier(device_ids=[actor.device.index])
+                current_platform.synchronize()
 
             evaluator.evaluate(
                 evaluate_fn,
