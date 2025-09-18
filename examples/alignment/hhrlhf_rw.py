@@ -9,12 +9,19 @@ from areal.dataset import get_custom_dataset
 from areal.engine.rw.rw_engine import FSDPRWEngine
 from areal.experimental.api.cli_args import ExperimentalSFTConfig as SFTConfig
 from areal.utils import stats_tracker
-from areal.utils.data import pairwise_pad_sequences_to_tensors
+from areal.utils.data import pad_sequences_to_tensors
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
+
+
+def rw_modeling_colate_fn(items):
+    seqs = []
+    for item in items:
+        [item["chosen_ids"], item["rejected_ids"]]
+    return pad_sequences_to_tensors(seqs)
 
 
 def main(args):
@@ -55,7 +62,7 @@ def main(args):
         batch_size=config.train_dataset.batch_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
-        collate_fn=pairwise_pad_sequences_to_tensors,
+        collate_fn=rw_modeling_colate_fn,
         drop_last=config.train_dataset.drop_last,
     )
     valid_dataloader = StatefulDataLoader(
@@ -63,7 +70,7 @@ def main(args):
         batch_size=config.valid_dataset.batch_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
-        collate_fn=pairwise_pad_sequences_to_tensors,
+        collate_fn=rw_modeling_colate_fn,
         drop_last=config.valid_dataset.drop_last,
     )
 

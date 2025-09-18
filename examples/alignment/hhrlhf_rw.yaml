@@ -18,10 +18,12 @@ model:
   trial_name: ${trial_name}
   path: Qwen/Qwen3-1.7B
   init_from_scratch: false
+  is_critic: true
   gradient_checkpointing: false
   dtype: bfloat16
   mb_spec:
     max_tokens_per_mb: 1024
+    granularity: 2
   optimizer:
     type: adam
     lr: 2e-5
@@ -32,7 +34,6 @@ model:
     lr_scheduler_type: cosine
     gradient_clipping: 1.0
   backend: fsdp
-  is_reward_model: true
 
 train_dataset:
   batch_size: 32
