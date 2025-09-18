@@ -140,6 +140,99 @@ def _load_weight_with_bridge_worker(
         param.copy_(param_to_load, non_blocking=True)
 
 
+def make_filename_bins(
+    local_to_file_map: Dict[str, List[str]],
+) -> Tuple[List[List[str]], List[List[str]]]:
+    # Allocate local weight name into bins, where each bin access independent files
+    # Then we can use multiple threads to concurrently load each bin's parameters
+    weight_name_bins = {}
+    file_name_to_bin_index = {}
+    bin_index = 0
+    for local_name, filenames in local_to_file_map.items():
+        if not all(filename in file_name_to_bin_index for filename in filenames):
+            # Some required filenames doesn't have existing bins
+            # Allocate a new bin, and merge all previous bins into this new bin
+            weight_name_bins[bin_index] = [local_name]
+            for filename in filenames:
+                if filename in file_name_to_bin_index:
+                    i = file_name_to_bin_index.pop(filename)
+                    if i in weight_name_bins:
+                        weight_name_bins[bin_index] += weight_name_bins.pop(i)
+                file_name_to_bin_index[filename] = bin_index
+            bin_index += 1
+        else:
+            # All required filenames have existing bins
+            # Use the head bin as the master bin, and merge all other bins into the master bin
+            head_i = file_name_to_bin_index[filenames[0]]
+            weight_name_bins[head_i].append(local_name)
+            if not all(
+                file_name_to_bin_index[filename] == head_i for filename in filenames
+            ):
+                # merge to head bin
+                for filename in filenames[1:]:
+                    if file_name_to_bin_index[filename] != head_i:
+                        i = file_name_to_bin_index.pop(filename)
+                        if i in weight_name_bins:
+                            weight_name_bins[head_i] += weight_name_bins.pop(i)
+                        file_name_to_bin_index[filename] = head_i
+
+    bin_index_to_file_names = defaultdict(list)
+    for filename, bin_index in file_name_to_bin_index.items():
+        bin_index_to_file_names[bin_index].append(filename)
+
+    grouped_local_names = list(weight_name_bins.values())
+    grouped_filenames = list(bin_index_to_file_names[i] for i in weight_name_bins)
+    return grouped_local_names, grouped_filenames
+
+
+def make_filename_bins_new(
+    local_to_file_map: Dict[str, List[str]],
+) -> Tuple[List[List[str]], List[List[str]]]:
+    # Use union find to create local_name groups with no file conflicts
+    local_names = list(local_to_file_map.keys())
+    parent = {name: name for name in local_names}
+    weight_groups = {name: [name] for name in local_names}
+    file_groups = {name: local_to_file_map[name] for name in local_names}
+    roots = [name for name in local_names]
+    ranks = {name: 0 for name in local_names}
+
+    def find(x):
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+
+    def union(x, y):
+        root_x = find(x)
+        root_y = find(y)
+        if root_x != root_y:
+            if ranks[root_x] > ranks[root_y]:
+                parent[root_y] = root_x
+                roots.remove(root_y)
+            elif ranks[root_x] < ranks[root_y]:
+                parent[root_x] = root_y
+                roots.remove(root_x)
+            else:
+                parent[root_y] = root_x
+                roots.remove(root_y)
+                ranks[root_x] += 1
+            # Merge file groups
+            file_groups[root_x].update(file_groups[root_y])
+            file_groups[root_y] = file_groups[root_x]
+            # Merge weight groups
+            weight_groups[root_x].extend(weight_groups[root_y])
+            weight_groups[root_y] = weight_groups[root_x]
+
+    for i, weight1 in enumerate(local_names):
+        for weight2 in local_names[i + 1 :]:
+            # If two weights share any files, they conflict
+            if any(fn in file_groups[weight1] for fn in file_groups[weight2]):
+                union(weight1, weight2)
+
+    grouped_local_names = [weight_groups[root] for root in roots]
+    grouped_filenames = [list(file_groups[root]) for root in roots]
+    return grouped_local_names, grouped_filenames
+
+
 def load_weights_from_hf_with_mbridge_fast(
     bridge: Bridge,
     models: list[torch.nn.Module],
@@ -201,45 +294,7 @@ def load_weights_from_hf_with_mbridge_fast(
                 if filename not in local_to_file_map[local_name]:
                     local_to_file_map[local_name].append(filename)
 
-        # Allocate local weight name into bins, where each bin access independent files
-        # Then we can use multiple threads to concurrently load each bin's parameters
-        weight_name_bins = {}
-        file_name_to_bin_index = {}
-        bin_index = 0
-        for local_name, filenames in local_to_file_map.items():
-            if not all(filename in file_name_to_bin_index for filename in filenames):
-                # Some required filenames doesn't have existing bins
-                # Allocate a new bin, and merge all previous bins into this new bin
-                weight_name_bins[bin_index] = [local_name]
-                for filename in filenames:
-                    if filename in file_name_to_bin_index:
-                        i = file_name_to_bin_index.pop(filename)
-                        if i in weight_name_bins:
-                            weight_name_bins[bin_index] += weight_name_bins.pop(i)
-                    file_name_to_bin_index[filename] = bin_index
-                bin_index += 1
-            else:
-                # All required filenames have existing bins
-                # Use the head bin as the master bin, and merge all other bins into the master bin
-                head_i = file_name_to_bin_index[filenames[0]]
-                weight_name_bins[head_i].append(local_name)
-                if not all(
-                    file_name_to_bin_index[filename] == head_i for filename in filenames
-                ):
-                    # merge to head bin
-                    for filename in filenames[1:]:
-                        if file_name_to_bin_index[filename] != head_i:
-                            i = file_name_to_bin_index.pop(filename)
-                            if i in weight_name_bins:
-                                weight_name_bins[head_i] += weight_name_bins.pop(i)
-                            file_name_to_bin_index[filename] = head_i
-
-        bin_index_to_file_names = defaultdict(list)
-        for filename, bin_index in file_name_to_bin_index.items():
-            bin_index_to_file_names[bin_index].append(filename)
-
-        grouped_local_names = list(weight_name_bins.values())
-        grouped_filenames = list(bin_index_to_file_names[i] for i in weight_name_bins)
+        grouped_local_names, grouped_filenames = make_filename_bins(local_to_file_map)
 
         for local_names, filenames in zip(grouped_local_names, grouped_filenames):
             worker_args.append(
