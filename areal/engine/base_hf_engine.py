@@ -368,7 +368,7 @@ class BaseHFEngine(TrainEngine):
             if is_qwen3_moe_model(self.model_config.model_type):
                 mb["attention_mask"] = None
                 padded_mb["attention_mask"] = None
-            elif "gemma" in self.model_config.model_type.lower():
+            elif "gemma" in self.model_config.model_type.lower() or "vila" in self.model_config.model_type.lower():
                 mb["attention_mask"] = None
                 padded_mb["attention_mask"] = None
             else:

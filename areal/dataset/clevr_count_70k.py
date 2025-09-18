@@ -41,10 +41,10 @@ def get_clevr_count_70k_sft_dataset(
     },
     """
     dataset = load_dataset(path=path, split=split)
-    total_size = len(dataset)
-    subset_size = int(total_size * 0.01)
-    indices = random.sample(range(total_size), subset_size)
-    dataset = dataset.select(indices)
+    # total_size = len(dataset)
+    # subset_size = int(total_size * 0.01)
+    # indices = random.sample(range(total_size), subset_size)
+    # dataset = dataset.select(indices)
 
     tokenizer = processor.tokenizer
 
@@ -129,7 +129,11 @@ def get_clevr_count_70k_rl_dataset(
     max_length: Optional[int] = None,
 ):
     dataset = load_dataset(path=path, split=split)
-    
+    total_size = len(dataset)
+    subset_size = int(total_size * 0.01)
+    indices = random.sample(range(total_size), subset_size)
+    dataset = dataset.select(indices)
+
 
     def process(sample):
         # processed_images = [
@@ -147,7 +151,7 @@ def get_clevr_count_70k_rl_dataset(
                 "role": "user",
                 "content": [
                     {"type": "image"},
-                    {"type": "text", "text": sample["problem"]}
+                    {"type": "text", "text": sample["problem"].replace("<image>","")}
                 ]
             }
         ]
@@ -157,7 +161,7 @@ def get_clevr_count_70k_rl_dataset(
         )
         return {"messages": messages, "images": sample["images"]}
 
-    dataset = dataset.map(process).remove_columns(["problem"])
+    dataset = dataset.map(process, num_proc=16).remove_columns(["problem"])
 
     # Filter out sequences longer than max_length if max_length is provided
     if max_length is not None:

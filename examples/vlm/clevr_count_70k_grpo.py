@@ -82,21 +82,21 @@ def main(args):
     )
 
     train_size = len(train_dataset)
-    subset_size = int(0.2 * train_size)
+    subset_size = int(1.0 * train_size)
 
     random_indices = torch.randperm(train_size).tolist()[:subset_size]
 
     subset_train_dataset = Subset(train_dataset, random_indices)
 
-    valid_dataset = get_custom_dataset(
-        path=config.valid_dataset.path,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
-        split="test",
-        max_length=config.valid_dataset.max_length,
-        type=config.valid_dataset.type,
-        processor=processor,
-    )
+    # valid_dataset = get_custom_dataset(
+    #     path=config.valid_dataset.path,
+    #     rank=actor.data_parallel_rank,
+    #     world_size=actor.data_parallel_world_size,
+    #     split="test",
+    #     max_length=config.valid_dataset.max_length,
+    #     type=config.valid_dataset.type,
+    #     processor=processor,
+    # )
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         subset_train_dataset,
@@ -106,14 +106,14 @@ def main(args):
         collate_fn=lambda x: x,
         drop_last=config.train_dataset.drop_last,
     )
-    valid_dataloader = StatefulDataLoader(
-        valid_dataset,
-        batch_size=config.valid_dataset.batch_size // actor.data_parallel_world_size,
-        shuffle=config.valid_dataset.shuffle,
-        num_workers=config.valid_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.valid_dataset.drop_last,
-    )
+    # valid_dataloader = StatefulDataLoader(
+    #     valid_dataset,
+    #     batch_size=config.valid_dataset.batch_size // actor.data_parallel_world_size,
+    #     shuffle=config.valid_dataset.shuffle,
+    #     num_workers=config.valid_dataset.num_workers,
+    #     collate_fn=lambda x: x,
+    #     drop_last=config.valid_dataset.drop_last,
+    # )
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
         dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
@@ -281,26 +281,26 @@ def main(args):
                 processor=processor,
             )
 
-        with stats_tracker.record_timing("eval"):
+        # with stats_tracker.record_timing("eval"):
 
-            def evaluate_fn():
-                # Stats are logged in workflow
-                # and will be exported later
-                cnt = 0
-                for data in valid_dataloader:
-                    for item in data:
-                        eval_rollout.submit(item, eval_workflow)
-                        cnt += 1
-                batch=eval_rollout.wait(cnt, timeout=None)
-                rewards = batch["rewards"].float().to(actor.device)
-                wandb.log({"eval_reward": rewards.mean().item()})
+        #     def evaluate_fn():
+        #         # Stats are logged in workflow
+        #         # and will be exported later
+        #         cnt = 0
+        #         for data in valid_dataloader:
+        #             for item in data:
+        #                 eval_rollout.submit(item, eval_workflow)
+        #                 cnt += 1
+        #         batch=eval_rollout.wait(cnt, timeout=None)
+        #         rewards = batch["rewards"].float().to(actor.device)
+        #         wandb.log({"eval_reward": rewards.mean().item()})
 
-            evaluator.evaluate(
-                evaluate_fn,
-                epoch,
-                step,
-                global_step,
-            )
+        #     evaluator.evaluate(
+        #         evaluate_fn,
+        #         epoch,
+        #         step,
+        #         global_step,
+        #     )
 
         with stats_tracker.record_timing("checkpoint_for_recover"):
             recover_handler.dump(
