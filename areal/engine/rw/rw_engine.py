@@ -1,10 +1,15 @@
+from copy import deepcopy
+
 import torch
 from tensordict import TensorDict
 
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
-from areal.utils import stats_tracker
+from areal.platforms import current_platform
+from areal.utils import logging, stats_tracker
+
+logger = logging.getLogger("RW engine")
 
 
 class RWEngine:
@@ -12,17 +17,28 @@ class RWEngine:
         self.engine = engine
 
     def train_rw(self, data: TensorDict):
+        """Train on a batch(reward model)"""
         self.engine.train()
-        return self.engine.rw_train_batch(
+        return self.engine.train_batch(
             input_=data,
             loss_fn=compute_rw_loss,
+            loss_weight_fn=lambda x: torch.tensor(
+                x["input_ids"].numel(),
+                dtype=torch.float,
+                device=current_platform.current_device(),
+            ),
         )
 
     def evaluate_rw(self, data):
         self.engine.eval()
-        self.engine.rw_eval_batch(
+        self.engine.eval_batch(
             input_=data,
             loss_fn=compute_rw_loss,
+            loss_weight_fn=lambda x: torch.tensor(
+                x["input_ids"].numel(),
+                dtype=torch.float,
+                device=current_platform.current_device(),
+            ),
         )
 
 
@@ -30,6 +46,10 @@ class FSDPRWEngine(FSDPEngine):
     def __init__(self, config: TrainEngineConfig):
         super().__init__(config)
         self.rw_engine = RWEngine(self)
+        if self.config.mb_spec.granularity != 2:
+            logger.warning("mb_spec.granularity must be 2 for reward modeling")
+            self.config = deepcopy(self.config)
+            self.config.mb_spec.granularity = 2
 
     def train_rw(self, data):
         return self.rw_engine.train_rw(data)
@@ -38,69 +58,33 @@ class FSDPRWEngine(FSDPEngine):
         return self.rw_engine.evaluate_rw(data)
 
 
-def compute_rw_loss(rewards: torch.Tensor, input_: TensorDict) -> torch.Tensor:
-    input_ids, attention_masks = input_["input_ids"], input_["attention_mask"]
-    bs = input_ids.shape[0] // 2
+def compute_rw_loss(scores: torch.Tensor, input_: TensorDict) -> torch.Tensor:
+    cu_seqlens = input_["cu_seqlens"]
+    seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu()
+    n_pairs = (cu_seqlens.shape[0] - 1) // 2
 
-    chosen_ids = input_ids[:bs]
-    rejected_ids = input_ids[bs:]
-    chosen_rewards = rewards[:bs]
-    rejected_rewards = rewards[bs:]
-    c_attention_masks = attention_masks[:bs]
-    r_attention_masks = attention_masks[bs:]
+    assert scores.shape[0] == seqlens.sum(), (scores.shape, seqlens.sum())
+    scores = scores[seqlens.cumsum(0) - 1].view(-1, 2).float()
+    loss = -(torch.nn.functional.logsigmoid(scores[:, 0] - scores[:, 1]))
+    logging_loss = loss.detach()
+    loss = loss.mean()
 
-    loss_sum = 0.0
-    for i in range(bs):
-        chosen_id = chosen_ids[i]
-        rejected_id = rejected_ids[i]
-        chosen_reward = chosen_rewards[i]
-        rejected_reward = rejected_rewards[i]
-        c_attention_mask = c_attention_masks[i]
-        r_attention_mask = r_attention_masks[i]
-
-        # append the length of input to inds (corner case : no padding on the right)
-        c_inds = torch.cat(
-            [
-                (c_attention_mask == 0).nonzero(),
-                torch.tensor([[len(chosen_id)]]).to(c_attention_mask.device),
-            ]
-        )
-        r_inds = torch.cat(
-            [
-                (r_attention_mask == 0).nonzero(),
-                torch.tensor([[len(chosen_id)]]).to(r_attention_mask.device),
-            ]
-        )
-        c_ind, r_ind = c_inds[0], r_inds[0]
-        end_ind = max(c_ind, r_ind)
-
-        # the index of first different input_id (prompt + chosen/rejected response)
-        divergence_ind = (chosen_id != rejected_id).nonzero()[0]
-        assert divergence_ind > 0
-
-        c_truncated_reward = chosen_reward[divergence_ind:end_ind]
-        r_truncated_reward = rejected_reward[divergence_ind:end_ind]
-        # the score of last token
-        chosen_score = chosen_reward[c_ind - 1]
-        rejected_score = rejected_reward[r_ind - 1]
-        acc = 1.0 if chosen_score > rejected_score else 0.0
-
-        loss = -torch.nn.functional.logsigmoid(
-            c_truncated_reward - r_truncated_reward
-        ).mean()
-        loss_sum += loss
-
-        # logging stats
+    # Logging.
+    with torch.no_grad():
         stats_tracker.denominator(
-            n_seqs=torch.ones(1, dtype=torch.bool, device=loss.device),
+            n_seqs=torch.ones(
+                cu_seqlens.shape[0] - 1, dtype=torch.bool, device=scores.device
+            ),
+            n_pairs=torch.ones(n_pairs, dtype=torch.bool, device=scores.device),
         )
-
         stats_tracker.stat(
-            loss=loss.detach().unsqueeze(0).to(torch.float32),
-            chosen_score=chosen_score.detach().to(torch.float32),
-            rejected_score=rejected_score.detach().to(torch.float32),
-            acc=torch.tensor([acc], dtype=torch.float32).to(loss.device),
+            correct_ratio=(scores[:, 0] > scores[:, 1]).detach().float(),
             denominator="n_seqs",
         )
-
-    return loss_sum / bs
+        stats_tracker.stat(
+            pos_score=scores[:, 0].detach().float(),
+            neg_score=scores[:, 1].detach().float(),
+            loss=logging_loss.float(),
+            denominator="n_pairs",
+        )
+    return loss

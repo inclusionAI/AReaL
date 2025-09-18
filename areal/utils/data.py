@@ -97,49 +97,6 @@ def pad_sequences_to_tensors(
     return TensorDict(result, batch_size=[result["attention_mask"].shape[0]])
 
 
-def pairwise_pad_sequences_to_tensors(
-    sequence_list: List[TensorDict], pad_value: float = 0.0
-) -> TensorDict:
-    max_length = max(len(seq) for item in sequence_list for _, seq in item.items())
-
-    chosen_padded, rejected_padded = [], []
-    chosen_attention, rejected_attention = [], []
-    for item in sequence_list:
-        chosen_ids = item["chosen_ids"]
-        rejected_ids = item["rejected_ids"]
-
-        if not torch.is_tensor(chosen_ids):
-            chosen_ids = torch.tensor(chosen_ids)
-        padded_chosen_ids = torch.nn.functional.pad(
-            chosen_ids, (0, max_length - len(chosen_ids)), value=pad_value
-        )
-        chosen_attention_mask = [1] * len(chosen_ids) + [0] * (
-            max_length - len(chosen_ids)
-        )
-        if not torch.is_tensor(rejected_ids):
-            rejected_ids = torch.tensor(rejected_ids)
-        padded_rejected_ids = torch.nn.functional.pad(
-            rejected_ids, (0, max_length - len(rejected_ids)), value=pad_value
-        )
-        rejected_attention_mask = [1] * len(rejected_ids) + [0] * (
-            max_length - len(rejected_ids)
-        )
-
-        chosen_padded.append(padded_chosen_ids)
-        rejected_padded.append(padded_rejected_ids)
-        chosen_attention.append(chosen_attention_mask)
-        rejected_attention.append(rejected_attention_mask)
-
-    result = {}
-    # chosen_ids : [:bs]
-    # rejected_ids : [bs:]
-    result["input_ids"] = torch.stack(chosen_padded + rejected_padded, dim=0)
-    result["attention_mask"] = torch.tensor(
-        chosen_attention + rejected_attention, dtype=torch.bool
-    )
-    return TensorDict(result, batch_size=[result["attention_mask"].shape[0]])
-
-
 def unpad_input(
     hidden_states, attention_mask
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
@@ -445,6 +402,7 @@ DEFAULT_MAX_TOKENS_PER_MB = int(1e12)
 def split_padded_tensor_dict_into_mb_list(
     data: TensorDict,
     mb_spec: MicroBatchSpec,
+    granularity: int = 1,
     group: Optional[dist.ProcessGroup] = None,
 ) -> MicroBatchList:
     """Split a padded tensordict into micro-batches based on the attention mask.
@@ -465,9 +423,20 @@ def split_padded_tensor_dict_into_mb_list(
         mb_spec = MicroBatchSpec.new(
             mb_spec, max_tokens_per_mb=DEFAULT_MAX_TOKENS_PER_MB
         )
+    granularity = mb_spec.granularity
     bs = data["attention_mask"].shape[0]
+    if bs % granularity != 0:
+        raise RuntimeError(f"Batch size {bs} cannot divide granularity {granularity}.")
     max_seqlen = data["attention_mask"].shape[1]
-    input_lens = data["attention_mask"].sum(1).long().cpu().numpy()
+    seq_lens = data["attention_mask"].sum(1).long().cpu().numpy().tolist()
+    input_lens = (
+        data["attention_mask"]
+        .view(bs // granularity, granularity, -1)
+        .sum(dims=(1, 2))
+        .long()
+        .cpu()
+        .numpy()
+    )
 
     # check tensor shape, split only 1d tensors with length "total_lens"
     to_split = {}
@@ -485,8 +454,14 @@ def split_padded_tensor_dict_into_mb_list(
 
     # split
     group_indices = allocate_balanced_mbs_synced(mb_spec, input_lens, group=group)
+    group_indices = [
+        datapack.flat2d(
+            [list(range(i * granularity, (i + 1) * granularity)) for i in group_index]
+        )
+        for group_index in group_indices
+    ]
     splitted_lens = [
-        [input_lens[i] for i in group_index] for group_index in group_indices
+        [seq_lens[i] for i in group_index] for group_index in group_indices
     ]
     group_n_seqs = [len(x) for x in splitted_lens]
     group_lens = [sum(x) for x in splitted_lens]

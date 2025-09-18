@@ -60,6 +60,12 @@ class MicroBatchSpec:
             "help": "Number of micro-batches (or minimum number if max_tokens_per_mb is set). Used when max_tokens_per_mb is None or as minimum count",
         },
     )
+    granularity: int = field(
+        default=1,
+        metadata={
+            "help": "The granularity of each micro-batch. Adjacent #granularity sequences are grouped together when dividing microbatches.",
+        },
+    )
     max_tokens_per_mb: Optional[int] = field(
         default=None,
         metadata={
@@ -72,6 +78,7 @@ class MicroBatchSpec:
         """Create new spec with updated fields while maintaining Omegaconf compatibility."""
         fields = dict(
             n_mbs=mb_spec.n_mbs,
+            granularity=mb_spec.granularity,
             max_tokens_per_mb=mb_spec.max_tokens_per_mb,
         )
         fields.update(kwargs)
@@ -234,9 +241,9 @@ class TrainEngineConfig:
     init_from_scratch: bool = field(
         default=False, metadata={"help": "Initialize model weights randomly"}
     )
-    init_critic_from_actor: bool = field(
+    is_critic: bool = field(
         default=False,
-        metadata={"help": "Initialize critic/reward model from LM checkpoint"},
+        metadata={"help": "Whether to use a critic/reward model"},
     )
     # Runtime microbatch limit
     mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
@@ -863,9 +870,6 @@ class BaseExperimentConfig:
         },
     )
     tokenizer_path: str = field(default="")
-    is_reward_model: bool = field(
-        default=False, metadata={"help": "Whether the model is reward model or not"}
-    )
 
     train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
     valid_dataset: Optional[DatasetConfig] = field(default=None)
