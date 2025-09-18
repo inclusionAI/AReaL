@@ -20,13 +20,16 @@ losses and reward shaping to discourage overly long or early-terminated response
 
 The core objective is:
 
-$$ J\_{\\text{DAPO}}(\\theta) = \\mathbb{E}_{\\substack{(q,a) \\sim \\mathcal{D}, \\
-{o_i}_{i=1}^G \\sim \\pi\_{\\theta\_{\\text{old}}}(o|q)}} \\left\[ \\frac{1}{G}
-\\sum\_{i=1}^G \\sum\_{t=1}^{|o_i|} \\left{ \\min\\left(r\_{i,t}(\\theta)
-\\hat{A}_{i,t}, \\text{clip}\\left(r_{i,t}(\\theta),
-\\textcolor{red}{1-\\epsilon\_{\\text{low}}},
-\\textcolor{red}{1+\\epsilon\_{\\text{high}}}\\right) \\hat{A}\_{i,t}\\right) \\right}
-\\right\] $$
+$$
+
+J\_{\\text{DAPO}}(\\theta) = \\mathbb{E}{\\substack{(q,a) \\sim \\mathcal{D}, \\
+{o_i}{i=1}^G \\sim \\pi\_{\\theta\_{\\text{old}}}(o|q)}} \\left\[ \\frac{1}{G}
+\\sum\_{i=1}^G \\sum\_{t=1}^{|o_i|} \\min\\left( r\_{i,t}(\\theta) \\hat{A}{i,t},\\
+\\text{clip}\\left( r{i,t}(\\theta),\\ \\textcolor{red}{1-\\epsilon\_{\\text{low}}},\\
+\\textcolor{red}{1+\\epsilon\_{\\text{high}}} \\right) \\hat{A}\_{i,t} \\right)
+\\right\]
+
+$$
 
 where $\\hat{A}_{i,t}$ is the group-normalized advantage and $r_{i,t}(\\theta)$ is the
 token-level policy ratio. Compared to GRPO’s symmetric clipping, DAPO’s asymmetric
