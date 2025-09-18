@@ -3,6 +3,7 @@ import torch
 VALID_VISION_MODELS = [
     "qwen2_vl",
     "qwen2_5_vl",
+    "gemma3",
 ]
 # This registry is used to check if a model is a vision model that we have checked it works with AReaL.
 # As different vision models vary in their image processing, special tokens and keys, etc.
@@ -16,6 +17,10 @@ def is_qwen2_vl_model(model_type):
 
 def is_qwen3_moe_model(model_type):
     return model_type in ["qwen3_moe"]
+
+
+def is_gemma3_model(model_type):
+    return model_type in ["gemma3"]
 
 
 # Copied from trl
