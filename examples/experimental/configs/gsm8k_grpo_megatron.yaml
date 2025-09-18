@@ -54,6 +54,10 @@ actor:
     warmup_steps_proportion: 0.001
   backend: megatron
   group_size: ${gconfig.n_samples}
+  adv_norm:
+    mean_level: group
+    std_level: group
+    group_size: ${gconfig.n_samples}
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -63,10 +67,6 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
-  adv_norm:
-    mean_level: group
-    std_level: group
-    group_size: ${gconfig.n_samples}
 
 ref:
   experiment_name: ${experiment_name}
