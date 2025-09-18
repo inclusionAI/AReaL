@@ -35,6 +35,7 @@ logger = logging.getLogger("TIR Training")
 # TIR specific configuration
 TIR_CONFIG = {
     "max_turns": 2,
+    "max_length": 3000,
     "tool_timeout": 30,
     "enable_tools": ["python", "calculator"]
 }
@@ -156,6 +157,7 @@ def main(args):
         tokenizer=tokenizer,
         tool_manager=tool_manager,
         max_turns=TIR_CONFIG["max_turns"],
+        max_length=TIR_CONFIG["max_length"],
         enable_thinking=False,
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
@@ -168,6 +170,7 @@ def main(args):
         tokenizer=tokenizer,
         tool_manager=tool_manager,
         max_turns=TIR_CONFIG["max_turns"],
+        max_length=TIR_CONFIG["max_length"],
         enable_thinking=False,
         rollout_stat_scope="eval-rollout",
         dump_dir=os.path.join(

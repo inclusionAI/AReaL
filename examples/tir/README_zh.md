@@ -245,9 +245,11 @@ valid_dataset:
 ```python
 TIR_CONFIG = {
     "max_turns": 2,
+    "max_length": 3000,
     "tool_timeout": 30,
     "enable_tools": ["python", "calculator"]
 }
+
 ```
 
 

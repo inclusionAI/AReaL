@@ -60,6 +60,7 @@ async def test_tir_workflow():
         tokenizer=tokenizer,
         tool_manager=tool_manager,
         max_turns=3,
+        max_length=2000,  # 测试用较小的长度
     )
     
     tool_manager.cleanup()

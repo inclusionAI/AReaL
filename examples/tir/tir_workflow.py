@@ -32,6 +32,7 @@ class TIRWorkflow(RolloutWorkflow):
         tool_manager: ToolManager,
         chat_model: bool = False,
         max_turns: int = 2,
+        max_length: int = 3000,
         enable_thinking: bool = False,
         rollout_stat_scope: str = "rollout",
         dump_dir: Optional[str] = None,
@@ -43,6 +44,7 @@ class TIRWorkflow(RolloutWorkflow):
         self.tool_manager = tool_manager
         self.chat_model = chat_model
         self.max_turns = max_turns
+        self.max_length = max_length
         self.enable_thinking = enable_thinking
         self.rollout_stat_scope = rollout_stat_scope
         self.dump_dir = dump_dir
@@ -104,7 +106,7 @@ class TIRWorkflow(RolloutWorkflow):
         tool_call_count = 0
         tool_success_count = 0
         stop_reason = None
-        max_len = 3000
+        max_len = self.max_length
         turn = 0
         # State flag for each episode: whether waiting for tool start marker
         waiting_for_tool_start = True
