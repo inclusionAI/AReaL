@@ -14,17 +14,17 @@ preserving the reliability of the gradient signal even when rewards are sparse.
 
 The overall surrogate objective is:
 
-$$ J\_{\\text{GRPO}}(\\theta) = \\mathbb{E}{\\substack{q \\sim P(Q), \\ {o_i}{i=1}^G
-\\sim \\pi\_{\\theta\_{\\text{old}}}(o|q)}} \\left\[ \\frac{1}{G} \\sum\_{i=1}^G
-\\sum\_{t=1}^{|o_i|} \\min\\left( r\_{i,t}(\\theta) \\hat{A}{i,t},\\ \\text{clip}\\left(
-r{i,t}(\\theta),\\ 1-\\epsilon,\\ 1+\\epsilon \\right) \\hat{A}{i,t} \\right) - \\beta
-D{\\mathrm{KL}}\\left\[ \\pi\_\\theta \\middle| \\pi\_{\\text{ref}} \\right\] \\right\]
+$$
+J_{\text{GRPO}}(\theta) = \mathbb{E}{\substack{q \sim P(Q), \ {o_i}{i=1}^G \sim \pi_{\theta_{\text{old}}}(o|q)}} \left[ \frac{1}{G} \sum_{i=1}^G \sum_{t=1}^{|o_i|} \min\left( r_{i,t}(\theta) \hat{A}{i,t},\ \text{clip}\left( r{i,t}(\theta),\ 1-\epsilon,\ 1+\epsilon \right) \hat{A}{i,t} \right) - \beta D{\mathrm{KL}}\left[ \pi_\theta \middle| \pi_{\text{ref}} \right] \right]
 $$
 
 where:
 
-$$ r\_{i,t}(\\theta) = \\frac{\\pi\_\\theta(o\_{i,t} \\mid q,
-o\_{i,\<t})}{\\pi\_{\\theta\_{\\text{old}}}(o\_{i,t} \\mid q, o\_{i,\<t})} $$
+$$
+r_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t} \mid q, o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t} \mid q, o_{i,<t})}
+$$
+
+
 
 For more details:
 
