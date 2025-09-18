@@ -144,92 +144,71 @@ def make_filename_bins(
     local_to_file_map: Dict[str, List[str]],
 ) -> Tuple[List[List[str]], List[List[str]]]:
     # Allocate local weight name into bins, where each bin access independent files
-    # Then we can use multiple threads to concurrently load each bin's parameters
-    weight_name_bins = {}
-    file_name_to_bin_index = {}
-    bin_index = 0
-    for local_name, filenames in local_to_file_map.items():
-        if not all(filename in file_name_to_bin_index for filename in filenames):
-            # Some required filenames doesn't have existing bins
-            # Allocate a new bin, and merge all previous bins into this new bin
-            weight_name_bins[bin_index] = [local_name]
-            for filename in filenames:
-                if filename in file_name_to_bin_index:
-                    i = file_name_to_bin_index.pop(filename)
-                    if i in weight_name_bins:
-                        weight_name_bins[bin_index] += weight_name_bins.pop(i)
-                file_name_to_bin_index[filename] = bin_index
-            bin_index += 1
-        else:
-            # All required filenames have existing bins
-            # Use the head bin as the master bin, and merge all other bins into the master bin
-            head_i = file_name_to_bin_index[filenames[0]]
-            weight_name_bins[head_i].append(local_name)
-            if not all(
-                file_name_to_bin_index[filename] == head_i for filename in filenames
-            ):
-                # merge to head bin
-                for filename in filenames[1:]:
-                    if file_name_to_bin_index[filename] != head_i:
-                        i = file_name_to_bin_index.pop(filename)
-                        if i in weight_name_bins:
-                            weight_name_bins[head_i] += weight_name_bins.pop(i)
-                        file_name_to_bin_index[filename] = head_i
+    # Then we can use multiple threads to concurrently load each bin's parameters.
+    # This function has a complexity of O(F + L²)
+    # where F = total number of files, L = number of local names
+    if not local_to_file_map:
+        return [], []
 
-    bin_index_to_file_names = defaultdict(list)
-    for filename, bin_index in file_name_to_bin_index.items():
-        bin_index_to_file_names[bin_index].append(filename)
-
-    grouped_local_names = list(weight_name_bins.values())
-    grouped_filenames = list(bin_index_to_file_names[i] for i in weight_name_bins)
-    return grouped_local_names, grouped_filenames
-
-
-def make_filename_bins_new(
-    local_to_file_map: Dict[str, List[str]],
-) -> Tuple[List[List[str]], List[List[str]]]:
-    # Use union find to create local_name groups with no file conflicts
     local_names = list(local_to_file_map.keys())
-    parent = {name: name for name in local_names}
-    weight_groups = {name: [name] for name in local_names}
-    file_groups = {name: local_to_file_map[name] for name in local_names}
-    roots = [name for name in local_names]
-    ranks = {name: 0 for name in local_names}
+    n = len(local_names)
+
+    # Convert file lists to sets for O(1) lookups and create file-to-locals mapping
+    local_to_files = {name: set(local_to_file_map[name]) for name in local_names}
+    file_to_locals = defaultdict(set)
+    for local_name, files in local_to_files.items():
+        for file in files:
+            file_to_locals[file].add(local_name)
+
+    # Union-Find with path compression and union by rank
+    parent = list(range(n))
+    rank = [0] * n
 
     def find(x):
         if parent[x] != x:
-            parent[x] = find(parent[x])
+            parent[x] = find(parent[x])  # Path compression
         return parent[x]
 
     def union(x, y):
-        root_x = find(x)
-        root_y = find(y)
-        if root_x != root_y:
-            if ranks[root_x] > ranks[root_y]:
-                parent[root_y] = root_x
-                roots.remove(root_y)
-            elif ranks[root_x] < ranks[root_y]:
-                parent[root_x] = root_y
-                roots.remove(root_x)
-            else:
-                parent[root_y] = root_x
-                roots.remove(root_y)
-                ranks[root_x] += 1
-            # Merge file groups
-            file_groups[root_x].update(file_groups[root_y])
-            file_groups[root_y] = file_groups[root_x]
-            # Merge weight groups
-            weight_groups[root_x].extend(weight_groups[root_y])
-            weight_groups[root_y] = weight_groups[root_x]
+        root_x, root_y = find(x), find(y)
+        if root_x == root_y:
+            return
 
-    for i, weight1 in enumerate(local_names):
-        for weight2 in local_names[i + 1 :]:
-            # If two weights share any files, they conflict
-            if any(fn in file_groups[weight1] for fn in file_groups[weight2]):
-                union(weight1, weight2)
+        # Union by rank
+        if rank[root_x] < rank[root_y]:
+            root_x, root_y = root_y, root_x
+        parent[root_y] = root_x
+        if rank[root_x] == rank[root_y]:
+            rank[root_x] += 1
 
-    grouped_local_names = [weight_groups[root] for root in roots]
-    grouped_filenames = [list(file_groups[root]) for root in roots]
+    # Create name-to-index mapping for O(1) lookups
+    name_to_idx = {name: i for i, name in enumerate(local_names)}
+
+    # Union locals that share files - O(F) where F is total number of files
+    for locals_sharing_file in file_to_locals.values():
+        if len(locals_sharing_file) > 1:
+            locals_list = list(locals_sharing_file)
+            first_idx = name_to_idx[locals_list[0]]
+            for local_name in locals_list[1:]:
+                union(first_idx, name_to_idx[local_name])
+
+    # Group by root - O(L)
+    root_to_group = defaultdict(list)
+    for i, name in enumerate(local_names):
+        root_to_group[find(i)].append(name)
+
+    # Build result groups - O(L + F)
+    grouped_local_names = []
+    grouped_filenames = []
+
+    for group in root_to_group.values():
+        grouped_local_names.append(group)
+        # Use set union to merge files from all locals in group
+        all_files = set()
+        for local_name in group:
+            all_files.update(local_to_files[local_name])
+        grouped_filenames.append(list(all_files))
+
     return grouped_local_names, grouped_filenames
 
 
