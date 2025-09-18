@@ -10,6 +10,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from einops import rearrange
 from tensordict import TensorDict
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import MicroBatchSpec
 from areal.platforms import current_platform
@@ -61,7 +62,7 @@ def pad_sequences_to_tensors(
 ) -> TensorDict:
     if not sequence_list:
         return TensorDict()
-    skip_keys = {"pixel_values", "image_grid_thw"}
+    skip_keys = {"multi_modal_input"}
     max_length = max(
         len(seq)
         for item in sequence_list
@@ -71,8 +72,17 @@ def pad_sequences_to_tensors(
     result = {}
     for key in sequence_list[0].keys():
         padded = []
-        if key in skip_keys:
-            result[key] = [sequence_list[i][key] for i in range(len(sequence_list))]
+        if key == "multi_modal_input":
+            for i in range(len(sequence_list)):
+                if sequence_list[i][key]:
+                    item = sequence_list[i][key][0]
+                    for k, v in item.items():
+                        if not torch.is_tensor(v):
+                            item[k] = torch.tensor(v)
+            # list concat
+            result[key] = sum(
+                [sequence_list[i][key] for i in range(len(sequence_list))], []
+            )
             continue
         for item in sequence_list:
             x = item[key]
@@ -1059,3 +1069,13 @@ def bcast_mb_list(
         old_cu_seqlens_list=old_cu_seqlens_list,
         align_to_lengths=align_to_lengths,
     )
+
+
+def cycle_dataloader(dataloader: StatefulDataLoader):
+    """Cycle through a dataloader indefinitely."""
+    g = iter(dataloader)
+    while True:
+        try:
+            yield next(g)
+        except StopIteration:
+            g = iter(dataloader)

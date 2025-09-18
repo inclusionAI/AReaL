@@ -8,6 +8,7 @@ from torch.testing import assert_close
 
 from areal.api.cli_args import TrainEngineConfig
 from areal.engine.base_hf_engine import BaseHFEngine
+from areal.platforms import current_platform
 from areal.utils.data import concat_padded_tensors
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.network import find_free_ports
@@ -37,10 +38,10 @@ def mock_padded_llm_data():
         )
         all_data.append(TensorDict(seq, batch_size=[1]))
 
-    return concat_padded_tensors(all_data).cuda()
+    return concat_padded_tensors(all_data).to(current_platform.device_type)
 
 
-QWEN3_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+QWEN3_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B/"
 if not os.path.exists(QWEN3_PATH):
     QWEN3_PATH = "Qwen/Qwen3-1.7B"
 QWEN25_PATH = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B/"
@@ -104,11 +105,18 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
 QWEN25_VL_PATH = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
 if not os.path.exists(QWEN25_VL_PATH):
     QWEN25_VL_PATH = "Qwen/Qwen2.5-VL-3B-Instruct"
+GEMMA3_PATH = "/storage/openpsi/models/google__gemma-3-4b-it/"
+if not os.path.exists(GEMMA3_PATH):
+    GEMMA3_PATH = "google/gemma-3-4b-it"
 
 
-@pytest.fixture(params=[QWEN25_VL_PATH])
-def mock_padded_vlm_data(request):
-    model_path = request.param
+def mock_padded_vlm_data(model_path):
+    if model_path == GEMMA3_PATH:
+        model_type = "gemma3"
+    elif model_path == QWEN25_VL_PATH:
+        model_type = "qwen25"
+    else:
+        raise NotImplementedError()
     # TODO: create mock vlm image data
     prompt_lens = torch.randint(1, MAX_PROMPT_LEN, size=(BS,))
     answer_lens = torch.randint(1, MAX_ANSWER_LEN, size=(BS,))
@@ -129,7 +137,11 @@ def mock_padded_vlm_data(request):
 
             image = torch.randint(0, 255, size=(3, VISION_H, VISION_W)).float() / 255.0
             images.append(image)
-            image_tokens.append("<|vision_start|><|image_pad|><|vision_end|>")
+            if model_type == "qwen25":
+                image_tokens.append("<|vision_start|><|image_pad|><|vision_end|>")
+            else:
+                assert model_type == "gemma3"
+                image_tokens.append(processor.boi_token)
 
         combined_image_token = "".join(image_tokens)
 
@@ -163,30 +175,34 @@ def mock_padded_vlm_data(request):
             multi_modal_input=[
                 {
                     "pixel_values": processed_input["pixel_values"],
-                    "image_grid_thw": processed_input["image_grid_thw"],
                 }
             ],
         )
+
+        if "image_grid_thw" in processed_input:
+            seq["multi_modal_input"][0]["image_grid_thw"] = processed_input[
+                "image_grid_thw"
+            ]
 
         td = TensorDict(seq, batch_size=[1])
 
         all_data.append(td)
 
-    padded_data = concat_padded_tensors(all_data).cuda()
+    padded_data = concat_padded_tensors(all_data).to(current_platform.device_type)
     if "multi_modal_input" in padded_data:
         for item in padded_data["multi_modal_input"]:
             if isinstance(item, dict):
                 for k, v in item.items():
                     if torch.is_tensor(v):
-                        item[k] = v.cuda()
+                        item[k] = v.to(current_platform.device_type)
     return padded_data
 
 
 @pytest.mark.parametrize(
     "model_path",
-    [QWEN25_VL_PATH],
+    [QWEN25_VL_PATH, GEMMA3_PATH],
 )
-def test_vlm_consistency(model_path, mock_padded_vlm_data):
+def test_vlm_consistency(model_path):
     os.environ["RANK"] = str(0)
     os.environ["WORLD_SIZE"] = str(1)
     os.environ["MASTER_ADDR"] = "localhost"
@@ -209,7 +225,7 @@ def test_vlm_consistency(model_path, mock_padded_vlm_data):
     engine.initialized = True
 
     # Convert padded_input to dict because tensordict requires same batch size for pixelvalues and image_grid_thw
-    padded_input = dict(mock_padded_vlm_data.clone())
+    padded_input = dict(mock_padded_vlm_data(model_path))
 
     # Get packed input
     mb_list = engine.prepare_mb_list(padded_input)

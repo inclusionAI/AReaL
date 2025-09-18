@@ -8,6 +8,7 @@ from tensordict import TensorDict
 
 from areal.api.cli_args import MicroBatchSpec
 from areal.api.engine_api import TrainEngine
+from areal.engine.ppo.actor import AdvNorm
 from areal.experimental.api.cli_args import ExperimentalPPOActorConfig as PPOActorConfig
 from areal.experimental.megatron_engine import MegatronEngine
 from areal.experimental.utils.mcore.functional import _VocabParallelEntropy
@@ -17,7 +18,6 @@ from areal.utils.functional import (
     dynamic_sampling,
     gather_logprobs,
     gather_logprobs_entropy,
-    masked_normalization,
     ppo_actor_loss_fn,
     reward_overlong_penalty,
 )
@@ -35,12 +35,12 @@ class PPOActor:
         self.reward_clip = config.reward_clip
 
         self.group_reward_norm = config.group_reward_norm
-        self.group_adv_norm = config.group_adv_norm
         self.group_size = config.group_size
 
         self.kl_ctl = config.kl_ctl
 
-        self.adv_norm = config.adv_norm
+        self.adv_norm = AdvNorm(config.adv_norm) if config.adv_norm else None
+
         self.discount = config.discount
         self.gae_lambda = config.gae_lambda
         self.mask_no_eos_with_zero = config.mask_no_eos_with_zero
@@ -170,17 +170,8 @@ class PPOActor:
         advantages = torch.stack(advantages_reversed[::-1], dim=1)
 
         # Optionally perform advantage normalization.
-        if self.adv_norm or self.group_adv_norm:
-            if self.group_adv_norm:
-                adv_list = []
-                for i in range(0, bs // self.group_size):
-                    s = slice(i * self.group_size, (i + 1) * self.group_size)
-                    adv = advantages[s]
-                    m = loss_mask[s]
-                    adv_list.append(masked_normalization(adv, m, all_reduce=False))
-                advantages = torch.cat(adv_list, 0)
-            else:
-                advantages = masked_normalization(advantages, loss_mask)
+        if self.adv_norm is not None:
+            advantages = self.adv_norm(advantages, loss_mask)
 
         # Store data in the dict.
         data["advantages"] = advantages

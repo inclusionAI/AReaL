@@ -57,7 +57,7 @@ dump_dir = os.path.join(
     StatsLogger.get_log_path(config.stats_logger), "generated"
 )
 
-data_generator = itertools.cycle(train_dataloader)
+data_generator = cycle_dataloader(train_dataloader)
 generated_data = rollout.rollout_batch(next(data_generator), workflow=workflow)
 
 # Save generated data for later use

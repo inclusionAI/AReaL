@@ -1,7 +1,7 @@
 import subprocess
 from pathlib import Path
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 __branch__ = ""
 __commit__ = ""
 __is_dirty__ = False
