@@ -411,7 +411,6 @@ DEFAULT_MAX_TOKENS_PER_MB = int(1e12)
 def split_padded_tensor_dict_into_mb_list(
     data: TensorDict,
     mb_spec: MicroBatchSpec,
-    granularity: int = 1,
     group: Optional[dist.ProcessGroup] = None,
 ) -> MicroBatchList:
     """Split a padded tensordict into micro-batches based on the attention mask.

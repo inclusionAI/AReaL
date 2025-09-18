@@ -890,6 +890,11 @@ class SFTConfig(BaseExperimentConfig):
 
 
 @dataclass
+class RWConfig(BaseExperimentConfig):
+    model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
+
+
+@dataclass
 class GRPOConfig(BaseExperimentConfig):
     async_training: bool = field(default=True)
     gconfig: GenerationHyperparameters = field(
