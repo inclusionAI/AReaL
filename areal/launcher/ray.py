@@ -19,6 +19,7 @@ from areal.api.cli_args import (
     LauncherConfig,
     RecoverConfig,
     SGLangConfig,
+    vLLMConfig,
     parse_cli_args,
     to_structured_cfg,
 )
@@ -30,9 +31,11 @@ from areal.utils.launcher import (
     get_env_vars,
     validate_config_for_distributed_launcher,
     wait_sglang_server_addrs,
+    wait_vllm_server_addrs,
 )
 from areal.utils.ray import get_placement_group_master_ip_and_port
 from areal.utils.recover import check_if_recover
+from areal.platforms import is_npu_available
 
 logger = logging.getLogger("RayLauncher")
 
@@ -108,14 +111,24 @@ class RayLauncher:
             if placement_group is not None
             else "DEFAULT"
         )
-        future = ray.remote(
-            num_cpus=cpus,
-            num_gpus=gpus,
-            memory=mem * 1024 * 1024,  # Convert MB to bytes
-            runtime_env=runtime_env,
-            scheduling_strategy=scheduling_strategy,
-        )(run_func).remote(file_path, func_name, *args, **kwargs)
-        self.jobs[job_name] = future
+        if is_npu_available:
+            future = ray.remote(
+                num_cpus=cpus,
+                resources={"NPU": gpus},
+                memory=mem * 1024 * 1024,  # Convert MB to bytes
+                runtime_env=runtime_env,
+                scheduling_strategy=scheduling_strategy,
+            )(run_func).remote(file_path, func_name, *args, **kwargs)
+            self.jobs[job_name] = future
+        else:
+            future = ray.remote(
+                num_cpus=cpus,
+                num_gpus=gpus,
+                memory=mem * 1024 * 1024,  # Convert MB to bytes
+                runtime_env=runtime_env,
+                scheduling_strategy=scheduling_strategy,
+            )(run_func).remote(file_path, func_name, *args, **kwargs)
+            self.jobs[job_name] = future
         return future
 
     def submit_array(
@@ -159,17 +172,23 @@ class RayLauncher:
         mem_per_node = mem_per_task * tasks_per_node
 
         if job_name not in self.placement_groups:
-            placement_group = ray.util.placement_group(
-                bundles=[
+            if is_npu_available:
+                device_bundles = [
                     {
                         "CPU": cpus_per_node,
-                        "GPU": gpus_per_node,
+                        "NPU": gpus_per_node,
                         "memory": mem_per_node * 1024 * 1024,  # Convert MB to bytes
                     }
-                ]
-                * nodes,
-                strategy="STRICT_SPREAD",
-            )
+                ] * nodes
+            else:
+                device_bundles = [
+                        {
+                            "CPU": cpus_per_node,
+                            "GPU": gpus_per_node,
+                            "memory": mem_per_node * 1024 * 1024,  # Convert MB to bytes
+                        }
+                ] * nodes
+            placement_group = ray.util.placement_group(bundles=device_bundles, strategy="PACK")
             try:
                 ray.get(placement_group.ready(), timeout=30)
             except ray.exceptions.GetTimeoutError as e:
@@ -346,6 +365,8 @@ def ray_main(config, run_id: int = 0):
     allocation_mode = AllocationMode.from_str(allocation_mode)
     sglang_addrs = []
     n_sglang_nodes = 0
+    vllm_addrs = []
+    n_vllm_nodes = 0
     if allocation_mode.gen_backend == "sglang":
         # Launcher should launch SGLang servers according to allocation mode.
         config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
@@ -429,17 +450,60 @@ def ray_main(config, run_id: int = 0):
                 force=False
             )  # force=False will send KeyboardInterrupt to sglang_server.main() to further clean all sglang-related processes
             raise e
+    elif allocation_mode.gen_backend == "vllm":
+        config.vllm = to_structured_cfg(config.vllm, vLLMConfig)
+        # Launcher should launch vLLM servers according to allocation mode.
+        vllm_tp_size = allocation_mode.gen.tp_size
+        n_vllm_servers = allocation_mode.gen.dp_size
+        n_vllm_nodes = allocation_mode.gen.world_size // n_gpus_per_node
+
+        base_seed = config.vllm.seed
+        vllm_args_list = [
+            [sys.argv[2:] + [f"vllm.seed={base_seed + i}"]]
+            for i in range(n_vllm_servers)
+        ]
+        vllm_entry_point = str(
+            pathlib.Path(__file__).resolve().parent.joinpath("vllm_server.py")
+        )
+        launcher.submit_array(
+            job_name="llm_server",
+            file_path=vllm_entry_point,
+            func_name=DEFAULT_MAIN_FUNC_NAME,
+            count=n_vllm_servers,
+            nodes=n_vllm_nodes,
+            list_args=vllm_args_list,
+            gpus_per_task=vllm_tp_size,
+            cpus_per_task=config.launcher.inference_server_cpus_per_gpu
+            * vllm_tp_size,
+            mem_per_task=config.launcher.inference_server_mem_per_gpu * vllm_tp_size,
+            env_vars=get_env_vars(
+                config.cluster.cluster_name,
+                config.launcher.inference_server_env_vars,
+            ),
+        )
+        # Get vllm server addresses via name_resolve
+        try:
+            vllm_addrs = wait_vllm_server_addrs(
+                config.experiment_name,
+                config.trial_name,
+                n_vllm_servers,
+            )
+        except (TimeoutError, KeyboardInterrupt) as e:
+            launcher.stop_all(force=True)
+            raise e
 
     if allocation_mode.type_ == AllocationType.DECOUPLED_EVAL:
         trainer_n_nodes = 1
         gpus_per_task = 0
     else:
-        trainer_n_nodes = n_nodes - n_sglang_nodes
+        trainer_n_nodes = n_nodes - (n_sglang_nodes if allocation_mode.gen_backend == "sglang" else n_vllm_nodes)
         gpus_per_task = 1
     trainer_entry_point = sys.argv[1]
     n_trainer_processes = trainer_n_nodes * config.cluster.n_gpus_per_node
     trainer_args_list = [[sys.argv[2:]] for _ in range(n_trainer_processes)]
     if allocation_mode.type_ != AllocationType.LLM_SERVER_ONLY:
+        llm_addrs = sglang_addrs if allocation_mode.gen_backend == "sglang" else vllm_addrs
+
         # In ray, we launch trainer in the granularity of processes (1 GPU per process)
         # We amend environment variable similar to torchrun to ensure correct initialization of
         # torch distributed.
@@ -482,7 +546,7 @@ def ray_main(config, run_id: int = 0):
                     config.cluster.cluster_name,
                     config.launcher.trainer_env_vars,
                 ),
-                AREAL_LLM_SERVER_ADDRS=",".join(sglang_addrs),
+                AREAL_LLM_SERVER_ADDRS=",".join(llm_addrs),
                 AREAL_RECOVER_RUN=str(int(is_recover_run)),
             ),
             env_hook=partial(torch_env_hook, trainer_n_nodes * n_gpus_per_node),

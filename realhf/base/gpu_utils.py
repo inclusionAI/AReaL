@@ -29,7 +29,7 @@ def gpu_count():
     """
     if platform.system() == "Darwin":
         return 0
-    elif platform.system() == "Windows":
+    elif platform.system() == "Windows" or platform.system() == "Linux":
         try:
             import torch
 

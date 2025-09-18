@@ -35,7 +35,7 @@ class RLVRWorkflow(RolloutWorkflow):
         self.enable_thinking = enable_thinking
         self.dump_dir = dump_dir
         self.rollout_stat_scope = rollout_stat_scope
-        self.async_reward_fn = AsyncRewardWrapper(reward_fn)
+        self.async_reward_fn = AsyncRewardWrapper(reward_fn, max_workers=self.gconfig.max_workers, interruptable_processpool=gconfig.interruptable_processpool)
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 

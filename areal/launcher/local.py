@@ -16,6 +16,7 @@ from areal.api.cli_args import (
     LauncherConfig,
     RecoverConfig,
     SGLangConfig,
+    vLLMConfig,
     parse_cli_args,
     to_structured_cfg,
 )
@@ -24,6 +25,7 @@ from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import JobException, JobInfo, JobState, get_env_vars
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.recover import check_if_recover
+from areal.platforms import is_npu_available
 
 logger = logging.getLogger("Local Scheduler")
 JOB_STATE_TO_PROCESS_STATUS = {
@@ -286,6 +288,40 @@ def local_main(config, run_id: int = 0):
             config.sglang.random_seed = base_seed + i
             cmd = SGLangConfig.build_cmd(
                 config.sglang,
+                host=host,
+                tp_size=alloc_mode.gen.tp_size,
+                base_gpu_id=0,
+                port=ports[i * 2],
+                dist_init_addr=f"localhost:{ports[i*2+1]}",
+            )
+            server_cmd.append(cmd)
+            server_addrs.append(f"{host}:{ports[i * 2]}")
+
+        # Launch inference servers.
+        launcher.submit_array(
+            job_name="llm_server",
+            cmd=server_cmd,
+            count=alloc_mode.gen.dp_size,
+            gpu=alloc_mode.gen.pp_size * alloc_mode.gen.tp_size,
+            env_vars=get_env_vars(
+                config.cluster.cluster_name,
+                config.launcher.inference_server_env_vars,
+            ),
+        )
+        logger.info(
+            f"LLM inference server launched at: AREAL_LLM_SERVER_ADDRS={','.join(server_addrs)}"
+        )
+    elif alloc_mode.gen_backend == "vllm":
+        # FIXME vllm adapt
+        base_seed = config.vllm.seed
+        config.vllm = to_structured_cfg(config.vllm, vLLMConfig)
+        ports = find_free_ports(alloc_mode.gen.dp_size * 2, port_range=(10000, 50000))
+        host_ip = gethostip()
+        host = "localhost" if not config.vllm.enable_metrics else host_ip
+        for i in range(alloc_mode.gen.dp_size):
+            config.vllm.seed = base_seed + i
+            cmd = vLLMConfig.build_cmd(
+                config.vllm,
                 host=host,
                 tp_size=alloc_mode.gen.tp_size,
                 base_gpu_id=0,

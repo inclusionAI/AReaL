@@ -36,7 +36,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
         self.max_turns = max_turns
         self.turn_discount = turn_discount
         self.rollout_stat_scope = rollout_stat_scope
-        self.async_reward_fn = AsyncRewardWrapper(reward_fn)
+        self.async_reward_fn = AsyncRewardWrapper(reward_fn, max_workers=self.gconfig.max_workers)
         self.dump_dir = dump_dir
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
