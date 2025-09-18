@@ -48,7 +48,7 @@ from areal.utils.fsdp import (
     fsdp2_clip_grad_norm,
     fsdp2_load_full_state_dict,
 )
-from areal.utils.model import VALID_VISION_MODELS
+from areal.utils.model import VALID_VISION_MODELS, is_gemma3_model
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
     set_ulysses_sequence_parallel_group,
@@ -175,14 +175,8 @@ class FSDPEngine(BaseHFEngine):
                 f"num_attention_heads {num_attention_heads} and num_key_value_heads {num_key_value_heads} must be divisible by tensor_parallel_size {self.tp_world_size}"
             )
 
-        # For root module
-        root_tp_plan: dict[str, ParallelStyle] = {
-            # All-gather
-            "lm_head": ColwiseParallel(
-                input_layouts=Shard(1),
-                output_layouts=Replicate(),
-            ),
-        }
+        if not isinstance(self.model.model, nn.Module):
+            raise RuntimeError("Model does not have the required submodule 'model'.")
 
         # For model or model.language_model
         model_tp_plan: dict[str, ParallelStyle] = {
@@ -224,8 +218,18 @@ class FSDPEngine(BaseHFEngine):
             "norm": SequenceParallel(),
         }
 
-        if not isinstance(self.model.model, nn.Module):
-            raise RuntimeError("Model does not have the required submodule 'model'.")
+        if is_gemma3_model(self.model_config.model_type):
+            model_tp_plan["layers.*.pre_feedforward_layernorm"] = SequenceParallel()
+            model_tp_plan["layers.*.post_feedforward_layernorm"] = SequenceParallel()
+
+        # For root module
+        root_tp_plan: dict[str, ParallelStyle] = {
+            # All-gather
+            "lm_head": ColwiseParallel(
+                input_layouts=Shard(1),
+                output_layouts=Replicate(),
+            ),
+        }
 
         if self.is_vision_model:
             if self.model_config.model_type not in VALID_VISION_MODELS:

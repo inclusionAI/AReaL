@@ -152,6 +152,9 @@ def main(args):
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
     )
     eval_workflow = VisionRLVRWorkflow(
         reward_fn=clevr_count_70k_reward_fn,
@@ -160,6 +163,9 @@ def main(args):
         processor=processor,
         enable_thinking=False,
         rollout_stat_scope="eval-rollout",
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated-eval"
+        ),
     )
 
     # Run training.
@@ -291,14 +297,17 @@ def main(args):
         with stats_tracker.record_timing("eval"):
 
             def evaluate_fn():
-                # Stats are logged in workflow
-                # and will be exported later
-                cnt = 0
-                for data in valid_dataloader:
-                    for item in data:
-                        eval_rollout.submit(item, eval_workflow)
-                        cnt += 1
-                eval_rollout.wait(cnt, timeout=None)
+                if actor.is_data_parallel_head():
+                    # Stats are logged in workflow
+                    # and will be exported later
+                    cnt = 0
+                    for data in valid_dataloader:
+                        for item in data:
+                            eval_rollout.submit(item, eval_workflow)
+                            cnt += 1
+                    eval_rollout.wait(cnt, timeout=None)
+                dist.barrier(device_ids=[actor.device.index])
+                current_platform.synchronize()
 
             evaluator.evaluate(
                 evaluate_fn,
