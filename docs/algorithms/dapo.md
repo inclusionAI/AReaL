@@ -9,8 +9,8 @@ Doc Author: [Ziyi ZENG](https://github.com/ZiyiTsang)
 Decoupled Clip and Dynamic Sampling Policy Optimization (DAPO) (Yu et al., 2025) is a
 reinforcement learning framework designed for training large language models (LLMs) on
 complex reasoning tasks. It improves upon conventional methods by introducing
-**asymmetric clipping** through decoupled lower and upper bounds
-$\epsilon\_{\text{low}}$ and $\epsilon\_{\text{high}}$, enabling more adaptive
+**asymmetric clipping** through decoupled lower and upper bounds $\epsilon\_{\text{low}}$ and $\epsilon\_{\text{high}}$, enabling more adaptive
+
 policy updates.
 
 DAPO further employs a **dynamic sampling strategy**, excluding samples where all
@@ -21,11 +21,11 @@ losses and reward shaping to discourage overly long or early-terminated response
 The core objective is:
 
 $$
+
 J_{\text{DAPO}}(\theta) = \mathbb{E}_{\substack{(q,a) \sim \mathcal{D}, \\ \{o_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}(o|q)}} \left[ \frac{1}{G} \sum_{i=1}^G \sum_{t=1}^{|o_i|} \min\left( r_{i,t}(\theta) \hat{A}_{i,t}, \text{clip}\left( r_{i,t}(\theta), \textcolor{red}{1-\epsilon_{\text{low}}}, \textcolor{red}{1+\epsilon_{\text{high}}} \right) \hat{A}_{i,t} \right) \right]
 $$
 
-where $\hat{A}_{i,t}$ is the group-normalized advantage and $r_{i,t}(\theta)$ is the
-token-level policy ratio. Compared to GRPO’s symmetric clipping, DAPO’s asymmetric
+where $\hat{A}_{i,t}$ is the group-normalized advantage and $r_{i,t}(\theta)$ is the token-level policy ratio. Compared to GRPO’s symmetric clipping, DAPO’s asymmetric
 design allows finer control over exploration and stability during training.
 
 For more details:

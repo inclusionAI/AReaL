@@ -29,6 +29,7 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelSaveStrategyWrapper,
 )
 
+from areal.platforms import current_platform
 from areal.utils import logging
 
 logger = logging.getLogger("MegatronCheckpointer")
@@ -40,8 +41,8 @@ def log_with_rank(message: str, rank: int, log_only_rank_0: bool = False):
 
 
 def get_device_name() -> str:
-    if torch.cuda.is_available():
-        device = "cuda"
+    if current_platform.is_available():
+        device = current_platform.device_type
     else:
         device = "cpu"
     return device
@@ -173,7 +174,9 @@ class MegatronCheckpointManager:
         }
 
         if get_device_name() != "cpu":
-            rng_state[f"{get_device_name()}_rng_state"] = torch.cuda.get_rng_state()
+            rng_state[f"{get_device_name()}_rng_state"] = (
+                current_platform.get_rng_state()
+            )
 
         rng_state_list = None
         if (
@@ -302,7 +305,7 @@ class MegatronCheckpointManager:
         torch.set_rng_state(rng_states["torch_rng_state"])
 
         if get_device_name() != "cpu":
-            torch.cuda.set_rng_state(rng_states[f"{get_device_name()}_rng_state"])
+            current_platform.set_rng_state(rng_states[f"{get_device_name()}_rng_state"])
 
         # Check for empty states array
         if not rng_states["rng_tracker_states"]:

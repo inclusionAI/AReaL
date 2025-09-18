@@ -1,5 +1,4 @@
 import asyncio
-import itertools
 import queue
 import random
 import threading
@@ -19,7 +18,7 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import RolloutStat
 from areal.experimental.openai.types import CompletionWithTokenLogpReward
 from areal.utils import logging
-from areal.utils.data import concat_padded_tensors
+from areal.utils.data import concat_padded_tensors, cycle_dataloader
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
@@ -314,7 +313,7 @@ class WorkflowExecutor:
         should_accept: Callable | None = None,
     ):
         if not hasattr(self, "data_generator"):
-            self.data_generator = itertools.cycle(dataloader)
+            self.data_generator = cycle_dataloader(dataloader)
         assert dataloader.batch_size is not None
         while True:
             # Submit at least two batches to allow maximum overlap
