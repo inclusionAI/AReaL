@@ -27,6 +27,9 @@ parts:
   - caption: Contributing
     chapters:
     - file: contrib
+  - caption: Version History
+    chapters:
+    - file: version_history
   - caption: References
     chapters:
     - file: references/benchmark
