@@ -92,6 +92,30 @@ def get_custom_dataset(
             max_length=max_length,
             **kwargs,
         )
+    elif "boba" in path and type == "rl":
+        from .boba import get_boba_rl_dataset
+
+        return get_boba_rl_dataset(
+            path=path,
+            split=split,
+            tokenizer=tokenizer,
+            rank=rank,
+            world_size=world_size,
+            max_length=max_length,
+            **kwargs,
+        )
+    elif "torl_data" in path and type == "rl":
+        from .torl_data import get_torl_data_rl_dataset
+
+        return get_torl_data_rl_dataset(
+            path=path,
+            split=split,
+            tokenizer=tokenizer,
+            rank=rank,
+            world_size=world_size,
+            max_length=max_length,
+            **kwargs,
+        )
     else:
         raise ValueError(
             f"Dataset {path} with split {split} and training type {type} is not supported. "
