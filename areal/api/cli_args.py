@@ -30,7 +30,7 @@ class AdvNormConfig(NormConfig):
     mean_level: str = field(
         default="batch",
         metadata={
-            "help": "mean_level for advantage normalization. options: batch, group, none"
+            "help": "mean_level for advantage normalization. options: batch, group, leave_one_out, none"
         },
     )
     std_level: str = field(
