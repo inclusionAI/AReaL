@@ -73,8 +73,8 @@ evaluator:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-  freq_epochs: null
-  freq_steps: 1
+  freq_epochs: 1
+  freq_steps: null
   freq_secs: null
 
 stats_logger:
@@ -82,7 +82,7 @@ stats_logger:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   wandb:
-    mode: online
+    mode: disabled
 
 launcher:
   inference_server_cpus_per_gpu: 4

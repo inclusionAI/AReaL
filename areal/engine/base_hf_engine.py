@@ -40,6 +40,7 @@ from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokeni
 from areal.utils.model import (
     VALID_VISION_MODELS,
     disable_dropout_in_model,
+    is_gemma3_model,
     is_qwen2_vl_model,
     is_qwen3_moe_model,
 )
@@ -411,12 +412,28 @@ class BaseHFEngine(TrainEngine):
     def get_model_name_parameters(self):
         name_params_iterator = self.model.named_parameters()
         if self.is_vision_model and is_qwen2_vl_model(self.model_config.model_type):
-
+            # Qwen2_5_VLForConditionalGeneration has a different naming convention in SGLang
             def name_remapping_generator():
                 for name, value in name_params_iterator:
                     new_name = name.replace("model.", "", 1).replace(
                         "language_model", "model"
                     )
+                    yield new_name, value
+
+            yield from name_remapping_generator()
+        elif self.is_vision_model and is_gemma3_model(self.model_config.model_type):
+            # Gemma3ForConditionalGeneration has a different naming convention in SGLang
+            def name_remapping_generator():
+                for name, value in name_params_iterator:
+                    new_name = name.replace("model.", "", 1)
+                    if new_name.startswith("language_model."):
+                        new_name = new_name.replace(
+                            "language_model.", "language_model.model.", 1
+                        )
+                    elif new_name.startswith("lm_head."):
+                        new_name = new_name.replace(
+                            "lm_head.", "language_model.lm_head.", 1
+                        )
                     yield new_name, value
 
             yield from name_remapping_generator()

@@ -3,6 +3,10 @@ from typing import Optional, Tuple
 
 import transformers
 
+import areal.utils.logging as logging
+
+logger = logging.getLogger("HF Utility")
+
 
 @lru_cache(maxsize=8)
 def load_hf_tokenizer(

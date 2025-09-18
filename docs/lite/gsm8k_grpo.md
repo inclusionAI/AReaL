@@ -327,7 +327,7 @@ def prepare_batch(
     should_accept: Callable | None = None,
 ):
     if not hasattr(self, "data_generator"):
-        self.data_generator = itertools.cycle(dataloader)
+        self.data_generator = cycle_dataloader(dataloader)
     assert dataloader.batch_size is not None
     while True:
         # Submit at least two batches to allow maximum overlap
@@ -367,7 +367,7 @@ rollout = RemoteSGLangEngine(config.inf_engine)
 rollout.initialize()
 eval_rollout = ...
 
-data_generator = itertools.cycle(train_dataloader)
+data_generator = cycle_dataloader(train_dataloader)
 for global_step in range(max_steps):
     # rollout batched training data for current step
     if config.async_training:
@@ -496,7 +496,7 @@ Now a complete GRPO training step in AReaL-lite is done! The core logic of our e
 training script can be summarized as:
 
 ```python
-data_generator = itertools.cycle(train_dataloader)
+data_generator = cycle_dataloader(train_dataloader)
 for global_step in range(max_steps):
     if config.async_training:
         batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
