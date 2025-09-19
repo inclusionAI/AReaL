@@ -52,7 +52,8 @@ class StatsLogger:
             settings=wandb.Settings(start_method="fork"),
         )
 
-        if self.config.wandb.mode != "disabled":
+        swanlab_config = self.config.swanlab
+        if swanlab_config.mode != "disabled":
             if swanlab_config.api_key:
                 swanlab.login(swanlab_config.api_key)
             else:
