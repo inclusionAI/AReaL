@@ -22,6 +22,7 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
+import time
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
@@ -233,9 +234,12 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
+            # actor.upload_weights first - this operation takes time
+            # that allows sglang to schedule pending requests into running state,
+            # making sglang pause_generation work properly
+            actor.upload_weights(weight_update_meta)
             if dist.get_rank() == 0:
                 future = rollout.update_weights(weight_update_meta)
-            actor.upload_weights(weight_update_meta)
             if dist.get_rank() == 0:
                 future.result()
             dist.barrier(device_ids=[actor.device.index])

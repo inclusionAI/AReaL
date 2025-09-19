@@ -288,7 +288,7 @@ class RemoteSGLangEngine(InferenceEngine):
                 payloads = []
                 if self.lora_init:
                     endpoints.append("unload_lora_adapter")
-                    payloads.append(dict(lora_name=lora_name, abort_all_requests=True))
+                    payloads.append(dict(lora_name=lora_name))
                 else:
                     self.lora_init = True
                 endpoints.append("load_lora_adapter")
