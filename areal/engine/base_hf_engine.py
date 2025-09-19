@@ -117,10 +117,8 @@ class BaseHFEngine(TrainEngine):
         return _get_default_group()
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
-        if is_npu_available:
-            backend = "hccl"
-        else:
-            backend = current_platform.communication_backend
+        backend = current_platform.communication_backend
+        if current_platform.communication_backend == "nccl":
             # Required by NCCL weight update group for SGLang
             os.environ["NCCL_CUMEM_ENABLE"] = "0"
             os.environ["NCCL_NVLS_ENABLE"] = "0"

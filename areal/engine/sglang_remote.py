@@ -267,7 +267,7 @@ class RemoteSGLangEngine(InferenceEngine):
             res.raise_for_status()
         tik = time.perf_counter()
         fut = Future()
-        if meta.type == "nccl":
+        if meta.type == current_platform.communication_backend:
             fut = self.executor.submit(
                 update_weights_from_distributed,
                 meta,

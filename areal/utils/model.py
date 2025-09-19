@@ -57,7 +57,7 @@ def get_model_update_meta(config, actor):
     else:
         weight_update_meta = [
             WeightUpdateMeta.from_fsdp_xccl(
-                'hccl' if is_npu_available else 'nccl', AllocationMode.from_str(config.allocation_mode), actor
+                AllocationMode.from_str(config.allocation_mode), actor
             )
         ]
     return weight_update_meta

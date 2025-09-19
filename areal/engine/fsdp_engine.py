@@ -226,7 +226,7 @@ class FSDPEngine(BaseHFEngine):
         )
 
     def upload_weights(self, meta: WeightUpdateMeta):
-        if meta.type == "nccl" or meta.type == "hccl":
+        if meta.type == current_platform.communication_backend:
             if not self.weight_update_group_initialized:
                 self._init_distributed_weight_update(meta)
             self._update_weights_from_distributed(meta.nccl_param_specs)
