@@ -1,3 +1,4 @@
+import itertools
 import os
 import re
 import sys
@@ -13,11 +14,11 @@ from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
+from areal.reward import get_custom_reward_fn
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container, cycle_dataloader
+from areal.utils.data import broadcast_tensor_container
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
@@ -82,7 +83,7 @@ def main(args):
     )
 
     train_size = len(train_dataset)
-    subset_size = int(1.0 * train_size)
+    subset_size = int(0.2 * train_size)
 
     random_indices = torch.randperm(train_size).tolist()[:subset_size]
 
@@ -151,25 +152,19 @@ def main(args):
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
 
     workflow = VisionRLVRWorkflow(
-        reward_fn=clevr_count_70k_reward_fn,
+        reward_fn=get_custom_reward_fn(config.train_dataset.path),
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
     )
     eval_workflow = VisionRLVRWorkflow(
-        reward_fn=clevr_count_70k_reward_fn,
+        reward_fn=get_custom_reward_fn(config.train_dataset.path),
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
         rollout_stat_scope="eval-rollout",
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-        ),
     )
 
     # Run training.
@@ -197,7 +192,7 @@ def main(args):
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    data_generator = cycle_dataloader(train_dataloader)
+    data_generator = itertools.cycle(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -232,7 +227,7 @@ def main(args):
             batch=TensorDict(batch)
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
+        torch.cuda.synchronize()
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -271,8 +266,8 @@ def main(args):
             if dist.get_rank() == 0:
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
-
+            torch.cuda.synchronize()
+            rollout.resume()
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
             eval_rollout.set_version(global_step + 1)
@@ -285,6 +280,27 @@ def main(args):
                 global_step,
                 tokenizer=tokenizer,
                 processor=processor,
+            )
+
+        with stats_tracker.record_timing("eval"):
+
+            def evaluate_fn():
+                # Stats are logged in workflow
+                # and will be exported later
+                cnt = 0
+                for data in valid_dataloader:
+                    for item in data:
+                        eval_rollout.submit(item, eval_workflow)
+                        cnt += 1
+                batch=eval_rollout.wait(cnt, timeout=None)
+                rewards = batch["rewards"].float().to(actor.device)
+                wandb.log({"eval_reward": rewards.mean().item()})
+
+            evaluator.evaluate(
+                evaluate_fn,
+                epoch,
+                step,
+                global_step,
             )
 
         with stats_tracker.record_timing("checkpoint_for_recover"):
@@ -300,32 +316,7 @@ def main(args):
             )
 
         dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
-
-        with stats_tracker.record_timing("eval"):
-
-            def evaluate_fn():
-                if actor.is_data_parallel_head():
-                    # Stats are logged in workflow
-                    # and will be exported later
-                    cnt = 0
-                    for data in valid_dataloader:
-                        for item in data:
-                            eval_rollout.submit(item, eval_workflow)
-                            cnt += 1
-                    eval_rollout.wait(cnt, timeout=None)
-                dist.barrier(device_ids=[actor.device.index])
-                current_platform.synchronize()
-
-            evaluator.evaluate(
-                evaluate_fn,
-                epoch,
-                step,
-                global_step,
-            )
-
-        dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
+        torch.cuda.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
         stats[0].update(
@@ -334,7 +325,7 @@ def main(args):
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
+        torch.cuda.synchronize()
 
         # Resume rollout
         rollout.resume()

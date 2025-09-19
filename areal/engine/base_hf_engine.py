@@ -27,6 +27,7 @@ from areal.utils import logging
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
+    list_of_dict2dict_of_list,
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
     pad_mb_list,
@@ -370,26 +371,24 @@ class BaseHFEngine(TrainEngine):
             if is_qwen3_moe_model(self.model_config.model_type):
                 mb["attention_mask"] = None
                 padded_mb["attention_mask"] = None
+            elif "gemma" in self.model_config.model_type.lower() or "vila" in self.model_config.model_type.lower():
+                mb["attention_mask"] = None
+                padded_mb["attention_mask"] = None
             else:
                 mb["attention_mask"] = dict(full_attention=None, sliding_attention=None)
                 padded_mb["attention_mask"] = dict(
                     full_attention=None, sliding_attention=None
                 )
             if "multi_modal_input" in mb:
-                image_grid_thw_list = [
-                    item["image_grid_thw"]
-                    for item in mb["multi_modal_input"]
-                    if "image_grid_thw" in item
-                ]
-                if image_grid_thw_list:
+                multi_modal_input=list_of_dict2dict_of_list(list(mb["multi_modal_input"]))
+                
+                image_grid_thw_list = multi_modal_input.get("image_grid_thw", None)
+                if image_grid_thw_list is not None:
                     mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
                     padded_mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
-                pixel_values_list = [
-                    item["pixel_values"]
-                    for item in mb["multi_modal_input"]
-                    if "pixel_values" in item
-                ]
-                if pixel_values_list:
+
+                pixel_values_list = multi_modal_input.get("pixel_values", None)
+                if pixel_values_list is not None:
                     # Individual pixel_values shape: (#patches_per_sample, patch_size)
                     # Concatenate along dim=0 to get shape: (#total_patches, patch_size)
                     # For Qwen:
@@ -399,14 +398,17 @@ class BaseHFEngine(TrainEngine):
                     # - total_image_pad_tokens = total_patches // (merge_size**2)
                     mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
                     padded_mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
-                video_grid_thw_list = [
-                    item["video_grid_thw"]
-                    for item in mb["multi_modal_input"]
-                    if "video_grid_thw" in item
-                ]
-                if video_grid_thw_list:
+                
+                token_type_ids_list = multi_modal_input.get("token_type_ids", None)
+                if token_type_ids_list is not None:
+                    mb["token_type_ids"] = torch.cat(token_type_ids_list, dim=0)
+                    padded_mb["token_type_ids"] = torch.cat(token_type_ids_list, dim=0)
+
+                video_grid_thw_list = multi_modal_input.get("video_grid_thw", None)
+                if video_grid_thw_list is not None:
                     mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
                     padded_mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
+                    
         return mb_list
 
     def get_model_name_parameters(self):

@@ -48,7 +48,11 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             return_tensors="pt",
         )
 
-        input_ids = processed_input["input_ids"].tolist()[0]
+        if "vila" in self.processor.image_processor._processor_class.lower():
+            #sglang forces to convert input_ids to prompt when processing multimodal data, which leads to incorrect image token number when using origin 
+            input_ids=self.processor.tokenizer.encode(data["messages"], add_special_tokens=False)
+        else:
+            input_ids = processed_input["input_ids"].tolist()[0]
 
         n_samples = self.gconfig.n_samples
 
@@ -71,6 +75,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         seqlens = []
 
         results = []
+
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
@@ -94,6 +99,13 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
             rewards.append(reward)
+            multi_modal_input = {
+                "pixel_values": processed_input["pixel_values"],
+            }
+            if "image_grid_thw" in processed_input:
+                multi_modal_input["image_grid_thw"] = processed_input["image_grid_thw"]
+            if "token_type_ids" in processed_input:
+                multi_modal_input["token_type_ids"] = processed_input["token_type_ids"]
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),
@@ -116,6 +128,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                     "image_grid_thw"
                 ]
             results.append(TensorDict(res, batch_size=[1]))
+
         if self.dump_dir is not None:
             dump_path = os.path.join(self.dump_dir, str(version))
             await aiofiles.os.makedirs(dump_path, exist_ok=True)

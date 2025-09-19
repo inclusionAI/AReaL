@@ -683,7 +683,8 @@ class FSDPEngine(BaseHFEngine):
 
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
-        ):
+        ):  
+
             if self.sp_world_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)

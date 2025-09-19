@@ -155,16 +155,18 @@ def get_geometry3k_rl_dataset(
         messages = [
             {
                 "role": "user",
-                "content": sample["problem"]
-                .replace("<image>", image_token)
-                .replace("different", ""),
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": sample["problem"]}
+                ]
             }
         ]
         messages.insert(0, system_prompt)
         messages = processor.tokenizer.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=False
         )
-        return {"messages": messages, "images": processed_images}
+        return {"messages": messages, "images": sample["images"]}
+        
 
     dataset = dataset.map(process).remove_columns(["problem"])
 
