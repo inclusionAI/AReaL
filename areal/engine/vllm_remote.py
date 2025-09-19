@@ -25,6 +25,7 @@ from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
 from areal.platforms import is_npu_available
 from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils import logging, name_resolve, names
+from areal.platforms import current_platform
 
 logger = logging.getLogger(__name__)
 
@@ -222,12 +223,8 @@ class RemotevLLMEngine(InferenceEngine):
             res = requests.post(f"http://{addr}/areal_pause_generation")
             res.raise_for_status()
         fut = Future()
-        if is_npu_available:
-            xccl = "hccl"
-        else:
-            xccl = "nccl"
 
-        if meta.type == xccl:
+        if meta.type == current_platform.communication_backend:
             fut = self.executor.submit(
                 update_weights_from_distributed,
                 meta,
