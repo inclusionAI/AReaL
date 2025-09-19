@@ -641,7 +641,7 @@ class SwanlabConfig:
     name: Optional[str] = None
     config: Optional[Dict] = None
     logdir: Optional[str] = None
-    mode: Optional[str] = "local"
+    mode: Optional[str] = "disabled"
     api_key: Optional[str] = os.getenv("SWANLAB_API_KEY", None)
 
 
