@@ -309,16 +309,16 @@ class FSDPEngine(BaseHFEngine):
         )
         self.reshard_after_forward = True
 
-        # mesh_shape=(self.world_size, 1) in FSDP2 is same as NO_Shard in FSDP.
-        # Lora use NO_Shard FSDP here
-        if self.config.use_lora:
-            self.fsdp_device_mesh = init_device_mesh(
-                "cuda",
-                mesh_shape=(self.world_size, 1),
-                mesh_dim_names=("replicate", "shard"),
-            )
-            self.cpu_offload = False
-            self.reshard_after_forward = False
+        # # mesh_shape=(self.world_size, 1) in FSDP2 is same as NO_Shard in FSDP.
+        # # Lora use NO_Shard FSDP here
+        # if self.config.use_lora:
+        #     self.fsdp_device_mesh = init_device_mesh(
+        #         "cuda",
+        #         mesh_shape=(self.world_size, 1),
+        #         mesh_dim_names=("replicate", "shard"),
+        #     )
+        #     self.cpu_offload = False
+        #     self.reshard_after_forward = False
 
         fsdp_kwargs = {
             "mesh": self.fsdp_tp_device_mesh["fsdp"],
@@ -365,7 +365,8 @@ class FSDPEngine(BaseHFEngine):
                 else:
                     param.requires_grad_(False)
 
-        self.model.print_trainable_parameters()
+        if self.rank == 0:
+            self.model.print_trainable_parameters()
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
