@@ -1,8 +1,8 @@
 from dataclasses import dataclass
-from typing import List
+from typing import Dict, List
 
+import torch
 import torch.distributed as dist
-from tensordict import TensorDict
 
 from areal.utils.data import all_gather_tensor_container, concat_padded_tensors
 from areal.utils.datapack import ffd_allocate
@@ -10,14 +10,14 @@ from areal.utils.datapack import ffd_allocate
 
 @dataclass
 class RedistributedData:
-    all_data: List[TensorDict]
-    data: TensorDict
+    all_data: List[Dict[str, torch.Tensor]]
+    data: Dict[str, torch.Tensor]
     rank: int
     group_indices: List[List[int]]
 
 
 def redistribute(
-    data: TensorDict, granularity: int = 1, group=None
+    data: Dict[str, torch.Tensor], granularity: int = 1, group=None
 ) -> RedistributedData:
     """Redistribute a batch across a process group.
 

@@ -6,7 +6,6 @@ import aiofiles
 import aiofiles.os
 import colorama
 import torch
-from tensordict import TensorDict
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
@@ -115,7 +114,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 res["multi_modal_input"][0]["image_grid_thw"] = processed_input[
                     "image_grid_thw"
                 ]
-            results.append(TensorDict(res, batch_size=[1]))
+            results.append(res)
         if self.dump_dir is not None:
             dump_path = os.path.join(self.dump_dir, str(version))
             await aiofiles.os.makedirs(dump_path, exist_ok=True)

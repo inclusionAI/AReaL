@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
@@ -131,9 +130,9 @@ class TrainEngine(abc.ABC):
 
     def train_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, torch.Tensor],
+        loss_fn: Callable[[torch.Tensor, Dict[str, torch.Tensor]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, torch.Tensor]], float],
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function."""
         raise NotImplementedError()
@@ -141,9 +140,9 @@ class TrainEngine(abc.ABC):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, torch.Tensor],
+        loss_fn: Callable[[torch.Tensor, Dict[str, torch.Tensor]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, torch.Tensor]], float],
     ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function."""
         raise NotImplementedError()
@@ -195,7 +194,7 @@ class InferenceEngine(abc.ABC):
         """Asynchronously submit a request to the inference engine. Exits immediately."""
         raise NotImplementedError()
 
-    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
+    def wait(self, count: int, timeout: float | None = None) -> Dict[str, torch.Tensor]:
         """Wait for a specified number of requests to complete, with a timeout."""
         raise NotImplementedError()
 
@@ -205,7 +204,7 @@ class InferenceEngine(abc.ABC):
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
-    ) -> TensorDict:
+    ) -> Dict[str, torch.Tensor]:
         """Submit a batch of requests to the inference engine and wait for the results."""
         raise NotImplementedError()
 
@@ -215,7 +214,7 @@ class InferenceEngine(abc.ABC):
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
-    ) -> TensorDict:
+    ) -> Dict[str, torch.Tensor]:
         """Asynchronously submit and wait until a full batch is ready."""
         raise NotImplementedError()
 

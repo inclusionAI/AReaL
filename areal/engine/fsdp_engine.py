@@ -9,7 +9,6 @@ import torch
 import torch.distributed as dist
 import torch.distributed.nn.functional as dist_F
 import torch.nn as nn
-from tensordict import TensorDict
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
@@ -474,12 +473,12 @@ class FSDPEngine(BaseHFEngine):
 
     def train_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, torch.Tensor],
+        loss_fn: Callable[[torch.Tensor, Dict[str, torch.Tensor]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, torch.Tensor]], float],
     ) -> Dict[str, float]:
         """Train on a batch using gradient accumulation."""
-        input_ = input_.to(self.device)
+        input_ = {k: v.to(self.device) for k, v in input_.items()}
         assert self.optimizer is not None
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
@@ -582,9 +581,9 @@ class FSDPEngine(BaseHFEngine):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, torch.Tensor],
+        loss_fn: Callable[[torch.Tensor, Dict[str, torch.Tensor]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, torch.Tensor]], float],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
         mb_list = self.prepare_mb_list(input_)
@@ -665,9 +664,9 @@ class FSDPEngine(BaseHFEngine):
     @torch.no_grad()
     def forward(
         self,
-        input_: TensorDict,
+        input_: Dict[str, torch.Tensor],
         output_seqlens: List[int] | None = None,
-        post_hook: Callable[[torch.Tensor, TensorDict], Any] | None = None,
+        post_hook: Callable[[torch.Tensor, Dict[str, torch.Tensor]], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""

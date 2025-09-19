@@ -6,7 +6,6 @@ import aiofiles
 import aiofiles.os
 import colorama
 import torch
-from tensordict import TensorDict
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
@@ -97,7 +96,7 @@ class RLVRWorkflow(RolloutWorkflow):
                 # reward
                 rewards=torch.tensor([float(reward)]),
             )
-            results.append(TensorDict(res, batch_size=[1]))
+            results.append(res)
 
         if self.dump_dir is not None:
             dump_path = os.path.join(self.dump_dir, str(version))

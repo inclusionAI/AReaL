@@ -5,7 +5,6 @@ from typing import Dict
 
 import pytest
 import torch
-from tensordict import TensorDict
 from transformers import AutoTokenizer
 
 from areal.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
@@ -43,10 +42,10 @@ def mock_input(
     ] = 1
     input_ids.masked_fill_(~attn_mask, pad_token_id)
 
-    return TensorDict(
-        input_ids=input_ids,
-        attention_mask=attn_mask,
-    )
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attn_mask,
+    }
 
 
 def get_engine(engine_type: str, model_path: str):
