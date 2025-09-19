@@ -1,7 +1,10 @@
 # Debugging Guide
 
-Here's how to debug AReaL training applications, focusing on `RolloutWorkflow` and
-custom RL algorithms.
+Here's how to debug AReaL training applications, including:
+
+- Debugging `RolloutWorkflow` with a persistent inference server;
+- Debugging custom RL algorithms;
+- Comparing the rollout results between Transformers and inference engine.
 
 ## Debugging `RolloutWorkflow` with a Persistent Inference Server
 
@@ -27,7 +30,11 @@ nohup python -m areal.launcher.local examples/math/gsm8k_grpo.py \
 ```
 
 **Note:** For debugging purposes, only the `allocation_mode` and `sglang` configs
-matter. You can ignore everything else in the example YAML file.
+matter. You can ignore everything else in the example YAML file. In addition, it is
+strongly recommended to examine the launch arguments related to the inference engine.
+For example, you may need to check if `sglang.enable_multimodal` should be set based on
+your model type since multimodal is disabled in SGLang by default in models such as
+Gemma3, Llama4, and Step3VL.
 
 Once it's running, you'll find the server address in the log:
 
@@ -48,7 +55,7 @@ train_dataloader = StatefulDataLoader(...)
 
 # Initialize inference engine - reads server addresses from environment variable
 rollout = RemoteSGLangEngine(config.rollout)
-rollout.initialize()
+rollout.initialize(...)
 
 # Create rollout workflow
 workflow = MyWorkflow(...)
@@ -124,4 +131,125 @@ torch.cuda.synchronize()
 
 # Your custom algorithm logic here
 ...
+```
+
+## Comparing the rollout results between Transformers and inference engine
+
+It is often useful to compare the rollout results between Transformers and the inference
+engine to ensure consistency and correctness. Most models will yield nearly identical
+results, but some models may have significant differences because the inference engine
+does a lot of efforts in accelerating the forward process.
+
+If you suspect any discrepancies, or if your workflow involves models that do not have
+first-class support in Transformers/SGLang, it is recommended to use a simple script to
+compare the outputs against a dataset. Here demonstrates an example script that compares
+the results of Qwen2.5-VL-3B-Instruct model on the CLEVR counting dataset.
+
+```python
+import datasets
+from io import BytesIO
+import base64
+from typing import List
+from transformers import AutoProcessor, Gemma3ForConditionalGeneration
+from PIL.Image import Image as ImageObject
+import requests
+import torch
+
+
+def image2base64(images: List[ImageObject] | ImageObject) -> List[str] | str:
+    if isinstance(images, ImageObject):
+        images = [images]
+
+    byte_images = []
+    for image in images:
+        with BytesIO() as buffer:
+            image.save(buffer, format="PNG")
+            buffer.seek(0)
+            byte_image = base64.b64encode(buffer.read()).decode("utf-8")
+            byte_images.append(byte_image)
+
+    return byte_images
+
+
+model_id = "google/gemma-3-4b-it"
+
+model = Gemma3ForConditionalGeneration.from_pretrained(
+    model_id, torch_dtype=torch.bfloat16
+).to("cuda")
+model.eval()
+
+processor = AutoProcessor.from_pretrained(model_id, use_fast=True)
+
+dataset = datasets.load_dataset("BUAADreamer/clevr_count_70k", split="train")
+
+
+t_count = 0
+s_count = 0
+
+for idx, sample in enumerate(dataset):
+    answer = int(sample["answer"])
+    image = sample["images"][0]
+
+    # Apply a chat template
+    messages = [
+        {
+            "role": "system",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Solve the following question: count the number of items in the image and provide the final answer in [ ] format, ensuring that only the number is inside the brackets without any additional text or explanations.",
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": "How many items are there in the image?"},
+            ],
+        },
+    ]
+
+    # Using the same inputs for both implementations
+    inputs = processor.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt",
+    ).to(model.device, dtype=torch.bfloat16)
+
+    input_ids = inputs["input_ids"]
+    input_len = input_ids.shape[-1]
+
+    # Run the generation with Transformers locally on GPUs
+    with torch.inference_mode():
+        generation = model.generate(**inputs, max_new_tokens=16, do_sample=False)
+        generation = generation[0][input_len:]
+
+    hf_results = processor.decode(generation, skip_special_tokens=True)
+
+    # Send the request to the inference server
+    response = requests.post(
+        "http://127.0.0.1:30000/generate",
+        json={
+            "input_ids": input_ids[0].tolist(),
+            "image_data": image2base64(image),
+            "sampling_params": {
+                "temperature": 0,
+                "max_new_tokens": 16,
+            },
+        },
+    )
+    sglang_results = processor.decode(
+        response.json()["output_ids"], skip_special_tokens=True
+    )
+
+    if f"[{answer}]" == hf_results:
+        t_count += 1
+    if f"[{answer}]" == sglang_results:
+        s_count += 1
+
+print(f"Transformers accuracy: {t_count / len(dataset) * 100:.2f}%")
+print(f"SGLang       accuracy: {s_count / len(dataset) * 100:.2f}%")
 ```

@@ -729,8 +729,8 @@ class DatasetConfig:
             "help": "Path to the dataset. Can be a local path or a HuggingFace dataset name."
         },
     )
-    type: Optional[str] = field(
-        default=None,
+    type: str = field(
+        default=MISSING,
         metadata={"help": "Type of training method.e.g., 'sft', 'rl', etc."},
     )
     batch_size: int = field(
@@ -924,7 +924,7 @@ def load_expr_config(argv: List[str], config_cls):
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)
-    assert isinstance(cfg, BaseExperimentConfig)
+    assert isinstance(cfg, config_cls)
     # Setup environment
 
     name_resolve.reconfigure(cfg.cluster.name_resolve)
