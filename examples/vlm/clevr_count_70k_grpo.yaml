@@ -40,7 +40,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/NVILA-Lite-8B-hf-0626
+  path: Qwen/Qwen2.5-VL-3B-Instruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true

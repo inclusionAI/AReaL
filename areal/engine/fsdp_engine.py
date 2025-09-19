@@ -616,7 +616,7 @@ class FSDPEngine(BaseHFEngine):
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
-
+        
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
 
@@ -624,7 +624,8 @@ class FSDPEngine(BaseHFEngine):
 
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
-        ):
+        ):  
+
             if self.sp_world_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)

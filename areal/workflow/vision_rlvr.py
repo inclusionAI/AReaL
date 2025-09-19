@@ -50,7 +50,11 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             return_tensors="pt",
         )
 
-        input_ids = processed_input["input_ids"].tolist()[0]
+        if "vila" in self.processor.image_processor._processor_class.lower():
+            #sglang forces to convert input_ids to prompt when processing multimodal data, which leads to incorrect image token number when using origin 
+            input_ids=self.processor.tokenizer.encode(data["messages"], add_special_tokens=False)
+        else:
+            input_ids = processed_input["input_ids"].tolist()[0]
 
         n_samples = self.gconfig.n_samples
 
