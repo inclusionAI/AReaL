@@ -250,7 +250,7 @@ def main(args):
     )
 
     # Run training—no other changes needed!
-    data_generator = itertools.cycle(train_dataloader)
+    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(max_steps):
         with stats_tracker.record_timing("rollout"):
             # the `should_accept` parameter is used for dynamic filtering

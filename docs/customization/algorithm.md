@@ -171,7 +171,7 @@ def main(args):
     )
 
     # Main training loop
-    data_generator = itertools.cycle(dataloader)
+    data_generator = cycle_dataloader(dataloader)
     for global_step in range(max_steps):
         # Generate training data
         with stats_tracker.record_timing("rollout"):
