@@ -55,6 +55,7 @@ from areal.utils.ulysses import (
     ulysses_pad,
     ulysses_pad_and_slice_inputs,
 )
+from areal.platforms import is_npu_available
 
 
 class FSDPEngine(BaseHFEngine):
@@ -383,7 +384,7 @@ class FSDPEngine(BaseHFEngine):
         )
 
     def upload_weights(self, meta: WeightUpdateMeta):
-        if meta.type == "nccl":
+        if meta.type == current_platform.communication_backend:
             if not self.weight_update_group_initialized:
                 self._init_distributed_weight_update(meta)
             self._update_weights_from_distributed(meta.nccl_param_specs)
@@ -409,8 +410,9 @@ class FSDPEngine(BaseHFEngine):
         # which blocks creating another TCP store for weight update.
         os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
         if dist.get_rank() == 0:
+            backend = current_platform.communication_backend
             self.weight_update_group = init_custom_process_group(
-                backend=current_platform.communication_backend,
+                backend=backend,
                 world_size=meta.alloc_mode.gen.world_size + 1,
                 init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
                 rank=0,
@@ -435,7 +437,7 @@ class FSDPEngine(BaseHFEngine):
                     tensor = param.data
                 if dist.get_rank() == 0:
                     self.logger.debug(f"Broadcasting {name} with shape {tensor.shape}")
-                    dist.broadcast(tensor, src=0, group=self.weight_update_group)
+                    dist.broadcast(tensor, src=0, group=self.weight_update_group, async_op=False)
                 del tensor
             dist.barrier(device_ids=[self.device.index])
             current_platform.synchronize()

@@ -3,14 +3,12 @@ import os
 import random
 import shutil
 import time
-import uuid
 from concurrent.futures import Future, ProcessPoolExecutor
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
 import requests
-import torch.distributed as dist
 import uvloop
 from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -18,19 +16,24 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
+    FinetuneSpec,
     ModelRequest,
     ModelResponse,
     WeightUpdateMeta,
 )
 from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
-from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names
+from areal.platforms import is_npu_available
 from areal.utils.http import arequest_with_retry, get_default_connector
+from areal.utils import logging, name_resolve, names
+from areal.platforms import current_platform
+
+logger = logging.getLogger(__name__)
+
 
 RID_CACHE_SIZE = 128
 
 
-class RemoteSGLangEngine(InferenceEngine):
+class RemotevLLMEngine(InferenceEngine):
 
     def __init__(self, config: InferenceEngineConfig):
         self.config = config
@@ -38,9 +41,13 @@ class RemoteSGLangEngine(InferenceEngine):
         self.rid_to_address = {}
         # Maintain the addresses for the recent 128 requests
         self.rid_queue = []
-        self.addresses = []
-        self.server_idx = 0
 
+        self.addresses = os.getenv("AREAL_LLM_SERVER_ADDRS").split(",")
+
+        if not self.addresses:
+            raise RuntimeError("No configured vLLM servers.")
+
+        self.server_idx = random.randint(0, len(self.addresses) - 1)
         self.distributed_weight_update_initialized = False
         self._version = 0
 
@@ -66,40 +73,13 @@ class RemoteSGLangEngine(InferenceEngine):
         except requests.exceptions.RequestException as e:
             return False
 
-    def initialize(
-        self,
-        engine_id: Optional[str] = None,
-        addr: str | List[str] | None = None,
-        train_data_parallel_size: int | None = None,
-    ):
-        if engine_id is None:
-            if dist.is_initialized():
-                engine_id = str(dist.get_rank())
-            else:
-                engine_id = uuid.uuid4().hex
-        self.engine_id = engine_id
-        self.logger = logging.getLogger(f"[SGLang Remote Engine Rank {engine_id}]")
-
-        if addr:
-            self.addresses = addr if isinstance(addr, list) else [addr]
-        else:
-            # When addr is not provided, fallback to reading addrs from env var
-            self.addresses = os.getenv("AREAL_LLM_SERVER_ADDRS").split(",")
-        if not self.addresses:
-            raise RuntimeError(
-                "No configured SGLang servers. Please pass in SGLang server addresses by arguments "
-                "for `RemoteSGLangEngine.initialize` or environment variable `AREAL_LLM_SERVER_ADDRS`."
-            )
-
-        self.logger.info("Waiting for server ready...")
+    def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None = None):
+        logger.info("Waiting for server ready...")
         for addr_ in self.addresses:
             self._wait_for_server(addr_)
-        self.server_idx = random.randint(0, len(self.addresses) - 1)
-        self.logger.info("Servers are all ready!")
+        logger.info("Servers are all ready!")
         self.executor = ProcessPoolExecutor(max_workers=1)
-        self.workflow_executor.initialize(
-            logger=self.logger, train_data_parallel_size=train_data_parallel_size
-        )
+        self.workflow_executor.initialize()
 
     def destroy(self):
         self.workflow_executor.destroy()
@@ -123,29 +103,25 @@ class RemoteSGLangEngine(InferenceEngine):
         # Prepare request payload
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
-        stop = gconfig.stop
 
         if gconfig.n_samples != 1:
             raise ValueError(
-                "RemoteSGLangEngine does not support n_samples > 1. "
+                "RemotevLLMEngine does not support n_samples > 1. "
                 "Please call generate for multiple times with n_samples = 1."
             )
-        sample_params = {
+
+        # NOTE: rid should NOT be passed in payload
+        payload = {
+            "prompt": req.input_ids.copy(),
+            # FIXME: Is vllm support this args?
+            # "image_data": req.image_data,
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
-            "max_new_tokens": gconfig.max_new_tokens,
+            "max_tokens": gconfig.max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
-            "frequency_penalty": gconfig.frequency_penalty,
-        }
-        if stop:
-            sample_params["stop"] = stop
-
-        payload = {
-            "input_ids": req.input_ids.copy(),
-            "image_data": req.image_data,  # ImageObject or str
-            "sampling_params": sample_params,
-            "return_logprob": True,
+            "return_tokens_as_token_ids": True,
+            "logprobs": 0,
             "stream": False,
         }
 
@@ -184,53 +160,47 @@ class RemoteSGLangEngine(InferenceEngine):
         # we call the pause_generation endpoint
         stop_reason = None
         while (
-            stop_reason not in ["stop", "tool_calls", "length"]
+            stop_reason != "stop"
             and len(accumulated_output_tokens) < gconfig.max_new_tokens
         ):
             # Request is interrupted, wait for some time to avoid interfering
             # with update weights requests
-            while self.workflow_executor.paused.is_set():
+            if stop_reason is not None:
                 await asyncio.sleep(0.5)
 
             # loop until the generation is complete
             result = await arequest_with_retry(
                 session=session,
                 addr=server_addr,
-                endpoint="/generate",
+                endpoint="/v1/completions",
                 payload=payload,
                 method="POST",
                 max_retries=self.config.request_retries,
                 timeout=self.config.request_timeout,
             )
 
-            meta_info = result["meta_info"]
+            meta_info = result["choices"][0]
             # Check if generation is complete
             finish_reason = meta_info["finish_reason"]
-            stop_reason = finish_reason["type"]
-            if (
-                stop_reason == "abort"
-                and finish_reason.get("message") == "Abort before prefill"
-            ):
-                continue
-
+            stop_reason = finish_reason
             # Parse response
-            output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
-            output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
+            output_tokens = meta_info["logprobs"]["tokens"]
+            output_tokens = [int(t.split(":")[1]) for t in output_tokens]
+            output_logprobs = meta_info["logprobs"]["token_logprobs"]
+
+            output_len = len(output_tokens)
+            if stop_reason == "abort" and output_len <= 0:
+                continue
 
             # Update accumulated outputs
             accumulated_output_tokens.extend(output_tokens)
             accumulated_output_logprobs.extend(output_logprobs)
             # FIXME: Update with actual server versions
-            accumulated_versions.extend([-1] * len(output_tokens))
+            accumulated_versions.extend([-1] * output_len)
 
-            payload["input_ids"] += output_tokens
-            sample_params["max_new_tokens"] -= len(output_tokens)
-
-        if stop_reason == "abort":
-            # If stop_reason is "abort", the only reason we exit the loop is
-            # len(accumulated_output_tokens) >= gconfig.max_new_tokens
-            # so the actual reason is length
-            stop_reason = "length"
+            payload["prompt"] += output_tokens
+            payload["max_tokens"] -= len(output_tokens)
+        
         await session.close()
         latency = time.perf_counter() - start_time
 
@@ -250,10 +220,10 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def update_weights(self, meta: WeightUpdateMeta):
         for addr in self.addresses:
-            res = requests.post(f"http://{addr}/pause_generation")
+            res = requests.post(f"http://{addr}/areal_pause_generation")
             res.raise_for_status()
-        tik = time.perf_counter()
         fut = Future()
+
         if meta.type == current_platform.communication_backend:
             fut = self.executor.submit(
                 update_weights_from_distributed,
@@ -264,19 +234,12 @@ class RemoteSGLangEngine(InferenceEngine):
             )
 
             def callback(fut):
-                self.logger.info(
-                    f"Distributed update weights done in {time.perf_counter() - tik}s"
-                )
                 self.distributed_weight_update_initialized = True
 
             fut.add_done_callback(callback)
         elif meta.type == "disk":
             # Update weights from disk
             # Use ProcessPool to bypass python GIL for running async coroutines
-            if self.config.experiment_name is None or self.config.trial_name is None:
-                raise RuntimeError(
-                    f"Experiment and trial names must be set for disk-based weight updates."
-                )
             fut = self.executor.submit(
                 update_weights_from_disk,
                 self.config.experiment_name,
@@ -289,11 +252,6 @@ class RemoteSGLangEngine(InferenceEngine):
             )
 
             def callback(fut):
-                respond_time = fut.result()
-                self.logger.info(
-                    f"Loading weights from disk done in {(time.perf_counter() - tik):.2f}s. "
-                    f"Respond time: {respond_time:.2f}s."
-                )
                 shutil.rmtree(meta.path, ignore_errors=True)
 
             fut.add_done_callback(callback)
@@ -302,7 +260,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
         def callback(fut):
             for addr in self.addresses:
-                res = requests.post(f"http://{addr}/continue_generation")
+                res = requests.post(f"http://{addr}/areal_continue_generation")
                 res.raise_for_status()
 
         fut.add_done_callback(callback)
@@ -313,31 +271,28 @@ class RemoteSGLangEngine(InferenceEngine):
         data: Dict[str, Any],
         workflow: Optional[RolloutWorkflow] = None,
         workflow_builder: Optional[Callable] = None,
-        should_accept: Callable | None = None,
     ) -> None:
-        return self.workflow_executor.submit(
-            data,
-            workflow=workflow,
-            workflow_builder=workflow_builder,
+        return self.workflow_executor.submit(data, workflow, workflow_builder)
+
+    def wait(
+        self,
+        count: int,
+        timeout: float | None = None,
+        should_accept: Callable | None = None,
+    ) -> TensorDict | List[TensorDict]:
+        return self.workflow_executor.wait(
+            count,
+            timeout=timeout,
             should_accept=should_accept,
         )
-
-    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
-        return self.workflow_executor.wait(count, timeout=timeout)
 
     def rollout_batch(
         self,
         data: List[Dict[str, Any]],
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
-        should_accept: Callable | None = None,
     ) -> TensorDict:
-        return self.workflow_executor.rollout_batch(
-            data=data,
-            workflow=workflow,
-            workflow_builder=workflow_builder,
-            should_accept=should_accept,
-        )
+        return self.workflow_executor.rollout_batch(data, workflow, workflow_builder)
 
     def prepare_batch(
         self,
@@ -347,10 +302,7 @@ class RemoteSGLangEngine(InferenceEngine):
         should_accept: Callable | None = None,
     ):
         return self.workflow_executor.prepare_batch(
-            dataloader=dataloader,
-            workflow=workflow,
-            workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            dataloader, workflow, workflow_builder, should_accept
         )
 
     def pause(self):
@@ -372,11 +324,15 @@ def update_weights_from_disk(
     request_timeout,
 ):
     async def _fn():
+        # Wait for model checkpoints of meta.version
         update_name = names.update_weights_from_disk(
             experiment_name, trial_name, model_version
         )
         save_timestamp = float(name_resolve.wait(update_name, timeout=120))
         load_timestamp = datetime.now().timestamp()
+        logger.info(
+            f"Begin update weights from {path}, responded in {(load_timestamp - save_timestamp):.2f}s"
+        )
         session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(
                 total=request_timeout,
@@ -390,8 +346,8 @@ def update_weights_from_disk(
             arequest_with_retry(
                 addr=addr,
                 session=session,
-                endpoint="/update_weights_from_disk",
-                payload=dict(model_path=str(path), abort_all_request=True),
+                endpoint="/areal_update_weights",
+                payload=dict(model_path=str(path)),
                 method="POST",
                 max_retries=request_retries,
                 timeout=request_timeout,
@@ -400,7 +356,9 @@ def update_weights_from_disk(
         ]
         await asyncio.gather(*jobs)
         await session.close()
-        return load_timestamp - save_timestamp
+        logger.info(
+            f"Loading weights done in {(datetime.now().timestamp() - load_timestamp):.2f}s"
+        )
 
     return uvloop.run(_fn())
 
@@ -416,6 +374,7 @@ def update_weights_from_distributed(
     ]
 
     async def _fn():
+        tik = time.perf_counter()
         if init_group:
             await asyncio.gather(
                 *[
@@ -423,18 +382,30 @@ def update_weights_from_distributed(
                     for i, addr in enumerate(addresses)
                 ]
             )
+            await asyncio.gather(
+                *[
+                    arequest_with_retry(
+                        addr=addr,
+                        endpoint="/areal_set_update_weight_meta",
+                        payload={
+                            "names": [pspec.name for pspec in nccl_param_specs],
+                            "dtypes": [pspec.dtype for pspec in nccl_param_specs],
+                            "shapes": [pspec.shape for pspec in nccl_param_specs],
+                            "group_name": meta.nccl_group_name,
+                        },
+                        method="POST",
+                        max_retries=1,
+                        timeout=request_timeout,
+                    )
+                    for addr in addresses
+                ]
+            )
         await asyncio.gather(
             *[
                 arequest_with_retry(
                     addr=addr,
-                    endpoint="/update_weights_from_distributed",
-                    payload={
-                        "names": [pspec.name for pspec in nccl_param_specs],
-                        "dtypes": [pspec.dtype for pspec in nccl_param_specs],
-                        "shapes": [pspec.shape for pspec in nccl_param_specs],
-                        "group_name": meta.nccl_group_name,
-                        "abort_all_requests": True,
-                    },
+                    endpoint="/areal_update_weights_xccl",
+                    payload={},
                     method="POST",
                     max_retries=1,
                     timeout=request_timeout,
@@ -442,6 +413,8 @@ def update_weights_from_distributed(
                 for addr in addresses
             ]
         )
+
+        logger.info(f"Distributed update weights done in {time.perf_counter() - tik}s")
 
     return uvloop.run(_fn())
 
@@ -463,12 +436,12 @@ async def ainit_weights_update_group(
         "master_port": str(meta.nccl_master_port),
         "rank_offset": rank_offset,
         "world_size": meta.alloc_mode.gen.world_size + 1,
-        "backend": current_platform.communication_backend,
+        "backend": meta.type,
         "group_name": meta.nccl_group_name,
     }
     res = await arequest_with_retry(
         addr=addr,
-        endpoint="/init_weights_update_group",
+        endpoint="/areal_init_weights_update_group",
         payload=payload,
         method="POST",
         max_retries=1,

@@ -15,6 +15,7 @@ from transformers import PreTrainedModel
 
 from areal.platforms import current_platform
 from areal.utils import logging, pkg_version
+from areal.platforms import is_npu_available
 
 if pkg_version.is_version_greater_or_equal("torch", "2.6.0"):
     from torch.distributed.fsdp import (
@@ -312,15 +313,16 @@ def fsdp2_clip_grad_norm(
 
 
 def create_fsdp_device_mesh(shard_size, world_size):
+    device = current_platform.device_type
     if shard_size < 0 or shard_size >= world_size:
         device_mesh = init_device_mesh(
-            current_platform.device_type,
+            device,
             mesh_shape=(world_size,),
             mesh_dim_names=("fsdp",),
         )
     else:
         device_mesh = init_device_mesh(
-            current_platform.device_type,
+            device,
             mesh_shape=(world_size // shard_size, shard_size),
             mesh_dim_names=("ddp", "fsdp"),
         )
