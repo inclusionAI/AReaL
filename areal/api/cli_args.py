@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import uvloop
+import yaml
 
 uvloop.install()
 from hydra import compose as hydra_compose
@@ -940,6 +941,13 @@ def load_expr_config(argv: List[str], config_cls):
     # Setup environment
 
     name_resolve.reconfigure(cfg.cluster.name_resolve)
+
+    from areal.utils.stats_logger import StatsLogger
+
+    # Save configuration as yaml
+    if os.getenv("RANK", "0") == "0":
+        save_config(cfg, StatsLogger.get_log_path(cfg.stats_logger))
+
     return cfg, str(config_file)
 
 
@@ -947,3 +955,16 @@ def conf_as_dict(cfg):
     if isinstance(cfg, (OmegaConf, DictConfig)):
         return OmegaConf.to_container(cfg, resolve=True)
     return asdict(cfg)
+
+
+def save_config(cfg, log_dir):
+    os.makedirs(log_dir, exist_ok=True)
+    config_save_path = os.path.join(log_dir, "config.yaml")
+    with open(config_save_path, "w") as f:
+        config_dict: Dict = asdict(cfg)
+        yaml.dump(
+            config_dict,
+            f,
+            default_flow_style=False,
+            sort_keys=False,
+        )
