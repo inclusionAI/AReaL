@@ -23,7 +23,7 @@ docker run \
     "areal-env:$ENV_SHA" \
     bash -c "
         mv /sglang ./sglang
-        HF_ENDPOINT=https://hf-mirror.com python -m pytest -s arealite/
+        HF_ENDPOINT=https://hf-mirror.com python -m pytest -s areal/
     " || { docker rm -f $RUN_ID; exit 1; }
 
 docker rm -f $RUN_ID

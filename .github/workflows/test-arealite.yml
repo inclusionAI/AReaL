@@ -3,16 +3,16 @@ name: Test AReaLite
 on:
   push:
     paths:
-      - .github/workflows/test-arealite.yml
-      - arealite/**
+      - .github/workflows/test-areal.yml
+      - areal/**
       - ci/**
   workflow_dispatch:
 
 jobs:
-  test-arealite:
+  test-areal:
     runs-on: ubuntu-latest
     concurrency:
-      group: test-arealite
+      group: test-areal
     steps:
       - uses: actions/checkout@v4
 
@@ -47,4 +47,4 @@ jobs:
           key: ${{ secrets.REMOTE_SSH_KEY }}
           command_timeout: 1h
           envs: GIT_COMMIT_SHA
-          script_path: ci/test_arealite.sh
+          script_path: ci/test_areal.sh
