@@ -2,7 +2,7 @@
 # Copyright (c) 2023, Tri Dao.
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -16,6 +16,15 @@ from areal.platforms import current_platform
 from areal.utils import datapack, logging
 
 logger = logging.getLogger("data utils")
+
+
+def get_batch_size(data: Dict[str, torch.Tensor]) -> List[int]:
+    if not data:
+        return [0]
+    for key, value in data.items():
+        if torch.is_tensor(value):
+            return list(value.shape)
+    return [0]
 
 
 def reorder_list(xs: List, indices: List[int]) -> List:
@@ -133,7 +142,7 @@ def concat_padded_tensors(
     if not tensor_dicts:
         return {}
 
-    batch_sizes = [tuple(d.batch_size) for d in tensor_dicts]
+    batch_sizes = [tuple(get_batch_size(d)) for d in tensor_dicts]
     new_batch_size = [sum(x[0] for x in batch_sizes), *batch_sizes[0][1:]]
 
     # Find max sequence length across all dictionaries
@@ -150,7 +159,7 @@ def concat_padded_tensors(
 
         # Merge multi-modal data maintaining per-dp correspondence
         for tensor_dict in tensor_dicts:
-            td_batch_size = tensor_dict.batch_size[0]
+            td_batch_size = get_batch_size(tensor_dict)[0]
 
             if "multi_modal_input" in tensor_dict:
                 # Has multi_modal_input - extend the lists
@@ -201,12 +210,17 @@ def concat_padded_tensors(
     return result
 
 
-def to_device(data: Dict[str, torch.Tensor | Any], device) -> Dict[str, torch.Tensor]:
-    """Move tensors in a dictionary to the specified device."""
-    return {
-        key: value.to(device) if torch.is_tensor(value) else value
-        for key, value in data.items()
-    }
+def to_device(
+    data: Union[Dict[str, torch.Tensor], List[Dict[str, torch.Tensor]]],
+    device: Union[str, torch.device],
+) -> Union[Dict[str, torch.Tensor], List[Dict[str, torch.Tensor]]]:
+    """Move a dict or list of dicts of tensors to a specified device."""
+    if isinstance(data, dict):
+        return {k: v.to(device) if torch.is_tensor(v) else v for k, v in data.items()}
+    elif isinstance(data, list):
+        return [to_device(d, device) for d in data]
+    else:
+        raise TypeError(f"Unsupported data type: {type(data)}")
 
 
 def unpack_sequence(
@@ -252,7 +266,7 @@ def allocate_balanced_mbs_synced(
 
 
 def pack_tensor_dict(data: Dict[str, torch.Tensor]):
-    """Pack a tensordict of shape [B, S, ...] into [total_length, ...], leaving other keys unchanged.
+    """Pack a dict of tensors of shape [B, S, ...] into [total_length, ...], leaving other keys unchanged.
 
     Args:
         data (Dict[str, Any]): Dictionary containing tensors to be packed. Should contain key "attention_mask" with shape [B, S].
@@ -329,7 +343,8 @@ def tensor_container_to(
         return d.to(*args, **kwargs)
     elif isinstance(d, list):
         return [
-            tensor_container_to(*args, **kwargs) if torch.is_tensor(v) else v for v in d
+            tensor_container_to(v, *args, **kwargs) if torch.is_tensor(v) else v
+            for v in d
         ]
     elif isinstance(d, dict):
         for key, value in d.items():
@@ -396,10 +411,10 @@ def split_padded_tensor_dict_into_mb_list(
     mb_spec: MicroBatchSpec,
     group: Optional[dist.ProcessGroup] = None,
 ) -> MicroBatchList:
-    """Split a padded tensordict into micro-batches based on the attention mask.
+    """Split a padded dict of tensors into micro-batches based on the attention mask.
 
     Args:
-        data (TensorDict): Dictionary containing padded tensors.
+        data (Dict): Dictionary containing padded tensors.
         mb_spec (MicroBatchSpec): Specification for micro-batch splitting.
         group (Optional[dist.ProcessGroup]): Process group for distributed synchronization.
 
@@ -501,18 +516,18 @@ def pad_packed_tensor_dict(
     align_sequences: bool = False,
     align_to_multiple_of: Optional[int] = None,
 ) -> Tuple[Dict[str, torch.Tensor], int, torch.Tensor, int]:
-    """Pad a packed tensor dict to a specified length.
+    """Pad a packed dict of tensors to a specified length.
     This function assumes that the input data contains "cu_seqlens" and "max_seqlen" key,
     and all other tensors of shape [total_length, ] will be padded to `pad_to_length`.
     This function will pad a new sequence filled with `pad_value` to the end of each tensor,
     and update the "cu_seqlens" and "max_seqlen" keys accordingly.
 
     Args:
-        data (TensorDict): Dictionary containing tensors to be packed.
+        data (Dict): Dictionary containing tensors to be packed.
         pad_to_length (int): The length to pad the tensors to. All tensors
 
     Returns:
-        TensorDict: Dictionary with padded tensors and modified "cu_seqlens" and
+        Dict: Dictionary with padded tensors and modified "cu_seqlens" and
             "max_seqlen".
         int: The pad length.
     """
@@ -783,7 +798,7 @@ def unsqueeze_packed_tensor_dict(
 def unsqueeze_mb_list(
     mb_list: MicroBatchList,
 ) -> MicroBatchList:
-    """Unsqueeze the packed tensordict in the micro-batch list."""
+    """Unsqueeze the packed dict of tensors in the micro-batch list."""
     new_padded_mbs = []
     for i, mb in enumerate(mb_list.mbs):
         if mb_list.padded_mbs is not None:
@@ -792,7 +807,7 @@ def unsqueeze_mb_list(
     return mb_list
 
 
-def amend_position_ids(data: TensorDict) -> TensorDict:
+def amend_position_ids(data: Dict) -> Dict:
     assert "attention_mask" in data, "Input data must contain 'attention_mask' key."
 
     attn_mask = data["attention_mask"]
@@ -902,7 +917,7 @@ def all_gather_tensor_container(data, group=None) -> List:
         data = [all_gather_tensor_container(d, group=group) for d in data]
         return list(zip(*data))
 
-    if isinstance(data, (dict, TensorDict)):
+    if isinstance(data, dict):
         results = {
             k: all_gather_tensor_container(v, group=group) for k, v in data.items()
         }
@@ -910,11 +925,6 @@ def all_gather_tensor_container(data, group=None) -> List:
             {k: v[i] for k, v in results.items()}
             for i in range(dist.get_world_size(group))
         ]
-        if isinstance(data, TensorDict):
-            results = [
-                TensorDict(r, batch_size=[r["attention_mask"].shape[0]])
-                for r in results
-            ]
         return results
 
     results = [None for _ in range(dist.get_world_size(group))]
@@ -943,15 +953,6 @@ def broadcast_tensor_container(data, src_rank=0, group=None):
                 k: broadcast_tensor_container(None, src_rank=src_rank, group=group)
                 for k in keys
             }
-        elif data_type == "tensordict":
-            batch_size, keys = info
-            return TensorDict(
-                {
-                    k: broadcast_tensor_container(None, src_rank=src_rank, group=group)
-                    for k in keys
-                },
-                batch_size=batch_size,
-            )
         elif data_type == "object":
             to_broadcast = [None]
             dist.broadcast_object_list(to_broadcast, src=src_rank, group=group)
@@ -981,16 +982,6 @@ def broadcast_tensor_container(data, src_rank=0, group=None):
                 k: broadcast_tensor_container(v, src_rank=src_rank, group=group)
                 for k, v in data.items()
             }
-        elif isinstance(data, TensorDict):
-            metadata = [("tensordict", (data.batch_size, list(data.keys())))]
-            dist.broadcast_object_list(metadata, src=src_rank, group=group)
-            return TensorDict(
-                {
-                    k: broadcast_tensor_container(v, src_rank=src_rank, group=group)
-                    for k, v in data.items()
-                },
-                batch_size=data.batch_size,
-            )
         else:
             metadata = [("object", None)]
             dist.broadcast_object_list(metadata, src=src_rank, group=group)

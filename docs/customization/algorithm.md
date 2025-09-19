@@ -79,7 +79,7 @@ class ReMaxRLVRWorkflow(RolloutWorkflow):
             rewards=torch.tensor([float(sample_reward - greedy_reward)] * (resp.input_len + resp.output_len)),
         )
 
-        return TensorDict(res, batch_size=[1])
+        return res
 ```
 
 > **Note**: For detailed guidance on customizing rollout workflows, see the
@@ -119,7 +119,7 @@ class ReinforceActor:
     def __init__(self, engine: TrainEngine):
         self.engine = engine
 
-    def train_reinforce(self, data: TensorDict):
+    def train_reinforce(self, data: Dict[str, torch.Tensor]):
         # Enable gradient checkpointing
         self.engine.train()
         return self.engine.train_batch(

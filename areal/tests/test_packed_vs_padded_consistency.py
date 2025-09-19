@@ -227,7 +227,6 @@ def test_vlm_consistency(model_path):
     engine.create_device_model()
     engine.initialized = True
 
-    # Convert padded_input to dict because tensordict requires same batch size for pixelvalues and image_grid_thw
     padded_input = mock_padded_vlm_data(model_path)
 
     # Get packed input

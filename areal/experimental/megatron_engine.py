@@ -17,7 +17,6 @@ from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.utils import get_model_config
-from tensordict import TensorDict
 
 from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
 from areal.api.cli_args import MicroBatchSpec
@@ -416,10 +415,8 @@ class MegatronEngine(TrainEngine):
             max_workers=None,
         )
 
-    def prepare_mb_list(self, input_: TensorDict) -> MicroBatchList:
+    def prepare_mb_list(self, input_: Dict[str, torch.Tensor]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
-        if isinstance(input_, dict):
-            input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
         input_ = amend_position_ids(input_)
         # Parallel sizes
         pp_size = self.parallel_strategy.pipeline_parallel_size
@@ -483,9 +480,9 @@ class MegatronEngine(TrainEngine):
 
     def train_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, torch.Tensor],
+        loss_fn: Callable[[torch.Tensor, Dict[str, torch.Tensor]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, torch.Tensor]], float],
     ) -> Dict[str, float]:
         assert self.model is not None, "Model is not initialized."
         assert self.optimizer is not None, "Optimizer is not initialized."
@@ -562,9 +559,9 @@ class MegatronEngine(TrainEngine):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, torch.Tensor],
+        loss_fn: Callable[[torch.Tensor, Dict[str, torch.Tensor]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, torch.Tensor]], float],
     ) -> torch.Tensor | None:
         assert self.model is not None, "Model is not initialized."
         # Assume input_ is identical across context and model parallel group
@@ -630,9 +627,9 @@ class MegatronEngine(TrainEngine):
     @torch.no_grad()
     def forward(
         self,
-        input_: TensorDict,
+        input_: Dict[str, torch.Tensor],
         output_seqlens: List[int] | None = None,
-        post_hook: Callable[[torch.Tensor, TensorDict], Any] | None = None,
+        post_hook: Callable[[torch.Tensor, Dict[str, torch.Tensor]], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         assert self.model is not None, "Model is not initialized."

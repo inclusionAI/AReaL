@@ -150,9 +150,9 @@ class TrainEngine(abc.ABC):
     @torch.no_grad()
     def forward(
         self,
-        input_: TensorDict,
+        input_: Dict[str, torch.Tensor],
         output_seqlens: List[int] | None = None,
-        post_hook: Callable[[torch.Tensor, TensorDict], Any] | None = None,
+        post_hook: Callable[[torch.Tensor, Dict[str, torch.Tensor]], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Run the forward pass or inference on the model. Note that it is gradient-free."""

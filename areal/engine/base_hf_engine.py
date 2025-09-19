@@ -344,7 +344,7 @@ class BaseHFEngine(TrainEngine):
                 mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
 
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
-        # TODO: remove the usage of tensordict
+
         # Modern model implementations takes a dict as the input.
         # This eliminates a bug of Qwen2.5-VL for transformers<=4.53.1
         for i, mb in enumerate(mb_list.mbs):

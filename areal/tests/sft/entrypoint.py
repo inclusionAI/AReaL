@@ -6,7 +6,6 @@ from typing import List, cast
 import torch
 import torch.distributed as dist
 import torch.utils.data
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 import areal.api.cli_args as cli_args
@@ -80,8 +79,7 @@ def main() -> None:
             ):
                 break
 
-            data: TensorDict
-            data = data.to(current_platform.current_device())
+            data = {k: v.to(current_platform.current_device()) for k, v in data.items()}
             data = broadcast_tensor_container(
                 data,
                 src_rank=engine.current_data_parallel_head(),

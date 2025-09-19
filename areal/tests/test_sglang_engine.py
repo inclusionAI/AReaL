@@ -5,8 +5,6 @@ import time
 
 import pytest
 import requests
-import torch
-from tensordict import TensorDict
 
 from areal.api.cli_args import (
     GenerationHyperparameters,
@@ -108,9 +106,9 @@ def test_remote_sglang_rollout(sglang_server, n_samples):
         "messages": [{"role": "user", "content": "Hello, how are you?"}],
     }
     result = engine.rollout_batch([data] * 2, workflow=workflow)
-    assert isinstance(result, TensorDict)
-    bs = result.batch_size
-    assert bs == torch.Size([2 * n_samples])
+    assert isinstance(result, dict)
+    bs = next(iter(result.values())).shape[0]
+    assert bs == 2 * n_samples
     engine.destroy()
 
 
