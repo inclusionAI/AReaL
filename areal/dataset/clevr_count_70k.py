@@ -12,7 +12,7 @@ from areal.utils import logging
 
 logger = logging.getLogger(__name__)
 
-DATASET_NUM_PROC = 16
+DATASET_NUM_PROC = 1
 
 
 def convert_image(
@@ -77,7 +77,6 @@ def get_clevr_count_70k_sft_dataset(
             example["problem"] = (
                 example["problem"]
                 .replace("<image>", image_token)
-                .replace("different", "")
             )
             processed_images = []
             for image in images:
@@ -174,32 +173,23 @@ def get_clevr_count_70k_rl_dataset(
             processed_images = [
                 convert_image(image, 336 * 336) for image in sample["images"]
             ]
-            image_processor_type = (
-                processor.image_processor.image_processor_type.lower()
-            )
-            if "qwen" in image_processor_type:
-                image_token = "<|vision_start|><|image_pad|><|vision_end|>"
-            elif "gemma3" in image_processor_type:
-                image_token = processor.boi_token
-            else:
-                image_token = (
-                    processor.image_token if processor is not None else "<image>"
-                )
+
             system_prompt = {
                 "role": "system",
                 "content": (
                     "Solve the following question: count the number of items in the image and provide the final answer in [ ] format, ensuring that only the number is inside the brackets without any additional text or explanations. "
                 ),
             }
-
             messages = [
                 {
                     "role": "user",
-                    "content": sample["problem"]
-                    .replace("<image>", image_token)
-                    .replace("different", ""),
+                    "content": [
+                        {"type": "image"},
+                        {"type": "text", "text": sample["problem"].replace("<image>","")}
+                    ]
                 }
             ]
+
             messages.insert(0, system_prompt)
             messages = processor.tokenizer.apply_chat_template(
                 messages, add_generation_prompt=True, tokenize=False

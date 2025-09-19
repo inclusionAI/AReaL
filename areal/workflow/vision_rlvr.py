@@ -41,6 +41,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         self.processor = processor
 
     async def arun_episode(self, engine, data):
+        
         processed_input = self.processor(
             images=data["images"],
             text=data["messages"],

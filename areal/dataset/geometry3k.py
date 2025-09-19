@@ -71,7 +71,7 @@ def get_geometry3k_sft_dataset(
         else:
             image_token = processor.image_token if processor is not None else "<image>"
         example["problem"] = (
-            example["problem"].replace("<image>", image_token).replace("different", "")
+            example["problem"].replace("<image>", image_token)
         )
         processed_images = []
         for image in images:
@@ -135,16 +135,10 @@ def get_geometry3k_rl_dataset(
     dataset = load_dataset(path=path, split=split)
 
     def process(sample):
-        processed_images = [
-            convert_image(image, 448, 448) for image in sample["images"]
-        ]
-        image_processor_type = processor.image_processor.image_processor_type.lower()
-        if "qwen" in image_processor_type:
-            image_token = "<|vision_start|><|image_pad|><|vision_end|>"
-        elif "gemma3" in image_processor_type:
-            image_token = processor.boi_token
-        else:
-            image_token = processor.image_token if processor is not None else "<image>"
+        # processed_images = [
+        #     convert_image(image, 448, 448) for image in sample["images"]
+        # ]
+
         system_prompt = {
             "role": "system",
             "content": (
