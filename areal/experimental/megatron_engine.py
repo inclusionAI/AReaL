@@ -16,7 +16,6 @@ from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
-from megatron.core.transformer import TransformerConfig
 from megatron.core.utils import get_model_config
 from tensordict import TensorDict
 
@@ -111,6 +110,18 @@ class MegatronEngine(TrainEngine):
         self.tokenizer = load_hf_tokenizer(self.config.path)
         self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
         self.bridge.dtype = self.dtype
+        # Set gradient checkpointing options
+        if self.config.gradient_checkpointing:
+            # reconstruct TransformerConfig for __post_init__
+            self.logger.info("Megatron enabled gradient checkpointing.")
+            self.bridge.set_extra_args(
+                recompute_granularity=self.mcore_config.recompute_granularity,
+                recompute_method=self.mcore_config.recompute_method,
+                recompute_num_layers=self.mcore_config.recompute_num_layers,
+                distribute_saved_activations=self.mcore_config.distribute_saved_activations,
+                recompute_modules=self.mcore_config.recompute_modules,
+            )
+
         self.logger.info(
             "Using mbridge to create models and hf model save/load in MegatronEngine."
         )
@@ -118,20 +129,7 @@ class MegatronEngine(TrainEngine):
         self.hf_config, self.tf_config = make_hf_and_mcore_config(
             self.config.path, dtype=self.dtype, bridge=self.bridge
         )
-        # Set gradient checkpointing options
-        if self.config.gradient_checkpointing:
-            # reconstruct TransformerConfig for __post_init__
-            tf_config_dict = dataclasses.asdict(self.tf_config)
-            tf_config_dict.update(
-                dict(
-                    recompute_granularity=self.mcore_config.recompute_granularity,
-                    recompute_method=self.mcore_config.recompute_method,
-                    recompute_num_layers=self.mcore_config.recompute_num_layers,
-                    distribute_saved_activations=self.mcore_config.distribute_saved_activations,
-                    recompute_modules=self.mcore_config.recompute_modules,
-                )
-            )
-            self.tf_config = TransformerConfig(**tf_config_dict)
+        self.logger.info(f"Megatron TransformerConfig: {self.tf_config}")
 
         # initialize mcore (DDP Wrapped) GPTModel
         with self.device:
