@@ -63,7 +63,13 @@ class FSDPEngine(BaseHFEngine):
         # FSDP options
         self.fsdp_tp_device_mesh = None
         self.mixed_precision_policy = None
-        self.cpu_offload = None
+
+        # FSDP offload
+        self.cpu_offload = False
+        self._is_offload_param=False
+        self._is_offload_optimizer=False
+
+
 
         self.dp_world_size = None
         self.sp_world_size = None
@@ -300,9 +306,19 @@ class FSDPEngine(BaseHFEngine):
             reduce_dtype=getattr(torch, self.config.grad_reduce_dtype),
             cast_forward_inputs=True,
         )
-        self.cpu_offload = (
-            CPUOffloadPolicy() if self.config.fsdp.offload_params else None
-        )
+        # self.cpu_offload = (
+        #     CPUOffloadPolicy() if self.config.fsdp.offload_policy== True else None
+        # )
+
+        if self.config.fsdp.offload_policy== True:
+            self.cpu_offload = CPUOffloadPolicy()
+            self._is_offload_param=False
+            self._is_offload_optimizer=False
+        else:
+            self._is_offload_param=self.config.fsdp.offload_param
+            self._is_offload_optimizer=self.config.fsdp.offload_optimizer
+
+
         fsdp_kwargs = {
             "mesh": self.fsdp_tp_device_mesh["fsdp"],
             "mp_policy": self.mixed_precision_policy,
@@ -486,6 +502,9 @@ class FSDPEngine(BaseHFEngine):
         assert self.fsdp_tp_device_mesh is not None
         set_ulysses_sequence_parallel_group(self.sp_group)
 
+
+        
+
         self.optimizer.zero_grad()
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
@@ -573,6 +592,10 @@ class FSDPEngine(BaseHFEngine):
             update_successful = True
 
         current_lr = self.lr_scheduler.get_last_lr()[0]
+
+
+
+
         return dict(
             update_successful=float(update_successful),
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),

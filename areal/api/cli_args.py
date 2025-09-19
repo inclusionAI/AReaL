@@ -178,9 +178,6 @@ class OptimizerConfig:
             "help": "Proportion of training steps for warmup",
         },
     )
-    offload: bool = field(
-        default=False, metadata={"help": "Enable optimizer state offloading"}
-    )
     initial_loss_scale: float = field(
         default=2**32, metadata={"help": "Initial loss scaling factor"}
     )
@@ -212,9 +209,21 @@ class FSDPEngineConfig:
         default=None,
         metadata={"help": "FSDP wrap policy, specifying model layers to wrap."},
     )
+    # 3 case:
+    # offload_policy true (any value of offload_params and offload_optimizer): enable offload and handled directly by fsdp2
+    # offload_policy false, offload_params true: only offload params of model
+    # offload_policy false, offload_optimizer true: only offload optimizer
     offload_params: bool = field(
         default=False,
         metadata={"help": "Whether to offload FSDP parameters to CPU."},
+    )
+    offload_optimizer: bool = field(
+        default=False,
+        metadata={"help": "Whether to offload FSDP optimizer to CPU."},
+    )
+    offload_policy: bool = field(
+        default=False,
+        metadata={"help": "Whether to offload to CPU."},
     )
 
 

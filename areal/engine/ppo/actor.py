@@ -19,6 +19,12 @@ from areal.utils.functional import (
     ppo_actor_loss_fn,
     reward_overlong_penalty,
 )
+from areal.utils.fsdp import (
+    load_fsdp2_model_to_gpu,
+    offload_fsdp2_model_to_gpu,
+    offload_fsdp_optimizer,
+    offload_fsdp2_model_to_cpu
+)
 
 
 class PPOActor:
@@ -246,6 +252,14 @@ class PPOActor:
             data.pop(key, None)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
         self.engine.train()
+
+        if self.engine._is_offload_param:
+            load_fsdp2_model_to_cpu(self.actor_module_fsdp)
+
+        if self.engine._is_offload_optimizer:
+            load_fsdp_optimizer(optimizer=self.optimizer)
+ 
+
         mb_inputs = split_padded_tensor_dict_into_mb_list(
             data,
             mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
@@ -268,6 +282,13 @@ class PPOActor:
                 stats_tracker.export(reduce_group=self.engine.data_parallel_group)
             )
         all_stats[0].update(global_stats)
+
+
+        if self.engine._is_offload_param:
+            offload_fsdp2_model_to_cpu(self.actor_module_fsdp)
+
+        if self.engine._is_offload_optimizer:
+            offload_fsdp_optimizer(optimizer=self.optimizer)
         return all_stats
 
 
