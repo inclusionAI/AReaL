@@ -23,7 +23,7 @@ class RWEngine:
             input_=data,
             loss_fn=compute_rw_loss,
             loss_weight_fn=lambda x: torch.tensor(
-                x["input_ids"].numel(),
+                x["cu_seqlens"].shape[0] - 1,
                 dtype=torch.float,
                 device=current_platform.current_device(),
             ),
@@ -35,7 +35,7 @@ class RWEngine:
             input_=data,
             loss_fn=compute_rw_loss,
             loss_weight_fn=lambda x: torch.tensor(
-                x["input_ids"].numel(),
+                x["cu_seqlens"].shape[0] - 1,
                 dtype=torch.float,
                 device=current_platform.current_device(),
             ),
@@ -72,16 +72,10 @@ def compute_rw_loss(scores: torch.Tensor, input_: TensorDict) -> torch.Tensor:
     # Logging.
     with torch.no_grad():
         stats_tracker.denominator(
-            n_seqs=torch.ones(
-                cu_seqlens.shape[0] - 1, dtype=torch.bool, device=scores.device
-            ),
             n_pairs=torch.ones(n_pairs, dtype=torch.bool, device=scores.device),
         )
         stats_tracker.stat(
             correct_ratio=(scores[:, 0] > scores[:, 1]).detach().float(),
-            denominator="n_seqs",
-        )
-        stats_tracker.stat(
             pos_score=scores[:, 0].detach().float(),
             neg_score=scores[:, 1].detach().float(),
             loss=logging_loss.float(),

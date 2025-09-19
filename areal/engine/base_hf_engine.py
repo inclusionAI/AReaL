@@ -11,7 +11,7 @@ from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
-    AutoModelForSequenceClassification,
+    AutoModelForTokenClassification,
     AutoProcessor,
     PretrainedConfig,
     PreTrainedTokenizerFast,
@@ -202,14 +202,14 @@ class BaseHFEngine(TrainEngine):
                 )
         else:
             if self.config.init_from_scratch:
-                model = AutoModelForSequenceClassification.from_config(
+                model = AutoModelForTokenClassification.from_config(
                     self.model_config,
                     torch_dtype=dtype,
                     num_labels=1,
                     attn_implementation=self.config.attn_impl,
                 )
             else:
-                model = AutoModelForSequenceClassification.from_pretrained(
+                model = AutoModelForTokenClassification.from_pretrained(
                     pretrained_model_name_or_path=self.config.path,
                     trust_remote_code=True,
                     torch_dtype=dtype,

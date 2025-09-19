@@ -23,7 +23,10 @@ from areal.utils.stats_logger import StatsLogger
 def rw_modeling_colate_fn(items):
     seqs = []
     for item in items:
-        [item["chosen_ids"], item["rejected_ids"]]
+        seqs += [
+            TensorDict(input_ids=item["chosen_ids"]),
+            TensorDict(input_ids=item["rejected_ids"]),
+        ]
     return pad_sequences_to_tensors(seqs)
 
 

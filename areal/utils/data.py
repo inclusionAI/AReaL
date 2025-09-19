@@ -440,7 +440,7 @@ def split_padded_tensor_dict_into_mb_list(
     input_lens = (
         data["attention_mask"]
         .view(bs // granularity, granularity, -1)
-        .sum(dims=(1, 2))
+        .sum(dim=(1, 2))
         .long()
         .cpu()
         .numpy()
