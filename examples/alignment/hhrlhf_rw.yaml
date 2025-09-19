@@ -18,7 +18,7 @@ allocation_mode: d8p1t1
 model:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen__Qwen2.5-7B
+  path: Qwen/Qwen2.5-7B
   init_from_scratch: false
   is_critic: true
   disable_dropout: true
@@ -43,7 +43,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/data/Anthropic___hh-rlhf
+  path: Anthropic/hh-rlhf
   type: rw
 
 valid_dataset:
@@ -51,7 +51,7 @@ valid_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/data/Anthropic___hh-rlhf
+  path: Anthropic/hh-rlhf
   type: rw
 
 # Utilities
