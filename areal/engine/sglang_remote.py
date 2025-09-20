@@ -97,6 +97,7 @@ class RemoteSGLangEngine(InferenceEngine):
         self.server_idx = random.randint(0, len(self.addresses) - 1)
         self.logger.info("Servers are all ready!")
         self.executor = ProcessPoolExecutor(max_workers=1)
+        self.lora_init = False
         self.workflow_executor.initialize(
             logger=self.logger, train_data_parallel_size=train_data_parallel_size
         )
@@ -148,6 +149,8 @@ class RemoteSGLangEngine(InferenceEngine):
             "return_logprob": True,
             "stream": False,
         }
+        if self.lora_init:
+            payload["lora_path"] = f"lora_1"
 
         # Make request
         start_time = time.perf_counter()
@@ -277,6 +280,20 @@ class RemoteSGLangEngine(InferenceEngine):
                 raise RuntimeError(
                     f"Experiment and trial names must be set for disk-based weight updates."
                 )
+            endpoints = ["update_weights_from_disk"]
+            payloads = [dict(model_path=str(meta.path), abort_all_requests=True)]
+            lora_name = "lora_1"
+            if meta.use_lora:
+                endpoints = []
+                payloads = []
+                if self.lora_init:
+                    endpoints.append("unload_lora_adapter")
+                    payloads.append(dict(lora_name=lora_name))
+                else:
+                    self.lora_init = True
+                endpoints.append("load_lora_adapter")
+                payloads.append(dict(lora_name=lora_name, lora_path=str(meta.path)))
+
             fut = self.executor.submit(
                 update_weights_from_disk,
                 self.config.experiment_name,
@@ -286,6 +303,8 @@ class RemoteSGLangEngine(InferenceEngine):
                 meta.path,
                 self.config.request_retries,
                 self.config.request_timeout,
+                endpoints,
+                payloads,
             )
 
             def callback(fut):
@@ -370,6 +389,8 @@ def update_weights_from_disk(
     path,
     request_retries,
     request_timeout,
+    endpoints,
+    payloads,
 ):
     async def _fn():
         update_name = names.update_weights_from_disk(
@@ -386,19 +407,20 @@ def update_weights_from_disk(
             read_bufsize=1024 * 1024 * 10,
             connector=get_default_connector(),
         )
-        jobs = [
-            arequest_with_retry(
-                addr=addr,
-                session=session,
-                endpoint="/update_weights_from_disk",
-                payload=dict(model_path=str(path), abort_all_request=True),
-                method="POST",
-                max_retries=request_retries,
-                timeout=request_timeout,
-            )
-            for addr in addresses
-        ]
-        await asyncio.gather(*jobs)
+        for endpoint, payload in zip(endpoints, payloads):
+            jobs = [
+                arequest_with_retry(
+                    addr=addr,
+                    session=session,
+                    endpoint=f"/{endpoint}",
+                    payload=payload,
+                    method="POST",
+                    max_retries=request_retries,
+                    timeout=request_timeout,
+                )
+                for addr in addresses
+            ]
+            await asyncio.gather(*jobs)
         await session.close()
         return load_timestamp - save_timestamp
 

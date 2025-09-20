@@ -9,6 +9,11 @@ import torch
 import torch.distributed as dist
 import torch.distributed.nn.functional as dist_F
 import torch.nn as nn
+from peft import (
+    LoraConfig,
+    TaskType,
+    get_peft_model,
+)
 from tensordict import TensorDict
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
@@ -284,6 +289,9 @@ class FSDPEngine(BaseHFEngine):
         # Create device model
         self.create_device_model()
 
+        if self.config.use_lora:
+            self._apply_peft_wrapper()
+
         # Monkey patch: replace attention's forward() with Ulysses variant.
         apply_monkey_patch(
             model=self.model,
@@ -303,11 +311,24 @@ class FSDPEngine(BaseHFEngine):
         self.cpu_offload = (
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
+        self.reshard_after_forward = True
+
+        # # mesh_shape=(self.world_size, 1) in FSDP2 is same as NO_Shard in FSDP.
+        # # Lora use NO_Shard FSDP here
+        # if self.config.use_lora:
+        #     self.fsdp_device_mesh = init_device_mesh(
+        #         "cuda",
+        #         mesh_shape=(self.world_size, 1),
+        #         mesh_dim_names=("replicate", "shard"),
+        #     )
+        #     self.cpu_offload = False
+        #     self.reshard_after_forward = False
+
         fsdp_kwargs = {
             "mesh": self.fsdp_tp_device_mesh["fsdp"],
             "mp_policy": self.mixed_precision_policy,
             "offload_policy": self.cpu_offload,
-            "reshard_after_forward": True,
+            "reshard_after_forward": self.reshard_after_forward,
         }
         tik = time.perf_counter()
         apply_fsdp2(self.model, fsdp_kwargs, self.config.fsdp.wrap_policy)
@@ -315,6 +336,41 @@ class FSDPEngine(BaseHFEngine):
 
         self.create_optimizer(ft_spec)
         self.initialized = True
+
+    def _apply_peft_wrapper(self):
+        config = self.config
+        if "all-linear" in config.target_modules:
+            target_modules = "all-linear"
+        else:
+            target_modules = config.target_modules
+        peft_config = {
+            "task_type": TaskType.CAUSAL_LM,
+            "r": config.lora_rank,
+            "lora_alpha": config.lora_alpha,
+            "target_modules": target_modules,
+            "bias": "none",
+        }
+        if self.config.peft_type == "lora":
+            peft_config = LoraConfig(**peft_config)
+        else:
+            raise NotImplementedError()
+
+        self.model = get_peft_model(
+            self.model,
+            peft_config,
+            autocast_adapter_dtype=False,
+        )
+
+        # Make sure we don't require gradients on non-lora params
+        with torch.no_grad():
+            for name, param in self.model.named_parameters():
+                if ".lora_A." in name or ".lora_B." in name:
+                    param.requires_grad_(True)
+                else:
+                    param.requires_grad_(False)
+
+        if self.rank == 0:
+            self.model.print_trainable_parameters()
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
@@ -356,9 +412,21 @@ class FSDPEngine(BaseHFEngine):
         options = StateDictOptions(full_state_dict=True, cpu_offload=True)
         state_dict = get_model_state_dict(self.model, options=options)
 
+        def filter_lora_weights(state_dict):
+            from collections import OrderedDict
+
+            filtered_state_dict = OrderedDict(
+                (key, value)
+                for key, value in state_dict.items()
+                if "lora" in key.lower()
+            )
+            return filtered_state_dict
+
         # save huggingface model on rank 0
         if dist.get_rank() == 0:
             os.makedirs(path, exist_ok=True)
+            if self.config.use_lora:
+                state_dict = filter_lora_weights(state_dict)
             self.model.save_pretrained(path, state_dict=state_dict)
             self.model_config.save_pretrained(path)
             if tokenizer is not None:

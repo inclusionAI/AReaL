@@ -81,3 +81,4 @@ msgspec
 transformers==4.54.0
 openai==1.99.6
 sh
+peft
