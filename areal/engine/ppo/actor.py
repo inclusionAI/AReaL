@@ -11,6 +11,7 @@ from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.utils import stats_tracker
 from areal.utils.data import split_padded_tensor_dict_into_mb_list
+from areal.utils.fsdp import offload_fsdp2_model_to_cpu, offload_fsdp_optimizer
 from areal.utils.functional import (
     dynamic_sampling,
     gather_logprobs,
@@ -18,12 +19,6 @@ from areal.utils.functional import (
     masked_normalization,
     ppo_actor_loss_fn,
     reward_overlong_penalty,
-)
-from areal.utils.fsdp import (
-    load_fsdp2_model_to_gpu,
-    offload_fsdp2_model_to_gpu,
-    offload_fsdp_optimizer,
-    offload_fsdp2_model_to_cpu
 )
 
 
@@ -258,7 +253,6 @@ class PPOActor:
 
         if self.engine._is_offload_optimizer:
             load_fsdp_optimizer(optimizer=self.optimizer)
- 
 
         mb_inputs = split_padded_tensor_dict_into_mb_list(
             data,
@@ -282,7 +276,6 @@ class PPOActor:
                 stats_tracker.export(reduce_group=self.engine.data_parallel_group)
             )
         all_stats[0].update(global_stats)
-
 
         if self.engine._is_offload_param:
             offload_fsdp2_model_to_cpu(self.actor_module_fsdp)
