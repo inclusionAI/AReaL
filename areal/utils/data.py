@@ -62,7 +62,7 @@ def pad_sequences_to_tensors(
 ) -> TensorDict:
     if not sequence_list:
         return TensorDict()
-    skip_keys = {"pixel_values", "image_grid_thw"}
+    skip_keys = {"multi_modal_input"}
     max_length = max(
         len(seq)
         for item in sequence_list
@@ -72,8 +72,17 @@ def pad_sequences_to_tensors(
     result = {}
     for key in sequence_list[0].keys():
         padded = []
-        if key in skip_keys:
-            result[key] = [sequence_list[i][key] for i in range(len(sequence_list))]
+        if key == "multi_modal_input":
+            for i in range(len(sequence_list)):
+                if sequence_list[i][key]:
+                    item = sequence_list[i][key][0]
+                    for k, v in item.items():
+                        if not torch.is_tensor(v):
+                            item[k] = torch.tensor(v)
+            # list concat
+            result[key] = sum(
+                [sequence_list[i][key] for i in range(len(sequence_list))], []
+            )
             continue
         for item in sequence_list:
             x = item[key]
@@ -422,9 +431,20 @@ def split_padded_tensor_dict_into_mb_list(
         mb_spec = MicroBatchSpec.new(
             mb_spec, max_tokens_per_mb=DEFAULT_MAX_TOKENS_PER_MB
         )
+    granularity = mb_spec.granularity
     bs = data["attention_mask"].shape[0]
+    if bs % granularity != 0:
+        raise RuntimeError(f"Batch size {bs} cannot divide granularity {granularity}.")
     max_seqlen = data["attention_mask"].shape[1]
-    input_lens = data["attention_mask"].sum(1).long().cpu().numpy()
+    seq_lens = data["attention_mask"].sum(1).long().cpu().numpy().tolist()
+    input_lens = (
+        data["attention_mask"]
+        .view(bs // granularity, granularity, -1)
+        .sum(dim=(1, 2))
+        .long()
+        .cpu()
+        .numpy()
+    )
 
     # check tensor shape, split only 1d tensors with length "total_lens"
     to_split = {}
@@ -442,8 +462,14 @@ def split_padded_tensor_dict_into_mb_list(
 
     # split
     group_indices = allocate_balanced_mbs_synced(mb_spec, input_lens, group=group)
+    group_indices = [
+        datapack.flat2d(
+            [list(range(i * granularity, (i + 1) * granularity)) for i in group_index]
+        )
+        for group_index in group_indices
+    ]
     splitted_lens = [
-        [input_lens[i] for i in group_index] for group_index in group_indices
+        [seq_lens[i] for i in group_index] for group_index in group_indices
     ]
     group_n_seqs = [len(x) for x in splitted_lens]
     group_lens = [sum(x) for x in splitted_lens]

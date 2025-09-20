@@ -11,6 +11,7 @@ from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
+    AutoModelForTokenClassification,
     AutoProcessor,
     PretrainedConfig,
     PreTrainedTokenizerFast,
@@ -40,6 +41,7 @@ from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokeni
 from areal.utils.model import (
     VALID_VISION_MODELS,
     disable_dropout_in_model,
+    is_gemma3_model,
     is_qwen2_vl_model,
     is_qwen3_moe_model,
 )
@@ -165,23 +167,7 @@ class BaseHFEngine(TrainEngine):
             self.tokenizer = load_hf_tokenizer(self.config.path)
             tik = time.perf_counter()
             with torch.device(current_platform.device_type):
-                if self.config.init_from_scratch:
-                    # initialize scratch model from config
-                    # NOTE: VLM cannot directly load state dict using this
-                    # random initialized model, so otherwise we call
-                    # from_pretrained rather than loading weights into this random model.
-                    model = AutoModelForCausalLM.from_config(
-                        self.model_config,
-                        torch_dtype=dtype,
-                        attn_implementation=self.config.attn_impl,
-                    )
-                else:
-                    model = AutoModelForCausalLM.from_pretrained(
-                        pretrained_model_name_or_path=self.config.path,
-                        trust_remote_code=True,
-                        torch_dtype=dtype,
-                        attn_implementation=self.config.attn_impl,
-                    )
+                model = self._create_llm_actor_or_critic()
                 if self.config.disable_dropout:
                     disable_dropout_in_model(model)
 
@@ -193,6 +179,44 @@ class BaseHFEngine(TrainEngine):
             f"Model creation and loading time: {time.perf_counter() - tik}"
         )
         self.model = model
+
+    def _create_llm_actor_or_critic(self):
+        dtype = getattr(torch, self.config.dtype)
+        if not self.config.is_critic:
+            if self.config.init_from_scratch:
+                # initialize model from config
+                # NOTE: VLM cannot directly load state dict using this
+                # random initialized model, so otherwise we call
+                # from_pretrained rather than loading weights into this random model.
+                model = AutoModelForCausalLM.from_config(
+                    self.model_config,
+                    torch_dtype=dtype,
+                    attn_implementation=self.config.attn_impl,
+                )
+            else:
+                model = AutoModelForCausalLM.from_pretrained(
+                    pretrained_model_name_or_path=self.config.path,
+                    trust_remote_code=True,
+                    torch_dtype=dtype,
+                    attn_implementation=self.config.attn_impl,
+                )
+        else:
+            if self.config.init_from_scratch:
+                model = AutoModelForTokenClassification.from_config(
+                    self.model_config,
+                    torch_dtype=dtype,
+                    num_labels=1,
+                    attn_implementation=self.config.attn_impl,
+                )
+            else:
+                model = AutoModelForTokenClassification.from_pretrained(
+                    pretrained_model_name_or_path=self.config.path,
+                    trust_remote_code=True,
+                    torch_dtype=dtype,
+                    num_labels=1,
+                    attn_implementation=self.config.attn_impl,
+                )
+        return model
 
     def create_optimizer(self, ft_spec: FinetuneSpec):
         if self.optimizer_config is None:
@@ -370,8 +394,10 @@ class BaseHFEngine(TrainEngine):
                 mb["attention_mask"] = None
                 padded_mb["attention_mask"] = None
             else:
-                mb["attention_mask"] = dict(full_attention=None)
-                padded_mb["attention_mask"] = dict(full_attention=None)
+                mb["attention_mask"] = dict(full_attention=None, sliding_attention=None)
+                padded_mb["attention_mask"] = dict(
+                    full_attention=None, sliding_attention=None
+                )
             if "multi_modal_input" in mb:
                 image_grid_thw_list = [
                     item["image_grid_thw"]
@@ -409,12 +435,28 @@ class BaseHFEngine(TrainEngine):
     def get_model_name_parameters(self):
         name_params_iterator = self.model.named_parameters()
         if self.is_vision_model and is_qwen2_vl_model(self.model_config.model_type):
-
+            # Qwen2_5_VLForConditionalGeneration has a different naming convention in SGLang
             def name_remapping_generator():
                 for name, value in name_params_iterator:
                     new_name = name.replace("model.", "", 1).replace(
                         "language_model", "model"
                     )
+                    yield new_name, value
+
+            yield from name_remapping_generator()
+        elif self.is_vision_model and is_gemma3_model(self.model_config.model_type):
+            # Gemma3ForConditionalGeneration has a different naming convention in SGLang
+            def name_remapping_generator():
+                for name, value in name_params_iterator:
+                    new_name = name.replace("model.", "", 1)
+                    if new_name.startswith("language_model."):
+                        new_name = new_name.replace(
+                            "language_model.", "language_model.model.", 1
+                        )
+                    elif new_name.startswith("lm_head."):
+                        new_name = new_name.replace(
+                            "lm_head.", "language_model.lm_head.", 1
+                        )
                     yield new_name, value
 
             yield from name_remapping_generator()
