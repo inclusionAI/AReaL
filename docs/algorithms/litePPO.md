@@ -4,7 +4,7 @@ Last updated: Sep 21, 2025
 
 Doc Author: [Ziyi ZENG](https://github.com/ZiyiTsang)
 
-![alt text](../figures/litePPO.jpg)
+![litePPO figure](../figures/litePPO.jpg)
 
 Lite PPO is a minimalist reinforcement learning approach designed for LLM reasoning.
 Compared to GRPO, Lite PPO introduces two main changes and advantages. Firstly, it
