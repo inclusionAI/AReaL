@@ -1,6 +1,6 @@
-# Decoupled Clip and Dynamic Sampling Policy Optimization (DAPO)
+# Lite-PPO
 
-Last updated: Sep 11, 2025
+Last updated: Sep 21, 2025
 
 Doc Author: [Ziyi ZENG](https://github.com/ZiyiTsang)
 
@@ -21,7 +21,7 @@ For more details:
 
 - AReal Detail: [Paper of AReal](https://arxiv.org/abs/2505.24298)
 
-- DAPO Detail: [Paper of DAPO](https://arxiv.org/abs/2503.14476)
+- Lite-PPO Detail: [Paper of Lite-PPO](https://arxiv.org/pdf/2508.08221v1)
 
 ## Algorithm Core Parameters
 
