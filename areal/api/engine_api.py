@@ -226,3 +226,11 @@ class InferenceEngine(abc.ABC):
     def resume(self):
         """Resume request submission for async rollout."""
         raise NotImplementedError()
+
+    def handle_manual_offload(self):
+        """Handle manual offload for FSDP2 models."""
+        raise NotImplementedError()
+
+    def handle_manual_load(self):
+        """Handle manual load for FSDP2 models."""
+        raise NotImplementedError()

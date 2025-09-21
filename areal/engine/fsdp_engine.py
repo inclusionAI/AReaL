@@ -41,12 +41,15 @@ from areal.utils.data import (
 )
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.fsdp import (
-    CPUOffloadPolicy,
     MixedPrecisionPolicy,
     NoParallel,
     apply_fsdp2,
     fsdp2_clip_grad_norm,
     fsdp2_load_full_state_dict,
+    load_fsdp2_model_to_gpu,
+    load_fsdp2_optimizer,
+    offload_fsdp2_model_to_cpu,
+    offload_fsdp_optimizer,
 )
 from areal.utils.model import VALID_VISION_MODELS, is_gemma3_model
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
@@ -304,23 +307,26 @@ class FSDPEngine(BaseHFEngine):
             reduce_dtype=getattr(torch, self.config.grad_reduce_dtype),
             cast_forward_inputs=True,
         )
-        # self.cpu_offload = (
-        #     CPUOffloadPolicy() if self.config.fsdp.offload_policy== True else None
-        # )
+        # # self.cpu_offload = (
+        # #     CPUOffloadPolicy() if self.config.fsdp.offload_policy== True else None
+        # # )
 
-        if self.config.fsdp.offload_policy == True:
-            self.cpu_offload = CPUOffloadPolicy()
-            self._is_offload_param = False
-            self._is_offload_optimizer = False
-        else:
+        # if self.config.fsdp.offload_policy == True:
+        #     self.cpu_offload = CPUOffloadPolicy()
+        #     self._is_offload_param = False
+        #     self._is_offload_optimizer = False
+        # else:
 
-            self._is_offload_param = self.config.fsdp.offload_param
-            self._is_offload_optimizer = self.config.fsdp.offload_optimizer
+        #     self._is_offload_param = self.config.fsdp.offload_params
+        #     self._is_offload_optimizer = self.config.fsdp.offload_optimizer
+
+        self._is_offload_param = self.config.fsdp.offload_params
+        self._is_offload_optimizer = self.config.fsdp.offload_optimizer
 
         fsdp_kwargs = {
             "mesh": self.fsdp_tp_device_mesh["fsdp"],
             "mp_policy": self.mixed_precision_policy,
-            "offload_policy": self.cpu_offload,
+            "offload_policy": None,  # TODO: CPUOffloadPolicy() if self.config.fsdp.offload_policy
             "reshard_after_forward": True,
         }
         tik = time.perf_counter()
@@ -397,6 +403,7 @@ class FSDPEngine(BaseHFEngine):
         )
 
     def upload_weights(self, meta: WeightUpdateMeta):
+
         if meta.type == "nccl":
             if not self.weight_update_group_initialized:
                 self._init_distributed_weight_update(meta)
@@ -468,8 +475,12 @@ class FSDPEngine(BaseHFEngine):
     def get_param_specs(
         self, weight_chunked_mem_mb: int = 1024
     ) -> List[List[ParamSpec]]:
+        if self._is_offload_param or self.cpu_offload is not None:
+            load_fsdp2_model_to_gpu(self.model)
+
         param_specs = []
         for name, param in self.get_model_name_parameters():
+            torch.cuda.synchronize()
             if isinstance(param.data, DTensor):
                 tensor = param.data.full_tensor()
             else:
@@ -482,6 +493,10 @@ class FSDPEngine(BaseHFEngine):
                 )
             )
             del tensor  # free memory if full_tensor was created
+
+        if self._is_offload_param or self.cpu_offload is not None:
+            offload_fsdp2_model_to_cpu(self.model)
+
         return self._bin_pack_param_specs(
             param_specs, chunked_mem_mb=weight_chunked_mem_mb
         )
@@ -756,3 +771,20 @@ class FSDPEngine(BaseHFEngine):
         unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
         reordered = reorder_list(unpacked, mb_list.backward_indices)
         return pad_and_stack_tensors_along_first_dim(reordered)
+
+    def handle_manual_offload(self):
+        """Handle manual offload for FSDP2 models."""
+
+        if self._is_offload_param:
+            offload_fsdp2_model_to_cpu(self.model)
+
+        if self._is_offload_optimizer:
+            offload_fsdp_optimizer(optimizer=self.optimizer)
+
+    def handle_manual_load(self):
+        """Handle manual load for FSDP2 models."""
+        if self._is_offload_param:
+            load_fsdp2_model_to_gpu(self.model)
+
+        if self._is_offload_optimizer:
+            load_fsdp2_optimizer(optimizer=self.optimizer)

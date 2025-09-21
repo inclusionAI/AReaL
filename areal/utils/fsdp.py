@@ -17,6 +17,7 @@ from transformers import PreTrainedModel
 
 from areal.platforms import current_platform
 from areal.utils import logging, pkg_version
+from areal.utils.device import get_device_id, get_torch_device
 
 if pkg_version.is_version_greater_or_equal("torch", "2.6.0"):
     from torch.distributed.fsdp import (
@@ -480,6 +481,24 @@ def get_cosine_schedule_with_warmup(
 
 # https://github.com/volcengine/verl
 @torch.no_grad()
+def load_fsdp2_model_to_gpu(model):
+    device = get_device_id()
+    model.to(device)
+
+
+@torch.no_grad()
+def load_fsdp2_optimizer(optimizer):
+    if not optimizer.state:
+        return
+    for param_group in optimizer.param_groups:
+        for param in param_group["params"]:
+            state = optimizer.state[param]
+            for key, value in state.items():
+                if isinstance(value, torch.Tensor):
+                    state[key] = value.to(get_device_id(), non_blocking=True)
+
+
+@torch.no_grad()
 def offload_fsdp_optimizer(optimizer):
     if not optimizer.state:
         return
@@ -489,43 +508,10 @@ def offload_fsdp_optimizer(optimizer):
             for key, value in state.items():
                 if isinstance(value, torch.Tensor):
                     state[key] = value.to("cpu", non_blocking=True)
-
-
-# https://github.com/volcengine/verl
-
-
-def get_device_id() -> int:
-    """Return current device id based on the device type.
-    Returns:
-        device index
-    """
-    return get_torch_device().current_device()
-
-
-@torch.no_grad()
-def load_fsdp2_model_to_gpu(model):
-    device = get_device_id()
-    model.to(device)
-
-
-@torch.no_grad()
-def offload_fsdp2_model_to_gpu(model):
-    device = get_device_id()
-    model.to(device)
-
-
-@torch.no_grad()
-def offload_fsdp_optimizer(optimizer, device_id):
-    if not optimizer.state:
-        return
-    for param_group in optimizer.param_groups:
-        for param in param_group["params"]:
-            state = optimizer.state[param]
-            for key, value in state.items():
-                if isinstance(value, torch.Tensor):
-                    state[key] = value.to(device_id, non_blocking=True)
+    get_torch_device().empty_cache()
 
 
 @torch.no_grad()
 def offload_fsdp2_model_to_cpu(model):
     model.cpu()
+    get_torch_device().empty_cache()

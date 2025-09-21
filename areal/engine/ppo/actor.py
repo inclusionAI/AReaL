@@ -11,7 +11,6 @@ from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.utils import stats_tracker
 from areal.utils.data import split_padded_tensor_dict_into_mb_list
-from areal.utils.fsdp import offload_fsdp2_model_to_cpu, offload_fsdp_optimizer
 from areal.utils.functional import (
     dynamic_sampling,
     gather_logprobs,
@@ -248,11 +247,7 @@ class PPOActor:
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
         self.engine.train()
 
-        if self.engine._is_offload_param:
-            load_fsdp2_model_to_cpu(self.actor_module_fsdp)
-
-        if self.engine._is_offload_optimizer:
-            load_fsdp_optimizer(optimizer=self.optimizer)
+        self.engine.handle_manual_load()
 
         mb_inputs = split_padded_tensor_dict_into_mb_list(
             data,
@@ -277,11 +272,8 @@ class PPOActor:
             )
         all_stats[0].update(global_stats)
 
-        if self.engine._is_offload_param:
-            offload_fsdp2_model_to_cpu(self.actor_module_fsdp)
+        self.engine.handle_manual_offload()
 
-        if self.engine._is_offload_optimizer:
-            offload_fsdp_optimizer(optimizer=self.optimizer)
         return all_stats
 
 

@@ -22,6 +22,11 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 
+# import debugpy
+# debugpy.listen(("0.0.0.0", 5678))
+# print("Waiting for debugger to attach...")
+# debugpy.wait_for_client()
+
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
     from areal.reward.math_parser import process_results
