@@ -135,7 +135,6 @@ class TrainController(abc.ABC):
         """
         return self.train(False)
 
-    @abc.abstractmethod
     def upload_weights(self, meta: WeightUpdateMeta):
         """Upload weights to the inference engine."""
         raise NotImplementedError()
