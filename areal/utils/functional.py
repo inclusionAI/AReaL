@@ -215,12 +215,22 @@ def dynamic_sampling(
             n_group_kept=batch_size // max(group_size, 1), n_group_filtered=0
         )
 
+    # Calculate number of groups (must be divisible)
     num_groups = batch_size // group_size
+
+    # Reshape rewards to (num_groups, group_size) for group-wise operations
     rewards_reshaped = rewards.view(num_groups, group_size)
+
+    # Check if all elements in each group are equal to the first element
     all_equal = (rewards_reshaped == rewards_reshaped[:, 0:1]).all(dim=1)
+
+    # Create mask for groups to keep (where not all rewards are equal)
     valid_groups = ~all_equal
+
+    # Expand the group mask to individual samples
     mask = valid_groups.repeat_interleave(group_size)
 
+    # In case all group is filtered out, return the original data (although not gradient in this case)
     if not mask.any():
         return data, dict(n_group_kept=0, n_group_filtered=num_groups)
 

@@ -45,7 +45,7 @@ def redistribute(
 
     all_data = []
     for d in all_gathered:
-        bs = d["attention_mask"].shape[0]
+        bs = get_batch_size(d)
         assert bs % granularity == 0
         all_data += [
             _slice_tensor_dict(d, i, i + granularity) for i in range(0, bs, granularity)
