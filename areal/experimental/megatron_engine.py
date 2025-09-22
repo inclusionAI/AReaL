@@ -112,7 +112,6 @@ class MegatronEngine(TrainEngine):
         self.bridge.dtype = self.dtype
         # Set gradient checkpointing options
         if self.config.gradient_checkpointing:
-            # reconstruct TransformerConfig for __post_init__
             self.bridge.set_extra_args(
                 recompute_granularity=self.mcore_config.recompute_granularity,
                 recompute_method=self.mcore_config.recompute_method,
