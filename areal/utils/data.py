@@ -12,7 +12,7 @@ from einops import rearrange
 from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import MicroBatchSpec
+from areal.api.cli_args import MicroBatchSpec, NormConfig
 from areal.platforms import current_platform
 from areal.utils import datapack, logging
 
@@ -1096,3 +1096,170 @@ def cycle_dataloader(dataloader: StatefulDataLoader):
             yield next(g)
         except StopIteration:
             g = iter(dataloader)
+
+
+class Normalization:
+    """
+    Adaptive normalization with different levels.
+
+    Supports independent specification of normalization level for mean and std:
+    - "batch": normalize across entire batch (with optional all_reduce in distributed setting)
+    - "group": normalize within fixed-size groups
+    - None: no centering or no std scaling
+    """
+
+    def __init__(self, config: NormConfig):
+
+        if config.mean_level not in {"batch", "group", None}:
+            raise ValueError(
+                f"mean_level must be 'batch', 'group' or 'none', got {config.mean_level}"
+            )
+        if config.std_level not in {"batch", "group", None}:
+            raise ValueError(
+                f"std_level must be 'batch', 'group', or 'none', got {config.std_level}"
+            )
+        if (
+            config.mean_level == "group" or config.std_level == "group"
+        ) and config.group_size is None:
+            raise ValueError("group_size must be provided if using group normalization")
+
+        self.mean_level = config.mean_level
+        self.std_level = config.std_level
+        self.group_size = config.group_size
+
+    @torch.no_grad()
+    def __call__(
+        self,
+        x: torch.Tensor,
+        loss_mask: Optional[torch.Tensor] = None,
+        eps: float = 1e-5,
+        unbiased: bool = False,
+        high_precision: bool = True,
+        reduce_group=None,
+    ) -> torch.Tensor:
+        bs = x.size(0)
+
+        # Step 1: Compute mean
+        if self.mean_level == "batch":
+            mean = self._compute_mean(x, loss_mask, high_precision, True, reduce_group)
+        elif self.mean_level == "group":
+            mean = torch.zeros_like(x)
+            for i in range(0, bs // self.group_size):
+                s = slice(i * self.group_size, (i + 1) * self.group_size)
+                xx = x[s]
+                m = loss_mask[s] if loss_mask is not None else None
+                group_mean = self._compute_mean(
+                    xx,
+                    m,
+                    high_precision,
+                    all_reduce=False,
+                    reduce_group=None,
+                )
+                mean[s] = group_mean.expand_as(xx)
+        else:  # mean_level == "none"
+            mean = torch.zeros_like(x)
+
+        # Subtract mean
+        x_centered = x - mean
+
+        # Step 2: Compute std
+        if self.std_level == "batch":
+            std = self._compute_std(
+                x,
+                loss_mask,
+                mean,
+                unbiased,
+                high_precision,
+                True,
+                reduce_group,
+            )
+        elif self.std_level == "group":
+            std = torch.zeros_like(x)
+            for i in range(0, bs // self.group_size):
+                s = slice(i * self.group_size, (i + 1) * self.group_size)
+                xx = x[s]
+                m = loss_mask[s] if loss_mask is not None else None
+                group_mean_slice = mean[s]  # already computed and expanded
+                group_std = self._compute_std(
+                    xx,
+                    m,
+                    group_mean_slice,
+                    unbiased,
+                    high_precision,
+                    False,
+                    reduce_group,
+                )
+                std[s] = group_std.expand_as(xx)
+        else:
+            std = torch.ones_like(x)
+            eps = 0.0
+
+        # Normalize
+        return (x_centered / (std + eps)).float()
+
+    @staticmethod
+    def _compute_mean(
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor],
+        high_precision: bool,
+        all_reduce: bool,
+        reduce_group,
+    ) -> torch.Tensor:
+        """Compute mean only, using masked_normalization internals."""
+        dtype = torch.float64 if high_precision else torch.float32
+        x = x.to(dtype)
+        dim = tuple(range(len(x.shape)))
+        if mask is None:
+            factor = torch.tensor(
+                np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
+            )
+            x_sum = x.sum(dim=dim, keepdim=True)
+        else:
+            mask = mask.to(dtype)
+            x_masked = x * mask
+            factor = mask.sum(dim, keepdim=True)
+            x_sum = x_masked.sum(dim=dim, keepdim=True)
+
+        if dist.is_initialized() and all_reduce:
+            dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
+            dist.all_reduce(x_sum, op=dist.ReduceOp.SUM, group=reduce_group)
+
+        mean = x_sum / factor
+        return mean
+
+    @staticmethod
+    def _compute_std(
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor],
+        mean: torch.Tensor,
+        unbiased: bool,
+        high_precision: bool,
+        all_reduce: bool,
+        reduce_group,
+    ) -> torch.Tensor:
+        """Compute std only, given precomputed mean."""
+        dtype = torch.float64 if high_precision else torch.float32
+        x = x.to(dtype)
+        dim = tuple(range(len(x.shape)))
+        if mask is None:
+            factor = torch.tensor(
+                np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
+            )
+            x_centered = x - mean
+            x_sum_sq = (x_centered**2).sum(dim=dim, keepdim=True)
+        else:
+            mask = mask.to(dtype)
+            x_masked = x * mask
+            factor = mask.sum(dim, keepdim=True)
+            x_centered = x_masked - mean * mask  # only apply mean where mask is 1
+            x_sum_sq = (x_centered**2).sum(dim=dim, keepdim=True)
+
+        if dist.is_initialized() and all_reduce:
+            dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
+            dist.all_reduce(x_sum_sq, op=dist.ReduceOp.SUM, group=reduce_group)
+
+        var = x_sum_sq / factor
+        if unbiased:
+            var *= factor / (factor - 1)
+        std = var.sqrt()
+        return std

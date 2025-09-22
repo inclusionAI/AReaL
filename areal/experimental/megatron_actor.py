@@ -8,12 +8,12 @@ from tensordict import TensorDict
 
 from areal.api.cli_args import MicroBatchSpec
 from areal.api.engine_api import TrainEngine
-from areal.engine.ppo.actor import AdvNorm
+from areal.engine.ppo.actor import Normalization
 from areal.experimental.api.cli_args import ExperimentalPPOActorConfig as PPOActorConfig
 from areal.experimental.megatron_engine import MegatronEngine
 from areal.experimental.utils.mcore.functional import _VocabParallelEntropy
 from areal.utils import stats_tracker
-from areal.utils.data import split_padded_tensor_dict_into_mb_list
+from areal.utils.data import Normalization, split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import (
     dynamic_sampling,
     gather_logprobs,
@@ -34,12 +34,14 @@ class PPOActor:
         self.reward_scaling = config.reward_scaling
         self.reward_clip = config.reward_clip
 
-        self.group_reward_norm = config.group_reward_norm
         self.group_size = config.group_size
 
         self.kl_ctl = config.kl_ctl
 
-        self.adv_norm = AdvNorm(config.adv_norm) if config.adv_norm else None
+        self.adv_norm = Normalization(config.adv_norm) if config.adv_norm else None
+        self.reward_norm = (
+            Normalization(config.reward_norm) if config.reward_norm else None
+        )
 
         self.discount = config.discount
         self.gae_lambda = config.gae_lambda
@@ -82,7 +84,6 @@ class PPOActor:
         )
 
         # ------------------Reward Calculating Start------------------
-        # TODO:rewrite the reward into "reward" class __call__ method should be good. Like VeRL does.
 
         # Reward Penalty on length
         if self.config.overlong_reward_penalty:
@@ -113,11 +114,8 @@ class PPOActor:
         reward_score = torch.clip(
             reward_score, max=self.reward_clip, min=-self.reward_clip
         )
-        if self.group_reward_norm:
-            for i in range(bs // self.group_size):
-                s = slice(i * self.group_size, (i + 1) * self.group_size)
-                r = reward_score[s]
-                reward_score[s] = (r - r.mean()) / (r.std() + 1e-9)
+        if self.reward_norm:
+            reward_score = self.reward_norm(reward_score)
         # ------------------Reward Calculating End------------------
 
         loss_mask = data["loss_mask"].float()
