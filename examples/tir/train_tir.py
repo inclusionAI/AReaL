@@ -15,7 +15,10 @@ from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container
+from areal.utils.data import (
+    broadcast_tensor_container,
+    tensor_container_to,
+)
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -209,7 +212,7 @@ def main(args):
                         workflow=workflow,
                         should_accept=lambda sample: True,
                     )
-                batch = batch.to(actor.device)
+                batch = tensor_container_to(batch, actor.device)
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
@@ -311,7 +314,6 @@ def main(args):
     if ref is not None:
         ref.destroy()
     actor.destroy()
-    tool_manager.cleanup()
 
 
 if __name__ == "__main__":

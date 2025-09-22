@@ -1,5 +1,5 @@
 experiment_name: tir-math-reasoning
-trial_name: python-torl-math-base-prompt-fixturn10
+trial_name: tir-math-reasoning
 allocation_mode: sglang.d4p1t1+d4p1t1
 cluster:
   fileroot: /tmp/areal/experiments
