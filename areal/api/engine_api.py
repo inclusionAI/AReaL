@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
@@ -249,9 +248,9 @@ class TrainEngine(abc.ABC):
 
     def train_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, Any]], float],
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function.
 
@@ -261,13 +260,13 @@ class TrainEngine(abc.ABC):
 
         Parameters
         ----------
-        input_ : TensorDict
+        input_ : Dict[str, Any]
             The input data for model forward pass and the loss function.
             Redundant entries are allowed.
-        loss_fn : Callable[[torch.Tensor, TensorDict], torch.Tensor]
+        loss_fn : Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor]
             The loss function that takes the model's forward output and input_,
             and outputs a scalar normalized loss.
-        loss_weight_fn : Callable[[TensorDict], float]
+        loss_weight_fn : Callable[[Dict[str, Any]], float]
             A function used to calculate the weight of each micro-batch. Since
             loss_fn normalizes the loss for a micro-batch, we need a corresponding
             weight for each micro-batch to normalize the loss globally. The weight
@@ -284,9 +283,9 @@ class TrainEngine(abc.ABC):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, Any]], float],
     ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function.
 
@@ -296,13 +295,13 @@ class TrainEngine(abc.ABC):
 
         Parameters
         ----------
-        input_ : TensorDict
+        input_ : Dict[str, Any]
             The input data for model forward pass and the loss function.
             Redundant entries are allowed.
-        loss_fn : Callable[[torch.Tensor, TensorDict], torch.Tensor]
+        loss_fn : Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor]
             The loss function that takes the model's forward output and input_,
             and outputs a scalar normalized loss.
-        loss_weight_fn : Callable[[TensorDict], float]
+        loss_weight_fn : Callable[[Dict[str, Any]], float]
             A function used to calculate the weight of each micro-batch. Since
             loss_fn normalizes the loss for a micro-batch, we need a corresponding
             weight for each micro-batch to normalize the loss globally. The weight
@@ -319,9 +318,9 @@ class TrainEngine(abc.ABC):
     @torch.no_grad()
     def forward(
         self,
-        input_: TensorDict,
+        input_: Dict[str, Any],
         output_seqlens: List[int] | None = None,
-        post_hook: Callable[[torch.Tensor, TensorDict], Any] | None = None,
+        post_hook: Callable[[torch.Tensor, Dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Run the forward pass or inference on the model.
@@ -332,12 +331,12 @@ class TrainEngine(abc.ABC):
 
         Parameters
         ----------
-        input_ : TensorDict
+        input_ : Dict[str, Any]
             The input data for model forward pass. Redundant entries are allowed.
         output_seqlens : List[int], optional
             The desired output sequence lengths. If None, assumes that the output
             has the same lengths as inputs, by default None.
-        post_hook : Callable[[torch.Tensor, TensorDict], Any], optional
+        post_hook : Callable[[torch.Tensor, Dict[str, Any]], Any], optional
             The post-processing function for micro-batched outputs. Post-processing
             the output on-the-fly during micro-batched forward can reduce peak
             memory usage, by default None.
@@ -461,7 +460,7 @@ class InferenceEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
+    def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
         """Wait for a specified number of requests to complete, with a timeout.
 
         Should be used together with preceding `submit`.
@@ -475,7 +474,7 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        TensorDict
+        Dict[str, Any]
             A concatenated batch of trajectories
 
         Raises
@@ -491,7 +490,7 @@ class InferenceEngine(abc.ABC):
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
-    ) -> TensorDict:
+    ) -> Dict[str, Any]:
         """Submit a batch of requests to the inference engine and wait for the results.
 
         See `workflow_api.py` for concrete implementation.
@@ -509,7 +508,7 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        TensorDict
+        Dict[str, Any]
             A concatenated batch of trajectory results
         """
         raise NotImplementedError()
@@ -520,7 +519,7 @@ class InferenceEngine(abc.ABC):
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
-    ) -> TensorDict:
+    ) -> Dict[str, Any]:
         """Asynchronously submit and wait until a full batch is ready with controlled staleness.
 
         See `workflow_api.py` for concrete implementation.
@@ -538,7 +537,7 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        TensorDict
+        Dict[str, Any]
             A full batch of trajectory results with controlled staleness
         """
         raise NotImplementedError()

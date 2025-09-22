@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 import torch.distributed as dist
 import uvloop
 from megatron.core import parallel_state as mpu
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
@@ -31,7 +30,7 @@ class RolloutWorkflow:
 
     async def arun_episode(
         self, engine: "InferenceEngine", data: Dict[str, Any]
-    ) -> Union[TensorDict, None, Dict[str, CompletionWithTokenLogpReward]]:
+    ) -> Union[Dict[str, Any], None, Dict[str, CompletionWithTokenLogpReward]]:
         """Run a single episode of the workflow.
 
         Note
@@ -49,7 +48,7 @@ class RolloutWorkflow:
 
         Returns
         -------
-        Union[TensorDict, None, Dict[str, CompletionWithTokenLogpReward]]
+        Union[Dict[str, Any], None, Dict[str, CompletionWithTokenLogpReward]]
             The trajectory result, None if rejected, or a dictionary of completion results
         """
         raise NotImplementedError()
@@ -58,7 +57,7 @@ class RolloutWorkflow:
 @dataclass
 class _TimedResult:
     t: int
-    data: TensorDict
+    data: Dict[str, Any]
 
 
 @dataclass
@@ -202,7 +201,7 @@ class WorkflowExecutor:
                         traj = concat_padded_tensors(
                             [v.to_tensor_dict() for v in traj.values()]
                         )
-                    assert traj is None or isinstance(traj, TensorDict), traj
+                    assert traj is None or isinstance(traj, dict), traj
                     task_rid = task.get_name()
                     with self.lock:
                         task_obj = rollout_tasks.pop(task_rid)
@@ -274,7 +273,7 @@ class WorkflowExecutor:
         except queue.Full:
             raise RuntimeError("Input queue full. Please increase queue_size.")
 
-    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
+    def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
         """Wait for workflow results.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.wait` for detailed documentation.
@@ -316,7 +315,7 @@ class WorkflowExecutor:
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
-    ) -> TensorDict:
+    ) -> Dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.rollout_batch` for detailed documentation.

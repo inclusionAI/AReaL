@@ -1,10 +1,9 @@
 import warnings
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.distributed as dist
-from tensordict import TensorDict
 
 
 @torch.compile
@@ -188,19 +187,33 @@ def ppo_actor_loss_fn(
     return pg_loss, stat
 
 
-def dynamic_sampling(data: TensorDict, group_size: int) -> TensorDict:
-    # When calling, make sure the samples from same group are adjacent
+def dynamic_sampling(
+    data: Dict[str, Any], group_size: int
+) -> Tuple[Dict[str, Any], Dict[str, int]]:
+    """Filter samples by group when all rewards in a group are equal.
 
-    # Get the rewards tensor which has shape [batch_size]
+    Assumes samples of the same group are adjacent in the batch.
+
+    Returns a new dict containing only kept samples (mask applied on batch dim
+    for all tensor values whose first dimension equals batch size), and a small
+    stats dict.
+    """
     rewards = data["rewards"]
+    if not torch.is_tensor(rewards):
+        raise TypeError("data['rewards'] must be a torch.Tensor")
     batch_size = rewards.shape[0]
 
-    # if the group size can not divisible by the group size
+    if group_size <= 0:
+        warnings.warn("group_size <= 0; returning original data")
+        return data, dict(n_group_kept=0, n_group_filtered=0)
+
     if batch_size % group_size != 0:
         warnings.warn(
             "The group size is not divisible by the batch size. Return the original data"
         )
-        return data
+        return data, dict(
+            n_group_kept=batch_size // max(group_size, 1), n_group_filtered=0
+        )
 
     # Calculate number of groups (must be divisible)
     num_groups = batch_size // group_size
@@ -219,27 +232,29 @@ def dynamic_sampling(data: TensorDict, group_size: int) -> TensorDict:
 
     # In case all group is filtered out, return the original data (although not gradient in this case)
     if not mask.any():
-        return data
+        return data, dict(n_group_kept=0, n_group_filtered=num_groups)
 
-    # stat metric
-    n_group_keeped = valid_groups.sum().item()
-    n_group_filtered = num_groups - n_group_keeped
+    n_group_kept = int(valid_groups.sum().item())
+    n_group_filtered = int(num_groups - n_group_kept)
 
-    # Apply mask to the TensorDict to create a new filtered TensorDict
-    # TensorDict supports indexing operations that apply to all contained tensors
-    return data[mask], dict(
-        n_group_keeped=n_group_keeped,
-        n_group_filtered=n_group_filtered,
-    )
+    # Apply mask row-wise across tensors that share the same batch dimension
+    filtered: Dict[str, Any] = {}
+    for k, v in data.items():
+        if torch.is_tensor(v) and v.shape[:1] == (batch_size,):
+            filtered[k] = v[mask]
+        else:
+            # keep untouched (e.g., scalars, metadata); caller should ensure consistency
+            filtered[k] = v
+    return filtered, dict(n_group_kept=n_group_kept, n_group_filtered=n_group_filtered)
 
 
 # code modified from VERL: https://github.com/volcengine/verl/blob/main/verl/workers/reward_manager/dapo.py
 def reward_overlong_penalty(
-    data: TensorDict,
+    data: Dict[str, Any],
     overlong_tokens: int,
     overlong_penalty_factor: float,
     max_response_length: int,
-) -> torch.Tensor:
+) -> Dict[str, Any]:
     reward_score = data["rewards"]
     input_ids = data["input_ids"]
     response_lengths = (data["loss_mask"].sum(dim=-1)).long()

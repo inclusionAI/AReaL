@@ -19,7 +19,7 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.reward.math_parser import process_results
 from areal.utils import seeding
-from areal.utils.data import broadcast_tensor_container
+from areal.utils.data import broadcast_tensor_container, tensor_container_to
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
@@ -116,7 +116,7 @@ def main() -> None:
             batch = None
             if actor.is_data_parallel_head():
                 batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
-                batch = batch.to(actor.device)
+                batch = tensor_container_to(batch, actor.device)
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
