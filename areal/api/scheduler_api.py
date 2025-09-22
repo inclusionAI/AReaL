@@ -18,7 +18,7 @@ class ContainerSpec:
     container_image: str = ""
     cmd: str = ""
     env_vars: Dict[str, str] = field(default_factory=dict)
-    portCount: int = 2
+    port_count: int = 2
 
 
 @dataclass
@@ -31,27 +31,16 @@ class ScheduleStrategy:
 class SchedulingConfig:
     replicas: int = 0
     specs: List[ContainerSpec] = field(default_factory=list)
-    schedule_strategy: ScheduleStrategy = None
+    schedule_strategy: ScheduleStrategy | None = None
     role: str = ""
 
 
 class Scheduler(abc.ABC):
-    def __init__(self, config: dict):
-        self.config = config
-        self.rpc_client = self._build_rpc_client(config)
-        self.worker_map = {}
-
-    @abc.abstractmethod
-    def _build_rpc_client(self, config):
-        pass
-
-    @abc.abstractmethod
     def create_workers(self, worker_key, scheduler_config, *args, **kwargs) -> str:
         """
-        Start workers, return [(id, ip, port), ...]
+        Start workers, return job id
         """
 
-    @abc.abstractmethod
     def get_workers(self, worker_key, timeout=None) -> List[Worker]:
         """
         Wait and return worker list, including scheduling results such as ip and engine ports
@@ -59,7 +48,6 @@ class Scheduler(abc.ABC):
         """
         raise NotImplementedError()
 
-    @abc.abstractmethod
     def delete_workers(self):
         """stop all workers
 
@@ -68,14 +56,14 @@ class Scheduler(abc.ABC):
         """
         raise NotImplementedError()
 
-    @abc.abstractmethod
     async def create_engine(self, worker_id, engine_obj, *args, **kwargs):
         """
         Create engine instance remotely
         """
+        raise NotImplementedError()
 
-    @abc.abstractmethod
     def call_engine(self, worker_id, method, *args, **kwargs):
         """
         Data plane call
         """
+        raise NotImplementedError()
