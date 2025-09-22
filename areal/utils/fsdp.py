@@ -1,5 +1,7 @@
 import math
+from abc import ABC
 from collections import defaultdict
+from contextlib import contextmanager
 from functools import partial
 from typing import List
 
@@ -22,6 +24,8 @@ if pkg_version.is_version_greater_or_equal("torch", "2.6.0"):
         MixedPrecisionPolicy,
         fully_shard,
     )
+
+    fully_shard_module = torch.distributed.fsdp._fully_shard._fully_shard
 else:
     raise ModuleNotFoundError(
         "Current PyTorch version < 2.6.0 is not supported for FSDPEngine."
@@ -327,6 +331,25 @@ def create_fsdp_device_mesh(shard_size, world_size):
     return device_mesh
 
 
+@contextmanager
+def maybe_patch_fsdp_module(model):
+    if fully_shard_module is None:
+        yield
+        return
+
+    orig_fsdp_module = fully_shard_module.FSDPModule
+
+    class FSDPModuleABC(ABC, orig_fsdp_module):
+        pass
+
+    try:
+        if isinstance(model, ABC):
+            fully_shard_module.FSDPModule = FSDPModuleABC
+        yield
+    finally:
+        fully_shard_module.FSDPModule = orig_fsdp_module
+
+
 def apply_fsdp2(model, fsdp_kwargs, wrap_policy):
     """model: AutoModelForCausalLM"""
     assert (
@@ -357,9 +380,12 @@ def apply_fsdp2(model, fsdp_kwargs, wrap_policy):
 
     for idx, module in enumerate(modules):
         fully_shard(module, **fsdp_kwargs)
-    fully_shard(
-        model, **fsdp_kwargs
-    )  # fsdp2 will not reshard_after_forward for root module
+    # NOTE: FSDP2 is not compatible with AutoModelForSequenceClassification, so we needs the patch
+    # see: https://github.com/volcengine/verl/pull/3072
+    with maybe_patch_fsdp_module(model):
+        fully_shard(
+            model, **fsdp_kwargs
+        )  # fsdp2 will not reshard_after_forward for root module
 
 
 def fsdp2_load_full_state_dict(

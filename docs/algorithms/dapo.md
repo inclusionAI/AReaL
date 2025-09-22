@@ -4,7 +4,7 @@ Last updated: Sep 11,2025
 
 Doc Author: [Ziyi ZENG](https://github.com/ZiyiTsang)
 
-![alt text](https://dapo-sia.github.io/static/images/score.png)
+![DAPO figure](https://dapo-sia.github.io/static/images/score.png)
 
 Decoupled Clip and Dynamic Sampling Policy Optimization (DAPO) (Yu et al., 2025) is a
 reinforcement learning framework designed for training large language models (LLMs) on

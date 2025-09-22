@@ -11,6 +11,7 @@ from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
+    AutoModelForTokenClassification,
     AutoProcessor,
     PretrainedConfig,
     PreTrainedTokenizerFast,
@@ -166,23 +167,7 @@ class BaseHFEngine(TrainEngine):
             self.tokenizer = load_hf_tokenizer(self.config.path)
             tik = time.perf_counter()
             with torch.device(current_platform.device_type):
-                if self.config.init_from_scratch:
-                    # initialize scratch model from config
-                    # NOTE: VLM cannot directly load state dict using this
-                    # random initialized model, so otherwise we call
-                    # from_pretrained rather than loading weights into this random model.
-                    model = AutoModelForCausalLM.from_config(
-                        self.model_config,
-                        torch_dtype=dtype,
-                        attn_implementation=self.config.attn_impl,
-                    )
-                else:
-                    model = AutoModelForCausalLM.from_pretrained(
-                        pretrained_model_name_or_path=self.config.path,
-                        trust_remote_code=True,
-                        torch_dtype=dtype,
-                        attn_implementation=self.config.attn_impl,
-                    )
+                model = self._create_llm_actor_or_critic()
                 if self.config.disable_dropout:
                     disable_dropout_in_model(model)
 
@@ -194,6 +179,44 @@ class BaseHFEngine(TrainEngine):
             f"Model creation and loading time: {time.perf_counter() - tik}"
         )
         self.model = model
+
+    def _create_llm_actor_or_critic(self):
+        dtype = getattr(torch, self.config.dtype)
+        if not self.config.is_critic:
+            if self.config.init_from_scratch:
+                # initialize model from config
+                # NOTE: VLM cannot directly load state dict using this
+                # random initialized model, so otherwise we call
+                # from_pretrained rather than loading weights into this random model.
+                model = AutoModelForCausalLM.from_config(
+                    self.model_config,
+                    torch_dtype=dtype,
+                    attn_implementation=self.config.attn_impl,
+                )
+            else:
+                model = AutoModelForCausalLM.from_pretrained(
+                    pretrained_model_name_or_path=self.config.path,
+                    trust_remote_code=True,
+                    torch_dtype=dtype,
+                    attn_implementation=self.config.attn_impl,
+                )
+        else:
+            if self.config.init_from_scratch:
+                model = AutoModelForTokenClassification.from_config(
+                    self.model_config,
+                    torch_dtype=dtype,
+                    num_labels=1,
+                    attn_implementation=self.config.attn_impl,
+                )
+            else:
+                model = AutoModelForTokenClassification.from_pretrained(
+                    pretrained_model_name_or_path=self.config.path,
+                    trust_remote_code=True,
+                    torch_dtype=dtype,
+                    num_labels=1,
+                    attn_implementation=self.config.attn_impl,
+                )
+        return model
 
     def create_optimizer(self, ft_spec: FinetuneSpec):
         if self.optimizer_config is None:
