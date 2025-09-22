@@ -45,7 +45,6 @@ from areal.utils.model import (
     is_valid_vision_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
-from areal.platforms import is_npu_available
 
 
 class BaseHFEngine(TrainEngine):

@@ -18,17 +18,21 @@ The following hardware configuration has been extensively tested:
 
 ### Dataset
 
-Download [AReaL-boba-106k](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-106k.jsonl)
+Download
+[AReaL-boba-106k](https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/blob/main/AReaL-boba-106k.jsonl)
 
 ### Model
 
-Download [DeepSeek-R1-Distill-Qwen-1.5B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B)
+Download
+[DeepSeek-R1-Distill-Qwen-1.5B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B)
 
 ## Runtime Environment
 
-We recommend using Docker with our provided image for NPU containing vllm and vllm-ascend.
+We recommend using Docker with our provided image for NPU containing vllm and
+vllm-ascend.
 
-This image is currently in testing phase. The release version and Dockerfile will be available in AReaL repository soon.
+This image is currently in testing phase. The release version and Dockerfile will be
+available in AReaL repository soon.
 
 ```bash
 work_dir=<your_workspace>
@@ -84,4 +88,3 @@ export NCCL_NVLS_ENABLE=0
 python3 -m areal.launcher.ray examples/math/boba_grpo.py \
     --config examples/math/boba_grpo_vllm.yaml
 ```
-

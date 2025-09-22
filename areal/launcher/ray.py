@@ -19,11 +19,11 @@ from areal.api.cli_args import (
     LauncherConfig,
     RecoverConfig,
     SGLangConfig,
-    vLLMConfig,
     parse_cli_args,
     to_structured_cfg,
+    vLLMConfig,
 )
-from areal.platforms import current_platform
+from areal.platforms import current_platform, is_npu_available
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import (
     JobException,
@@ -35,7 +35,6 @@ from areal.utils.launcher import (
 )
 from areal.utils.ray import get_placement_group_master_ip_and_port
 from areal.utils.recover import check_if_recover
-from areal.platforms import is_npu_available
 
 logger = logging.getLogger("RayLauncher")
 
@@ -182,13 +181,15 @@ class RayLauncher:
                 ] * nodes
             else:
                 device_bundles = [
-                        {
-                            "CPU": cpus_per_node,
-                            "GPU": gpus_per_node,
-                            "memory": mem_per_node * 1024 * 1024,  # Convert MB to bytes
-                        }
+                    {
+                        "CPU": cpus_per_node,
+                        "GPU": gpus_per_node,
+                        "memory": mem_per_node * 1024 * 1024,  # Convert MB to bytes
+                    }
                 ] * nodes
-            placement_group = ray.util.placement_group(bundles=device_bundles, strategy="PACK")
+            placement_group = ray.util.placement_group(
+                bundles=device_bundles, strategy="PACK"
+            )
             try:
                 ray.get(placement_group.ready(), timeout=30)
             except ray.exceptions.GetTimeoutError as e:
@@ -473,8 +474,7 @@ def ray_main(config, run_id: int = 0):
             nodes=n_vllm_nodes,
             list_args=vllm_args_list,
             gpus_per_task=vllm_tp_size,
-            cpus_per_task=config.launcher.inference_server_cpus_per_gpu
-            * vllm_tp_size,
+            cpus_per_task=config.launcher.inference_server_cpus_per_gpu * vllm_tp_size,
             mem_per_task=config.launcher.inference_server_mem_per_gpu * vllm_tp_size,
             env_vars=get_env_vars(
                 config.cluster.cluster_name,
@@ -496,13 +496,17 @@ def ray_main(config, run_id: int = 0):
         trainer_n_nodes = 1
         gpus_per_task = 0
     else:
-        trainer_n_nodes = n_nodes - (n_sglang_nodes if allocation_mode.gen_backend == "sglang" else n_vllm_nodes)
+        trainer_n_nodes = n_nodes - (
+            n_sglang_nodes if allocation_mode.gen_backend == "sglang" else n_vllm_nodes
+        )
         gpus_per_task = 1
     trainer_entry_point = sys.argv[1]
     n_trainer_processes = trainer_n_nodes * config.cluster.n_gpus_per_node
     trainer_args_list = [[sys.argv[2:]] for _ in range(n_trainer_processes)]
     if allocation_mode.type_ != AllocationType.LLM_SERVER_ONLY:
-        llm_addrs = sglang_addrs if allocation_mode.gen_backend == "sglang" else vllm_addrs
+        llm_addrs = (
+            sglang_addrs if allocation_mode.gen_backend == "sglang" else vllm_addrs
+        )
 
         # In ray, we launch trainer in the granularity of processes (1 GPU per process)
         # We amend environment variable similar to torchrun to ensure correct initialization of

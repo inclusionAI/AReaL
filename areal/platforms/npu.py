@@ -1,5 +1,3 @@
-import torch
-
 import areal.utils.logging as logging
 
 from .platform import Platform

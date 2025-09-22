@@ -1,13 +1,13 @@
 import asyncio
 import os
 import uuid
+from typing import Callable, Optional
 
 import aiofiles
 import aiofiles.os
 import colorama
 import torch
 from transformers import PreTrainedTokenizerFast
-from typing import Callable, Optional
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
@@ -46,7 +46,9 @@ class RLVRWorkflow(RolloutWorkflow):
 
     async def arun_episode(self, engine: InferenceEngine, data):
         if self.get_input_ids_fn and self.data_extract_prompt_fn:
-            input_ids = self.get_input_ids_fn(self.data_extract_prompt_fn(data), self.tokenizer)
+            input_ids = self.get_input_ids_fn(
+                self.data_extract_prompt_fn(data), self.tokenizer
+            )
         else:
             input_ids = self.tokenizer.apply_chat_template(
                 data["messages"],

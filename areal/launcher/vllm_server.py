@@ -11,12 +11,12 @@ import requests
 from areal.api.cli_args import (
     ClusterSpecConfig,
     NameResolveConfig,
-    vLLMConfig,
     parse_cli_args,
     to_structured_cfg,
+    vLLMConfig,
 )
-from areal.platforms import is_npu_available
 from areal.api.io_struct import AllocationMode
+from areal.platforms import is_npu_available
 from areal.utils.launcher import TRITON_CACHE_PATH
 from areal.utils.network import find_free_ports, gethostip
 from realhf.base import logging, name_resolve, names
@@ -131,7 +131,7 @@ class vLLMServerWrapper:
             dist_init_addr = f"localhost:{dist_init_port}"
             host_ip = gethostip()
 
-            base_gpu_id = (server_local_idx - server_idx_offset) * gpus_per_server
+            (server_local_idx - server_idx_offset) * gpus_per_server
             cmd = vLLMConfig.build_cmd(
                 self.config,
                 tp_size=self.allocation_mode.gen.tp_size,

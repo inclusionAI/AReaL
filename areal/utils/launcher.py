@@ -2,7 +2,6 @@ import dataclasses
 import enum
 import getpass
 import os
-import pathlib
 import time
 from typing import Dict, Optional
 

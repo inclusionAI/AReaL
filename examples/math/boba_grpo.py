@@ -1,46 +1,34 @@
-import asyncio
-import functools
 import os
-import time
 import sys
-import uuid
-from concurrent.futures import ProcessPoolExecutor
-from pebble import ProcessPool
 
-import colorama
 import torch
 import torch.distributed as dist
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
-from transformers import PreTrainedTokenizerFast
-from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
+
+from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import (
     AllocationMode,
     FinetuneSpec,
-    ModelRequest,
-    WeightUpdateMeta,
     StepInfo,
 )
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
-from areal.utils.data import concat_padded_tensors
-from areal.utils.device import log_gpu_stats
-from areal.utils.saver import Saver
-from areal.utils.recover import RecoverHandler
-from areal.utils.evaluator import Evaluator
-from areal.utils.stats_logger import StatsLogger
-from areal.utils.model import get_model_update_meta
-
-from areal.utils.hf_utils import load_hf_tokenizer
-from areal.workflow.rlvr import RLVRWorkflow
-from areal.utils import logging, seeding, stats_tracker
 from areal.platforms import is_npu_available
+from areal.utils import logging, seeding, stats_tracker
+from areal.utils.device import log_gpu_stats
+from areal.utils.evaluator import Evaluator
+from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.model import get_model_update_meta
+from areal.utils.recover import RecoverHandler
+from areal.utils.saver import Saver
+from areal.utils.stats_logger import StatsLogger
+from areal.workflow.rlvr import RLVRWorkflow
+
 if is_npu_available:
-    import torch_npu
-    from torch_npu.contrib import transfer_to_npu
+    pass
 
 logger = logging.getLogger("boba_grpo")
 
@@ -48,6 +36,7 @@ logger = logging.getLogger("boba math")
 
 
 REWARD_TIMEOUT_SECONDS = 30
+
 
 def get_input_ids_fn(data, tokenizer):
     user_token = "<｜User｜>"
@@ -68,6 +57,7 @@ def get_input_ids_fn(data, tokenizer):
         enable_thinking=enable_thinking,
     )
     return input_ids
+
 
 def data_extract_prompt_fn(data):
     return data["prompt"]
@@ -100,14 +90,18 @@ def main(args):
     config: GRPOConfig
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
-    assert config.train_dataset.batch_size >= world_size, f"batch size({config.train_dataset.batch_size}) must larger or equal than world_size({world_size})!" 
+    assert (
+        config.train_dataset.batch_size >= world_size
+    ), f"batch size({config.train_dataset.batch_size}) must larger or equal than world_size({world_size})!"
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
-    train_dataset = get_boba_math_dataset(config.train_dataset.path, tokenizer, rank=rank, world_size=world_size)
-        # Create dataset and dataloaders
+    train_dataset = get_boba_math_dataset(
+        config.train_dataset.path, tokenizer, rank=rank, world_size=world_size
+    )
+    # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         train_dataset,
         batch_size=config.train_dataset.batch_size,
@@ -121,9 +115,11 @@ def main(args):
 
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
-    device=torch.device(int(os.environ["LOCAL_RANK"]))
+    device = torch.device(int(os.environ["LOCAL_RANK"]))
     train_dataset_len = len(train_dataloader)
-    dateset_len_tensor = torch.tensor([train_dataset_len], dtype=torch.long, device=device)
+    dateset_len_tensor = torch.tensor(
+        [train_dataset_len], dtype=torch.long, device=device
+    )
     train_dataset_len = dateset_len_tensor.item()
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,

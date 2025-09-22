@@ -16,7 +16,7 @@ logger = logging.getLogger("Platform init")
 def is_torch_npu_available() -> bool:
     """Check the availability of NPU."""
     try:
-        import torch_npu
+        pass
 
         return True
     except ImportError:
@@ -102,8 +102,4 @@ current_platform: Platform | _LazyPlatform = (
 )  # NOTE: This is a proxy, not a subclass of Platform.
 
 
-__all__ = [
-    "Platform",
-    "current_platform",
-    "is_npu_available"
-]
+__all__ = ["Platform", "current_platform", "is_npu_available"]

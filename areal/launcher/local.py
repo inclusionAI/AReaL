@@ -16,9 +16,9 @@ from areal.api.cli_args import (
     LauncherConfig,
     RecoverConfig,
     SGLangConfig,
-    vLLMConfig,
     parse_cli_args,
     to_structured_cfg,
+    vLLMConfig,
 )
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names

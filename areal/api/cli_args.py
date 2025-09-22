@@ -388,8 +388,8 @@ class PPOActorConfig(TrainEngineConfig):
 
 @dataclass
 class vLLMConfig:
-    """Configuration for vLLM runtime.
-    """
+    """Configuration for vLLM runtime."""
+
     model: str = ""
     seed: int = 1
     skip_tokenizer_init: bool = False
@@ -415,8 +415,11 @@ class vLLMConfig:
     # will fix this issue.
     enable_prefix_caching: bool = False
     gpu_memory_utilization: float = 0.9
-    worker_extension_cls: str = "areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"
+    worker_extension_cls: str = (
+        "areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"
+    )
     enable_sleep_mode: bool = False
+
     # additional_engine_args: Dict = field(default_factory=dict)
     @staticmethod
     def build_args(
@@ -438,6 +441,7 @@ class vLLMConfig:
             **args,
         )
         return args
+
     @staticmethod
     def build_cmd(
         vllm_config: "vLLMConfig",

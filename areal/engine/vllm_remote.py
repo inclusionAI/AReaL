@@ -22,10 +22,9 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
-from areal.platforms import is_npu_available
-from areal.utils.http import arequest_with_retry, get_default_connector
-from areal.utils import logging, name_resolve, names
 from areal.platforms import current_platform
+from areal.utils import logging, name_resolve, names
+from areal.utils.http import arequest_with_retry, get_default_connector
 
 logger = logging.getLogger(__name__)
 
@@ -225,8 +224,8 @@ class RemotevLLMEngine(InferenceEngine):
         # we call the pause_generation endpoint
         stop_reason = None
         while (
-                stop_reason != "stop"
-                and len(accumulated_output_tokens) < gconfig.max_new_tokens
+            stop_reason != "stop"
+            and len(accumulated_output_tokens) < gconfig.max_new_tokens
         ):
             # Request is interrupted, wait for some time to avoid interfering
             # with update weights requests
@@ -341,10 +340,10 @@ class RemotevLLMEngine(InferenceEngine):
         return fut
 
     def submit(
-            self,
-            data: Dict[str, Any],
-            workflow: Optional[RolloutWorkflow] = None,
-            workflow_builder: Optional[Callable] = None,
+        self,
+        data: Dict[str, Any],
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
     ) -> None:
         """
         Submit data for processing via workflow executor.
@@ -357,10 +356,10 @@ class RemotevLLMEngine(InferenceEngine):
         return self.workflow_executor.submit(data, workflow, workflow_builder)
 
     def wait(
-            self,
-            count: int,
-            timeout: float | None = None,
-            should_accept: Callable | None = None,
+        self,
+        count: int,
+        timeout: float | None = None,
+        should_accept: Callable | None = None,
     ) -> TensorDict | List[TensorDict]:
         """
         Wait for results from the workflow executor.
@@ -380,10 +379,10 @@ class RemotevLLMEngine(InferenceEngine):
         )
 
     def rollout_batch(
-            self,
-            data: List[Dict[str, Any]],
-            workflow: Optional["RolloutWorkflow"] = None,
-            workflow_builder: Optional[Callable] = None,
+        self,
+        data: List[Dict[str, Any]],
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
     ) -> TensorDict:
         """
         Process a batch of data through a rollout workflow.
@@ -399,11 +398,11 @@ class RemotevLLMEngine(InferenceEngine):
         return self.workflow_executor.rollout_batch(data, workflow, workflow_builder)
 
     def prepare_batch(
-            self,
-            dataloader: StatefulDataLoader,
-            workflow: Optional[RolloutWorkflow] = None,
-            workflow_builder: Optional[Callable] = None,
-            should_accept: Callable | None = None,
+        self,
+        dataloader: StatefulDataLoader,
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
     ):
         """
         Prepare a batch for processing.

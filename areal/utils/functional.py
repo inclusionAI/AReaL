@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 from tensordict import TensorDict
+
 from areal.platforms import is_npu_available
 
 
@@ -14,7 +15,7 @@ def _gather_logprobs(
     log_probs = torch.nn.functional.log_softmax(logits.float() / temperature, dim=-1)
     log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
     return log_probs_labels
-   
+
 
 def _gather_logprobs_entropy(
     logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
