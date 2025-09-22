@@ -35,8 +35,8 @@ def download(url, save_path):
 
 
 def prepare_torl_data(rank):
-    if rank==0 and (not os.path.exists("/tmp/areal/torl_data")):
-        os.makedirs("/tmp/areal/torl_data")
+    if rank==0 and (not os.path.exists("/tmp/areal/torl_data/_SUCCESS")):
+        os.makedirs("/tmp/areal/torl_data", exist_ok=True)
         for url, save_path in TORL_DATA_URLS:
             download(url, save_path)
         # add SUCCESS flag file
