@@ -164,7 +164,10 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     def eval(self):
-        """Set the engine to evaluation mode."""
+        """Set the engine to evaluation mode.
+
+        This is a convenience method that calls `self.train(False)`.
+        """
         return self.train(False)
 
     def upload_weights(self, meta: WeightUpdateMeta):
