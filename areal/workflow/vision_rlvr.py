@@ -49,7 +49,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             return_tensors="pt",
         )
 
-            #Sglang forces to convert input_ids to prompt when processing multimodal data, which leads to incorrect image token number when using processed input_ids
+        #Sglang forces to convert input_ids to prompt when processing multimodal data, which leads to incorrect image token number when using processed input_ids
         input_ids=self.processor.tokenizer.encode(data["messages"], add_special_tokens=False)
 
         n_samples = self.gconfig.n_samples
