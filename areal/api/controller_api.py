@@ -114,7 +114,6 @@ class TrainController(abc.ABC):
         """
         raise NotImplementedError()
 
-    @abc.abstractmethod
     def destroy(self):
         """Destroy the engine and release GPU memory."""
         raise NotImplementedError()
