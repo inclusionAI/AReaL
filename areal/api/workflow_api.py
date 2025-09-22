@@ -34,9 +34,23 @@ class RolloutWorkflow:
     ) -> Union[TensorDict, None, Dict[str, CompletionWithTokenLogpReward]]:
         """Run a single episode of the workflow.
 
-        `None` implies that this trajectory is rejected and will not be used for training.
+        Note
+        ----
+        Returning `None` implies that this trajectory is rejected and will not be used for training.
 
         See concrete example implementations under the `areal/workflow` directory.
+
+        Parameters
+        ----------
+        engine : InferenceEngine
+            The inference engine to use for generating responses
+        data : Dict[str, Any]
+            Input data for the workflow episode
+
+        Returns
+        -------
+        Union[TensorDict, None, Dict[str, CompletionWithTokenLogpReward]]
+            The trajectory result, None if rejected, or a dictionary of completion results
         """
         raise NotImplementedError()
 
@@ -295,7 +309,6 @@ class WorkflowExecutor:
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ) -> TensorDict:
-        """Submit a batch of requests to the inference engine and wait for the results."""
         for item in data:
             self.submit(
                 data=item,
