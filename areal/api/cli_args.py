@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import uvloop
+import yaml
 
 uvloop.install()
 from hydra import compose as hydra_compose
@@ -60,6 +61,12 @@ class MicroBatchSpec:
             "help": "Number of micro-batches (or minimum number if max_tokens_per_mb is set). Used when max_tokens_per_mb is None or as minimum count",
         },
     )
+    granularity: int = field(
+        default=1,
+        metadata={
+            "help": "The granularity of each micro-batch. Adjacent #granularity sequences are grouped together when dividing microbatches.",
+        },
+    )
     max_tokens_per_mb: Optional[int] = field(
         default=None,
         metadata={
@@ -72,6 +79,7 @@ class MicroBatchSpec:
         """Create new spec with updated fields while maintaining Omegaconf compatibility."""
         fields = dict(
             n_mbs=mb_spec.n_mbs,
+            granularity=mb_spec.granularity,
             max_tokens_per_mb=mb_spec.max_tokens_per_mb,
         )
         fields.update(kwargs)
@@ -234,9 +242,9 @@ class TrainEngineConfig:
     init_from_scratch: bool = field(
         default=False, metadata={"help": "Initialize model weights randomly"}
     )
-    init_critic_from_actor: bool = field(
+    is_critic: bool = field(
         default=False,
-        metadata={"help": "Initialize critic/reward model from LM checkpoint"},
+        metadata={"help": "Whether to use a critic/reward model"},
     )
     # Runtime microbatch limit
     mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
@@ -641,7 +649,7 @@ class SwanlabConfig:
     name: Optional[str] = None
     config: Optional[Dict] = None
     logdir: Optional[str] = None
-    mode: Optional[str] = "local"
+    mode: Optional[str] = "disabled"
     api_key: Optional[str] = os.getenv("SWANLAB_API_KEY", None)
 
 
@@ -729,8 +737,8 @@ class DatasetConfig:
             "help": "Path to the dataset. Can be a local path or a HuggingFace dataset name."
         },
     )
-    type: Optional[str] = field(
-        default=None,
+    type: str = field(
+        default=MISSING,
         metadata={"help": "Type of training method.e.g., 'sft', 'rl', etc."},
     )
     batch_size: int = field(
@@ -883,6 +891,11 @@ class SFTConfig(BaseExperimentConfig):
 
 
 @dataclass
+class RWConfig(BaseExperimentConfig):
+    model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
+
+
+@dataclass
 class GRPOConfig(BaseExperimentConfig):
     async_training: bool = field(default=True)
     gconfig: GenerationHyperparameters = field(
@@ -924,10 +937,17 @@ def load_expr_config(argv: List[str], config_cls):
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)
-    assert isinstance(cfg, BaseExperimentConfig)
+    assert isinstance(cfg, config_cls)
     # Setup environment
 
     name_resolve.reconfigure(cfg.cluster.name_resolve)
+
+    from areal.utils.stats_logger import StatsLogger
+
+    # Save configuration as yaml
+    if os.getenv("RANK", "0") == "0":
+        save_config(cfg, StatsLogger.get_log_path(cfg.stats_logger))
+
     return cfg, str(config_file)
 
 
@@ -935,3 +955,16 @@ def conf_as_dict(cfg):
     if isinstance(cfg, (OmegaConf, DictConfig)):
         return OmegaConf.to_container(cfg, resolve=True)
     return asdict(cfg)
+
+
+def save_config(cfg, log_dir):
+    os.makedirs(log_dir, exist_ok=True)
+    config_save_path = os.path.join(log_dir, "config.yaml")
+    with open(config_save_path, "w") as f:
+        config_dict: Dict = asdict(cfg)
+        yaml.dump(
+            config_dict,
+            f,
+            default_flow_style=False,
+            sort_keys=False,
+        )
