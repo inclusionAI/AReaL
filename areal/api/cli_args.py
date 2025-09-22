@@ -569,6 +569,7 @@ class InferenceEngineConfig:
         },
     )
     enable_rollout_tracing: bool = field(default=False)
+    check_trajectory_format: bool = field(default=False)
     schedule_policy: str = field(
         default="round_robin",
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
