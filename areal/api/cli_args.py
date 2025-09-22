@@ -99,7 +99,7 @@ class GenerationHyperparameters:
         default=0, metadata={"help": "Minimum number of tokens to generate."}
     )
     max_tokens: int = field(
-        default=2048,
+        default=65536,
         metadata={
             "help": "Maximum number of tokens including prompt and generated tokens."
         },
