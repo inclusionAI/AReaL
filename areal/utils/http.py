@@ -85,6 +85,6 @@ async def arequest_with_retry(
         await _session.close()
     raise RuntimeError(
         f"Failed after {max_retries} retries each. "
-        f"Payload: {payload}. Addr: {addr}. Endpoint: {endpoint}. "
+        # f"Payload: {payload}. Addr: {addr}. Endpoint: {endpoint}. "
         f"Last error: {last_exception}"
     )
