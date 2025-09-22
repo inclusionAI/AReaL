@@ -165,7 +165,6 @@ def main(args):
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,
-        enable_thinking=False,
         max_turns=3,
         turn_discount=0.9,
         dump_dir=os.path.join(
@@ -177,7 +176,6 @@ def main(args):
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,
-        enable_thinking=False,
         max_turns=3,
         turn_discount=0.9,
         rollout_stat_scope="eval-rollout",
