@@ -111,7 +111,7 @@ def get_clevr_count_70k_sft_dataset(
             if "image_grid_thw" in processed_input:
                 multi_modal_input["image_grid_thw"] = processed_input[
                     "image_grid_thw"
-                ].squeeze(0)
+                ]
             example["multi_modal_input"] = [multi_modal_input]
             answer_token = tokenizer.encode(example["answer"])
             loss_mask = [0] * (len(example["input_ids"]) - len(answer_token)) + [

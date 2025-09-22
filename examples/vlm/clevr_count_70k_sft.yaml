@@ -41,7 +41,6 @@ train_dataset:
   pin_memory: true
   num_workers: 4
   path: BUAADreamer/clevr_count_70k
-  path: BUAADreamer/clevr_count_70k
   type: sft
 
 valid_dataset:
@@ -49,7 +48,6 @@ valid_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: BUAADreamer/clevr_count_70k
   path: BUAADreamer/clevr_count_70k
   type: sft
 
