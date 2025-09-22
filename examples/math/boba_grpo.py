@@ -23,7 +23,6 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
     StepInfo,
 )
-from areal.api.workflow_api import RolloutWorkflow
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
@@ -34,14 +33,15 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.evaluator import Evaluator
 from areal.utils.stats_logger import StatsLogger
 from areal.utils.model import get_model_update_meta
-from realhf.api.core.data_api import load_hf_tokenizer
-from realhf.base import logging, seeding, stats_tracker
+
+from areal.utils.hf_utils import load_hf_tokenizer
+from areal.workflow.rlvr import RLVRWorkflow
+from areal.utils import logging, seeding, stats_tracker
 from areal.platforms import is_npu_available
 if is_npu_available:
     import torch_npu
     from torch_npu.contrib import transfer_to_npu
 
-import realhf.base.logging as logging
 logger = logging.getLogger("boba_grpo")
 
 logger = logging.getLogger("boba math")
@@ -49,133 +49,28 @@ logger = logging.getLogger("boba math")
 
 REWARD_TIMEOUT_SECONDS = 30
 
+def get_input_ids_fn(data, tokenizer):
+    user_token = "<｜User｜>"
+    assistant_token = "<｜Assistant｜>"
+    think_token = "<think>"
+    enable_thinking = False
+    if user_token in data:
+        data = data.replace("<｜User｜>", "")
+    if assistant_token in data:
+        data = data.replace("<｜Assistant｜>", "")
+    if think_token in data:
+        enable_thinking = True
+        data = data.replace("<think>", "")
+    input_ids = tokenizer.apply_chat_template(
+        [{"role": "user", "content": data}],
+        tokenize=True,
+        add_generation_prompt=True,
+        enable_thinking=enable_thinking,
+    )
+    return input_ids
 
-class RLVRWorkflow(RolloutWorkflow):
-    def __init__(
-        self,
-        reward_fn,
-        gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
-        dump_dir: str | None = None,
-    ):
-        self.reward_fn = reward_fn
-        self.gconfig = gconfig
-        self.tokenizer = tokenizer
-        self.dump_dir = dump_dir
-        self.rw_executor = ProcessPoolExecutor(max_workers=4)
-        if self.dump_dir is not None and not os.path.exists(self.dump_dir):
-            os.makedirs(self.dump_dir, exist_ok=True)
-
-    def preprocess_data(self, data):
-        user_token = "<｜User｜>"
-        assistant_token = "<｜Assistant｜>"
-        think_token = "<think>"
-        enable_thinking = False
-        if user_token in data:
-            data = data.replace("<｜User｜>", "")
-        if assistant_token in data:
-            data = data.replace("<｜Assistant｜>", "")
-        if think_token in data:
-            enable_thinking = True
-            data = data.replace("<think>", "")
-        input_ids = self.tokenizer.apply_chat_template(
-            [{"role": "user", "content": data}],
-            tokenize=True,
-            add_generation_prompt=True,
-            enable_thinking=enable_thinking,
-        )
-        return input_ids
-
-    async def arun_episode(self, engine, data):
-        input_ids = self.preprocess_data(data["prompt"])
-        n_samples = self.gconfig.n_samples
-        req = ModelRequest(
-            rid=uuid.uuid4().hex,
-            input_ids=input_ids,
-            gconfig=self.gconfig.new(n_samples=1),
-        )
-        resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
-
-        version = engine.get_version()
-        prompt_strs = []
-        completions_strs = []
-        rewards = []
-        seqlens = []
-
-        results = []
-        loop = asyncio.get_event_loop()
-        for resp in resps:
-            seq = resp.input_tokens + resp.output_tokens
-            logprobs = [0.0] * resp.input_len + resp.output_logprobs
-            loss_mask = [0] * resp.input_len + [1] * resp.output_len
-            versions = [-1] * resp.input_len + resp.output_versions
-
-            prompt_str = data["prompt"]
-            completions_str = self.tokenizer.decode(resp.output_tokens)
-            prompt_strs.append(prompt_str)
-            completions_strs.append(completions_str)
-            seqlens.append(len(seq))
-            try:
-                future = loop.run_in_executor(
-                    self.rw_executor,
-                    functools.partial(
-                        self.reward_fn,
-                        completions=completions_str,
-                        prompt_ids=resp.input_tokens,
-                        completion_ids=resp.output_tokens,
-                        **data,
-                    ),
-                )
-                reward = await asyncio.wait_for(
-                    future,
-                    timeout=REWARD_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"Computing reward timeout after {REWARD_TIMEOUT_SECONDS}s. Set reward to 0."
-                )
-                reward = 0
-            rewards.append(reward)
-            res = dict(
-                # unsqueeze to add an additional batch dimension
-                input_ids=torch.tensor(seq).unsqueeze(0),
-                loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                logprobs=torch.tensor(logprobs).unsqueeze(0),
-                versions=torch.tensor(versions).unsqueeze(0),
-                attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
-                # reward
-                rewards=torch.tensor([float(reward)]),
-            )
-            results.append(TensorDict(res, batch_size=[1]))
-
-        if self.dump_dir is not None:
-            os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
-            # Get the unique identifier for this prompt
-            qid = None
-            for key in ["query_id", "id", "qid"]:
-                qid = data.get(key, None)
-                if qid is not None:
-                    break
-            qid = qid or uuid.uuid4().hex
-
-            # Dump rollout to file
-            with open(
-                os.path.join(self.dump_dir, str(version), f"{qid}.txt"), "a"
-            ) as f:
-                n_samples = self.gconfig.n_samples
-                for i, (p, c, r, sl) in enumerate(
-                    zip(prompt_strs, completions_strs, rewards, seqlens)
-                ):
-                    info = "\n".join(
-                        [
-                            f"idx: {i + 1} / {n_samples}, seqlen: {sl}, reward is {r}.",
-                            f"prompt is \n{colorama.Fore.YELLOW + colorama.Style.DIM}{p}{colorama.Style.RESET_ALL}",
-                            f"sequence is: \n{colorama.Fore.YELLOW + colorama.Style.DIM}{c}{colorama.Style.RESET_ALL}",
-                        ]
-                    )
-                    f.write(info + "\n")
-
-        return concat_padded_tensors(results)
+def data_extract_prompt_fn(data):
+    return data["prompt"]
 
 
 def get_boba_math_dataset(path, tokenizer, rank, world_size):
@@ -189,7 +84,7 @@ def get_boba_math_dataset(path, tokenizer, rank, world_size):
 
 
 def boba_reward_fn(
-    prompt, completions, prompt_ids, completion_ids, query_id, solutions, **kwargs
+    prompts, completions, prompt_ids, completion_ids, solutions, **kwargs
 ):
     from realhf.impl.dataset.math_parser import process_results
 
@@ -269,6 +164,8 @@ def main(args):
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
+        get_input_ids_fn=get_input_ids_fn,
+        data_extract_prompt_fn=data_extract_prompt_fn,
     )
 
     # Run training.

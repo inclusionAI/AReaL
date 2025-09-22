@@ -7,6 +7,7 @@ import aiofiles.os
 import colorama
 import torch
 from transformers import PreTrainedTokenizerFast
+from typing import Callable, Optional
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
@@ -25,9 +26,11 @@ class RLVRWorkflow(RolloutWorkflow):
         reward_fn,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
-        enable_thinking: bool,
+        enable_thinking: bool = False,
         rollout_stat_scope: bool = "rollout",
         dump_dir: str | None = None,
+        get_input_ids_fn: Optional[Callable] = None,
+        data_extract_prompt_fn: Optional[Callable] = None,
     ):
         self.reward_fn = reward_fn
         self.gconfig = gconfig
@@ -36,16 +39,21 @@ class RLVRWorkflow(RolloutWorkflow):
         self.dump_dir = dump_dir
         self.rollout_stat_scope = rollout_stat_scope
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
+        self.get_input_ids_fn = get_input_ids_fn
+        self.data_extract_prompt_fn = data_extract_prompt_fn
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
     async def arun_episode(self, engine: InferenceEngine, data):
-        input_ids = self.tokenizer.apply_chat_template(
-            data["messages"],
-            tokenize=True,
-            add_generation_prompt=True,
-            enable_thinking=self.enable_thinking,
-        )
+        if self.get_input_ids_fn and self.data_extract_prompt_fn:
+            input_ids = self.get_input_ids_fn(self.data_extract_prompt_fn(data), self.tokenizer)
+        else:
+            input_ids = self.tokenizer.apply_chat_template(
+                data["messages"],
+                tokenize=True,
+                add_generation_prompt=True,
+                enable_thinking=self.enable_thinking,
+            )
 
         n_samples = self.gconfig.n_samples
         req = ModelRequest(
