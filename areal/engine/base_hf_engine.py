@@ -5,7 +5,6 @@ from typing import Any, Callable, Dict, List
 
 import torch
 import torch.distributed as dist
-from tensordict import TensorDict
 from torch.distributed.distributed_c10d import _get_default_group
 from transformers import (
     AutoConfig,
@@ -313,11 +312,9 @@ class BaseHFEngine(TrainEngine):
         assert self.lr_scheduler is not None
         self.lr_scheduler.step()
 
-    def prepare_mb_list(self, input_: TensorDict) -> MicroBatchList:
+    def prepare_mb_list(self, input_: Dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
 
-        if isinstance(input_, dict):
-            input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
         if is_qwen2_vl_model(self.model_config.model_type):
             # Create the special t,h,w position IDs for qwen 2.5 VL
             attn_mask = input_["attention_mask"]
@@ -370,7 +367,7 @@ class BaseHFEngine(TrainEngine):
                 mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
 
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
-        # TODO: remove the usage of tensordict
+
         # Modern model implementations takes a dict as the input.
         # This eliminates a bug of Qwen2.5-VL for transformers<=4.53.1
         for i, mb in enumerate(mb_list.mbs):
@@ -465,18 +462,18 @@ class BaseHFEngine(TrainEngine):
 
     def train_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, Any]], float],
     ) -> Dict[str, float]:
         """Train on a batch using gradient accumulation."""
-        input_ = input_.to(self.device)
         assert self.optimizer is not None
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
 
         self.optimizer.zero_grad()
         mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
 
         total_loss_weight = (
             sum([loss_weight_fn(mb) for mb in mb_list.mbs])
@@ -531,13 +528,14 @@ class BaseHFEngine(TrainEngine):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, Any]], float],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
-        input_ = input_.to(self.device)
         mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
+
         total_loss_weight = (
             sum([loss_weight_fn(mb) for mb in mb_list.mbs])
             .detach()
@@ -567,15 +565,15 @@ class BaseHFEngine(TrainEngine):
     @torch.no_grad()
     def forward(
         self,
-        input_: TensorDict,
+        input_: Dict[str, Any],
         output_seqlens: List[int] | None = None,
-        post_hook: Callable[[torch.Tensor, TensorDict], Any] | None = None,
+        post_hook: Callable[[torch.Tensor, Dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""
-        input_ = input_.to(self.device)
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
         mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
 
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()

@@ -5,10 +5,9 @@ import random
 
 import torch
 import torch.distributed as dist
-from tensordict import TensorDict
 
 from areal.platforms import current_platform
-from areal.utils.data import concat_padded_tensors
+from areal.utils.data import concat_padded_tensors, tensor_container_to
 from areal.utils.redistributor import redistribute
 
 
@@ -41,9 +40,10 @@ def main(args):
             log_probs=log_probs.unsqueeze(0),
             attention_mask=attention_mask.unsqueeze(0),
         )
-        data.append(TensorDict(d, batch_size=1))
+        data.append(d)
 
-    data = concat_padded_tensors(data).to(device)
+    data = concat_padded_tensors(data)
+    data = tensor_container_to(data, device)
     redistributed = redistribute(data, granularity=args.granularity)
 
     redistributed.all_data = [x.to("cpu") for x in redistributed.all_data]

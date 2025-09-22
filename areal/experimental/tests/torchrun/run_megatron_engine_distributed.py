@@ -7,7 +7,6 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
-from tensordict import TensorDict
 from transformers import AutoTokenizer
 
 from areal.api.alloc_mode import AllocationMode
@@ -64,7 +63,7 @@ def mock_input(
     min_seqlen=1,
     max_seqlen=1024,
     device=current_platform.device_type,
-) -> TensorDict:
+) -> Dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -83,7 +82,7 @@ def mock_input(
     ] = 1
     input_ids.masked_fill_(~attn_mask, pad_token_id)
 
-    return TensorDict(
+    return dict(
         input_ids=input_ids,
         attention_mask=attn_mask,
     )

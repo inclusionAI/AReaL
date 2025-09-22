@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 import torch.distributed as dist
 import uvloop
 from megatron.core import parallel_state as mpu
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
@@ -31,7 +30,7 @@ class RolloutWorkflow:
 
     async def arun_episode(
         self, engine: "InferenceEngine", data: Dict[str, Any]
-    ) -> Union[TensorDict, None, Dict[str, CompletionWithTokenLogpReward]]:
+    ) -> Union[Dict[str, Any], None, Dict[str, CompletionWithTokenLogpReward]]:
         """Run a single episode of the workflow.
 
         `None` implies that this trajectory is rejected and will not be used for training.
@@ -44,7 +43,7 @@ class RolloutWorkflow:
 @dataclass
 class _TimedResult:
     t: int
-    data: TensorDict
+    data: Dict[str, Any]
 
 
 @dataclass
@@ -188,7 +187,7 @@ class WorkflowExecutor:
                         traj = concat_padded_tensors(
                             [v.to_tensor_dict() for v in traj.values()]
                         )
-                    assert traj is None or isinstance(traj, TensorDict), traj
+                    assert traj is None or isinstance(traj, dict), traj
                     task_rid = task.get_name()
                     with self.lock:
                         task_obj = rollout_tasks.pop(task_rid)
@@ -256,7 +255,7 @@ class WorkflowExecutor:
         except queue.Full:
             raise RuntimeError("Input queue full. Please increase queue_size.")
 
-    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
+    def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
         tik = time.perf_counter()
         timeout = timeout or float(7 * 24 * 3600)
         while not self.exiting.is_set() and time.perf_counter() - tik < timeout:
@@ -294,7 +293,7 @@ class WorkflowExecutor:
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
-    ) -> TensorDict:
+    ) -> Dict[str, Any]:
         """Submit a batch of requests to the inference engine and wait for the results."""
         for item in data:
             self.submit(

@@ -12,7 +12,6 @@ import aiohttp
 import requests
 import torch.distributed as dist
 import uvloop
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
@@ -322,7 +321,7 @@ class RemoteSGLangEngine(InferenceEngine):
             should_accept=should_accept,
         )
 
-    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
+    def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
         return self.workflow_executor.wait(count, timeout=timeout)
 
     def rollout_batch(
@@ -331,7 +330,7 @@ class RemoteSGLangEngine(InferenceEngine):
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
-    ) -> TensorDict:
+    ) -> Dict[str, Any]:
         return self.workflow_executor.rollout_batch(
             data=data,
             workflow=workflow,

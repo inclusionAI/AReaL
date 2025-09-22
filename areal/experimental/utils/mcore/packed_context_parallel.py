@@ -1,10 +1,9 @@
-from typing import Dict
+from typing import Any, Dict
 
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
 from megatron.core.packed_seq_params import PackedSeqParams
-from tensordict import TensorDict
 
 
 def preprocess_packed_seqs_context_parallel(
@@ -125,7 +124,7 @@ def postprocess_packed_seqs_context_parallel(
 
 def packed_context_parallel_forward(
     model: torch.nn.Module,
-    input_: TensorDict | Dict[str, torch.Tensor],
+    input_: Dict[str, Any],
     is_critic: bool = False,
 ):
     # TODO: implement critic models

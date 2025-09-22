@@ -6,7 +6,6 @@ from typing import Any, Callable, Dict, List, Optional
 
 import sglang as sgl
 import torch.distributed as dist
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
@@ -214,7 +213,7 @@ class SGLangEngine(InferenceEngine):
             should_accept=should_accept,
         )
 
-    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
+    def wait(self, count: int, timeout: float | None = None):
         return self.workflow_executor.wait(count, timeout=timeout)
 
     def rollout_batch(
@@ -223,7 +222,7 @@ class SGLangEngine(InferenceEngine):
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
-    ) -> TensorDict:
+    ):
         return self.workflow_executor.rollout_batch(
             data=data,
             workflow=workflow,
