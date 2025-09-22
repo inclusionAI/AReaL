@@ -260,6 +260,10 @@ class WorkflowExecutor:
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ) -> None:
+        """Submit a request to the workflow executor.
+
+        See :meth:`~areal.api.engine_api.InferenceEngine.submit` for detailed documentation.
+        """
         try:
             if workflow is None:
                 workflow = workflow_builder()
@@ -271,6 +275,10 @@ class WorkflowExecutor:
             raise RuntimeError("Input queue full. Please increase queue_size.")
 
     def wait(self, count: int, timeout: float | None = None) -> TensorDict:
+        """Wait for workflow results.
+
+        See :meth:`~areal.api.engine_api.InferenceEngine.wait` for detailed documentation.
+        """
         tik = time.perf_counter()
         timeout = timeout or float(7 * 24 * 3600)
         while not self.exiting.is_set() and time.perf_counter() - tik < timeout:
@@ -309,6 +317,10 @@ class WorkflowExecutor:
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ) -> TensorDict:
+        """Submit a batch of requests and wait for results.
+
+        See :meth:`~areal.api.engine_api.InferenceEngine.rollout_batch` for detailed documentation.
+        """
         for item in data:
             self.submit(
                 data=item,
@@ -325,6 +337,10 @@ class WorkflowExecutor:
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ):
+        """Prepare a batch with controlled staleness.
+
+        See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for detailed documentation.
+        """
         if not hasattr(self, "data_generator"):
             self.data_generator = cycle_dataloader(dataloader)
         assert dataloader.batch_size is not None
@@ -349,7 +365,15 @@ class WorkflowExecutor:
                 pass
 
     def pause(self):
+        """Pause request submission for async rollout.
+
+        See :meth:`~areal.api.engine_api.InferenceEngine.pause` for detailed documentation.
+        """
         self.paused.set()
 
     def resume(self):
+        """Resume request submission for async rollout.
+
+        See :meth:`~areal.api.engine_api.InferenceEngine.resume` for detailed documentation.
+        """
         self.paused.clear()
