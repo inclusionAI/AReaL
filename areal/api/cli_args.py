@@ -24,17 +24,17 @@ class NormConfig:
     mean_level: str | None = field(
         default="batch",
         metadata={
-            "help": "mean_level for advantage normalization. choices: batch, group"
+            "help": "mean_level for normalization. choices: batch, group. Omit for no mean normalization."
         },
     )
     std_level: str | None = field(
         default="batch",
         metadata={
-            "help": "std_level for advantage normalization. choices: batch, group"
+            "help": "std_level for normalization. choices: batch, group. Omit for no std normalization."
         },
     )
     group_size: int = field(
-        default=1, metadata={"help": "group_size for advantage normalization"}
+        default=1, metadata={"help": "group_size for group-level normalization"}
     )
 
 

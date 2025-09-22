@@ -1081,14 +1081,13 @@ class Normalization:
     """
 
     def __init__(self, config: NormConfig):
-
         if config.mean_level not in {"batch", "group", None}:
             raise ValueError(
-                f"mean_level must be 'batch', 'group' or 'none', got {config.mean_level}"
+                f"mean_level must be 'batch', 'group' or None, got {config.mean_level}"
             )
         if config.std_level not in {"batch", "group", None}:
             raise ValueError(
-                f"std_level must be 'batch', 'group', or 'none', got {config.std_level}"
+                f"std_level must be 'batch', 'group', or None, got {config.std_level}"
             )
         if (
             config.mean_level == "group" or config.std_level == "group"

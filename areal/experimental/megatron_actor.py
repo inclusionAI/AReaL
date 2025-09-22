@@ -7,7 +7,6 @@ from megatron.core import tensor_parallel
 
 from areal.api.cli_args import MicroBatchSpec
 from areal.api.engine_api import TrainEngine
-from areal.engine.ppo.actor import Normalization
 from areal.experimental.api.cli_args import ExperimentalPPOActorConfig as PPOActorConfig
 from areal.experimental.megatron_engine import MegatronEngine
 from areal.experimental.utils.mcore.functional import _VocabParallelEntropy
