@@ -1,8 +1,8 @@
 import os
-from platform import processor
 import subprocess
 import sys
 import time
+from platform import processor
 
 import pytest
 import requests
@@ -82,9 +82,10 @@ def _dummy_reward_fn(*args, **kwargs):
 
 @pytest.mark.parametrize("n_samples", [1, 2, 4])
 def test_remote_sglang_rollout(sglang_server, n_samples):
+    from PIL import Image
+
     from areal.engine.sglang_remote import RemoteSGLangEngine
-    from areal.workflow.vision_rlvr import VisionRLVRWorkflow
-    from PIL import Image 
+    from areal.workflow.vision_rlvr import VisionRLVRWorkflow 
 
     config = InferenceEngineConfig(
         experiment_name=EXPR_NAME,

@@ -6,7 +6,6 @@ from copy import deepcopy
 import torch
 import torch.distributed as dist
 import wandb
-from tensordict import TensorDict
 from torch.utils.data import Subset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -17,6 +16,7 @@ from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
+from areal.reward.math_parser import math_equal
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
@@ -29,30 +29,33 @@ from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
-from areal.workflow.vision_rlvr import VisionRLVRWorkflow
+from areal.workflow.vision_multi_turn import VisionMultiTurnWorkflow
 
 
 def extract_answer(pred_str, data_name, use_last_number=True):
-    match = re.findall(r"\[([0-9\.]+)\]", pred_str)
-    if match:
-        return match[-1]
+    matches = re.findall(r"\[([^\]]+)\]", pred_str)
+    if matches:
+        return matches[-1]
 
     return ""
 
 
-def clevr_count_70k_reward_fn(
+def geometry3k_reward_fn(
     prompt, completions, prompt_ids, completion_ids, answer, **kwargs
-):  
-    
+):
     sol = extract_answer(completions, data_name="")  # str number
     ans = answer
-
+    sol = sol.replace(" ", "")
+    ans = ans.replace(" ", "")
     if sol is None:
         return 0
     if ans is None:
         return 0
 
-    return float(sol.strip() == ans.strip())
+    if math_equal(sol, ans):
+        # print(f"completions: {completions}, answer: {answer}")
+        return 1
+    return 0
 
 
 def main(args):
@@ -83,7 +86,7 @@ def main(args):
     )
 
     train_size = len(train_dataset)
-    subset_size = int(0.1 * train_size)
+    subset_size = int(1.0 * train_size)
 
     random_indices = torch.randperm(train_size).tolist()[:subset_size]
 
@@ -157,22 +160,26 @@ def main(args):
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
 
-    workflow = VisionRLVRWorkflow(
-        reward_fn=clevr_count_70k_reward_fn,
+    workflow = VisionMultiTurnWorkflow(
+        reward_fn=geometry3k_reward_fn,
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
+        max_turns=3,
+        turn_discount=0.9,
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
-    )
-    eval_workflow = VisionRLVRWorkflow(
-        reward_fn=clevr_count_70k_reward_fn,
+    )   
+    eval_workflow = VisionMultiTurnWorkflow(
+        reward_fn=geometry3k_reward_fn, 
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
+        max_turns=3,
+        turn_discount=0.9,
         rollout_stat_scope="eval-rollout",
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated-eval"
