@@ -902,7 +902,6 @@ class BaseExperimentConfig:
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
 
-    weight_update_type: str = field(default="nccl", metadata={"help": "nccl/disk"})
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
 
