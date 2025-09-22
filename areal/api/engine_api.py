@@ -151,7 +151,7 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     def destroy(self):
-        """Destroy the engine and release GPU memory."""
+        """Destroy the engine and release GPU memory of models."""
 
     def train(self, mode: bool = True):
         """Set the engine to training mode.
