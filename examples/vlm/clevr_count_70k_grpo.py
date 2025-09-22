@@ -51,9 +51,6 @@ def clevr_count_70k_reward_fn(
     if ans is None:
         return 0
 
-    if float(sol.strip() == ans.strip()):
-       return 1.0
-
     return float(sol.strip() == ans.strip())
 
 
@@ -150,7 +147,6 @@ def main(args):
             AllocationMode.from_str(config.allocation_mode), actor
         )
     ]
-    # weight_update_meta = [WeightUpdateMeta.from_disk(config.saver)]
     dist.broadcast_object_list(weight_update_meta, src=0)
     weight_update_meta = weight_update_meta[0]
 
@@ -273,7 +269,6 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
-            # rollout.pause()
             if dist.get_rank() == 0:
                 future = rollout.update_weights(weight_update_meta)
             actor.upload_weights(weight_update_meta)
