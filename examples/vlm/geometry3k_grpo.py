@@ -1,3 +1,4 @@
+import itertools
 import os
 import re
 import sys
@@ -9,19 +10,16 @@ import wandb
 from torch.utils.data import Subset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
+from areal.reward.math_parser import math_equal
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
+from areal.reward import get_custom_reward_fn
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import (
-    broadcast_tensor_container,
-    cycle_dataloader,
-    tensor_container_to,
-)
+from areal.utils.data import broadcast_tensor_container
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
@@ -32,29 +30,29 @@ from areal.workflow.vision_rlvr import VisionRLVRWorkflow
 
 
 def extract_answer(pred_str, data_name, use_last_number=True):
-    match = re.findall(r"\[([0-9\.]+)\]", pred_str)
-    if match:
-        return match[-1]
+    matches = re.findall(r"\[([^\]]+)\]", pred_str)
+    if matches:
+        return matches[-1]
 
     return ""
 
 
-def clevr_count_70k_reward_fn(
+def geometry3k_reward_fn(
     prompt, completions, prompt_ids, completion_ids, answer, **kwargs
-):  
-    
+):
     sol = extract_answer(completions, data_name="")  # str number
     ans = answer
-
+    sol = sol.replace(" ", "")
+    ans = ans.replace(" ", "")
     if sol is None:
         return 0
     if ans is None:
         return 0
 
-    if float(sol.strip() == ans.strip()):
-       return 1.0
-
-    return float(sol.strip() == ans.strip())
+    if math_equal(sol, ans):
+        # print(f"completions: {completions}, answer: {answer}")
+        return 1
+    return 0
 
 
 def main(args):
@@ -85,7 +83,7 @@ def main(args):
     )
 
     train_size = len(train_dataset)
-    subset_size = int(0.1 * train_size)
+    subset_size = int(1.0 * train_size)
 
     random_indices = torch.randperm(train_size).tolist()[:subset_size]
 
@@ -142,17 +140,10 @@ def main(args):
     # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
-    # weight_update_meta = [WeightUpdateMeta.from_disk(config.saver.experiment_name,config.saver.trial_name,config.saver.fileroot)]
-    # dist.broadcast_object_list(weight_update_meta, src=0)
-    # weight_update_meta = weight_update_meta[0]
-    weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
-            AllocationMode.from_str(config.allocation_mode), actor
-        )
-    ]
-    # weight_update_meta = [WeightUpdateMeta.from_disk(config.saver)]
+    weight_update_meta = [WeightUpdateMeta.from_disk(config.saver.experiment_name,config.saver.trial_name,config.saver.fileroot)]
     dist.broadcast_object_list(weight_update_meta, src=0)
     weight_update_meta = weight_update_meta[0]
+
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -161,25 +152,19 @@ def main(args):
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
 
     workflow = VisionRLVRWorkflow(
-        reward_fn=clevr_count_70k_reward_fn,
+        reward_fn=geometry3k_reward_fn,
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
     )
     eval_workflow = VisionRLVRWorkflow(
-        reward_fn=clevr_count_70k_reward_fn,
+        reward_fn=geometry3k_reward_fn,
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
         rollout_stat_scope="eval-rollout",
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-        ),
     )
 
     # Run training.
@@ -207,7 +192,7 @@ def main(args):
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    data_generator = cycle_dataloader(train_dataloader)
+    data_generator = itertools.cycle(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -233,15 +218,16 @@ def main(args):
                         workflow=workflow,
                         should_accept=lambda sample: True,
                     )
-                batch = tensor_container_to(batch, actor.device)
+                batch = batch.to(actor.device)
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
                 group=actor.context_and_model_parallel_group,
             )
+            batch=TensorDict(batch)
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
+        torch.cuda.synchronize()
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -273,15 +259,15 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
-            # rollout.pause()
+            rollout.pause()
             if dist.get_rank() == 0:
                 future = rollout.update_weights(weight_update_meta)
             actor.upload_weights(weight_update_meta)
             if dist.get_rank() == 0:
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
-
+            torch.cuda.synchronize()
+            rollout.resume()
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
             eval_rollout.set_version(global_step + 1)
@@ -294,6 +280,27 @@ def main(args):
                 global_step,
                 tokenizer=tokenizer,
                 processor=processor,
+            )
+
+        with stats_tracker.record_timing("eval"):
+
+            def evaluate_fn():
+                # Stats are logged in workflow
+                # and will be exported later
+                cnt = 0
+                for data in valid_dataloader:
+                    for item in data:
+                        eval_rollout.submit(item, eval_workflow)
+                        cnt += 1
+                batch=eval_rollout.wait(cnt, timeout=None)
+                rewards = batch["rewards"].float().to(actor.device)
+                wandb.log({"eval_reward": rewards.mean().item()})
+
+            evaluator.evaluate(
+                evaluate_fn,
+                epoch,
+                step,
+                global_step,
             )
 
         with stats_tracker.record_timing("checkpoint_for_recover"):
@@ -309,32 +316,7 @@ def main(args):
             )
 
         dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
-
-        with stats_tracker.record_timing("eval"):
-
-            def evaluate_fn():
-                if actor.is_data_parallel_head():
-                    # Stats are logged in workflow
-                    # and will be exported later
-                    cnt = 0
-                    for data in valid_dataloader:
-                        for item in data:
-                            eval_rollout.submit(item, eval_workflow)
-                            cnt += 1
-                    eval_rollout.wait(cnt, timeout=None)
-                dist.barrier(device_ids=[actor.device.index])
-                current_platform.synchronize()
-
-            evaluator.evaluate(
-                evaluate_fn,
-                epoch,
-                step,
-                global_step,
-            )
-
-        dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
+        torch.cuda.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
         stats[0].update(
@@ -343,7 +325,7 @@ def main(args):
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
+        torch.cuda.synchronize()
 
         # Resume rollout
         rollout.resume()

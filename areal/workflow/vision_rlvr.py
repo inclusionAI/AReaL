@@ -40,14 +40,16 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         self.processor = processor
 
     async def arun_episode(self, engine, data):
+        
         processed_input = self.processor(
             images=data["images"],
             text=data["messages"],
             padding=False,
             return_tensors="pt",
         )
-
-        input_ids = processed_input["input_ids"].tolist()[0]
+           
+        #BUG: Sglang forces to convert input_ids to prompt when processing multimodal data, which leads to slightly different input_ids in rollout and training.
+        input_ids = processed_input["input_ids"].tolist()[0] 
 
         n_samples = self.gconfig.n_samples
 
@@ -70,7 +72,8 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         seqlens = []
 
         results = []
-        for resp in resps:
+
+        for resp in resps:            
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
             loss_mask = [0] * resp.input_len + [1] * resp.output_len
