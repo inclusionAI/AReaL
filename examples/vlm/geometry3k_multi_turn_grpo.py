@@ -10,7 +10,6 @@ import wandb
 from torch.utils.data import Subset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.reward.math_parser import math_equal
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
