@@ -65,19 +65,17 @@ class PPOActor:
         )
 
     def compute_advantages(self, data: TensorDict) -> None:
+        # === 1. Common Initialization and Reward Preprocessing (for both GAE and RLOO) ===
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
         batch_indices = torch.arange(
             bs, device=data["input_ids"].device, dtype=torch.long
         )
 
-        # TODO:rewrite the reward into "reward" class __call__ method should be good. Like VeRL does.
-        # Reward Penalty on length
+        # Reward Penalty on length (DAPO-related)
         if self.config.overlong_reward_penalty:
-
             overlong_tokens = self.config.overlong_tokens
             overlong_penalty_factor = self.config.overlong_penalty_factor
-
             data = reward_overlong_penalty(
                 data,
                 overlong_tokens=overlong_tokens,
@@ -85,7 +83,7 @@ class PPOActor:
                 max_response_length=self.config.max_new_tokens,
             )
 
-        # Reward Scaling
+        # Reward Scaling, Clipping, and optional Group Normalization
         reward_score = data["rewards"]
         reward_score = (reward_score + self.reward_bias) * self.reward_scaling
         reward_score = torch.clip(
@@ -97,65 +95,96 @@ class PPOActor:
                 r = reward_score[s]
                 reward_score[s] = (r - r.mean()) / (r.std() + 1e-9)
 
+        # Prepare loss_mask and old_logp, which are needed by both branches
         loss_mask = data["loss_mask"].float()
         loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
-        # Apply the mask to log probabilities.
+        
         if not self.config.use_decoupled_loss and self.config.recompute_logprob:
-            # Overwrite logprobs produced by the inference engine
             old_logp = data["logprobs"] = data["prox_logp"]
         else:
             old_logp = torch.roll(data["logprobs"], shifts=-1, dims=-1)
             if not self.config.use_decoupled_loss:
-                # prox logp not available, use inferenced logp
                 data["prox_logp"] = old_logp
-        ref_logp = data.get("ref_logp", torch.zeros_like(old_logp))
-        ref_logp *= loss_mask
-        old_logp *= loss_mask
+        
+        # === 2. Main Advantage Calculation Branching ===
+        
+        # Check if RLOO is configured
+        is_rloo = self.adv_norm and self.adv_norm.mean_level == 'leave_one_out'
 
-        # Compute KL-regularized rewards.
-        attn_mask = data["attention_mask"]
-        seqlens = attn_mask.sum(-1).long()
-        seq_no_eos_mask = seqlens == attn_mask.shape[1]
-        rewards = -self.kl_ctl * (old_logp - ref_logp)
-        kl_rewards = rewards.clone()
-        # KL rewards at the next token after eos is zero.
-        rewards[batch_indices, seqlens - 1] = 0
-        indices = torch.clip(seqlens - 2, min=0)
-        if self.mask_no_eos_with_zero:
-            rewards[batch_indices, indices] += torch.where(
-                seq_no_eos_mask, 0, reward_score
-            )
+        if is_rloo:
+            if bs <= 1:
+                advantages_seq_level = torch.zeros_like(reward_score)
+            else:
+                sum_of_all_rewards = reward_score.sum()
+                baseline = (sum_of_all_rewards - reward_score) / (bs - 1)
+                advantages_seq_level = reward_score - baseline
+
+            advantages = advantages_seq_level.unsqueeze(1).expand_as(loss_mask)
+            
+            # The stats_tracker in ppo_update needs to read the keys named tot_rewards and kl_rewards from data, so be prepared here as well
+            # RLOO does not use KL penalties
+            kl_rewards = torch.zeros_like(advantages)
+            # The final reward signal is a pure task reward, and this reward applies to every valid Token in the sequence
+            rewards = reward_score.unsqueeze(1).expand_as(loss_mask) 
+
         else:
-            rewards[batch_indices, indices] += reward_score
+            # --- GAE (Generalized Advantage Estimation) Branch (Original Logic) ---
+            
+            # Apply the mask to log probabilities.
+            ref_logp = data.get("ref_logp", torch.zeros_like(old_logp))
+            ref_logp *= loss_mask
+            old_logp *= loss_mask
 
-        # Compute GAE.
-        if "values" not in data:
-            values = torch.zeros_like(rewards)
-        else:
-            values = data["values"]
-        advantages_reversed = [
-            torch.zeros(bs, dtype=torch.float32, device=values.device)
-        ]
-        lastgaelam = 0
-        for t in reversed(range(max_seqlen - 1)):
-            nextvalues = values[:, t + 1]
-            if t == max_seqlen - 2:
-                nextvalues *= seq_no_eos_mask
-            delta = rewards[:, t] + self.discount * nextvalues - values[:, t]
-            lastgaelam = delta + self.discount * self.gae_lambda * lastgaelam
-            advantages_reversed.append(lastgaelam)
-        advantages = torch.stack(advantages_reversed[::-1], dim=1)
+            # Compute KL-regularized rewards.
+            attn_mask = data["attention_mask"]
+            seqlens = attn_mask.sum(-1).long()
+            seq_no_eos_mask = seqlens == attn_mask.shape[1]
+            rewards = -self.kl_ctl * (old_logp - ref_logp)
+            kl_rewards = rewards.clone()
+            # KL rewards at the next token after eos is zero.
+            rewards[batch_indices, seqlens - 1] = 0
+            indices = torch.clip(seqlens - 2, min=0)
+            if self.mask_no_eos_with_zero:
+                rewards[batch_indices, indices] += torch.where(
+                    seq_no_eos_mask, 0, reward_score
+                )
+            else:
+                rewards[batch_indices, indices] += reward_score
 
-        # Optionally perform advantage normalization.
-        if self.adv_norm is not None:
+            # Compute GAE.
+            if "values" not in data:
+                values = torch.zeros_like(rewards)
+            else:
+                values = data["values"]
+            advantages_reversed = [
+                torch.zeros(bs, dtype=torch.float32, device=values.device)
+            ]
+            lastgaelam = 0
+            for t in reversed(range(max_seqlen - 1)):
+                nextvalues = values[:, t + 1]
+                if t == max_seqlen - 2:
+                    nextvalues *= seq_no_eos_mask
+                delta = rewards[:, t] + self.discount * nextvalues - values[:, t]
+                lastgaelam = delta + self.discount * self.gae_lambda * lastgaelam
+                advantages_reversed.append(lastgaelam)
+            advantages = torch.stack(advantages_reversed[::-1], dim=1)
+
+        # === 3. Optional Advantage Normalization (applies to both RLOO and GAE advantages) ===
+        if self.adv_norm is not None and not is_rloo:
+            # For non-RLOO paths, use the full AdvNorm class logic
             advantages = self.adv_norm(advantages, loss_mask)
+        elif is_rloo and self.adv_norm is not None and self.adv_norm.std_level != 'none':
+            # For RLOO, we have already done mean-centering. We only apply std normalization if configured.
+            # We can reuse the masked_normalization utility for simplicity.
+            # This will re-center, but for RLOO advantages, the mean is already ~0.
+            advantages = masked_normalization(advantages, mask=loss_mask, all_reduce=True)
 
-        # Store data in the dict.
+
+        # === 4. Store final data in the dict ===
         data["advantages"] = advantages
         data["kl_rewards"] = kl_rewards
         data["tot_rewards"] = rewards
         data["loss_mask"] = loss_mask
-        # because we have rolled old_logp by -1
         data["logprobs"] = old_logp
 
     def ppo_update(self, data: TensorDict) -> List[Dict[str, float]]:
