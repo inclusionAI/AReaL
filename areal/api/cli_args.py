@@ -99,6 +99,12 @@ class GenerationHyperparameters:
     min_new_tokens: int = field(
         default=0, metadata={"help": "Minimum number of tokens to generate."}
     )
+    max_tokens: int = field(
+        default=65536,
+        metadata={
+            "help": "Maximum number of tokens including prompt and generated tokens."
+        },
+    )
     greedy: bool = field(
         default=False,
         metadata={"help": "Whether to use greedy decoding (max probability)."},
@@ -633,6 +639,8 @@ class RecoverConfig(_Timer):
 @dataclass
 class WandBConfig:
     mode: str = "disabled"
+    wandb_base_url: str = ""
+    wandb_api_key: str = ""
     entity: Optional[str] = None
     project: Optional[str] = None
     name: Optional[str] = None
@@ -641,6 +649,7 @@ class WandBConfig:
     notes: Optional[str] = None
     tags: Optional[List[str]] = None
     config: Optional[Dict] = None
+    id_suffix: Optional[str] = "train"
 
 
 @dataclass
@@ -727,6 +736,16 @@ class ClusterSpecConfig:
         default=8,
         metadata={"help": "GPUs per node (physically)."},
     )
+
+
+@dataclass
+class SchedulerConfig:
+    endpoint: str = field(default="http://localhost:8081")
+    deploy_mode: str = field(default="separation")
+    functioncall_service_domain: str = field(default="http://localhost:8080")
+    reward_functioncall_config: Dict = field(default_factory=dict)
+    reward_model_path: str = field(default="")
+    reward_model_service_url: str = field(default="http://localhost:30000/classify")
 
 
 @dataclass
@@ -883,6 +902,8 @@ class BaseExperimentConfig:
 
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
+
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
 
 @dataclass

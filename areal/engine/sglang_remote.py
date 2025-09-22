@@ -6,6 +6,7 @@ import time
 import uuid
 from concurrent.futures import Future, ProcessPoolExecutor
 from datetime import datetime
+from threading import Lock
 from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
@@ -43,6 +44,7 @@ class RemoteSGLangEngine(InferenceEngine):
         self.distributed_weight_update_initialized = False
         self._version = 0
 
+        self.lock = Lock()
         self.workflow_executor = WorkflowExecutor(
             config=config,
             inference_engine=self,
@@ -105,10 +107,12 @@ class RemoteSGLangEngine(InferenceEngine):
         self.executor.shutdown()
 
     def set_version(self, version):
-        self._version = version
+        with self.lock:
+            self._version = version
 
     def get_version(self):
-        return self._version
+        with self.lock:
+            return self._version
 
     def choose_server(self) -> str:
         if self.config.schedule_policy == "round_robin":
@@ -129,10 +133,21 @@ class RemoteSGLangEngine(InferenceEngine):
                 "RemoteSGLangEngine does not support n_samples > 1. "
                 "Please call generate for multiple times with n_samples = 1."
             )
+
+        max_new_tokens = min(
+            gconfig.max_tokens - len(req.input_ids), gconfig.max_new_tokens
+        )
+        if max_new_tokens <= 0:
+            raise RuntimeError(
+                f"max_new_tokens ({max_new_tokens}) is non-positive! "
+                f"max_tokens={gconfig.max_tokens}, prompt_len={len(req.input_ids)}, "
+                f"max_new_tokens={gconfig.max_new_tokens}."
+            )
+
         sample_params = {
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
-            "max_new_tokens": gconfig.max_new_tokens,
+            "max_new_tokens": max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
             "frequency_penalty": gconfig.frequency_penalty,
@@ -219,8 +234,7 @@ class RemoteSGLangEngine(InferenceEngine):
             # Update accumulated outputs
             accumulated_output_tokens.extend(output_tokens)
             accumulated_output_logprobs.extend(output_logprobs)
-            # FIXME: Update with actual server versions
-            accumulated_versions.extend([-1] * len(output_tokens))
+            accumulated_versions.extend([self.get_version()] * len(output_tokens))
 
             payload["input_ids"] += output_tokens
             sample_params["max_new_tokens"] -= len(output_tokens)
