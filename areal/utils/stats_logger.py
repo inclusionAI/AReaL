@@ -3,9 +3,9 @@ import os
 import time
 from typing import Dict, List
 
+import swanlab
 import torch.distributed as dist
 import wandb
-import swanlab
 from megatron.core import parallel_state as mpu
 from tensorboardX import SummaryWriter
 
@@ -62,7 +62,7 @@ class StatsLogger:
         swanlab_config = self.config.swanlab
         swanlab.init(
             project=swanlab_config.project or self.config.experiment_name,
-            experiment_name=swanlab_config.name or self.config.trial_name+"_train",
+            experiment_name=swanlab_config.name or self.config.trial_name + "_train",
             config=swanlab_config.config,
             logdir=self.get_log_path(self.config),
             mode=swanlab_config.mode,
