@@ -46,8 +46,10 @@ def main(args):
     data = tensor_container_to(data, device)
     redistributed = redistribute(data, granularity=args.granularity)
 
-    redistributed.all_data = [x.to("cpu") for x in redistributed.all_data]
-    redistributed.data = redistributed.data.to("cpu")
+    redistributed.all_data = [
+        tensor_container_to(x, "cpu") for x in redistributed.all_data
+    ]
+    redistributed.data = tensor_container_to(redistributed.data, "cpu")
 
     with open(
         os.path.join(args.dump_path, f"redistributed{dist.get_rank()}.pkl"), "wb"

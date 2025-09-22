@@ -340,10 +340,7 @@ def tensor_container_to(
     if torch.is_tensor(d):
         return d.to(*args, **kwargs)
     elif isinstance(d, list):
-        return [
-            tensor_container_to(v, *args, **kwargs) if torch.is_tensor(v) else v
-            for v in d
-        ]
+        return [tensor_container_to(v, *args, **kwargs) for v in d]
     elif isinstance(d, dict):
         for key, value in d.items():
             if isinstance(value, dict) or isinstance(value, list):

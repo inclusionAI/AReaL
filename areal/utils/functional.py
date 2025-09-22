@@ -205,14 +205,14 @@ def dynamic_sampling(
 
     if group_size <= 0:
         warnings.warn("group_size <= 0; returning original data")
-        return data, dict(n_group_keeped=0, n_group_filtered=0)
+        return data, dict(n_group_kept=0, n_group_filtered=0)
 
     if batch_size % group_size != 0:
         warnings.warn(
             "The group size is not divisible by the batch size. Return the original data"
         )
         return data, dict(
-            n_group_keeped=batch_size // max(group_size, 1), n_group_filtered=0
+            n_group_kept=batch_size // max(group_size, 1), n_group_filtered=0
         )
 
     num_groups = batch_size // group_size
@@ -222,10 +222,10 @@ def dynamic_sampling(
     mask = valid_groups.repeat_interleave(group_size)
 
     if not mask.any():
-        return data, dict(n_group_keeped=0, n_group_filtered=num_groups)
+        return data, dict(n_group_kept=0, n_group_filtered=num_groups)
 
-    n_group_keeped = int(valid_groups.sum().item())
-    n_group_filtered = int(num_groups - n_group_keeped)
+    n_group_kept = int(valid_groups.sum().item())
+    n_group_filtered = int(num_groups - n_group_kept)
 
     # Apply mask row-wise across tensors that share the same batch dimension
     filtered: Dict[str, Any] = {}
@@ -235,9 +235,7 @@ def dynamic_sampling(
         else:
             # keep untouched (e.g., scalars, metadata); caller should ensure consistency
             filtered[k] = v
-    return filtered, dict(
-        n_group_keeped=n_group_keeped, n_group_filtered=n_group_filtered
-    )
+    return filtered, dict(n_group_kept=n_group_kept, n_group_filtered=n_group_filtered)
 
 
 # code modified from VERL: https://github.com/volcengine/verl/blob/main/verl/workers/reward_manager/dapo.py
