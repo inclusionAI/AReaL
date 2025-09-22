@@ -2,10 +2,12 @@ import functools
 from typing import Any, Dict, List, Optional
 
 import torch
+import torch.distributed.nn.functional as dist_F
 
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
+from areal.utils.ulysses import get_ulysses_sequence_parallel_world_size, get_ulysses_sequence_parallel_group
 from areal.utils import stats_tracker
 from areal.utils.data import (
     KLEstimator,
@@ -304,16 +306,22 @@ def grpo_loss_fn(
 ):
     """Loss function for actor step, all inputs should be splitted into
     pipeline micro batches, returns loss and logging stats."""
-    input_ids = input_data["input_ids"]
+    labels = input_data.get("logp_labels", torch.roll(input_data['input_ids'], shifts=-1, dims=-1))
     old_logp = input_data["logprobs"]
     advantages = input_data["advantages"]
     loss_mask = input_data["loss_mask"].bool()
     prox_logp = input_data["prox_logp"]
 
     logprobs, entropy = gather_logprobs_entropy(
-        logits, torch.roll(input_ids, shifts=-1, dims=-1), temperature
+        logits, labels, temperature
     )
     entropy = entropy.detach()
+    if get_ulysses_sequence_parallel_world_size() > 1:
+        sp_group = get_ulysses_sequence_parallel_group()
+        logprobs = dist_F.all_gather(logprobs, group=sp_group)
+        logprobs = torch.cat(logprobs, dim=-1)
+        entropy = dist_F.all_gather(entropy, group=sp_group)
+        entropy = torch.cat(entropy, dim=-1)
     loss, stat = ppo_actor_loss_fn(
         logprobs=logprobs,
         old_logprobs=old_logp,
