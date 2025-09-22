@@ -1,10 +1,9 @@
 import functools
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
 import torch.distributed as dist
-from tensordict import TensorDict
 
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
@@ -48,7 +47,7 @@ class PPOActor:
     @torch.no_grad()
     def compute_logp(
         self,
-        data: TensorDict,
+        data: Dict[str, Any],
         temperature: Optional[float] = None,
     ) -> torch.Tensor | None:
 
@@ -64,7 +63,7 @@ class PPOActor:
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
         )
 
-    def compute_advantages(self, data: TensorDict) -> None:
+    def compute_advantages(self, data: Dict[str, Any]) -> None:
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
         batch_indices = torch.arange(
@@ -158,7 +157,7 @@ class PPOActor:
         # because we have rolled old_logp by -1
         data["logprobs"] = old_logp
 
-    def ppo_update(self, data: TensorDict) -> List[Dict[str, float]]:
+    def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
 
         if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
             data, sampling_stat = dynamic_sampling(data, self.group_size)

@@ -4,7 +4,7 @@ Last updated: Sep 11, 2025
 
 Doc Author: [Ziyi ZENG](https://github.com/ZiyiTsang)
 
-![alt text](https://pica.zhimg.com/v2-03d7071a0b1d9e11a697f2fb25a50068_1440w.jpg)
+![Dr.GRPO figure](https://pica.zhimg.com/v2-03d7071a0b1d9e11a697f2fb25a50068_1440w.jpg)
 
 Dr. GRPO is an advanced optimization method introduced to address the limitations of
 previous reinforcement learning approaches in enhancing the reasoning capabilities of

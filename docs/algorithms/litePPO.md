@@ -1,10 +1,10 @@
-# Decoupled Clip and Dynamic Sampling Policy Optimization (DAPO)
+# Lite-PPO
 
-Last updated: Sep 11, 2025
+Last updated: Sep 21, 2025
 
 Doc Author: [Ziyi ZENG](https://github.com/ZiyiTsang)
 
-![alt text](../figures/litePPO.jpg)
+![litePPO figure](../figures/litePPO.jpg)
 
 Lite PPO is a minimalist reinforcement learning approach designed for LLM reasoning.
 Compared to GRPO, Lite PPO introduces two main changes and advantages. Firstly, it
@@ -21,7 +21,7 @@ For more details:
 
 - AReal Detail: [Paper of AReal](https://arxiv.org/abs/2505.24298)
 
-- DAPO Detail: [Paper of DAPO](https://arxiv.org/abs/2503.14476)
+- Lite-PPO Detail: [Paper of Lite-PPO](https://arxiv.org/pdf/2508.08221v1)
 
 ## Algorithm Core Parameters
 

@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 import torch.distributed as dist
 import uvloop
 from megatron.core import parallel_state as mpu
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
@@ -31,12 +30,26 @@ class RolloutWorkflow:
 
     async def arun_episode(
         self, engine: "InferenceEngine", data: Dict[str, Any]
-    ) -> Union[TensorDict, None, Dict[str, CompletionWithTokenLogpReward]]:
+    ) -> Union[Dict[str, Any], None, Dict[str, CompletionWithTokenLogpReward]]:
         """Run a single episode of the workflow.
 
-        `None` implies that this trajectory is rejected and will not be used for training.
+        Note
+        ----
+        Returning `None` implies that this trajectory is rejected and will not be used for training.
 
         See concrete example implementations under the `areal/workflow` directory.
+
+        Parameters
+        ----------
+        engine : InferenceEngine
+            The inference engine to use for generating responses
+        data : Dict[str, Any]
+            Input data for the workflow episode
+
+        Returns
+        -------
+        Union[Dict[str, Any], None, Dict[str, CompletionWithTokenLogpReward]]
+            The trajectory result, None if rejected, or a dictionary of completion results
         """
         raise NotImplementedError()
 
@@ -44,7 +57,7 @@ class RolloutWorkflow:
 @dataclass
 class _TimedResult:
     t: int
-    data: TensorDict
+    data: Dict[str, Any]
 
 
 @dataclass
@@ -188,7 +201,7 @@ class WorkflowExecutor:
                         traj = concat_padded_tensors(
                             [v.to_tensor_dict() for v in traj.values()]
                         )
-                    assert traj is None or isinstance(traj, TensorDict), traj
+                    assert traj is None or isinstance(traj, dict), traj
                     task_rid = task.get_name()
                     with self.lock:
                         task_obj = rollout_tasks.pop(task_rid)
@@ -246,6 +259,10 @@ class WorkflowExecutor:
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ) -> None:
+        """Submit a request to the workflow executor.
+
+        See :meth:`~areal.api.engine_api.InferenceEngine.submit` for detailed documentation.
+        """
         try:
             if workflow is None:
                 workflow = workflow_builder()
@@ -256,7 +273,11 @@ class WorkflowExecutor:
         except queue.Full:
             raise RuntimeError("Input queue full. Please increase queue_size.")
 
-    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
+    def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
+        """Wait for workflow results.
+
+        See :meth:`~areal.api.engine_api.InferenceEngine.wait` for detailed documentation.
+        """
         tik = time.perf_counter()
         timeout = timeout or float(7 * 24 * 3600)
         while not self.exiting.is_set() and time.perf_counter() - tik < timeout:
@@ -294,8 +315,11 @@ class WorkflowExecutor:
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
-    ) -> TensorDict:
-        """Submit a batch of requests to the inference engine and wait for the results."""
+    ) -> Dict[str, Any]:
+        """Submit a batch of requests and wait for results.
+
+        See :meth:`~areal.api.engine_api.InferenceEngine.rollout_batch` for detailed documentation.
+        """
         for item in data:
             self.submit(
                 data=item,
@@ -312,6 +336,10 @@ class WorkflowExecutor:
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ):
+        """Prepare a batch with controlled staleness.
+
+        See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for detailed documentation.
+        """
         if not hasattr(self, "data_generator"):
             self.data_generator = cycle_dataloader(dataloader)
         assert dataloader.batch_size is not None
@@ -336,7 +364,15 @@ class WorkflowExecutor:
                 pass
 
     def pause(self):
+        """Pause request submission for async rollout.
+
+        See :meth:`~areal.api.engine_api.InferenceEngine.pause` for detailed documentation.
+        """
         self.paused.set()
 
     def resume(self):
+        """Resume request submission for async rollout.
+
+        See :meth:`~areal.api.engine_api.InferenceEngine.resume` for detailed documentation.
+        """
         self.paused.clear()

@@ -5,10 +5,10 @@ import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import SFTConfig, load_expr_config
+from areal.api.cli_args import RWConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
-from areal.engine.sft.lm_engine import FSDPLMEngine
+from areal.engine.rw.rw_engine import FSDPRWEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
@@ -23,9 +23,19 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
 
+def rw_modeling_colate_fn(items):
+    return pad_sequences_to_tensors(
+        [
+            {"input_ids": ids}
+            for item in items
+            for ids in (item["chosen_ids"], item["rejected_ids"])
+        ]
+    )
+
+
 def main(args):
-    config, _ = load_expr_config(args, SFTConfig)
-    config: SFTConfig
+    config, _ = load_expr_config(args, RWConfig)
+    config: RWConfig
 
     rank = int(os.getenv("RANK"))
 
@@ -33,7 +43,7 @@ def main(args):
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
 
-    engine = FSDPLMEngine(config=config.model)
+    engine = FSDPRWEngine(config=config.model)
     engine.create_process_group(parallel_strategy=parallel_strategy)
 
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
@@ -62,7 +72,7 @@ def main(args):
         batch_size=config.train_dataset.batch_size // engine.data_parallel_world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
-        collate_fn=pad_sequences_to_tensors,
+        collate_fn=rw_modeling_colate_fn,
         drop_last=config.train_dataset.drop_last,
     )
     valid_dataloader = StatefulDataLoader(
@@ -70,7 +80,7 @@ def main(args):
         batch_size=config.valid_dataset.batch_size // engine.data_parallel_world_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
-        collate_fn=pad_sequences_to_tensors,
+        collate_fn=rw_modeling_colate_fn,
         drop_last=config.valid_dataset.drop_last,
     )
 
@@ -129,9 +139,9 @@ def main(args):
 
             with (
                 stats_tracker.record_timing("train_step"),
-                stats_tracker.scope("sft"),
+                stats_tracker.scope("rw"),
             ):
-                stats = engine.train_lm(data)
+                stats = engine.train_rw(data)
                 engine.step_lr_scheduler()
                 stats_tracker.scalar(**stats)
 
@@ -158,15 +168,13 @@ def main(args):
                 def evaluate_fn():
                     with stats_tracker.scope("sft-eval"):
                         for data in valid_dataloader:
-                            data = tensor_container_to(
-                                data, current_platform.current_device()
-                            )
+                            data = data.to(current_platform.current_device())
                             data = broadcast_tensor_container(
                                 data,
                                 src_rank=engine.current_data_parallel_head(),
                                 group=engine.context_and_model_parallel_group,
                             )
-                            engine.evaluate_lm(data)
+                            engine.evaluate_rw(data)
 
                 evaluator.evaluate(
                     evaluate_fn,
