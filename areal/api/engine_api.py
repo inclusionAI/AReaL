@@ -26,10 +26,11 @@ class Scheduling:
     cpu: int
     gpu: int
     mem: int
-    nodelist: Optional[str] = None
-    exclude: Optional[str] = None
-    partition: Optional[str] = None
-    container_image: Optional[str] = None
+    nodelist: str | None = None
+    exclude: str | None = None
+    partition: str | None = None
+    container_image: str | None = None
+    type: str | None = None
     env_vars: Dict[str, str] = field(default_factory=dict)
     # time utils from "https://slurm.schedmd.com/sbatch.html"
     time_limit: Optional[str] = None  # see  "--time" option for format

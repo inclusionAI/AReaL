@@ -130,10 +130,15 @@ class RemoteSGLangEngine(InferenceEngine):
                 "RemoteSGLangEngine does not support n_samples > 1. "
                 "Please call generate for multiple times with n_samples = 1."
             )
+
+        max_new_tokens = min(
+            gconfig.max_tokens - len(req.input_ids), gconfig.max_new_tokens
+        )
+
         sample_params = {
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
-            "max_new_tokens": gconfig.max_new_tokens,
+            "max_new_tokens": max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
             "frequency_penalty": gconfig.frequency_penalty,
