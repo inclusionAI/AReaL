@@ -6,7 +6,6 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from functools import partial
 from typing import Callable, List, Optional
-from pebble import ProcessPool
 
 from areal.utils import logging
 
@@ -35,10 +34,6 @@ def reward_fn(
     """
 
 
-def get_rw_executor(max_workers):
-    return ProcessPoolExecutor(max_workers=max_workers)
-
-
 class AsyncRewardWrapper:
     """
     Wraps a synchronous reward function to make it async with timeout handling.
@@ -65,8 +60,8 @@ class AsyncRewardWrapper:
 
         with self._lock:
             if self._executor_key not in self._executors:
-                self._executors[self._executor_key] = get_rw_executor(
-                    max_workers=max_workers,
+                self._executors[self._executor_key] = ProcessPoolExecutor(
+                    max_workers=max_workers
                 )
                 self._instance_counts[self._executor_key] = 0
             self._instance_counts[self._executor_key] += 1

@@ -62,7 +62,7 @@ class RLVRWorkflow(RolloutWorkflow):
         self.gconfig = gconfig
         self.tokenizer = tokenizer
         self.dump_dir = dump_dir
-        self.rw_executor = ProcessPoolExecutor(max_workers=self.gconfig.max_workers)
+        self.rw_executor = ProcessPoolExecutor(max_workers=4)
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
@@ -254,14 +254,6 @@ def main(args):
 
     # NOTE: Weight update meta only requires address and free port of rank 0,
     # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
-    # due to `engine.get_param_specs()`.
-    # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
-    # NOTE: Change to NCCL if running on local or ray
-    # weight_update_meta = [
-    #     WeightUpdateMeta.from_fsdp_nccl(
-    #         AllocationMode.from_str(config.allocation_mode), actor
-    #     )
-    # ]
     weight_update_meta = get_model_update_meta(config, actor)
     weight_update_meta = weight_update_meta[0]
 

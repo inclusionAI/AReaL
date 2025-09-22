@@ -81,7 +81,7 @@ export VLLM_LOGGING_LEVEL=WARNING
 export NCCL_CUMEM_ENABLE=0
 export NCCL_NVLS_ENABLE=0
 
-python3 -m areal.launcher.ray examples/lite/boba_ppo.py \
-    --config examples/lite/configs/boba_ppo_vllm.yaml
+python3 -m areal.launcher.ray examples/math/boba_grpo.py \
+    --config examples/math/boba_grpo_vllm.yaml
 ```
 

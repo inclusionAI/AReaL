@@ -34,14 +34,25 @@ RID_CACHE_SIZE = 128
 
 
 class RemotevLLMEngine(InferenceEngine):
+    """
+    A remote inference engine that communicates with vLLM servers to perform model inference.
+    This class manages multiple vLLM server instances and routes requests accordingly.
+    """
 
     def __init__(self, config: InferenceEngineConfig):
+        """
+        Initialize the RemotevLLMEngine with configuration.
+
+        Args:
+            config (InferenceEngineConfig): Configuration object containing engine settings.
+        """
         self.config = config
 
         self.rid_to_address = {}
-        # Maintain the addresses for the recent 128 requests
+        # Maintain recent request IDs for cache management
         self.rid_queue = []
 
+        # List of available vLLM server addresses
         self.addresses = os.getenv("AREAL_LLM_SERVER_ADDRS").split(",")
 
         if not self.addresses:
@@ -57,6 +68,15 @@ class RemotevLLMEngine(InferenceEngine):
         )
 
     def _wait_for_server(self, address):
+        """
+        Wait until the specified vLLM server becomes healthy.
+
+        Args:
+            address (str): Server address to check.
+
+        Raises:
+            RuntimeError: If server doesn't become healthy within setup timeout.
+        """
         base_url = f"http://{address}"
         tik = time.time()
         while time.time() - tik < self.config.setup_timeout:
@@ -66,7 +86,15 @@ class RemotevLLMEngine(InferenceEngine):
         raise RuntimeError("server launch failed")
 
     def check_health(self, base_url):
-        # Check server endpoint
+        """
+        Check if the vLLM server at the given base URL is healthy.
+
+        Args:
+            base_url (str): Base URL of the server to check.
+
+        Returns:
+            bool: True if server is healthy, False otherwise.
+        """
         try:
             response = requests.get(f"{base_url}/health", timeout=30)
             return response.status_code == 200
@@ -74,6 +102,13 @@ class RemotevLLMEngine(InferenceEngine):
             return False
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None = None):
+        """
+        Initialize the engine by waiting for all servers to be ready.
+
+        Args:
+            addr (str | None): Address for initialization (not used).
+            ft_spec (FinetuneSpec | None): Fine-tuning specification (not used).
+        """
         logger.info("Waiting for server ready...")
         for addr_ in self.addresses:
             self._wait_for_server(addr_)
@@ -82,16 +117,38 @@ class RemotevLLMEngine(InferenceEngine):
         self.workflow_executor.initialize()
 
     def destroy(self):
+        """Clean up resources and shut down executors."""
         self.workflow_executor.destroy()
         self.executor.shutdown()
 
     def set_version(self, version):
+        """
+        Set the current model version.
+
+        Args:
+            version (int): Model version number.
+        """
         self._version = version
 
     def get_version(self):
+        """
+        Get the current model version.
+
+        Returns:
+            int: Current model version.
+        """
         return self._version
 
     def choose_server(self) -> str:
+        """
+        Choose a server based on the scheduling policy.
+
+        Returns:
+            str: Selected server address.
+
+        Raises:
+            NotImplementedError: If schedule policy other than round-robin is used.
+        """
         if self.config.schedule_policy == "round_robin":
             server = self.addresses[self.server_idx]
             self.server_idx = (self.server_idx + 1) % len(self.addresses)
@@ -99,7 +156,15 @@ class RemotevLLMEngine(InferenceEngine):
         raise NotImplementedError("Only round-robin scheduling is implemented.")
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
-        """Async version of generate using aiohttp."""
+        """
+        Asynchronously generate text using the vLLM server.
+
+        Args:
+            req (ModelRequest): Request containing input data and generation parameters.
+
+        Returns:
+            ModelResponse: Response containing generated tokens and metadata.
+        """
         # Prepare request payload
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
@@ -160,8 +225,8 @@ class RemotevLLMEngine(InferenceEngine):
         # we call the pause_generation endpoint
         stop_reason = None
         while (
-            stop_reason != "stop"
-            and len(accumulated_output_tokens) < gconfig.max_new_tokens
+                stop_reason != "stop"
+                and len(accumulated_output_tokens) < gconfig.max_new_tokens
         ):
             # Request is interrupted, wait for some time to avoid interfering
             # with update weights requests
@@ -200,7 +265,7 @@ class RemotevLLMEngine(InferenceEngine):
 
             payload["prompt"] += output_tokens
             payload["max_tokens"] -= len(output_tokens)
-        
+
         await session.close()
         latency = time.perf_counter() - start_time
 
@@ -219,6 +284,15 @@ class RemotevLLMEngine(InferenceEngine):
         return response
 
     def update_weights(self, meta: WeightUpdateMeta):
+        """
+        Update model weights across all servers.
+
+        Args:
+            meta (WeightUpdateMeta): Metadata for weight update operation.
+
+        Returns:
+            Future: Future representing the asynchronous operation.
+        """
         for addr in self.addresses:
             res = requests.post(f"http://{addr}/areal_pause_generation")
             res.raise_for_status()
@@ -267,19 +341,38 @@ class RemotevLLMEngine(InferenceEngine):
         return fut
 
     def submit(
-        self,
-        data: Dict[str, Any],
-        workflow: Optional[RolloutWorkflow] = None,
-        workflow_builder: Optional[Callable] = None,
+            self,
+            data: Dict[str, Any],
+            workflow: Optional[RolloutWorkflow] = None,
+            workflow_builder: Optional[Callable] = None,
     ) -> None:
+        """
+        Submit data for processing via workflow executor.
+
+        Args:
+            data (Dict[str, Any]): Data to process.
+            workflow (Optional[RolloutWorkflow]): Workflow to use.
+            workflow_builder (Optional[Callable]): Function to build workflow.
+        """
         return self.workflow_executor.submit(data, workflow, workflow_builder)
 
     def wait(
-        self,
-        count: int,
-        timeout: float | None = None,
-        should_accept: Callable | None = None,
+            self,
+            count: int,
+            timeout: float | None = None,
+            should_accept: Callable | None = None,
     ) -> TensorDict | List[TensorDict]:
+        """
+        Wait for results from the workflow executor.
+
+        Args:
+            count (int): Number of results to wait for.
+            timeout (float | None): Timeout in seconds.
+            should_accept (Callable | None): Function to determine which results to accept.
+
+        Returns:
+            TensorDict | List[TensorDict]: Results from the workflow.
+        """
         return self.workflow_executor.wait(
             count,
             timeout=timeout,
@@ -287,20 +380,40 @@ class RemotevLLMEngine(InferenceEngine):
         )
 
     def rollout_batch(
-        self,
-        data: List[Dict[str, Any]],
-        workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Optional[Callable] = None,
+            self,
+            data: List[Dict[str, Any]],
+            workflow: Optional["RolloutWorkflow"] = None,
+            workflow_builder: Optional[Callable] = None,
     ) -> TensorDict:
+        """
+        Process a batch of data through a rollout workflow.
+
+        Args:
+            data (List[Dict[str, Any]]): Batch of data to process.
+            workflow (Optional[RolloutWorkflow]): Workflow to use.
+            workflow_builder (Optional[Callable]): Function to build workflow.
+
+        Returns:
+            TensorDict: Processed results.
+        """
         return self.workflow_executor.rollout_batch(data, workflow, workflow_builder)
 
     def prepare_batch(
-        self,
-        dataloader: StatefulDataLoader,
-        workflow: Optional[RolloutWorkflow] = None,
-        workflow_builder: Optional[Callable] = None,
-        should_accept: Callable | None = None,
+            self,
+            dataloader: StatefulDataLoader,
+            workflow: Optional[RolloutWorkflow] = None,
+            workflow_builder: Optional[Callable] = None,
+            should_accept: Callable | None = None,
     ):
+        """
+        Prepare a batch for processing.
+
+        Args:
+            dataloader (StatefulDataLoader): Data loader to use.
+            workflow (Optional[RolloutWorkflow]): Workflow to use.
+            workflow_builder (Optional[Callable]): Function to build workflow.
+            should_accept (Callable | None): Function to determine which results to accept.
+        """
         return self.workflow_executor.prepare_batch(
             dataloader, workflow, workflow_builder, should_accept
         )
