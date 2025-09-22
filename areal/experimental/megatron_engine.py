@@ -113,7 +113,6 @@ class MegatronEngine(TrainEngine):
         # Set gradient checkpointing options
         if self.config.gradient_checkpointing:
             # reconstruct TransformerConfig for __post_init__
-            self.logger.info("Megatron enabled gradient checkpointing.")
             self.bridge.set_extra_args(
                 recompute_granularity=self.mcore_config.recompute_granularity,
                 recompute_method=self.mcore_config.recompute_method,
@@ -129,8 +128,6 @@ class MegatronEngine(TrainEngine):
         self.hf_config, self.tf_config = make_hf_and_mcore_config(
             self.config.path, dtype=self.dtype, bridge=self.bridge
         )
-        self.logger.info(f"Megatron TransformerConfig: {self.tf_config}")
-
         # initialize mcore (DDP Wrapped) GPTModel
         with self.device:
             self.model = make_mcore_model(

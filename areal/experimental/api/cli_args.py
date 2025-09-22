@@ -55,9 +55,9 @@ class MegatronEngineConfig:
     use_deterministic_algorithms: bool = False
 
     # Gradient checkpointing options, only effective when gradient_checkpointing=True
-    recompute_granularity: Optional[str] = "selective"
-    recompute_method: Optional[str] = None
-    recompute_num_layers: Optional[int] = None
+    recompute_granularity: Optional[str] = "full"
+    recompute_method: Optional[str] = "uniform"
+    recompute_num_layers: Optional[int] = 1
     distribute_saved_activations: Optional[bool] = None
     recompute_modules: Optional[List[str]] = None
 
