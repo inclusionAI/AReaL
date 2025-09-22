@@ -20,7 +20,7 @@ async_training: true
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 16
+  max_concurrent_rollouts: 400
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 4
@@ -32,7 +32,6 @@ gconfig:
   max_new_tokens: 30720
   greedy: false
   temperature: 1.0
-  interruptable_processpool: true
 
 actor:
   experiment_name: ${experiment_name}
@@ -57,7 +56,6 @@ actor:
   backend: fsdp
 
   group_size: ${gconfig.n_samples}
-  group_adv_norm: false
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -91,7 +89,7 @@ vllm:
 
 # datasets
 train_dataset:
-  path: AReaL-boba-106k
+  path: inclusionAI/AReaL-boba-Data
   batch_size: 512
   shuffle: true
   pin_memory: true

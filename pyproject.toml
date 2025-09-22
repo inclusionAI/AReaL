@@ -57,7 +57,6 @@ dependencies = [
     "h5py",
 
     # Utilities and data processing
-    "pebble",
     "setproctitle",
     "nltk",
     "sentencepiece",

@@ -30,7 +30,7 @@ pynvml
 pytest
 PyYAML
 pyzmq
-ray
+ray[default]
 redis
 scipy
 seaborn
@@ -85,3 +85,4 @@ mdformat==0.7.17
 mdformat-gfm
 mdformat-tables
 mdformat-frontmatter
+setproctitle

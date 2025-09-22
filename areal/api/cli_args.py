@@ -126,16 +126,6 @@ class GenerationHyperparameters:
             )
         },
     )
-    max_workers: Optional[int] = field(
-        default=32,
-        metadata={"help": "Number of workers processing reward."}
-    )
-    interruptable_processpool: Optional[bool] = field(
-        default=False,
-        metadata={
-            "help": "Using an interruptable process pool to process reward function or not."
-        },
-    )
 
     def new(self, **kwargs):
         args = asdict(self)
@@ -285,12 +275,6 @@ class PPOActorConfig(TrainEngineConfig):
     group_size: int = field(
         default=1, metadata={"help": "Number of sequences in each group"}
     )
-    group_adv_norm: bool = field(
-        default=False,
-        metadata={
-            "help": "Normalize advantages within each prompt group rather than globally"
-        },
-    )
     ppo_n_minibatches: int = field(
         default=4, metadata={"help": "Number of minibatches for each PPO update"}
     )
@@ -431,7 +415,7 @@ class vLLMConfig:
     # will fix this issue.
     enable_prefix_caching: bool = False
     gpu_memory_utilization: float = 0.9
-    worker_extension_cls: str = "areal.launcher.vllm_worker_extension.VLLMWorkerExtension"
+    worker_extension_cls: str = "areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"
     enable_sleep_mode: bool = False
     # additional_engine_args: Dict = field(default_factory=dict)
     @staticmethod
@@ -442,7 +426,6 @@ class vLLMConfig:
         port,
         dist_init_addr: Optional[str] = None,
     ):
-        from realhf.experiments.common.utils import asdict as conf_as_dict
         args: Dict = conf_as_dict(vllm_config)
         args = dict(
             host=host,
@@ -459,12 +442,10 @@ class vLLMConfig:
     def build_cmd(
         vllm_config: "vLLMConfig",
         tp_size,
-        base_gpu_id,
         host,
         port,
         dist_init_addr: Optional[str] = None,
     ):
-        # TODO base_gpu_id ?
         args = vLLMConfig.build_args(
             vllm_config=vllm_config,
             tp_size=tp_size,
@@ -483,7 +464,7 @@ class vLLMConfig:
                 flags.append(f"--{k.replace('_','-')} {' '.join(map(str, v))}")
             else:
                 flags.append(f"--{k.replace('_','-')} {v}")
-        return f"python3 -m areal.launcher.areal_vllm_server {' '.join(flags)}"
+        return f"python3 -m areal.thirdparty.vllm.areal_vllm_server {' '.join(flags)}"
 
 
 @dataclass

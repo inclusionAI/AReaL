@@ -135,7 +135,6 @@ class vLLMServerWrapper:
             cmd = vLLMConfig.build_cmd(
                 self.config,
                 tp_size=self.allocation_mode.gen.tp_size,
-                base_gpu_id=base_gpu_id,
                 host=host_ip,
                 port=server_port,
                 dist_init_addr=dist_init_addr,

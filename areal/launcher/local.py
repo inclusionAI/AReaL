@@ -25,7 +25,6 @@ from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import JobException, JobInfo, JobState, get_env_vars
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.recover import check_if_recover
-from areal.platforms import is_npu_available
 
 logger = logging.getLogger("Local Scheduler")
 JOB_STATE_TO_PROCESS_STATUS = {
@@ -324,7 +323,6 @@ def local_main(config, run_id: int = 0):
                 config.vllm,
                 host=host,
                 tp_size=alloc_mode.gen.tp_size,
-                base_gpu_id=0,
                 port=ports[i * 2],
                 dist_init_addr=f"localhost:{ports[i*2+1]}",
             )

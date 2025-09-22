@@ -45,12 +45,7 @@ def _init_platform() -> Platform:
         logger.warning("Unrecognized CUDA device. Falling back to UnknownPlatform.")
         return UnknownPlatform()
     elif is_npu_available:
-        # device_name = torch.npu.get_device_name().upper()
-        # logger.info(f"Detected NPU device: {device_name}")
-        # if "NPU" in device_name:
-        #     logger.info("Initializing NPU platform (NPU).")
-        #     return NPUPlatform()
-        # logger.warning("Unrecognized NPU device. Falling back to UnknownPlatform.")
+        logger.info("Initializing NPU platform (NPU).")
         return NPUPlatform()
     else:
         logger.info("No supported accelerator detected. Initializing CPU platform.")

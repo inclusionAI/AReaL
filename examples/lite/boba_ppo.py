@@ -62,7 +62,7 @@ class RLVRWorkflow(RolloutWorkflow):
         self.gconfig = gconfig
         self.tokenizer = tokenizer
         self.dump_dir = dump_dir
-        self.rw_executor = ProcessPool(max_workers=self.gconfig.max_workers) if self.gconfig.interruptable_processpool else ProcessPoolExecutor(max_workers=self.gconfig.max_workers)
+        self.rw_executor = ProcessPoolExecutor(max_workers=self.gconfig.max_workers)
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
@@ -116,28 +116,16 @@ class RLVRWorkflow(RolloutWorkflow):
             completions_strs.append(completions_str)
             seqlens.append(len(seq))
             try:
-                if self.gconfig.interruptable_processpool:
-                    future = asyncio.wrap_future(self.rw_executor.schedule(
-                        functools.partial(
-                            self.reward_fn,
-                            completions=completions_str,
-                            prompt_ids=resp.input_tokens,
-                            completion_ids=resp.output_tokens,
-                            **data,
-                        ),
-                        timeout=REWARD_TIMEOUT_SECONDS,
-                    ))
-                else:
-                    future = loop.run_in_executor(
-                        self.rw_executor,
-                        functools.partial(
-                            self.reward_fn,
-                            completions=completions_str,
-                            prompt_ids=resp.input_tokens,
-                            completion_ids=resp.output_tokens,
-                            **data,
-                        ),
-                    )
+                future = loop.run_in_executor(
+                    self.rw_executor,
+                    functools.partial(
+                        self.reward_fn,
+                        completions=completions_str,
+                        prompt_ids=resp.input_tokens,
+                        completion_ids=resp.output_tokens,
+                        **data,
+                    ),
+                )
                 reward = await asyncio.wait_for(
                     future,
                     timeout=REWARD_TIMEOUT_SECONDS,
