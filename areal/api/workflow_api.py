@@ -48,7 +48,7 @@ class RolloutWorkflow:
 
         Returns
         -------
-        Union[TensorDict, None, Dict[str, CompletionWithTokenLogpReward]]
+        Union[Dict[str, Any], None, Dict[str, CompletionWithTokenLogpReward]]
             The trajectory result, None if rejected, or a dictionary of completion results
         """
         raise NotImplementedError()

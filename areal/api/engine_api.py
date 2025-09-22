@@ -260,13 +260,13 @@ class TrainEngine(abc.ABC):
 
         Parameters
         ----------
-        input_ : TensorDict
+        input_ : Dict[str, Any]
             The input data for model forward pass and the loss function.
             Redundant entries are allowed.
-        loss_fn : Callable[[torch.Tensor, TensorDict], torch.Tensor]
+        loss_fn : Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor]
             The loss function that takes the model's forward output and input_,
             and outputs a scalar normalized loss.
-        loss_weight_fn : Callable[[TensorDict], float]
+        loss_weight_fn : Callable[[Dict[str, Any]], float]
             A function used to calculate the weight of each micro-batch. Since
             loss_fn normalizes the loss for a micro-batch, we need a corresponding
             weight for each micro-batch to normalize the loss globally. The weight
@@ -295,13 +295,13 @@ class TrainEngine(abc.ABC):
 
         Parameters
         ----------
-        input_ : TensorDict
+        input_ : Dict[str, Any]
             The input data for model forward pass and the loss function.
             Redundant entries are allowed.
-        loss_fn : Callable[[torch.Tensor, TensorDict], torch.Tensor]
+        loss_fn : Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor]
             The loss function that takes the model's forward output and input_,
             and outputs a scalar normalized loss.
-        loss_weight_fn : Callable[[TensorDict], float]
+        loss_weight_fn : Callable[[Dict[str, Any]], float]
             A function used to calculate the weight of each micro-batch. Since
             loss_fn normalizes the loss for a micro-batch, we need a corresponding
             weight for each micro-batch to normalize the loss globally. The weight
@@ -331,12 +331,12 @@ class TrainEngine(abc.ABC):
 
         Parameters
         ----------
-        input_ : TensorDict
+        input_ : Dict[str, Any]
             The input data for model forward pass. Redundant entries are allowed.
         output_seqlens : List[int], optional
             The desired output sequence lengths. If None, assumes that the output
             has the same lengths as inputs, by default None.
-        post_hook : Callable[[torch.Tensor, TensorDict], Any], optional
+        post_hook : Callable[[torch.Tensor, Dict[str, Any]], Any], optional
             The post-processing function for micro-batched outputs. Post-processing
             the output on-the-fly during micro-batched forward can reduce peak
             memory usage, by default None.
@@ -474,7 +474,7 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        TensorDict
+        Dict[str, Any]
             A concatenated batch of trajectories
 
         Raises
@@ -508,7 +508,7 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        TensorDict
+        Dict[str, Any]
             A concatenated batch of trajectory results
         """
         raise NotImplementedError()
@@ -537,7 +537,7 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        TensorDict
+        Dict[str, Any]
             A full batch of trajectory results with controlled staleness
         """
         raise NotImplementedError()
