@@ -48,7 +48,6 @@ def clevr_count_70k_reward_fn(
         return 0
 
     if float(sol.strip() == ans.strip()):
-       print(f"completions: {completions}, answer: {answer}")
        return 1.0
 
     return float(sol.strip() == ans.strip())
@@ -82,7 +81,7 @@ def main(args):
     )
 
     train_size = len(train_dataset)
-    subset_size = int(1.0 * train_size)
+    subset_size = int(0.1 * train_size)
 
     random_indices = torch.randperm(train_size).tolist()[:subset_size]
 

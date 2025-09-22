@@ -21,7 +21,6 @@ def clevr_count_70k_reward_fn(
         return 0
 
     if sol.strip() == ans.strip():
-        print(f"completions: {completions}, answer: {answer}")
         return 1
 
     return 0
