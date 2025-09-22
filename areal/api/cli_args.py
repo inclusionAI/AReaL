@@ -583,6 +583,15 @@ class InferenceEngineConfig:
 
 
 @dataclass
+class TIRConfig:
+    max_turns: int = field(default=2)
+    max_length: int = field(default=3000)
+    tool_timeout: float = field(default=30)
+    enable_tools: str = field(default="python")
+    is_chat_model: bool = field(default=False)
+
+
+@dataclass
 class _Timer:
     experiment_name: str = MISSING
     trial_name: str = MISSING
@@ -925,6 +934,11 @@ class GRPOConfig(BaseExperimentConfig):
     rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
     ref: PPOActorConfig = field(default_factory=PPOActorConfig)
+
+
+@dataclass
+class TIRGRPOConfig(GRPOConfig):
+    tir: TIRConfig = field(default_factory=TIRConfig)
 
 
 def parse_cli_args(argv: List[str]):
