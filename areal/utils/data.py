@@ -1142,6 +1142,7 @@ class Normalization:
         # Step 1: Compute mean
         if self.mean_level == "batch":
             mean = self._compute_mean(x, loss_mask, high_precision, True, reduce_group)
+            mean = mean.expand_as(x)
         elif self.mean_level == "group":
             mean = torch.zeros_like(x)
             for i in range(0, bs // self.group_size):
@@ -1173,6 +1174,7 @@ class Normalization:
                 True,
                 reduce_group,
             )
+            std = std.expand_as(x)
         elif self.std_level == "group":
             std = torch.zeros_like(x)
             for i in range(0, bs // self.group_size):
