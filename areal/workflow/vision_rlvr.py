@@ -49,11 +49,8 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             return_tensors="pt",
         )
 
-        if "vila" in self.processor.image_processor._processor_class.lower():
-            #sglang forces to convert input_ids to prompt when processing multimodal data, which leads to incorrect image token number when using origin 
-            input_ids=self.processor.tokenizer.encode(data["messages"], add_special_tokens=False)
-        else:
-            input_ids = processed_input["input_ids"].tolist()[0]
+            #Sglang forces to convert input_ids to prompt when processing multimodal data, which leads to incorrect image token number when using processed input_ids
+        input_ids=self.processor.tokenizer.encode(data["messages"], add_special_tokens=False)
 
         n_samples = self.gconfig.n_samples
 
@@ -100,13 +97,6 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
             rewards.append(reward)
-            multi_modal_input = {
-                "pixel_values": processed_input["pixel_values"],
-            }
-            if "image_grid_thw" in processed_input:
-                multi_modal_input["image_grid_thw"] = processed_input["image_grid_thw"]
-            if "token_type_ids" in processed_input:
-                multi_modal_input["token_type_ids"] = processed_input["token_type_ids"]
             res = dict(
                 # unsqueeze to add an additional batch dimension
                 input_ids=torch.tensor(seq).unsqueeze(0),
