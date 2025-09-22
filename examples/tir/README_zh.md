@@ -1,18 +1,10 @@
 # Tool-Integrated Reasoning (TIR) Agent
 
-## 项目概述
+## 概述
 
-本项目在AReaL框架中实现了一个Tool-Integrated Reasoning智能体，该智能体能够在数学推理过程中通过多轮工具调用来解决复杂问题。智能体使用Python代码执行、数学计算等工具，并通过强化学习进行端到端训练。
+实现了一个Tool-Integrated Reasoning智能体，该智能体能够在数学推理过程中通过多轮工具调用来解决复杂问题。智能体使用Python代码执行、数学计算等工具，并通过强化学习进行端到端训练。
 
-## 核心特性
-
-- **多轮工具调用**: 支持在推理过程中进行多轮工具调用
-- **流式生成**: 实时检测工具调用意图，无缝集成工具执行
-- **安全执行**: 沙箱环境执行Python代码，确保系统安全
-- **强化学习训练**: 基于AReaL框架的GRPO训练，端到端优化
-- **模块化设计**: 易于扩展新工具和功能
-
-## 代码组成逻辑
+## 代码逻辑
 
 ### 1. 核心组件
 
@@ -90,121 +82,6 @@ output: 6
 
 核心逻辑见`examples/tir/tir_workflow.py`
 
-```python
-async def _multi_round_response(self, engine, prompt_ids, data):
-  prompt_str = self.tokenizer.decode(prompt_ids)
-  completions_str = ""
-  has_tool = False
-  tool_call_count = 0
-  tool_success_count = 0
-  stop_reason = None
-  max_len = 3000
-  turn = 0
-  # State flag for each episode: whether waiting for tool start marker
-  waiting_for_tool_start = True
-  tool_start_idx = -1
-
-  # initialize seq, logprobs, loss_mask, versions
-  context_ids = copy.deepcopy(prompt_ids)
-  seq = copy.deepcopy(prompt_ids)
-  logprobs = [0.0] * len(context_ids)
-  loss_mask = [0] * len(context_ids)
-  versions = [-1] * len(context_ids)
-  output_ids = []
-
-  while turn <= self.max_turns:
-      if len(context_ids) >= max_len:
-          break
-
-      # Generate response
-      resp, stop_reason = await self._generate_response(engine, context_ids, max_len, waiting_for_tool_start)
-
-      context_ids.extend(resp.output_tokens)
-      seq.extend(resp.output_tokens)
-      logprobs.extend(resp.output_logprobs)
-      loss_mask.extend([1] * resp.output_len)
-      versions.extend(resp.output_versions)
-      
-      cur_completions_str = self.tokenizer.decode(resp.output_tokens)
-      completions_str += cur_completions_str
-      output_ids.extend(resp.output_tokens)
-  
-      # End token, truncate
-      if context_ids[-1] in [
-          self.tokenizer.pad_token_id,
-          self.tokenizer.eos_token_id,
-      ]:
-          break
-
-      # If answer appears, truncate immediately
-      if re.search(ANSWER, cur_completions_str):
-          break
-
-      # State transition logic: detect if tool start marker is encountered
-      if waiting_for_tool_start and stop_reason == "stop":
-          # Check if tool start marker is detected
-          tool_start_marker = self._detect_tool_start_marker(cur_completions_str)
-          if tool_start_marker:
-              waiting_for_tool_start = False
-              tool_start_idx = len(completions_str) - len(tool_start_marker)
-              # Continue generating until tool end marker
-              continue
-
-      # If tool call is detected, execute tool call
-      if not waiting_for_tool_start and stop_reason == "stop" and tool_start_idx != -1:
-          tool_results, tool_status = self._execute_tools(completions_str[tool_start_idx:])
-          if tool_status == ToolCallStatus.NOT_FOUND:
-              # No match found, continue generating until next tool end marker
-              continue
-          turn += 1
-          has_tool = True
-          tool_call_count += 1  # Increment tool call count
-          if tool_status == ToolCallStatus.SUCCESS:
-              tool_success_count += 1
-          tool_results = self._process_tool_result(tool_results)
-          # Append tool response token IDs
-          tool_rsp_token_ids=self.tokenizer.encode(tool_results, add_special_tokens=False)
-          # Concatenate to seq
-          # Build tool mask
-          context_ids.extend(tool_rsp_token_ids)
-          seq.extend(tool_rsp_token_ids)
-          logprobs.extend([0.0] * len(tool_rsp_token_ids))
-          loss_mask.extend([0] * len(tool_rsp_token_ids))
-          versions.extend([-1] * len(tool_rsp_token_ids))
-          completions_str += tool_results
-          
-          # After tool execution completes, reset state flag to prepare for next tool call detection
-          waiting_for_tool_start = True
-
-  reward = await self.async_reward_fn(
-      prompt_str,
-      completions_str,
-      prompt_ids,
-      output_ids,
-      tool_using=has_tool,
-      tool_status=tool_call_count,
-      **data
-  )
-  
-  # Record tool call count to stats_tracker
-  stats_tracker.get(self.rollout_stat_scope).scalar(
-      tool_call_count=tool_call_count,
-      tool_success_count=tool_success_count
-  )
-
-  res = dict(
-      input_ids=torch.tensor(seq[:max_len]).unsqueeze(0),
-      logprobs=torch.tensor(logprobs[:max_len]).unsqueeze(0),
-      loss_mask=torch.tensor(loss_mask[:max_len]).unsqueeze(0),
-      versions=torch.tensor(versions[:max_len]).unsqueeze(0),
-      attention_mask=torch.ones(len(seq[:max_len]), dtype=torch.bool).unsqueeze(0),
-      rewards=torch.tensor([float(reward)]),
-  )
-  return TensorDict(res, batch_size=[1])
-
-```
-
-
 ## 如何使用
 
 ### 1. 环境准备
@@ -264,9 +141,6 @@ python3 -m areal.launcher.local \
 
 TODO
 
-### 5. 测试脚本
-
-TODO
 
 ## 训练效果
 
@@ -285,19 +159,15 @@ TODO
 
   **grpo_actor/task_reward**
   
-  <img src="figure/task_reward.png" alt="奖励曲线" width="600"/>
+  <img src="figures/task_reward.png" alt="奖励曲线" width="600"/>
 
   黄色线为TIR的reward, 可以看到相对纯GRPO训练有15%左右的正确率优势。
 
 - **工具使用频率**:
 
-  <img src="figure/tool_call_count.png" alt="奖励曲线" width="600"/>
+  <img src="figures/tool_call_count.png" alt="奖励曲线" width="600"/>
 
   工具调用次数和成功率变化，随训练进行，单个回答调用tool次数0.9->1.2, tool调用成功率没有明显变化。
-
-### 3. 评估
-
-TODO
 
 ## 文件结构
 
@@ -322,6 +192,8 @@ examples/tir/
 
 
 ## TODOs
+
+- [ ] 评估脚本
 - [ ] 支持异步工具调用.
 - [ ] 支持多机训练
 - [ ] 调优, 提供Intruct模型的Prompt模板
