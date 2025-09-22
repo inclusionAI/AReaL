@@ -23,7 +23,7 @@ This project implements a Tool-Integrated Reasoning agent that can solve complex
   - **Calculator**: Basic mathematical operations
 - **Key Features**:
   - Tool registration and routing mechanism
-  - Secure code execution environment
+  - Secure code execution environment 
   - Unified tool calling interface
 
 #### 1.3 Tool Implementation (`tools/`)
