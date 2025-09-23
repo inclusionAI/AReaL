@@ -240,8 +240,8 @@ class TrainEngine(abc.ABC):
     def step_lr_scheduler(self):
         """Step the learning rate scheduler.
 
-        Since PPO uses minibatch updates, this method only needs to be called once
-        after several train_batch calls. It is separated from train_batch to allow
+        Since PPO uses minibatch updates, this method should be called periodically
+        (e.g., once per PPO step). It is separated from train_batch to allow
         for more flexible learning rate scheduling.
         """
         raise NotImplementedError()
@@ -370,6 +370,7 @@ class InferenceEngine(abc.ABC):
 
     def destroy(self):
         """Destroy the engine and release GPU memory for the local inference engine."""
+        raise NotImplementedError()
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.
