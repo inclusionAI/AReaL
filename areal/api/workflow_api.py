@@ -206,7 +206,7 @@ def check_trajectory_format(
             if (
                 not isinstance(value, list)
                 or len(value) == 0
-                or not all(isinstance(v, dict) for v in value)
+                or any(not isinstance(v, dict) for v in value)
             ):
                 raise ValueError(
                     "multi_modal_input should be a non-empty list of dicts"
@@ -380,9 +380,7 @@ class WorkflowExecutor:
                             traj, expected_keys=self._expected_trajectory_keys
                         )
                         # Track expected keys for consistency checking
-                        if isinstance(traj, dict) and all(
-                            isinstance(v, torch.Tensor) for v in traj.values()
-                        ):
+                        if isinstance(traj, dict) and "input_ids" in traj:
                             if self._expected_trajectory_keys is None:
                                 self._expected_trajectory_keys = set(traj.keys())
                                 self.logger.info(

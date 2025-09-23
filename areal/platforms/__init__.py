@@ -52,6 +52,7 @@ class _LazyPlatform:
         if not self._initialized:
             self._platform = _init_platform()
             self._initialized = True
+        assert self._platform is not None, "Platform should be initialized here."
         return self._platform
 
     def __getattr__(self, name: str):
@@ -79,7 +80,10 @@ class _LazyPlatform:
 
 # Global singleton representing the current platform in use.
 # Platform detection and initialization is deferred until first access.
-current_platform: Platform = _LazyPlatform()
+current_platform: Platform | _LazyPlatform = (
+    _LazyPlatform()
+)  # NOTE: This is a proxy, not a subclass of Platform.
+
 
 __all__ = [
     "Platform",
