@@ -85,11 +85,11 @@ output: 6
 
 Main process:
 
-1. Model pauses when generating to tool call markers
-1. Detect and parse tool call content
-1. Execute tools in a secure environment
-1. Integrate tool results into the conversation
-1. Continue generating subsequent content
+- Model pauses when generating to tool call markers
+- Detect and parse tool call content
+- Execute tools in a secure environment
+- Integrate tool results into the conversation
+- Continue generating subsequent content
 
 Core logic can be found in `examples/tir/tir_workflow.py`
 
@@ -97,8 +97,8 @@ Core logic can be found in `examples/tir/tir_workflow.py`
 
 ### 1. Setup
 
-1. Follow `docs/tutorial/installation.md` for basic environment installation
-1. Install qwen_agent: `pip install qwen_agent`
+- Follow `docs/tutorial/installation.md` for basic environment installation
+- Install qwen_agent: `pip install qwen_agent`
 
 ### 2. Data Preparation
 

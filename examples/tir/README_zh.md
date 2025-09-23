@@ -96,7 +96,7 @@ output: 6
 ### 1. 环境准备
 
 - 参考`docs/tutorial/installation.md`进行基本环境安装
-- 安装qwen_agent: `pip install qwen_agent -y`
+- 安装qwen_agent: `pip install qwen_agent`
 
 ### 2. 数据准备
 
