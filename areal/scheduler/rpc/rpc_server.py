@@ -8,7 +8,7 @@ from typing import AnyStr
 
 import cloudpickle
 
-from realhf.base import logging
+from areal.utils import logging
 
 logger = logging.getLogger("RPCServer")
 

@@ -1,12 +1,15 @@
 import gzip
 import time
 from http import HTTPStatus
+from typing import Any, Union
 
 import cloudpickle
 import requests
 
+from areal.api.cli_args import InferenceEngineConfig, TrainEngineConfig
+from areal.api.engine_api import InferenceEngine, TrainEngine
+from areal.utils import logging
 from areal.utils.http import response_ok, response_retryable
-from realhf.base import logging
 
 logger = logging.getLogger("RPCClient")
 
@@ -15,11 +18,16 @@ class RPCClient:
     def __init__(self):
         self._addrs = {}
 
-    def register(self, worker_id, ip, port):
+    def register(self, worker_id: str, ip: str, port: int) -> None:
         self._addrs[worker_id] = (ip, port)
         logger.info(f"Registered worker {worker_id} at {ip}:{port}")
 
-    def create_engine(self, worker_id, engine_obj, init_config):
+    def create_engine(
+        self,
+        worker_id: str,
+        engine_obj: Union[InferenceEngine, TrainEngine],
+        init_config: Union[InferenceEngineConfig, TrainEngineConfig],
+    ) -> None:
         ip, port = self._addrs[worker_id]
         url = f"http://{ip}:{port}/create_engine"
         logger.info(f"send create_engine to {worker_id} ({ip}:{port})")
@@ -39,7 +47,9 @@ class RPCClient:
                 f"Failed to create engine, {resp.status_code}, {resp.content}"
             )
 
-    def call_engine(self, worker_id, method, max_retries=3, *args, **kwargs):
+    def call_engine(
+        self, worker_id: str, method: str, max_retries: int = 3, *args, **kwargs
+    ) -> Any:
         # 支持变长参数
         req = (method, args, kwargs)
         serialized_data = cloudpickle.dumps(req)
@@ -50,7 +60,7 @@ class RPCClient:
 
     def call_engine_with_serialized_data(
         self, worker_id: str, serialized_data: bytes, max_retries=3
-    ):
+    ) -> Any:
         """
         数据面调用（带序列化数据），支持异常和503状态码重试
         """
