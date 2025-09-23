@@ -177,11 +177,7 @@ def format_default_value(field_obj) -> str:
     if field_obj.default is not inspect._empty:
         default_value = field_obj.default
         # Check for MISSING by string representation to avoid import issues
-        if (
-            str(default_value).startswith("'???'")
-            or str(default_value) == "MISSING"
-            or "MISSING" in str(type(default_value))
-        ):
+        if default_value is cli_args_module.MISSING:
             return "**Required**"
         elif default_value is None:
             return "`None`"
@@ -191,8 +187,6 @@ def format_default_value(field_obj) -> str:
             return "`[]`"
         elif isinstance(default_value, bool):
             return f"`{default_value}`"
-        elif "MISSING" in str(default_value):
-            return "**Required**"
         else:
             return f"`{default_value}`"
     elif field_obj.default_factory is not inspect._empty:
