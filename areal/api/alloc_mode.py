@@ -273,7 +273,7 @@ class AllocationMode:
     """
 
     type_: AllocationType
-    gen: ParallelStrategy
+    gen: ParallelStrategy = field(default_factory=ParallelStrategy)
     train: Optional[ParallelStrategy] = None
     gen_backend: Optional[str] = None
     train_backend: Optional[str] = None
