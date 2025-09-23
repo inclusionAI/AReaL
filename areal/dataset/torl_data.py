@@ -1,15 +1,15 @@
-import requests
-import time
 import os
+import time
 from typing import Optional
+
+import requests
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 
-
 """
 Data columns (total 5 columns):
- #   Column        Non-Null Count  Dtype 
----  ------        --------------  ----- 
+ #   Column        Non-Null Count  Dtype
+---  ------        --------------  -----
  0   data_source   1275 non-null   object
  1   prompt        1275 non-null   object
  2   ability       1275 non-null   object
@@ -19,23 +19,29 @@ Data columns (total 5 columns):
 
 
 TORL_DATA_URLS = [
-    ("https://github.com/GAIR-NLP/ToRL/raw/main/data/torl_data/test.parquet", "/tmp/areal/torl_data/test.parquet"),
-    ("https://github.com/GAIR-NLP/ToRL/raw/main/data/torl_data/train.parquet", "/tmp/areal/torl_data/train.parquet"),
+    (
+        "https://github.com/GAIR-NLP/ToRL/raw/main/data/torl_data/test.parquet",
+        "/tmp/areal/torl_data/test.parquet",
+    ),
+    (
+        "https://github.com/GAIR-NLP/ToRL/raw/main/data/torl_data/train.parquet",
+        "/tmp/areal/torl_data/train.parquet",
+    ),
 ]
 
 
 def download(url, save_path):
     response = requests.get(url, stream=True)
     response.raise_for_status()
-    
-    with open(save_path, 'wb') as f:
+
+    with open(save_path, "wb") as f:
         for chunk in response.iter_content(chunk_size=8192):
             f.write(chunk)
     print(f"Downloaded {url} to {save_path}")
 
 
 def prepare_torl_data(rank):
-    if rank==0 and (not os.path.exists("/tmp/areal/torl_data/_SUCCESS")):
+    if rank == 0 and (not os.path.exists("/tmp/areal/torl_data/_SUCCESS")):
         os.makedirs("/tmp/areal/torl_data", exist_ok=True)
         for url, save_path in TORL_DATA_URLS:
             download(url, save_path)
@@ -74,13 +80,13 @@ def get_torl_data_rl_dataset(
 ):
     prepare_torl_data(rank)
     # Load parquet dataset instead of json
-    dataset = load_dataset("parquet", data_files=path, split='train')
+    dataset = load_dataset("parquet", data_files=path, split="train")
 
     def process(sample):
         # Handle the prompt content - it might be a list of messages or a string
-        answer = sample['reward_model']['ground_truth']    
-        answer = f"\\boxed{{{answer}}}"    
-        return {"messages": sample['prompt'], "answer": answer}
+        answer = sample["reward_model"]["ground_truth"]
+        answer = f"\\boxed{{{answer}}}"
+        return {"messages": sample["prompt"], "answer": answer}
 
     dataset = dataset.map(process).remove_columns(["prompt", "reward_model"])
 

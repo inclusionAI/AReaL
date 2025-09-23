@@ -1,7 +1,6 @@
 import itertools
 import os
 import sys
-import time
 from copy import deepcopy
 
 import torch
@@ -14,7 +13,8 @@ from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.utils import seeding, stats_tracker
+from areal.reward.math_parser import process_results
+from areal.utils import logging, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
     tensor_container_to,
@@ -25,19 +25,18 @@ from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
-from areal.utils import logging
-from areal.reward.math_parser import process_results
-
 from examples.tir.tir_workflow import TIRWorkflow
 
 logger = logging.getLogger("TIR Training")
 
 
 def math_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    tool_using = 0.01 if 'tool_using' in kwargs and kwargs['tool_using'] else 0
-    tool_success = 0.05 if 'tool_status' in kwargs and kwargs['tool_status'] else 0
+    # tool_using = 0.01 if 'tool_using' in kwargs and kwargs['tool_using'] else 0
+    # tool_success = 0.05 if 'tool_status' in kwargs and kwargs['tool_status'] else 0
 
-    retval, (extracted_answer, extracted_solution) = process_results(completions, answer)
+    retval, (extracted_answer, extracted_solution) = process_results(
+        completions, answer
+    )
 
     return int(retval)
 
@@ -52,7 +51,7 @@ def main(args):
     logger.info(f"Configuration: {config.experiment_name}")
     logger.info(f"Model: {config.actor.path}")
     logger.info(f"Batch size: {config.train_dataset.batch_size}")
-    
+
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
@@ -131,13 +130,13 @@ def main(args):
     weight_update_meta = weight_update_meta[0]
 
     reward_fn = math_reward_fn
-    
+
     # Create TIR workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-    
+
     workflow = TIRWorkflow(
         reward_fn=reward_fn,
         gconfig=config.gconfig,
@@ -148,7 +147,7 @@ def main(args):
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
     )
-    
+
     eval_workflow = TIRWorkflow(
         reward_fn=reward_fn,
         gconfig=config.gconfig.new(temperature=0.6),
@@ -218,7 +217,7 @@ def main(args):
                 src_rank=actor.current_data_parallel_head(),
                 group=actor.context_and_model_parallel_group,
             )
-        
+
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
         torch.cuda.synchronize()
@@ -266,6 +265,7 @@ def main(args):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
 
         with stats_tracker.record_timing("eval"):
+
             def evaluate_fn():
                 cnt = 0
                 for data in valid_dataloader:

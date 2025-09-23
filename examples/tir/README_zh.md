@@ -2,13 +2,15 @@
 
 ## 概述
 
-实现了一个Tool-Integrated Reasoning智能体，该智能体能够在数学推理过程中通过多轮工具调用来解决复杂问题。智能体使用Python代码执行、数学计算等工具，并通过强化学习进行端到端训练。
+实现了一个Tool-Integrated Reasoning智能体，该智能体能够在数学推理过程中通过多轮工具调用来解决复杂问题。
+智能体使用Python代码执行、数学计算等工具，并通过强化学习进行端到端训练。
 
 ## 代码逻辑
 
 ### 1. 核心组件
 
 #### 1.1 TIRWorkflow (`tir_workflow.py`)
+
 - **功能**: 核心工作流，管理多轮推理过程
 - **关键特性**:
   - 继承自AReaL的`RolloutWorkflow`基类
@@ -17,6 +19,7 @@
   - 集成奖励函数计算
 
 #### 1.2 ToolManager (`tool_manager.py`)
+
 - **功能**: 工具管理器，负责协调工具调用
 - **支持的工具**:
   - **Python执行器**: 执行Python代码进行数学计算
@@ -27,11 +30,13 @@
   - 统一的工具调用接口
 
 #### 1.3 工具实现 (`tools/`)
+
 - **BaseTool** (`tools/base.py`): 工具基类，定义工具接口
-- **QwenPythonTool** (`tools/python_tool.py`): Python代码执行工具
+- **PythonTool** (`tools/python_tool.py`): Python代码执行工具
 - **CalculatorTool** (`tools/calculator_tool.py`): 数学计算工具
 
 #### 1.4 训练脚本 (`train_tir.py`)
+
 - **功能**: 完整的训练流程实现
 - **特性**:
   - 集成AReaL的GRPO训练框架
@@ -42,6 +47,7 @@
 #### 2.1 工具调用格式
 
 执行Python代码
+
 ```python
 # Initialize the count of concave numbers
 count = 0
@@ -63,22 +69,25 @@ print(count)
 output: 120
 ```
 
-
 数学计算
+
 ```
 <calculator>1 + 2 * 3</calculator>
 ```
+
 ```python
 output: 6
 ```
 
 #### 2.2 流式生成与工具调用检测
+
 主要流程：
-1. 模型生成到工具调用标记时暂停
-2. 检测并解析工具调用内容
-3. 在安全环境中执行工具
-4. 将工具结果整合到对话中
-5. 继续生成后续内容
+
+- 模型生成到工具调用标记时暂停
+- 检测并解析工具调用内容
+- 在安全环境中执行工具
+- 将工具结果整合到对话中
+- 继续生成后续内容
 
 核心逻辑见`examples/tir/tir_workflow.py`
 
@@ -86,8 +95,8 @@ output: 6
 
 ### 1. 环境准备
 
-1. 参考`docs/tutorial/installation.md`进行基本环境安装
-2. 安装qwen_agent: `pip install qwen_agent -y`
+- 参考`docs/tutorial/installation.md`进行基本环境安装
+- 安装qwen_agent: `pip install qwen_agent -y`
 
 ### 2. 数据准备
 
@@ -125,9 +134,7 @@ tir:
   enable_tools: python;calculator
 ```
 
-
 ### 4. 运行训练
-
 
 **单机多GPU训练**
 
@@ -141,24 +148,23 @@ python3 -m areal.launcher.local \
 
 TODO
 
-
 ## 训练效果
 
 ### 1. 实验设置
 
 - 训练使用了[Qwen2.5-Math-1.5B](https://huggingface.co/Qwen/Qwen2.5-Math-1.5B) 作为基模型。
 - 奖励仅用结果是否正确。
-- 训练Prompt参考[ToRL](https://arxiv.org/pdf/2503.23383), 仅提示模型可以用编程工具，具体可以查看`examples/tir/prompts.py`
+- 训练Prompt参考[ToRL](https://arxiv.org/pdf/2503.23383),
+  仅提示模型可以用编程工具，具体可以查看`examples/tir/prompts.py`
 
 ### 2. 训练曲线
-
 
 训练过程中的关键指标变化：
 
 - **奖励曲线**:
 
   **grpo_actor/task_reward**
-  
+
   <img src="figures/task_reward.png" alt="奖励曲线" width="600"/>
 
   黄色线为TIR的reward, 可以看到相对纯GRPO训练有15%左右的正确率优势。
@@ -189,7 +195,6 @@ examples/tir/
 └── utils/                      # 工具函数
     └── __init__.py
 ```
-
 
 ## TODOs
 

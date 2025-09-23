@@ -2,13 +2,17 @@
 
 ## Overview
 
-This project implements a Tool-Integrated Reasoning agent that can solve complex problems through multi-turn tool calls during mathematical reasoning. The agent uses tools such as Python code execution and mathematical calculations, and is trained end-to-end through reinforcement learning.
+This project implements a Tool-Integrated Reasoning agent that can solve complex
+problems through multi-turn tool calls during mathematical reasoning. The agent uses
+tools such as Python code execution and mathematical calculations, and is trained
+end-to-end through reinforcement learning.
 
 ## Code Architecture
 
 ### 1. Core Components
 
 #### 1.1 TIRWorkflow (`tir_workflow.py`)
+
 - **Function**: Core workflow that manages multi-turn reasoning processes
 - **Key Features**:
   - Inherits from AReaL's `RolloutWorkflow` base class
@@ -17,21 +21,24 @@ This project implements a Tool-Integrated Reasoning agent that can solve complex
   - Integrates reward function calculation
 
 #### 1.2 ToolManager (`tool_manager.py`)
+
 - **Function**: Tool manager responsible for coordinating tool calls
 - **Supported Tools**:
   - **Python Executor**: Executes Python code for mathematical calculations
   - **Calculator**: Basic mathematical operations
 - **Key Features**:
   - Tool registration and routing mechanism
-  - Secure code execution environment 
+  - Secure code execution environment
   - Unified tool calling interface
 
 #### 1.3 Tool Implementation (`tools/`)
+
 - **BaseTool** (`tools/base.py`): Tool base class that defines tool interfaces
-- **QwenPythonTool** (`tools/python_tool.py`): Python code execution tool
+- **PythonTool** (`tools/python_tool.py`): Python code execution tool
 - **CalculatorTool** (`tools/calculator_tool.py`): Mathematical calculation tool
 
 #### 1.4 Training Script (`train_tir.py`)
+
 - **Function**: Complete training pipeline implementation
 - **Features**:
   - Integrates AReaL's GRPO training framework
@@ -42,6 +49,7 @@ This project implements a Tool-Integrated Reasoning agent that can solve complex
 #### 2.1 Tool Calling Format
 
 Execute Python code
+
 ```python
 # Initialize the count of concave numbers
 count = 0
@@ -63,22 +71,25 @@ print(count)
 output: 120
 ```
 
-
 Mathematical calculation
+
 ```
 <calculator>1 + 2 * 3</calculator>
 ```
+
 ```python
 output: 6
 ```
 
 #### 2.2 Streaming Generation and Tool Call Detection
+
 Main process:
+
 1. Model pauses when generating to tool call markers
-2. Detect and parse tool call content
-3. Execute tools in a secure environment
-4. Integrate tool results into the conversation
-5. Continue generating subsequent content
+1. Detect and parse tool call content
+1. Execute tools in a secure environment
+1. Integrate tool results into the conversation
+1. Continue generating subsequent content
 
 Core logic can be found in `examples/tir/tir_workflow.py`
 
@@ -87,11 +98,12 @@ Core logic can be found in `examples/tir/tir_workflow.py`
 ### 1. Setup
 
 1. Follow `docs/tutorial/installation.md` for basic environment installation
-2. Install qwen_agent: `pip install qwen_agent -y`
+1. Install qwen_agent: `pip install qwen_agent`
 
 ### 2. Data Preparation
 
-The project uses mathematical reasoning datasets. Using the ToRL dataset as an example, the data format is as follows:
+The project uses mathematical reasoning datasets. Using the ToRL dataset as an example,
+the data format is as follows:
 
 ```json
 {"messages": [{"role": "user", "content": "What is 15 + 27?"}], "answer": "42"}
@@ -125,9 +137,7 @@ tir:
   enable_tools: python;calculator
 ```
 
-
 ### 4. Start Training
-
 
 **Single-machine Multi-GPU Training**
 
@@ -141,33 +151,36 @@ python3 -m areal.launcher.local \
 
 TODO
 
-
 ## Training Results
 
 ### 1. Experimental Setup
 
-- Training used [Qwen2.5-Math-1.5B](https://huggingface.co/Qwen/Qwen2.5-Math-1.5B) as the base model.
+- Training used [Qwen2.5-Math-1.5B](https://huggingface.co/Qwen/Qwen2.5-Math-1.5B) as
+  the base model.
 - Reward is based solely on whether the result is correct.
-- Training prompts reference [ToRL](https://arxiv.org/pdf/2503.23383), only hinting that the model can use programming tools. See `examples/tir/prompts.py` for details.
+- Training prompts reference [ToRL](https://arxiv.org/pdf/2503.23383), only hinting that
+  the model can use programming tools. See `examples/tir/prompts.py` for details.
 
 ### 2. Training Curves
-
 
 Key metric changes during training:
 
 - **Reward Curve**:
 
   **grpo_actor/task_reward**
-  
+
   <img src="figures/task_reward.png" alt="Reward Curve" width="600"/>
 
-  The yellow line shows TIR's reward, demonstrating approximately 15% accuracy advantage over pure GRPO training.
+  The yellow line shows TIR's reward, demonstrating approximately 15% accuracy advantage
+  over pure GRPO training.
 
 - **Tool Usage Frequency**:
 
   <img src="figures/tool_call_count.png" alt="Tool Call Count" width="600"/>
 
-  Changes in tool call count and success rate. As training progresses, the number of tool calls per answer increases from 0.9 to 1.2, while tool call success rate shows no significant change.
+  Changes in tool call count and success rate. As training progresses, the number of
+  tool calls per answer increases from 0.9 to 1.2, while tool call success rate shows no
+  significant change.
 
 ## File Structure
 
@@ -189,7 +202,6 @@ examples/tir/
 └── utils/                      # Utility functions
     └── __init__.py
 ```
-
 
 ## TODOs
 

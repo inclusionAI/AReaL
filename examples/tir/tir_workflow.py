@@ -1,7 +1,7 @@
 import asyncio
 import copy
-import uuid
 import re
+import uuid
 from typing import Any, Dict, Optional, Tuple
 
 import torch
@@ -16,14 +16,15 @@ from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
 
+from .prompts import ANSWER, SYSTEM_PROMPT, TORL_PROMPT
 from .tool_manager import ToolCallStatus, ToolManager
-from .prompts import SYSTEM_PROMPT, BASE_MODEL_PROMPT, TORL_PROMPT, ANSWER
 
 logger = logging.getLogger("TIR workflow")
 
+
 class TIRWorkflow(RolloutWorkflow):
     """Tool-Integrated Reasoning Workflow for multi-turn tool calling."""
-    
+
     def __init__(
         self,
         reward_fn,
@@ -38,7 +39,9 @@ class TIRWorkflow(RolloutWorkflow):
         self.reward_fn = reward_fn
         self.gconfig = gconfig
         self.tokenizer = tokenizer
-        self.tool_manager = ToolManager(tir_config.tool_timeout, tir_config.enable_tools, debug_mode=False)
+        self.tool_manager = ToolManager(
+            tir_config.tool_timeout, tir_config.enable_tools, debug_mode=False
+        )
         self.is_chat_model = tir_config.is_chat_model
         self.max_turns = tir_config.max_turns
         self.max_length = tir_config.max_length
@@ -46,23 +49,27 @@ class TIRWorkflow(RolloutWorkflow):
         self.rollout_stat_scope = rollout_stat_scope
         self.dump_dir = dump_dir
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
-        
+
         self.start_markers = self.tool_manager.get_all_start_markers()
         self.end_markers = self.tool_manager.get_all_end_markers()
 
-        logger.info(f"start markers: {self.start_markers}, end markers {self.end_markers}")
-    
+        logger.info(
+            f"start markers: {self.start_markers}, end markers {self.end_markers}"
+        )
+
     @staticmethod
     def _process_tool_result(tool_result) -> str:
         try:
             run_result, run_status = eval(tool_result)
-        except Exception as e:
+        except Exception:
             run_result = tool_result
-            run_status = 'Done'
-        res = run_result if run_status == 'Done' else f"Error: {run_status}"
+            run_status = "Done"
+        res = run_result if run_status == "Done" else f"Error: {run_status}"
         return f"\n```output\n{res}\n```\n"
-    
-    async def arun_episode(self, engine: InferenceEngine, data: Dict[str, Any]) -> TensorDict:
+
+    async def arun_episode(
+        self, engine: InferenceEngine, data: Dict[str, Any]
+    ) -> TensorDict:
         """Run a complete TIR inference episode.
         :param engine: The inference engine.
         :param data: The input data.
@@ -72,13 +79,14 @@ class TIRWorkflow(RolloutWorkflow):
         messages = data["messages"]
 
         # Add system prompt with tool usage instructions
-        system_prompt = SYSTEM_PROMPT.format(tool_descriptions=self.tool_manager.get_tool_descriptions_prompt())
+        system_prompt = SYSTEM_PROMPT.format(
+            tool_descriptions=self.tool_manager.get_tool_descriptions_prompt()
+        )
         if messages[0]["role"] == "system":
             messages[0]["content"] = system_prompt
         else:
-            messages.insert(0, {"role": "system", 
-                                "content": system_prompt})
-        
+            messages.insert(0, {"role": "system", "content": system_prompt})
+
         # Prepare input
         if self.is_chat_model:
             input_ids = self.tokenizer.apply_chat_template(
@@ -88,12 +96,20 @@ class TIRWorkflow(RolloutWorkflow):
                 enable_thinking=self.enable_thinking,
             )
         else:
-            input_ids = self.tokenizer.encode(TORL_PROMPT.format(prompt=messages[1]["content"]), add_special_tokens=False)
+            input_ids = self.tokenizer.encode(
+                TORL_PROMPT.format(prompt=messages[1]["content"]),
+                add_special_tokens=False,
+            )
 
         n_samples = self.gconfig.n_samples
         # Append conversation history
-        results = await asyncio.gather(*[self._multi_round_response(engine, input_ids, data) for _ in range(n_samples)])
-        
+        results = await asyncio.gather(
+            *[
+                self._multi_round_response(engine, input_ids, data)
+                for _ in range(n_samples)
+            ]
+        )
+
         return concat_padded_tensors(results)
 
     async def _multi_round_response(self, engine, prompt_ids, data):
@@ -122,18 +138,20 @@ class TIRWorkflow(RolloutWorkflow):
                 break
 
             # Generate response
-            resp, stop_reason = await self._generate_response(engine, context_ids, max_len, waiting_for_tool_start)
+            resp, stop_reason = await self._generate_response(
+                engine, context_ids, max_len, waiting_for_tool_start
+            )
 
             context_ids.extend(resp.output_tokens)
             seq.extend(resp.output_tokens)
             logprobs.extend(resp.output_logprobs)
             loss_mask.extend([1] * resp.output_len)
             versions.extend(resp.output_versions)
-            
+
             cur_completions_str = self.tokenizer.decode(resp.output_tokens)
             completions_str += cur_completions_str
             output_ids.extend(resp.output_tokens)
-        
+
             # End token, truncate
             if context_ids[-1] in [
                 self.tokenizer.pad_token_id,
@@ -156,19 +174,30 @@ class TIRWorkflow(RolloutWorkflow):
                     continue
 
             # If tool call is detected, execute tool call
-            if not waiting_for_tool_start and stop_reason == "stop" and tool_start_idx != -1:
-                tool_results, tool_status = self._execute_tools(completions_str[tool_start_idx:])
+            if (
+                not waiting_for_tool_start
+                and stop_reason == "stop"
+                and tool_start_idx != -1
+            ):
+                tool_results, tool_status = self._execute_tools(
+                    completions_str[tool_start_idx:]
+                )
                 if tool_status == ToolCallStatus.NOT_FOUND:
                     # No match found, continue generating until next tool end marker
                     continue
                 turn += 1
                 has_tool = True
                 tool_call_count += 1  # Increment tool call count
-                if tool_status == ToolCallStatus.SUCCESS and "Error" not in tool_results:
+                if (
+                    tool_status == ToolCallStatus.SUCCESS
+                    and "Error" not in tool_results
+                ):
                     tool_success_count += 1
                 tool_results = self._process_tool_result(tool_results)
                 # Append tool response token IDs
-                tool_rsp_token_ids=self.tokenizer.encode(tool_results, add_special_tokens=False)
+                tool_rsp_token_ids = self.tokenizer.encode(
+                    tool_results, add_special_tokens=False
+                )
                 # Concatenate to seq
                 # Build tool mask
                 context_ids.extend(tool_rsp_token_ids)
@@ -177,7 +206,7 @@ class TIRWorkflow(RolloutWorkflow):
                 loss_mask.extend([0] * len(tool_rsp_token_ids))
                 versions.extend([-1] * len(tool_rsp_token_ids))
                 completions_str += tool_results
-                
+
                 # After tool execution completes, reset state flag to prepare for next tool call detection
                 waiting_for_tool_start = True
 
@@ -188,13 +217,12 @@ class TIRWorkflow(RolloutWorkflow):
             output_ids,
             tool_using=has_tool,
             tool_status=tool_call_count,
-            **data
+            **data,
         )
-        
+
         # Record tool call count to stats_tracker
         stats_tracker.get(self.rollout_stat_scope).scalar(
-            tool_call_count=tool_call_count,
-            tool_success_count=tool_success_count
+            tool_call_count=tool_call_count, tool_success_count=tool_success_count
         )
 
         res = dict(
@@ -202,14 +230,22 @@ class TIRWorkflow(RolloutWorkflow):
             logprobs=torch.tensor(logprobs[:max_len]).unsqueeze(0),
             loss_mask=torch.tensor(loss_mask[:max_len]).unsqueeze(0),
             versions=torch.tensor(versions[:max_len]).unsqueeze(0),
-            attention_mask=torch.ones(len(seq[:max_len]), dtype=torch.bool).unsqueeze(0),
+            attention_mask=torch.ones(len(seq[:max_len]), dtype=torch.bool).unsqueeze(
+                0
+            ),
             rewards=torch.tensor([float(reward)]),
         )
         return TensorDict(res, batch_size=[1])
 
-    async def _generate_response(self, engine: InferenceEngine, input_ids: list[int], max_len: int, waiting_for_tool_start: bool) -> Tuple[ModelResponse, str]:
+    async def _generate_response(
+        self,
+        engine: InferenceEngine,
+        input_ids: list[int],
+        max_len: int,
+        waiting_for_tool_start: bool,
+    ) -> Tuple[ModelResponse, str]:
         """Generate response with tool call detection support"""
-        
+
         # Select stop condition based on state flag
         if waiting_for_tool_start:
             # When waiting for tool start marker, use start_markers to stop
@@ -217,13 +253,12 @@ class TIRWorkflow(RolloutWorkflow):
         else:
             # Tool start detected, use end_markers to stop
             stop_markers = [marker for marker in self.end_markers]
-        
+
         # Set generation config, add tool call stop tokens
         gconfig = self.gconfig.new(
-            n_samples=1,
-            stop=[marker for marker in stop_markers]
+            n_samples=1, stop=[marker for marker in stop_markers]
         )
-        
+
         # Generate response
         req = ModelRequest(
             rid=uuid.uuid4().hex,
@@ -231,7 +266,7 @@ class TIRWorkflow(RolloutWorkflow):
             gconfig=gconfig,
             tokenizer=self.tokenizer,
         )
-        
+
         resp = await engine.agenerate(req)
         return resp, resp.stop_reason
 
@@ -241,7 +276,7 @@ class TIRWorkflow(RolloutWorkflow):
             if text.endswith(marker):
                 return marker
         return None
-    
+
     def _execute_tools(self, response: str) -> str:
         """Execute tool call"""
         # Call execute_tool_call

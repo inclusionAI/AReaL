@@ -147,7 +147,7 @@ stats_logger:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   wandb:
-    mode: online
+    mode: disabled
 
 launcher:
   inference_server_cpus_per_gpu: 4
