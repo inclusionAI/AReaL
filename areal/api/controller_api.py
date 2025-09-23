@@ -21,9 +21,17 @@ if TYPE_CHECKING:
     from areal.api.workflow_api import RolloutWorkflow
 
 
-# TODO: this is a dummy class for type annotation
 class DistributedBatchMemory:
-    pass
+    """
+    Represents a batch of data distributed across multiple workers in a distributed training setup.
+
+    This class is used for type annotation and interface documentation within the API.
+    It serves as a placeholder for objects that encapsulate distributed batch memory,
+    which may span multiple devices or processes during distributed training workflows.
+
+    Actual implementation details are provided by the underlying distributed data handling
+    mechanisms. This class exists to clarify the expected structure and usage in controller APIs.
+    """
 
 
 class TrainController(abc.ABC):
@@ -170,8 +178,8 @@ class TrainController(abc.ABC):
     def step_lr_scheduler(self):
         """Step the learning rate scheduler.
 
-        Since PPO uses minibatch updates, this method only needs to be called once
-        after several train_batch calls. It is separated from train_batch to allow
+        Since PPO uses minibatch updates, this method should be called periodically
+        (e.g., once per PPO step). It is separated from train_batch to allow
         for more flexible learning rate scheduling.
         """
         raise NotImplementedError()
@@ -518,7 +526,7 @@ class RolloutController(abc.ABC):
         """Register a callback function for the specified method across all workers.
 
         Partial rollout API. After successful registration, the controller will poll
-        and call the `method` method in a background thread. When the return value
+        and call the specified method in a background thread. When the return value
         is obtained, it will be used as a parameter to call the `callback` function.
 
         Parameters
@@ -533,7 +541,7 @@ class RolloutController(abc.ABC):
         raise NotImplementedError()
 
     def abort_all_requests(self) -> None:
-        """Abort all on-going requests in the inference engine.
+        """Abort all ongoing requests in the inference engine.
 
         Partial rollout API for canceling all queued and in-progress requests.
         """
