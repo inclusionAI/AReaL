@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+from transformers.utils.import_utils import is_torch_npu_available
 
 import areal.utils.logging as logging
 
@@ -11,16 +12,6 @@ from .platform import Platform
 from .unknown import UnknownPlatform
 
 logger = logging.getLogger("Platform init")
-
-
-def is_torch_npu_available() -> bool:
-    """Check the availability of NPU."""
-    try:
-        import torch_npu
-
-        return True
-    except ImportError:
-        return False
 
 
 is_npu_available = is_torch_npu_available()
@@ -45,6 +36,10 @@ def _init_platform() -> Platform:
         logger.warning("Unrecognized CUDA device. Falling back to UnknownPlatform.")
         return UnknownPlatform()
     elif is_npu_available:
+        from torch_npu.contrib import transfer_to_npu
+
+        # Prevent being marked as an unused package and deleted
+        _ = transfer_to_npu.is_available()
         logger.info("Initializing NPU platform (NPU).")
         return NPUPlatform()
     else:

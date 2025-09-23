@@ -114,6 +114,7 @@ def wait_rollout_server_addrs(
             )
     return rollout_addrs
 
+
 def validate_config_for_distributed_launcher(config):
     n_nodes = config.cluster.n_nodes
     n_gpus_per_node = config.cluster.n_gpus_per_node

@@ -16,9 +16,13 @@ from areal.api.io_struct import (
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
-from areal.platforms import is_npu_available, current_platform
+from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import cycle_dataloader, tensor_container_to, broadcast_tensor_container
+from areal.utils.data import (
+    broadcast_tensor_container,
+    cycle_dataloader,
+    tensor_container_to,
+)
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -27,10 +31,6 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
-
-if is_npu_available:
-    import torch_npu
-    from torch_npu.contrib import transfer_to_npu
 
 logger = logging.getLogger("boba_grpo")
 

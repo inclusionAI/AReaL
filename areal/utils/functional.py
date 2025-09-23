@@ -4,7 +4,6 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import torch
 import torch.distributed as dist
-from tensordict import TensorDict
 
 from areal.platforms import is_npu_available
 
