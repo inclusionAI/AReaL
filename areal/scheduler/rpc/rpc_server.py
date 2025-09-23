@@ -1,20 +1,21 @@
 import argparse
 import gzip
-from typing import AnyStr
-
-from realhf.base import logging
 import os
 import traceback
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import AnyStr
 
 import cloudpickle
-from http import HTTPStatus
+
+from realhf.base import logging
 
 logger = logging.getLogger("RPCServer")
 
 
 class EngineRPCServer(BaseHTTPRequestHandler):
     engine = None
+
     def _read_body(self, timeout=120.0) -> AnyStr:
         old_timeout = None
         try:
@@ -34,7 +35,9 @@ class EngineRPCServer(BaseHTTPRequestHandler):
         try:
             data = self._read_body()
         except Exception as e:
-            self.send_response(HTTPStatus.REQUEST_TIMEOUT)  # 408 means read request timeout
+            self.send_response(
+                HTTPStatus.REQUEST_TIMEOUT
+            )  # 408 means read request timeout
             self.end_headers()
             self.wfile.write(
                 f"Exception: {e}\n{traceback.format_exc()}".encode("utf-8")
@@ -62,9 +65,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 action, args, kwargs = cloudpickle.loads(data)
                 method = getattr(EngineRPCServer.engine, action)
                 # NOTE: DO NOT print args here, args may be a very huge tensor
-                logger.info(
-                    f"RPC server calling engine method: {action}"
-                )
+                logger.info(f"RPC server calling engine method: {action}")
                 result = method(*args, **kwargs)
                 self.send_response(HTTPStatus.OK)
                 self.end_headers()

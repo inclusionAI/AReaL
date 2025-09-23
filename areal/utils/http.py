@@ -89,8 +89,10 @@ async def arequest_with_retry(
         f"Last error: {last_exception}"
     )
 
+
 def response_ok(http_code: int) -> bool:
     return http_code == HTTPStatus.OK
+
 
 def response_retryable(http_code: int) -> bool:
     return http_code == HTTPStatus.REQUEST_TIMEOUT

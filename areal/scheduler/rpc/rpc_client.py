@@ -44,9 +44,13 @@ class RPCClient:
         req = (method, args, kwargs)
         serialized_data = cloudpickle.dumps(req)
 
-        return self.call_engine_with_serialized_data(worker_id, serialized_data, max_retries)
+        return self.call_engine_with_serialized_data(
+            worker_id, serialized_data, max_retries
+        )
 
-    def call_engine_with_serialized_data(self, worker_id: str, serialized_data: bytes, max_retries=3):
+    def call_engine_with_serialized_data(
+        self, worker_id: str, serialized_data: bytes, max_retries=3
+    ):
         """
         数据面调用（带序列化数据），支持异常和503状态码重试
         """
@@ -64,9 +68,13 @@ class RPCClient:
                 if response_ok(resp.status_code):
                     return cloudpickle.loads(resp.content)
                 elif response_retryable(resp.status_code):
-                    last_exception = RuntimeError(f"Retryable HTTP status {resp.status_code}: {resp.content}")
+                    last_exception = RuntimeError(
+                        f"Retryable HTTP status {resp.status_code}: {resp.content}"
+                    )
                 else:
-                    raise RuntimeError(f"Non-retryable HTTP error: {resp.status_code} - {resp.content}")
+                    raise RuntimeError(
+                        f"Non-retryable HTTP error: {resp.status_code} - {resp.content}"
+                    )
 
             except (RuntimeError, TimeoutError) as e:
                 logger.error(f"stop retrying, error on attempt {attempt + 1}: {e}")
@@ -77,7 +85,9 @@ class RPCClient:
 
             if last_exception is not None:
                 if attempt < max_retries - 1:
-                    logger.warning(f"Retrying in 1 second... ({attempt + 1}/{max_retries})")
+                    logger.warning(
+                        f"Retrying in 1 second... ({attempt + 1}/{max_retries})"
+                    )
                     time.sleep(1)
                     continue
                 else:
