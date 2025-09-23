@@ -258,7 +258,3 @@ class ToolManager:
         else:
             logger.error(f"Tool execution error: {result}")
             return f"Error: Tool execution failed - {result}", status
-
-    def cleanup(self):
-        """Clean up resources"""
-        logger.info("ToolManager cleanup completed")

@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import copy
 import re
@@ -60,7 +61,7 @@ class TIRWorkflow(RolloutWorkflow):
     @staticmethod
     def _process_tool_result(tool_result) -> str:
         try:
-            run_result, run_status = eval(tool_result)
+            run_result, run_status = ast.literal_eval(tool_result)
         except Exception:
             run_result = tool_result
             run_status = "Done"
@@ -277,7 +278,7 @@ class TIRWorkflow(RolloutWorkflow):
                 return marker
         return None
 
-    def _execute_tools(self, response: str) -> str:
+    def _execute_tools(self, response: str) -> Tuple[str, ToolCallStatus]:
         """Execute tool call"""
         # Call execute_tool_call
         tool_results = self.tool_manager.execute_tool_call(response)
