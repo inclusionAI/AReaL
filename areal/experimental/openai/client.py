@@ -2,7 +2,7 @@ import json
 import os
 import time
 import uuid
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from copy import deepcopy
 from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Tuple, Union
 
@@ -208,7 +208,10 @@ class ArealOpenAI(AsyncOpenAI):
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
-        self._completion_cache: Dict[str, CompletionWithTokenLogpReward] = {}
+        # Use an ordered dict to maintain insertion order of completions
+        self._completion_cache: OrderedDict[str, CompletionWithTokenLogpReward] = (
+            OrderedDict()
+        )
 
         # Override chat.completions with our extended implementation
         self.chat.completions = AsyncCompletionsWithReward(
@@ -235,11 +238,10 @@ class ArealOpenAI(AsyncOpenAI):
         self, turn_discount: float = 1.0, return_leaf_only: bool = False
     ) -> Dict[str, CompletionWithTokenLogpReward]:
         # Assign rewards to completions in cache based on their created time
-        comp_time_sequence = sorted(
-            list(self._completion_cache.values()),
-            key=lambda comp: comp.completion.created,
-            reverse=True,
+        comp_time_sequence = reversed(
+            [comp for _, comp in self._completion_cache.items()]
         )
+
         # Check if the last-created completion has a reward set
         if comp_time_sequence:
             if comp_time_sequence[0].reward is None:
@@ -344,4 +346,4 @@ class ArealOpenAI(AsyncOpenAI):
                     leaf_only[cid] = obj
             return leaf_only
         else:
-            return self._completion_cache.copy()
+            return dict(**self._completion_cache)
