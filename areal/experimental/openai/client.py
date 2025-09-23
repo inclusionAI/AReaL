@@ -328,19 +328,11 @@ class ArealOpenAI(AsyncOpenAI):
             child_info["obj"].parent = best_parent
 
         # Build children mapping for discount propagation
-        children_map: Dict[
-            CompletionWithTokenLogpReward, List[CompletionWithTokenLogpReward]
-        ] = defaultdict(list)
+        children_map: Dict[str, List[CompletionWithTokenLogpReward]] = defaultdict(list)
         for _, info in meta.items():
             obj = info["obj"]
             if obj.parent is not None:
-                children_map[obj.parent].append(obj)
-
-        # Sort children of each node deterministically by id string
-        for parent, ch_list in children_map.items():
-            ch_list.sort(
-                key=lambda c: next((k for k, v in meta.items() if v["obj"] is c), "")
-            )
+                children_map[obj.parent.id].append(obj)
 
         if return_leaf_only:
             # Return only leaf nodes (nodes without children)
@@ -348,9 +340,8 @@ class ArealOpenAI(AsyncOpenAI):
             leaf_only: Dict[str, CompletionWithTokenLogpReward] = {}
             for cid, info in meta.items():
                 obj = info["obj"]
-                if obj not in parents_with_children:
+                if obj.id not in parents_with_children:
                     leaf_only[cid] = obj
-
             return leaf_only
         else:
             return self._completion_cache.copy()

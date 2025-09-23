@@ -64,8 +64,8 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         tokenizer: PreTrainedTokenizerFast,
         dump_dir: str | None = None,
         n_trajs: int = 1,
-        topk: int = 10,
-        max_tokens: int = 30000,
+        max_tokens: int = 32768,
+        max_llm_calls_per_run: int = 100,
         judge_engine: RemoteSGLangEngine | None = None,
     ):
         self.gconfig = gconfig
@@ -78,9 +78,13 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
 
         # Search hyper-parameters
         self.n_trajs = n_trajs
-        self.topk = topk
         self.judge_client = ArealOpenAI(engine=judge_engine, tokenizer=tokenizer)
-        self.agent = MultiTurnReactAgent(tokenizer=self.tokenizer)
+        self.agent = MultiTurnReactAgent(
+            tokenizer=self.tokenizer,
+            max_tokens_per_turn=self.gconfig.max_new_tokens,
+            max_llm_calls_per_run=max_llm_calls_per_run,
+            max_total_tokens=max_tokens,
+        )
 
     async def arun_episode(self, engine, data):
         # Get the unique identifier for this prompt
@@ -135,6 +139,18 @@ class AgentRLConfig(GRPOConfig):
         default=1,
         metadata={
             "help": "We could collect multiple trajectories for a single query. By default n_trajs=1."
+        },
+    )
+    max_llm_calls_per_run: int = field(
+        default=100,
+        metadata={
+            "help": "Maximum number of LLM calls per trajectory. By default max_llm_calls_per_run=100."
+        },
+    )
+    max_tokens_per_trajectory: int = field(
+        default=32768,
+        metadata={
+            "help": "Maximum number of tokens per trajectory. By default max_tokens_per_trajectory=32768."
         },
     )
     # Logging Agent Trajectories
@@ -219,19 +235,15 @@ def main(args):
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-    workflow = ASearcherReasoningWorkflow(
+    workflow = TongyiDeepResearchReactWorkflow(
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
-        dataset_path=config.train_dataset.path,
-        max_turns=config.max_turns,
-        force_turns=config.force_turns,
         n_trajs=config.n_trajs,
-        search_client_type=config.search_client_type,
-        topk=config.topk,
-        max_tokens=config.gconfig.max_new_tokens,
+        max_tokens=config.max_tokens_per_trajectory,
+        max_llm_calls_per_run=config.max_llm_calls_per_run,
         judge_engine=judge_engine,
     )
 
