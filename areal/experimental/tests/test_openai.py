@@ -713,10 +713,10 @@ async def test_tree_multi_round_conversation(openai_client):
 
     # Export completions of leaf nodes, check whether all leaves are present
     leaf_completions = openai_client.export_completions(
-        turn_discount=0.9, return_leaf_only=True
+        turn_discount=0.9, reward_propagation_style="tree"
     )
     all_completions = openai_client.export_completions(
-        turn_discount=0.9, return_leaf_only=False
+        turn_discount=0.0, reward_propagation_style="linear"
     )
     assert set(leaf_completions.keys()) == {c_a1.id, c_a2.id, c_b1.id}
     assert set(all_completions.keys()) == {

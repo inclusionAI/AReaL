@@ -242,10 +242,9 @@ class ArealOpenAI(AsyncOpenAI):
 
         if reward_propagation_style == "linear":
             # Assign rewards to completions in cache based on their created time
-            comp_time_sequence = reversed(
-                [comp for _, comp in self._completion_cache.items()]
+            comp_time_sequence = list(
+                reversed([comp for _, comp in self._completion_cache.items()])
             )
-
             # Check if the last-created completion has a reward set
             if comp_time_sequence:
                 if comp_time_sequence[0].reward is None:
