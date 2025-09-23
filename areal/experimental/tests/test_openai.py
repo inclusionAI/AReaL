@@ -16,9 +16,9 @@ from areal.utils.hf_utils import load_hf_tokenizer
 
 EXPR_NAME = "test_openai"
 TRIAL_NAME = "trial_0"
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B/"
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen2-0.5B"
+    MODEL_PATH = "Qwen/Qwen3-1.7B"
 PORT, DIST_PORT = network.find_free_ports(2)
 HOST = network.gethostip()
 # set a large timeout since we may need to download the model from hub
@@ -425,7 +425,7 @@ async def test_multi_round_conversation_with_thinking(openai_client):
         },
         {"role": "user", "content": "What is 15 * 24? Please think step-by-step."},
     ]
-    c1 = await openai_client.chat.completions.create(messages=messages, max_tokens=2048)
+    c1 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
 
     # Round 2 - Strip thinking from previous response
     cleaned_assistant_content = strip_thinking_tags(c1.choices[0].message.content)
@@ -436,7 +436,7 @@ async def test_multi_round_conversation_with_thinking(openai_client):
             "content": "Now what is 360 divided by 12? Please think step-by-step.",
         },
     ]
-    c2 = await openai_client.chat.completions.create(messages=messages, max_tokens=2048)
+    c2 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
 
     # Round 3 - Continue conversation, stripping thinking from previous response
     cleaned_assistant_content_2 = strip_thinking_tags(c2.choices[0].message.content)
@@ -447,7 +447,7 @@ async def test_multi_round_conversation_with_thinking(openai_client):
             "content": "Great! Can you explain why division by 12 gave us 30?  Please think step-by-step.",
         },
     ]
-    c3 = await openai_client.chat.completions.create(messages=messages, max_tokens=2048)
+    c3 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
 
     # Verify conversation history
     stored_messages_c2 = openai_client.get_completions(c2.id).messages
@@ -492,7 +492,7 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
         },
     ]
     c1 = await openai_client.chat.completions.create(
-        messages=messages, tools=tools, tool_choice="auto", max_tokens=2048
+        messages=messages, tools=tools, tool_choice="auto", max_tokens=1024
     )
 
     # Round 2 - Provide tool result and ask follow-up, stripping thinking from previous response
@@ -510,7 +510,7 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
         },
     ]
     c2 = await openai_client.chat.completions.create(
-        messages=messages, tools=tools, tool_choice="auto", max_tokens=2048
+        messages=messages, tools=tools, tool_choice="auto", max_tokens=1024
     )
 
     # Round 3 - Continue with tool result
@@ -527,7 +527,7 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
             "content": "That's quite expensive! What would be the cost per square foot instead?  Please think step-by-step.",
         },
     ]
-    c3 = await openai_client.chat.completions.create(messages=messages, max_tokens=2048)
+    c3 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
 
     # Verify conversation history
     stored_messages_c2 = openai_client.get_completions(c2.id).messages
