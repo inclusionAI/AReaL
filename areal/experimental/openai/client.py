@@ -252,11 +252,11 @@ class ArealOpenAI(AsyncOpenAI):
                         "The most recent completion does not have a reward set. "
                         "All completions will have None reward."
                     )
-                    comp_time_sequence[0].reward = 0
+                    comp_time_sequence[0].reward = 0.0
                 # Propagate rewards backwards with discounting if reward is not set
                 for i in range(1, len(comp_time_sequence)):
                     if comp_time_sequence[i].reward is None:
-                        comp_time_sequence[i].reward = 0
+                        comp_time_sequence[i].reward = 0.0
                     comp_time_sequence[i].reward += (
                         comp_time_sequence[i - 1].reward * turn_discount
                     )

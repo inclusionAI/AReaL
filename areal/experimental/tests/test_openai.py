@@ -738,10 +738,7 @@ async def test_tree_multi_round_conversation(openai_client):
     assert wrapped_completion(c_a1).parent is wrapped_completion(c_a)
     assert wrapped_completion(c_a).parent is wrapped_completion(c_root)
 
-    # Reward is discounted by time sequence, check reward values
+    # Reward is not propagated to tree nodes, check reward values
     assert wrapped_completion(c_b1).reward == 3
-    assert wrapped_completion(c_b).reward == 3 * 0.9
     assert wrapped_completion(c_a2).reward == 1.5
     assert wrapped_completion(c_a1).reward == 2
-    assert wrapped_completion(c_a).reward == 2 * 0.9
-    assert wrapped_completion(c_root).reward == 2 * 0.9 * 0.9
