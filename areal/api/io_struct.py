@@ -130,7 +130,9 @@ class WeightUpdateMeta:
         nccl_group_name: str = "update_weight_group",
         weight_chunked_mem_mb: int = 1024,
     ):
+
         param_specs = fsdp_engine.get_param_specs(weight_chunked_mem_mb)
+
         return cls(
             type=current_platform.communication_backend,
             alloc_mode=allocation_mode,

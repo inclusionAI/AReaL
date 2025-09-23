@@ -240,6 +240,9 @@ class PPOActor:
             data.pop(key, None)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
         self.engine.train()
+
+        self.engine.handle_manual_load()
+
         mb_inputs = split_padded_tensor_dict_into_mb_list(
             data,
             mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
@@ -262,6 +265,9 @@ class PPOActor:
                 stats_tracker.export(reduce_group=self.engine.data_parallel_group)
             )
         all_stats[0].update(global_stats)
+
+        self.engine.handle_manual_offload()
+
         return all_stats
 
 
