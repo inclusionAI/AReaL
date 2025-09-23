@@ -32,9 +32,6 @@ if is_npu_available:
 
 logger = logging.getLogger("boba_grpo")
 
-logger = logging.getLogger("boba math")
-
-
 REWARD_TIMEOUT_SECONDS = 30
 
 
@@ -134,7 +131,7 @@ def main(args):
         rollout = RemotevLLMEngine(config.rollout)
     elif allocation_mode.gen_backend == "sglang":
         rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(None, ft_spec)
+    rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
     # Initialize train engine
     actor.initialize(None, ft_spec)
