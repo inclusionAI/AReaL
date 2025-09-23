@@ -2,13 +2,14 @@ import itertools
 import os
 import sys
 from copy import deepcopy
+from dataclasses import dataclass, field
 
 import torch
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import TIRGRPOConfig, load_expr_config
+from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
@@ -28,6 +29,20 @@ from areal.utils.stats_logger import StatsLogger
 from examples.tir.tir_workflow import TIRWorkflow
 
 logger = logging.getLogger("TIR Training")
+
+
+@dataclass
+class TIRConfig:
+    max_turns: int = field(default=2)
+    max_length: int = field(default=3000)
+    tool_timeout: float = field(default=30)
+    enable_tools: str = field(default="python")
+    is_chat_model: bool = field(default=False)
+
+
+@dataclass
+class TIRGRPOConfig(GRPOConfig):
+    tir: TIRConfig = field(default_factory=TIRConfig)
 
 
 def math_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
