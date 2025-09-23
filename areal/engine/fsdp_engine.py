@@ -436,7 +436,9 @@ class FSDPEngine(BaseHFEngine):
                 inputs["input_ids"] = ulysses_input_ids
                 if ulysses_position_ids is not None:
                     inputs["position_ids"] = ulysses_position_ids
-                inputs = ulysses_pad_and_slice_loss_inputs(inputs, padded_mb_input, self.sp_world_size)
+                inputs = ulysses_pad_and_slice_loss_inputs(
+                    inputs, padded_mb_input, self.parallel_helper.sp_size
+                )
             else:
                 inputs = padded_mb_input
 
@@ -541,14 +543,16 @@ class FSDPEngine(BaseHFEngine):
                 inputs["input_ids"] = ulysses_input_ids
                 if ulysses_position_ids is not None:
                     inputs["position_ids"] = ulysses_position_ids
-                inputs = ulysses_pad_and_slice_loss_inputs(inputs, padded_mb_input, self.sp_world_size)
+                inputs = ulysses_pad_and_slice_loss_inputs(
+                    inputs, self.parallel_helper.sp_size
+                )
             else:
                 inputs = padded_mb_input
 
             outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
-            if self.sp_world_size > 1:
+            if self.parallel_helper.sp_size > 1:
                 # Gather and remove Ulysses padding
                 gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
                 logits = torch.cat(gathered_logits, dim=0)
