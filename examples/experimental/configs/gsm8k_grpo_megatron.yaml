@@ -54,7 +54,10 @@ actor:
     warmup_steps_proportion: 0.001
   backend: megatron
   group_size: ${gconfig.n_samples}
-  group_adv_norm: false
+  adv_norm:
+    mean_level: group
+    std_level: group
+    group_size: ${gconfig.n_samples}
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0

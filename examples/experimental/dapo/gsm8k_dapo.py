@@ -1,4 +1,3 @@
-import itertools
 import os
 import sys
 from copy import deepcopy
@@ -14,7 +13,11 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container
+from areal.utils.data import (
+    broadcast_tensor_container,
+    cycle_dataloader,
+    tensor_container_to,
+)
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -164,7 +167,7 @@ def main(args):
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    data_generator = itertools.cycle(train_dataloader)
+    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -190,7 +193,7 @@ def main(args):
                         workflow=workflow,
                         should_accept=lambda sample: True,
                     )
-                batch = batch.to(actor.device)
+                batch = tensor_container_to(batch, actor.device)
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
@@ -259,14 +262,17 @@ def main(args):
         with stats_tracker.record_timing("eval"):
 
             def evaluate_fn():
-                # Stats are logged in workflow
-                # and will be exported later
-                cnt = 0
-                for data in valid_dataloader:
-                    for item in data:
-                        eval_rollout.submit(item, eval_workflow)
-                        cnt += 1
-                eval_rollout.wait(cnt, timeout=None)
+                if actor.is_data_parallel_head():
+                    # Stats are logged in workflow
+                    # and will be exported later
+                    cnt = 0
+                    for data in valid_dataloader:
+                        for item in data:
+                            eval_rollout.submit(item, eval_workflow)
+                            cnt += 1
+                    eval_rollout.wait(cnt, timeout=None)
+                dist.barrier(device_ids=[actor.device.index])
+                current_platform.synchronize()
 
             evaluator.evaluate(
                 evaluate_fn,

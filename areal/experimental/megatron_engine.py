@@ -17,7 +17,6 @@ from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.utils import get_model_config
-from tensordict import TensorDict
 
 from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
 from areal.api.cli_args import MicroBatchSpec
@@ -110,6 +109,16 @@ class MegatronEngine(TrainEngine):
         self.tokenizer = load_hf_tokenizer(self.config.path)
         self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
         self.bridge.dtype = self.dtype
+        # Set gradient checkpointing options
+        if self.config.gradient_checkpointing:
+            self.bridge.set_extra_args(
+                recompute_granularity=self.mcore_config.recompute_granularity,
+                recompute_method=self.mcore_config.recompute_method,
+                recompute_num_layers=self.mcore_config.recompute_num_layers,
+                distribute_saved_activations=self.mcore_config.distribute_saved_activations,
+                recompute_modules=self.mcore_config.recompute_modules,
+            )
+
         self.logger.info(
             "Using mbridge to create models and hf model save/load in MegatronEngine."
         )
@@ -416,16 +425,14 @@ class MegatronEngine(TrainEngine):
             max_workers=None,
         )
 
-    def prepare_mb_list(self, input_: TensorDict) -> MicroBatchList:
+    def prepare_mb_list(self, input_: Dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
-        if isinstance(input_, dict):
-            input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
         input_ = amend_position_ids(input_)
         # Parallel sizes
         pp_size = self.parallel_strategy.pipeline_parallel_size
         cp_size = self.parallel_strategy.context_parallel_size
         tp_size = self.parallel_strategy.tensor_parallel_size
-        # Split the input tensor dict into micro-batches
+        # Split the input into micro-batches
         # NOTE: Here we use 2*pp_size in forward to align logprob precision
         # TODO: Performance check
         min_n_mbs = (
@@ -464,7 +471,6 @@ class MegatronEngine(TrainEngine):
             f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}."
         )
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
-        # TODO: remove the usage of tensordict
         # Modern model implementations takes a dict as the input.
         # This eliminates a bug of Qwen2.5-VL for transformers<=4.53.1
         for i, mb in enumerate(mb_list.mbs):
@@ -483,9 +489,9 @@ class MegatronEngine(TrainEngine):
 
     def train_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, Any]], float],
     ) -> Dict[str, float]:
         assert self.model is not None, "Model is not initialized."
         assert self.optimizer is not None, "Optimizer is not initialized."
@@ -562,9 +568,9 @@ class MegatronEngine(TrainEngine):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, Any]], float],
     ) -> torch.Tensor | None:
         assert self.model is not None, "Model is not initialized."
         # Assume input_ is identical across context and model parallel group
@@ -630,9 +636,9 @@ class MegatronEngine(TrainEngine):
     @torch.no_grad()
     def forward(
         self,
-        input_: TensorDict,
+        input_: Dict[str, Any],
         output_seqlens: List[int] | None = None,
-        post_hook: Callable[[torch.Tensor, TensorDict], Any] | None = None,
+        post_hook: Callable[[torch.Tensor, Dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         assert self.model is not None, "Model is not initialized."

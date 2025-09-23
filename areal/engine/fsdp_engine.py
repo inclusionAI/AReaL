@@ -9,7 +9,6 @@ import torch
 import torch.distributed as dist
 import torch.distributed.nn.functional as dist_F
 import torch.nn as nn
-from tensordict import TensorDict
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
@@ -48,7 +47,7 @@ from areal.utils.fsdp import (
     fsdp2_clip_grad_norm,
     fsdp2_load_full_state_dict,
 )
-from areal.utils.model import VALID_VISION_MODELS
+from areal.utils.model import VALID_VISION_MODELS, is_gemma3_model
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
     set_ulysses_sequence_parallel_group,
@@ -175,14 +174,8 @@ class FSDPEngine(BaseHFEngine):
                 f"num_attention_heads {num_attention_heads} and num_key_value_heads {num_key_value_heads} must be divisible by tensor_parallel_size {self.tp_world_size}"
             )
 
-        # For root module
-        root_tp_plan: dict[str, ParallelStyle] = {
-            # All-gather
-            "lm_head": ColwiseParallel(
-                input_layouts=Shard(1),
-                output_layouts=Replicate(),
-            ),
-        }
+        if not isinstance(self.model.model, nn.Module):
+            raise RuntimeError("Model does not have the required submodule 'model'.")
 
         # For model or model.language_model
         model_tp_plan: dict[str, ParallelStyle] = {
@@ -224,8 +217,18 @@ class FSDPEngine(BaseHFEngine):
             "norm": SequenceParallel(),
         }
 
-        if not isinstance(self.model.model, nn.Module):
-            raise RuntimeError("Model does not have the required submodule 'model'.")
+        if is_gemma3_model(self.model_config.model_type):
+            model_tp_plan["layers.*.pre_feedforward_layernorm"] = SequenceParallel()
+            model_tp_plan["layers.*.post_feedforward_layernorm"] = SequenceParallel()
+
+        # For root module
+        root_tp_plan: dict[str, ParallelStyle] = {
+            # All-gather
+            "lm_head": ColwiseParallel(
+                input_layouts=Shard(1),
+                output_layouts=Replicate(),
+            ),
+        }
 
         if self.is_vision_model:
             if self.model_config.model_type not in VALID_VISION_MODELS:
@@ -470,19 +473,21 @@ class FSDPEngine(BaseHFEngine):
 
     def train_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, Any]], float],
     ) -> Dict[str, float]:
         """Train on a batch using gradient accumulation."""
-        input_ = input_.to(self.device)
         assert self.optimizer is not None
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
         assert self.fsdp_tp_device_mesh is not None
-        set_ulysses_sequence_parallel_group(self.sp_group)
+
+        if self.sp_world_size > 1:
+            set_ulysses_sequence_parallel_group(self.sp_group)
 
         self.optimizer.zero_grad()
+
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
@@ -578,14 +583,16 @@ class FSDPEngine(BaseHFEngine):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, Any]], float],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
+        if self.sp_world_size > 1:
+            set_ulysses_sequence_parallel_group(self.sp_group)
+
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
-        set_ulysses_sequence_parallel_group(self.sp_group)
 
         total_loss_weight = (
             sum([loss_weight_fn(mb) for mb in mb_list.mbs])
@@ -661,16 +668,18 @@ class FSDPEngine(BaseHFEngine):
     @torch.no_grad()
     def forward(
         self,
-        input_: TensorDict,
+        input_: Dict[str, Any],
         output_seqlens: List[int] | None = None,
-        post_hook: Callable[[torch.Tensor, TensorDict], Any] | None = None,
+        post_hook: Callable[[torch.Tensor, Dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""
+        if self.sp_world_size > 1:
+            set_ulysses_sequence_parallel_group(self.sp_group)
+
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
-        set_ulysses_sequence_parallel_group(self.sp_group)
 
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()

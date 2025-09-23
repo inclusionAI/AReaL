@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import uvloop
+import yaml
 
 uvloop.install()
 from hydra import compose as hydra_compose
@@ -18,36 +19,23 @@ from areal.utils.fs import get_user_tmp
 
 @dataclass
 class NormConfig:
-    """Configuration for advantage normalization."""
+    """Configuration for normalization."""
 
-    # TODO: add common fields of adv_norm and reward_norm
-
-
-@dataclass
-class AdvNormConfig(NormConfig):
-    """Advanced configuration for advantage normalization."""
-
-    mean_level: str = field(
+    mean_level: str | None = field(
         default="batch",
         metadata={
-            "help": "mean_level for advantage normalization. options: batch, group, none"
+            "help": "mean_level for normalization. choices: batch, group. Omit for no mean normalization."
         },
     )
-    std_level: str = field(
+    std_level: str | None = field(
         default="batch",
         metadata={
-            "help": "std_level for advantage normalization. options: batch, group, none"
+            "help": "std_level for normalization. choices: batch, group. Omit for no std normalization."
         },
     )
     group_size: int = field(
-        default=1, metadata={"help": "group_size for advantage normalization"}
+        default=1, metadata={"help": "group_size for group-level normalization"}
     )
-
-
-@dataclass
-class RewardNormConfig(NormConfig):
-    # TODO: implement reward normalization
-    pass
 
 
 @dataclass
@@ -58,6 +46,12 @@ class MicroBatchSpec:
         default=1,
         metadata={
             "help": "Number of micro-batches (or minimum number if max_tokens_per_mb is set). Used when max_tokens_per_mb is None or as minimum count",
+        },
+    )
+    granularity: int = field(
+        default=1,
+        metadata={
+            "help": "The granularity of each micro-batch. Adjacent #granularity sequences are grouped together when dividing microbatches.",
         },
     )
     max_tokens_per_mb: Optional[int] = field(
@@ -72,6 +66,7 @@ class MicroBatchSpec:
         """Create new spec with updated fields while maintaining Omegaconf compatibility."""
         fields = dict(
             n_mbs=mb_spec.n_mbs,
+            granularity=mb_spec.granularity,
             max_tokens_per_mb=mb_spec.max_tokens_per_mb,
         )
         fields.update(kwargs)
@@ -90,6 +85,12 @@ class GenerationHyperparameters:
     )
     min_new_tokens: int = field(
         default=0, metadata={"help": "Minimum number of tokens to generate."}
+    )
+    max_tokens: int = field(
+        default=65536,
+        metadata={
+            "help": "Maximum number of tokens including prompt and generated tokens."
+        },
     )
     greedy: bool = field(
         default=False,
@@ -234,9 +235,9 @@ class TrainEngineConfig:
     init_from_scratch: bool = field(
         default=False, metadata={"help": "Initialize model weights randomly"}
     )
-    init_critic_from_actor: bool = field(
+    is_critic: bool = field(
         default=False,
-        metadata={"help": "Initialize critic/reward model from LM checkpoint"},
+        metadata={"help": "Whether to use a critic/reward model"},
     )
     # Runtime microbatch limit
     mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
@@ -302,11 +303,9 @@ class PPOActorConfig(TrainEngineConfig):
         default=1.0, metadata={"help": "Temperature during generation."}
     )
     # Reward
-    group_reward_norm: bool = field(
-        default=False,
-        metadata={
-            "help": "Normalize final reward of each sequence (GRPO-style) to reduce length bias"
-        },
+    reward_norm: NormConfig | None = field(
+        default=None,
+        metadata={"help": "Normalization configuration for rewards"},
     )
     reward_scaling: float = field(
         default=1.0, metadata={"help": "Reward scaling factor"}
@@ -340,6 +339,9 @@ class PPOActorConfig(TrainEngineConfig):
     )
     gae_lambda: float = field(
         default=1.0, metadata={"help": "Lambda parameter for GAE"}
+    )
+    adv_norm: NormConfig | None = field(
+        default=None, metadata={"help": "Normalization configuration for advantages."}
     )
 
     # KL Control
@@ -394,9 +396,6 @@ class PPOActorConfig(TrainEngineConfig):
         default=1024,
         metadata={"help": "Maximum number of new tokens to generate"},
     )
-    adv_norm: Optional[AdvNormConfig] = field(
-        default=None, metadata={"help": "Optimizer configuration, default is None"}
-    )
 
 
 @dataclass
@@ -431,6 +430,7 @@ class SGLangConfig:
     enable_memory_saver: bool = False
     allow_auto_truncate: bool = False
     attention_backend: Optional[str] = "fa3"
+    enable_multimodal: bool = False
     sampling_backend: Optional[str] = None
     context_length: Optional[int] = 32768
     mem_fraction_static: Optional[float] = 0.9
@@ -558,6 +558,7 @@ class InferenceEngineConfig:
         },
     )
     enable_rollout_tracing: bool = field(default=False)
+    check_trajectory_format: bool = field(default=False)
     schedule_policy: str = field(
         default="round_robin",
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
@@ -628,6 +629,8 @@ class RecoverConfig(_Timer):
 @dataclass
 class WandBConfig:
     mode: str = "disabled"
+    wandb_base_url: str = ""
+    wandb_api_key: str = ""
     entity: Optional[str] = None
     project: Optional[str] = None
     name: Optional[str] = None
@@ -636,6 +639,7 @@ class WandBConfig:
     notes: Optional[str] = None
     tags: Optional[List[str]] = None
     config: Optional[Dict] = None
+    id_suffix: Optional[str] = "train"
 
 
 @dataclass
@@ -644,7 +648,7 @@ class SwanlabConfig:
     name: Optional[str] = None
     config: Optional[Dict] = None
     logdir: Optional[str] = None
-    mode: Optional[str] = "local"
+    mode: Optional[str] = "disabled"
     api_key: Optional[str] = os.getenv("SWANLAB_API_KEY", None)
 
 
@@ -725,6 +729,16 @@ class ClusterSpecConfig:
 
 
 @dataclass
+class SchedulerConfig:
+    endpoint: str = field(default="http://localhost:8081")
+    deploy_mode: str = field(default="separation")
+    functioncall_service_domain: str = field(default="http://localhost:8080")
+    reward_functioncall_config: Dict = field(default_factory=dict)
+    reward_model_path: str = field(default="")
+    reward_model_service_url: str = field(default="http://localhost:30000/classify")
+
+
+@dataclass
 class DatasetConfig:
     path: str = field(
         default=MISSING,
@@ -732,8 +746,8 @@ class DatasetConfig:
             "help": "Path to the dataset. Can be a local path or a HuggingFace dataset name."
         },
     )
-    type: Optional[str] = field(
-        default=None,
+    type: str = field(
+        default=MISSING,
         metadata={"help": "Type of training method.e.g., 'sft', 'rl', etc."},
     )
     batch_size: int = field(
@@ -883,9 +897,16 @@ class BaseExperimentConfig:
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
 
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+
 
 @dataclass
 class SFTConfig(BaseExperimentConfig):
+    model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
+
+
+@dataclass
+class RWConfig(BaseExperimentConfig):
     model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
 
@@ -936,10 +957,17 @@ def load_expr_config(argv: List[str], config_cls):
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)
-    assert isinstance(cfg, BaseExperimentConfig)
+    assert isinstance(cfg, config_cls)
     # Setup environment
 
     name_resolve.reconfigure(cfg.cluster.name_resolve)
+
+    from areal.utils.stats_logger import StatsLogger
+
+    # Save configuration as yaml
+    if os.getenv("RANK", "0") == "0":
+        save_config(cfg, StatsLogger.get_log_path(cfg.stats_logger))
+
     return cfg, str(config_file)
 
 
@@ -947,3 +975,16 @@ def conf_as_dict(cfg):
     if isinstance(cfg, (OmegaConf, DictConfig)):
         return OmegaConf.to_container(cfg, resolve=True)
     return asdict(cfg)
+
+
+def save_config(cfg, log_dir):
+    os.makedirs(log_dir, exist_ok=True)
+    config_save_path = os.path.join(log_dir, "config.yaml")
+    with open(config_save_path, "w") as f:
+        config_dict: Dict = asdict(cfg)
+        yaml.dump(
+            config_dict,
+            f,
+            default_flow_style=False,
+            sort_keys=False,
+        )

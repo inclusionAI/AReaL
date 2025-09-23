@@ -20,7 +20,7 @@ your agent's behavior however you need.
 class RolloutWorkflow:
     async def arun_episode(
         self, engine: InferenceEngine, data: Dict[str, Any]
-    ) -> TensorDict:
+    ) -> Dict[str, Any]:
         """Run a single episode of the workflow.
 
         See concrete example implementations under the `areal/workflow` directory.
@@ -79,7 +79,7 @@ and converting it into an `ModelRequest` object for the inference engine:
 class MultiTurnWorkflow(RolloutWorkflow):
     # ... __init__ method above ...
 
-    async def arun_episode(self, engine: InferenceEngine, data) -> TensorDict:
+    async def arun_episode(self, engine: InferenceEngine, data) -> Dict[str, Any]:
         # Initialize result containers
         seq, logprobs, loss_mask, versions = [], [], [], []
         messages = data["messages"]
@@ -124,7 +124,7 @@ apply a discount, add feedback to the conversation, and let the model try again:
 class MultiTurnWorkflow(RolloutWorkflow):
     # ... previous methods ...
 
-    async def arun_episode(self, engine: InferenceEngine, data) -> TensorDict:
+    async def arun_episode(self, engine: InferenceEngine, data) -> Dict[str, Any]:
         # ... initialization code ...
         while reward == 0 and t < self.max_turns:
             # Add feedback if the previous answer was incorrect
@@ -188,14 +188,13 @@ workflows—modify as needed for your specific use case.
 
 ### Collecting Training Data
 
-Finally, let's complete the implementation by collecting trajectories in the
-`TensorDict` format:
+Finally, let's complete the implementation by collecting trajectories in a `dict`:
 
 ```python
 class MultiTurnWorkflow(RolloutWorkflow):
     # ... previous methods ...
 
-    async def arun_episode(self, engine: InferenceEngine, data) -> TensorDict:
+    async def arun_episode(self, engine: InferenceEngine, data) -> Dict[str, Any]:
         # ... episode logic above ...
 
         while reward == 0 and t < self.max_turns:
@@ -221,13 +220,13 @@ class MultiTurnWorkflow(RolloutWorkflow):
         return concat_padded_tensors([res])
 ```
 
-> **Important**: The returned `TensorDict` must follow HuggingFace's padded data format,
-> where each tensor has shape `[batch_size, sequence_length, *]`. This allows AReaL-lite
-> to automatically batch multiple trajectories for training. Since this example returns
-> a single trajectory, we use `unsqueeze(0)` to create a batch of size 1.
+> **Important**: The returned `dict` must follow HuggingFace's padded data format, where
+> each tensor has shape `[batch_size, sequence_length, *]`. This allows AReaL-lite to
+> automatically batch multiple trajectories for training. Since this example returns a
+> single trajectory, we use `unsqueeze(0)` to create a batch of size 1.
 
-> **Note**: You're not restricted to specific keys in your `TensorDict`—different
-> algorithms need different keys. This example targets the GRPO algorithm, so we include
+> **Note**: You're not restricted to specific keys in your `dict`—different algorithms
+> need different keys. This example targets the GRPO algorithm, so we include
 > `input_ids`, `loss_mask`, `attention_mask`, and `logprobs` (needed for computing
 > importance ratios).
 
@@ -250,7 +249,7 @@ def main(args):
     )
 
     # Run training—no other changes needed!
-    data_generator = itertools.cycle(train_dataloader)
+    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(max_steps):
         with stats_tracker.record_timing("rollout"):
             # the `should_accept` parameter is used for dynamic filtering

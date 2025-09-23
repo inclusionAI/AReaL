@@ -1,7 +1,10 @@
 # Debugging Guide
 
-Here's how to debug AReaL training applications, focusing on `RolloutWorkflow` and
-custom RL algorithms.
+Here's how to debug AReaL training applications, including:
+
+- Debugging `RolloutWorkflow` with a persistent inference server;
+- Debugging custom RL algorithms;
+- Comparing the rollout results between Transformers and inference engine.
 
 ## Debugging `RolloutWorkflow` with a Persistent Inference Server
 
@@ -27,7 +30,11 @@ nohup python -m areal.launcher.local examples/math/gsm8k_grpo.py \
 ```
 
 **Note:** For debugging purposes, only the `allocation_mode` and `sglang` configs
-matter. You can ignore everything else in the example YAML file.
+matter. You can ignore everything else in the example YAML file. In addition, it is
+strongly recommended to examine the launch arguments related to the inference engine.
+For example, you may need to check if `sglang.enable_multimodal` should be set based on
+your model type since multimodal is disabled in SGLang by default in models such as
+Gemma3, Llama4, and Step3VL.
 
 Once it's running, you'll find the server address in the log:
 
@@ -48,7 +55,7 @@ train_dataloader = StatefulDataLoader(...)
 
 # Initialize inference engine - reads server addresses from environment variable
 rollout = RemoteSGLangEngine(config.rollout)
-rollout.initialize()
+rollout.initialize(...)
 
 # Create rollout workflow
 workflow = MyWorkflow(...)
@@ -57,7 +64,7 @@ dump_dir = os.path.join(
     StatsLogger.get_log_path(config.stats_logger), "generated"
 )
 
-data_generator = itertools.cycle(train_dataloader)
+data_generator = cycle_dataloader(train_dataloader)
 generated_data = rollout.rollout_batch(next(data_generator), workflow=workflow)
 
 # Save generated data for later use
@@ -125,3 +132,16 @@ torch.cuda.synchronize()
 # Your custom algorithm logic here
 ...
 ```
+
+## Comparing the rollout results between Transformers and inference engine
+
+It is often useful to compare the rollout results between Transformers and the inference
+engine to ensure consistency and correctness. Most models will yield nearly identical
+results, but some models may have significant differences because the inference engine
+does a lot of efforts in accelerating the forward process.
+
+If you suspect any discrepancies, or if your workflow involves models that do not have
+first-class support in Transformers/SGLang, it is recommended to use a simple script to
+compare the outputs against a dataset. Please refer to
+`examples/docs/debug/cmp_rollout.py` for a complete example, which compares the rollout
+results of `google/gemma3-4b-it` on `BUAADreamer/clevr_count_70k` dataset.
