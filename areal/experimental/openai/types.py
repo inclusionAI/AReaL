@@ -15,13 +15,26 @@ class CompletionWithTokenLogpReward:
     response: ModelResponse
     messages: List[dict] = field(default_factory=list)
     reward: Optional[float] = None
+    parent: "CompletionWithTokenLogpReward" = None
 
     def to_tensor_dict(self) -> Dict[str, torch.Tensor]:
         resp = self.response
         seq = resp.input_tokens + resp.output_tokens
-        logprobs = [0.0] * resp.input_len + resp.output_logprobs
-        loss_mask = [0] * resp.input_len + [1] * resp.output_len
-        versions = [-1] * resp.input_len + resp.output_versions
+        if self.parent:
+            parent_res = self.parent.to_tensor_dict()
+            logprobs = (
+                parent_res["logprobs"] + [0.0] * resp.input_len + resp.output_logprobs
+            )
+            loss_mask = (
+                parent_res["loss_mask"] + [0] * resp.input_len + [1] * resp.output_len
+            )
+            versions = (
+                parent_res["versions"] + [-1] * resp.input_len + resp.output_versions
+            )
+        else:
+            logprobs = [0.0] * resp.input_len + resp.output_logprobs
+            loss_mask = [0] * resp.input_len + [1] * resp.output_len
+            versions = [-1] * resp.input_len + resp.output_versions
         reward = self.reward
         assert reward is not None
         return dict(

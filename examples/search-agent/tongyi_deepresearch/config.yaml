@@ -1,0 +1,167 @@
+experiment_name: asearcher-qwq-web-8nodes
+trial_name: run1
+
+cluster:
+  fileroot: /tmp/areal/experiments
+  n_nodes: 6
+  n_gpus_per_node: 8
+  name_resolve:
+    type: nfs
+    nfs_record_root: /tmp/areal/experiments
+seed: 1
+total_train_epochs: 10
+total_train_steps: null
+tokenizer_path: ${actor.path}
+allocation_mode: sglang.d2t8+d4t8
+async_training: true
+
+rollout:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  max_concurrent_rollouts: 160
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 4
+  enable_rollout_tracing: true
+
+gconfig:
+  n_samples: 16
+  min_new_tokens: 0
+  max_new_tokens: 30000
+  greedy: false
+  temperature: 1.0
+
+actor:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: /storage/openpsi/models/Tongyi-DeepResearch-30B-A3B_325cfb57c4945b2b
+  init_from_scratch: false
+  disable_dropout: true
+  gradient_checkpointing: true
+  dtype: bfloat16
+  mb_spec:
+    max_tokens_per_mb: 32000
+  pad_to_maximum: true
+  optimizer:
+    type: adam
+    lr: 5e-5
+    weight_decay: 0.01
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1e-8
+    lr_scheduler_type: constant
+    gradient_clipping: 1.0
+    warmup_steps_proportion: 0.001
+  backend: fsdp
+
+  group_size: ${gconfig.n_samples}
+  adv_norm:
+    group_size: ${gconfig.n_samples}
+  eps_clip: 0.4
+  temperature: ${gconfig.temperature}
+  reward_scaling: 10.0
+  reward_bias: -0.5
+  kl_ctl: 0.0
+  ppo_n_minibatches: 1
+  recompute_logprob: true
+  use_decoupled_loss: true
+  behav_imp_weight_cap: 5.0
+
+ref:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: ${actor.path}
+  init_from_scratch: false
+  disable_dropout: true
+  dtype: ${actor.dtype}
+  mb_spec:
+    max_tokens_per_mb: 32768
+  optimizer: null
+  backend: fsdp
+
+# SGLang
+sglang:
+  model_path: ${actor.path}
+  random_seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: ${actor.dtype}
+  max_running_requests: null
+  context_length: 32768
+  mem_fraction_static: 0.8
+  attention_backend: fa3
+
+# datasets
+train_dataset:
+  batch_size: 64
+  shuffle: true
+  pin_memory: true
+  path: path_to_training_data
+
+# Utilities
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: 10
+  freq_secs: 3600
+
+
+recover:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: 3600
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: online
+
+# Launcher
+launcher:
+  inference_server_cpus_per_gpu: 15
+  inference_server_mem_per_gpu: 153600
+  trainer_cpus_per_gpu: 15
+  trainer_mem_per_gpu: 153600
+  slurm:
+    mount: /storage:/storage # mount share storage if necessary
+    trainer_image: AReaL_Lite_Image
+    inference_server_image: AReaL_Lite_Image
+
+  trainer_env_vars: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,WANDB_API_KEY=your_wandb_api_key,SERPER_API_KEY=your_serper_api_key,JINA_API_KEY=your_jina_api_key
+
+judge_engine:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  max_concurrent_rollouts: 1
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 4
+  enable_rollout_tracing: false
+
+max_turns: 128
+force_turns: 4
+n_trajs: 16
+search_client_type: async-online-search-access
+topk: 10
+log_agent_stats: true
+log_agent_stats_keys:
+  - turns
+  - num_search
+  - num_access
+  - score
+  - num_input_tokens
+  - num_output_tokens

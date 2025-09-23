@@ -657,3 +657,88 @@ async def test_parallel_responses_with_merged_results(openai_client):
     assert completions[c0.id].reward == 0.8 * r / len(
         parallel_completions
     )  # discounted from final completion
+
+
+@pytest.mark.asyncio
+async def test_tree_multi_round_conversation(openai_client):
+    """Create a conversation tree using create() and verify parents and rewards.
+
+    Rewards are explicitly set (no propagation). Export should return only leaves.
+    """
+    openai_client: ArealOpenAI
+    # Base conversation
+    base = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Start the session."},
+    ]
+
+    # Root
+    c_root = await openai_client.chat.completions.create(messages=base)
+
+    # Branch A1: root -> a -> a1
+    msgs_a = base + [
+        {"role": "assistant", "content": c_root.choices[0].message.content},
+        {"role": "user", "content": "Question A"},
+    ]
+    c_a = await openai_client.chat.completions.create(messages=msgs_a)
+    msgs_a1 = msgs_a + [
+        {"role": "assistant", "content": c_a.choices[0].message.content},
+        {"role": "user", "content": "Follow-up A1"},
+    ]
+    c_a1 = await openai_client.chat.completions.create(messages=msgs_a1)
+
+    # Branch A2: root -> a -> a2
+    msgs_a2 = msgs_a + [
+        {"role": "assistant", "content": c_a.choices[0].message.content},
+        {"role": "user", "content": "Follow-up A2"},
+    ]
+    c_a2 = await openai_client.chat.completions.create(messages=msgs_a2)
+
+    # Branch B: root -> b -> b1
+    msgs_b = base + [
+        {"role": "assistant", "content": c_root.choices[0].message.content},
+        {"role": "user", "content": "Question B"},
+    ]
+    c_b = await openai_client.chat.completions.create(messages=msgs_b)
+    msgs_b1 = msgs_b + [
+        {"role": "assistant", "content": c_b.choices[0].message.content},
+        {"role": "user", "content": "Follow-up B1"},
+    ]
+    c_b1 = await openai_client.chat.completions.create(messages=msgs_b1)
+
+    # Set rewards to leaf nodes only, which should be c_a1, c_a2, c_b1
+    openai_client.set_reward(c_a1.id, 2)
+    openai_client.set_reward(c_a2.id, 1.5)
+    openai_client.set_reward(c_b1.id, 3)
+
+    # Export completions of leaf nodes, check whether all leaves are present
+    leaf_completions = openai_client.export_completions(
+        turn_discount=0.9, return_leaf_only=True
+    )
+    all_completions = openai_client.export_completions(
+        turn_discount=0.9, return_leaf_only=False
+    )
+    assert set(leaf_completions.keys()) == {c_a1.id, c_a2.id, c_b1.id}
+    assert set(all_completions.keys()) == {
+        c_root.id,
+        c_a.id,
+        c_a1.id,
+        c_a2.id,
+        c_b.id,
+        c_b1.id,
+    }
+
+    # Check tree structure
+    assert c_b1.parent is c_b
+    assert c_b.parent is c_root
+    assert c_a2.parent is c_a
+    assert c_a1.parent is c_a
+    assert c_a.parent is c_root
+
+    # Reward is discounted by time sequence, check reward values
+    assert c_b1.reward == 3
+    assert c_b.reward == 3 * 0.9
+    assert c_a2.reward == 1.5
+    assert c_a1.reward == 2
+    assert c_a.reward == 2 * 0.9
+    assert c_root.reward == 2 * 0.9 * 0.9

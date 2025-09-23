@@ -1,3 +1,4 @@
+import json
 import os
 import time
 import uuid
@@ -5,7 +6,6 @@ from collections import defaultdict
 from copy import deepcopy
 from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Tuple, Union
 
-import numpy as np
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN, Body, NotGiven
 from openai.resources.chat.completions.completions import (
@@ -28,6 +28,7 @@ from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import ModelRequest
 from areal.experimental.openai.tool_call_parser import process_tool_calls
 from areal.experimental.openai.types import CompletionWithTokenLogpReward
+from areal.utils import logging
 
 if TYPE_CHECKING:
     from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
@@ -37,6 +38,8 @@ if TYPE_CHECKING:
 # reset OpenAI keys when using the wrapped client.
 os.environ["OPENAI_API_KEY"] = "none"
 os.environ["OPENAI_BASE_URL"] = "none"
+
+logger = logging.getLogger("AReaLOpenAI Client")
 
 
 class AsyncCompletionsWithReward(BaseAsyncCompletions):
@@ -229,114 +232,125 @@ class ArealOpenAI(AsyncOpenAI):
         self._completion_cache[completion_id].reward = reward
 
     def export_completions(
-        self, turn_discount: float = 1.0
+        self, turn_discount: float = 1.0, return_leaf_only: bool = False
     ) -> Dict[str, CompletionWithTokenLogpReward]:
-        """Export all completions with rewards after backpropagation."""
-
-        # Step 1: Build tree structure based on role prefix relationships
-        children = defaultdict(list)  # parent_id -> [child_ids]
-        parents = {}  # child_id -> parent_id
-        roots = set()  # completion_ids with no parents
-
-        # Convert messages to role sequence for easier comparison
-        def get_role_sequence(messages: List[dict]) -> Tuple[str, ...]:
-            return tuple(msg.get("role", "user") for msg in messages)
-
-        # Build role sequences for all completions
-        completion_roles = {}
-        for completion_id, completion_data in self._completion_cache.items():
-            completion_roles[completion_id] = get_role_sequence(
-                completion_data.messages
-            )
-
-        # Find parent-child relationships based on role prefix matching
-        completion_ids = list(self._completion_cache.keys())
-        for i, child_id in enumerate(completion_ids):
-            child_roles = completion_roles[child_id]
-            parent_found = False
-
-            for j, potential_parent_id in enumerate(completion_ids):
-                if i == j:
-                    continue
-                parent_roles = completion_roles[potential_parent_id]
-
-                # Check if parent_roles is a prefix of child_roles
-                if (
-                    len(parent_roles) < len(child_roles)
-                    and child_roles[: len(parent_roles)] == parent_roles
-                ):
-
-                    # Find the best parent (longest prefix)
-                    if child_id not in parents or len(parent_roles) >= len(
-                        completion_roles[parents[child_id]]
-                    ):
-                        # Remove from previous parent if exists
-                        if child_id in parents and len(parent_roles) > len(
-                            completion_roles[parents[child_id]]
-                        ):
-                            old_parent = parents[child_id]
-                            children[old_parent].remove(child_id)
-
-                        parents[child_id] = potential_parent_id
-                        children[potential_parent_id].append(child_id)
-                        parent_found = True
-
-            if not parent_found:
-                roots.add(child_id)
-
-        # Step 2: Perform topological sorting on each tree
-        def topological_sort_tree(root_id: str) -> List[str]:
-            """Perform DFS-based topological sort starting from root."""
-            visited = set()
-            stack = []
-
-            def dfs(node_id: str):
-                if node_id in visited:
-                    return
-                visited.add(node_id)
-
-                # Visit all children first (post-order)
-                for child_id in children[node_id]:
-                    dfs(child_id)
-
-                # Add current node to stack after visiting children
-                stack.append(node_id)
-
-            dfs(root_id)
-            return stack
-
-        # Get topological order for all trees
-        topo_order = []
-        for root_id in roots:
-            topo_order.extend(topological_sort_tree(root_id))
-
-        # Step 3: Backpropagate rewards from leaves to roots
-        # Process nodes in topological order (leaves first, since topological_sort_tree returns post-order)
-        for completion_id in topo_order:
-            completion_data = self._completion_cache[completion_id]
-
-            # If this is a leaf node with a reward, keep it
-            if len(children[completion_id]) == 0:
-                # This is a leaf - its reward should already be set
-                if completion_data.reward is None:
-                    completion_data.reward = 0
-                continue
-
-            # Calculate reward as discounted sum from children
-            child_rewards = [
-                self._completion_cache[child_id].reward
-                for child_id in children[completion_id]
-            ]
-            if completion_data.reward is None:
-                completion_data.reward = 0.0
-            # Find the highest level/the minimum reward
-            # Do not overwrite the existing reward if explicitly set
-            child_non_none_rewards = list(
-                filter(lambda x: x is not None, child_rewards)
-            )
-            if len(child_non_none_rewards) > 0:
-                completion_data.reward += turn_discount * np.mean(
-                    child_non_none_rewards
+        # Assign rewards to completions in cache based on their created time
+        comp_time_sequence = sorted(
+            list(self._completion_cache.values()),
+            key=lambda comp: comp.completion.created,
+            reverse=True,
+        )
+        # Check if the last-created completion has a reward set
+        if comp_time_sequence:
+            if comp_time_sequence[0].reward is None:
+                logger.warning(
+                    "The most recent completion does not have a reward set. "
+                    "All completions will have None reward."
                 )
+                comp_time_sequence[0].reward = 0
+            # Propagate rewards backwards with discounting if reward is not set
+            for i in range(1, len(comp_time_sequence)):
+                if comp_time_sequence[i].reward is None:
+                    comp_time_sequence[i].reward = (
+                        comp_time_sequence[i - 1].reward * turn_discount
+                    )
 
-        return self._completion_cache.copy()
+        # Helper: normalize messages to compare prefixes (only role & content)
+        def _normalize_messages(msgs: List[dict]) -> List[Tuple[str, str]]:
+            def _to_str(v) -> str:
+                try:
+                    return json.dumps(v, ensure_ascii=False, sort_keys=True)
+                except Exception:
+                    return repr(v)
+
+            norm: List[Tuple[str, str]] = []
+            for m in msgs:
+                # messages may be dataclass-like or dict-like; be defensive
+                if isinstance(m, dict):
+                    role = m.get("role")
+                    content = m.get("content")
+                else:
+                    # fallback attributes
+                    role = getattr(m, "role", None)
+                    content = getattr(m, "content", None)
+                norm.append((str(role), _to_str(content)))
+            return norm
+
+        def _is_prefix(a: List[Tuple[str, str]], b: List[Tuple[str, str]]) -> bool:
+            # True if a is a strict prefix of b
+            if len(a) >= len(b):
+                return False
+            for i in range(len(a)):
+                if a[i] != b[i]:
+                    return False
+            return True
+
+        # Build helpers for all cached completions
+        items: List[Tuple[str, CompletionWithTokenLogpReward]] = list(
+            self._completion_cache.items()
+        )
+        if not items:
+            return self._completion_cache
+
+        # Precompute normalized messages
+        meta = {}
+        for cid, comp in items:
+            meta[cid] = {
+                "norm_msgs": _normalize_messages(comp.messages or []),
+                "obj": comp,
+            }
+
+        # 1) Construct parent-child relationships using longest prefix rule
+        # Sort potential children by (message length asc, created asc) so parents are available
+        ordered = sorted(
+            meta.items(),
+            key=lambda kv: (len(kv[1]["norm_msgs"]), kv[0]),
+        )
+
+        # Reset parents before rebuilding
+        for _, info in ordered:
+            info["obj"].parent = None
+
+        for child_id, child_info in ordered:
+            child_msgs = child_info["norm_msgs"]
+            best_parent = None
+            best_len = -1
+            for parent_id, parent_info in ordered:
+                if parent_id == child_id:
+                    continue
+                parent_msgs = parent_info["norm_msgs"]
+                if _is_prefix(parent_msgs, child_msgs):
+                    plen = len(parent_msgs)
+                    # choose the longest prefix
+                    if plen > best_len:
+                        best_parent = parent_info["obj"]
+                        best_len = plen
+            child_info["obj"].parent = best_parent
+
+        # Build children mapping for discount propagation
+        children_map: Dict[
+            CompletionWithTokenLogpReward, List[CompletionWithTokenLogpReward]
+        ] = defaultdict(list)
+        for _, info in meta.items():
+            obj = info["obj"]
+            if obj.parent is not None:
+                children_map[obj.parent].append(obj)
+
+        # Sort children of each node deterministically by id string
+        for parent, ch_list in children_map.items():
+            ch_list.sort(
+                key=lambda c: next((k for k, v in meta.items() if v["obj"] is c), "")
+            )
+
+        if return_leaf_only:
+            # Return only leaf nodes (nodes without children)
+            parents_with_children = set(children_map.keys())
+            leaf_only: Dict[str, CompletionWithTokenLogpReward] = {}
+            for cid, info in meta.items():
+                obj = info["obj"]
+                if obj not in parents_with_children:
+                    leaf_only[cid] = obj
+
+            return leaf_only
+        else:
+            return self._completion_cache.copy()
