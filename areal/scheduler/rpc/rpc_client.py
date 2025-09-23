@@ -50,7 +50,17 @@ class RPCClient:
     def call_engine(
         self, worker_id: str, method: str, max_retries: int = 3, *args, **kwargs
     ) -> Any:
-        # 支持变长参数
+        """
+        call the rpc server with method name and args, retry on failure
+        Args:
+            worker_id: the id of the worker to call
+            method: the method name to call
+            max_retries: max retries on failure
+            *args: args to pass to the method
+            **kwargs: kwargs to pass to the method
+        Returns:
+            the deserialized result from the rpc server
+        """
         req = (method, args, kwargs)
         serialized_data = cloudpickle.dumps(req)
 
@@ -62,7 +72,13 @@ class RPCClient:
         self, worker_id: str, serialized_data: bytes, max_retries=3
     ) -> Any:
         """
-        数据面调用（带序列化数据），支持异常和503状态码重试
+        call the rpc server with serialized data, retry on failure
+        Args:
+            worker_id: the id of the worker to call
+            serialized_data: the serialized data to send
+            max_retries: max retries on failure
+        Returns:
+            the deserialized result from the rpc server
         """
         ip, port = self._addrs[worker_id]
         url = f"http://{ip}:{port}/call"
