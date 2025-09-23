@@ -6,6 +6,8 @@ import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
+from areal.api.cli_args import InferenceEngineConfig, TrainEngineConfig
+from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import (
     ModelRequest,
     ModelResponse,
@@ -13,6 +15,7 @@ from areal.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
+from areal.api.scheduler_api import Scheduler
 
 if TYPE_CHECKING:
     from areal.api.workflow_api import RolloutWorkflow
@@ -41,6 +44,16 @@ class TrainController(abc.ABC):
     of results from the underlying TrainEngine workers, enabling scalable and
     efficient distributed training.
     """
+
+    def __init__(
+        self,
+        train_engine: TrainEngine,
+        config: TrainEngineConfig,
+        scheduler: Scheduler,
+    ):
+        self.train_engine = train_engine
+        self.config = config
+        self.scheduler = scheduler
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         """Initialize PyTorch distributed communication groups.
@@ -287,6 +300,16 @@ class RolloutController(abc.ABC):
     of their assigned tasks. Generated data is stored locally on workers and aggregated
     into `DistributedBatchMemory` objects for seamless integration with TrainController.
     """
+
+    def __init__(
+        self,
+        inf_engine: InferenceEngine,
+        config: InferenceEngineConfig,
+        scheduler: Scheduler,
+    ):
+        self.inf_engine = inf_engine
+        self.config = config
+        self.scheduler = scheduler
 
     def initialize(self, *args, **kwargs):
         """Initialize environments and launch the background thread for asynchronous distributed inference.
