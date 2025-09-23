@@ -16,7 +16,7 @@ logger = logging.getLogger("Platform init")
 def is_torch_npu_available() -> bool:
     """Check the availability of NPU."""
     try:
-        pass
+        import torch_npu
 
         return True
     except ImportError:

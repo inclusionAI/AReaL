@@ -29,7 +29,8 @@ from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 
 if is_npu_available:
-    pass
+    import torch_npu
+    from torch_npu.contrib import transfer_to_npu
 
 logger = logging.getLogger("boba_grpo")
 

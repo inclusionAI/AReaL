@@ -38,8 +38,7 @@ NA132_ENVIRONS = {
     "NCCL_DEBUG": "WARN",
     "NCCL_DEBUG_SUBSYS": "INIT,TUNING,GRAPH",
 }
-SGLANG_SERVER_WAIT_TIMEOUT_SECONDS = 360
-VLLM_SERVER_WAIT_TIMEOUT_SECONDS = 360
+ROLLOUT_SERVER_WAIT_TIMEOUT_SECONDS = 360
 
 
 def get_env_vars(
@@ -91,55 +90,29 @@ class JobInfo:
     slurm_id: Optional[int] = None  # Slurm only. The Slurm id of the job.
 
 
-def wait_sglang_server_addrs(
+def wait_rollout_server_addrs(
     experiment_name: str,
     trial_name: str,
-    n_sglang_servers: int,
+    n_rollout_servers: int,
 ):
-    # Get SGLang slurm nodes, find the hosts
+    # Get rollout nodes, find the hosts
     name = names.gen_servers(experiment_name, trial_name)
     start = time.perf_counter()
     while True:
-        sglang_addrs = name_resolve.get_subtree(name)
-        if len(sglang_addrs) >= n_sglang_servers:
+        rollout_addrs = name_resolve.get_subtree(name)
+        if len(rollout_addrs) >= n_rollout_servers:
             logger.info(
-                f"Found {len(sglang_addrs)} SGLang servers: {', '.join(sglang_addrs)}"
+                f"Found {len(rollout_addrs)} rollout servers: {', '.join(rollout_addrs)}"
             )
             break
 
         time.sleep(1)
-        if time.perf_counter() - start > SGLANG_SERVER_WAIT_TIMEOUT_SECONDS:
+        if time.perf_counter() - start > ROLLOUT_SERVER_WAIT_TIMEOUT_SECONDS:
             raise TimeoutError(
-                f"Timeout waiting for SGLang servers to be ready. "
-                f"Expected {n_sglang_servers} servers, found {len(sglang_addrs)}."
+                f"Timeout waiting for rollout servers to be ready. "
+                f"Expected {n_rollout_servers} servers, found {len(rollout_addrs)}."
             )
-    return sglang_addrs
-
-
-def wait_vllm_server_addrs(
-    experiment_name: str,
-    trial_name: str,
-    n_vllm_servers: int,
-):
-    # Get vllm nodes, find the hosts
-    name = names.gen_servers(experiment_name, trial_name)
-    start = time.perf_counter()
-    while True:
-        vllm_addrs = name_resolve.get_subtree(name)
-        if len(vllm_addrs) >= n_vllm_servers:
-            logger.info(
-                f"Found {len(vllm_addrs)} vLLM servers: {', '.join(vllm_addrs)}"
-            )
-            break
-
-        time.sleep(1)
-        if time.perf_counter() - start > VLLM_SERVER_WAIT_TIMEOUT_SECONDS:
-            raise TimeoutError(
-                f"Timeout waiting for vLLM servers to be ready. "
-                f"Expected {n_vllm_servers} servers, found {len(vllm_addrs)}."
-            )
-    return vllm_addrs
-
+    return rollout_addrs
 
 def validate_config_for_distributed_launcher(config):
     n_nodes = config.cluster.n_nodes
