@@ -19,36 +19,23 @@ from areal.utils.fs import get_user_tmp
 
 @dataclass
 class NormConfig:
-    """Configuration for advantage normalization."""
+    """Configuration for normalization."""
 
-    # TODO: add common fields of adv_norm and reward_norm
-
-
-@dataclass
-class AdvNormConfig(NormConfig):
-    """Advanced configuration for advantage normalization."""
-
-    mean_level: str = field(
+    mean_level: str | None = field(
         default="batch",
         metadata={
-            "help": "mean_level for advantage normalization. options: batch, group, none"
+            "help": "mean_level for normalization. choices: batch, group. Omit for no mean normalization."
         },
     )
-    std_level: str = field(
+    std_level: str | None = field(
         default="batch",
         metadata={
-            "help": "std_level for advantage normalization. options: batch, group, none"
+            "help": "std_level for normalization. choices: batch, group. Omit for no std normalization."
         },
     )
     group_size: int = field(
-        default=1, metadata={"help": "group_size for advantage normalization"}
+        default=1, metadata={"help": "group_size for group-level normalization"}
     )
-
-
-@dataclass
-class RewardNormConfig(NormConfig):
-    # TODO: implement reward normalization
-    pass
 
 
 @dataclass
@@ -312,11 +299,9 @@ class PPOActorConfig(TrainEngineConfig):
         default=1.0, metadata={"help": "Temperature during generation."}
     )
     # Reward
-    group_reward_norm: bool = field(
-        default=False,
-        metadata={
-            "help": "Normalize final reward of each sequence (GRPO-style) to reduce length bias"
-        },
+    reward_norm: NormConfig | None = field(
+        default=None,
+        metadata={"help": "Normalization configuration for rewards"},
     )
     reward_scaling: float = field(
         default=1.0, metadata={"help": "Reward scaling factor"}
@@ -350,6 +335,9 @@ class PPOActorConfig(TrainEngineConfig):
     )
     gae_lambda: float = field(
         default=1.0, metadata={"help": "Lambda parameter for GAE"}
+    )
+    adv_norm: NormConfig | None = field(
+        default=None, metadata={"help": "Normalization configuration for advantages."}
     )
 
     # KL Control
@@ -403,9 +391,6 @@ class PPOActorConfig(TrainEngineConfig):
     max_new_tokens: int = field(
         default=1024,
         metadata={"help": "Maximum number of new tokens to generate"},
-    )
-    adv_norm: Optional[AdvNormConfig] = field(
-        default=None, metadata={"help": "Optimizer configuration, default is None"}
     )
 
 
@@ -569,6 +554,7 @@ class InferenceEngineConfig:
         },
     )
     enable_rollout_tracing: bool = field(default=False)
+    check_trajectory_format: bool = field(default=False)
     schedule_policy: str = field(
         default="round_robin",
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},

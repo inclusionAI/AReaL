@@ -491,7 +491,7 @@ class MegatronEngine(TrainEngine):
         self,
         input_: Dict[str, Any],
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], float],
+        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> Dict[str, float]:
         assert self.model is not None, "Model is not initialized."
         assert self.optimizer is not None, "Optimizer is not initialized."
@@ -502,7 +502,8 @@ class MegatronEngine(TrainEngine):
         mb_list = mb_list.to(self.device)
 
         total_loss_weight = (
-            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
+            torch.stack([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
+            .sum()
             .detach()
             .clone()
             .to(dtype=torch.float32)
@@ -570,7 +571,7 @@ class MegatronEngine(TrainEngine):
         self,
         input_: Dict[str, Any],
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], float],
+        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         assert self.model is not None, "Model is not initialized."
         # Assume input_ is identical across context and model parallel group
@@ -578,7 +579,8 @@ class MegatronEngine(TrainEngine):
         mb_list = mb_list.to(self.device)
 
         total_loss_weight = (
-            sum([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
+            torch.stack([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
+            .sum()
             .detach()
             .clone()
             .to(dtype=torch.float32)
