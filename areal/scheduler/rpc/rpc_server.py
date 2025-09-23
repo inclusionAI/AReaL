@@ -91,17 +91,19 @@ def get_serve_port(args):
     port = args.port
     port_str = os.environ.get("PORT_LIST", "").strip()
 
-    # 检查是否设置
-    if not port_str:
-        return port
-    # 按逗号分割并去除每个元素的空格
-    ports = [p.strip() for p in port_str.split(",")]
-    # 检查数组是否为空
-    if not ports:
-        return port
-    # 获取第 0 个元素
-    first_port = ports[0]
-    return int(first_port)
+    # Check if PORT_LIST is set
+    if port_str:
+        # Split by comma and strip whitespace
+        ports = [p.strip() for p in port_str.split(",")]
+        # Use the first valid port from the list
+        if ports and ports[0]:
+            try:
+                return int(ports[0])
+            except ValueError:
+                logger.warning(
+                    f"Invalid port '{ports[0]}' in PORT_LIST. Falling back to --port argument."
+                )
+    return port
 
 
 if __name__ == "__main__":
