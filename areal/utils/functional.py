@@ -4,6 +4,9 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import torch
 import torch.distributed as dist
+import torch.distributed.nn.functional as dist_F
+
+from areal.utils.ulysses import get_ulysses_sequence_parallel_world_size, get_ulysses_sequence_parallel_group
 
 
 @torch.compile
@@ -76,7 +79,17 @@ def gather_logprobs_entropy(
         log_probs_labels_list.append(chunk_log_probs)
         entropy_list.append(chunk_entropy)
 
-    return torch.cat(log_probs_labels_list), torch.cat(entropy_list)
+    logprobs = torch.cat(log_probs_labels_list)
+    entropy = torch.cat(entropy_list)
+
+    if get_ulysses_sequence_parallel_world_size() > 1:
+        sp_group = get_ulysses_sequence_parallel_group()
+        logprobs = dist_F.all_gather(logprobs, group=sp_group)
+        logprobs = torch.cat(logprobs, dim=-1)
+        entropy = dist_F.all_gather(entropy, group=sp_group)
+        entropy = torch.cat(entropy, dim=-1)
+
+    return logprobs, entropy
 
 
 @torch.no_grad()

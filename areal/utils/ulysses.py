@@ -236,9 +236,14 @@ def ulysses_pad_and_slice(input_tensor: torch.Tensor, sp_size: int = 1):
 
 def ulysses_pad_and_slice_loss_inputs(ulysses_mb_input, padded_mb_input, sp_world_size):
     # Pad and slice the loss inputs
-    for key in ["prox_logp", "loss_mask", "advantages", "logprobs"]:
-        ulysses_mb_input[key] = padded_mb_input[key].squeeze(0)
+    padded_input_ids = padded_mb_input['input_ids']
+    for key, value in padded_mb_input.items():
+        if key == 'input_ids':
+            continue
+        if torch.is_tensor(value) and value.shape[:2] == padded_input_ids.shape[:2]:
+            ulysses_mb_input[key] = value.squeeze(0)
+
     # Pad and slice the labels with full input_ids
-    lgp_labels = torch.roll(padded_mb_input["input_ids"], shifts=-1, dims=-1)
-    ulysses_mb_input["logp_labels"] = ulysses_pad_and_slice(lgp_labels, sp_size=sp_world_size)[0].squeeze(0)
+    full_labels = torch.roll(padded_input_ids, shifts=-1, dims=-1)
+    ulysses_mb_input["sp_labels"] = ulysses_pad_and_slice(full_labels, sp_size=sp_world_size)[0].squeeze(0)
     return ulysses_mb_input
