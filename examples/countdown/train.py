@@ -171,6 +171,7 @@ def main(args):
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
     # Create process groups
     actor = FSDPPPOActor(config=config.actor)

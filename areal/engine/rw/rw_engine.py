@@ -31,7 +31,7 @@ class RWEngine:
 
     def evaluate_rw(self, data: Dict[str, Any]):
         self.engine.eval()
-        self.engine.eval_batch(
+        return self.engine.eval_batch(
             input_=data,
             loss_fn=compute_rw_loss,
             loss_weight_fn=lambda x: torch.tensor(
