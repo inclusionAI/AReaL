@@ -9,7 +9,12 @@ import torch
 from tensordict import TensorDict
 from transformers import PreTrainedTokenizerFast
 
-from areal.api.cli_args import GenerationHyperparameters, TIRConfig
+from areal.api.cli_args import (
+    GenerationHyperparameters,
+    GRPOConfig,
+    dataclass,
+    field,
+)
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse
 from areal.api.reward_api import AsyncRewardWrapper
@@ -21,6 +26,20 @@ from .prompts import ANSWER, SYSTEM_PROMPT, TORL_PROMPT
 from .tool_manager import ToolCallStatus, ToolManager
 
 logger = logging.getLogger("TIR workflow")
+
+
+@dataclass
+class TIRConfig:
+    max_turns: int = field(default=2)
+    max_length: int = field(default=3000)
+    tool_timeout: float = field(default=30)
+    enable_tools: str = field(default="python")
+    is_chat_model: bool = field(default=False)
+
+
+@dataclass
+class TIRGRPOConfig(GRPOConfig):
+    tir: TIRConfig = field(default_factory=TIRConfig)
 
 
 class TIRWorkflow(RolloutWorkflow):
