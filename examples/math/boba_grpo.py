@@ -16,8 +16,9 @@ from areal.api.io_struct import (
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
-from areal.platforms import is_npu_available
+from areal.platforms import is_npu_available, current_platform
 from areal.utils import logging, seeding, stats_tracker
+from areal.utils.data import cycle_dataloader, tensor_container_to, broadcast_tensor_container
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -186,6 +187,7 @@ def main(args):
     steps_per_epoch = train_dataset_len
     max_steps = total_epochs * steps_per_epoch
 
+    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
         if stop_step and global_step >= stop_step:
             logger.info("Training stopped at step %d", global_step)
@@ -199,21 +201,31 @@ def main(args):
             epoch_step=step,
             steps_per_epoch=steps_per_epoch,
         )
-        data_generator = iter(train_dataloader)
+
         with stats_tracker.record_timing("rollout"):
-            if config.async_training:
-                batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
-            else:
-                try:
-                    data = next(data_generator)
-                except StopIteration:
-                    data_generator = iter(train_dataloader)
-                    data = next(data_generator)
-                batch = rollout.rollout_batch(data, workflow=workflow)
+            batch = None
+            if actor.is_data_parallel_head():
+                if config.async_training:
+                    batch = rollout.prepare_batch(
+                        train_dataloader,
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
+                else:
+                    batch = rollout.rollout_batch(
+                        next(data_generator),
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
+                batch = tensor_container_to(batch, actor.device)
+            batch = broadcast_tensor_container(
+                batch,
+                src_rank=actor.current_data_parallel_head(),
+                group=actor.context_and_model_parallel_group,
+            )
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
-        batch = batch.to(actor.device)
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -238,21 +250,24 @@ def main(args):
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
+        # pause inference for updating weights, save, and evaluation
+        rollout.pause()
+
         with stats_tracker.record_timing("update_weights"):
-            rollout.pause()
             if dist.get_rank() == 0:
                 future = rollout.update_weights(weight_update_meta)
             actor.upload_weights(weight_update_meta)
             if dist.get_rank() == 0:
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
             rollout.resume()
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
-            saver.save(actor, epoch, step, global_step)
+            saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
+
         with stats_tracker.record_timing("checkpoint_for_recover"):
             recover_handler.dump(
                 actor,
