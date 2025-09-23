@@ -235,109 +235,108 @@ class ArealOpenAI(AsyncOpenAI):
         self._completion_cache[completion_id].reward = reward
 
     def export_completions(
-        self, turn_discount: float = 1.0, return_leaf_only: bool = False
+        self, turn_discount: float = 1.0, reward_propagation_style: str = "linear"
     ) -> Dict[str, CompletionWithTokenLogpReward]:
-        # Assign rewards to completions in cache based on their created time
-        comp_time_sequence = reversed(
-            [comp for _, comp in self._completion_cache.items()]
-        )
-
-        # Check if the last-created completion has a reward set
-        if comp_time_sequence:
-            if comp_time_sequence[0].reward is None:
-                logger.warning(
-                    "The most recent completion does not have a reward set. "
-                    "All completions will have None reward."
-                )
-                comp_time_sequence[0].reward = 0
-            # Propagate rewards backwards with discounting if reward is not set
-            for i in range(1, len(comp_time_sequence)):
-                if comp_time_sequence[i].reward is None:
-                    comp_time_sequence[i].reward = 0
-                comp_time_sequence[i].reward += (
-                    comp_time_sequence[i - 1].reward * turn_discount
-                )
-
-        # Helper: normalize messages to compare prefixes (only role & content)
-        def _normalize_messages(msgs: List[dict]) -> List[Tuple[str, str]]:
-            def _to_str(v) -> str:
-                try:
-                    return json.dumps(v, ensure_ascii=False, sort_keys=True)
-                except Exception:
-                    return repr(v)
-
-            norm: List[Tuple[str, str]] = []
-            for m in msgs:
-                # messages may be dataclass-like or dict-like; be defensive
-                if isinstance(m, dict):
-                    role = m.get("role")
-                    content = m.get("content")
-                else:
-                    # fallback attributes
-                    role = getattr(m, "role", None)
-                    content = getattr(m, "content", None)
-                norm.append((str(role), _to_str(content)))
-            return norm
-
-        def _is_prefix(a: List[Tuple[str, str]], b: List[Tuple[str, str]]) -> bool:
-            # True if a is a strict prefix of b
-            if len(a) >= len(b):
-                return False
-            for i in range(len(a)):
-                if a[i] != b[i]:
-                    return False
-            return True
-
-        # Build helpers for all cached completions
-        items: List[Tuple[str, CompletionWithTokenLogpReward]] = list(
-            self._completion_cache.items()
-        )
-        if not items:
+        if len(self._completion_cache) == 0:
             return self._completion_cache
 
-        # Precompute normalized messages
-        meta = {}
-        for cid, comp in items:
-            meta[cid] = {
-                "norm_msgs": _normalize_messages(comp.messages or []),
-                "obj": comp,
-            }
+        if reward_propagation_style == "linear":
+            # Assign rewards to completions in cache based on their created time
+            comp_time_sequence = reversed(
+                [comp for _, comp in self._completion_cache.items()]
+            )
 
-        # 1) Construct parent-child relationships using longest prefix rule
-        # Sort potential children by (message length asc, created asc) so parents are available
-        ordered = sorted(
-            meta.items(),
-            key=lambda kv: (len(kv[1]["norm_msgs"]), kv[0]),
-        )
+            # Check if the last-created completion has a reward set
+            if comp_time_sequence:
+                if comp_time_sequence[0].reward is None:
+                    logger.warning(
+                        "The most recent completion does not have a reward set. "
+                        "All completions will have None reward."
+                    )
+                    comp_time_sequence[0].reward = 0
+                # Propagate rewards backwards with discounting if reward is not set
+                for i in range(1, len(comp_time_sequence)):
+                    if comp_time_sequence[i].reward is None:
+                        comp_time_sequence[i].reward = 0
+                    comp_time_sequence[i].reward += (
+                        comp_time_sequence[i - 1].reward * turn_discount
+                    )
+            return dict(**self._completion_cache)
+        elif reward_propagation_style == "tree":
+            # Helper: normalize messages to compare prefixes (only role & content)
+            def _normalize_messages(msgs: List[dict]) -> List[Tuple[str, str]]:
+                def _to_str(v) -> str:
+                    try:
+                        return json.dumps(v, ensure_ascii=False, sort_keys=True)
+                    except Exception:
+                        return repr(v)
 
-        # Reset parents before rebuilding
-        for _, info in ordered:
-            info["obj"].parent = None
+                norm: List[Tuple[str, str]] = []
+                for m in msgs:
+                    # messages may be dataclass-like or dict-like; be defensive
+                    if isinstance(m, dict):
+                        role = m.get("role")
+                        content = m.get("content")
+                    else:
+                        # fallback attributes
+                        role = getattr(m, "role", None)
+                        content = getattr(m, "content", None)
+                    norm.append((str(role), _to_str(content)))
+                return norm
 
-        for child_id, child_info in ordered:
-            child_msgs = child_info["norm_msgs"]
-            best_parent = None
-            best_len = -1
-            for parent_id, parent_info in ordered:
-                if parent_id == child_id:
-                    continue
-                parent_msgs = parent_info["norm_msgs"]
-                if _is_prefix(parent_msgs, child_msgs):
-                    plen = len(parent_msgs)
-                    # choose the longest prefix
-                    if plen > best_len:
-                        best_parent = parent_info["obj"]
-                        best_len = plen
-            child_info["obj"].parent = best_parent
+            def _is_prefix(a: List[Tuple[str, str]], b: List[Tuple[str, str]]) -> bool:
+                # True if a is a strict prefix of b
+                if len(a) >= len(b):
+                    return False
+                for i in range(len(a)):
+                    if a[i] != b[i]:
+                        return False
+                return True
 
-        # Build children mapping for discount propagation
-        children_map: Dict[str, List[CompletionWithTokenLogpReward]] = defaultdict(list)
-        for _, info in meta.items():
-            obj = info["obj"]
-            if obj.parent is not None:
-                children_map[obj.parent.completion.id].append(obj)
+            # Precompute normalized messages
+            meta = {}
+            for cid, comp in self._completion_cache.items():
+                meta[cid] = {
+                    "norm_msgs": _normalize_messages(comp.messages or []),
+                    "obj": comp,
+                }
 
-        if return_leaf_only:
+            # 1) Construct parent-child relationships using longest prefix rule
+            # Sort potential children by (message length asc, created asc) so parents are available
+            ordered = sorted(
+                meta.items(),
+                key=lambda kv: (len(kv[1]["norm_msgs"]), kv[0]),
+            )
+
+            # Reset parents before rebuilding
+            for _, info in ordered:
+                info["obj"].parent = None
+
+            for child_id, child_info in ordered:
+                child_msgs = child_info["norm_msgs"]
+                best_parent = None
+                best_len = -1
+                for parent_id, parent_info in ordered:
+                    if parent_id == child_id:
+                        continue
+                    parent_msgs = parent_info["norm_msgs"]
+                    if _is_prefix(parent_msgs, child_msgs):
+                        plen = len(parent_msgs)
+                        # choose the longest prefix
+                        if plen > best_len:
+                            best_parent = parent_info["obj"]
+                            best_len = plen
+                child_info["obj"].parent = best_parent
+
+            # Build children mapping for discount propagation
+            children_map: Dict[str, List[CompletionWithTokenLogpReward]] = defaultdict(
+                list
+            )
+            for _, info in meta.items():
+                obj = info["obj"]
+                if obj.parent is not None:
+                    children_map[obj.parent.completion.id].append(obj)
+
             # Return only leaf nodes (nodes without children)
             parents_with_children = set(children_map.keys())
             leaf_only: Dict[str, CompletionWithTokenLogpReward] = {}
@@ -347,4 +346,6 @@ class ArealOpenAI(AsyncOpenAI):
                     leaf_only[cid] = obj
             return leaf_only
         else:
-            return dict(**self._completion_cache)
+            raise ValueError(
+                f"Invalid reward_propagation_style {reward_propagation_style}"
+            )
