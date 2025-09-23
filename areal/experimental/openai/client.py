@@ -332,7 +332,7 @@ class ArealOpenAI(AsyncOpenAI):
         for _, info in meta.items():
             obj = info["obj"]
             if obj.parent is not None:
-                children_map[obj.parent.id].append(obj)
+                children_map[obj.parent.completion.id].append(obj)
 
         if return_leaf_only:
             # Return only leaf nodes (nodes without children)
@@ -340,7 +340,7 @@ class ArealOpenAI(AsyncOpenAI):
             leaf_only: Dict[str, CompletionWithTokenLogpReward] = {}
             for cid, info in meta.items():
                 obj = info["obj"]
-                if obj.id not in parents_with_children:
+                if obj.completion.id not in parents_with_children:
                     leaf_only[cid] = obj
             return leaf_only
         else:
