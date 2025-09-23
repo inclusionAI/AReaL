@@ -18,7 +18,7 @@ from areal.utils import name_resolve, pkg_version
 
 @dataclass
 class NormConfig:
-    """Configuration for normalization."""
+    """Configuration for reward/advantage normalization."""
 
     mean_level: str | None = field(
         default="batch",
@@ -74,7 +74,7 @@ class MicroBatchSpec:
 
 @dataclass
 class GenerationHyperparameters:
-    """Controls text generation behavior for RL training."""
+    """Controls text generation behavior for rollout."""
 
     n_samples: int = field(
         default=1, metadata={"help": "Number of sequences to generate per prompt."}
@@ -138,14 +138,11 @@ class GenerationHyperparameters:
 
 @dataclass
 class OptimizerConfig:
-    """Configuration for model optimization during training.
-    Note:
-        Set type to "empty" for models that won't be trained.
-    """
+    """Configuration for model optimization during training."""
 
     type: str = field(
         default="adam",
-        metadata={"help": "Optimizer type", "choices": ["adam", "empty"]},
+        metadata={"help": "Optimizer type", "choices": ["adam"]},
     )
     lr: float = field(default=2e-5, metadata={"help": "Learning rate"})
     weight_decay: float = field(default=0.05, metadata={"help": "Weight decay"})
@@ -193,6 +190,8 @@ class OptimizerConfig:
 
 @dataclass
 class FSDPWrapPolicy:
+    """Policy configuration for FSDP model layer wrapping. None defaults to wrapping transformer decoder layers defined by transformers."""
+
     transformer_layer_cls_to_wrap: List[str] | None = field(
         default=None,
         metadata={"help": "A list of transformer layer names for FSDP to wrap."},
@@ -201,6 +200,8 @@ class FSDPWrapPolicy:
 
 @dataclass
 class FSDPEngineConfig:
+    """Configuration for Fully Sharded Data Parallel (FSDP) training backend."""
+
     wrap_policy: FSDPWrapPolicy | None = field(
         default=None,
         metadata={"help": "FSDP wrap policy, specifying model layers to wrap."},
@@ -212,15 +213,9 @@ class FSDPEngineConfig:
 
 
 @dataclass
-class DeepSpeedAutoTPEngineConfig:
-    autotp_size: int | None = field(
-        default=1,
-        metadata={"help": "DeepSpeed AutoTP size"},
-    )
-
-
-@dataclass
 class TrainEngineConfig:
+    """Core configuration for model training, including optimization and backend settings."""
+
     experiment_name: str = MISSING
     trial_name: str = MISSING
     path: str = field(default="", metadata={"help": "Path to HuggingFace checkpoint"})
@@ -262,20 +257,20 @@ class TrainEngineConfig:
         default="float32", metadata={"help": "Gradient reduction data type."}
     )
     optimizer: OptimizerConfig | None = field(
-        default=None, metadata={"help": "Optimizer configuration"}
+        default=None,
+        metadata={"help": "Optimizer configuration. None means no training."},
     )
 
     backend: str = field(
         default="", metadata={"help": "Training backend (refer to documentation)"}
     )
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
-    ds_auto_tp: DeepSpeedAutoTPEngineConfig = field(
-        default_factory=DeepSpeedAutoTPEngineConfig
-    )
 
 
 @dataclass
 class PPOActorConfig(TrainEngineConfig):
+    """Configuration for PPO actor model, a subclass of a TrainEngine."""
+
     # Core PPO/GRPO Parameters
     group_size: int = field(
         default=1, metadata={"help": "Number of sequences in each group"}
@@ -526,6 +521,8 @@ class SGLangConfig:
 
 @dataclass
 class InferenceEngineConfig:
+    """Configuration for inference servers, including offpolicyness control."""
+
     experiment_name: str | None = None
     trial_name: str | None = None
     max_concurrent_rollouts: None | int = field(
@@ -607,16 +604,18 @@ class _Timer:
 
 @dataclass
 class EvaluatorConfig(_Timer):
-    pass
+    """Configuration for model evaluation scheduling and timing."""
 
 
 @dataclass
 class SaverConfig(_Timer):
-    pass
+    """Configuration for model checkpoint saving scheduling and timing."""
 
 
 @dataclass
 class RecoverConfig(_Timer):
+    """Configuration for experiment recovery and fault tolerance."""
+
     mode: str = field(
         default="disabled",
         metadata={
@@ -636,6 +635,8 @@ class RecoverConfig(_Timer):
 
 @dataclass
 class WandBConfig:
+    """Configuration for Weights & Biases experiment tracking."""
+
     mode: str = "disabled"
     wandb_base_url: str = ""
     wandb_api_key: str = ""
@@ -652,6 +653,8 @@ class WandBConfig:
 
 @dataclass
 class SwanlabConfig:
+    """Configuration for SwanLab experiment tracking and monitoring."""
+
     project: str | None = None
     name: str | None = None
     config: Dict | None = None
@@ -662,11 +665,15 @@ class SwanlabConfig:
 
 @dataclass
 class TensorBoardConfig:
+    """Configuration for TensorBoard logging and visualization."""
+
     path: str | None = None
 
 
 @dataclass
 class StatsLoggerConfig:
+    """Configuration for experiment statistics logging and tracking services."""
+
     experiment_name: str = MISSING
     trial_name: str = MISSING
     fileroot: str = MISSING
@@ -686,6 +693,8 @@ class StatsLoggerConfig:
 
 @dataclass
 class NameResolveConfig:
+    """Configuration for distributed name resolution and service discovery."""
+
     type: str = field(
         default="nfs",
         metadata={
@@ -710,6 +719,8 @@ class NameResolveConfig:
 
 @dataclass
 class ClusterSpecConfig:
+    """Configuration for cluster specification and distributed computing setup."""
+
     name_resolve: NameResolveConfig = field(
         default_factory=NameResolveConfig,
         metadata={"help": "Name resolving configuration."},
@@ -738,6 +749,8 @@ class ClusterSpecConfig:
 
 @dataclass
 class SchedulerConfig:
+    """Configuration for worker scheduling. Used in the single-controller mode. Experimental."""
+
     endpoint: str = field(default="http://localhost:8081")
     deploy_mode: str = field(default="separation")
     functioncall_service_domain: str = field(default="http://localhost:8080")
@@ -748,6 +761,8 @@ class SchedulerConfig:
 
 @dataclass
 class DatasetConfig:
+    """Configuration for dataset loading and preprocessing."""
+
     path: str = field(
         default=MISSING,
         metadata={
@@ -786,7 +801,7 @@ class DatasetConfig:
 
 @dataclass
 class SlurmLauncherConfig:
-    """Configuration for launching the SGLang server with Slurm."""
+    """Configuration for launching the training jobs with Slurm."""
 
     srun_additional_args: str = field(
         default="--mpi=pmi2 -K --chdir $PWD",
@@ -812,7 +827,7 @@ class SlurmLauncherConfig:
 
 @dataclass
 class LauncherConfig:
-    """Configuration for launching the SGLang server."""
+    """Configuration for launching the LLM server and trainer processes."""
 
     inference_server_cpus_per_gpu: int = field(
         default=4,
@@ -852,6 +867,8 @@ class LauncherConfig:
 
 @dataclass
 class BaseExperimentConfig:
+    """Base configuration class for all experiment types with common settings."""
+
     # NOTE: we need this unified config class because different experiments
     # have different config structures, e.g., GRPO has two engine configs,
     # but SFT only has a single one. We use subclasses to represent these structures.
@@ -913,16 +930,22 @@ class BaseExperimentConfig:
 
 @dataclass
 class SFTConfig(BaseExperimentConfig):
+    """Configuration for Supervised Fine-Tuning (SFT) experiments."""
+
     model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
 
 @dataclass
 class RWConfig(BaseExperimentConfig):
+    """Configuration for Reward Model (RW) training experiments."""
+
     model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
 
 @dataclass
 class GRPOConfig(BaseExperimentConfig):
+    """Configuration for Group Relative Policy Optimization (GRPO) reinforcement learning experiments."""
+
     async_training: bool = field(
         default=True,
         metadata={

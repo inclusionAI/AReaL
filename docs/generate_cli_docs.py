@@ -2,6 +2,9 @@
 """
 Script to automatically generate CLI documentation from areal.api.cli_args dataclasses.
 This creates markdown documentation compatible with jupyter-book.
+
+The script automatically discovers all dataclasses in the cli_args module and generates
+documentation with appropriate categorization and hyperlinks.
 """
 
 import inspect
@@ -9,37 +12,123 @@ import sys
 import types
 from dataclasses import fields, is_dataclass
 from pathlib import Path
-from typing import Union, get_args, get_origin
+from typing import Any, Dict, List, Tuple, Union, get_args, get_origin
 
 # Add the project root to the path so we can import areal
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from areal.api.cli_args import (
-    BaseExperimentConfig,
-    ClusterSpecConfig,
-    DatasetConfig,
-    EvaluatorConfig,
-    GenerationHyperparameters,
-    GRPOConfig,
-    InferenceEngineConfig,
-    LauncherConfig,
-    MicroBatchSpec,
-    NormConfig,
-    OptimizerConfig,
-    PPOActorConfig,
-    RecoverConfig,
-    RWConfig,
-    SaverConfig,
-    SchedulerConfig,
-    SFTConfig,
-    SGLangConfig,
-    StatsLoggerConfig,
-    TrainEngineConfig,
-)
+# Import the entire module to discover all dataclasses
+import areal.api.cli_args as cli_args_module
 
 
-def get_type_description(field_type) -> str:
+def discover_dataclasses() -> Dict[str, Any]:
+    """Discover all dataclasses in the cli_args module."""
+    dataclasses = {}
+    for name in dir(cli_args_module):
+        obj = getattr(cli_args_module, name)
+        if inspect.isclass(obj) and is_dataclass(obj) and not name.startswith("_"):
+            dataclasses[name] = obj
+    return dataclasses
+
+
+def categorize_dataclasses(
+    dataclasses: Dict[str, Any],
+) -> Dict[str, List[Tuple[str, Any]]]:
+    """Categorize dataclasses by their purpose/type."""
+    categories = {
+        "Core Experiment Configurations": [],
+        "Training Configurations": [],
+        "Inference Configurations": [],
+        "Dataset": [],
+        "System and Cluster Configurations": [],
+        "Logging and Monitoring": [],
+        "Others": [],
+    }
+
+    # Define categorization rules - only include the most important configs
+    experiment_configs = ["BaseExperimentConfig", "SFTConfig", "GRPOConfig", "RWConfig"]
+    training_configs = [
+        "TrainEngineConfig",
+        "PPOActorConfig",
+        "OptimizerConfig",
+        "MicroBatchSpec",
+        "NormConfig",
+        "FSDPEngineConfig",
+        "FSDPWrapPolicy",
+    ]
+    inference_configs = [
+        "InferenceEngineConfig",
+        "SGLangConfig",
+        "GenerationHyperparameters",
+    ]
+    dataset_configs = ["DatasetConfig"]
+    system_configs = [
+        "ClusterSpecConfig",
+        "NameResolveConfig",
+        "LauncherConfig",
+        "SlurmLauncherConfig",
+    ]
+    logging_configs = [
+        "StatsLoggerConfig",
+        "WandBConfig",
+        "SwanlabConfig",
+        "TensorBoardConfig",
+        "SaverConfig",
+        "EvaluatorConfig",
+        "RecoverConfig",
+    ]
+
+    for name, cls in dataclasses.items():
+        if name in experiment_configs:
+            categories["Core Experiment Configurations"].append((name, cls))
+        elif name in training_configs:
+            categories["Training Configurations"].append((name, cls))
+        elif name in inference_configs:
+            categories["Inference Configurations"].append((name, cls))
+        elif name in dataset_configs:
+            categories["Dataset"].append((name, cls))
+        elif name in system_configs:
+            categories["System and Cluster Configurations"].append((name, cls))
+        elif name in logging_configs:
+            categories["Logging and Monitoring"].append((name, cls))
+        else:
+            # All other configs go to "Others" section
+            categories["Others"].append((name, cls))
+
+    # Remove empty categories
+    return {k: v for k, v in categories.items() if v}
+
+
+def get_anchor_name(class_name: str) -> str:
+    """Convert a class name to an anchor name for hyperlinks."""
+    # Convert CamelCase to kebab-case
+    import re
+
+    s1 = re.sub("(.)([A-Z][a-z]+)", r"\1-\2", class_name)
+    s2 = re.sub("([a-z0-9])([A-Z])", r"\1-\2", s1).lower()
+
+    # Clean up common patterns
+    s2 = s2.replace("-config", "").replace("-spec", "")
+
+    return s2
+
+
+def get_class_description(cls: Any) -> str:
+    """Get description for a dataclass from its docstring."""
+    if cls.__doc__ and not cls.__doc__.startswith(cls.__name__ + "("):
+        # Clean up the docstring
+        doc = cls.__doc__.strip()
+        # Take only the first line or sentence
+        first_line = doc.split("\n")[0].strip()
+        if first_line:
+            return first_line
+
+    # Fallback for classes without docstrings
+    return f"Configuration class: {cls.__name__}"
+
+
+def get_type_description(field_type, all_dataclasses: Dict[str, Any]) -> str:
     """Convert a type annotation to a readable string."""
     # Handle union types (Type | None)
     origin = get_origin(field_type)
@@ -49,10 +138,12 @@ def get_type_description(field_type) -> str:
         # Check if it's a union with None (optional type)
         if len(args) == 2 and type(None) in args:
             non_none_type = args[0] if args[1] is type(None) else args[1]
-            return f"{get_type_description(non_none_type)} &#124; None"
+            return f"{get_type_description(non_none_type, all_dataclasses)} &#124; None"
         else:
             # Multiple non-None types in union
-            return " &#124; ".join(get_type_description(arg) for arg in args)
+            return " &#124; ".join(
+                get_type_description(arg, all_dataclasses) for arg in args
+            )
 
     # Handle basic types
     if field_type == int:
@@ -66,8 +157,14 @@ def get_type_description(field_type) -> str:
     elif field_type == list or get_origin(field_type) == list:
         if get_args(field_type):
             inner_type = get_args(field_type)[0]
-            return f"list of {get_type_description(inner_type)}"
+            return f"list of {get_type_description(inner_type, all_dataclasses)}"
         return "list"
+    elif hasattr(field_type, "__name__") and field_type.__name__ in all_dataclasses:
+        # Create hyperlinks for dataclass types
+        class_name = field_type.__name__
+        # Convert class name to anchor format (lowercase with hyphens)
+        anchor_name = get_anchor_name(class_name)
+        return f"[`{class_name}`](section-{anchor_name})"
     elif hasattr(field_type, "__name__"):
         return f"`{field_type.__name__}`"
     else:
@@ -114,39 +211,61 @@ def format_default_value(field_obj) -> str:
 
 
 def generate_config_section(
-    config_class, title: str, description: str = "", anchor: str = ""
+    config_class,
+    all_dataclasses: Dict[str, Any],
+    title: str = "",
+    description: str = "",
+    anchor: str = "",
 ) -> str:
     """Generate documentation for a single configuration dataclass."""
     if not is_dataclass(config_class):
         return ""
 
+    # Auto-generate title and description if not provided
+    if not title:
+        title = config_class.__name__.replace("Config", " Configuration").replace(
+            "Spec", " Specification"
+        )
+        # Handle special cases
+        if title.endswith(" Configuration Configuration"):
+            title = title.replace(" Configuration Configuration", " Configuration")
+
+    if not description:
+        description = get_class_description(config_class)
+
+    if not anchor:
+        anchor = get_anchor_name(config_class.__name__)
+
     # Create anchor for table of contents linking
-    if anchor:
-        doc = f"(section-{anchor})=\n## {title}\n\n"
-    else:
-        doc = f"## {title}\n\n"
+    doc = f"(section-{anchor})=\n## {title}\n\n"
 
     if description:
         doc += f"{description}\n\n"
 
-    # Only add docstring if it's not the auto-generated dataclass signature
+    # Add additional docstring content if available (beyond the first line used in description)
     if config_class.__doc__ and not config_class.__doc__.startswith(
         config_class.__name__ + "("
     ):
-        doc += f"{config_class.__doc__.strip()}\n\n"
+        docstring = config_class.__doc__.strip()
+        lines = docstring.split("\n")
+        if len(lines) > 1:
+            # Use remaining lines after first line
+            remaining_doc = "\n".join(lines[1:]).strip()
+            if remaining_doc:
+                doc += f"{remaining_doc}\n\n"
 
     doc += "| Parameter | Type | Default | Description |\n"
     doc += "|-----------|------|---------|-------------|\n"
 
     for field in fields(config_class):
         field_name = field.name
-        field_type = get_type_description(field.type)
+        field_type = get_type_description(field.type, all_dataclasses)
         default_value = format_default_value(field)
 
         # Get help text from metadata
         help_text = field.metadata.get(
             "help",
-            "No description available. Please check the description of this dataclass.",
+            "-",
         )
 
         # Get choices if available
@@ -161,7 +280,14 @@ def generate_config_section(
 
 
 def generate_cli_documentation():
-    """Generate the complete CLI documentation."""
+    """Generate the complete CLI documentation automatically."""
+    # Discover all dataclasses
+    all_dataclasses = discover_dataclasses()
+
+    # Categorize them
+    categories = categorize_dataclasses(all_dataclasses)
+
+    # Start building documentation
     doc = """# Configurations
 
 This page provides a comprehensive reference for all configuration parameters available in AReaL's command-line interface. These parameters are defined using dataclasses and can be specified in YAML configuration files or overridden via command line arguments.
@@ -184,187 +310,27 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 
 ## Table of Contents
 
-### Core Experiment Configurations
-- [Base Experiment Configuration](section-base-experiment)
-- [SFT Configuration](section-sft)
-- [GRPO Configuration](section-grpo)
-- [Reward Model Configuration](section-reward-model)
-
-### Training Configurations
-- [Training Engine Configuration](section-train-engine)
-- [PPO Actor Configuration](section-ppo-actor)
-- [Optimizer Configuration](section-optimizer)
-- [Micro-batch Specification](section-microbatch)
-- [Normalization Configuration](section-normalization)
-
-### Inference Configurations
-- [Inference Engine Configuration](section-inference-engine)
-- [SGLang Configuration](section-sglang)
-- [Generation Hyperparameters](section-generation)
-
-### Dataset
-- [Dataset Configuration](section-dataset)
-
-### System and Cluster Configurations
-- [Cluster Specification](section-cluster)
-- [Launcher Configuration](section-launcher)
-
-### Logging and Monitoring
-- [Statistics Logger Configuration](section-stats-logger)
-- [Checkpoint Saver Configuration](section-saver)
-- [Evaluator Configuration](section-evaluator)
-- [Recovery Configuration](section-recovery)
-- [Scheduler Configuration](section-scheduler)
-
----
-
 """
 
-    # Core experiment configurations
-    doc += generate_config_section(
-        BaseExperimentConfig,
-        "Base Experiment Configuration",
-        "Base configuration shared by all experiment types (SFT, GRPO, etc.)",
-        "base-experiment",
-    )
+    # Generate table of contents automatically
+    for category_name, class_list in categories.items():
+        doc += f"### {category_name}\n"
+        for class_name, cls in class_list:
+            anchor = get_anchor_name(class_name)
+            title = class_name.replace("Config", " Configuration").replace(
+                "Spec", " Specification"
+            )
+            if title.endswith(" Configuration Configuration"):
+                title = title.replace(" Configuration Configuration", " Configuration")
+            doc += f"- [{title}](section-{anchor})\n"
+        doc += "\n"
 
-    doc += generate_config_section(
-        SFTConfig,
-        "SFT Configuration",
-        "Configuration specific to supervised fine-tuning experiments",
-        "sft",
-    )
+    doc += "---\n\n"
 
-    doc += generate_config_section(
-        GRPOConfig,
-        "GRPO Configuration",
-        "Configuration for GRPO reinforcement learning experiments",
-        "grpo",
-    )
-
-    doc += generate_config_section(
-        RWConfig,
-        "Reward Model Configuration",
-        "Configuration for training reward models",
-        "reward-model",
-    )
-
-    # Training configurations
-    doc += generate_config_section(
-        TrainEngineConfig,
-        "Training Engine Configuration",
-        "Core configuration for model training, including optimization and backend settings",
-        "train-engine",
-    )
-
-    doc += generate_config_section(
-        PPOActorConfig,
-        "PPO Actor Configuration",
-        "Configuration for PPO actor models in RL training",
-        "ppo-actor",
-    )
-
-    doc += generate_config_section(
-        OptimizerConfig,
-        "Optimizer Configuration",
-        "Settings for model optimization during training",
-        "optimizer",
-    )
-
-    doc += generate_config_section(
-        MicroBatchSpec,
-        "Micro-batch Specification",
-        "Configuration for splitting data into micro-batches during training",
-        "microbatch",
-    )
-
-    # Inference configurations
-    doc += generate_config_section(
-        InferenceEngineConfig,
-        "Inference Engine Configuration",
-        "Configuration for model inference and rollout generation",
-        "inference-engine",
-    )
-
-    doc += generate_config_section(
-        SGLangConfig,
-        "SGLang Configuration",
-        "Configuration for SGLang inference runtime",
-        "sglang",
-    )
-
-    doc += generate_config_section(
-        GenerationHyperparameters,
-        "Generation Hyperparameters",
-        "Parameters controlling text generation behavior during RL training",
-        "generation",
-    )
-
-    # Data and normalization
-    doc += generate_config_section(
-        DatasetConfig,
-        "Dataset Configuration",
-        "Configuration for training and validation datasets",
-        "dataset",
-    )
-
-    doc += generate_config_section(
-        NormConfig,
-        "Normalization Configuration",
-        "Settings for data normalization (rewards, advantages, etc.)",
-        "normalization",
-    )
-
-    # System and cluster configurations
-    doc += generate_config_section(
-        ClusterSpecConfig,
-        "Cluster Specification",
-        "Configuration for distributed training cluster setup",
-        "cluster",
-    )
-
-    doc += generate_config_section(
-        LauncherConfig,
-        "Launcher Configuration",
-        "Settings for launching training and inference processes",
-        "launcher",
-    )
-
-    # Logging and monitoring
-    doc += generate_config_section(
-        StatsLoggerConfig,
-        "Statistics Logger Configuration",
-        "Configuration for experiment logging and monitoring",
-        "stats-logger",
-    )
-
-    doc += generate_config_section(
-        SaverConfig,
-        "Checkpoint Saver Configuration",
-        "Settings for saving model checkpoints",
-        "saver",
-    )
-
-    doc += generate_config_section(
-        EvaluatorConfig,
-        "Evaluator Configuration",
-        "Configuration for model evaluation during training",
-        "evaluator",
-    )
-
-    doc += generate_config_section(
-        RecoverConfig,
-        "Recovery Configuration",
-        "Settings for experiment recovery and fault tolerance",
-        "recovery",
-    )
-
-    doc += generate_config_section(
-        SchedulerConfig,
-        "Scheduler Configuration",
-        "Configuration for the AReaL scheduler service. Used for the single-controller mode. Experimental.",
-        "scheduler",
-    )
+    # Generate documentation sections automatically
+    for category_name, class_list in categories.items():
+        for class_name, cls in class_list:
+            doc += generate_config_section(cls, all_dataclasses)
 
     return doc
 
