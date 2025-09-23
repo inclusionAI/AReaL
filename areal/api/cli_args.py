@@ -24,17 +24,17 @@ class NormConfig:
     mean_level: str | None = field(
         default="batch",
         metadata={
-            "help": "mean_level for normalization. choices: batch, group. Omit for no mean normalization."
+            "help": "Mean level for normalization. Choices: batch, group. Omit for no mean normalization."
         },
     )
     std_level: str | None = field(
         default="batch",
         metadata={
-            "help": "std_level for normalization. choices: batch, group. Omit for no std normalization."
+            "help": "Standard deviation level for normalization. Choices: batch, group. Omit for no std normalization."
         },
     )
     group_size: int = field(
-        default=1, metadata={"help": "group_size for group-level normalization"}
+        default=1, metadata={"help": "Group size for group-level normalization"}
     )
 
 
@@ -51,7 +51,7 @@ class MicroBatchSpec:
     granularity: int = field(
         default=1,
         metadata={
-            "help": "The granularity of each micro-batch. Adjacent #granularity sequences are grouped together when dividing microbatches.",
+            "help": "Granularity of each micro-batch. Adjacent sequences are grouped by this size when dividing microbatches.",
         },
     )
     max_tokens_per_mb: Optional[int] = field(
@@ -110,7 +110,7 @@ class GenerationHyperparameters:
     )
     stop_token_ids: List[int] = field(
         default_factory=list,
-        metadata={"help": "Stop generation when encoutering these token ids."},
+        metadata={"help": "Stop generation when encountering these token IDs."},
     )
     stop: Optional[List[str]] = field(
         default=None,
@@ -123,7 +123,7 @@ class GenerationHyperparameters:
         metadata={
             "help": (
                 "Penalizes tokens based on their frequency in generation so far. "
-                "Must be between -2 and 2 where negative numbers encourage repeatment."
+                "Must be between -2 and 2 where negative numbers encourage repetition."
             )
         },
     )
@@ -246,7 +246,7 @@ class TrainEngineConfig:
         metadata={
             "help": (
                 "Whether to pad each microbatch to the length upper bound specified by mb_spec. "
-                "Can reduce memory fragmentation but slow down training."
+                "Can reduce memory fragmentation but slows down training."
             )
         },
     )
@@ -258,9 +258,9 @@ class TrainEngineConfig:
     gradient_checkpointing: bool = field(
         default=True, metadata={"help": "Enable gradient checkpointing"}
     )
-    dtype: str = field(default="bfloat16", metadata={"help": "Parameter dtype."})
+    dtype: str = field(default="bfloat16", metadata={"help": "Parameter data type."})
     grad_reduce_dtype: str = field(
-        default="float32", metadata={"help": "Gradient reduce dtype."}
+        default="float32", metadata={"help": "Gradient reduction data type."}
     )
     optimizer: Optional[OptimizerConfig] = field(
         default=None, metadata={"help": "Optimizer configuration"}
@@ -290,13 +290,13 @@ class PPOActorConfig(TrainEngineConfig):
     eps_clip_higher: Optional[float] = field(
         default=None,
         metadata={
-            "help": "Clipping factor (higher value) for policy ratio. Defaults is None. When eps_clip_higher is setted (decouppled), eps_clip will be used as the lower value."
+            "help": "Clipping factor (higher value) for policy ratio. Default is None. When eps_clip_higher is set (decoupled), eps_clip will be used as the lower value."
         },
     )
     c_clip: Optional[float] = field(
         default=None,
         metadata={
-            "help": "Dual clipping factor for policy ratio, must > 1.0. None disables dual clipping."
+            "help": "Dual clipping factor for policy ratio, must be > 1.0. None disables dual clipping."
         },
     )
     temperature: float = field(
@@ -316,15 +316,15 @@ class PPOActorConfig(TrainEngineConfig):
     )
     overlong_reward_penalty: bool = field(
         default=False,
-        metadata={"help": "penalty for overlong sequences. used within DAPO."},
+        metadata={"help": "Penalty for overlong sequences. Used within DAPO."},
     )
     overlong_tokens: Optional[int] = field(
         default=None,
-        metadata={"help": "The numbers of token in the tail will receive a penalty"},
+        metadata={"help": "Number of tokens in the tail that will receive a penalty"},
     )
     overlong_penalty_factor: Optional[float] = field(
         default=None,
-        metadata={"help": "The numbers of token in the tail will receive a penalty"},
+        metadata={"help": "Penalty factor for tokens in the tail"},
     )
     mask_no_eos_with_zero: bool = field(
         default=False,
@@ -350,46 +350,40 @@ class PPOActorConfig(TrainEngineConfig):
     # Asynchronous RL
     recompute_logprob: bool = field(
         default=False,
-        metadata={"help": "Recompute logp and replace the logp returned by inference."},
+        metadata={
+            "help": "Recompute log probability and replace the log probability returned by inference."
+        },
     )
     use_decoupled_loss: bool = field(
         default=False,
         metadata={
-            "help": "Use the decoupled loss. Implicitly enable recompute_logprob."
+            "help": "Use the decoupled loss. Implicitly enables recompute_logprob."
         },
     )
     behav_imp_weight_cap: Optional[float] = field(
         default=None,
         metadata={
-            "help": "We filter out the tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing the loss, must be > 1.0, use_decoupled_loss must be true"
+            "help": "Filter out tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing loss. Must be > 1.0. use_decoupled_loss must be true."
         },
     )
     # Advanced Options
     dynamic_sampling: bool = field(
         default=False,
         metadata={
-            "help": "Enable dynamic sampling (within DAPO). If enabled, the group with same reward will be filtered out."
+            "help": "Enable dynamic sampling (within DAPO). If enabled, groups with the same reward will be masked out. "
+            "Note that enabling this option will lead to variable batch sizes. If you want to use a constant batch size with dynamic filtering, "
+            "you should use the `should_accept` parameter in `rollout_batch` and `prepare_batch`."
         },
     )
 
     # Logging Agent Trajectories
     log_agent_stats: bool = field(
         default=False,
-        metadata={"help": "Log stats for agent trajectories"},
+        metadata={"help": "Log statistics for agent trajectories"},
     )
     log_agent_stats_keys: List[str] = field(
         default_factory=lambda: [],
-        metadata={"help": "Keys of log stats for agent trajectories"},
-    )
-
-    # Logging Agent Trajectories
-    log_agent_stats: bool = field(
-        default=False,
-        metadata={"help": "Log stats for agent trajectories"},
-    )
-    log_agent_stats_keys: List[str] = field(
-        default_factory=lambda: [],
-        metadata={"help": "Keys of log stats for agent trajectories"},
+        metadata={"help": "Keys for logging agent trajectory statistics"},
     )
     # Others
     max_new_tokens: int = field(
@@ -557,13 +551,28 @@ class InferenceEngineConfig:
             "the request will not be accepted.",
         },
     )
-    enable_rollout_tracing: bool = field(default=False)
-    check_trajectory_format: bool = field(default=False)
+    enable_rollout_tracing: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to output verbose tracing messages for each generation request."
+        },
+    )
+    check_trajectory_format: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to check the format of produced trajectories of a customized workflow. Useful when debugging the workflow in isolation. Should be False during RL training."
+        },
+    )
     schedule_policy: str = field(
         default="round_robin",
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
     )
-    setup_timeout: float = field(default=120.0)
+    setup_timeout: float = field(
+        default=120.0,
+        metadata={
+            "help": "Timeout in seconds of connecting to remote servers or launching local servers."
+        },
+    )
     request_timeout: float = field(
         default=3600, metadata={"help": "Timeout for HTTP requests."}
     )
@@ -688,7 +697,7 @@ class NameResolveConfig:
     nfs_record_root: str = field(
         default="/tmp/areal/name_resolve",
         metadata={
-            "help": "Record root for NFS name resolving. Should be available in all nodes."
+            "help": "Record root for NFS name resolving. Should be available on all nodes."
         },
     )
     etcd3_addr: str = field(
@@ -713,7 +722,7 @@ class ClusterSpecConfig:
     fileroot: str = field(
         default=get_user_tmp(),
         metadata={
-            "help": "Root for logs and checkpoints. Should be available to all nodes."
+            "help": "Root for logs and checkpoints. Should be available on all nodes."
         },
     )
     n_nodes: int = field(
@@ -724,7 +733,7 @@ class ClusterSpecConfig:
     )
     n_gpus_per_node: int = field(
         default=8,
-        metadata={"help": "GPUs per node (physically)."},
+        metadata={"help": "Number of GPUs per node (physical)."},
     )
 
 
@@ -748,10 +757,10 @@ class DatasetConfig:
     )
     type: str = field(
         default=MISSING,
-        metadata={"help": "Type of training method.e.g., 'sft', 'rl', etc."},
+        metadata={"help": "Type of training method, e.g., 'sft', 'rl', etc."},
     )
     batch_size: int = field(
-        default=1, metadata={"help": "Batch size of the dataloader"}
+        default=1, metadata={"help": "Batch size for the dataloader"}
     )
     shuffle: bool = field(
         default=True, metadata={"help": "Whether to shuffle the dataset"}
@@ -771,7 +780,7 @@ class DatasetConfig:
     max_length: Optional[int] = field(
         default=None,
         metadata={
-            "help": "Maximum token length of sequences in dataset. Longer sequences will be filtered out"
+            "help": "Maximum token length of sequences in dataset. Longer sequences are filtered out."
         },
     )
 
@@ -808,32 +817,32 @@ class LauncherConfig:
 
     inference_server_cpus_per_gpu: int = field(
         default=4,
-        metadata={"help": "Number of CPUs allocated per GPU for inference server. "},
+        metadata={"help": "Number of CPUs allocated per GPU for inference server."},
     )
     inference_server_mem_per_gpu: int = field(
         default=32 * 1024,
-        metadata={"help": "Memory allocated per GPU for inference server in MB. "},
+        metadata={"help": "Memory allocated per GPU for inference server in MB."},
     )
     trainer_cpus_per_gpu: int = field(
         default=4,
-        metadata={"help": "Number of CPUs allocated per GPU for training. "},
+        metadata={"help": "Number of CPUs allocated per GPU for training."},
     )
     trainer_mem_per_gpu: int = field(
         default=32 * 1024,
-        metadata={"help": "Memory allocated per GPU for training in MB. "},
+        metadata={"help": "Memory allocated per GPU for training in MB."},
     )
     inference_server_env_vars: str = field(
         default="",
         metadata={
-            "help": "Environment variables for inference server, seperated by commas. "
-            "Example: 'ENV1=val1,ENV2=val2'. "
+            "help": "Environment variables for inference server, separated by commas. "
+            "Example: 'ENV1=val1,ENV2=val2'."
         },
     )
     trainer_env_vars: str = field(
         default="",
         metadata={
-            "help": "Environment variables for training, seperated by commas. "
-            "Example: 'ENV1=val1,ENV2=val2'. "
+            "help": "Environment variables for training, separated by commas. "
+            "Example: 'ENV1=val1,ENV2=val2'."
         },
     )
     slurm: SlurmLauncherConfig = field(
@@ -884,7 +893,10 @@ class BaseExperimentConfig:
             "For benchmarking purposes only. None indicates normal training."
         },
     )
-    tokenizer_path: str = field(default="")
+    tokenizer_path: str = field(
+        default="",
+        metadata={"help": "Path to the tokenizer."},
+    )
 
     train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
     valid_dataset: Optional[DatasetConfig] = field(default=None)
@@ -915,7 +927,7 @@ class GRPOConfig(BaseExperimentConfig):
     async_training: bool = field(
         default=True,
         metadata={
-            "help": "Enable asynchronous training between rollout and policy update"
+            "help": "Enable asynchronous training between rollout and policy update."
         },
     )
     gconfig: GenerationHyperparameters = field(
@@ -929,7 +941,7 @@ class GRPOConfig(BaseExperimentConfig):
 def parse_cli_args(argv: List[str]):
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--config", help="The path of the main configuration file", required=True
+        "--config", help="Path to the main configuration file", required=True
     )
     args, overrides = parser.parse_known_args(argv)
     # Initialize hydra config
