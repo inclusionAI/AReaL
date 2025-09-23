@@ -149,6 +149,8 @@ class FSDPEngine(BaseHFEngine):
         self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
 
     def apply_tensor_parallel(self, device_mesh: DeviceMesh):
+        num_attention_heads: int
+        num_key_value_heads: int
         try:
             num_attention_heads, num_key_value_heads = (
                 self.model.config.num_attention_heads,  # type: ignore
@@ -160,8 +162,6 @@ class FSDPEngine(BaseHFEngine):
                 self.model.config.text_config.num_key_value_heads,  # type: ignore
             )
 
-        num_attention_heads: int
-        num_key_value_heads: int
         if (
             num_attention_heads % self.tp_world_size != 0
             or num_key_value_heads % self.tp_world_size != 0

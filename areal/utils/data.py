@@ -373,7 +373,7 @@ class MicroBatchList:
     def to(self, *args, **kwargs):
         mbs = [tensor_container_to(mb, *args, **kwargs) for mb in self.mbs]
         data = tensor_container_to(self.data, *args, **kwargs)
-        padded_mbs = []
+        padded_mbs = None
         if self.padded_mbs is not None:
             padded_mbs = [
                 tensor_container_to(mb, *args, **kwargs) for mb in self.padded_mbs
