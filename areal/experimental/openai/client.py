@@ -253,9 +253,10 @@ class ArealOpenAI(AsyncOpenAI):
             # Propagate rewards backwards with discounting if reward is not set
             for i in range(1, len(comp_time_sequence)):
                 if comp_time_sequence[i].reward is None:
-                    comp_time_sequence[i].reward = (
-                        comp_time_sequence[i - 1].reward * turn_discount
-                    )
+                    comp_time_sequence[i].reward = 0
+                comp_time_sequence[i].reward += (
+                    comp_time_sequence[i - 1].reward * turn_discount
+                )
 
         # Helper: normalize messages to compare prefixes (only role & content)
         def _normalize_messages(msgs: List[dict]) -> List[Tuple[str, str]]:
