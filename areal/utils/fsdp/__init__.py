@@ -32,6 +32,7 @@ __all__ = [
 logger = logging.getLogger("FSDPEngine")
 
 
+# Adapted from verl
 @contextmanager
 def maybe_patch_fsdp_module(model):
     orig_fsdp_module = fully_shard_module.FSDPModule
@@ -47,6 +48,7 @@ def maybe_patch_fsdp_module(model):
         fully_shard_module.FSDPModule = orig_fsdp_module
 
 
+# Adapted from verl
 def apply_fsdp2(model, fsdp_kwargs, wrap_policy):
     """model: AutoModelForCausalLM"""
     assert (
@@ -85,6 +87,7 @@ def apply_fsdp2(model, fsdp_kwargs, wrap_policy):
         )  # fsdp2 will not reshard_after_forward for root module
 
 
+# Adapted from verl
 def fsdp2_load_full_state_dict(
     model: PreTrainedModel,
     full_state: dict,

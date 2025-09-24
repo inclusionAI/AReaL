@@ -33,8 +33,7 @@ from areal.utils.data import (
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.fsdp import fsdp2_load_full_state_dict
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
-from areal.utils.fsdp.parallel_dims import FSDPParallelDims
-from areal.utils.fsdp.parallelize import parallelize_model
+from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
     set_ulysses_sequence_parallel_group,
@@ -49,7 +48,7 @@ class FSDPEngine(BaseHFEngine):
         # FSDP options
         self.cpu_offload: CPUOffloadPolicy | None = None
 
-        self.parallel_dims: FSDPParallelDims
+        self.parallel_helper: ParallelHelper
         self.world_mesh: DeviceMesh
 
         self.dp_group: dist.ProcessGroup
@@ -69,7 +68,7 @@ class FSDPEngine(BaseHFEngine):
 
     @property
     def data_parallel_world_size(self) -> int:
-        return self.parallel_dims.dp
+        return self.parallel_helper.dp_size
 
     def current_data_parallel_head(self) -> int:
         return self.dp_head
@@ -98,20 +97,13 @@ class FSDPEngine(BaseHFEngine):
 
         parallel_strategy = self._make_parallel_strategy(parallel_strategy)
 
-        self.parallel_dims = FSDPParallelDims(
-            dp=parallel_strategy.dp_size,
-            sp=parallel_strategy.cp_size,
-            tp=parallel_strategy.tp_size,
-            ep=parallel_strategy.ep_size,
-            etp=parallel_strategy.etp_size,
-            world_size=self.world_size,
-        )
+        self.parallel_helper = ParallelHelper.from_parallel_strategy(parallel_strategy)
 
         self.logger.info(
-            f"Initializing device mesh with parallel dims {str(self.parallel_dims)}."
+            f"Initializing device mesh with parallel dims {str(self.parallel_helper)}."
         )
 
-        self.world_mesh = self.parallel_dims.world_mesh
+        self.world_mesh = self.parallel_helper.world_mesh
 
         self.dp_group = self.world_mesh["dp"].get_group()
         self.sp_group = self.world_mesh["sp"].get_group()
@@ -140,7 +132,7 @@ class FSDPEngine(BaseHFEngine):
         # Monkey patch: replace attention's forward() with Ulysses variant.
         apply_monkey_patch(
             model=self.model,
-            ulysses_sp_size=self.parallel_dims.sp,
+            ulysses_sp_size=self.parallel_helper.sp_size,
         )
 
         # sharding_strategy = ShardingStrategy.FULL_SHARD
@@ -149,12 +141,13 @@ class FSDPEngine(BaseHFEngine):
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
         tik = time.perf_counter()
+        # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
         parallelize_model(
             self.model,
             config=self.config,
             model_config=self.model_config,
             nd_device_mesh=self.world_mesh,
-            parallel_dims=self.parallel_dims,
+            parallel_helper=self.parallel_helper,
             cpu_offload=self.cpu_offload,
             wrap_policy=self.config.fsdp.wrap_policy,
         )
@@ -333,7 +326,7 @@ class FSDPEngine(BaseHFEngine):
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
 
-        if self.parallel_dims.sp > 1:
+        if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
         self.optimizer.zero_grad()
@@ -356,7 +349,7 @@ class FSDPEngine(BaseHFEngine):
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
             ulysses_pad_size = 0
-            if self.parallel_dims.sp > 1:
+            if self.parallel_helper.sp_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
 
@@ -366,7 +359,7 @@ class FSDPEngine(BaseHFEngine):
                         ulysses_position_ids,
                         ulysses_pad_size,
                     ) = ulysses_pad(
-                        input_ids, position_ids, sp_size=self.parallel_dims.sp
+                        input_ids, position_ids, sp_size=self.parallel_helper.sp_size
                     )
                 else:
                     # Pad and slice the inputs
@@ -377,7 +370,7 @@ class FSDPEngine(BaseHFEngine):
                     ) = ulysses_pad_and_slice_inputs(
                         input_ids,
                         position_ids,
-                        sp_size=self.parallel_dims.sp,
+                        sp_size=self.parallel_helper.sp_size,
                     )
 
                 if (
@@ -396,7 +389,7 @@ class FSDPEngine(BaseHFEngine):
             outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
-            if self.parallel_dims.sp > 1:
+            if self.parallel_helper.sp_size > 1:
                 # Gather and remove Ulysses padding
                 gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
                 logits = torch.cat(gathered_logits, dim=0)
@@ -408,7 +401,7 @@ class FSDPEngine(BaseHFEngine):
 
             # Scale loss for accumulation
             # To reverse the gradient averaging for SP groups
-            loss_scale *= self.parallel_dims.dp
+            loss_scale *= self.parallel_helper.dp_size
 
             loss *= loss_scale
             loss.backward()
@@ -441,7 +434,7 @@ class FSDPEngine(BaseHFEngine):
         loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
-        if self.parallel_dims.sp > 1:
+        if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
         mb_list = self.prepare_mb_list(input_)
@@ -463,7 +456,7 @@ class FSDPEngine(BaseHFEngine):
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
             ulysses_pad_size = 0
-            if self.parallel_dims.sp > 1:
+            if self.parallel_helper.sp_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
 
@@ -473,7 +466,7 @@ class FSDPEngine(BaseHFEngine):
                         ulysses_position_ids,
                         ulysses_pad_size,
                     ) = ulysses_pad(
-                        input_ids, position_ids, sp_size=self.parallel_dims.sp
+                        input_ids, position_ids, sp_size=self.parallel_helper.sp_size
                     )
                 else:
                     # Pad and slice the inputs
@@ -484,7 +477,7 @@ class FSDPEngine(BaseHFEngine):
                     ) = ulysses_pad_and_slice_inputs(
                         input_ids,
                         position_ids,
-                        sp_size=self.parallel_dims.sp,
+                        sp_size=self.parallel_helper.sp_size,
                     )
 
                 if (
@@ -503,7 +496,7 @@ class FSDPEngine(BaseHFEngine):
             outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
-            if self.parallel_dims.sp > 1:
+            if self.parallel_helper.sp_size > 1:
                 # Gather and remove Ulysses padding
                 gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
                 logits = torch.cat(gathered_logits, dim=0)
@@ -531,7 +524,7 @@ class FSDPEngine(BaseHFEngine):
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""
-        if self.parallel_dims.sp > 1:
+        if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
@@ -548,7 +541,7 @@ class FSDPEngine(BaseHFEngine):
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
             ulysses_pad_size = 0
-            if self.parallel_dims.sp > 1:
+            if self.parallel_helper.sp_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
 
@@ -558,7 +551,7 @@ class FSDPEngine(BaseHFEngine):
                         ulysses_position_ids,
                         ulysses_pad_size,
                     ) = ulysses_pad(
-                        input_ids, position_ids, sp_size=self.parallel_dims.sp
+                        input_ids, position_ids, sp_size=self.parallel_helper.sp_size
                     )
                 else:
                     # Pad and slice the inputs
@@ -569,7 +562,7 @@ class FSDPEngine(BaseHFEngine):
                     ) = ulysses_pad_and_slice_inputs(
                         input_ids,
                         position_ids,
-                        sp_size=self.parallel_dims.sp,
+                        sp_size=self.parallel_helper.sp_size,
                     )
 
                 if (
@@ -588,7 +581,7 @@ class FSDPEngine(BaseHFEngine):
             outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
-            if self.parallel_dims.sp > 1:
+            if self.parallel_helper.sp_size > 1:
                 # Gather and remove Ulysses padding
                 gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
                 logits = torch.cat(gathered_logits, dim=0)
