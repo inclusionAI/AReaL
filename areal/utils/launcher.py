@@ -90,7 +90,7 @@ class JobInfo:
     slurm_id: Optional[int] = None  # Slurm only. The Slurm id of the job.
 
 
-def wait_rollout_server_addrs(
+def wait_llm_server_addrs(
     experiment_name: str,
     trial_name: str,
     n_rollout_servers: int,

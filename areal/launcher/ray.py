@@ -30,7 +30,7 @@ from areal.utils.launcher import (
     JobState,
     get_env_vars,
     validate_config_for_distributed_launcher,
-    wait_rollout_server_addrs,
+    wait_llm_server_addrs,
 )
 from areal.utils.ray import get_placement_group_master_ip_and_port
 from areal.utils.recover import check_if_recover
@@ -440,7 +440,7 @@ def ray_main(config, run_id: int = 0):
         )
         # Get SGLang server addresses via name_resolve
         try:
-            sglang_addrs = wait__server_addrs(
+            sglang_addrs = wait_llm_server_addrs(
                 config.experiment_name,
                 config.trial_name,
                 n_sglang_servers,
@@ -482,7 +482,7 @@ def ray_main(config, run_id: int = 0):
         )
         # Get vllm server addresses via name_resolve
         try:
-            vllm_addrs = wait_rollout_server_addrs(
+            vllm_addrs = wait_llm_server_addrs(
                 config.experiment_name,
                 config.trial_name,
                 n_vllm_servers,

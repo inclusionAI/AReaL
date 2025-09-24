@@ -93,6 +93,7 @@ train_dataset:
   batch_size: 512
   shuffle: true
   pin_memory: true
+  type: rl
 
 # Utilities
 saver:
