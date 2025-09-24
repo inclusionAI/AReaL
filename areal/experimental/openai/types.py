@@ -23,13 +23,19 @@ class CompletionWithTokenLogpReward:
         if self.parent:
             parent_res = self.parent.to_tensor_dict()
             logprobs = (
-                parent_res["logprobs"] + [0.0] * resp.input_len + resp.output_logprobs
+                parent_res["logprobs"].squeeze(0).tolist()
+                + [0.0] * resp.input_len
+                + resp.output_logprobs
             )
             loss_mask = (
-                parent_res["loss_mask"] + [0] * resp.input_len + [1] * resp.output_len
+                parent_res["loss_mask"].squeeze(0).tolist()
+                + [0] * resp.input_len
+                + [1] * resp.output_len
             )
             versions = (
-                parent_res["versions"] + [-1] * resp.input_len + resp.output_versions
+                parent_res["versions"].squeeze(0).tolist()
+                + [-1] * resp.input_len
+                + resp.output_versions
             )
         else:
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
