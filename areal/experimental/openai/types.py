@@ -37,6 +37,16 @@ class CompletionWithTokenLogpReward:
             )
             print(f"[Debug] parent.messages = {parent_messages}")
             print(f"[Debug] self.messages = {self.messages}")
+            debug_parent_messages_tokens = tokenizer.apply_chat_template(
+                parent_messages,
+                tools=self.tools,
+                add_generation_prompt=True,
+                tokenize=True,
+                **self.extra_body.get("chat_template_kwargs", {}),
+            )
+            print(
+                f"[Debug] parent.messages tokens = {len(debug_parent_messages_tokens)} {debug_parent_messages_tokens}"
+            )
             debug_self_messages_tokens = tokenizer.apply_chat_template(
                 parent_messages_with_output,
                 tools=self.tools,
@@ -44,7 +54,9 @@ class CompletionWithTokenLogpReward:
                 tokenize=True,
                 **self.extra_body.get("chat_template_kwargs", {}),
             )
-            print(f"[Debug] self.messages tokens = {debug_self_messages_tokens}")
+            print(
+                f"[Debug] self.messages tokens = {len(debug_self_messages_tokens)} {debug_self_messages_tokens}"
+            )
 
             parent_remaining_tokens = tokenizer.apply_chat_template(
                 parent_messages_with_output,
@@ -53,7 +65,9 @@ class CompletionWithTokenLogpReward:
                 tokenize=True,
                 **self.extra_body.get("chat_template_kwargs", {}),
             )
-            print(f"[Debug] parent_remaining_tokens = {parent_remaining_tokens}")
+            print(
+                f"[Debug] parent_remaining_tokens = {len(parent_remaining_tokens)} {parent_remaining_tokens}"
+            )
             print(
                 f"[Debug] resp.input_tokens = {resp.input_tokens}, resp.output_tokens = {resp.output_tokens}"
             )
