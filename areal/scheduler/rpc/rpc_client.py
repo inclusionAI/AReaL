@@ -52,13 +52,22 @@ class RPCClient:
     ) -> Any:
         """
         call the rpc server with method name and args, retry on failure
-        Args:
-            worker_id: the id of the worker to call
-            method: the method name to call
-            max_retries: max retries on failure
-            *args: args to pass to the method
-            **kwargs: kwargs to pass to the method
-        Returns:
+
+        Parameters
+        ----------
+        worker_id: str
+            the id of the worker to call
+        method: str
+            the method name to call
+        max_retries: int
+            max retries on failure
+        *args:
+            args to pass to the method
+        **kwargs:
+            kwargs to pass to the method
+
+        Returns
+        -------
             the deserialized result from the rpc server
         """
         req = (method, args, kwargs)
@@ -73,11 +82,18 @@ class RPCClient:
     ) -> Any:
         """
         call the rpc server with serialized data, retry on failure
-        Args:
-            worker_id: the id of the worker to call
-            serialized_data: the serialized data to send
-            max_retries: max retries on failure
-        Returns:
+
+        Parameters
+        ----------
+        worker_id: str
+            the id of the worker to call
+        serialized_data: bytes
+            the serialized data to send
+        max_retries: int
+            max retries on failure
+
+        Returns
+        -------
             the deserialized result from the rpc server
         """
         ip, port = self._addrs[worker_id]
