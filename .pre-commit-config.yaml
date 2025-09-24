@@ -96,7 +96,6 @@ repos:
         name: Generate CLI documentation
         entry: python docs/generate_cli_docs.py
         language: system
-        files: ^(areal/api/cli_args\.py|docs/generate_cli_docs\.py)$
+        files: ^areal/api/cli_args\.py$
         pass_filenames: false
         always_run: false
-        require_serial: true
