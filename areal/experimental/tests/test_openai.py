@@ -655,6 +655,18 @@ async def test_multi_round_conversation_concat_style_export(openai_client, token
     print(f"[Debug] c_root_messages = {wrapped_completion(c_root).messages}")
     print(f"[Debug] c_a_messages = {wrapped_completion(c_a).messages}")
     print(f"[Debug] c_a1_messages = {wrapped_completion(c_a1).messages}")
+    c_root_input = tokenizer.apply_chat_template(
+        wrapped_completion(c_root).messages, add_generation_prompt=True, tokenize=False
+    )
+    print(f"[Debug] c_root_input = {c_root_input}")
+    c_a_input = tokenizer.apply_chat_template(
+        wrapped_completion(c_a).messages, add_generation_prompt=True, tokenize=False
+    )
+    print(f"[Debug] c_a_input = {c_a_input}")
+    c_a1_input = tokenizer.apply_chat_template(
+        wrapped_completion(c_a1).messages, add_generation_prompt=True, tokenize=False
+    )
+    print(f"[Debug] c_a1_input = {c_a1_input}")
     c_root_actual_input_len = len(
         tokenizer.apply_chat_template(
             wrapped_completion(c_root).messages,
