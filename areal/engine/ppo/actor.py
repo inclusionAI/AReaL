@@ -294,14 +294,14 @@ def grpo_loss_fn(
 ):
     """Loss function for actor step, all inputs should be splitted into
     pipeline micro batches, returns loss and logging stats."""
-    input_ids = input_data["input_ids"]
+    labels = input_data.get("sp_labels", torch.roll(input_data['input_ids'], shifts=-1, dims=-1))
     old_logp = input_data["logprobs"]
     advantages = input_data["advantages"]
     loss_mask = input_data["loss_mask"].bool()
     prox_logp = input_data["prox_logp"]
 
     logprobs, entropy = gather_logprobs_entropy(
-        logits, torch.roll(input_ids, shifts=-1, dims=-1), temperature
+        logits, labels, temperature
     )
     entropy = entropy.detach()
     loss, stat = ppo_actor_loss_fn(
