@@ -1036,7 +1036,3 @@ def save_config(cfg, log_dir):
             default_flow_style=False,
             sort_keys=False,
         )
-
-
-# test comment
-# Test comment

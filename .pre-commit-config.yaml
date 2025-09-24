@@ -37,6 +37,7 @@ repos:
           - mdformat-frontmatter
         exclude: ^docs/algorithms/.*\.md$
 
+
   - repo: https://github.com/pycqa/autoflake
     rev: v2.3.1
     hooks:
