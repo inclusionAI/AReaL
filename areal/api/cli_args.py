@@ -2,7 +2,7 @@ import argparse
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import uvloop
 import yaml
@@ -14,27 +14,26 @@ from omegaconf import MISSING, DictConfig, OmegaConf
 
 from areal.platforms import current_platform
 from areal.utils import name_resolve, pkg_version
-from areal.utils.fs import get_user_tmp
 
 
 @dataclass
 class NormConfig:
-    """Configuration for normalization."""
+    """Configuration for reward/advantage normalization."""
 
     mean_level: str | None = field(
         default="batch",
         metadata={
-            "help": "mean_level for normalization. choices: batch, group. Omit for no mean normalization."
+            "help": "Mean level for normalization. Choices: batch, group. Omit for no mean normalization."
         },
     )
     std_level: str | None = field(
         default="batch",
         metadata={
-            "help": "std_level for normalization. choices: batch, group. Omit for no std normalization."
+            "help": "Standard deviation level for normalization. Choices: batch, group. Omit for no std normalization."
         },
     )
     group_size: int = field(
-        default=1, metadata={"help": "group_size for group-level normalization"}
+        default=1, metadata={"help": "Group size for group-level normalization"}
     )
 
 
@@ -42,7 +41,7 @@ class NormConfig:
 class MicroBatchSpec:
     """Specification for splitting micro-batches during training."""
 
-    n_mbs: Optional[int] = field(
+    n_mbs: int | None = field(
         default=1,
         metadata={
             "help": "Number of micro-batches (or minimum number if max_tokens_per_mb is set). Used when max_tokens_per_mb is None or as minimum count",
@@ -51,10 +50,10 @@ class MicroBatchSpec:
     granularity: int = field(
         default=1,
         metadata={
-            "help": "The granularity of each micro-batch. Adjacent #granularity sequences are grouped together when dividing microbatches.",
+            "help": "Granularity of each micro-batch. Adjacent sequences are grouped by this size when dividing microbatches.",
         },
     )
-    max_tokens_per_mb: Optional[int] = field(
+    max_tokens_per_mb: int | None = field(
         default=None,
         metadata={
             "help": "Maximum tokens per micro-batch for each forward pass. When set, n_mbs becomes the minimum number of micro-batches.",
@@ -75,7 +74,7 @@ class MicroBatchSpec:
 
 @dataclass
 class GenerationHyperparameters:
-    """Controls text generation behavior for RL training."""
+    """Controls text generation behavior for rollout."""
 
     n_samples: int = field(
         default=1, metadata={"help": "Number of sequences to generate per prompt."}
@@ -110,9 +109,9 @@ class GenerationHyperparameters:
     )
     stop_token_ids: List[int] = field(
         default_factory=list,
-        metadata={"help": "Stop generation when encoutering these token ids."},
+        metadata={"help": "Stop generation when encountering these token IDs."},
     )
-    stop: Optional[List[str]] = field(
+    stop: List[str] | None = field(
         default=None,
         metadata={
             "help": "One or multiple stop words. Generation will stop if one of these words is sampled."
@@ -123,7 +122,7 @@ class GenerationHyperparameters:
         metadata={
             "help": (
                 "Penalizes tokens based on their frequency in generation so far. "
-                "Must be between -2 and 2 where negative numbers encourage repeatment."
+                "Must be between -2 and 2 where negative numbers encourage repetition."
             )
         },
     )
@@ -139,14 +138,11 @@ class GenerationHyperparameters:
 
 @dataclass
 class OptimizerConfig:
-    """Configuration for model optimization during training.
-    Note:
-        Set type to "empty" for models that won't be trained.
-    """
+    """Configuration for model optimization during training."""
 
     type: str = field(
         default="adam",
-        metadata={"help": "Optimizer type", "choices": ["adam", "empty"]},
+        metadata={"help": "Optimizer type", "choices": ["adam"]},
     )
     lr: float = field(default=2e-5, metadata={"help": "Learning rate"})
     weight_decay: float = field(default=0.05, metadata={"help": "Weight decay"})
@@ -194,7 +190,9 @@ class OptimizerConfig:
 
 @dataclass
 class FSDPWrapPolicy:
-    transformer_layer_cls_to_wrap: Optional[List[str]] = field(
+    """Policy configuration for FSDP model layer wrapping. None defaults to wrapping transformer decoder layers defined by transformers."""
+
+    transformer_layer_cls_to_wrap: List[str] | None = field(
         default=None,
         metadata={"help": "A list of transformer layer names for FSDP to wrap."},
     )
@@ -202,7 +200,9 @@ class FSDPWrapPolicy:
 
 @dataclass
 class FSDPEngineConfig:
-    wrap_policy: Optional[FSDPWrapPolicy] = field(
+    """Configuration for Fully Sharded Data Parallel (FSDP) training backend."""
+
+    wrap_policy: FSDPWrapPolicy | None = field(
         default=None,
         metadata={"help": "FSDP wrap policy, specifying model layers to wrap."},
     )
@@ -213,15 +213,9 @@ class FSDPEngineConfig:
 
 
 @dataclass
-class DeepSpeedAutoTPEngineConfig:
-    autotp_size: Optional[int] = field(
-        default=1,
-        metadata={"help": "DeepSpeed AutoTP size"},
-    )
-
-
-@dataclass
 class TrainEngineConfig:
+    """Core configuration for model training, including optimization and backend settings."""
+
     experiment_name: str = MISSING
     trial_name: str = MISSING
     path: str = field(default="", metadata={"help": "Path to HuggingFace checkpoint"})
@@ -246,33 +240,37 @@ class TrainEngineConfig:
         metadata={
             "help": (
                 "Whether to pad each microbatch to the length upper bound specified by mb_spec. "
-                "Can reduce memory fragmentation but slow down training."
+                "Can reduce memory fragmentation but slows down training."
             )
         },
     )
 
     # Training Backend Configuration
-    disable_dropout: bool = field(default=False)
+    disable_dropout: bool = field(
+        default=False, metadata={"help": "Disable dropout layers during training"}
+    )
     gradient_checkpointing: bool = field(
         default=True, metadata={"help": "Enable gradient checkpointing"}
     )
-    dtype: str = field(default="bfloat16", metadata={"help": "Parameter dtype."})
+    dtype: str = field(default="bfloat16", metadata={"help": "Parameter data type."})
     grad_reduce_dtype: str = field(
-        default="float32", metadata={"help": "Gradient reduce dtype."}
+        default="float32", metadata={"help": "Gradient reduction data type."}
     )
-    optimizer: Optional[OptimizerConfig] = field(
-        default=None, metadata={"help": "Optimizer configuration"}
+    optimizer: OptimizerConfig | None = field(
+        default=None,
+        metadata={"help": "Optimizer configuration. None means no training."},
     )
 
-    backend: str = ""
-    fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
-    ds_auto_tp: DeepSpeedAutoTPEngineConfig = field(
-        default_factory=DeepSpeedAutoTPEngineConfig
+    backend: str = field(
+        default="", metadata={"help": "Training backend (refer to documentation)"}
     )
+    fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
 
 
 @dataclass
 class PPOActorConfig(TrainEngineConfig):
+    """Configuration for PPO actor model, a subclass of a TrainEngine."""
+
     # Core PPO/GRPO Parameters
     group_size: int = field(
         default=1, metadata={"help": "Number of sequences in each group"}
@@ -283,16 +281,16 @@ class PPOActorConfig(TrainEngineConfig):
     eps_clip: float = field(
         default=0.2, metadata={"help": "Clipping factor for policy ratio"}
     )
-    eps_clip_higher: Optional[float] = field(
+    eps_clip_higher: float | None = field(
         default=None,
         metadata={
-            "help": "Clipping factor (higher value) for policy ratio. Defaults is None. When eps_clip_higher is setted (decouppled), eps_clip will be used as the lower value."
+            "help": "Clipping factor (higher value) for policy ratio. Default is None. When eps_clip_higher is set (decoupled), eps_clip will be used as the lower value."
         },
     )
-    c_clip: Optional[float] = field(
+    c_clip: float | None = field(
         default=None,
         metadata={
-            "help": "Dual clipping factor for policy ratio, must > 1.0. None disables dual clipping."
+            "help": "Dual clipping factor for policy ratio, must be > 1.0. None disables dual clipping."
         },
     )
     temperature: float = field(
@@ -312,15 +310,15 @@ class PPOActorConfig(TrainEngineConfig):
     )
     overlong_reward_penalty: bool = field(
         default=False,
-        metadata={"help": "penalty for overlong sequences. used within DAPO."},
+        metadata={"help": "Penalty for overlong sequences. Used within DAPO."},
     )
-    overlong_tokens: Optional[int] = field(
+    overlong_tokens: int | None = field(
         default=None,
-        metadata={"help": "The numbers of token in the tail will receive a penalty"},
+        metadata={"help": "Number of tokens in the tail that will receive a penalty"},
     )
-    overlong_penalty_factor: Optional[float] = field(
+    overlong_penalty_factor: float | None = field(
         default=None,
-        metadata={"help": "The numbers of token in the tail will receive a penalty"},
+        metadata={"help": "Penalty factor for tokens in the tail"},
     )
     mask_no_eos_with_zero: bool = field(
         default=False,
@@ -346,46 +344,40 @@ class PPOActorConfig(TrainEngineConfig):
     # Asynchronous RL
     recompute_logprob: bool = field(
         default=False,
-        metadata={"help": "Recompute logp and replace the logp returned by inference."},
+        metadata={
+            "help": "Recompute log probability and replace the log probability returned by inference."
+        },
     )
     use_decoupled_loss: bool = field(
         default=False,
         metadata={
-            "help": "Use the decoupled loss. Implicitly enable recompute_logprob."
+            "help": "Use the decoupled loss. Implicitly enables recompute_logprob."
         },
     )
-    behav_imp_weight_cap: Optional[float] = field(
+    behav_imp_weight_cap: float | None = field(
         default=None,
         metadata={
-            "help": "We filter out the tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing the loss, must be > 1.0, use_decoupled_loss must be true"
+            "help": "Filter out tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing loss. Must be > 1.0. use_decoupled_loss must be true."
         },
     )
     # Advanced Options
     dynamic_sampling: bool = field(
         default=False,
         metadata={
-            "help": "Enable dynamic sampling (within DAPO). If enabled, the group with same reward will be filtered out."
+            "help": "Enable dynamic sampling (within DAPO). If enabled, groups with the same reward will be masked out. "
+            "Note that enabling this option will lead to variable batch sizes. If you want to use a constant batch size with dynamic filtering, "
+            "you should use the `should_accept` parameter in `rollout_batch` and `prepare_batch`."
         },
     )
 
     # Logging Agent Trajectories
     log_agent_stats: bool = field(
         default=False,
-        metadata={"help": "Log stats for agent trajectories"},
+        metadata={"help": "Log statistics for agent trajectories"},
     )
     log_agent_stats_keys: List[str] = field(
         default_factory=lambda: [],
-        metadata={"help": "Keys of log stats for agent trajectories"},
-    )
-
-    # Logging Agent Trajectories
-    log_agent_stats: bool = field(
-        default=False,
-        metadata={"help": "Log stats for agent trajectories"},
-    )
-    log_agent_stats_keys: List[str] = field(
-        default_factory=lambda: [],
-        metadata={"help": "Keys of log stats for agent trajectories"},
+        metadata={"help": "Keys for logging agent trajectory statistics"},
     )
     # Others
     max_new_tokens: int = field(
@@ -415,8 +407,8 @@ class SGLangConfig:
     enable_ep_moe: bool = False
     enable_torch_compile: bool = False
     torch_compile_max_bs: int = 32
-    cuda_graph_max_bs: Optional[int] = None
-    cuda_graph_bs: Optional[List[int]] = None
+    cuda_graph_max_bs: int | None = None
+    cuda_graph_bs: List[int] | None = None
     torchao_config: str = ""
     enable_nan_detection: bool = False
     enable_p2p_check: bool = False
@@ -425,15 +417,15 @@ class SGLangConfig:
     num_continuous_decode_steps: int = 1
     enable_memory_saver: bool = False
     allow_auto_truncate: bool = False
-    attention_backend: Optional[str] = "fa3"
+    attention_backend: str | None = "fa3"
     enable_multimodal: bool = False
-    sampling_backend: Optional[str] = None
-    context_length: Optional[int] = 32768
-    mem_fraction_static: Optional[float] = 0.9
-    max_running_requests: Optional[int] = None
+    sampling_backend: str | None = None
+    context_length: int | None = 32768
+    mem_fraction_static: float | None = 0.9
+    max_running_requests: int | None = None
     # NOTE: chunked_prefill_size is by default 8192 on GPUs with 80GB mem in SGLang,
     # but we disable it to avoid precision issues
-    chunked_prefill_size: Optional[int] = -1
+    chunked_prefill_size: int | None = -1
     max_prefill_tokens: int = 32768
     schedule_policy: str = "lpm"
     schedule_conservativeness: float = 1.0
@@ -444,7 +436,7 @@ class SGLangConfig:
     ep_size: int = 1
     # logging
     log_level: str = "warning"
-    log_level_http: Optional[str] = "warning"
+    log_level_http: str | None = "warning"
     log_requests: bool = False
     log_requests_level: int = 0
     show_time_cost: bool = False
@@ -461,7 +453,7 @@ class SGLangConfig:
         base_gpu_id,
         host,
         port,
-        dist_init_addr: Optional[str] = None,
+        dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
     ):
@@ -496,7 +488,7 @@ class SGLangConfig:
         base_gpu_id,
         host,
         port,
-        dist_init_addr: Optional[str] = None,
+        dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
     ):
@@ -529,8 +521,10 @@ class SGLangConfig:
 
 @dataclass
 class InferenceEngineConfig:
-    experiment_name: Optional[str] = None
-    trial_name: Optional[str] = None
+    """Configuration for inference servers, including offpolicyness control."""
+
+    experiment_name: str | None = None
+    trial_name: str | None = None
     max_concurrent_rollouts: None | int = field(
         default=None,
         metadata={
@@ -553,13 +547,28 @@ class InferenceEngineConfig:
             "the request will not be accepted.",
         },
     )
-    enable_rollout_tracing: bool = field(default=False)
-    check_trajectory_format: bool = field(default=False)
+    enable_rollout_tracing: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to output verbose tracing messages for each generation request."
+        },
+    )
+    check_trajectory_format: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to check the format of produced trajectories of a customized workflow. Useful when debugging the workflow in isolation. Should be False during RL training."
+        },
+    )
     schedule_policy: str = field(
         default="round_robin",
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
     )
-    setup_timeout: float = field(default=120.0)
+    setup_timeout: float = field(
+        default=120.0,
+        metadata={
+            "help": "Timeout in seconds of connecting to remote servers or launching local servers."
+        },
+    )
     request_timeout: float = field(
         default=3600, metadata={"help": "Timeout for HTTP requests."}
     )
@@ -573,19 +582,19 @@ class _Timer:
     experiment_name: str = MISSING
     trial_name: str = MISSING
     fileroot: str = MISSING
-    freq_epochs: Optional[int] = field(
+    freq_epochs: int | None = field(
         default=None,
         metadata={
             "help": "Trigger frequency in epochs. None disables epoch-based saving."
         },
     )
-    freq_steps: Optional[int] = field(
+    freq_steps: int | None = field(
         default=None,
         metadata={
             "help": "Trigger frequency in steps. None disables step-based saving."
         },
     )
-    freq_secs: Optional[int] = field(
+    freq_secs: int | None = field(
         default=None,
         metadata={
             "help": "Trigger frequency in seconds. None disables time-based saving."
@@ -595,16 +604,18 @@ class _Timer:
 
 @dataclass
 class EvaluatorConfig(_Timer):
-    pass
+    """Configuration for model evaluation scheduling and timing."""
 
 
 @dataclass
 class SaverConfig(_Timer):
-    pass
+    """Configuration for model checkpoint saving scheduling and timing."""
 
 
 @dataclass
 class RecoverConfig(_Timer):
+    """Configuration for experiment recovery and fault tolerance."""
+
     mode: str = field(
         default="disabled",
         metadata={
@@ -624,37 +635,45 @@ class RecoverConfig(_Timer):
 
 @dataclass
 class WandBConfig:
+    """Configuration for Weights & Biases experiment tracking."""
+
     mode: str = "disabled"
     wandb_base_url: str = ""
     wandb_api_key: str = ""
-    entity: Optional[str] = None
-    project: Optional[str] = None
-    name: Optional[str] = None
-    job_type: Optional[str] = None
-    group: Optional[str] = None
-    notes: Optional[str] = None
-    tags: Optional[List[str]] = None
-    config: Optional[Dict] = None
-    id_suffix: Optional[str] = "train"
+    entity: str | None = None
+    project: str | None = None
+    name: str | None = None
+    job_type: str | None = None
+    group: str | None = None
+    notes: str | None = None
+    tags: List[str] | None = None
+    config: Dict | None = None
+    id_suffix: str | None = "train"
 
 
 @dataclass
 class SwanlabConfig:
-    project: Optional[str] = None
-    name: Optional[str] = None
-    config: Optional[Dict] = None
-    logdir: Optional[str] = None
-    mode: Optional[str] = "disabled"
-    api_key: Optional[str] = os.getenv("SWANLAB_API_KEY", None)
+    """Configuration for SwanLab experiment tracking and monitoring."""
+
+    project: str | None = None
+    name: str | None = None
+    config: Dict | None = None
+    logdir: str | None = None
+    mode: str | None = "disabled"
+    api_key: str | None = os.getenv("SWANLAB_API_KEY", None)
 
 
 @dataclass
 class TensorBoardConfig:
-    path: Optional[str] = None
+    """Configuration for TensorBoard logging and visualization."""
+
+    path: str | None = None
 
 
 @dataclass
 class StatsLoggerConfig:
+    """Configuration for experiment statistics logging and tracking services."""
+
     experiment_name: str = MISSING
     trial_name: str = MISSING
     fileroot: str = MISSING
@@ -674,6 +693,8 @@ class StatsLoggerConfig:
 
 @dataclass
 class NameResolveConfig:
+    """Configuration for distributed name resolution and service discovery."""
+
     type: str = field(
         default="nfs",
         metadata={
@@ -684,7 +705,7 @@ class NameResolveConfig:
     nfs_record_root: str = field(
         default="/tmp/areal/name_resolve",
         metadata={
-            "help": "Record root for NFS name resolving. Should be available in all nodes."
+            "help": "Record root for NFS name resolving. Should be available on all nodes."
         },
     )
     etcd3_addr: str = field(
@@ -698,6 +719,8 @@ class NameResolveConfig:
 
 @dataclass
 class ClusterSpecConfig:
+    """Configuration for cluster specification and distributed computing setup."""
+
     name_resolve: NameResolveConfig = field(
         default_factory=NameResolveConfig,
         metadata={"help": "Name resolving configuration."},
@@ -707,9 +730,9 @@ class ClusterSpecConfig:
         metadata={"help": "Name of the cluster. Used to set specific environs."},
     )
     fileroot: str = field(
-        default=get_user_tmp(),
+        default="/tmp/areal/",
         metadata={
-            "help": "Root for logs and checkpoints. Should be available to all nodes."
+            "help": "Root for logs and checkpoints. Should be available on all nodes."
         },
     )
     n_nodes: int = field(
@@ -720,12 +743,14 @@ class ClusterSpecConfig:
     )
     n_gpus_per_node: int = field(
         default=8,
-        metadata={"help": "GPUs per node (physically)."},
+        metadata={"help": "Number of GPUs per node (physical)."},
     )
 
 
 @dataclass
 class SchedulerConfig:
+    """Configuration for worker scheduling. Used in the single-controller mode. Experimental."""
+
     endpoint: str = field(default="http://localhost:8081")
     deploy_mode: str = field(default="separation")
     functioncall_service_domain: str = field(default="http://localhost:8080")
@@ -736,6 +761,8 @@ class SchedulerConfig:
 
 @dataclass
 class DatasetConfig:
+    """Configuration for dataset loading and preprocessing."""
+
     path: str = field(
         default=MISSING,
         metadata={
@@ -744,10 +771,10 @@ class DatasetConfig:
     )
     type: str = field(
         default=MISSING,
-        metadata={"help": "Type of training method.e.g., 'sft', 'rl', etc."},
+        metadata={"help": "Type of training method, e.g., 'sft', 'rl', etc."},
     )
     batch_size: int = field(
-        default=1, metadata={"help": "Batch size of the dataloader"}
+        default=1, metadata={"help": "Batch size for the dataloader"}
     )
     shuffle: bool = field(
         default=True, metadata={"help": "Whether to shuffle the dataset"}
@@ -761,16 +788,20 @@ class DatasetConfig:
     num_workers: int = field(
         default=0, metadata={"help": "Number of worker processes for data loading"}
     )
-    drop_last: bool = field(default=True)
-    reward_fn: Optional[str] = field(
-        default=None,
+    drop_last: bool = field(
+        default=True, metadata={"help": "Drop the last incomplete batch"}
     )
-    max_length: Optional[int] = None
+    max_length: int | None = field(
+        default=None,
+        metadata={
+            "help": "Maximum token length of sequences in dataset. Longer sequences are filtered out."
+        },
+    )
 
 
 @dataclass
 class SlurmLauncherConfig:
-    """Configuration for launching the SGLang server with Slurm."""
+    """Configuration for launching the training jobs with Slurm."""
 
     srun_additional_args: str = field(
         default="--mpi=pmi2 -K --chdir $PWD",
@@ -786,46 +817,46 @@ class SlurmLauncherConfig:
     mount: str = field(
         default="/storage:/storage", metadata={"help": "Mount path for slurm."}
     )
-    trainer_image: Optional[str] = field(
+    trainer_image: str | None = field(
         default=None, metadata={"help": "slurm image for trainers."}
     )
-    inference_server_image: Optional[str] = field(
+    inference_server_image: str | None = field(
         default=None, metadata={"help": "slurm image for LLM inference."}
     )
 
 
 @dataclass
 class LauncherConfig:
-    """Configuration for launching the SGLang server."""
+    """Configuration for launching the LLM server and trainer processes."""
 
     inference_server_cpus_per_gpu: int = field(
         default=4,
-        metadata={"help": "Number of CPUs allocated per GPU for inference server. "},
+        metadata={"help": "Number of CPUs allocated per GPU for inference server."},
     )
     inference_server_mem_per_gpu: int = field(
         default=32 * 1024,
-        metadata={"help": "Memory allocated per GPU for inference server in MB. "},
+        metadata={"help": "Memory allocated per GPU for inference server in MB."},
     )
     trainer_cpus_per_gpu: int = field(
         default=4,
-        metadata={"help": "Number of CPUs allocated per GPU for training. "},
+        metadata={"help": "Number of CPUs allocated per GPU for training."},
     )
     trainer_mem_per_gpu: int = field(
         default=32 * 1024,
-        metadata={"help": "Memory allocated per GPU for training in MB. "},
+        metadata={"help": "Memory allocated per GPU for training in MB."},
     )
     inference_server_env_vars: str = field(
         default="",
         metadata={
-            "help": "Environment variables for inference server, seperated by commas. "
-            "Example: 'ENV1=val1,ENV2=val2'. "
+            "help": "Environment variables for inference server, separated by commas. "
+            "Example: 'ENV1=val1,ENV2=val2'."
         },
     )
     trainer_env_vars: str = field(
         default="",
         metadata={
-            "help": "Environment variables for training, seperated by commas. "
-            "Example: 'ENV1=val1,ENV2=val2'. "
+            "help": "Environment variables for training, separated by commas. "
+            "Example: 'ENV1=val1,ENV2=val2'."
         },
     )
     slurm: SlurmLauncherConfig = field(
@@ -836,6 +867,8 @@ class LauncherConfig:
 
 @dataclass
 class BaseExperimentConfig:
+    """Base configuration class for all experiment types with common settings."""
+
     # NOTE: we need this unified config class because different experiments
     # have different config structures, e.g., GRPO has two engine configs,
     # but SFT only has a single one. We use subclasses to represent these structures.
@@ -862,24 +895,27 @@ class BaseExperimentConfig:
     total_train_epochs: int = field(
         default=1, metadata={"help": "Total number of epochs to train the model."}
     )
-    total_train_steps: Optional[int] = field(
+    total_train_steps: int | None = field(
         default=None,
         metadata={
             "help": "Terminate training after this number of steps. "
             "For benchmarking purposes only. None indicates normal training."
         },
     )
-    total_train_n_seqs: Optional[int] = field(
+    total_train_n_seqs: int | None = field(
         default=None,
         metadata={
             "help": "Terminate training after consuming this number of samples. "
             "For benchmarking purposes only. None indicates normal training."
         },
     )
-    tokenizer_path: str = field(default="")
+    tokenizer_path: str = field(
+        default="",
+        metadata={"help": "Path to the tokenizer."},
+    )
 
     train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
-    valid_dataset: Optional[DatasetConfig] = field(default=None)
+    valid_dataset: DatasetConfig | None = field(default=None)
 
     saver: SaverConfig = field(default_factory=SaverConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
@@ -894,17 +930,28 @@ class BaseExperimentConfig:
 
 @dataclass
 class SFTConfig(BaseExperimentConfig):
+    """Configuration for Supervised Fine-Tuning (SFT) experiments."""
+
     model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
 
 @dataclass
 class RWConfig(BaseExperimentConfig):
+    """Configuration for Reward Model (RW) training experiments."""
+
     model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
 
 @dataclass
 class GRPOConfig(BaseExperimentConfig):
-    async_training: bool = field(default=True)
+    """Configuration for Group Relative Policy Optimization (GRPO) reinforcement learning experiments."""
+
+    async_training: bool = field(
+        default=True,
+        metadata={
+            "help": "Enable asynchronous training between rollout and policy update."
+        },
+    )
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
@@ -916,7 +963,7 @@ class GRPOConfig(BaseExperimentConfig):
 def parse_cli_args(argv: List[str]):
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--config", help="The path of the main configuration file", required=True
+        "--config", help="Path to the main configuration file", required=True
     )
     args, overrides = parser.parse_known_args(argv)
     # Initialize hydra config
