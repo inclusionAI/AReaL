@@ -1,4 +1,3 @@
-import json
 import os
 import time
 import uuid
@@ -234,54 +233,35 @@ class ArealOpenAI(AsyncOpenAI):
             raise KeyError(f"Completion with ID {completion_id} not found in cache")
         self._completion_cache[completion_id].reward = reward
 
+    def apply_reward_discount(self, turn_discount: float = 1.0) -> None:
+        # Assign rewards to completions in cache based on their created time
+        comp_time_sequence = list(
+            reversed([comp for _, comp in self._completion_cache.items()])
+        )
+        # Check if the last-created completion has a reward set
+        if comp_time_sequence:
+            if comp_time_sequence[0].reward is None:
+                logger.warning(
+                    "The most recent completion does not have a reward set. "
+                    "All completions will have None reward."
+                )
+                comp_time_sequence[0].reward = 0.0
+            # Propagate rewards backwards with discounting if reward is not set
+            for i in range(1, len(comp_time_sequence)):
+                if comp_time_sequence[i].reward is None:
+                    comp_time_sequence[i].reward = 0.0
+                comp_time_sequence[i].reward += (
+                    comp_time_sequence[i - 1].reward * turn_discount
+                )
+        return dict(**self._completion_cache)
+
     def export_completions(
-        self, turn_discount: float = 1.0, reward_propagation_style: str = "linear"
+        self, style: str = "concat"
     ) -> Dict[str, CompletionWithTokenLogpReward]:
         if len(self._completion_cache) == 0:
             return self._completion_cache
 
-        if reward_propagation_style == "linear":
-            # Assign rewards to completions in cache based on their created time
-            comp_time_sequence = list(
-                reversed([comp for _, comp in self._completion_cache.items()])
-            )
-            # Check if the last-created completion has a reward set
-            if comp_time_sequence:
-                if comp_time_sequence[0].reward is None:
-                    logger.warning(
-                        "The most recent completion does not have a reward set. "
-                        "All completions will have None reward."
-                    )
-                    comp_time_sequence[0].reward = 0.0
-                # Propagate rewards backwards with discounting if reward is not set
-                for i in range(1, len(comp_time_sequence)):
-                    if comp_time_sequence[i].reward is None:
-                        comp_time_sequence[i].reward = 0.0
-                    comp_time_sequence[i].reward += (
-                        comp_time_sequence[i - 1].reward * turn_discount
-                    )
-            return dict(**self._completion_cache)
-        elif reward_propagation_style == "tree":
-            # Helper: normalize messages to compare prefixes (only role & content)
-            def _normalize_messages(msgs: List[dict]) -> List[Tuple[str, str]]:
-                def _to_str(v) -> str:
-                    try:
-                        return json.dumps(v, ensure_ascii=False, sort_keys=True)
-                    except Exception:
-                        return repr(v)
-
-                norm: List[Tuple[str, str]] = []
-                for m in msgs:
-                    # messages may be dataclass-like or dict-like; be defensive
-                    if isinstance(m, dict):
-                        role = m.get("role")
-                        content = m.get("content")
-                    else:
-                        # fallback attributes
-                        role = getattr(m, "role", None)
-                        content = getattr(m, "content", None)
-                    norm.append((str(role), _to_str(content)))
-                return norm
+        if style == "concat":
 
             def _is_prefix(a: List[Tuple[str, str]], b: List[Tuple[str, str]]) -> bool:
                 # True if a is a strict prefix of b
@@ -296,7 +276,7 @@ class ArealOpenAI(AsyncOpenAI):
             meta = {}
             for cid, comp in self._completion_cache.items():
                 meta[cid] = {
-                    "norm_msgs": _normalize_messages(comp.messages or []),
+                    "norm_msgs": comp.messages or [],
                     "obj": comp,
                 }
 
@@ -344,7 +324,7 @@ class ArealOpenAI(AsyncOpenAI):
                 if obj.completion.id not in parents_with_children:
                     leaf_only[cid] = obj
             return leaf_only
+        elif style == "individual":
+            return dict(**self._completion_cache)
         else:
-            raise ValueError(
-                f"Invalid reward_propagation_style {reward_propagation_style}"
-            )
+            raise ValueError(f"Invalid export completions style {style}")
