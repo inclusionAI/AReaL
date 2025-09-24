@@ -1095,24 +1095,33 @@ class Normalization:
             raise ValueError("group_size must be provided if using group normalization")
 
         self.mean_level = config.mean_level
+        self.mean_loo = config.mean_loo
         self.std_level = config.std_level
+        self.std_unbiased = config.std_unbiased
         self.group_size = config.group_size
+        self.eps = config.eps
 
     @torch.no_grad()
     def __call__(
         self,
         x: torch.Tensor,
         loss_mask: Optional[torch.Tensor] = None,
-        eps: float = 1e-5,
-        unbiased: bool = False,
         high_precision: bool = True,
         reduce_group=None,
     ) -> torch.Tensor:
         bs = x.size(0)
+        eps = self.eps
 
         # Step 1: Compute mean
         if self.mean_level == "batch":
-            mean = self._compute_mean(x, loss_mask, high_precision, True, reduce_group)
+            mean = self._compute_mean(
+                x,
+                loss_mask,
+                high_precision=high_precision,
+                leave_one_out=self.mean_loo,
+                all_reduce=True,
+                reduce_group=reduce_group,
+            )
             mean = mean.expand_as(x)
         elif self.mean_level == "group":
             mean = torch.zeros_like(x)
@@ -1123,7 +1132,8 @@ class Normalization:
                 group_mean = self._compute_mean(
                     xx,
                     m,
-                    high_precision,
+                    high_precision=high_precision,
+                    leave_one_out=self.mean_loo,
                     all_reduce=False,
                     reduce_group=None,
                 )
@@ -1140,10 +1150,10 @@ class Normalization:
                 x,
                 loss_mask,
                 mean,
-                unbiased,
-                high_precision,
-                True,
-                reduce_group,
+                unbiased=self.std_unbiased,
+                high_precision=high_precision,
+                all_reduce=True,
+                reduce_group=reduce_group,
             )
             std = std.expand_as(x)
         elif self.std_level == "group":
@@ -1157,10 +1167,10 @@ class Normalization:
                     xx,
                     m,
                     group_mean_slice,
-                    unbiased,
-                    high_precision,
-                    False,
-                    reduce_group,
+                    unbiased=self.std_unbiased,
+                    high_precision=high_precision,
+                    all_reduce=False,
+                    reduce_group=reduce_group,
                 )
                 std[s] = group_std.expand_as(xx)
         else:
@@ -1175,6 +1185,7 @@ class Normalization:
         x: torch.Tensor,
         mask: Optional[torch.Tensor],
         high_precision: bool,
+        leave_one_out: bool,
         all_reduce: bool,
         reduce_group,
     ) -> torch.Tensor:
@@ -1197,8 +1208,9 @@ class Normalization:
             dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
             dist.all_reduce(x_sum, op=dist.ReduceOp.SUM, group=reduce_group)
 
-        mean = x_sum / factor
-        return mean
+        if leave_one_out:
+            return (x_sum - x) / (factor - 1)
+        return x_sum / factor
 
     @staticmethod
     def _compute_std(

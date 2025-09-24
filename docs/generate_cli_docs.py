@@ -14,6 +14,8 @@ from dataclasses import fields, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union, get_args, get_origin
 
+import mdformat
+
 # Add the project root to the path so we can import areal
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -187,6 +189,9 @@ def format_default_value(field_obj) -> str:
             return "`[]`"
         elif isinstance(default_value, bool):
             return f"`{default_value}`"
+        elif str(default_value).startswith("<dataclasses._MISSING_TYPE object"):
+            # Handle MISSING objects with consistent representation
+            return "**Required**"
         else:
             return f"`{default_value}`"
     elif field_obj.default_factory is not inspect._empty:
@@ -335,6 +340,11 @@ def main():
 
     try:
         documentation = generate_cli_documentation()
+        documentation = mdformat.text(
+            documentation,
+            options={"wrap": 88},
+            extensions=["gfm", "tables", "frontmatter"],
+        )
 
         with open(output_path, "w") as f:
             f.write(documentation)

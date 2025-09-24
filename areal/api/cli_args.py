@@ -26,10 +26,24 @@ class NormConfig:
             "help": "Mean level for normalization. Choices: batch, group. Omit for no mean normalization."
         },
     )
+    mean_loo: bool = field(
+        default=False,
+        metadata={"help": "Whether to use leave-one-out average."},
+    )
     std_level: str | None = field(
         default="batch",
         metadata={
             "help": "Standard deviation level for normalization. Choices: batch, group. Omit for no std normalization."
+        },
+    )
+    std_unbiased: bool = field(
+        default=False,
+        metadata={"help": "Whether to use unbiased standard deviation computation."},
+    )
+    eps: float = field(
+        default=1e-5,
+        metadata={
+            "help": "The eps when dividing by standard deviation to avoid numerical issues."
         },
     )
     group_size: int = field(
@@ -1022,3 +1036,7 @@ def save_config(cfg, log_dir):
             default_flow_style=False,
             sort_keys=False,
         )
+
+
+# test comment
+# Test comment
