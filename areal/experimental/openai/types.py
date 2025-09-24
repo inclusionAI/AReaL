@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional
 
 import torch
 from openai._types import Body
@@ -16,7 +16,7 @@ class CompletionWithTokenLogpReward:
     response: ModelResponse
     messages: List[dict] = field(default_factory=list)
     reward: float | None = None
-    parent: "CompletionWithTokenLogpReward" | None = None
+    parent: Optional["CompletionWithTokenLogpReward"] | None = None
     tools: Iterable[ChatCompletionToolParam] | None = None
     extra_body: Body | Dict = field(default_factory=dict)
     seq_tokens: List[int] | None = None
