@@ -22,7 +22,6 @@ from areal.api.alloc_mode import FSDPParallelStrategy
 from areal.api.cli_args import FSDPWrapPolicy, TrainEngineConfig
 from areal.platforms import current_platform
 from areal.utils.fsdp import apply_fsdp2
-from areal.utils.fsdp.parallel import ReplicateParallel
 from areal.utils.model import is_gemma3_model, is_moe_model, is_valid_vision_model
 
 __all__ = ["ReplicateParallel", "ParallelHelper", "parallelize_model"]
@@ -88,10 +87,10 @@ class ParallelHelper:
     _world_mesh: DeviceMesh | None = None
 
     @classmethod
-    def from_parallel_strategy(cls, fspd_ps: FSDPParallelStrategy) -> "ParallelHelper":
-        assert fspd_ps.pp_size == 1, "Pipeline parallelism is not supported in FSDP"
+    def from_parallel_strategy(cls, fsdp_ps: FSDPParallelStrategy) -> "ParallelHelper":
+        assert fsdp_ps.pp_size == 1, "Pipeline parallelism is not supported in FSDP"
 
-        return cls(_ps=fspd_ps)
+        return cls(_ps=fsdp_ps)
 
     def __str__(self) -> str:
         _ps = self._ps
