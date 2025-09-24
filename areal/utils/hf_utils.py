@@ -34,7 +34,7 @@ def load_hf_processor_and_tokenizer(
     model_name_or_path: str,
     fast_tokenizer=True,
     padding_side: Optional[str] = None,
-) -> Tuple["transformers.ProcessorMixin", transformers.PreTrainedTokenizerFast]:
+) -> Tuple["transformers.ProcessorMixin | None", transformers.PreTrainedTokenizerFast]:
     """Load a tokenizer and processor from Hugging Face."""
     # NOTE: use the raw type annoation will trigger cuda initialization
     tokenizer = load_hf_tokenizer(model_name_or_path, fast_tokenizer, padding_side)

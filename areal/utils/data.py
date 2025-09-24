@@ -362,13 +362,13 @@ class MicroBatchList:
     forward_indices: List[int]
     backward_indices: List[int]
     group_lens: List[int]
-    padded_mbs: Optional[List[Dict[str, Any]]] = None
+    padded_mbs: List[Dict[str, Any]] | None = None
     # Batch-level padding information
-    padding_lengths: Optional[List[int]] = None
-    padded_to_lengths: Optional[List[int]] = None
+    padding_lengths: List[int] | None = None
+    padded_to_lengths: List[int] | None = None
     # sequence-level padding information
-    align_to_lengths: Optional[List[int]] = None
-    old_cu_seqlens_list: Optional[List[torch.Tensor]] = None
+    align_to_lengths: List[int] | None = None
+    old_cu_seqlens_list: List[torch.Tensor] | None = None
 
     def to(self, *args, **kwargs):
         mbs = [tensor_container_to(mb, *args, **kwargs) for mb in self.mbs]
