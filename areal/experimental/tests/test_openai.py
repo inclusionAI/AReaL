@@ -7,6 +7,7 @@ import time
 
 import pytest
 import requests
+import torch
 
 from areal.api.cli_args import SGLangConfig
 from areal.experimental.openai import ArealOpenAI
@@ -649,3 +650,58 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
     assert wrapped_completion(c_b1).reward == 3
     assert wrapped_completion(c_a2).reward == 1.5
     assert wrapped_completion(c_a1).reward == 2
+
+    # Check loss masks produced by completions
+    # c_a1 loss mask
+    c_a1_loss_mask = wrapped_completion(c_a1).to_tensor_dict()["loss_mask"].squeeze(0)
+    c_root_input_len = wrapped_completion(c_root).response.input_len
+    c_root_output_len = wrapped_completion(c_root).response.output_len
+    c_a_input_len = wrapped_completion(c_a).response.input_len
+    c_a_output_len = wrapped_completion(c_a).response.output_len
+    c_a1_input_len = wrapped_completion(c_a1).response.input_len
+    c_a1_output_len = wrapped_completion(c_a1).response.output_len
+    assert torch.equal(
+        c_a1_loss_mask,
+        torch.tensor(
+            [0] * c_root_input_len
+            + [1] * c_root_output_len
+            + [0] * (c_a_input_len - c_root_output_len)
+            + [1] * c_a_output_len
+            + [0] * (c_a1_input_len - c_a_output_len)
+            + [1] * c_a1_output_len
+        ),
+    )
+
+    # c_a2 loss mask
+    c_a2_loss_mask = wrapped_completion(c_a2).to_tensor_dict()["loss_mask"].squeeze(0)
+    c_a2_input_len = wrapped_completion(c_a2).response.input_len
+    c_a2_output_len = wrapped_completion(c_a2).response.output_len
+    assert torch.equal(
+        c_a2_loss_mask,
+        torch.tensor(
+            [0] * c_root_input_len
+            + [1] * c_root_output_len
+            + [0] * (c_a_input_len - c_root_output_len)
+            + [1] * c_a_output_len
+            + [0] * (c_a2_input_len - c_a_output_len)
+            + [1] * c_a2_output_len
+        ),
+    )
+
+    # c_b1 loss mask
+    c_b1_loss_mask = wrapped_completion(c_b1).to_tensor_dict()["loss_mask"].squeeze(0)
+    c_b_input_len = wrapped_completion(c_b).response.input_len
+    c_b_output_len = wrapped_completion(c_b).response.output_len
+    c_b1_input_len = wrapped_completion(c_b1).response.input_len
+    c_b1_output_len = wrapped_completion(c_b1).response.output_len
+    assert torch.equal(
+        c_b1_loss_mask,
+        torch.tensor(
+            [0] * c_root_input_len
+            + [1] * c_root_output_len
+            + [0] * (c_b_input_len - c_root_output_len)
+            + [1] * c_b_output_len
+            + [0] * (c_b1_input_len - c_b_output_len)
+            + [1] * c_b1_output_len
+        ),
+    )
