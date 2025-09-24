@@ -139,6 +139,10 @@ dev = [
     "isort==6.0.1",
     "clang-format==19.1.7",
     "sh~=2.2",
+    "mdformat==0.7.17",
+    "mdformat-gfm",
+    "mdformat-tables",
+    "mdformat-frontmatter",
 ]
 
 docs = [

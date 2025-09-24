@@ -4,28 +4,28 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from areal.api.cli_args import AdvNormConfig
-from areal.engine.ppo.actor import AdvNorm
+from areal.api.cli_args import NormConfig
+from areal.utils.data import Normalization
 
 # =============================================================================
-# AdvNormConfig Tests
+# NormConfig Tests
 # =============================================================================
 
 
 def test_adv_norm_config_inheritance():
-    """Test that AdvNormConfig inherits all properties from NormConfig."""
-    adv_config = AdvNormConfig()
+    """Test that NormConfig inherits all properties from NormConfig."""
+    adv_config = NormConfig()
 
-    # Verify that AdvNormConfig has expected attributes
+    # Verify that NormConfig has expected attributes
     assert hasattr(
         adv_config, "mean_level"
-    ), "AdvNormConfig should have mean_level attribute"
+    ), "NormConfig should have mean_level attribute"
     assert hasattr(
         adv_config, "std_level"
-    ), "AdvNormConfig should have std_level attribute"
+    ), "NormConfig should have std_level attribute"
     assert hasattr(
         adv_config, "group_size"
-    ), "AdvNormConfig should have group_size attribute"
+    ), "NormConfig should have group_size attribute"
 
     # Verify default values
     assert adv_config.mean_level == "batch", "Default mean_level should be 'batch'"
@@ -34,17 +34,17 @@ def test_adv_norm_config_inheritance():
 
 
 def test_adv_norm_config_custom_values():
-    """Test AdvNormConfig with custom values."""
-    adv_config = AdvNormConfig(mean_level="none", std_level="batch", group_size=4)
+    """Test NormConfig with custom values."""
+    adv_config = NormConfig(mean_level=None, std_level="batch", group_size=4)
 
-    assert adv_config.mean_level == "none"
+    assert adv_config.mean_level == None
     assert adv_config.std_level == "batch"
     assert adv_config.group_size == 4
 
 
 def test_adv_norm_config_asdict():
-    """Test conversion of AdvNormConfig to dictionary."""
-    adv_config = AdvNormConfig(mean_level="batch", std_level="group", group_size=32)
+    """Test conversion of NormConfig to dictionary."""
+    adv_config = NormConfig(mean_level="batch", std_level="group", group_size=32)
 
     config_dict = asdict(adv_config)
 
@@ -53,12 +53,12 @@ def test_adv_norm_config_asdict():
     assert config_dict["group_size"] == 32
 
 
-@pytest.mark.parametrize("mean_level", ["batch", "group", "none"])
-@pytest.mark.parametrize("std_level", ["batch", "group", "none"])
+@pytest.mark.parametrize("mean_level", ["batch", "group", None])
+@pytest.mark.parametrize("std_level", ["batch", "group", None])
 @pytest.mark.parametrize("group_size", [1, 8, 32, 128])
 def test_adv_norm_config_parameterized(mean_level, std_level, group_size):
-    """Parameterized test for AdvNormConfig with various combinations."""
-    adv_config = AdvNormConfig(
+    """Parameterized test for NormConfig with various combinations."""
+    adv_config = NormConfig(
         mean_level=mean_level, std_level=std_level, group_size=group_size
     )
 
@@ -68,74 +68,74 @@ def test_adv_norm_config_parameterized(mean_level, std_level, group_size):
 
 
 def test_adv_norm_config_equality():
-    """Test equality comparison between AdvNormConfig instances."""
-    adv_config1 = AdvNormConfig(mean_level="batch", std_level="batch", group_size=1)
-    adv_config2 = AdvNormConfig(mean_level="batch", std_level="batch", group_size=1)
-    adv_config3 = AdvNormConfig(mean_level="group", std_level="batch", group_size=1)
+    """Test equality comparison between NormConfig instances."""
+    adv_config1 = NormConfig(mean_level="batch", std_level="batch", group_size=1)
+    adv_config2 = NormConfig(mean_level="batch", std_level="batch", group_size=1)
+    adv_config3 = NormConfig(mean_level="group", std_level="batch", group_size=1)
 
     assert adv_config1 == adv_config2
     assert adv_config1 != adv_config3
 
 
 def test_adv_norm_initialization():
-    """Test AdvNorm initialization with various configurations."""
+    """Test Normalization initialization with various configurations."""
     # Test with batch normalization
-    config = AdvNormConfig(mean_level="batch", std_level="batch", group_size=1)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level="batch", std_level="batch", group_size=1)
+    adv_norm = Normalization(config)
     assert adv_norm.mean_level == "batch"
     assert adv_norm.std_level == "batch"
     assert adv_norm.group_size == 1
 
     # Test with group normalization
-    config = AdvNormConfig(mean_level="group", std_level="group", group_size=8)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level="group", std_level="group", group_size=8)
+    adv_norm = Normalization(config)
     assert adv_norm.mean_level == "group"
     assert adv_norm.std_level == "group"
     assert adv_norm.group_size == 8
 
     # Test with mixed normalization
-    config = AdvNormConfig(mean_level="batch", std_level="group", group_size=16)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level="batch", std_level="group", group_size=16)
+    adv_norm = Normalization(config)
     assert adv_norm.mean_level == "batch"
     assert adv_norm.std_level == "group"
     assert adv_norm.group_size == 16
 
     # Test with no normalization
-    config = AdvNormConfig(mean_level="none", std_level="none", group_size=1)
-    adv_norm = AdvNorm(config)
-    assert adv_norm.mean_level == "none"
-    assert adv_norm.std_level == "none"
+    config = NormConfig(mean_level=None, std_level=None, group_size=1)
+    adv_norm = Normalization(config)
+    assert adv_norm.mean_level == None
+    assert adv_norm.std_level == None
     assert adv_norm.group_size == 1
 
 
 def test_adv_norm_initialization_validation():
-    """Test AdvNorm initialization validation."""
+    """Test Normalization initialization validation."""
     # Test invalid mean_level
     with pytest.raises(
         ValueError, match="mean_level must be 'batch', 'group' or 'none'"
     ):
-        config = AdvNormConfig(mean_level="invalid", std_level="batch", group_size=1)
-        AdvNorm(config)
+        config = NormConfig(mean_level="invalid", std_level="batch", group_size=1)
+        Normalization(config)
 
     # Test invalid std_level
     with pytest.raises(
         ValueError, match="std_level must be 'batch', 'group', or 'none'"
     ):
-        config = AdvNormConfig(mean_level="batch", std_level="invalid", group_size=1)
-        AdvNorm(config)
+        config = NormConfig(mean_level="batch", std_level="invalid", group_size=1)
+        Normalization(config)
 
     # Test missing group_size for group normalization
     with pytest.raises(
         ValueError, match="group_size must be provided if using group normalization"
     ):
-        config = AdvNormConfig(mean_level="group", std_level="batch", group_size=None)
-        AdvNorm(config)
+        config = NormConfig(mean_level="group", std_level="batch", group_size=None)
+        Normalization(config)
 
 
 def test_adv_norm_batch_normalization():
     """Test batch normalization functionality."""
-    config = AdvNormConfig(mean_level="batch", std_level="batch", group_size=1)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level="batch", std_level="batch", group_size=1)
+    adv_norm = Normalization(config)
 
     # Create test data
     advantages = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=torch.float32)
@@ -153,8 +153,8 @@ def test_adv_norm_batch_normalization():
 
 def test_adv_norm_group_normalization():
     """Test group normalization functionality."""
-    config = AdvNormConfig(mean_level="group", std_level="group", group_size=2)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level="group", std_level="group", group_size=2)
+    adv_norm = Normalization(config)
 
     # Create test data with 4 samples (2 groups of 2)
     advantages = torch.tensor(
@@ -174,8 +174,8 @@ def test_adv_norm_group_normalization():
 
 def test_adv_norm_mixed_normalization():
     """Test mixed normalization (different mean and std levels)."""
-    config = AdvNormConfig(mean_level="batch", std_level="group", group_size=2)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level="batch", std_level="group", group_size=2)
+    adv_norm = Normalization(config)
 
     # Create test data
     advantages = torch.tensor(
@@ -195,8 +195,8 @@ def test_adv_norm_mixed_normalization():
 
 def test_adv_norm_no_normalization():
     """Test no normalization case."""
-    config = AdvNormConfig(mean_level="none", std_level="none", group_size=1)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level=None, std_level=None, group_size=1)
+    adv_norm = Normalization(config)
 
     advantages = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=torch.float32)
     loss_mask = torch.ones_like(advantages)
@@ -210,8 +210,8 @@ def test_adv_norm_no_normalization():
 
 def test_adv_norm_center_only():
     """Test normalization with mean subtraction only (std_level='none')."""
-    config = AdvNormConfig(mean_level="batch", std_level="none", group_size=1)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level="batch", std_level=None, group_size=1)
+    adv_norm = Normalization(config)
 
     advantages = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=torch.float32)
     loss_mask = torch.ones_like(advantages)
@@ -227,8 +227,8 @@ def test_adv_norm_center_only():
 
 def test_adv_norm_without_mask():
     """Test normalization without providing a mask."""
-    config = AdvNormConfig(mean_level="batch", std_level="batch", group_size=1)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level="batch", std_level="batch", group_size=1)
+    adv_norm = Normalization(config)
 
     advantages = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=torch.float32)
 
@@ -241,10 +241,10 @@ def test_adv_norm_without_mask():
 
 
 def test_adv_norm_edge_cases():
-    """Test edge cases for AdvNorm."""
+    """Test edge cases for Normalization."""
     # Test with all zeros
-    config = AdvNormConfig(mean_level="batch", std_level="batch", group_size=1)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level="batch", std_level="batch", group_size=1)
+    adv_norm = Normalization(config)
 
     advantages = torch.zeros((2, 3), dtype=torch.float32)
     loss_mask = torch.ones_like(advantages)
@@ -262,8 +262,8 @@ def test_adv_norm_edge_cases():
 
 def test_adv_norm_dtype_preservation():
     """Test that output dtype is preserved as float32."""
-    config = AdvNormConfig(mean_level="batch", std_level="batch", group_size=1)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level="batch", std_level="batch", group_size=1)
+    adv_norm = Normalization(config)
 
     advantages = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
     normalized = adv_norm(advantages)
@@ -275,12 +275,12 @@ def test_adv_norm_dtype_preservation():
 @patch("torch.distributed.is_initialized")
 @patch("torch.distributed.all_reduce")
 def test_adv_norm_distributed(mock_all_reduce, mock_is_initialized):
-    """Test AdvNorm in distributed setting."""
+    """Test Normalization in distributed setting."""
     mock_is_initialized.return_value = True
     mock_all_reduce.return_value = None
 
-    config = AdvNormConfig(mean_level="batch", std_level="batch", group_size=1)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level="batch", std_level="batch", group_size=1)
+    adv_norm = Normalization(config)
 
     advantages = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=torch.float32)
     loss_mask = torch.ones_like(advantages)
@@ -300,18 +300,18 @@ def test_adv_norm_distributed(mock_all_reduce, mock_is_initialized):
         ("group", "group"),
         ("batch", "group"),
         ("group", "batch"),
-        ("batch", "none"),
-        ("none", "batch"),
+        ("batch", None),
+        (None, "batch"),
     ],
 )
 def test_adv_norm_parameterized(mean_level, std_level):
     """Parameterized test for different normalization combinations."""
-    config = AdvNormConfig(
+    config = NormConfig(
         mean_level=mean_level,
         std_level=std_level,
         group_size=4 if "group" in [mean_level, std_level] else 1,
     )
-    adv_norm = AdvNorm(config)
+    adv_norm = Normalization(config)
 
     # Create test data
     advantages = torch.tensor(
@@ -334,15 +334,15 @@ def test_adv_norm_parameterized(mean_level, std_level):
     assert normalized.dtype == torch.float32
 
     # For non-"none" normalization, values should change
-    if mean_level != "none" or std_level != "none":
+    if mean_level != None or std_level != None:
         assert not torch.allclose(normalized, advantages)
 
 
 def test_adv_norm_debug_cases():
     """Debug test cases for mixed and no normalization scenarios."""
     # Test mixed normalization (batch mean, group std)
-    config = AdvNormConfig(mean_level="batch", std_level="group", group_size=2)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level="batch", std_level="group", group_size=2)
+    adv_norm = Normalization(config)
 
     advantages = torch.tensor(
         [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
@@ -357,8 +357,8 @@ def test_adv_norm_debug_cases():
     assert not torch.allclose(normalized, advantages)  # Should be normalized
 
     # Test no normalization case
-    config = AdvNormConfig(mean_level="none", std_level="none", group_size=1)
-    adv_norm = AdvNorm(config)
+    config = NormConfig(mean_level=None, std_level=None, group_size=1)
+    adv_norm = Normalization(config)
 
     advantages = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=torch.float32)
     loss_mask = torch.ones_like(advantages)

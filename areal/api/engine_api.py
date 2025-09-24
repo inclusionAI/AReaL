@@ -240,8 +240,8 @@ class TrainEngine(abc.ABC):
     def step_lr_scheduler(self):
         """Step the learning rate scheduler.
 
-        Since PPO uses minibatch updates, this method only needs to be called once
-        after several train_batch calls. It is separated from train_batch to allow
+        Since PPO uses minibatch updates, this method should be called periodically
+        (e.g., once per PPO step). It is separated from train_batch to allow
         for more flexible learning rate scheduling.
         """
         raise NotImplementedError()
@@ -250,7 +250,7 @@ class TrainEngine(abc.ABC):
         self,
         input_: Dict[str, Any],
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], float],
+        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function.
 
@@ -266,7 +266,7 @@ class TrainEngine(abc.ABC):
         loss_fn : Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor]
             The loss function that takes the model's forward output and input_,
             and outputs a scalar normalized loss.
-        loss_weight_fn : Callable[[Dict[str, Any]], float]
+        loss_weight_fn : Callable[[Dict[str, Any]], torch.Tensor]
             A function used to calculate the weight of each micro-batch. Since
             loss_fn normalizes the loss for a micro-batch, we need a corresponding
             weight for each micro-batch to normalize the loss globally. The weight
@@ -285,7 +285,7 @@ class TrainEngine(abc.ABC):
         self,
         input_: Dict[str, Any],
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], float],
+        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function.
 
@@ -301,7 +301,7 @@ class TrainEngine(abc.ABC):
         loss_fn : Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor]
             The loss function that takes the model's forward output and input_,
             and outputs a scalar normalized loss.
-        loss_weight_fn : Callable[[Dict[str, Any]], float]
+        loss_weight_fn : Callable[[Dict[str, Any]], torch.Tensor]
             A function used to calculate the weight of each micro-batch. Since
             loss_fn normalizes the loss for a micro-batch, we need a corresponding
             weight for each micro-batch to normalize the loss globally. The weight
@@ -370,6 +370,7 @@ class InferenceEngine(abc.ABC):
 
     def destroy(self):
         """Destroy the engine and release GPU memory for the local inference engine."""
+        raise NotImplementedError()
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.

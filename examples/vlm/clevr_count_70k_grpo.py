@@ -61,6 +61,7 @@ def main(args):
     seeding.set_random_seed(config.seed, f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)

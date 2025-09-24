@@ -23,7 +23,7 @@ class LMEngine:
 
     def evaluate_lm(self, data):
         self.engine.eval()
-        self.engine.eval_batch(
+        return self.engine.eval_batch(
             input_=data,
             loss_fn=compute_packed_sft_loss,
             loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),

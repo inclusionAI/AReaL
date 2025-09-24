@@ -11,9 +11,9 @@ from transformers import (
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
     AutoModelForTokenClassification,
-    AutoProcessor,
     PretrainedConfig,
     PreTrainedTokenizerFast,
+    ProcessorMixin,
     get_constant_schedule_with_warmup,
     get_linear_schedule_with_warmup,
 )
@@ -55,7 +55,7 @@ class BaseHFEngine(TrainEngine):
         self.model: torch.nn.Module
         self.optimizer: torch.optim.Optimizer
         self.tokenizer: PreTrainedTokenizerFast
-        self.processor: AutoProcessor | None = None
+        self.processor: ProcessorMixin | None
         # huggingface model config
         self.model_config: PretrainedConfig
         self._version: int = 0
@@ -129,7 +129,9 @@ class BaseHFEngine(TrainEngine):
             )
             self.own_global_group = True
         # Each process is its own model parallel group.
-        self.mp_group = dist.new_group([dist.get_rank()])
+        mp_group = dist.new_group([dist.get_rank()])
+        assert mp_group is not None
+        self.mp_group = mp_group
 
         self.logger = logging.getLogger(f"[HF Engine Rank {dist.get_rank()}]")
 
@@ -362,6 +364,7 @@ class BaseHFEngine(TrainEngine):
         # packed input to be of shape [1, total_seqlen].
         mb_list = unsqueeze_mb_list(mb_list)
         if is_qwen2_vl_model(self.model_config.model_type):
+            assert mb_list.padded_mbs is not None
             for mb in mb_list.padded_mbs:
                 # [1, total_seqlen, 3] -> [3, 1, total_seqlen]
                 mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
@@ -370,6 +373,7 @@ class BaseHFEngine(TrainEngine):
 
         # Modern model implementations takes a dict as the input.
         # This eliminates a bug of Qwen2.5-VL for transformers<=4.53.1
+        assert mb_list.padded_mbs is not None
         for i, mb in enumerate(mb_list.mbs):
             mb_list.mbs[i] = dict(**mb)
         for i, mb in enumerate(mb_list.padded_mbs):
@@ -464,7 +468,7 @@ class BaseHFEngine(TrainEngine):
         self,
         input_: Dict[str, Any],
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], float],
+        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> Dict[str, float]:
         """Train on a batch using gradient accumulation."""
         assert self.optimizer is not None
@@ -476,7 +480,8 @@ class BaseHFEngine(TrainEngine):
         mb_list = mb_list.to(self.device)
 
         total_loss_weight = (
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            torch.stack([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .sum()
             .detach()
             .clone()
             .to(dtype=torch.float32)
@@ -485,8 +490,8 @@ class BaseHFEngine(TrainEngine):
         dist.all_reduce(total_loss_weight)
 
         # Process microbatches with gradient accumulation
-        for i, (pad_length, padded_mb_input, mb_input) in enumerate(
-            zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
+        for pad_length, padded_mb_input, mb_input in zip(
+            mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
             outputs = self.model(**padded_mb_input)
 
@@ -530,22 +535,23 @@ class BaseHFEngine(TrainEngine):
         self,
         input_: Dict[str, Any],
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], float],
+        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
         total_loss_weight = (
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            torch.stack([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .sum()
             .detach()
             .clone()
             .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
 
-        total_loss = 0.0
-        total_weight = 0.0
+        total_loss = torch.zeros(1, device=self.device, dtype=torch.float32)
+        total_weight = torch.zeros(1, device=self.device, dtype=torch.float32)
 
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
@@ -557,10 +563,10 @@ class BaseHFEngine(TrainEngine):
 
             # Simple weight calculation (could be improved)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
-            total_loss += loss.item() * loss_scale
+            total_loss += loss * loss_scale
             total_weight += loss_scale
 
-        return torch.tensor(total_loss / total_weight)
+        return total_loss / total_weight
 
     @torch.no_grad()
     def forward(
@@ -577,6 +583,7 @@ class BaseHFEngine(TrainEngine):
 
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
+        assert output_seqlens is not None
 
         results = []
         for pad_length, padded_mb_input, mb_input in zip(

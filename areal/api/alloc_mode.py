@@ -54,8 +54,7 @@ class ParallelStrategy:
         data_parallel_size: Number of data parallel replicas for ZeRO optimization (default: 1)
         context_parallel_size: Number of devices for context parallelism in attention modules (default: 1)
         expert_parallel_size: Number of devices for expert parallelism in MoE models (default: 1)
-        expert_tensor_parallel_size: Tensor parallelism size specifically for expert modules.
-            If None, defaults to tensor_parallel_size (default: None)
+        expert_tensor_parallel_size: Tensor parallelism size specifically for expert modules (default: 1)
 
     Note:
         - Context parallelism is only effective for attention modules
@@ -85,24 +84,17 @@ class ParallelStrategy:
             "Note that expert parallelism is only effective for expert modules."
         },
     )
-    expert_tensor_parallel_size: Optional[int] = field(
-        default=None,
+    expert_tensor_parallel_size: int = field(
+        default=1,
         metadata={
             "help": "Tensor parallelism size for expert modules. "
-            "If not set, expert modules will use `tensor_parallel_size`."
+            "By default, it is 1 which disables expert tensor parallelism."
         },
     )
 
     def __post_init__(self):
         """Initialize computed properties and validate configuration."""
         if self.expert_parallel_size > 1:
-            # Set expert tensor parallel size if not explicitly provided
-            self.expert_tensor_parallel_size = (
-                self.tensor_parallel_size
-                if self.expert_tensor_parallel_size is None
-                else self.expert_tensor_parallel_size
-            )
-
             # Calculate expert model parallel size for validation
             self.expert_model_parallel_size = (
                 self.pipeline_parallel_size
@@ -150,7 +142,7 @@ class ParallelStrategy:
         return self.expert_parallel_size
 
     @property
-    def etp_size(self) -> Optional[int]:
+    def etp_size(self) -> int:
         """Expert tensor parallelism size (abbreviated)."""
         return self.expert_tensor_parallel_size
 
@@ -181,7 +173,7 @@ class ParallelStrategy:
             parts.append(f"cp={self.context_parallel_size}")
         if self.expert_parallel_size > 1:
             parts.append(f"ep={self.expert_parallel_size}")
-            if self.expert_tensor_parallel_size != self.tensor_parallel_size:
+            if self.expert_tensor_parallel_size != 1:
                 parts.append(f"ep_tp={self.expert_tensor_parallel_size}")
 
         return f"Parallel({','.join(parts)})"
@@ -217,7 +209,7 @@ class FSDPParallelStrategy(ParallelStrategy):
     @staticmethod
     def parallelism_eq(this, other):
         """Compare FSDP parallelism configurations."""
-        return super().parallelism_eq(this, other)
+        return ParallelStrategy.parallelism_eq(this, other)
 
 
 @dataclass
@@ -241,7 +233,7 @@ class MegatronParallelStrategy(ParallelStrategy):
     @staticmethod
     def parallelism_eq(this, other):
         """Compare Megatron parallelism configurations (excluding sequence parallelism)."""
-        return super().parallelism_eq(this, other) and (
+        return ParallelStrategy.parallelism_eq(this, other) and (
             (
                 this.virtual_pipeline_parallel_size
                 == other.virtual_pipeline_parallel_size
@@ -281,7 +273,7 @@ class AllocationMode:
     """
 
     type_: AllocationType
-    gen: Optional[ParallelStrategy] = None
+    gen: ParallelStrategy = field(default_factory=ParallelStrategy)
     train: Optional[ParallelStrategy] = None
     gen_backend: Optional[str] = None
     train_backend: Optional[str] = None
@@ -721,7 +713,7 @@ class _ParallelStrategyTransformer(Transformer):
         # Build expert strategy parameters
         expert_data_parallel_size = None
         expert_pipeline_parallel_size = None
-        expert_tensor_parallel_size = None
+        expert_tensor_parallel_size = 1
         expert_parallel_size = 1
 
         for dim in expert_dims:
@@ -759,7 +751,7 @@ class _ParallelStrategyTransformer(Transformer):
                 expert_pipeline_parallel_size or attn_kwargs["pipeline_parallel_size"],
             ]
             + [
-                expert_tensor_parallel_size or attn_kwargs["tensor_parallel_size"],
+                expert_tensor_parallel_size,
                 expert_parallel_size,
             ]
         )
@@ -773,10 +765,9 @@ class _ParallelStrategyTransformer(Transformer):
         # Create final strategy combining both
         final_strategy_kwargs = attn_kwargs.copy()
         final_strategy_kwargs["expert_parallel_size"] = expert_parallel_size
-        if expert_tensor_parallel_size is not None:
-            final_strategy_kwargs["expert_tensor_parallel_size"] = (
-                expert_tensor_parallel_size
-            )
+        final_strategy_kwargs["expert_tensor_parallel_size"] = (
+            expert_tensor_parallel_size
+        )
 
         strategy = ParallelStrategy(**final_strategy_kwargs)
         return TrainingParallelism(strategy=strategy, backend="megatron")

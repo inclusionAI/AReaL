@@ -3,7 +3,7 @@ import math
 import os
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List
 
 import torch
 import torch.distributed as dist
@@ -23,7 +23,7 @@ from torch.distributed.tensor.parallel import (
     SequenceParallel,
     parallelize_module,
 )
-from transformers import AutoProcessor, PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast, ProcessorMixin
 
 from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
@@ -61,39 +61,33 @@ class FSDPEngine(BaseHFEngine):
     def __init__(self, config: TrainEngineConfig):
         super().__init__(config)
         # FSDP options
-        self.fsdp_tp_device_mesh = None
-        self.mixed_precision_policy = None
-        self.cpu_offload = None
+        self.fsdp_tp_device_mesh: DeviceMesh
+        self.cpu_offload: CPUOffloadPolicy | None = None
 
-        self.dp_world_size = None
-        self.sp_world_size = None
-        self.tp_world_size = None
+        self.dp_world_size: int
+        self.sp_world_size: int
+        self.tp_world_size: int
 
-        self.dp_group = None
-        self.sp_group = None
-        self.mp_group = None
+        self.dp_group: dist.ProcessGroup
+        self.sp_group: dist.ProcessGroup
 
-        self.rank = None
-        self.dp_head = None
-        self.dp_rank = None
+        self.rank: int
+        self.dp_head: int
+        self.dp_rank: int
 
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
-        assert self.dp_group is not None
         return self.dp_group
 
     @property
     def data_parallel_rank(self) -> int:
-        assert self.dp_rank is not None
         return self.dp_rank
 
     @property
     def data_parallel_world_size(self) -> int:
-        assert self.dp_world_size is not None
         return self.dp_world_size
 
     def current_data_parallel_head(self) -> int:
-        assert self.dp_head is not None
         return self.dp_head
 
     def is_data_parallel_head(self) -> bool:
@@ -101,7 +95,6 @@ class FSDPEngine(BaseHFEngine):
 
     @property
     def context_and_model_parallel_group(self) -> dist.ProcessGroup:
-        assert self.mp_group is not None
         return self.mp_group
 
     def _make_parallel_strategy(
@@ -113,6 +106,7 @@ class FSDPEngine(BaseHFEngine):
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         super().create_process_group(parallel_strategy)
+
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
 
@@ -144,27 +138,29 @@ class FSDPEngine(BaseHFEngine):
         self.dp_group = nd_device_mesh["dp"].get_group()
         self.sp_group = nd_device_mesh["sp"].get_group()
 
+        # Combined model parallel group (tp + sp)
         nd_device_mesh["sp", "tp"]._flatten(mesh_dim_name="mp")
-
         self.mp_group = nd_device_mesh["mp"].get_group()
 
         self.rank = dist.get_rank()
 
-        self.dp_head = nd_device_mesh["mp"].mesh[0].item()
+        self.dp_head = int(nd_device_mesh["mp"].mesh[0].item())
         self.dp_rank = dist.get_rank(self.dp_group)
 
         self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
 
     def apply_tensor_parallel(self, device_mesh: DeviceMesh):
+        num_attention_heads: int
+        num_key_value_heads: int
         try:
             num_attention_heads, num_key_value_heads = (
-                self.model.config.num_attention_heads,
-                self.model.config.num_key_value_heads,
+                self.model.config.num_attention_heads,  # type: ignore
+                self.model.config.num_key_value_heads,  # type: ignore
             )
         except AttributeError:
             num_attention_heads, num_key_value_heads = (
-                self.model.config.text_config.num_attention_heads,
-                self.model.config.text_config.num_key_value_heads,
+                self.model.config.text_config.num_attention_heads,  # type: ignore
+                self.model.config.text_config.num_key_value_heads,  # type: ignore
             )
 
         if (
@@ -278,9 +274,6 @@ class FSDPEngine(BaseHFEngine):
             "torch", "2.4.0"
         ), f"areal only supports FSDP2, which requires torch>=2.4.0"
 
-        assert self.fsdp_tp_device_mesh is not None
-        assert self.sp_world_size is not None
-
         # Create device model
         self.create_device_model()
 
@@ -295,7 +288,7 @@ class FSDPEngine(BaseHFEngine):
 
         # sharding_strategy = ShardingStrategy.FULL_SHARD
         # Simple auto wrap policy
-        self.mixed_precision_policy = MixedPrecisionPolicy(
+        mixed_precision_policy = MixedPrecisionPolicy(
             param_dtype=getattr(torch, self.config.dtype),
             reduce_dtype=getattr(torch, self.config.grad_reduce_dtype),
             cast_forward_inputs=True,
@@ -305,7 +298,7 @@ class FSDPEngine(BaseHFEngine):
         )
         fsdp_kwargs = {
             "mesh": self.fsdp_tp_device_mesh["fsdp"],
-            "mp_policy": self.mixed_precision_policy,
+            "mp_policy": mixed_precision_policy,
             "offload_policy": self.cpu_offload,
             "reshard_after_forward": True,
         }
@@ -343,8 +336,8 @@ class FSDPEngine(BaseHFEngine):
     def _save_model_to_hf(
         self,
         path: str,
-        tokenizer: Optional[PreTrainedTokenizerFast],
-        processor: Optional[AutoProcessor],
+        tokenizer: PreTrainedTokenizerFast | None,
+        processor: ProcessorMixin | None,
     ):
         """Save model in HuggingFace format."""
         if self.model is None:
@@ -409,6 +402,7 @@ class FSDPEngine(BaseHFEngine):
         # which blocks creating another TCP store for weight update.
         os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
         if dist.get_rank() == 0:
+            assert meta.alloc_mode is not None
             self.weight_update_group = init_custom_process_group(
                 backend=current_platform.communication_backend,
                 world_size=meta.alloc_mode.gen.world_size + 1,
@@ -476,13 +470,12 @@ class FSDPEngine(BaseHFEngine):
         self,
         input_: Dict[str, Any],
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], float],
+        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> Dict[str, float]:
         """Train on a batch using gradient accumulation."""
         assert self.optimizer is not None
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
-        assert self.fsdp_tp_device_mesh is not None
 
         if self.sp_world_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
@@ -493,7 +486,8 @@ class FSDPEngine(BaseHFEngine):
         mb_list = mb_list.to(self.device)
 
         total_loss_weight = (
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            torch.stack([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .sum()
             .detach()
             .clone()
             .to(dtype=torch.float32, device=self.device)
@@ -502,9 +496,10 @@ class FSDPEngine(BaseHFEngine):
         dist.all_reduce(total_loss_weight, group=self.dp_group)
 
         # Process microbatches with gradient accumulation
-        for i, (pad_length, padded_mb_input, mb_input) in enumerate(
-            zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
+        for pad_length, padded_mb_input, mb_input in zip(
+            mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
+            ulysses_pad_size = 0
             if self.sp_world_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
@@ -584,7 +579,7 @@ class FSDPEngine(BaseHFEngine):
         self,
         input_: Dict[str, Any],
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], float],
+        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
         if self.sp_world_size > 1:
@@ -594,7 +589,8 @@ class FSDPEngine(BaseHFEngine):
         mb_list = mb_list.to(self.device)
 
         total_loss_weight = (
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            torch.stack([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .sum()
             .detach()
             .clone()
             .to(dtype=torch.float32)
@@ -607,6 +603,7 @@ class FSDPEngine(BaseHFEngine):
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
+            ulysses_pad_size = 0
             if self.sp_world_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
@@ -680,12 +677,14 @@ class FSDPEngine(BaseHFEngine):
 
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
+        assert output_seqlens is not None
 
         results = []
 
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
+            ulysses_pad_size = 0
             if self.sp_world_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)

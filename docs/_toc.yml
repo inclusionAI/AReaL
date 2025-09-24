@@ -16,6 +16,7 @@ parts:
     - file: tutorial/quickstart
     - file: tutorial/openai_workflows
     - file: tutorial/eval
+    - file: cli_reference
     - file: tutorial/quickstart_legacy
     # - file: tutorial/troubleshooting
   - caption: Best Practices
