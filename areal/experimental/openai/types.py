@@ -39,25 +39,6 @@ class CompletionWithTokenLogpReward:
                 tokenizer is not None
             ), "Tokenizer must be provided in ModelResponse if completion is exported with concat style."
             parent_messages = self.parent.messages
-            # parent_messages_with_output = self.messages[: len(parent_messages) + 1]
-
-            # # append an empty user message to ensure assistant message is properly handled (think tokens removed)
-            # empty_message = {"role": "user", "content": ""}
-            # empty_message_tokens = tokenizer.apply_chat_template(
-            #     [empty_message],
-            #     tools=self.tools,
-            #     add_generation_prompt=True,
-            #     tokenize=True,
-            #     **self.extra_body.get("chat_template_kwargs", {}),
-            # )
-            # parent_remaining_tokens = tokenizer.apply_chat_template(
-            #     parent_messages_with_output + [empty_message],
-            #     tools=self.tools,
-            #     add_generation_prompt=True,
-            #     tokenize=True,
-            #     **self.extra_body.get("chat_template_kwargs", {}),
-            # )
-
             new_input_tokens = tokenizer.apply_chat_template(
                 self.messages[len(parent_messages) + 1 :],
                 tools=self.tools,
@@ -66,9 +47,6 @@ class CompletionWithTokenLogpReward:
                 **self.extra_body.get("chat_template_kwargs", {}),
             )
             # This is the number of input tokens that are not part of the parent's sequence
-            # new_input_tokens_length = resp.input_len - (
-            #     len(parent_remaining_tokens) - len(empty_message_tokens)
-            # )
             new_input_tokens_length = len(new_input_tokens)
             assert new_input_tokens_length >= 0, (
                 f"New input tokens length must be non-negative if a parent is present, got {new_input_tokens_length}."

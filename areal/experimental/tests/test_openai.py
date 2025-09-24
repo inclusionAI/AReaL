@@ -651,61 +651,16 @@ async def test_multi_round_conversation_concat_style_export(openai_client, token
     assert wrapped_completion(c_a1).reward == 2
 
     # Check loss masks produced by completions
-    print(f"[Debug] c_root_messages = {wrapped_completion(c_root).messages}")
-    print(f"[Debug] c_a_messages = {wrapped_completion(c_a).messages}")
-    print(f"[Debug] c_a1_messages = {wrapped_completion(c_a1).messages}")
-    c_root_input = tokenizer.apply_chat_template(
-        wrapped_completion(c_root).messages, add_generation_prompt=True, tokenize=False
-    )
-    print(f"[Debug] c_root_input = {c_root_input}")
-    c_a_input = tokenizer.apply_chat_template(
-        wrapped_completion(c_a).messages, add_generation_prompt=True, tokenize=False
-    )
-    print(f"[Debug] c_a_input = {c_a_input}")
-    c_a1_input = tokenizer.apply_chat_template(
-        wrapped_completion(c_a1).messages, add_generation_prompt=True, tokenize=False
-    )
-    print(f"[Debug] c_a1_input = {c_a1_input}")
-    c_root_actual_input_len = len(
-        tokenizer.apply_chat_template(
-            wrapped_completion(c_root).messages,
-            add_generation_prompt=True,
-            tokenize=True,
-        )
-    )
-    print(f"[Debug] c_root_actual_input_len = {c_root_actual_input_len}")
-    c_a_actual_input_len = len(
-        tokenizer.apply_chat_template(
-            wrapped_completion(c_a).messages,
-            add_generation_prompt=True,
-            tokenize=True,
-        )
-    )
-    print(f"[Debug] c_a_actual_input_len = {c_a_actual_input_len}")
-    c_a1_actual_input_len = len(
-        tokenizer.apply_chat_template(
-            wrapped_completion(c_a1).messages,
-            add_generation_prompt=True,
-            tokenize=True,
-        )
-    )
-    print(f"[Debug] c_a1_actual_input_len = {c_a1_actual_input_len}")
-
-    # c_a1 loss mask
+    # Ensure number of 1s in the loss masks is actually the number of tokens output by the model
     c_a1_loss_mask = wrapped_completion(c_a1).to_tensor_dict()["loss_mask"].squeeze(0)
     c_root_output_len = wrapped_completion(c_root).response.output_len
     c_a_output_len = wrapped_completion(c_a).response.output_len
     c_a1_output_len = wrapped_completion(c_a1).response.output_len
 
+    # c_a1 loss mask
     assert c_a1_loss_mask.sum().item() == (
         c_root_output_len + c_a_output_len + c_a1_output_len
     ), f"c_a1 loss_mask sum {c_a1_loss_mask.sum().item()} vs {c_root_output_len}+{c_a_output_len}+{c_a1_output_len}"
-
-    print(
-        f"[Debug] c_root_output_len = {c_root_output_len}"
-        f", c_a_output_len = {c_a_output_len}"
-        f", c_a1_output_len = {c_a1_output_len}"
-    )
 
     # c_a2 loss mask
     c_a2_loss_mask = wrapped_completion(c_a2).to_tensor_dict()["loss_mask"].squeeze(0)
