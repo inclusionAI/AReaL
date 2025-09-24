@@ -48,7 +48,7 @@ class CompletionWithTokenLogpReward:
                 f"[Debug] parent.messages tokens = {len(debug_parent_messages_tokens)} {debug_parent_messages_tokens}"
             )
             debug_self_messages_tokens = tokenizer.apply_chat_template(
-                parent_messages_with_output,
+                self.messages,
                 tools=self.tools,
                 add_generation_prompt=True,
                 tokenize=True,
