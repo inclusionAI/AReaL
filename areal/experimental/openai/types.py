@@ -32,12 +32,30 @@ class CompletionWithTokenLogpReward:
             ), "Tokenizer must be provided in ModelResponse if completion is exported with concat style."
             parent_messages = self.parent.messages
             parent_messages_with_output = self.messages[: len(parent_messages) + 1]
+            print(
+                f"[Debug] parent_messages_with_output = {parent_messages_with_output}"
+            )
+            print(f"[Debug] parent.messages = {parent_messages}")
+            print(f"[Debug] self.messages = {self.messages}")
+            debug_self_messages_tokens = tokenizer.apply_chat_template(
+                parent_messages_with_output,
+                tools=self.tools,
+                add_generation_prompt=True,
+                tokenize=True,
+                **self.extra_body.get("chat_template_kwargs", {}),
+            )
+            print(f"[Debug] self.messages tokens = {debug_self_messages_tokens}")
+
             parent_remaining_tokens = tokenizer.apply_chat_template(
                 parent_messages_with_output,
                 tools=self.tools,
                 add_generation_prompt=True,
                 tokenize=True,
                 **self.extra_body.get("chat_template_kwargs", {}),
+            )
+            print(f"[Debug] parent_remaining_tokens = {parent_remaining_tokens}")
+            print(
+                f"[Debug] resp.input_tokens = {resp.input_tokens}, resp.output_tokens = {resp.output_tokens}"
             )
             new_input_tokens_length = resp.input_len - len(parent_remaining_tokens)
             assert new_input_tokens_length >= 0, (
