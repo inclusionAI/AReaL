@@ -35,8 +35,7 @@ class CompletionWithTokenLogpReward:
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
             loss_mask = [0] * resp.input_len + [1] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
-        reward = self.reward
-        assert reward is not None
+        reward = self.reward if self.reward is not None else 0.0
         return dict(
             # unsqueeze to add an additional batch dimension
             input_ids=torch.tensor(seq).unsqueeze(0),
