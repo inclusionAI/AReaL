@@ -25,6 +25,8 @@ class CompletionWithTokenLogpReward:
         resp = self.response
         tokenizer = resp.tokenizer
         if self.parent:
+            # TODO: This is a hacky implementation, only tested for Qwen3 models,
+            # think about other solutions.
             parent_res = self.parent.to_tensor_dict()
             assert self.parent.seq_tokens is not None, "Parent seq_tokens must be set."
             assert (
@@ -38,81 +40,15 @@ class CompletionWithTokenLogpReward:
                 tokenize=True,
                 **self.extra_body.get("chat_template_kwargs", {}),
             )
-            empty_message_strings = tokenizer.apply_chat_template(
-                [empty_message],
-                tools=self.tools,
-                add_generation_prompt=True,
-                tokenize=False,
-                **self.extra_body.get("chat_template_kwargs", {}),
-            )
-            print(f"[Debug] empty_message_tokens = {empty_message_tokens}")
-            print(f"[Debug] empty_message_strings = {empty_message_strings}")
-
             parent_messages = self.parent.messages
             parent_messages_with_output = self.messages[: len(parent_messages) + 1]
-            print(
-                f"[Debug] parent_messages_with_output = {parent_messages_with_output}"
-            )
-            print(f"[Debug] parent.messages = {parent_messages}")
-            print(f"[Debug] self.messages = {self.messages}")
-            debug_parent_messages_tokens = tokenizer.apply_chat_template(
-                parent_messages,
-                tools=self.tools,
-                add_generation_prompt=True,
-                tokenize=True,
-                **self.extra_body.get("chat_template_kwargs", {}),
-            )
-            debug_parent_messages_strings = tokenizer.apply_chat_template(
-                parent_messages,
-                tools=self.tools,
-                add_generation_prompt=True,
-                tokenize=False,
-                **self.extra_body.get("chat_template_kwargs", {}),
-            )
-            print(
-                f"[Debug] parent.messages tokens = {len(debug_parent_messages_tokens)} {debug_parent_messages_tokens}"
-            )
-            print(f"[Debug] parent.messages strings = {debug_parent_messages_strings}")
-            debug_self_messages_tokens = tokenizer.apply_chat_template(
-                self.messages,
-                tools=self.tools,
-                add_generation_prompt=True,
-                tokenize=True,
-                **self.extra_body.get("chat_template_kwargs", {}),
-            )
-            debug_self_messages_strings = tokenizer.apply_chat_template(
-                self.messages,
-                tools=self.tools,
-                add_generation_prompt=True,
-                tokenize=False,
-                **self.extra_body.get("chat_template_kwargs", {}),
-            )
-            print(
-                f"[Debug] self.messages tokens = {len(debug_self_messages_tokens)} {debug_self_messages_tokens}"
-            )
-            print(f"[Debug] self.messages strings = {debug_self_messages_strings}")
-
             parent_remaining_tokens = tokenizer.apply_chat_template(
+                # append an empty user message to ensure assistant message is properly handled
                 parent_messages_with_output + [empty_message],
                 tools=self.tools,
                 add_generation_prompt=True,
                 tokenize=True,
                 **self.extra_body.get("chat_template_kwargs", {}),
-            )
-            parent_remaining_strings = tokenizer.apply_chat_template(
-                parent_messages_with_output + [empty_message],
-                tools=self.tools,
-                add_generation_prompt=True,
-                tokenize=False,
-                **self.extra_body.get("chat_template_kwargs", {}),
-            )
-            print(
-                f"[Debug] parent_remaining_tokens = {len(parent_remaining_tokens)} {parent_remaining_tokens}"
-            )
-            print(f"[Debug] parent_remaining_strings = {parent_remaining_strings}")
-
-            print(
-                f"[Debug] resp.input_tokens = {len(resp.input_tokens)} {resp.input_tokens}, resp.output_tokens = {len(resp.output_tokens)} {resp.output_tokens}"
             )
             new_input_tokens_length = resp.input_len - (
                 len(parent_remaining_tokens) - len(empty_message_tokens)
