@@ -39,20 +39,23 @@ class CompletionWithTokenLogpReward:
                 tokenizer is not None
             ), "Tokenizer must be provided in ModelResponse if completion is exported with concat style."
             parent_messages = self.parent.messages
-            new_input_tokens = tokenizer.apply_chat_template(
-                self.messages[len(parent_messages) + 1 :],
-                tools=self.tools,
-                add_generation_prompt=True,
-                tokenize=True,
-                **self.extra_body.get("chat_template_kwargs", {}),
-            )
+            if len(self.messages) == len(parent_messages) + 1:
+                new_input_tokens_length = 0
+            elif len(self.messages) > len(parent_messages) + 1:
+                new_input_tokens = tokenizer.apply_chat_template(
+                    # Assume only one output message is appended to message list
+                    self.messages[len(parent_messages) + 1 :],
+                    tools=self.tools,
+                    add_generation_prompt=True,
+                    tokenize=True,
+                    **self.extra_body.get("chat_template_kwargs", {}),
+                )
+                new_input_tokens_length = len(new_input_tokens)
+            else:
+                raise ValueError(
+                    "Current messages must contain at least one more message than parent messages."
+                )
             # This is the number of input tokens that are not part of the parent's sequence
-            new_input_tokens_length = len(new_input_tokens)
-            assert new_input_tokens_length >= 0, (
-                f"New input tokens length must be non-negative if a parent is present, got {new_input_tokens_length}."
-                "This usually indicates an unexpected behavior when tokenizer applying chat template."
-                "Expected behaviors include removing thinking outputs and adding delimiter tokens."
-            )
             # Complete the entire sequence including parent's output tokens
             # removed by tokenizer.apply_chat_template
             self.seq_tokens = seq = (

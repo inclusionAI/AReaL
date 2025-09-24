@@ -235,6 +235,33 @@ class ArealOpenAI(AsyncOpenAI):
         self._completion_cache[completion_id].reward = reward
 
     def apply_reward_discount(self, turn_discount: float = 1.0) -> None:
+        """Apply backward discounted rewards across cached completions.
+
+        This method iterates over the cached completions in reverse creation
+        (insertion) order and applies a geometric discount to propagate reward
+        signal backward in time. The most recent completion is treated as the
+        starting point. If it does not have an explicit reward, a warning is
+        logged and a default reward of ``0.0`` is used. For each earlier
+        completion, its reward is initialized to ``0.0`` if unset, then the
+        discounted reward from the next later completion is added:
+
+        ``reward[i] += reward[i+1] * turn_discount``.
+
+        Typically called before exporting completions in 'individual' style
+        to each completion is assigned with a valid reward value.
+
+        Parameters
+        ----------
+        turn_discount : float, optional
+            The per-turn discount factor applied when propagating reward
+            backward from a later completion to an earlier one, by default 1.0.
+
+        Returns
+        -------
+        Dict[str, CompletionWithTokenLogpReward]
+            A shallow copy of the completion cache after rewards have been
+            updated in-place.
+        """
         # Assign rewards to completions in cache based on their created time
         comp_time_sequence = list(
             reversed([comp for _, comp in self._completion_cache.items()])
@@ -259,6 +286,35 @@ class ArealOpenAI(AsyncOpenAI):
     def export_completions(
         self, style: str = "concat"
     ) -> Dict[str, CompletionWithTokenLogpReward]:
+        """Export cached completions in different formats.
+
+        When ``style='concat'``, this method constructs a conversation tree by
+        linking completions whose input message lists form a strict-prefix
+        relationship. The longest-prefix rule is used to determine each node's
+        parent. It then returns only leaf-node completions (those without
+        children). No reward propagation is performed here.
+
+        When ``style='individual'``, all cached completions are returned as-is
+        without constructing the tree.
+
+        Parameters
+        ----------
+        style : str, optional
+            The export style, either ``'concat'`` (build tree and return leaves)
+            or ``'individual'`` (return all), by default 'concat'.
+
+        Returns
+        -------
+        Dict[str, CompletionWithTokenLogpReward]
+            A mapping from completion ID to completion objects. For
+            ``'concat'``, this contains only leaf nodes. For ``'individual'``,
+            this contains all cached completions.
+
+        Raises
+        ------
+        ValueError
+            If an unsupported ``style`` is provided.
+        """
         if len(self._completion_cache) == 0:
             return self._completion_cache
 
