@@ -77,6 +77,7 @@ class AVoyagerWorkflow(RolloutWorkflow):
         valid_inst_ratio: float = 1.0,
         max_tokens: int = 32000,
         search_only: bool = True,
+        reward_info: dict = None,
     ):
         self.gconfig = gconfig
         self.gconfig.n_samples = 1
@@ -94,6 +95,7 @@ class AVoyagerWorkflow(RolloutWorkflow):
         self.reward_type = reward_type
         self.valid_inst_ratio = valid_inst_ratio
         self.voyager_client_types = voyager_client_types    
+        self.reward_info=reward_info
 
         self.toolbox = VoyageToolBox(self.voyager_client_types)
     
@@ -105,12 +107,6 @@ class AVoyagerWorkflow(RolloutWorkflow):
             answer
             images (optional)
         }
-        准确度分 acc_reward如解析 <answer>…</answer> 与真值比对，或外部判分器）。
-        格式分 format_reward校验是否满足你规定的输出模板:同时统计 tool_call_count。
-        工具项：若检测到工具调用，则对 acc 分做折扣 (1 - tool_call_penalty)，并加上 use_tool_reward_weight。
-        合成总分:score = (1 - tool_call_penalty) * acc_weight * acc + format_weight * format_reward + tool_reward
-        可选：超长惩罚（超出预算长度按比例扣分）。
-        
         '''
         agent = VoyageAgent(input_data)
         score = 0
@@ -154,8 +150,10 @@ class AVoyagerWorkflow(RolloutWorkflow):
 
         llm_gen_records = agent.memory.filter_records("llm_gen")
         pred_answer = agent.get_answer()
+        
         # compute reward:{"score","acc_reward"，"format_reward","tool_call_reward"}
-        reward_dict=calculate_reward(llm_gen_records, ground_truth, pred_answer)
+        # XXX: Mini-o3 attempted to call GPT API inside reward function and built a reward manager for this multithreading scenario. But in the final implementation this setting is not used. So we keep a direct call to compute_score here.
+        reward_dict=compute_score(predict_str_list=llm_gen_records, ground_truth=ground_truth, extra_info=self.reward_info)
         
         score = reward_dict["score"]
         
