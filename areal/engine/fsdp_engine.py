@@ -142,6 +142,10 @@ class FSDPEngine(BaseHFEngine):
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
         tik = time.perf_counter()
+        if dist.get_rank() == 0:
+            full_state = self.model.state_dict()
+        else:
+            full_state = {}
         # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
         if dist.get_rank() == 0:
             full_state = self.model.state_dict()
@@ -222,8 +226,6 @@ class FSDPEngine(BaseHFEngine):
         # save huggingface model on rank 0
         if dist.get_rank() == 0:
             os.makedirs(path, exist_ok=True)
-            if self.config.use_lora:
-                state_dict = filter_lora_weights(state_dict)
             self.model.save_pretrained(path, state_dict=state_dict)
             self.model_config.save_pretrained(path)
             if tokenizer is not None:

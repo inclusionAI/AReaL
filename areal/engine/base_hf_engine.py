@@ -214,14 +214,6 @@ class BaseHFEngine(TrainEngine):
             autocast_adapter_dtype=False,
         )
 
-        # Make sure we don't require gradients on non-lora params
-        with torch.no_grad():
-            for name, param in self.model.named_parameters():
-                if ".lora_A." in name or ".lora_B." in name:
-                    param.requires_grad_(True)
-                else:
-                    param.requires_grad_(False)
-
         if self.rank == 0:
             self.model.print_trainable_parameters()
 
