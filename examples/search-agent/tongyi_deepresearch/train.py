@@ -313,7 +313,7 @@ def main(args):
                         workflow=workflow,
                         should_accept=lambda sample: True,
                     )
-                batch = tensor_container_to(actor.device)
+                batch = tensor_container_to(batch, actor.device)
                 batch = redistribute(batch, group=actor.data_parallel_group).data
             batch = broadcast_tensor_container(
                 batch,
