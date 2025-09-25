@@ -144,7 +144,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
                 result[k] = torch.tensor([v])
             result["begin_of_trajectory"] = torch.tensor([1])
             results.append(result)
-        result = concat_padded_tensors(results)
+        results = concat_padded_tensors(results)
         return results
 
 
