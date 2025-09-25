@@ -1,3 +1,5 @@
+from typing import List
+
 from areal.api.cli_args import *
 
 
@@ -14,7 +16,7 @@ class DistributedDataParallelConfig:
     align_param_gather: bool = False
     use_distributed_optimizer: bool = True
     check_for_nan_in_grad: bool = False
-    bucket_size: Optional[int] = None
+    bucket_size: int | None = None
     average_in_collective: bool = False
     fp8_param_gather: bool = False
 
@@ -55,11 +57,11 @@ class MegatronEngineConfig:
     use_deterministic_algorithms: bool = False
 
     # Gradient checkpointing options, only effective when gradient_checkpointing=True
-    recompute_granularity: Optional[str] = "full"
-    recompute_method: Optional[str] = "uniform"
-    recompute_num_layers: Optional[int] = 1
-    distribute_saved_activations: Optional[bool] = None
-    recompute_modules: Optional[List[str]] = None
+    recompute_granularity: str | None = "full"
+    recompute_method: str | None = "uniform"
+    recompute_num_layers: int | None = 1
+    distribute_saved_activations: bool | None = None
+    recompute_modules: List[str] | None = None
 
 
 @dataclass

@@ -76,6 +76,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
         top_p: Optional[float] | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
+        use_chat_template: bool = True,
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
         # Extract and validate supported parameters
@@ -86,13 +87,28 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             extra_body = {}
         # Convert messages to prompt format
         tools = tools if tools is not NOT_GIVEN else None
-        prompt_token_ids = self.tokenizer.apply_chat_template(
-            messages_list,
-            tools=tools,
-            add_generation_prompt=True,
-            tokenize=True,
-            **extra_body.get("chat_template_kwargs", {}),
-        )
+        if use_chat_template:
+            prompt_token_ids = self.tokenizer.apply_chat_template(
+                messages_list,
+                tools=tools,
+                add_generation_prompt=True,
+                tokenize=True,
+                **extra_body.get("chat_template_kwargs", {}),
+            )
+            prompt_token_strs = self.tokenizer.apply_chat_template(
+                messages_list,
+                tools=tools,
+                add_generation_prompt=True,
+                tokenize=False,
+                **extra_body.get("chat_template_kwargs", {}),
+            )
+            print(f"[Debug] Prompt text:\n{prompt_token_strs}")
+        else:
+            message_strs = []
+            for role, content in messages_list:
+                message_strs.append(f"<|im_start|>{role}\n{content}<|im_end|>\n")
+            prompt_token_ids = self.tokenizer.encode("".join(message_strs))
+            print(f"[Debug] customized template Prompt text:\n{''.join(message_strs)}")
 
         temp = 1.0 if temperature is NOT_GIVEN else (temperature or 0.0)
         max_new_tokens = 512
