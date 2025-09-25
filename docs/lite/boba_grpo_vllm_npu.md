@@ -74,6 +74,9 @@ ${image}  \
 
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
+# Package used for calculating math reward
+pip install -e evaluation/latex2sympy
+# Install AReaL
 pip install -e .
 ```
 

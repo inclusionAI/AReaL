@@ -38,7 +38,7 @@ NA132_ENVIRONS = {
     "NCCL_DEBUG": "WARN",
     "NCCL_DEBUG_SUBSYS": "INIT,TUNING,GRAPH",
 }
-ROLLOUT_SERVER_WAIT_TIMEOUT_SECONDS = 360
+LLM_SERVER_WAIT_TIMEOUT_SECONDS = 360
 
 
 def get_env_vars(
@@ -107,7 +107,7 @@ def wait_llm_server_addrs(
             break
 
         time.sleep(1)
-        if time.perf_counter() - start > ROLLOUT_SERVER_WAIT_TIMEOUT_SECONDS:
+        if time.perf_counter() - start > LLM_SERVER_WAIT_TIMEOUT_SECONDS:
             raise TimeoutError(
                 f"Timeout waiting for rollout servers to be ready. "
                 f"Expected {n_rollout_servers} servers, found {len(rollout_addrs)}."

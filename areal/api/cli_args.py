@@ -420,7 +420,6 @@ class vLLMConfig:
     )
     enable_sleep_mode: bool = False
 
-    # additional_engine_args: Dict = field(default_factory=dict)
     @staticmethod
     def build_args(
         vllm_config: "vLLMConfig",

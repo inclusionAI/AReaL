@@ -20,6 +20,20 @@ from areal.utils.data import concat_padded_tensors
 logger = logging.getLogger("RLVR workflow")
 
 
+def default_get_input_ids_fn(data, tokenizer):
+    input_ids = tokenizer.apply_chat_template(
+        data,
+        tokenize=True,
+        add_generation_prompt=True,
+        enable_thinking=self.enable_thinking,
+    )
+    return input_ids
+
+
+def default_data_extract_prompt_fn(data):
+    return data["messages"]
+
+
 class RLVRWorkflow(RolloutWorkflow):
     def __init__(
         self,
@@ -29,8 +43,8 @@ class RLVRWorkflow(RolloutWorkflow):
         enable_thinking: bool = False,
         rollout_stat_scope: bool = "rollout",
         dump_dir: str | None = None,
-        get_input_ids_fn: Optional[Callable] = None,
-        data_extract_prompt_fn: Optional[Callable] = None,
+        get_input_ids_fn: Callable = default_get_input_ids_fn,
+        data_extract_prompt_fn: Callable = default_data_extract_prompt_fn,
     ):
         self.reward_fn = reward_fn
         self.gconfig = gconfig
@@ -45,17 +59,9 @@ class RLVRWorkflow(RolloutWorkflow):
             os.makedirs(self.dump_dir, exist_ok=True)
 
     async def arun_episode(self, engine: InferenceEngine, data):
-        if self.get_input_ids_fn and self.data_extract_prompt_fn:
-            input_ids = self.get_input_ids_fn(
-                self.data_extract_prompt_fn(data), self.tokenizer
-            )
-        else:
-            input_ids = self.tokenizer.apply_chat_template(
-                data["messages"],
-                tokenize=True,
-                add_generation_prompt=True,
-                enable_thinking=self.enable_thinking,
-            )
+        input_ids = self.get_input_ids_fn(
+            self.data_extract_prompt_fn(data), self.tokenizer
+        )
 
         n_samples = self.gconfig.n_samples
         req = ModelRequest(

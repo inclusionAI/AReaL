@@ -30,10 +30,3 @@ def log_gpu_stats(head: str, rank: int = 0):
         mem_allocated, mem_reserved, mem_used, mem_total = _get_current_mem_info()
         message = f"{head}, memory allocated (GB): {mem_allocated}, memory reserved (GB): {mem_reserved}, device memory used/total (GB): {mem_used}/{mem_total}"
         logger.info(msg=message)
-
-
-def device_synchronize():
-    if is_npu_available:
-        torch.npu.synchronize()
-    else:
-        torch.cuda.synchronize()

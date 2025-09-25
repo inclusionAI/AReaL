@@ -311,12 +311,10 @@ def local_main(config, run_id: int = 0):
             f"LLM inference server launched at: AREAL_LLM_SERVER_ADDRS={','.join(server_addrs)}"
         )
     elif alloc_mode.gen_backend == "vllm":
-        # FIXME vllm adapt
         base_seed = config.vllm.seed
         config.vllm = to_structured_cfg(config.vllm, vLLMConfig)
         ports = find_free_ports(alloc_mode.gen.dp_size * 2, port_range=(10000, 50000))
-        host_ip = gethostip()
-        host = "localhost" if not config.vllm.enable_metrics else host_ip
+        host = "localhost"
         for i in range(alloc_mode.gen.dp_size):
             config.vllm.seed = base_seed + i
             cmd = vLLMConfig.build_cmd(

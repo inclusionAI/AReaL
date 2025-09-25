@@ -4,7 +4,7 @@ import torch
 from vllm.logger import init_logger
 from vllm.model_executor.model_loader import get_model_loader
 
-from areal.utils.device import device_synchronize
+from areal.platforms import current_platform
 from areal.utils.distributed import init_custom_process_group
 
 logger = init_logger("vllm_worker_extension")
@@ -16,7 +16,7 @@ class VLLMWorkerExtension:
     """
 
     def sync(self):
-        device_synchronize()
+        current_platform.synchronize()
         torch.distributed.barrier()
 
     def update_weights(self, model_path):
