@@ -6,6 +6,7 @@ import os
 import sys
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List
 
 import torch
@@ -44,6 +45,7 @@ from areal.utils.stats_logger import StatsLogger
 
 # sys.path.append("/storage/openpsi/users/xushusheng.xss/projects/ASearcher-Lite@0908")
 # sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(Path(__file__).parent.parent))
 from .react_agent import MultiTurnReactAgent
 
 worker_id = uuid.uuid4().hex[:4]
