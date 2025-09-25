@@ -965,6 +965,8 @@ def parse_cli_args(argv: List[str]):
     parser.add_argument(
         "--config", help="Path to the main configuration file", required=True
     )
+    if argv and argv[0].endswith(".py"):
+        argv = argv[1:]
     args, overrides = parser.parse_known_args(argv)
     # Initialize hydra config
     config_file = Path(args.config).absolute()
