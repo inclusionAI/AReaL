@@ -168,15 +168,11 @@ class FSDPEngine(BaseHFEngine):
 
     def _apply_peft_wrapper(self):
         config = self.config
-        if "all-linear" in config.target_modules:
-            target_modules = "all-linear"
-        else:
-            target_modules = config.target_modules
         peft_config = {
             "task_type": TaskType.CAUSAL_LM,
             "r": config.lora_rank,
             "lora_alpha": config.lora_alpha,
-            "target_modules": target_modules,
+            "target_modules": target_modules or "all-linear",
             "bias": "none",
         }
         if self.config.peft_type == "lora":
