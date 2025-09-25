@@ -107,6 +107,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             message_strs = []
             for role, content in messages_list:
                 message_strs.append(f"<|im_start|>{role}\n{content}<|im_end|>\n")
+            message_strs.append("<|im_start|>assistant\n")
             prompt_token_ids = self.tokenizer.encode("".join(message_strs))
             print(f"[Debug] customized template Prompt text:\n{''.join(message_strs)}")
 
@@ -205,6 +206,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 completion=deepcopy(chat_completion),
                 response=response,  # Should not deepcopy response because of tokenizer
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
+                use_chat_template=use_chat_template,
             )
         return chat_completion
 
@@ -334,6 +336,13 @@ class ArealOpenAI(AsyncOpenAI):
             return self._completion_cache
 
         if style == "concat":
+            for comp in self._completion_cache.values():
+                if comp.use_chat_template:
+                    raise ValueError(
+                        "Cannot export completions in 'concat' style when "
+                        "use_chat_template=True for any completion. "
+                        "Please use 'individual' style instead."
+                    )
 
             def _is_prefix(a: List[Tuple[str, str]], b: List[Tuple[str, str]]) -> bool:
                 # True if a is a strict prefix of b

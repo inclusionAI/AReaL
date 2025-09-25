@@ -16,18 +16,25 @@ class CompletionWithTokenLogpReward:
     messages: List[dict] = field(default_factory=list)
     reward: float | None = None
     parent: Optional["CompletionWithTokenLogpReward"] | None = None
+    use_chat_template: bool = False
 
     def to_tensor_dict(self) -> Dict[str, torch.Tensor]:
         resp = self.response
         self.seq_tokens = seq = resp.input_tokens + resp.output_tokens
         if self.parent:
+            assert (
+                not self.use_chat_template
+            ), "Cannot use parent with completions that use chat template."
             parent_res = self.parent.to_tensor_dict()
             parent_logprobs = parent_res["logprobs"].squeeze(0).tolist()
             parent_loss_mask = parent_res["loss_mask"].squeeze(0).tolist()
             parent_versions = parent_res["versions"].squeeze(0).tolist()
             parent_len = len(parent_logprobs)
             assert parent_len == len(parent_loss_mask) == len(parent_versions)
-
+            assert resp.input_len >= parent_len, (
+                "The input length of the child completion must be greater than or equal to "
+                "the length of the parent completion."
+            )
             logprobs = (
                 parent_logprobs
                 + [0.0] * (resp.input_len - parent_len)
