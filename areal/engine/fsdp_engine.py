@@ -2,17 +2,13 @@ import dataclasses
 import math
 import os
 import time
+from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Callable, Dict, List
 
 import torch
 import torch.distributed as dist
 import torch.distributed.nn.functional as dist_F
-from peft import (
-    LoraConfig,
-    TaskType,
-    get_peft_model,
-)
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
@@ -134,9 +130,6 @@ class FSDPEngine(BaseHFEngine):
         # Create device model
         self.create_device_model()
 
-        if self.config.use_lora:
-            self._apply_peft_wrapper()
-
         # Monkey patch: replace attention's forward() with Ulysses variant.
         apply_monkey_patch(
             model=self.model,
@@ -150,6 +143,11 @@ class FSDPEngine(BaseHFEngine):
         )
         tik = time.perf_counter()
         # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
+        if dist.get_rank() == 0:
+            full_state = self.model.state_dict()
+        else:
+            full_state = {}
+        # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
         parallelize_model(
             self.model,
             config=self.config,
@@ -159,51 +157,18 @@ class FSDPEngine(BaseHFEngine):
             cpu_offload=self.cpu_offload,
             wrap_policy=self.config.fsdp.wrap_policy,
         )
+        fsdp2_load_full_state_dict(
+            self.model,
+            full_state,
+            self.cpu_offload,
+            tie_word_embeddings=self.model_config.tie_word_embeddings,
+        )
         self.logger.info(
             f"Applying FSDP2 with N-D parallelism for {time.perf_counter() - tik:.2f} seconds"
         )
 
         self.create_optimizer(ft_spec)
         self.initialized = True
-
-    def _apply_peft_wrapper(self):
-        config = self.config
-        if len(config.target_modules) == 0:
-            target_modules = "all-linear"
-        elif (
-            len(config.target_modules) == 1 and config.target_modules[0] == "all-linear"
-        ):
-            target_modules = "all-linear"
-        else:
-            target_modules = config.target_modules
-        peft_config = {
-            "task_type": TaskType.CAUSAL_LM,
-            "r": config.lora_rank,
-            "lora_alpha": config.lora_alpha,
-            "target_modules": target_modules,
-            "bias": "none",
-        }
-        if self.config.peft_type == "lora":
-            peft_config = LoraConfig(**peft_config)
-        else:
-            raise NotImplementedError()
-
-        self.model = get_peft_model(
-            self.model,
-            peft_config,
-            autocast_adapter_dtype=False,
-        )
-
-        # Make sure we don't require gradients on non-lora params
-        with torch.no_grad():
-            for name, param in self.model.named_parameters():
-                if ".lora_A." in name or ".lora_B." in name:
-                    param.requires_grad_(True)
-                else:
-                    param.requires_grad_(False)
-
-        if self.rank == 0:
-            self.model.print_trainable_parameters()
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
@@ -246,7 +211,6 @@ class FSDPEngine(BaseHFEngine):
         state_dict = get_model_state_dict(self.model, options=options)
 
         def filter_lora_weights(state_dict):
-            from collections import OrderedDict
 
             filtered_state_dict = OrderedDict(
                 (key, value)

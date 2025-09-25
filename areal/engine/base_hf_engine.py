@@ -5,6 +5,11 @@ from typing import Any, Callable, Dict, List
 
 import torch
 import torch.distributed as dist
+from peft import (
+    LoraConfig,
+    TaskType,
+    get_peft_model,
+)
 from torch.distributed.distributed_c10d import _get_default_group
 from transformers import (
     AutoConfig,
@@ -180,6 +185,45 @@ class BaseHFEngine(TrainEngine):
             f"Model creation and loading time: {time.perf_counter() - tik}"
         )
         self.model = model
+
+        if self.config.use_lora:
+            self._apply_peft_wrapper()
+
+    def _apply_peft_wrapper(self):
+        config = self.config
+        if not config.target_modules or config.target_modules == ["all-linear"]:
+            target_modules = "all-linear"
+        else:
+            target_modules = config.target_modules
+        peft_config = {
+            "task_type": TaskType.CAUSAL_LM,
+            "r": config.lora_rank,
+            "lora_alpha": config.lora_alpha,
+            "target_modules": target_modules,
+            "bias": "none",
+        }
+        if self.config.peft_type == "lora":
+            peft_config = LoraConfig(**peft_config)
+        else:
+            raise NotImplementedError()
+
+        self.model.enable_input_require_grads()
+        self.model = get_peft_model(
+            self.model,
+            peft_config,
+            autocast_adapter_dtype=False,
+        )
+
+        # Make sure we don't require gradients on non-lora params
+        with torch.no_grad():
+            for name, param in self.model.named_parameters():
+                if ".lora_A." in name or ".lora_B." in name:
+                    param.requires_grad_(True)
+                else:
+                    param.requires_grad_(False)
+
+        if self.rank == 0:
+            self.model.print_trainable_parameters()
 
     def _create_llm_actor_or_critic(self):
         dtype = getattr(torch, self.config.dtype)
