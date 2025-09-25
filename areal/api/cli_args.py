@@ -277,8 +277,8 @@ class TrainEngineConfig:
     )
     lora_rank: int = field(default=32, metadata={"help": "lora rank"})
     lora_alpha: int = field(default=16, metadata={"help": "lora alpha"})
-    target_modules: List[str] | None = field(
-        default=None,
+    target_modules: List[str] = field(
+        default_factory=list,
         metadata={"help": "lora target_modules. None defaults to 'all-linear'"},
     )
     peft_type: str = field(
