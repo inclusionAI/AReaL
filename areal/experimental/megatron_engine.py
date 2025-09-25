@@ -310,6 +310,11 @@ class MegatronEngine(TrainEngine):
         assert self.initialized
         return self._context_and_model_parallel_group
 
+    @property
+    def data_parallel_group(self) -> dist.ProcessGroup:
+        assert self.initialized
+        return mpu.get_data_parallel_group()
+
     def destroy(self):
         if hasattr(self, "optimizer"):
             del self.optimizer

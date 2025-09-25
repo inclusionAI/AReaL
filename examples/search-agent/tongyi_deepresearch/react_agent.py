@@ -90,9 +90,9 @@ class MultiTurnReactAgent(FnCallAgent):
     async def call_server(self, client: ArealOpenAI, messages: List[Dict]) -> str:
         completion = await client.chat.completions.create(
             messages=messages,
+            temperature=1.0,
             stop=["\n<tool_response>", "<tool_response>"],
-            logprobs=True,
-            max_tokens=10000,
+            max_tokens=self.max_total_tokens,
         )
         content = completion.choices[0].message.content
         assert content and content.strip(), "Error: LLM response is empty."
@@ -110,7 +110,14 @@ class MultiTurnReactAgent(FnCallAgent):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": question},
         ]
+        stats = dict(
+            turns=0,
+            num_search=0,
+            num_access=0,
+            score=0.0,
+        )
         num_llm_calls_available = self.max_llm_calls_per_run
+        completions = []
         round = 0
         while num_llm_calls_available > 0:
             # Check whether time is reached
@@ -126,8 +133,10 @@ class MultiTurnReactAgent(FnCallAgent):
                 }
                 return result
             round += 1
+            stats["turns"] += 1
             num_llm_calls_available -= 1
             completion, content = await self.call_server(client, messages)
+            completions.append(completion)
             print(f"Round {round}: {content}")
             if "<tool_response>" in content:
                 pos = content.find("<tool_response>")
@@ -154,7 +163,10 @@ class MultiTurnReactAgent(FnCallAgent):
                         tool_name = tool_call.get("name", "")
                         tool_args = tool_call.get("arguments", {})
                         result = self.custom_call_tool(tool_name, tool_args)
-
+                        if tool_name == "search":
+                            stats["num_search"] += 1
+                        elif tool_name == "visit":
+                            stats["num_access"] += 1
                 except:
                     result = 'Error: Tool call is not a valid JSON. Tool call must contain a valid "name" and "arguments" field.'
                 result = "<tool_response>\n" + result + "\n</tool_response>"
@@ -179,6 +191,7 @@ class MultiTurnReactAgent(FnCallAgent):
                     "content"
                 ] = "You have now reached the maximum context length you can handle. You should stop making tool calls and, based on all the information above, think again and provide what you consider the most likely answer in the following format:<think>your final thinking</think>\n<answer>your answer</answer>"
                 completion, content = await self.call_server(messages)
+                completions.append(completion)
                 messages.append({"role": "assistant", "content": content.strip()})
                 if "<answer>" in content and "</answer>" in content:
                     prediction = (
@@ -198,7 +211,8 @@ class MultiTurnReactAgent(FnCallAgent):
                     "messages": messages,
                     "prediction": prediction,
                     "termination": termination,
-                    "completion": completion,  # final completion
+                    "completions": completions,
+                    "stats": stats,
                 }
                 token_count = self.count_tokens(messages)
                 if token_count > self.max_total_tokens:
@@ -223,7 +237,8 @@ class MultiTurnReactAgent(FnCallAgent):
             "messages": messages,
             "prediction": prediction,
             "termination": termination,
-            "completion": completion,  # final completion
+            "completions": completions,  # final completion
+            "stats": stats,
         }
         return result
 
@@ -302,5 +317,6 @@ class MultiTurnReactAgent(FnCallAgent):
     ) -> Dict:
         result = await self.run_agent(data, client)
         reward = await self.calc_reward_with_llm_judge(result, judge_client)
-        completion = result["completion"]
-        client.set_reward(completion.id, reward)
+        completions = result["completions"]
+        stats = result["stats"]
+        return completions, reward, stats

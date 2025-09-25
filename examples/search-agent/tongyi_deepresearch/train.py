@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import List
 
+import torch
 import torch.distributed as dist
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
@@ -16,7 +17,6 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import (
     GenerationHyperparameters,
-    GRPOConfig,
     InferenceEngineConfig,
     load_expr_config,
 )
@@ -27,12 +27,13 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.workflow_api import RolloutWorkflow
-from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.experimental.api.cli_args import ExperimentalGRPOConfig as GRPOConfig
+from areal.experimental.megatron_actor import MegatronPPOActor
 from areal.experimental.openai import ArealOpenAI
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container
+from areal.utils.data import broadcast_tensor_container, concat_padded_tensors
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -115,7 +116,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         judge_client = self.judge_client
 
         # Collect trajectories
-        await asyncio.gather(
+        all_completions, rewards, stats = await asyncio.gather(
             *[
                 self.agent.make_trajectory(
                     data=data,
@@ -126,11 +127,44 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
             ]
         )
 
-        result = client.export_completions(turn_discount=0.0, return_leaf_only=True)
-        assert (
-            len(result) == self.n_trajs
-        ), f"Expected {self.n_trajs} trajectories, but got {len(result)}"
-        return result
+        # Group Normalization
+        advantages = rewards - rewards.mean()
+        if abs(rewards.max() - rewards.mean()) > 1e-3:
+            advantages = advantages / advantages.std()
+        else:
+            return None
+
+        # Set advantages to all completions
+        for completions, advantage in zip(all_completions, advantages):
+            for comp in completions:
+                client.set_reward(comp.id, advantage)
+
+        completions_with_rewards = client.export_completions(style="individual")
+
+        results = []
+        for i in range(self.n_trajs):
+            stats[i].update(
+                dict(
+                    num_output_tokens=0,
+                    num_input_tokens=0,
+                )
+            )
+            for comp in all_completions[i]:
+                resp = completions_with_rewards[comp.id].response
+                stats[i]["num_input_tokens"] += resp.input_len
+                stats[i]["num_output_tokens"] += resp.output_len
+
+            first_completion = True
+            for comp in all_completions[i]:
+                res = completions_with_rewards[comp.id].to_tensor_dict()
+
+                res["begin_of_trajectory"] = torch.tensor([int(first_completion)])
+                for k, v in stats[i].items():
+                    res[k] = torch.tensor([v])
+                first_completion = False
+                results.append(res)
+        results = concat_padded_tensors(results)
+        return results
 
 
 @dataclass
@@ -187,7 +221,7 @@ def main(args):
     parallel_strategy = allocation_mode.train
 
     # Initialize train engine
-    actor = FSDPPPOActor(config=config.actor)
+    actor = MegatronPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
     # Create dataset and dataloaders
@@ -219,13 +253,6 @@ def main(args):
     judge_engine.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
     actor.initialize(None, ft_spec)
-    ref = None
-
-    # NOTE: Weight update meta only requires address and free port of rank 0,
-    # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
-    # due to `engine.get_param_specs()`.
-    # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
-
     weight_update_meta = WeightUpdateMeta.from_disk(
         config.experiment_name, config.trial_name, config.cluster.fileroot
     )
@@ -318,11 +345,6 @@ def main(args):
                 batch["prox_logp"] = logp
                 log_gpu_stats("recompute logp")
 
-        if ref is not None:
-            with stats_tracker.record_timing("ref_logp"):
-                batch["ref_logp"] = ref.compute_logp(batch)
-                log_gpu_stats("ref logp")
-
         with stats_tracker.record_timing("compute_advantage"):
             actor.compute_advantages(batch)
             log_gpu_stats("compute advantages")
@@ -389,9 +411,8 @@ def main(args):
 
     stats_logger.close()
     rollout.destroy()
-    if ref is not None:
-        ref.destroy()
     actor.destroy()
+    actor.destroy_process_groups()
 
 
 if __name__ == "__main__":
