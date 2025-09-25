@@ -9,6 +9,7 @@ import json
 import gc
 import torch
 import torch.distributed as dist
+from PIL import Image
 import numpy as np
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
@@ -47,7 +48,7 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.utils import seeding, logging, stats_tracker
 
-from AVoyager.train.voyager_agent import VoyageAgent
+from AVoyager.train.voyage_agent import VoyageAgent
 from AVoyager.utils.voyage_tool import VoyageToolBox
 from AVoyager.utils.rewards import acc_reward, calculate_reward
 
@@ -105,7 +106,8 @@ class AVoyagerWorkflow(RolloutWorkflow):
             messages
             input_ids
             answer
-            images (optional)
+            images (optional) 
+            image_paths (optional)
         }
         '''
         agent = VoyageAgent(input_data)
@@ -116,11 +118,12 @@ class AVoyagerWorkflow(RolloutWorkflow):
         while agent.num_turns < self.max_turns and not agent.is_finished:
             # The agent prepares the prompt and sampling params for LLM generation
             input_ids, sampling_params = agent.prepare_llm_query()
-
+            
             # Send request to inference engine and get response
             req = ModelRequest(
                 rid=traj_rid,
                 input_ids=input_ids,
+                image_data=input_data.get("image_paths", None),
                 gconfig=self.gconfig.new(n_samples=1),
             )
             if "stop" in sampling_params:
@@ -182,6 +185,7 @@ class AVoyagerWorkflow(RolloutWorkflow):
             qid
             answer
             images (optional)
+            image_paths (optional)
         }
         '''
         # Get the unique identifier for this prompt
@@ -215,9 +219,10 @@ class AVoyagerWorkflow(RolloutWorkflow):
             )
             #BUG: Sglang forces to convert input_ids to prompt when processing multimodal data, which leads to slightly different input_ids in rollout and training.
             input_ids = processed_input["input_ids"].tolist()[0]
-            input_data["images"] = [data["image"]]
+            input_data["images"] = data["image"]
             input_data["messages"] = data["messages"]
             input_data["input_ids"] = input_ids
+            input_data["image_paths"]= data.get("image_path", None)
         else:
             input_ids = self.tokenizer.encode(data["messages"], add_special_tokens=False)
             input_data["messages"] = data["messages"]
@@ -247,7 +252,7 @@ class AVoyagerWorkflow(RolloutWorkflow):
         # logger.info(f"Scores @ qid={qid}: {raw_scores} -> {scores}")
         if all([s==0 for s in scores]):
             return None
-
+        #TODO 9.25 需要添加收集分类image的逻辑？整理清楚图片流，用路径还是image data
         trajs = [traj for _, _, traj, _ in trajs]
         for i, traj_memory in enumerate(trajs):
             seqs = []
