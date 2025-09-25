@@ -93,10 +93,11 @@ class MultiTurnReactAgent(FnCallAgent):
             temperature=1.0,
             stop=["\n<tool_response>", "<tool_response>"],
             max_tokens=self.max_total_tokens,
+            use_chat_template=False,
         )
         content = completion.choices[0].message.content
-        assert content and content.strip(), "Error: LLM response is empty."
-        return completion, content.strip()
+        assert content, "Error: LLM response is empty."
+        return completion, content
 
     async def run_agent(
         self, data, client: ArealOpenAI, save_path: str | None = None
@@ -141,35 +142,21 @@ class MultiTurnReactAgent(FnCallAgent):
             completion, content = await self.call_server(client, messages)
             completions.append(completion)
             print(f"Round {round}: {content}")
-            if "<tool_response>" in content:
-                pos = content.find("<tool_response>")
-                content = content[:pos]
-            messages.append({"role": "assistant", "content": content.strip()})
+            # if "<tool_response>" in content:
+            #     pos = content.find("<tool_response>")
+            #     content = content[:pos]
+            messages.append({"role": "assistant", "content": content})
             if "<tool_call>" in content and "</tool_call>" in content:
                 tool_call = content.split("<tool_call>")[1].split("</tool_call>")[0]
                 try:
-                    if "python" in tool_call.lower():
-                        try:
-                            code_raw = (
-                                content.split("<tool_call>")[1]
-                                .split("</tool_call>")[0]
-                                .split("<code>")[1]
-                                .split("</code>")[0]
-                                .strip()
-                            )
-                            result = TOOL_MAP["PythonInterpreter"].call(code_raw)
-                        except:
-                            result = "[Python Interpreter Error]: Formatting error."
-
-                    else:
-                        tool_call = json5.loads(tool_call)
-                        tool_name = tool_call.get("name", "")
-                        tool_args = tool_call.get("arguments", {})
-                        result = self.custom_call_tool(tool_name, tool_args)
-                        if tool_name == "search":
-                            stats["num_search"] += 1
-                        elif tool_name == "visit":
-                            stats["num_access"] += 1
+                    tool_call = json5.loads(tool_call)
+                    tool_name = tool_call.get("name", "")
+                    tool_args = tool_call.get("arguments", {})
+                    result = self.custom_call_tool(tool_name, tool_args)
+                    if tool_name == "search":
+                        stats["num_search"] += 1
+                    elif tool_name == "visit":
+                        stats["num_access"] += 1
                 except:
                     result = 'Error: Tool call is not a valid JSON. Tool call must contain a valid "name" and "arguments" field.'
                 result = "<tool_response>\n" + result + "\n</tool_response>"
@@ -189,13 +176,12 @@ class MultiTurnReactAgent(FnCallAgent):
 
             if token_count > max_tokens:
                 print(f"Token quantity exceeds the limit: {token_count} > {max_tokens}")
-
                 messages[-1][
                     "content"
                 ] = "You have now reached the maximum context length you can handle. You should stop making tool calls and, based on all the information above, think again and provide what you consider the most likely answer in the following format:<think>your final thinking</think>\n<answer>your answer</answer>"
-                completion, content = await self.call_server(messages)
+                completion, content = await self.call_server(client, messages)
                 completions.append(completion)
-                messages.append({"role": "assistant", "content": content.strip()})
+                messages.append({"role": "assistant", "content": content})
                 if "<answer>" in content and "</answer>" in content:
                     prediction = (
                         messages[-1]["content"]
