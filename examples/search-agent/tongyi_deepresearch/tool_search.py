@@ -5,7 +5,7 @@ from typing import List, Optional, Union
 
 from qwen_agent.tools.base import BaseTool, register_tool
 
-SERPER_KEY = os.environ.get("SERPER_KEY_ID")
+SERPER_KEY = os.environ.get("SERPER_KEY_ID", "")
 
 
 @register_tool("search", allow_overwrite=True)
