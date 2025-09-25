@@ -571,7 +571,7 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
 
 
 @pytest.mark.asyncio
-async def test_multi_round_conversation_concat_style_export(openai_client, tokenizer):
+async def test_multi_round_conversation_concat_style_export(openai_client):
     """Create a conversation tree using create() and verify parents and rewards.
 
     Rewards are explicitly set (no propagation). Export should return only leaves.
@@ -584,38 +584,50 @@ async def test_multi_round_conversation_concat_style_export(openai_client, token
     ]
 
     # Root
-    c_root = await openai_client.chat.completions.create(messages=base)
+    c_root = await openai_client.chat.completions.create(
+        messages=base, use_chat_template=False
+    )
 
     # Branch A1: root -> a -> a1
     msgs_a = base + [
         {"role": "assistant", "content": c_root.choices[0].message.content},
         {"role": "user", "content": "Question A"},
     ]
-    c_a = await openai_client.chat.completions.create(messages=msgs_a)
+    c_a = await openai_client.chat.completions.create(
+        messages=msgs_a, use_chat_template=False
+    )
     msgs_a1 = msgs_a + [
         {"role": "assistant", "content": c_a.choices[0].message.content},
         {"role": "user", "content": "Follow-up A1"},
     ]
-    c_a1 = await openai_client.chat.completions.create(messages=msgs_a1)
+    c_a1 = await openai_client.chat.completions.create(
+        messages=msgs_a1, use_chat_template=False
+    )
 
     # Branch A2: root -> a -> a2
     msgs_a2 = msgs_a + [
         {"role": "assistant", "content": c_a.choices[0].message.content},
         {"role": "user", "content": "Follow-up A2"},
     ]
-    c_a2 = await openai_client.chat.completions.create(messages=msgs_a2)
+    c_a2 = await openai_client.chat.completions.create(
+        messages=msgs_a2, use_chat_template=False
+    )
 
     # Branch B: root -> b -> b1
     msgs_b = base + [
         {"role": "assistant", "content": c_root.choices[0].message.content},
         {"role": "user", "content": "Question B"},
     ]
-    c_b = await openai_client.chat.completions.create(messages=msgs_b)
+    c_b = await openai_client.chat.completions.create(
+        messages=msgs_b, use_chat_template=False
+    )
     msgs_b1 = msgs_b + [
         {"role": "assistant", "content": c_b.choices[0].message.content},
         {"role": "user", "content": "Follow-up B1"},
     ]
-    c_b1 = await openai_client.chat.completions.create(messages=msgs_b1)
+    c_b1 = await openai_client.chat.completions.create(
+        messages=msgs_b1, use_chat_template=False
+    )
 
     # Set rewards to leaf nodes only, which should be c_a1, c_a2, c_b1
     openai_client.set_reward(c_a1.id, 2)
