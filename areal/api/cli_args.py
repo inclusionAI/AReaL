@@ -269,34 +269,21 @@ class TrainEngineConfig:
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
 
     # Lora
-    use_lora: bool = False
-    lora_rank: int = field(default=32, metadata={"help": "lora_rank"})
+    use_lora: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to use LoRA. Only support FSDP. Note that should be enabled together with vLLM/SGLang."
+        },
+    )
+    lora_rank: int = field(default=32, metadata={"help": "lora rank"})
     lora_alpha: int = field(default=16, metadata={"help": "lora alpha"})
-    target_modules: List[str] | None = field(
-        default=None, metadata={"help": "lora target_modules"}
+    target_modules: List[str] | str = field(
+        default="all-linear", metadata={"help": "lora target_modules"}
     )
-    peft_type: str | None = field(
-        default=None, metadata={"help": "peft method type, include lora, ..."}
+    peft_type: str = field(
+        default="lora",
+        metadata={"help": "peft method type. Only LoRA is supported for now."},
     )
-
-    def __post_init__(self):
-        if self.use_lora:
-            if not self.peft_type:
-                self.peft_type = "lora"
-                logger.warning(
-                    "Set the default peft_type to lora when use_lora is True"
-                )
-            elif self.peft_type.lower() != "lora":
-                self.peft_type = "lora"
-                logger.warning("Only support lora now!")
-            if not self.target_modules:
-                self.target_modules = "all-linear"
-                logger.warning(
-                    "Set the default target_modules to all-linear when use_lora is True"
-                )
-        else:
-            self.peft_type = None
-            self.target_modules = None
 
 
 @dataclass
