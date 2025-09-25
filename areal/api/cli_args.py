@@ -965,7 +965,7 @@ def parse_cli_args(argv: List[str]):
     parser.add_argument(
         "--config", help="Path to the main configuration file", required=True
     )
-    # The first argument might be the path to a training script, 
+    # The first argument might be the path to a training script,
     # which should be ignored by the argument parser.
     if argv and argv[0].endswith(".py"):
         argv = argv[1:]
