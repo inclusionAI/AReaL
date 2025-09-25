@@ -43,10 +43,13 @@ from areal.utils.redistributor import redistribute
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
-# sys.path.append("/storage/openpsi/users/xushusheng.xss/projects/ASearcher-Lite@0908")
-# sys.path.append(str(Path(__file__).resolve().parents[2]))
-sys.path.append(str(Path(__file__).parent.parent))
-from .react_agent import MultiTurnReactAgent
+try:  # Package-style relative import (works if executed via -m with package context)
+    from .react_agent import MultiTurnReactAgent  # type: ignore
+except ImportError:  # Fallback when executed directly (no package parent known)
+    module_dir = Path(__file__).parent
+    if str(module_dir) not in sys.path:
+        sys.path.insert(0, str(module_dir))
+    from react_agent import MultiTurnReactAgent  # type: ignore
 
 worker_id = uuid.uuid4().hex[:4]
 
