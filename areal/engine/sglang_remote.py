@@ -268,6 +268,11 @@ class RemoteSGLangEngine(InferenceEngine):
         for addr in self.addresses:
             res = requests.post(f"http://{addr}/pause_generation")
             res.raise_for_status()
+
+        # The above http request may require some time to be scheduled and executed.
+        # The following line waits until all requests are indeed dropped.
+        time.sleep(1)
+
         tik = time.perf_counter()
         fut = Future()
         if meta.type == "nccl":
