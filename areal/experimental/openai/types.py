@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 
 import torch
 from openai.types.chat import ChatCompletion
+from transformers import PreTrainedTokenizer
 
 from areal.api.io_struct import ModelResponse
 
@@ -17,6 +18,7 @@ class CompletionWithTokenLogpReward:
     reward: float | None = None
     parent: Optional["CompletionWithTokenLogpReward"] | None = None
     use_chat_template: bool = False
+    tokenizer: Optional[PreTrainedTokenizer] = None
 
     def to_tensor_dict(self) -> Dict[str, torch.Tensor]:
         resp = self.response
@@ -31,10 +33,30 @@ class CompletionWithTokenLogpReward:
             parent_versions = parent_res["versions"].squeeze(0).tolist()
             parent_len = len(parent_logprobs)
             assert parent_len == len(parent_loss_mask) == len(parent_versions)
-            assert resp.input_len >= parent_len, (
-                "The input length of the child completion must be greater than or equal to "
-                "the length of the parent completion."
-            )
+            try:
+                assert resp.input_len >= parent_len, (
+                    "The input length of the child completion must be greater than or equal to "
+                    "the length of the parent completion."
+                )
+            except AssertionError as e:
+                # for debugging
+                parent_input = self.tokenizer.decode(
+                    self.parent.response.input_tokens, skip_special_tokens=False
+                )
+                parent_output = self.tokenizer.decode(
+                    self.parent.response.output_tokens, skip_special_tokens=False
+                )
+                child_input = self.tokenizer.decode(
+                    resp.input_tokens, skip_special_tokens=False
+                )
+                child_output = self.tokenizer.decode(
+                    resp.output_tokens, skip_special_tokens=False
+                )
+                print("[Debug] Parent input: ", parent_input)
+                print("[Debug] Parent output: ", parent_output)
+                print("[Debug] Child input: ", child_input)
+                print("[Debug] Child output: ", child_output)
+
             logprobs = (
                 parent_logprobs
                 + [0.0] * (resp.input_len - parent_len)

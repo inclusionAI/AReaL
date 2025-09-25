@@ -200,6 +200,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 response=response,  # Should not deepcopy response because of tokenizer
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
                 use_chat_template=use_chat_template,
+                tokenizer=self.tokenizer,
             )
         return chat_completion
 
