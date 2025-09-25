@@ -33,7 +33,7 @@ from areal.experimental.megatron_actor import MegatronPPOActor
 from areal.experimental.openai import ArealOpenAI
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container, concat_padded_tensors
+from areal.utils.data import broadcast_tensor_container
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -98,25 +98,25 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         data["qid"] = qid
 
         # check for generated qid when resuming
-        if self.dump_dir is not None:
-            import glob
+        # if self.dump_dir is not None:
+        #     import glob
 
-            _pattern = os.path.join(self.dump_dir, "*", f"{qid}.jsonl")
-            if len(glob.glob(_pattern)) > 0:
-                logger.info(f"{qid} is already trained on")
-                return None
+        #     _pattern = os.path.join(self.dump_dir, "*", f"{qid}/*.jsonl")
+        #     if len(glob.glob(_pattern)) > 0:
+        #         logger.info(f"{qid} is already trained on")
+        #         return None
 
         # path to save trajs
         version = engine.get_version()
         if self.dump_dir is not None:
             os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
-            os.path.join(self.dump_dir, str(version), f"{qid}/ID.json")
+            os.path.join(self.dump_dir, str(version), f"{qid}/{{traj_id}}.json")
 
         client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
         judge_client = self.judge_client
 
         # Collect trajectories
-        all_completions, rewards, stats = await asyncio.gather(
+        last_completions, all_stats = await asyncio.gather(
             *[
                 self.agent.make_trajectory(
                     data=data,
@@ -126,44 +126,14 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
                 for i in range(self.n_trajs)
             ]
         )
-
-        # Group Normalization
-        advantages = rewards - rewards.mean()
-        if abs(rewards.max() - rewards.mean()) > 1e-3:
-            advantages = advantages / advantages.std()
-        else:
-            return None
-
-        # Set advantages to all completions
-        for completions, advantage in zip(all_completions, advantages):
-            for comp in completions:
-                client.set_reward(comp.id, advantage)
-
-        completions_with_rewards = client.export_completions(style="individual")
-
+        completions_with_rewards = client.export_completions(style="concat")
         results = []
-        for i in range(self.n_trajs):
-            stats[i].update(
-                dict(
-                    num_output_tokens=0,
-                    num_input_tokens=0,
-                )
-            )
-            for comp in all_completions[i]:
-                resp = completions_with_rewards[comp.id].response
-                stats[i]["num_input_tokens"] += resp.input_len
-                stats[i]["num_output_tokens"] += resp.output_len
-
-            first_completion = True
-            for comp in all_completions[i]:
-                res = completions_with_rewards[comp.id].to_tensor_dict()
-
-                res["begin_of_trajectory"] = torch.tensor([int(first_completion)])
-                for k, v in stats[i].items():
-                    res[k] = torch.tensor([v])
-                first_completion = False
-                results.append(res)
-        results = concat_padded_tensors(results)
+        for comp, stats in zip(last_completions, all_stats):
+            comp_with_reward = completions_with_rewards[comp.id]
+            result = comp_with_reward.to_tensor_dict()
+            for k, v in stats.items():
+                result[k] = torch.tensor([v])
+            results.append(result)
         return results
 
 

@@ -98,8 +98,11 @@ class MultiTurnReactAgent(FnCallAgent):
         assert content and content.strip(), "Error: LLM response is empty."
         return completion, content.strip()
 
-    async def run_agent(self, data, client: ArealOpenAI) -> List[List[Message]]:
+    async def run_agent(
+        self, data, client: ArealOpenAI, save_path: str | None = None
+    ) -> List[List[Message]]:
         start_time = time.time()
+        data["qid"]
         question = data["question"]
         answer = data["answer"]
         self.user_prompt = question
@@ -240,6 +243,10 @@ class MultiTurnReactAgent(FnCallAgent):
             "completions": completions,  # final completion
             "stats": stats,
         }
+        if save_path:
+            with open(save_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False, indent=4)
+            print(f"Result dumped to {save_path}")
         return result
 
     def custom_call_tool(self, tool_name: str, tool_args: dict, **kwargs):
@@ -314,9 +321,12 @@ class MultiTurnReactAgent(FnCallAgent):
         data: Dict[str, str],
         client: ArealOpenAI,
         judge_client: ArealOpenAI,
+        save_path: str | None = None,
     ) -> Dict:
-        result = await self.run_agent(data, client)
+        result = await self.run_agent(data, client, save_path=save_path)
         reward = await self.calc_reward_with_llm_judge(result, judge_client)
         completions = result["completions"]
+        last_completion = completions[-1]
+        client.set_reward(last_completion.id, reward)
         stats = result["stats"]
-        return completions, reward, stats
+        return last_completion, stats
