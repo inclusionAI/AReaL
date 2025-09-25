@@ -1,10 +1,9 @@
 import argparse
 import os
-from typing import Dict
+from typing import Any, Dict
 
 import torch
 import torch.distributed as dist
-from tensordict import TensorDict
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import (
@@ -15,6 +14,7 @@ from areal.api.cli_args import (
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.platforms import current_platform
+from areal.utils.data import tensor_container_to
 
 MODEL_PATHS = {
     "qwen3": "/storage/openpsi/models/Qwen__Qwen3-1.7B/",
@@ -52,7 +52,7 @@ def mock_input(
     batch_size=128,
     min_seqlen=1,
     max_seqlen=1024,
-) -> TensorDict:
+) -> Dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -71,7 +71,7 @@ def mock_input(
     ] = 1
     input_ids.masked_fill_(~attn_mask, pad_token_id)
 
-    return TensorDict(
+    return dict(
         input_ids=input_ids,
         attention_mask=attn_mask,
     )
@@ -125,13 +125,15 @@ def test_ulysses(model_type: str):
         full_input_list = [None]
     dist.broadcast_object_list(full_input_list, src=0, group=dist.group.WORLD)
     full_input = full_input_list[0]
-    full_input = full_input.to(torch.device(f"{current_platform.device_type}:{rank}"))
+    full_input = tensor_container_to(
+        full_input, torch.device(f"{current_platform.device_type}:{rank}")
+    )
 
     input_chunks = []
     for i in range(batch_size // batch_per_rank):
         start_idx = i * batch_per_rank
         end_idx = (i + 1) * batch_per_rank
-        chunk = TensorDict(
+        chunk = dict(
             input_ids=full_input["input_ids"][start_idx:end_idx],
             attention_mask=full_input["attention_mask"][start_idx:end_idx],
         )

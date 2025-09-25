@@ -16,7 +16,11 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container, cycle_dataloader
+from areal.utils.data import (
+    broadcast_tensor_container,
+    cycle_dataloader,
+    tensor_container_to,
+)
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
@@ -57,6 +61,7 @@ def main(args):
     seeding.set_random_seed(config.seed, f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
@@ -152,6 +157,9 @@ def main(args):
         tokenizer=tokenizer,
         processor=processor,
         enable_thinking=False,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
     )
     eval_workflow = VisionRLVRWorkflow(
         reward_fn=clevr_count_70k_reward_fn,
@@ -160,6 +168,9 @@ def main(args):
         processor=processor,
         enable_thinking=False,
         rollout_stat_scope="eval-rollout",
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated-eval"
+        ),
     )
 
     # Run training.
@@ -213,7 +224,7 @@ def main(args):
                         workflow=workflow,
                         should_accept=lambda sample: True,
                     )
-                batch = batch.to(actor.device)
+                batch = tensor_container_to(batch, actor.device)
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
@@ -291,14 +302,17 @@ def main(args):
         with stats_tracker.record_timing("eval"):
 
             def evaluate_fn():
-                # Stats are logged in workflow
-                # and will be exported later
-                cnt = 0
-                for data in valid_dataloader:
-                    for item in data:
-                        eval_rollout.submit(item, eval_workflow)
-                        cnt += 1
-                eval_rollout.wait(cnt, timeout=None)
+                if actor.is_data_parallel_head():
+                    # Stats are logged in workflow
+                    # and will be exported later
+                    cnt = 0
+                    for data in valid_dataloader:
+                        for item in data:
+                            eval_rollout.submit(item, eval_workflow)
+                            cnt += 1
+                    eval_rollout.wait(cnt, timeout=None)
+                dist.barrier(device_ids=[actor.device.index])
+                current_platform.synchronize()
 
             evaluator.evaluate(
                 evaluate_fn,

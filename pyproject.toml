@@ -49,14 +49,14 @@ dependencies = [
     "megatron-core==0.13.1",
     "mbridge==0.13.0",
     "peft",
-    
+
     # Scientific computing
     "scipy",
     "pandas",
     "matplotlib",
     "seaborn",
     "h5py",
-    
+
     # Utilities and data processing
     "nltk",
     "sentencepiece",
@@ -77,7 +77,7 @@ dependencies = [
     "pybase64",
     "msgspec",
     "openai==1.99.6",
-    
+
     # Monitoring and logging
     "wandb",
     "tensorboardx",
@@ -86,13 +86,13 @@ dependencies = [
     "psutil",
     "pynvml",
     "swanlab[dashboard]",
-    
+
     # Performance and compression
     "ninja",
     "numba",
     "blosc",
     "pybind11>=2.10.0",
-    
+
     # Networking and async
     "networkx==3.3",
     "aiofiles",
@@ -101,24 +101,24 @@ dependencies = [
     "pyzmq",
     "paramiko",
     "etcd3",
-    
+
     # Distributed computing
     "ray",
     "redis",
     "deepspeed>=0.17.2",
-    
+
     # Web frameworks
     "fastapi>=0.115.12",
     "uvicorn>=0.34.2",
     "uvloop>=0.21.0",
     "flask",
-    
+
     # Build and packaging tools
     "build>=1.2.1",
     "wheel>=0.43.0",
     "setuptools>=62.3.0,<75.9",
     "cookiecutter>2.1.1",
-    
+
     # System utilities
     "distro-info>=1.0",
     "python-debian>=0.1.49",
@@ -129,8 +129,7 @@ dependencies = [
     "Pebble",
     "timeout-decorator",
     "prettytable",
-    "sh",
-    
+    "sh"
 ]
 
 [project.optional-dependencies]
@@ -141,6 +140,10 @@ dev = [
     "isort==6.0.1",
     "clang-format==19.1.7",
     "sh~=2.2",
+    "mdformat==0.7.17",
+    "mdformat-gfm",
+    "mdformat-tables",
+    "mdformat-frontmatter",
 ]
 
 docs = [

@@ -67,11 +67,13 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
+  dynamic_sampling: true
   adv_norm:
     mean_level: group
     std_level: group
     group_size: ${gconfig.n_samples}
   max_new_tokens: ${gconfig.max_new_tokens}
+
 
 ref:
   experiment_name: ${experiment_name}

@@ -3,7 +3,6 @@ import subprocess
 
 import pytest
 import torch
-from tensordict import TensorDict
 from torch.testing import assert_close
 
 from areal.platforms import current_platform
@@ -21,7 +20,7 @@ def assert_tensor_container_close(x1, x2):
         assert len(x1) == len(x2), (len(x1), len(x2))
         [assert_tensor_container_close(xx1, xx2) for xx1, xx2 in zip(x1, x2)]
         return
-    if isinstance(x1, (dict, TensorDict)):
+    if isinstance(x1, dict):
         assert x1.keys() == x2.keys(), (x1.keys(), x2.keys())
         for k in x1.keys():
             assert_tensor_container_close(x1[k], x2[k])
