@@ -1,6 +1,7 @@
 import os
 import sys
 from copy import deepcopy
+from typing import Dict
 
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -13,11 +14,18 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container, cycle_dataloader
+from areal.utils.data import (
+    broadcast_tensor_container,
+    concat_padded_tensors,
+    cycle_dataloader,
+    get_batch_size,
+    tensor_container_to,
+)
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
+from areal.utils.redistributor import redistribute
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
@@ -27,6 +35,19 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
     from areal.reward.math_parser import process_results
 
     return int(process_results(completions, answer)[0])
+
+
+def bcast_and_split_from_rank0(batch: Dict | None, granularity: int) -> Dict:
+    batch = broadcast_tensor_container(batch, src_rank=0)
+    bs = get_batch_size(batch)
+    assert bs % dist.get_world_size() == 0
+    bs_per_rank = bs // dist.get_world_size()
+    local_batch = []
+    for i in range(dist.get_rank() * bs_per_rank, (dist.get_rank() + 1) * bs_per_rank):
+        local_batch.append({k: v[i : i + 1] for k, v in batch.items()})
+    local_batch = concat_padded_tensors(local_batch)
+    # Make the sequences on each rank more balanced.
+    return redistribute(local_batch, granularity=granularity).data
 
 
 def main(args):
@@ -39,15 +60,19 @@ def main(args):
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
+    if parallel_strategy.data_parallel_size != parallel_strategy.world_size:
+        raise ValueError("LoRA does not support parallelism other than FSDP.")
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
+    # NOTE: special design for lora, only rank 0 submits rollout
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
+        rank=0,
+        world_size=1,
         split="train",
         max_length=config.train_dataset.max_length,
         type=config.train_dataset.type,
@@ -55,8 +80,8 @@ def main(args):
     )
     valid_dataset = get_custom_dataset(
         path=config.valid_dataset.path,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
+        rank=0,
+        world_size=1,
         split="test",
         max_length=config.valid_dataset.max_length,
         type=config.valid_dataset.type,
@@ -66,7 +91,7 @@ def main(args):
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         train_dataset,
-        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
+        batch_size=config.train_dataset.batch_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -74,7 +99,7 @@ def main(args):
     )
     valid_dataloader = StatefulDataLoader(
         valid_dataset,
-        batch_size=config.valid_dataset.batch_size // actor.data_parallel_world_size,
+        batch_size=config.valid_dataset.batch_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -88,7 +113,7 @@ def main(args):
 
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
+    rollout.initialize(train_data_parallel_size=1)
     eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
     # NOTE: eval does not have any offpolicyness control
     eval_rollout.config.max_head_offpolicyness = int(1e12)
@@ -101,17 +126,6 @@ def main(args):
         ref.create_process_group(parallel_strategy=parallel_strategy)
         ref.initialize(None, ft_spec)
 
-    # NOTE: Weight update meta only requires address and free port of rank 0,
-    # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
-    # due to `engine.get_param_specs()`.
-    # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
-    # weight_update_meta = [
-    #     WeightUpdateMeta.from_fsdp_nccl(
-    #         AllocationMode.from_str(config.allocation_mode), actor
-    #     )
-    # ]
-    # dist.broadcast_object_list(weight_update_meta, src=0)
-    # weight_update_meta = weight_update_meta[0]
     weight_update_meta = WeightUpdateMeta.from_disk(
         config.saver.experiment_name,
         config.saver.trial_name,
@@ -182,7 +196,7 @@ def main(args):
 
         with stats_tracker.record_timing("rollout"):
             batch = None
-            if actor.is_data_parallel_head():
+            if dist.get_rank() == 0:
                 if config.async_training:
                     batch = rollout.prepare_batch(
                         train_dataloader,
@@ -195,12 +209,11 @@ def main(args):
                         workflow=workflow,
                         should_accept=lambda sample: True,
                     )
-                batch = batch.to(actor.device)
-            batch = broadcast_tensor_container(
-                batch,
-                src_rank=actor.current_data_parallel_head(),
-                group=actor.context_and_model_parallel_group,
+                batch = tensor_container_to(batch, actor.device)
+            batch = bcast_and_split_from_rank0(
+                batch, granularity=config.actor.group_size
             )
+
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
@@ -237,9 +250,7 @@ def main(args):
             # making sglang pause_generation work properly
             actor.upload_weights(weight_update_meta)
             if dist.get_rank() == 0:
-                future = rollout.update_weights(weight_update_meta)
-            if dist.get_rank() == 0:
-                future.result()
+                rollout.update_weights(weight_update_meta).result()
             dist.barrier(device_ids=[actor.device.index])
             current_platform.synchronize()
 
@@ -270,11 +281,14 @@ def main(args):
                 # Stats are logged in workflow
                 # and will be exported later
                 cnt = 0
-                for data in valid_dataloader:
-                    for item in data:
-                        eval_rollout.submit(item, eval_workflow)
-                        cnt += 1
-                eval_rollout.wait(cnt, timeout=None)
+                if dist.get_rank() == 0:
+                    for data in valid_dataloader:
+                        for item in data:
+                            eval_rollout.submit(item, eval_workflow)
+                            cnt += 1
+                    eval_rollout.wait(cnt, timeout=None)
+                dist.barrier(device_ids=[actor.device.index])
+                current_platform.synchronize()
 
             evaluator.evaluate(
                 evaluate_fn,

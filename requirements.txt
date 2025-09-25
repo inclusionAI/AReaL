@@ -82,3 +82,7 @@ transformers==4.54.0
 openai==1.99.6
 sh
 peft
+mdformat==0.7.17
+mdformat-gfm
+mdformat-tables
+mdformat-frontmatter

@@ -1,9 +1,9 @@
 import argparse
 import os
+from typing import Any, Dict
 
 import torch
 import torch.distributed as dist
-from tensordict import TensorDict
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import (
@@ -51,7 +51,7 @@ def mock_input(
     batch_size=128,
     min_seqlen=1,
     max_seqlen=1024,
-) -> TensorDict:
+) -> Dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -70,7 +70,7 @@ def mock_input(
     ] = 1
     input_ids.masked_fill_(~attn_mask, pad_token_id)
 
-    return TensorDict(
+    return dict(
         input_ids=input_ids,
         attention_mask=attn_mask,
     )

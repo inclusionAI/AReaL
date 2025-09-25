@@ -4,7 +4,6 @@ from importlib.metadata import version as get_version
 
 import pytest
 import torch
-from tensordict import TensorDict
 from transformers import AutoTokenizer
 
 from areal.api.alloc_mode import AllocationMode
@@ -35,7 +34,7 @@ def mock_input(
     min_seqlen=10,
     max_seqlen=20,
     device=current_platform.device_type,
-) -> TensorDict:
+) -> Dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -54,13 +53,13 @@ def mock_input(
     ] = 1
     input_ids.masked_fill_(~attn_mask, pad_token_id)
 
-    return TensorDict(
+    return dict(
         input_ids=input_ids,
         attention_mask=attn_mask,
     )
 
 
-def mock_loss_fn(logits: torch.Tensor, input_data: TensorDict) -> torch.Tensor:
+def mock_loss_fn(logits: torch.Tensor, input_data: dict) -> torch.Tensor:
     """Mock loss function for testing."""
     return torch.mean(logits)
 
