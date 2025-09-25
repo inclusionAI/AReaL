@@ -1,7 +1,7 @@
 import asyncio
 import os
 import uuid
-from typing import Callable, Optional
+from typing import Callable
 
 import aiofiles
 import aiofiles.os
