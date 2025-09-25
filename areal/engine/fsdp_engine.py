@@ -2,7 +2,6 @@ import dataclasses
 import math
 import os
 import time
-from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Callable, Dict, List
 
@@ -142,15 +141,12 @@ class FSDPEngine(BaseHFEngine):
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
         tik = time.perf_counter()
-        if dist.get_rank() == 0:
-            full_state = self.model.state_dict()
-        else:
-            full_state = {}
-        # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
-        if dist.get_rank() == 0:
-            full_state = self.model.state_dict()
-        else:
-            full_state = {}
+        # Prepare lora weights synchronization
+        if self.config.use_lora:
+            if dist.get_rank() == 0:
+                full_state = self.model.state_dict()
+            else:
+                full_state = {}
         # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
         parallelize_model(
             self.model,
@@ -161,12 +157,14 @@ class FSDPEngine(BaseHFEngine):
             cpu_offload=self.cpu_offload,
             wrap_policy=self.config.fsdp.wrap_policy,
         )
-        fsdp2_load_full_state_dict(
-            self.model,
-            full_state,
-            self.cpu_offload,
-            tie_word_embeddings=self.model_config.tie_word_embeddings,
-        )
+        # Synchronize initialized lora weights
+        if self.config.use_lora:
+            fsdp2_load_full_state_dict(
+                self.model,
+                full_state,
+                self.cpu_offload,
+                tie_word_embeddings=self.model_config.tie_word_embeddings,
+            )
         self.logger.info(
             f"Applying FSDP2 with N-D parallelism for {time.perf_counter() - tik:.2f} seconds"
         )
@@ -213,15 +211,6 @@ class FSDPEngine(BaseHFEngine):
         # Get full state dict with FSDP2
         options = StateDictOptions(full_state_dict=True, cpu_offload=True)
         state_dict = get_model_state_dict(self.model, options=options)
-
-        def filter_lora_weights(state_dict):
-
-            filtered_state_dict = OrderedDict(
-                (key, value)
-                for key, value in state_dict.items()
-                if "lora" in key.lower()
-            )
-            return filtered_state_dict
 
         # save huggingface model on rank 0
         if dist.get_rank() == 0:
