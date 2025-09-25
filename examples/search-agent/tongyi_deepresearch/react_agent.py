@@ -1,7 +1,9 @@
 import asyncio
 import os
+import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List
 
 import json5
@@ -14,13 +16,22 @@ from transformers import PreTrainedTokenizer
 from areal.experimental.openai import ArealOpenAI
 from areal.utils import logging
 
-from .prompt import *
+try:
+    from .prompt import *
 
-# from tool_file import *
-# from tool_scholar import *
-# from tool_python import *
-from .tool_search import *
-from .tool_visit import *
+    # from tool_file import *
+    # from tool_scholar import *
+    # from tool_python import *
+    from .tool_search import *
+    from .tool_visit import *
+except ImportError:  # Fallback when executed directly (no package parent known)
+    module_dir = Path(__file__).parent
+    if str(module_dir) not in sys.path:
+        sys.path.insert(0, str(module_dir))
+    from prompt import *
+    from tool_search import *
+    from tool_visit import *
+
 
 logger = logging.getLogger("Tongyi-DeepResearch react agent")
 
