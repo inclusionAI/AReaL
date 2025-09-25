@@ -1,6 +1,8 @@
 import asyncio
+from calendar import c
 from json import tool
 import os
+from platform import processor
 import sys
 import uuid
 import json
@@ -14,7 +16,7 @@ from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PreTrainedTokenizerFast, AutoProcessor
 from areal.utils.evaluator import Evaluator
-from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.data import broadcast_tensor_container, cycle_dataloader
 from dataclasses import dataclass, field
@@ -45,10 +47,9 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.utils import seeding, logging, stats_tracker
 
-# from AVoyager.train.prompts import SEARCH_ACCESS_PROMPT_TEMPLATE, SEARCH_ONLY_PROMPT_TEMPLATE, INVALID_PROMPT, VALID_PROMPT
-from AVoyager.train.voyager_agent import VoyagerAgent
-from AReaL.examples.AVoyager.utils.voyage_tool import VoyageToolBox
-# from AVoyager.utils.rewards import correct_format_fn
+from AVoyager.train.voyager_agent import VoyageAgent
+from AVoyager.utils.voyage_tool import VoyageToolBox
+from AVoyager.utils.rewards import acc_reward, calculate_reward
 
 worker_id = uuid.uuid4().hex[:4]
 
@@ -71,9 +72,8 @@ class AVoyagerWorkflow(RolloutWorkflow):
         dump_dir: str | None = None,
         max_turns: int = 128,
         n_trajs: int = 1,
-        voyager_client_type: str = "async-image-zoom-in",
+        voyager_client_types: list = ["image-grounding"],
         reward_type: str = "F1",
-        topk: int = 5,
         valid_inst_ratio: float = 1.0,
         max_tokens: int = 32000,
         search_only: bool = True,
@@ -92,21 +92,34 @@ class AVoyagerWorkflow(RolloutWorkflow):
         self.max_turns = max_turns
         self.n_trajs = n_trajs
         self.reward_type = reward_type
-        self.topk = topk
         self.valid_inst_ratio = valid_inst_ratio
         self.voyager_client_types = voyager_client_types    
 
         self.toolbox = VoyageToolBox(self.voyager_client_types)
     
-    async def collect_agent_trajectory(self, valid_inst, qid, prompt, prompt_token_ids, engine):
-        agent = VoyagerAgent(prompt, prompt_token_ids)
+    async def collect_agent_trajectory(self, valid_inst, qid, input_data, engine):
+        '''
+        input_data:{
+            messages
+            input_ids
+            answer
+            images (optional)
+        }
+        准确度分 acc_reward如解析 <answer>…</answer> 与真值比对，或外部判分器）。
+        格式分 format_reward校验是否满足你规定的输出模板:同时统计 tool_call_count。
+        工具项：若检测到工具调用，则对 acc 分做折扣 (1 - tool_call_penalty)，并加上 use_tool_reward_weight。
+        合成总分:score = (1 - tool_call_penalty) * acc_weight * acc + format_weight * format_reward + tool_reward
+        可选：超长惩罚（超出预算长度按比例扣分）。
+        
+        '''
+        agent = VoyageAgent(input_data)
         score = 0
-        ground_truth = None
+        ground_truth = input_data["answer"] if "answer" in input_data else None
         # a unique trajectory rid to ensure all requests goes to the same sglang server
         traj_rid = uuid.uuid4().hex
         while agent.num_turns < self.max_turns and not agent.is_finished:
             # The agent prepares the prompt and sampling params for LLM generation
-            input_ids, sampling_params = agent.prepare_llm_query(self.tokenizer)
+            input_ids, sampling_params = agent.prepare_llm_query()
 
             # Send request to inference engine and get response
             req = ModelRequest(
@@ -129,38 +142,50 @@ class AVoyagerWorkflow(RolloutWorkflow):
                 tool_call = tool_calls[0]
                 res = (await self.toolbox.step((qid, [tool_call])))[0]
                 
-                agent.consume_tool_response(res, topk=self.topk)
+                agent.consume_tool_response(res)
 
-                if "score" in res:
-                    score = res["score"]
-                if "ground_truth" in res:
-                    ground_truth = res["ground_truth"]
+                # if "score" in res:
+                #     score = res["score"]
+                # if "ground_truth" in res:
+                #     ground_truth = res["ground_truth"]
 
             if resp.output_tokens[-1] in [self.tokenizer.eos_token_id, self.tokenizer.pad_token_id]:
                 break
 
         llm_gen_records = agent.memory.filter_records("llm_gen")
-        format_reward = float(all([correct_format_fn(i, r.text) for i, r in enumerate(llm_gen_records)]))
-
-        # compute rewards
-        score = (score or 0) * format_reward
         pred_answer = agent.get_answer()
+        # compute reward:{"score","acc_reward"，"format_reward","tool_call_reward"}
+        reward_dict=calculate_reward(llm_gen_records, ground_truth, pred_answer)
+        
+        score = reward_dict["score"]
+        
         judge_q_invalid = False
         if pred_answer is not None:
             judge_q_invalid = any([_c in pred_answer for _c in ["question", "invalid", "appropriate", "valid"]])
         if valid_inst and judge_q_invalid:
             score = -0.5
+            logger.warning(f"Invalid answer detected: {pred_answer}. Force to -0.5 score.")
         
         stats = agent.memory.logging_stats()
         stats.update(dict(
             score=score,
-            judge_q_invalid = judge_q_invalid,
-            format_reward=format_reward,
+            judge_q_invalid=judge_q_invalid,
+            acc_reward=reward_dict["acc_reward"],
+            format_reward=reward_dict["format_reward"],
+            tool_reward=reward_dict["tool_reward"],
         ))
 
         return ground_truth, score, agent.memory, stats       
     
     async def arun_episode(self, engine, data):
+        '''
+        data:{
+            messages
+            qid
+            answer
+            images (optional)
+        }
+        '''
         # Get the unique identifier for this prompt
         qid = None
         for key in ["query_id", "id", "qid"]:
@@ -179,19 +204,37 @@ class AVoyagerWorkflow(RolloutWorkflow):
 
         # Initialize and Prepare the prompt
         version = engine.get_version()
-        tool_list=data.get("tools", [])
-        if "image-grounding" in tool_list and "image" in data.keys():
-            original_image_path=data["image"]
-            self.toolbox.init_grounding_client(original_image=original_image, processor=self.processor)
-        prompt_template = SEARCH_ONLY_PROMPT_TEMPLATE if self.search_only else SEARCH_ACCESS_PROMPT_TEMPLATE
-        prompt = prompt_template.format(question=data["question"])
-        valid_inst: bool = np.random.uniform(0, 1) <= self.valid_inst_ratio
-        if valid_inst:
-            prompt = prompt.replace(INVALID_PROMPT, VALID_PROMPT)
-        prompt_token_ids = self.tokenizer(prompt, add_special_tokens=False)["input_ids"]
+        input_data = dict()
+        # always use grounding tool if image is provided
+        if "image" in data.keys():
+            self.toolbox.init_grounding_client(original_image=data["image"], processor=self.processor)
+            
+            processed_input = self.processor(
+                images=[data["image"]],
+                messages=data["messages"],
+                padding=False,
+                return_tensors="pt",
+            )
+            #BUG: Sglang forces to convert input_ids to prompt when processing multimodal data, which leads to slightly different input_ids in rollout and training.
+            input_ids = processed_input["input_ids"].tolist()[0]
+            input_data["images"] = [data["image"]]
+            input_data["messages"] = data["messages"]
+            input_data["input_ids"] = input_ids
+        else:
+            input_ids = self.tokenizer.encode(data["messages"], add_special_tokens=False)
+            input_data["messages"] = data["messages"]
+            input_data["input_ids"] = input_ids
+            
+            logger.warning(f"No image provided for qid={qid}. The agent will not be able to use image grounding tool. This option is for more general text-based tools in future.")
+
+        # for adjust train data ratio
+        # valid_inst: bool = np.random.uniform(0, 1) <= self.valid_inst_ratio
+        # if valid_inst:
+        #     prompt = prompt.replace(INVALID_PROMPT, VALID_PROMPT)
+        # prompt_token_ids = self.tokenizer(prompt, add_special_tokens=False)["input_ids"]
 
         # Collect trajectories 
-        trajs = await asyncio.gather(*[self.collect_agent_trajectory(valid_inst, qid, prompt, prompt_token_ids, engine) for _ in range(self.n_trajs)])
+        trajs = await asyncio.gather(*[self.collect_agent_trajectory(valid_inst, qid, input_data, engine) for _ in range(self.n_trajs)])
 
         ground_truth, scores, results, stats = None, [], [], []
         for gt, score, traj, traj_stats in trajs:
@@ -298,12 +341,6 @@ class AgentRLConfig(GRPOConfig):
             "help": "The type of reward function"
         }
     )
-    topk: int = field(
-        default=5,
-        metadata={
-            "help": "search returns the top-k results. Default top_k=5"
-        }
-    )
     valid_inst_ratio: float = field(
         default=1.0,
         metadata={
@@ -325,11 +362,10 @@ class AgentRLConfig(GRPOConfig):
     )
 
 
-def get_search_dataset(dataset_path, tokenizer, rank, world_size):
+def get_voyage_dataset(dataset_path, tokenizer, rank, world_size):
     dataset = load_dataset(
-        path="json",
+        path=dataset_path,
         split="train",
-        data_files=dataset_path,
     )
     # dataset = dataset.filter(lambda x: len(tokenizer.encode(x["question"])) <= 1024)
     return split_dataset_by_node(dataset, rank=rank, world_size=world_size)
@@ -340,7 +376,7 @@ def main(args):
 
     rank = int(os.getenv("RANK"))
     world_size = int(os.getenv("WORLD_SIZE"))
-    tokenizer = load_hf_tokenizer(config.tokenizer_path)
+    processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_name_or_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
@@ -392,9 +428,10 @@ def main(args):
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-    workflow = ASearcherWorkflow(
+    workflow = AVoyagerWorkflow(
         gconfig=config.gconfig,
         tokenizer=tokenizer,
+        processor=processor,
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
@@ -403,7 +440,6 @@ def main(args):
         n_trajs=config.n_trajs,
         search_client_type=config.search_client_type,
         reward_type=config.reward_type,
-        topk=config.topk,
         valid_inst_ratio=config.valid_inst_ratio,
         max_tokens=config.actor.mb_spec.max_tokens_per_mb,
     )

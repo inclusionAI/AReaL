@@ -48,7 +48,7 @@ class VoyageToolBox:
         for action in actions:
             result = dict(image=None, input_ids=None, type=None)
 
-            # tool calling
+            # tool calling: for instant tool like image grounding and calculation, we adopt sync calling.
             if "<grounding>" in action and "</grounding>" in action:
                 query = action.split("<grounding>")[-1].split("</grounding>")[0].strip()
                 req_meta = {
@@ -63,6 +63,7 @@ class VoyageToolBox:
                     result={
                         "image": response["image"],
                         "input_ids": response["input_ids"],
+                        "text": response["text"],
                         "type": "grounding",
                         "status": "success",
                         "error_info": response["error_info"],
@@ -71,6 +72,7 @@ class VoyageToolBox:
                     result={
                         "image": None,
                         "input_ids": response["input_ids"],
+                        "text": response["text"],
                         "type": "grounding",
                         "status": "error",
                         "error_info": response["error_info"],

@@ -58,6 +58,7 @@ class ImageGroundingClient:
             tool_outputs=dict{
                 "image": resize_image,
                 "input_ids": input_ids,
+                "text": tool_call_prompt_message,
                 "error_info": error_info,
             }       
         else:
@@ -66,6 +67,7 @@ class ImageGroundingClient:
             tool_outputs=dict{
                 "image": None,
                 "input_ids": input_ids,
+                "text": tool_call_prompt_message,
                 "error_info": error_info,
             }
         return tool_outputs

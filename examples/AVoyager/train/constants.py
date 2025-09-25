@@ -7,3 +7,6 @@ SYSTEM_PROMPT_MAP={
 TOOL_CALL_CROP_MULTI_TRUN_PROMPT="After the above Action {action_turn}, here is the the zoom-in image (Observation {observation_turn}):\n<|vision_start|><|image_pad|><|vision_end|>.\nContinue your reasoning process inside <think> and </think>. If needed, you can continue to zoom in on the original image or any of the observations, by outputting <grounding> and </grounding> as before. If the final answer is confirmed, put your final answer inside <answer> and </answer>."
 
 ERROR_INFO_MULTI_TURN_PROMPT="Please analyze the error information obtained from the function tool and adjust your response. Countinue your reasoning process inside <think> and </think>."
+
+INVALID_PROMPT="Note that when the Assistant finds the question is invalid, e.g. no answer could match all information in the question, the Assistant replies with '<answer> the question is invalid. </answer>'."
+VALID_PROMPT="You should try to find the most likely answer. "
