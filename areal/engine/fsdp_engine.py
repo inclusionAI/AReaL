@@ -163,7 +163,12 @@ class FSDPEngine(BaseHFEngine):
             cpu_offload=self.cpu_offload,
             wrap_policy=self.config.fsdp.wrap_policy,
         )
-        fsdp2_load_full_state_dict(self.model, full_state, self.cpu_offload, tie_word_embeddings=self.model_config.tie_word_embeddings)
+        fsdp2_load_full_state_dict(
+            self.model,
+            full_state,
+            self.cpu_offload,
+            tie_word_embeddings=self.model_config.tie_word_embeddings,
+        )
         self.logger.info(
             f"Applying FSDP2 with N-D parallelism for {time.perf_counter() - tik:.2f} seconds"
         )
