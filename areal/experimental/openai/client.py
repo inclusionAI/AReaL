@@ -95,14 +95,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 tokenize=True,
                 **extra_body.get("chat_template_kwargs", {}),
             )
-            prompt_token_strs = self.tokenizer.apply_chat_template(
-                messages_list,
-                tools=tools,
-                add_generation_prompt=True,
-                tokenize=False,
-                **extra_body.get("chat_template_kwargs", {}),
-            )
-            print(f"[Debug] Prompt text:\n{prompt_token_strs}")
         else:
             message_strs = []
             for msg in messages_list:
@@ -111,7 +103,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 )
             message_strs.append("<|im_start|>assistant\n")
             prompt_token_ids = self.tokenizer.encode("".join(message_strs))
-            print(f"[Debug] customized template Prompt text:\n{''.join(message_strs)}")
 
         temp = 1.0 if temperature is NOT_GIVEN else (temperature or 0.0)
         max_new_tokens = 512
