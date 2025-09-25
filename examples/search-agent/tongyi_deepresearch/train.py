@@ -227,7 +227,9 @@ def main(args):
     judge_engine = RemoteSGLangEngine(config.judge_engine)
     judge_engine.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
-    actor.initialize(None, ft_spec)
+    actor.initialize(
+        None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
+    )
     weight_update_meta = WeightUpdateMeta.from_disk(
         config.experiment_name, config.trial_name, config.cluster.fileroot
     )
