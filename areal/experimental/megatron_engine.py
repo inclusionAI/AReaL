@@ -311,6 +311,11 @@ class MegatronEngine(TrainEngine):
         return self._context_and_model_parallel_group
 
     @property
+    def data_parallel_rank(self) -> int:
+        assert self.initialized
+        return mpu.get_data_parallel_rank()
+
+    @property
     def data_parallel_group(self) -> dist.ProcessGroup:
         assert self.initialized
         return mpu.get_data_parallel_group()
