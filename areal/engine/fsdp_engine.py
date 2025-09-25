@@ -248,16 +248,6 @@ class FSDPEngine(BaseHFEngine):
         options = StateDictOptions(full_state_dict=True, cpu_offload=True)
         state_dict = get_model_state_dict(self.model, options=options)
 
-        def filter_lora_weights(state_dict):
-            from collections import OrderedDict
-
-            filtered_state_dict = OrderedDict(
-                (key, value)
-                for key, value in state_dict.items()
-                if "lora" in key.lower()
-            )
-            return filtered_state_dict
-
         # save huggingface model on rank 0
         if dist.get_rank() == 0:
             os.makedirs(path, exist_ok=True)
