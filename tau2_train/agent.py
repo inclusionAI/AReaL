@@ -150,7 +150,7 @@ class LLMAgent:
             self.stop = True
             assistant_message = AssistantMessage(
                 role="assistant",
-                content="",
+                content="error: reach max context length",
                 tool_calls=None,
                 raw_data=None,
             )
@@ -185,7 +185,7 @@ class LLMAgent:
             if "</think>" in completion_str:
                 completion_str = completion_str.split("</think>")[-1]
             else:
-                completion_str = ""
+                completion_str = "error: </think> not found."
                 self.stop = True
         completion_str = completion_str.replace(self.tokenizer.eos_token, "")
         try:
