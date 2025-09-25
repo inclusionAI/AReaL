@@ -116,7 +116,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         if self.dump_dir is not None:
             os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
             save_traj_path = os.path.join(
-                self.dump_dir, str(version), f"{qid}/{{traj_id}}.json"
+                self.dump_dir, str(version), f"{qid}_{{traj_id}}.json"
             )
 
         client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
