@@ -1,6 +1,8 @@
 import json
 import os
+import sys
 import time
+from pathlib import Path
 from typing import List, Union
 
 import requests
@@ -8,7 +10,14 @@ import tiktoken
 from openai import OpenAI
 from qwen_agent.tools.base import BaseTool, register_tool
 
-from .prompt import EXTRACTOR_PROMPT
+try:
+    from .prompt import *
+except ImportError:  # Fallback when executed directly (no package parent known)
+    module_dir = Path(__file__).parent
+    if str(module_dir) not in sys.path:
+        sys.path.insert(0, str(module_dir))
+    from prompt import *
+
 
 VISIT_SERVER_TIMEOUT = int(os.getenv("VISIT_SERVER_TIMEOUT", 200))
 WEBCONTENT_MAXLENGTH = int(os.getenv("WEBCONTENT_MAXLENGTH", 150000))
