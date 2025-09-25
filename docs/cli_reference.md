@@ -436,8 +436,8 @@ https://github.com/sgl-project/sglang for detailed documentation.
 | `max_lora_rank`                   | integer \| None         | `None`       | -           |
 | `lora_target_modules`             | list of string \| None  | `None`       | -           |
 | `lora_paths`                      | list of string \| None  | `None`       | -           |
-| `max_loaded_loras`                | integer \| None         | `None`       | -           |
-| `max_loras_per_batch`             | integer                 | `8`          | -           |
+| `max_loaded_loras`                | integer                 | `1`          | -           |
+| `max_loras_per_batch`             | integer                 | `1`          | -           |
 | `lora_backend`                    | string                  | `"triton"`   | -           |
 | `log_level`                       | string                  | `"warning"`  | -           |
 | `log_level_http`                  | string \| None          | `"warning"`  | -           |
