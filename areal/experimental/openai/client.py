@@ -105,8 +105,10 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             print(f"[Debug] Prompt text:\n{prompt_token_strs}")
         else:
             message_strs = []
-            for role, content in messages_list:
-                message_strs.append(f"<|im_start|>{role}\n{content}<|im_end|>\n")
+            for msg in messages_list:
+                message_strs.append(
+                    f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
+                )
             message_strs.append("<|im_start|>assistant\n")
             prompt_token_ids = self.tokenizer.encode("".join(message_strs))
             print(f"[Debug] customized template Prompt text:\n{''.join(message_strs)}")
