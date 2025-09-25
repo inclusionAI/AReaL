@@ -43,6 +43,12 @@ class AdvNormConfig(NormConfig):
     group_size: int = field(
         default=1, metadata={"help": "group_size for advantage normalization"}
     )
+    aggregation_mode: str = field(
+        default="native",
+        metadata={
+            "help": "native is the noral z-score normalization. for mix, the normal z-score and mean-base z-score normalization will be calculate and aggragate (more info please refer to the paper of MAPO)."
+        },
+    )
 
 
 @dataclass

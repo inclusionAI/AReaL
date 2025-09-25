@@ -408,9 +408,28 @@ class AdvNorm:
         self.mean_level = advNorm_cfg.mean_level
         self.std_level = advNorm_cfg.std_level
         self.group_size = advNorm_cfg.group_size
+        # aggregation_mode should be native or mix. native is the noral z-score normalization, for mix, pls refer to paper MAPO.
+        self.aggregation_mode = advNorm_cfg.aggregation_mode
 
     @torch.no_grad()
-    def __call__(
+    def _native_adv_norm(self, *args, **kwargs) -> torch.Tensor:
+        return self._calculate_adv_norm(*args, calculation_base="deviation", **kwargs)
+
+    @torch.no_grad()
+    def _mix_adv_norm() -> torch.Tensor:
+        # the implementation to paper MAPO
+        deviation_base_norm = self._calculate_adv_norm(
+            *args, calculation_base="deviation", **kwargs
+        )
+        mean_base_norm = self._calculate_adv_norm(
+            *args, calculation_base="mean", **kwargs
+        )
+        trajectory_certainty_degree = 0.5
+        return (
+            1 - trajectory_certainty_degree
+        ) * deviation_base_norm + trajectory_certainty_degree * mean_base_norm
+
+    def _calculate_adv_norm(
         self,
         advantages: torch.Tensor,
         loss_mask: Optional[torch.Tensor] = None,
@@ -418,6 +437,7 @@ class AdvNorm:
         unbiased: bool = False,
         high_precision: bool = True,
         reduce_group=None,
+        calculation_base: str = "deviation",
     ) -> torch.Tensor:
         """
         Normalize advantages tensor according to mean_level and std_level.
@@ -429,6 +449,7 @@ class AdvNorm:
             unbiased (bool): whether to use unbiased variance
             high_precision (bool): use float64 for computation
             reduce_group: distributed group for all_reduce
+            calculation_base: The denominator in the final calculation step. Default is "deviation", which means the x_center is divide by std. If set to "mean", the denominator will be the mean.
 
         Returns:
             normalized advantages (same shape, dtype=float32)
@@ -532,8 +553,43 @@ class AdvNorm:
                 )
                 std[s] = group_std.expand_as(adv)
 
+        assert calculation_base in [
+            "mean",
+            "deviation",
+        ], "calculation_base must be either mean or deviation"
+        base = std if calculation_base == "deviation" else mean
+        # Ensure stability
+        base += eps
         # Normalize
-        return (x_centered / (std + eps)).float()
+        return (x_centered / base).float()
+
+    @torch.no_grad()
+    def __call__(
+        self,
+        advantages: torch.Tensor,
+        loss_mask: Optional[torch.Tensor] = None,
+        eps: float = 1e-5,
+        unbiased: bool = False,
+        high_precision: bool = True,
+        reduce_group=None,
+    ) -> torch.Tensor:
+        assert self.aggregation_mode in [
+            "native",
+            "mix",
+        ], "aggregation_mode must be either native or mix"
+        norm_func = (
+            self._native_adv_norm
+            if self.aggregation_mode == "native"
+            else _mix_adv_norm
+        )
+        return norm_func(
+            advantages,
+            loss_mask,
+            eps,
+            unbiased,
+            high_precision,
+            reduce_group,
+        )
 
     @staticmethod
     def _compute_mean(
