@@ -11,7 +11,6 @@ import json5
 from qwen_agent.agents.fncall_agent import FnCallAgent
 from qwen_agent.llm.schema import Message
 from qwen_agent.settings import MAX_LLM_CALL_PER_RUN
-from qwen_agent.utils.utils import build_text_completion_prompt
 from transformers import PreTrainedTokenizer
 
 from areal.experimental.openai import ArealOpenAI
@@ -91,9 +90,14 @@ class MultiTurnReactAgent(FnCallAgent):
         self.max_total_tokens_before_finishing = int(max_total_tokens * 0.8)
 
     def count_tokens(self, messages):
-        full_message = [Message(**x) for x in messages]
-        full_prompt = build_text_completion_prompt(full_message, allow_special=True)
-        return len(self.tokenizer.encode(full_prompt))
+        message_strs = []
+        for msg in messages:
+            message_strs.append(
+                f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
+            )
+        message_strs.append("<|im_start|>assistant\n")
+        prompt_token_ids = self.tokenizer.encode("".join(message_strs))
+        return len(prompt_token_ids)
 
     async def call_server(self, client: ArealOpenAI, messages: List[Dict]) -> str:
         completion = await client.chat.completions.create(
