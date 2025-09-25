@@ -143,7 +143,7 @@ def main(args):
         ref.initialize(None, ft_spec)
 
     # NOTE: Weight update meta only requires address and free port of rank 0,
-    # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
+    # but `WeightUpdateMeta.from_fsdp_xccl` has to be executed on all ranks
     weight_update_meta = get_model_update_meta(config, actor)
     weight_update_meta = weight_update_meta[0]
 

@@ -112,14 +112,14 @@ def test_adv_norm_initialization_validation():
     """Test Normalization initialization validation."""
     # Test invalid mean_level
     with pytest.raises(
-        ValueError, match="mean_level must be 'batch', 'group' or 'none'"
+        ValueError, match="mean_level must be 'batch', 'group' or None"
     ):
         config = NormConfig(mean_level="invalid", std_level="batch", group_size=1)
         Normalization(config)
 
     # Test invalid std_level
     with pytest.raises(
-        ValueError, match="std_level must be 'batch', 'group', or 'none'"
+        ValueError, match="std_level must be 'batch', 'group', or None"
     ):
         config = NormConfig(mean_level="batch", std_level="invalid", group_size=1)
         Normalization(config)

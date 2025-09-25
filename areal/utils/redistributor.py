@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 import torch
 import torch.distributed as dist
 
-from areal.utils.data import all_gather_tensor_container, concat_padded_tensors
+from areal.utils.data import get_batch_size, all_gather_tensor_container, concat_padded_tensors
 from areal.utils.datapack import ffd_allocate
 
 

@@ -42,7 +42,7 @@ def vllm_server():
     seeding.set_random_seed(1, EXPR_NAME)
     cmd = vLLMConfig.build_cmd(
         vllm_config=vLLMConfig(
-            skip_tokenizer_init=True,
+            skip_tokenizer_init=False,
             model=MODEL_PATH,
         ),
         host=HOST,
