@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 import time
@@ -236,8 +237,10 @@ class MultiTurnReactAgent(FnCallAgent):
             "stats": stats,
         }
         if save_path:
+            to_dump = dict(**result)
+            to_dump.pop("completions")
             with open(save_path, "w", encoding="utf-8") as f:
-                json.dump(result, f, ensure_ascii=False, indent=4)
+                json.dump(to_dump, f, ensure_ascii=False, indent=4)
             print(f"Result dumped to {save_path}")
         return result
 
