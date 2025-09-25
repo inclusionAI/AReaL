@@ -55,7 +55,7 @@ class BaseHFEngine(TrainEngine):
         self.model: torch.nn.Module
         self.optimizer: torch.optim.Optimizer
         self.tokenizer: PreTrainedTokenizerFast
-        self.processor: ProcessorMixin | None
+        self.processor: ProcessorMixin | None = None
         # huggingface model config
         self.model_config: PretrainedConfig
         self._version: int = 0

@@ -407,7 +407,7 @@ class vLLMConfig:
     # NOTE: Defaults max_model_len to 32k because a larger value
     # will enable chunked prefill in vLLM, which will cause
     # evalution performance degeneration.
-    max_model_len: Optional[int] = 32768
+    max_model_len: int | None = 32768
     enable_chunked_prefill: bool = False
     # NOTE: Setting enable_prefix_caching to False
     # because it will reuse the block after
@@ -427,7 +427,7 @@ class vLLMConfig:
         tp_size,
         host,
         port,
-        dist_init_addr: Optional[str] = None,
+        dist_init_addr: str | None = None,
     ):
         args: Dict = conf_as_dict(vllm_config)
         args = dict(
@@ -448,7 +448,7 @@ class vLLMConfig:
         tp_size,
         host,
         port,
-        dist_init_addr: Optional[str] = None,
+        dist_init_addr: str | None = None,
     ):
         args = vLLMConfig.build_args(
             vllm_config=vllm_config,
@@ -998,6 +998,7 @@ class BaseExperimentConfig:
         default="",
         metadata={"help": "Path to the tokenizer."},
     )
+    weight_update_mode: str = field(default="disk")
 
     train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
     valid_dataset: DatasetConfig | None = field(default=None)
