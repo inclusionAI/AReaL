@@ -125,7 +125,6 @@ class MultiTurnReactAgent(FnCallAgent):
             turns=0,
             num_search=0,
             num_access=0,
-            score=0.0,
         )
         num_llm_calls_available = self.max_llm_calls_per_run
         completions = []

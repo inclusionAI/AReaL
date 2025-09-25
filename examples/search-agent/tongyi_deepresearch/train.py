@@ -34,7 +34,7 @@ from areal.experimental.megatron_actor import MegatronPPOActor
 from areal.experimental.openai import ArealOpenAI
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container
+from areal.utils.data import broadcast_tensor_container, concat_padded_tensors
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -115,22 +115,26 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         version = engine.get_version()
         if self.dump_dir is not None:
             os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
-            os.path.join(self.dump_dir, str(version), f"{qid}/{{traj_id}}.json")
+            save_traj_path = os.path.join(
+                self.dump_dir, str(version), f"{qid}/{{traj_id}}.json"
+            )
 
         client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
         judge_client = self.judge_client
 
         # Collect trajectories
-        last_completions, all_stats = await asyncio.gather(
+        outputs = await asyncio.gather(
             *[
                 self.agent.make_trajectory(
                     data=data,
                     client=client,
                     judge_client=judge_client,
+                    save_path=save_traj_path.format(traj_id=i),
                 )
                 for i in range(self.n_trajs)
             ]
         )
+        last_completions, all_stats = zip(*outputs)
         completions_with_rewards = client.export_completions(style="concat")
         results = []
         for comp, stats in zip(last_completions, all_stats):
@@ -138,7 +142,9 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
             result = comp_with_reward.to_tensor_dict()
             for k, v in stats.items():
                 result[k] = torch.tensor([v])
+            result["begin_of_trajectory"] = torch.tensor([1])
             results.append(result)
+        result = concat_padded_tensors(results)
         return results
 
 
