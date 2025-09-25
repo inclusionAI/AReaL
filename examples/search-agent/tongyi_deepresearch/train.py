@@ -34,7 +34,11 @@ from areal.experimental.megatron_actor import MegatronPPOActor
 from areal.experimental.openai import ArealOpenAI
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container, concat_padded_tensors
+from areal.utils.data import (
+    broadcast_tensor_container,
+    concat_padded_tensors,
+    tensor_container_to,
+)
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -294,8 +298,6 @@ def main(args):
             steps_per_epoch=steps_per_epoch,
         )
 
-        print(f"Epoch {epoch}. Step: {step}/{steps_per_epoch}")
-
         with stats_tracker.record_timing("rollout"):
             batch = None
             if actor.is_data_parallel_head():
@@ -311,7 +313,7 @@ def main(args):
                         workflow=workflow,
                         should_accept=lambda sample: True,
                     )
-                batch = batch.to(actor.device)
+                batch = tensor_container_to(actor.device)
                 batch = redistribute(batch, group=actor.data_parallel_group).data
             batch = broadcast_tensor_container(
                 batch,
