@@ -416,8 +416,9 @@ class AdvNorm:
         return self._calculate_adv_norm(*args, calculation_base="deviation", **kwargs)
 
     @torch.no_grad()
-    def _mix_adv_norm() -> torch.Tensor:
+    def _mix_adv_norm(self, *args, **kwargs) -> torch.Tensor:
         # the implementation to paper MAPO
+
         deviation_base_norm = self._calculate_adv_norm(
             *args, calculation_base="deviation", **kwargs
         )
