@@ -475,7 +475,7 @@ class MegatronEngine(TrainEngine):
         param_specs = []
         for name, param in self._get_named_parameters():
             param = all_gather_param(name, param)
-            param = remove_padding(name, param, self.vocab_size)
+            param = remove_padding(name, param, self.hf_config.vocab_size)
             # if not self._is_pp_src_rank:
             #     continue
 

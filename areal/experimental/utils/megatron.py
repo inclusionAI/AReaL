@@ -56,6 +56,7 @@ def remove_padding(name, param, vocab_size):
     return param
 
 
+# Adapted from slime
 def convert_qwen3moe_to_hf(tf_config: TransformerConfig, name: str, param):
     if name == "module.module.embedding.word_embeddings.weight":
         return [("model.embed_tokens.weight", param)]
@@ -66,13 +67,13 @@ def convert_qwen3moe_to_hf(tf_config: TransformerConfig, name: str, param):
 
     try:
         head_dim = (
-            args.kv_channels
-            if args.kv_channels is not None
-            else tf_config.hidden_size // args.num_attention_heads
+            tf_config.kv_channels
+            if tf_config.kv_channels is not None
+            else tf_config.hidden_size // tf_config.num_attention_heads
         )
     except:
-        head_dim = tf_config.hidden_size // args.num_attention_heads
-    value_num_per_group = args.num_attention_heads // args.num_query_groups
+        head_dim = tf_config.hidden_size // tf_config.num_attention_heads
+    value_num_per_group = tf_config.num_attention_heads // tf_config.num_query_groups
 
     decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
     match = re.match(decoder_layers_pattern, name)
@@ -140,7 +141,7 @@ def convert_qwen3moe_to_hf(tf_config: TransformerConfig, name: str, param):
         elif rest == "self_attention.linear_qkv.weight":
 
             param = param.view(
-                args.num_query_groups, -1, head_dim, tf_config.hidden_size
+                tf_config.num_query_groups, -1, head_dim, tf_config.hidden_size
             )
             q_param, k_param, v_param = torch.split(
                 param, split_size_or_sections=[value_num_per_group, 1, 1], dim=1
@@ -154,7 +155,7 @@ def convert_qwen3moe_to_hf(tf_config: TransformerConfig, name: str, param):
                 (f"model.layers.{layer_idx}.self_attn.v_proj.weight", v_param),
             ]
         elif rest == "self_attention.linear_qkv.bias":
-            param = param.view(args.num_query_groups, -1)
+            param = param.view(tf_config.num_query_groups, -1)
             q_bias, k_bias, v_bias = torch.split(
                 param,
                 split_size_or_sections=[
@@ -206,6 +207,7 @@ def convert_qwen3moe_to_hf(tf_config: TransformerConfig, name: str, param):
     raise ValueError(f"Unknown parameter name: {name}")
 
 
+# Adapted from slime
 def convert_qwen2_to_hf(tf_config: TransformerConfig, name: str, param):
     if name == "module.module.embedding.word_embeddings.weight":
         return [("model.embed_tokens.weight", param)]
@@ -216,13 +218,13 @@ def convert_qwen2_to_hf(tf_config: TransformerConfig, name: str, param):
 
     try:
         head_dim = (
-            args.kv_channels
-            if args.kv_channels is not None
-            else tf_config.hidden_size // args.num_attention_heads
+            tf_config.kv_channels
+            if tf_config.kv_channels is not None
+            else tf_config.hidden_size // tf_config.num_attention_heads
         )
     except:
-        head_dim = tf_config.hidden_size // args.num_attention_heads
-    value_num_per_group = args.num_attention_heads // args.num_query_groups
+        head_dim = tf_config.hidden_size // tf_config.num_attention_heads
+    value_num_per_group = tf_config.num_attention_heads // tf_config.num_query_groups
 
     decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
     match = re.match(decoder_layers_pattern, name)
@@ -233,7 +235,7 @@ def convert_qwen2_to_hf(tf_config: TransformerConfig, name: str, param):
         elif rest == "self_attention.linear_qkv.weight":
 
             param = param.view(
-                args.num_query_groups, -1, head_dim, tf_config.hidden_size
+                tf_config.num_query_groups, -1, head_dim, tf_config.hidden_size
             )
             q_param, k_param, v_param = torch.split(
                 param, split_size_or_sections=[value_num_per_group, 1, 1], dim=1
@@ -247,7 +249,7 @@ def convert_qwen2_to_hf(tf_config: TransformerConfig, name: str, param):
                 (f"model.layers.{layer_idx}.self_attn.v_proj.weight", v_param),
             ]
         elif rest == "self_attention.linear_qkv.bias":
-            param = param.view(args.num_query_groups, -1)
+            param = param.view(tf_config.num_query_groups, -1)
             q_bias, k_bias, v_bias = torch.split(
                 param,
                 split_size_or_sections=[
@@ -289,9 +291,8 @@ def convert_qwen2_to_hf(tf_config: TransformerConfig, name: str, param):
     raise ValueError(f"Unknown parameter name: {name}")
 
 
-def convert_to_hf(
-    tf_config: TransformerConfig, model_name: str, name: str, param: torch.Tensor
-):
+# Adapted from slime
+def convert_to_hf(tf_config: TransformerConfig, model_name: str, name: str, param):
     if "qwen3moe" in model_name:
         converted_named_tensors = convert_qwen3moe_to_hf(tf_config, name, param)
     elif "qwen2" in model_name or "qwen3" in model_name:
