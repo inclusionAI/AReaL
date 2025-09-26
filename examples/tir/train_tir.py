@@ -121,11 +121,7 @@ def main(args):
         ref.initialize(None, ft_spec)
 
     # Weight update meta
-    weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
-            AllocationMode.from_str(config.allocation_mode), actor
-        )
-    ]
+    weight_update_meta = [WeightUpdateMeta.from_fsdp_nccl(allocation_mode, actor)]
     dist.broadcast_object_list(weight_update_meta, src=0)
     weight_update_meta = weight_update_meta[0]
 

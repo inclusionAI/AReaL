@@ -231,11 +231,7 @@ def main(args):
     # but `WeightUpdateMeta.from_fsdp_xccl` has to be executed on all ranks
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
-    weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_xccl(
-            AllocationMode.from_str(config.allocation_mode), actor
-        )
-    ]
+    weight_update_meta = [WeightUpdateMeta.from_fsdp_xccl(allocation_mode, actor)]
     dist.broadcast_object_list(weight_update_meta, src=0)
     weight_update_meta = weight_update_meta[0]
 

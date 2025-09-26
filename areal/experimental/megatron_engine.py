@@ -355,6 +355,9 @@ class MegatronEngine(TrainEngine):
     def get_param_specs(
         self, weight_chunked_mem_mb: int = 1024
     ) -> List[List[ParamSpec]]:
+        if dist.get_rank() == 0:
+            for name, param in self.model.named_parameters():
+                self.logger.info(f"Param: {name}, shape: {param.shape}")
         raise NotImplementedError()
 
     def set_version(self, version: int):

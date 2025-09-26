@@ -24,5 +24,9 @@ def gen_servers(experiment_name, trial_name):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/gen_servers"
 
 
+def update_weights_from_nccl(experiment_name, trial_name, model_version):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/update_weights_from_nccl/{model_version}"
+
+
 def update_weights_from_disk(experiment_name, trial_name, model_version):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/update_weights_from_disk/{model_version}"

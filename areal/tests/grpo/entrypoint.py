@@ -81,11 +81,7 @@ def main() -> None:
     ref.create_process_group(parallel_strategy=parallel_strategy)
     ref.initialize(None, ft_spec)
 
-    weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_xccl(
-            AllocationMode.from_str(config.allocation_mode), actor
-        )
-    ]
+    weight_update_meta = [WeightUpdateMeta.from_fsdp_xccl(allocation_mode, actor)]
     dist.broadcast_object_list(weight_update_meta, src=0)
     weight_update_meta = weight_update_meta[0]
 

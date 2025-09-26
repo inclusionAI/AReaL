@@ -123,6 +123,24 @@ class WeightUpdateMeta:
         )
 
     @classmethod
+    def from_megatron_nccl(
+        cls,
+        allocation_mode: AllocationMode,
+        megatron_engine: "TrainEngine",
+        nccl_group_name: str = "update_weight_group",
+        weight_chunked_mem_mb: int = 1024,
+    ):
+        param_specs = megatron_engine.get_param_specs(weight_chunked_mem_mb)
+        return cls(
+            type=current_platform.communication_backend,
+            alloc_mode=allocation_mode,
+            nccl_master_address=gethostip(),
+            nccl_master_port=find_free_ports(1)[0],
+            nccl_param_specs=param_specs,
+            nccl_group_name=nccl_group_name,
+        )
+
+    @classmethod
     def from_fsdp_xccl(
         cls,
         allocation_mode: AllocationMode,

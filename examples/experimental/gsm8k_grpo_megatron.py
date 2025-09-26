@@ -8,25 +8,29 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import load_expr_config
-from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
+from areal.api.io_struct import FinetuneSpec, WeightUpdateMeta
+
+# from areal.api.io_struct import StepInfo
 from areal.dataset import get_custom_dataset
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.api.cli_args import ExperimentalGRPOConfig as GRPOConfig
 from areal.experimental.megatron_actor import MegatronPPOActor
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import (
-    broadcast_tensor_container,
-    cycle_dataloader,
-    tensor_container_to,
-)
-from areal.utils.device import log_gpu_stats
-from areal.utils.evaluator import Evaluator
+
+# from areal.utils.data import (
+#     broadcast_tensor_container,
+#     cycle_dataloader,
+#     tensor_container_to,
+# )
+# from areal.utils.device import log_gpu_stats
+# from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.recover import RecoverHandler
-from areal.utils.saver import Saver
-from areal.utils.stats_logger import StatsLogger
-from areal.workflow.rlvr import RLVRWorkflow
+
+# from areal.utils.recover import RecoverHandler
+# from areal.utils.saver import Saver
+# from areal.utils.stats_logger import StatsLogger
+# from areal.workflow.rlvr import RLVRWorkflow
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
@@ -58,14 +62,14 @@ def main(args):
         type=config.train_dataset.type,
         tokenizer=tokenizer,
     )
-    valid_dataset = get_custom_dataset(
-        path=config.valid_dataset.path,
-        rank=mpu.get_data_parallel_rank(),
-        world_size=mpu.get_data_parallel_world_size(),
-        split="test",
-        type=config.valid_dataset.type,
-        tokenizer=tokenizer,
-    )
+    # valid_dataset = get_custom_dataset(
+    #     path=config.valid_dataset.path,
+    #     rank=mpu.get_data_parallel_rank(),
+    #     world_size=mpu.get_data_parallel_world_size(),
+    #     split="test",
+    #     type=config.valid_dataset.type,
+    #     tokenizer=tokenizer,
+    # )
 
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
@@ -77,15 +81,15 @@ def main(args):
         collate_fn=lambda x: x,
         drop_last=config.train_dataset.drop_last,
     )
-    valid_dataloader = StatefulDataLoader(
-        valid_dataset,
-        batch_size=config.valid_dataset.batch_size
-        // mpu.get_data_parallel_world_size(),
-        shuffle=config.valid_dataset.shuffle,
-        num_workers=config.valid_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.valid_dataset.drop_last,
-    )
+    # valid_dataloader = StatefulDataLoader(
+    #     valid_dataset,
+    #     batch_size=config.valid_dataset.batch_size
+    #     // mpu.get_data_parallel_world_size(),
+    #     shuffle=config.valid_dataset.shuffle,
+    #     num_workers=config.valid_dataset.num_workers,
+    #     collate_fn=lambda x: x,
+    #     drop_last=config.valid_dataset.drop_last,
+    # )
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
         dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
@@ -112,62 +116,79 @@ def main(args):
         )
 
     # NOTE: megatron engine currently does not support nccl weight update
-    weight_update_meta = WeightUpdateMeta.from_disk(
-        config.experiment_name,
-        config.trial_name,
-        config.cluster.fileroot,
-    )
+    # weight_update_meta = WeightUpdateMeta.from_disk(
+    #     config.experiment_name,
+    #     config.trial_name,
+    #     config.cluster.fileroot,
+    # )
+    weight_update_meta = [WeightUpdateMeta.from_megatron_nccl(allocation_mode, actor)]
+    dist.broadcast_object_list(weight_update_meta, src=0)
+    weight_update_meta = weight_update_meta[0]
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-    workflow = RLVRWorkflow(
-        reward_fn=gsm8k_reward_fn,
-        gconfig=config.gconfig,
-        tokenizer=tokenizer,
-        enable_thinking=False,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
-    )
-    eval_workflow = RLVRWorkflow(
-        reward_fn=gsm8k_reward_fn,
-        gconfig=config.gconfig.new(temperature=0.6),
-        tokenizer=tokenizer,
-        enable_thinking=False,
-        rollout_stat_scope="eval-rollout",
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-        ),
-    )
+    # workflow = RLVRWorkflow(
+    #     reward_fn=gsm8k_reward_fn,
+    #     gconfig=config.gconfig,
+    #     tokenizer=tokenizer,
+    #     enable_thinking=False,
+    #     dump_dir=os.path.join(
+    #         StatsLogger.get_log_path(config.stats_logger), "generated"
+    #     ),
+    # )
+    # eval_workflow = RLVRWorkflow(
+    #     reward_fn=gsm8k_reward_fn,
+    #     gconfig=config.gconfig.new(temperature=0.6),
+    #     tokenizer=tokenizer,
+    #     enable_thinking=False,
+    #     rollout_stat_scope="eval-rollout",
+    #     dump_dir=os.path.join(
+    #         StatsLogger.get_log_path(config.stats_logger), "generated-eval"
+    #     ),
+    # )
 
     # Run training.
-    saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
-    evaluator = Evaluator(config.evaluator, ft_spec)
+    # saver = Saver(config.saver, ft_spec)
+    # stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    # evaluator = Evaluator(config.evaluator, ft_spec)
 
-    recover_handler = RecoverHandler(config.recover, ft_spec)
-    recover_info = recover_handler.load(
-        actor,
-        saver,
-        evaluator,
-        stats_logger,
-        train_dataloader,
-        inference_engine=rollout,
-        weight_update_meta=weight_update_meta,
-    )
-    start_step = (
-        recover_info.last_step_info.next().global_step
-        if recover_info is not None
-        else 0
-    )
+    # recover_handler = RecoverHandler(config.recover, ft_spec)
+    # recover_info = recover_handler.load(
+    #     actor,
+    #     saver,
+    #     evaluator,
+    #     stats_logger,
+    #     train_dataloader,
+    #     inference_engine=rollout,
+    #     weight_update_meta=weight_update_meta,
+    # )
+    # start_step = (
+    #     recover_info.last_step_info.next().global_step
+    #     if recover_info is not None
+    #     else 0
+    # )
 
-    total_epochs = config.total_train_epochs
-    steps_per_epoch = len(train_dataloader)
-    max_steps = total_epochs * steps_per_epoch
+    # total_epochs = config.total_train_epochs
+    # steps_per_epoch = len(train_dataloader)
+    # max_steps = total_epochs * steps_per_epoch
 
+    with stats_tracker.record_timing("update_weights"):
+        if dist.get_rank() == 0:
+            future = rollout.update_weights(weight_update_meta)
+        actor.upload_weights(weight_update_meta)
+        if dist.get_rank() == 0:
+            future.result()
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
+
+        actor.set_version(1)
+        rollout.set_version(1)
+        eval_rollout.set_version(1)
+
+    """
     data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
@@ -294,8 +315,9 @@ def main(args):
 
         # Resume rollout
         rollout.resume()
+    """
 
-    stats_logger.close()
+    # stats_logger.close()
     eval_rollout.destroy()
     rollout.destroy()
     if ref is not None:
