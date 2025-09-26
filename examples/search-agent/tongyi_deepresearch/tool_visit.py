@@ -1,24 +1,13 @@
-import asyncio
 import json
 import os
-import sys
 import time
-from pathlib import Path
 from typing import List, Union
 
-import aiohttp
+import requests
 import tiktoken
 from openai import OpenAI
+from prompt import EXTRACTOR_PROMPT
 from qwen_agent.tools.base import BaseTool, register_tool
-
-try:
-    from .prompt import *
-except ImportError:  # Fallback when executed directly (no package parent known)
-    module_dir = Path(__file__).parent
-    if str(module_dir) not in sys.path:
-        sys.path.insert(0, str(module_dir))
-    from prompt import *
-
 
 VISIT_SERVER_TIMEOUT = int(os.getenv("VISIT_SERVER_TIMEOUT", 200))
 WEBCONTENT_MAXLENGTH = int(os.getenv("WEBCONTENT_MAXLENGTH", 150000))
@@ -67,45 +56,47 @@ class Visit(BaseTool):
     }
 
     # The `call` method is the main function of the tool.
-    async def call(self, params: Union[str, dict], **kwargs) -> str:  # type: ignore[override]
+    def call(self, params: Union[str, dict], **kwargs) -> str:
         try:
             url = params["url"]
             goal = params["goal"]
-        except Exception:
+        except:
             return "[Visit] Invalid request format: Input must be a JSON object containing 'url' and 'goal' fields"
 
         start_time = time.time()
+
+        # Create log folder if it doesn't exist
         log_folder = "log"
         os.makedirs(log_folder, exist_ok=True)
 
-        async with aiohttp.ClientSession() as session:
-            if isinstance(url, str):
-                response = await self.readpage_jina(session, url, goal)
-            else:
-                assert isinstance(url, List)
-                responses: List[str] = []
-                for u in url:
-                    if time.time() - start_time > 900:
-                        cur_response = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
-                            url=url, goal=goal
-                        )
-                        cur_response += (
-                            "Evidence in page: \n"
-                            + "The provided webpage content could not be accessed. Please check the URL or file format."
-                            + "\n\n"
-                        )
-                        cur_response += (
-                            "Summary: \n"
-                            + "The webpage content could not be processed, and therefore, no information is available."
-                            + "\n\n"
-                        )
-                    else:
-                        try:
-                            cur_response = await self.readpage_jina(session, u, goal)
-                        except Exception as e:  # pragma: no cover
-                            cur_response = f"Error fetching {u}: {str(e)}"
-                    responses.append(cur_response)
-                response = "\n=======\n".join(responses)
+        if isinstance(url, str):
+            response = self.readpage_jina(url, goal)
+        else:
+            response = []
+            assert isinstance(url, List)
+            start_time = time.time()
+            for u in url:
+                if time.time() - start_time > 900:
+                    cur_response = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
+                        url=url, goal=goal
+                    )
+                    cur_response += (
+                        "Evidence in page: \n"
+                        + "The provided webpage content could not be accessed. Please check the URL or file format."
+                        + "\n\n"
+                    )
+                    cur_response += (
+                        "Summary: \n"
+                        + "The webpage content could not be processed, and therefore, no information is available."
+                        + "\n\n"
+                    )
+                else:
+                    try:
+                        cur_response = self.readpage_jina(u, goal)
+                    except Exception as e:
+                        cur_response = f"Error fetching {u}: {str(e)}"
+                response.append(cur_response)
+            response = "\n=======\n".join(response)
 
         print(f"Summary Length {len(response)}; Summary Content {response}")
         return response.strip()
@@ -140,7 +131,7 @@ class Visit(BaseTool):
                     return ""
                 continue
 
-    async def jina_readpage(self, session: aiohttp.ClientSession, url: str) -> str:
+    def jina_readpage(self, url: str) -> str:
         """
         Read webpage content using Jina service.
 
@@ -154,28 +145,31 @@ class Visit(BaseTool):
         max_retries = 3
         timeout = 50
 
-        headers = {"Authorization": f"Bearer {JINA_API_KEYS}"}
         for attempt in range(max_retries):
+            headers = {
+                "Authorization": f"Bearer {JINA_API_KEYS}",
+            }
             try:
-                async with session.get(
+                response = requests.get(
                     f"https://r.jina.ai/{url}", headers=headers, timeout=timeout
-                ) as resp:
-                    if resp.status == 200:
-                        return await resp.text()
-                    text = await resp.text()
-                    print(text)
+                )
+                if response.status_code == 200:
+                    webpage_content = response.text
+                    return webpage_content
+                else:
+                    print(response.text)
                     raise ValueError("jina readpage error")
-            except Exception:
-                await asyncio.sleep(0.5)
+            except Exception as e:
+                time.sleep(0.5)
                 if attempt == max_retries - 1:
                     return "[visit] Failed to read page."
 
         return "[visit] Failed to read page."
 
-    async def html_readpage_jina(self, session: aiohttp.ClientSession, url: str) -> str:
+    def html_readpage_jina(self, url: str) -> str:
         max_attempts = 8
         for attempt in range(max_attempts):
-            content = await self.jina_readpage(session, url)
+            content = self.jina_readpage(url)
             service = "jina"
             print(service)
             if (
@@ -187,9 +181,7 @@ class Visit(BaseTool):
                 return content
         return "[visit] Failed to read page."
 
-    async def readpage_jina(
-        self, session: aiohttp.ClientSession, url: str, goal: str
-    ) -> str:
+    def readpage_jina(self, url: str, goal: str) -> str:
         """
         Attempt to read webpage content by alternating between jina and aidata services.
 
@@ -204,7 +196,7 @@ class Visit(BaseTool):
         summary_page_func = self.call_server
         max_retries = int(os.getenv("VISIT_SERVER_MAX_RETRIES", 1))
 
-        content = await self.html_readpage_jina(session, url)
+        content = self.html_readpage_jina(url)
 
         if (
             content
@@ -291,17 +283,18 @@ class Visit(BaseTool):
             return useful_information
 
         # If no valid content was obtained after all retries
-        useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
-            url=url, goal=goal
-        )
-        useful_information += (
-            "Evidence in page: \n"
-            + "The provided webpage content could not be accessed. Please check the URL or file format."
-            + "\n\n"
-        )
-        useful_information += (
-            "Summary: \n"
-            + "The webpage content could not be processed, and therefore, no information is available."
-            + "\n\n"
-        )
-        return useful_information
+        else:
+            useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
+                url=url, goal=goal
+            )
+            useful_information += (
+                "Evidence in page: \n"
+                + "The provided webpage content could not be accessed. Please check the URL or file format."
+                + "\n\n"
+            )
+            useful_information += (
+                "Summary: \n"
+                + "The webpage content could not be processed, and therefore, no information is available."
+                + "\n\n"
+            )
+            return useful_information
