@@ -426,7 +426,7 @@ class MegatronEngine(TrainEngine):
         self, weight_chunked_mem_mb: int = 1024
     ) -> List[List[ParamSpec]]:
         param_specs = []
-        for name, param in self._get_named_parameters(self.model):
+        for name, param in self._get_named_parameters():
             self.logger.info(f"Param name: {name}, shape: {param.shape}")
             # if isinstance(param.data, DTensor):
             #     tensor = param.data.full_tensor()
