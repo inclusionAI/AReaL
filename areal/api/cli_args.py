@@ -26,7 +26,7 @@ class NormConfig:
             "help": "Mean level for normalization. Choices: batch, group. Omit for no mean normalization."
         },
     )
-    mean_loo: bool = field(
+    mean_leave1out: bool = field(
         default=False,
         metadata={"help": "Whether to use leave-one-out average."},
     )

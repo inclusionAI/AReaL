@@ -1095,7 +1095,7 @@ class Normalization:
             raise ValueError("group_size must be provided if using group normalization")
 
         self.mean_level = config.mean_level
-        self.mean_loo = config.mean_loo
+        self.mean_leave1out = config.mean_leave1out
         self.std_level = config.std_level
         self.std_unbiased = config.std_unbiased
         self.group_size = config.group_size
@@ -1118,7 +1118,7 @@ class Normalization:
                 x,
                 loss_mask,
                 high_precision=high_precision,
-                leave_one_out=self.mean_loo,
+                leave_one_out=self.mean_leave1out,
                 all_reduce=True,
                 reduce_group=reduce_group,
             )
@@ -1133,7 +1133,7 @@ class Normalization:
                     xx,
                     m,
                     high_precision=high_precision,
-                    leave_one_out=self.mean_loo,
+                    leave_one_out=self.mean_leave1out,
                     all_reduce=False,
                     reduce_group=None,
                 )

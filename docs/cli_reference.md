@@ -274,14 +274,14 @@ Specification for splitting micro-batches during training.
 
 Configuration for reward/advantage normalization.
 
-| Parameter      | Type           | Default   | Description                                                                                       |
-| -------------- | -------------- | --------- | ------------------------------------------------------------------------------------------------- |
-| `mean_level`   | string \| None | `"batch"` | Mean level for normalization. Choices: batch, group. Omit for no mean normalization.              |
-| `mean_loo`     | boolean        | `False`   | Whether to use leave-one-out average.                                                             |
-| `std_level`    | string \| None | `"batch"` | Standard deviation level for normalization. Choices: batch, group. Omit for no std normalization. |
-| `std_unbiased` | boolean        | `False`   | Whether to use unbiased standard deviation computation.                                           |
-| `eps`          | float          | `1e-05`   | The eps when dividing by standard deviation to avoid numerical issues.                            |
-| `group_size`   | integer        | `1`       | Group size for group-level normalization                                                          |
+| Parameter        | Type           | Default   | Description                                                                                       |
+| ---------------- | -------------- | --------- | ------------------------------------------------------------------------------------------------- |
+| `mean_level`     | string \| None | `"batch"` | Mean level for normalization. Choices: batch, group. Omit for no mean normalization.              |
+| `mean_leave1out` | boolean        | `False`   | Whether to use leave-one-out average.                                                             |
+| `std_level`      | string \| None | `"batch"` | Standard deviation level for normalization. Choices: batch, group. Omit for no std normalization. |
+| `std_unbiased`   | boolean        | `False`   | Whether to use unbiased standard deviation computation.                                           |
+| `eps`            | float          | `1e-05`   | The eps when dividing by standard deviation to avoid numerical issues.                            |
+| `group_size`     | integer        | `1`       | Group size for group-level normalization                                                          |
 
 (section-optimizer)=
 
