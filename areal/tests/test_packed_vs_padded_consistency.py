@@ -76,7 +76,7 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
     engine.initialized = True
 
     # Prepare padded input
-    padded_input = mock_padded_llm_data.clone()
+    padded_input = mock_padded_llm_data
 
     # Get packed input using prepare_mb_list
     mb_list = engine.prepare_mb_list(padded_input)

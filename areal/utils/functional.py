@@ -6,8 +6,9 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
+from areal.platforms import is_npu_available
 
-@torch.compile
+
 def _gather_logprobs(
     logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
 ):
@@ -16,7 +17,6 @@ def _gather_logprobs(
     return log_probs_labels
 
 
-@torch.compile
 def _gather_logprobs_entropy(
     logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
 ):
@@ -24,6 +24,12 @@ def _gather_logprobs_entropy(
     entropy = -torch.sum(log_probs.exp() * log_probs, dim=-1)
     log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
     return log_probs_labels, entropy
+
+
+# remove torch.compile due to npu problems
+if not is_npu_available:
+    _gather_logprobs = torch.compile(_gather_logprobs)
+    _gather_logprobs_entropy = torch.compile(_gather_logprobs_entropy)
 
 
 def gather_logprobs(

@@ -1,5 +1,7 @@
 import torch
 
+from areal.api.io_struct import AllocationMode, WeightUpdateMeta
+
 VALID_VISION_MODELS = [
     "qwen2_vl",
     "qwen2_5_vl",
@@ -42,3 +44,19 @@ def disable_dropout_in_model(model: torch.nn.Module) -> None:
     for module in model.modules():
         if isinstance(module, torch.nn.Dropout):
             module.p = 0
+
+
+def get_model_update_meta(config, actor):
+    if config.weight_update_mode == "disk":
+        weight_update_meta = [
+            WeightUpdateMeta.from_disk(
+                config.experiment_name, config.trial_name, config.cluster.fileroot
+            )
+        ]
+    else:
+        weight_update_meta = [
+            WeightUpdateMeta.from_fsdp_xccl(
+                AllocationMode.from_str(config.allocation_mode), actor
+            )
+        ]
+    return weight_update_meta
