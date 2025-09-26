@@ -418,6 +418,7 @@ class PPOCriticConfig(TrainEngineConfig):
     )
 
 
+@dataclass
 class vLLMConfig:
     """Configuration for vLLM runtime."""
 
