@@ -79,7 +79,7 @@ class MultiTurnReactAgent(FnCallAgent):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
-        max_tokens_per_turn: int = 1024,
+        max_tokens_per_turn: int = 10000,
         max_llm_calls_per_run: int = 100,
         max_total_tokens: int = 32768,
     ):
@@ -104,7 +104,7 @@ class MultiTurnReactAgent(FnCallAgent):
             messages=messages,
             temperature=1.0,
             stop=["\n<tool_response>", "<tool_response>"],
-            max_tokens=self.max_total_tokens,
+            max_completion_tokens=self.max_tokens_per_turn,
             use_chat_template=False,
         )
         content = completion.choices[0].message.content
