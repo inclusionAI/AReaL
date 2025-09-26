@@ -103,8 +103,6 @@ class WeightUpdateMeta:
     nccl_param_specs: List[List[ParamSpec]] = field(default_factory=list)
     nccl_group_name: str = "update_weight_group"
 
-    use_lora: bool = False
-
     @classmethod
     def from_disk(
         cls,
@@ -112,7 +110,6 @@ class WeightUpdateMeta:
         trial_name: str,
         file_root: str,
         name: str = "default",
-        use_lora: bool = False,
     ) -> "WeightUpdateMeta":
         from areal.utils.saver import Saver
 
@@ -123,7 +120,6 @@ class WeightUpdateMeta:
         return cls(
             type="disk",
             path=path,
-            use_lora=use_lora,
         )
 
     @classmethod

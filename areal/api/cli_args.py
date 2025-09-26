@@ -266,24 +266,6 @@ class TrainEngineConfig:
     )
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
 
-    # Lora
-    use_lora: bool = field(
-        default=False,
-        metadata={
-            "help": "Whether to use LoRA. Only support FSDP. Note that should be enabled together with vLLM/SGLang."
-        },
-    )
-    lora_rank: int = field(default=32, metadata={"help": "lora rank"})
-    lora_alpha: int = field(default=16, metadata={"help": "lora alpha"})
-    target_modules: List[str] = field(
-        default_factory=list,
-        metadata={"help": "lora target_modules. None defaults to 'all-linear'"},
-    )
-    peft_type: str = field(
-        default="lora",
-        metadata={"help": "peft method type. Only LoRA is supported for now."},
-    )
-
 
 @dataclass
 class PPOActorConfig(TrainEngineConfig):
@@ -452,14 +434,6 @@ class SGLangConfig:
     kv_cache_dtype: str = "auto"
     dp_size: int = 1  # only used for dp attention
     ep_size: int = 1
-    # lora
-    enable_lora: bool | None = None
-    max_lora_rank: int | None = None
-    lora_target_modules: List[str] | None = None
-    lora_paths: List[str] | None = None
-    max_loaded_loras: int = 1
-    max_loras_per_batch: int = 1
-    lora_backend: str = "triton"
     # logging
     log_level: str = "warning"
     log_level_http: str | None = "warning"
@@ -518,11 +492,7 @@ class SGLangConfig:
         n_nodes: int = 1,
         node_rank: int = 0,
     ):
-        # Map "all-linear" to "all"
-        if sglang_config.lora_target_modules:
-            sglang_config.lora_target_modules = [
-                x.replace("-linear", "") for x in sglang_config.lora_target_modules
-            ]
+
         args: Dict = conf_as_dict(sglang_config)
         args = dict(
             host=host,
