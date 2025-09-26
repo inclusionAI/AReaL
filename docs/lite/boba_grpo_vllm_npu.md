@@ -1,6 +1,6 @@
-# Running PPO with vLLM on BOBA dataset on NPU
+# Running GRPO with vLLM on BOBA dataset on NPU
 
-In this instruction, we will introduce how to run PPO with vLLM on BOBA dataset on NPU.
+In this instruction, we will introduce how to run GRPO with vLLM on BOBA dataset on NPU.
 
 ## Prerequisites
 
@@ -44,7 +44,6 @@ container_name=areal_npu
 
 cd ${work_dir}
 
-# Including vllm 0.10.1 and vllm-ascend 0.10
 docker pull ${image}
 
 docker run -itd --cap-add=SYS_PTRACE --net=host \
@@ -83,11 +82,6 @@ pip install -e .
 ## Start training
 
 ```
-export VLLM_USE_V1=1
-export VLLM_LOGGING_LEVEL=WARNING
-export NCCL_CUMEM_ENABLE=0
-export NCCL_NVLS_ENABLE=0
-
 python3 -m areal.launcher.ray examples/math/boba_grpo.py \
     --config examples/math/boba_grpo_vllm.yaml
 ```

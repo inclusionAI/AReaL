@@ -37,11 +37,10 @@ logger = logging.getLogger("boba_grpo")
 REWARD_TIMEOUT_SECONDS = 30
 
 
-def get_input_ids_fn(data, tokenizer):
+def get_input_ids_fn(data, tokenizer, enable_thinking):
     user_token = "<｜User｜>"
     assistant_token = "<｜Assistant｜>"
     think_token = "<think>"
-    enable_thinking = False
     if user_token in data:
         data = data.replace("<｜User｜>", "")
     if assistant_token in data:

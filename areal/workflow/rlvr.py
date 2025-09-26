@@ -20,12 +20,12 @@ from areal.utils.data import concat_padded_tensors
 logger = logging.getLogger("RLVR workflow")
 
 
-def default_get_input_ids_fn(data, tokenizer):
+def default_get_input_ids_fn(data, tokenizer, enable_thinking):
     input_ids = tokenizer.apply_chat_template(
         data,
         tokenize=True,
         add_generation_prompt=True,
-        enable_thinking=self.enable_thinking,
+        enable_thinking=enable_thinking,
     )
     return input_ids
 
@@ -60,7 +60,7 @@ class RLVRWorkflow(RolloutWorkflow):
 
     async def arun_episode(self, engine: InferenceEngine, data):
         input_ids = self.get_input_ids_fn(
-            self.data_extract_prompt_fn(data), self.tokenizer
+            self.data_extract_prompt_fn(data), self.tokenizer, self.enable_thinking
         )
 
         n_samples = self.gconfig.n_samples
