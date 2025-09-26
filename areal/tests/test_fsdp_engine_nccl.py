@@ -110,20 +110,16 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     remote_engine = RemoteSGLangEngine(config)
     remote_engine.initialize()
 
+    engine.connect_engine(remote_engine)
+
     # Get WeightUpdateMeta
     meta = WeightUpdateMeta.from_fsdp_xccl(
         AllocationMode.from_str("sglang.d1p1t1+d1p1t1"),
-        engine,
         nccl_group_name=GROUP_NAME,
     )
 
     # Broadcast weights
-    future = remote_engine.update_weights(meta)
-    print("got future", flush=True)
-    engine.upload_weights(meta)
-    print("uploaded wexights to remote engine", flush=True)
-    # Wait for remote engine to finish
-    future.result(timeout=120)
-    print("got result", flush=True)
+    engine.update_weights(meta)
+    print("uploaded weights to remote engine", flush=True)
     remote_engine.destroy()
     engine.destroy()

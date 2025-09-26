@@ -217,11 +217,10 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, vllm_server):
     inf_engine = RemotevLLMEngine(config)
     inf_engine.initialize()
     inf_engine.set_version(100)
+    engine.connect_engine(inf_engine)
     engine.set_version(100)
     # test update weights
     path = tmp_path_factory.mktemp("areal_update_weights")
     update_weight_meta = WeightUpdateMeta(type="disk", path=str(path))
-    future = inf_engine.update_weights(update_weight_meta)
-    engine.upload_weights(update_weight_meta)
-    future.result()
+    engine.update_weights(update_weight_meta)
     inf_engine.destroy()

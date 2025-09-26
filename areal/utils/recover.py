@@ -11,7 +11,6 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.api.cli_args import RecoverConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta, StepInfo, WeightUpdateMeta
-from areal.platforms import current_platform
 from areal.utils import logging, timeutil
 from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
@@ -256,15 +255,10 @@ class RecoverHandler:
 
             if inference_engine is not None:
                 update_engine = engine[inference_engine_update_from]
+                update_engine.connect_engine(inference_engine)
                 # update inference engine weights
                 inference_engine.pause()
-                if dist.get_rank() == 0:
-                    future = inference_engine.update_weights(weight_update_meta)
-                update_engine.upload_weights(weight_update_meta)
-                if dist.get_rank() == 0:
-                    future.result()
-                dist.barrier(device_ids=[update_engine.device.index])
-                current_platform.synchronize()
+                update_engine.update_weights(weight_update_meta)
                 inference_engine.resume()
                 update_engine.set_version(global_step + 1)
                 inference_engine.set_version(global_step + 1)
