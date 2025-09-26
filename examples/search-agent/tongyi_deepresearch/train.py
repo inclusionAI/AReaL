@@ -97,90 +97,96 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         )
 
     async def arun_episode(self, engine, data):
-        # Get the unique identifier for this prompt
-        qid = None
-        for key in ["query_id", "id", "qid"]:
-            qid = data.get(key, None)
-            if qid is not None:
-                break
-        qid = str(qid) or uuid.uuid4().hex
-        data["qid"] = qid
-
-        # check for generated qid when resuming
-        # if self.dump_dir is not None:
-        #     import glob
-
-        #     _pattern = os.path.join(self.dump_dir, "*", f"{qid}/*.jsonl")
-        #     if len(glob.glob(_pattern)) > 0:
-        #         logger.info(f"{qid} is already trained on")
-        #         return None
-
-        # path to save trajs
-        version = engine.get_version()
-        if self.dump_dir is not None:
-            os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
-            save_traj_path = os.path.join(
-                self.dump_dir, str(version), f"{qid}_{{traj_id}}.json"
-            )
-
-        clients = [
-            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
-            for _ in range(self.n_trajs)
-        ]
-        judge_client = self.judge_client
-
-        # Collect trajectories
-        outputs = await asyncio.gather(
-            *[
-                self.agent.make_trajectory(
-                    data=data,
-                    client=clients[i],
-                    judge_client=judge_client,
-                    save_path=save_traj_path.format(traj_id=i),
-                )
-                for i in range(self.n_trajs)
-            ]
-        )
-        last_completions, all_stats = zip(*outputs)
-
         try:
-            completions_with_rewards = {}
-            for client in clients:
-                completion_with_rewards = client.export_completions(style="concat")
-                assert len(completion_with_rewards) == 1
-                completions_with_rewards.update(completion_with_rewards)
-            assert len(last_completions) == self.n_trajs
-            assert len(completions_with_rewards) == self.n_trajs
-            results = []
-            for comp, stats in zip(last_completions, all_stats):
-                comp_with_reward = completions_with_rewards[comp.id]
-                result = comp_with_reward.to_tensor_dict()
-                for k, v in stats.items():
-                    result[k] = torch.tensor([v])
-                result["begin_of_trajectory"] = torch.tensor([1])
-                results.append(result)
-            results = concat_padded_tensors(results)
-        except (AssertionError, KeyError) as e:
-            print(
-                f"[Debug] Leaf Completions mismatch: last_completions={len(last_completions)}, completions_with_rewards={len(completions_with_rewards)}, error={e}"
-            )
-            print(
-                f"[Debug] Last completion ids={[comp.id for comp in last_completions]}"
-            )
-            for comp in completions_with_rewards.values():
-                print(
-                    f"[Debug] Leaf Completion: id={comp.completion.id}, parent_id={comp.parent.completion.id}"
-                )
-                parent = comp.parent
-                count = 0
-                while parent is not None:
-                    print(
-                        f"[Debug] Parent {count} Completion: id={parent.completion.id}"
-                    )
-                    parent = parent.parent
-            raise e
+            # Get the unique identifier for this prompt
+            qid = None
+            for key in ["query_id", "id", "qid"]:
+                qid = data.get(key, None)
+                if qid is not None:
+                    break
+            qid = str(qid) or uuid.uuid4().hex
+            data["qid"] = qid
 
-        return results
+            # check for generated qid when resuming
+            # if self.dump_dir is not None:
+            #     import glob
+
+            #     _pattern = os.path.join(self.dump_dir, "*", f"{qid}/*.jsonl")
+            #     if len(glob.glob(_pattern)) > 0:
+            #         logger.info(f"{qid} is already trained on")
+            #         return None
+
+            # path to save trajs
+            version = engine.get_version()
+            if self.dump_dir is not None:
+                os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
+                save_traj_path = os.path.join(
+                    self.dump_dir, str(version), f"{qid}_{{traj_id}}.json"
+                )
+
+            clients = [
+                ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
+                for _ in range(self.n_trajs)
+            ]
+            judge_client = self.judge_client
+
+            # Collect trajectories
+            outputs = await asyncio.gather(
+                *[
+                    self.agent.make_trajectory(
+                        data=data,
+                        client=clients[i],
+                        judge_client=judge_client,
+                        save_path=save_traj_path.format(traj_id=i),
+                    )
+                    for i in range(self.n_trajs)
+                ]
+            )
+            last_completions, all_stats = zip(*outputs)
+
+            try:
+                completions_with_rewards = {}
+                for client in clients:
+                    completion_with_rewards = client.export_completions(style="concat")
+                    assert len(completion_with_rewards) == 1
+                    completions_with_rewards.update(completion_with_rewards)
+                assert len(last_completions) == self.n_trajs
+                assert len(completions_with_rewards) == self.n_trajs
+                results = []
+                for comp, stats in zip(last_completions, all_stats):
+                    comp_with_reward = completions_with_rewards[comp.id]
+                    result = comp_with_reward.to_tensor_dict()
+                    for k, v in stats.items():
+                        result[k] = torch.tensor([v])
+                    result["begin_of_trajectory"] = torch.tensor([1])
+                    results.append(result)
+                results = concat_padded_tensors(results)
+            except (AssertionError, KeyError) as e:
+                print(
+                    f"[Debug] Leaf Completions mismatch: last_completions={len(last_completions)}, completions_with_rewards={len(completions_with_rewards)}, error={e}"
+                )
+                print(
+                    f"[Debug] Last completion ids={[comp.id for comp in last_completions]}"
+                )
+                for comp in completions_with_rewards.values():
+                    print(
+                        f"[Debug] Leaf Completion: id={comp.completion.id}, parent_id={comp.parent.completion.id}"
+                    )
+                    parent = comp.parent
+                    count = 0
+                    while parent is not None:
+                        print(
+                            f"[Debug] Parent {count} Completion: id={parent.completion.id}"
+                        )
+                        parent = parent.parent
+                raise e
+
+            return results
+        except Exception as e:
+            print(
+                f">>>>>>>>>>>>>>>>>>>>>>> rank {dist.get_rank()} arun_episode error!! {e}"
+            )
+            raise e
 
 
 @dataclass
