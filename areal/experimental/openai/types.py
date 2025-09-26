@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -52,6 +53,11 @@ class CompletionWithTokenLogpReward:
                 child_output = self.tokenizer.decode(
                     resp.output_tokens, skip_special_tokens=False
                 )
+                print(
+                    "[Debug] >>> AssertionError: The input length of the child completion must be greater than or equal to the length of the parent completion."
+                )
+                print(f"[Debug] parent messages: \n{json.dumps(self.parent.messages)}")
+                print(f"[Debug] child messages: \n{json.dumps(self.messages)}")
                 print(
                     f"[Debug] Parent input: {len(self.parent.response.input_tokens)}: **********************************************\n",
                     parent_input,
