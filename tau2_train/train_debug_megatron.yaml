@@ -2,6 +2,9 @@ experiment_name: xss-tau2-megatron
 trial_name: trial0
 allocation_mode: sglang:d4p1t8+megatron:(attn:d2p4t2c2|ffn:d2p4t2e2)
 max_context_length: 32768
+reward_type: db
+dynamic_filtering: true
+n_trajs: 8
 cluster:
   cluster_name: na132
   fileroot: /storage/openpsi/experiments
@@ -102,11 +105,11 @@ sglang:
 
 # datasets
 train_dataset:
-  batch_size: 128
+  batch_size: 64
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: ""
+  path: "/storage/openpsi/users/xushusheng.xss/data/agent_eval/airline_repeat.jsonl"
   type: rl
 
 valid_dataset:
