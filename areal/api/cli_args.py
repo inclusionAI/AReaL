@@ -406,7 +406,9 @@ class PPOCriticConfig(TrainEngineConfig):
 
 @dataclass
 class vLLMConfig:
-    """Configuration for vLLM runtime."""
+    """Configuration for vLLM runtime. Refer to:
+    https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
+    """
 
     model: str = ""
     seed: int = 1

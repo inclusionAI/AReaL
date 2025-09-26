@@ -507,7 +507,9 @@ https://github.com/sgl-project/sglang for detailed documentation.
 
 ## vLLM Configuration
 
-Configuration for vLLM runtime.
+Configuration for vLLM runtime. Refer to:
+
+https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
 
 | Parameter                | Type            | Default                                                             | Description |
 | ------------------------ | --------------- | ------------------------------------------------------------------- | ----------- |
