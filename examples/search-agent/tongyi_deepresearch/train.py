@@ -184,7 +184,7 @@ class AgentRLConfig(GRPOConfig):
     judge_engine: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
 
 
-def get_search_dataset(dataset_path, tokenizer, rank, world_size):
+def get_search_dataset(dataset_path, tokenizer, rank=0, world_size=1):
     dataset = load_dataset(
         path="json",
         split="train",
@@ -214,10 +214,10 @@ def main(args):
         get_search_dataset(
             config.train_dataset.path,
             tokenizer,
-            actor.data_parallel_rank,
-            actor.data_parallel_world_size,
+            # actor.data_parallel_rank,
+            # actor.data_parallel_world_size,
         ),
-        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
+        batch_size=config.train_dataset.batch_size,  # // actor.data_parallel_world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -232,7 +232,6 @@ def main(args):
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
-
     # Initialize judge inference engine
     judge_engine = RemoteSGLangEngine(config.judge_engine)
     judge_engine.initialize(train_data_parallel_size=parallel_strategy.dp_size)
@@ -300,21 +299,33 @@ def main(args):
 
         with stats_tracker.record_timing("rollout"):
             batch = None
+            if rank == 0:
+                assert actor.is_data_parallel_head()
+
             if actor.is_data_parallel_head():
-                if config.async_training:
-                    batch = rollout.prepare_batch(
-                        train_dataloader,
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
-                    )
+                if rank == 0:
+                    if config.async_training:
+                        batch = rollout.prepare_batch(
+                            train_dataloader,
+                            workflow=workflow,
+                            should_accept=lambda sample: True,
+                        )
+                    else:
+                        batch = rollout.rollout_batch(
+                            next(data_generator),
+                            workflow=workflow,
+                            should_accept=lambda sample: True,
+                        )
+                    batch = tensor_container_to(batch, actor.device)
                 else:
-                    batch = rollout.rollout_batch(
-                        next(data_generator),
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
-                    )
-                batch = tensor_container_to(batch, actor.device)
-                batch = redistribute(batch, group=actor.data_parallel_group).data
+                    batch = None
+                batch = redistribute(
+                    batch,
+                    group=actor.data_parallel_group,
+                    granularity=config.n_trajs,
+                    mode="broadcast",
+                    src_rank=0,
+                ).data
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),

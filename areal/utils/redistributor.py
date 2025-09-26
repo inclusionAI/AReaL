@@ -4,7 +4,11 @@ from typing import Any, Dict, List
 import torch
 import torch.distributed as dist
 
-from areal.utils.data import all_gather_tensor_container, concat_padded_tensors
+from areal.utils.data import (
+    all_gather_tensor_container,
+    broadcast_tensor_container,
+    concat_padded_tensors,
+)
 from areal.utils.datapack import ffd_allocate
 
 
@@ -31,7 +35,11 @@ def _slice_tensor_dict(data: Dict[str, Any], start: int, end: int) -> Dict[str, 
 
 
 def redistribute(
-    data: Dict[str, Any], granularity: int = 1, group=None
+    data: Dict[str, Any],
+    granularity: int = 1,
+    group=None,
+    mode: str = "gather",
+    src_rank: int = 0,
 ) -> RedistributedData:
     """Redistribute a batch across a process group.
 
@@ -40,15 +48,29 @@ def redistribute(
 
     This function will divide the global batch into segments each with consecutive
     `granularity` sequences, and then redistribute the segments (e.g., for GRPO).
-    """
-    all_gathered = all_gather_tensor_container(data, group=group)
 
+    This function support "gather" and "broadcast" modes.
+    In "gather" mode, the function will gather the data from all ranks, and then redistribute them.
+    In "broadcast" mode, the function will broadcast the data from src_rank, and then redistribute them.
+    """
     all_data = []
-    for d in all_gathered:
-        bs = get_batch_size(d)
+    if mode == "gather":
+        all_gathered = all_gather_tensor_container(data, group=group)
+
+        for d in all_gathered:
+            bs = d["attention_mask"].shape[0]
+            assert bs % granularity == 0
+            all_data += [
+                _slice_tensor_dict(d, i, i + granularity)
+                for i in range(0, bs, granularity)
+            ]
+    elif mode == "broadcast":
+        data = broadcast_tensor_container(data, src_rank=src_rank, group=group)
+        bs = data["attention_mask"].shape[0]
         assert bs % granularity == 0
         all_data += [
-            _slice_tensor_dict(d, i, i + granularity) for i in range(0, bs, granularity)
+            _slice_tensor_dict(data, i, i + granularity)
+            for i in range(0, bs, granularity)
         ]
 
     seqlens = [d["attention_mask"].sum().item() for d in all_data]
