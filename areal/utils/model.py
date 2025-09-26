@@ -11,16 +11,30 @@ VALID_VISION_MODELS = [
 # If you want to add a new vision model, please make sure it works with AReaL.
 
 
-def is_qwen2_vl_model(model_type):
+def is_valid_vision_model(model_type: str) -> bool:
+    return model_type in VALID_VISION_MODELS
+
+
+def is_qwen2_vl_model(model_type: str) -> bool:
     return model_type in ["qwen2_vl", "qwen2_5_vl"]
 
 
-def is_qwen3_moe_model(model_type):
-    return model_type in ["qwen3_moe"]
-
-
-def is_gemma3_model(model_type):
+def is_gemma3_model(model_type: str) -> bool:
     return model_type in ["gemma3"]
+
+
+VALID_MOE_MODELS = [
+    "qwen3_moe",
+]
+# This registry is used to check if a model is a MoE model that we have checked it works with AReaL.
+
+
+def is_moe_model(model_type: str) -> bool:
+    return model_type in VALID_MOE_MODELS
+
+
+def is_qwen3_moe_model(model_type: str) -> bool:
+    return model_type in ["qwen3_moe"]
 
 
 # Copied from trl

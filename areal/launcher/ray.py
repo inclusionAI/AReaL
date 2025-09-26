@@ -308,7 +308,7 @@ class RayLauncher:
 
 def main():
     ray.init()
-    config, _ = parse_cli_args(sys.argv[2:])
+    config, _ = parse_cli_args(sys.argv[1:])
     ray_main(config, run_id=0)
 
 

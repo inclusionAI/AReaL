@@ -38,11 +38,11 @@ from areal.utils.data import (
 from areal.utils.fsdp import get_cosine_schedule_with_warmup
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.model import (
-    VALID_VISION_MODELS,
     disable_dropout_in_model,
     is_gemma3_model,
     is_qwen2_vl_model,
     is_qwen3_moe_model,
+    is_valid_vision_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
@@ -71,7 +71,7 @@ class BaseHFEngine(TrainEngine):
             pretrained_model_name_or_path=self.config.path,
             trust_remote_code=True,
         )
-        self.is_vision_model = self.model_config.model_type in VALID_VISION_MODELS
+        self.is_vision_model = is_valid_vision_model(self.model_config.model_type)
 
         self.world_size = int(os.environ["WORLD_SIZE"])
 

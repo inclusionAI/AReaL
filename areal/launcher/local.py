@@ -247,7 +247,7 @@ class LocalLauncher:
 
 
 def main():
-    config, _ = parse_cli_args(sys.argv[2:])
+    config, _ = parse_cli_args(sys.argv[1:])
     local_main(config, run_id=0)
 
 
