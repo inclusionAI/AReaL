@@ -178,9 +178,15 @@ class MultiTurnReactAgent(FnCallAgent):
                 termination = "answer"
                 break
             if num_llm_calls_available <= 0 and "<answer>" not in content:
-                messages[-1][
-                    "content"
-                ] = "Sorry, the number of llm calls exceeds the limit."
+                # messages[-1]["content"] = "Sorry, the number of llm calls exceeds the limit."
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "Sorry, the number of llm calls exceeds the limit. You should stop making tool calls and, "
+                        "based on all the information above, think again and provide what you consider the most likely answer "
+                        "in the following format:<think>your final thinking</think>\n<answer>your answer</answer>",
+                    }
+                )
 
             max_tokens = self.max_total_tokens_before_finishing
             token_count = self.count_tokens(messages)
@@ -188,9 +194,18 @@ class MultiTurnReactAgent(FnCallAgent):
 
             if token_count > max_tokens:
                 print(f"Token quantity exceeds the limit: {token_count} > {max_tokens}")
-                messages[-1][
-                    "content"
-                ] = "You have now reached the maximum context length you can handle. You should stop making tool calls and, based on all the information above, think again and provide what you consider the most likely answer in the following format:<think>your final thinking</think>\n<answer>your answer</answer>"
+                # messages[-1][
+                #     "content"
+                # ] = "You have now reached the maximum context length you can handle. You should stop making tool calls and, based on all the information above, think again and provide what you consider the most likely answer in the following format:<think>your final thinking</think>\n<answer>your answer</answer>"
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "You have now reached the maximum context length you can handle. "
+                        "You should stop making tool calls and, based on all the information above, "
+                        "think again and provide what you consider the most likely answer in the following format:"
+                        "<think>your final thinking</think>\n<answer>your answer</answer>",
+                    }
+                )
                 completion, content = await self.call_server(client, messages)
                 completions.append(completion)
                 messages.append({"role": "assistant", "content": content})
