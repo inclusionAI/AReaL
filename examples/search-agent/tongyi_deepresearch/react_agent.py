@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 import sys
@@ -163,7 +162,7 @@ class MultiTurnReactAgent(FnCallAgent):
                     tool_call = json5.loads(tool_call)
                     tool_name = tool_call.get("name", "")
                     tool_args = tool_call.get("arguments", {})
-                    result = self.custom_call_tool(tool_name, tool_args)
+                    result = await self.custom_call_tool(tool_name, tool_args)
                     if tool_name == "search":
                         stats["num_search"] += 1
                     elif tool_name == "visit":
@@ -248,28 +247,12 @@ class MultiTurnReactAgent(FnCallAgent):
             print(f"Result dumped to {save_path}")
         return result
 
-    def custom_call_tool(self, tool_name: str, tool_args: dict, **kwargs):
+    async def custom_call_tool(self, tool_name: str, tool_args: dict, **kwargs):
         if tool_name in TOOL_MAP:
             tool_args["params"] = tool_args
-            if "python" in tool_name.lower():
-                result = TOOL_MAP["PythonInterpreter"].call(tool_args)
-            elif tool_name == "parse_file":
-                params = {"files": tool_args["files"]}
-
-                raw_result = asyncio.run(
-                    TOOL_MAP[tool_name].call(
-                        params, file_root_path="./eval_data/file_corpus"
-                    )
-                )
-                result = raw_result
-
-                if not isinstance(raw_result, str):
-                    result = str(raw_result)
-            else:
-                raw_result = TOOL_MAP[tool_name].call(tool_args, **kwargs)
-                result = raw_result
+            raw_result = await TOOL_MAP[tool_name].call(tool_args, **kwargs)
+            result = raw_result
             return result
-
         else:
             return f"Error: Tool {tool_name} not found"
 
@@ -323,9 +306,12 @@ class MultiTurnReactAgent(FnCallAgent):
         save_path: str | None = None,
     ) -> Dict:
         result = await self.run_agent(data, client, save_path=save_path)
+        print(f">>>> QID: {data['qid']} `run_agent` returns.")
         reward = await self.calc_reward_with_llm_judge(result, judge_client)
+        print(f">>>> QID: {data['qid']} `calc_reward_with_llm_judge` returns {reward}.")
         completions = result["completions"]
         last_completion = completions[-1]
         client.set_reward(last_completion.id, reward)
         stats = result["stats"]
+        print(f">>>> QID: {data['qid']} `make_trajectory` finishes.")
         return last_completion, stats

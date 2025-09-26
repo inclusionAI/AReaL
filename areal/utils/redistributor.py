@@ -8,6 +8,7 @@ from areal.utils.data import (
     all_gather_tensor_container,
     broadcast_tensor_container,
     concat_padded_tensors,
+    get_batch_size,
 )
 from areal.utils.datapack import ffd_allocate
 
@@ -58,7 +59,7 @@ def redistribute(
         all_gathered = all_gather_tensor_container(data, group=group)
 
         for d in all_gathered:
-            bs = d["attention_mask"].shape[0]
+            bs = get_batch_size(d)
             assert bs % granularity == 0
             all_data += [
                 _slice_tensor_dict(d, i, i + granularity)
@@ -66,7 +67,7 @@ def redistribute(
             ]
     elif mode == "broadcast":
         data = broadcast_tensor_container(data, src_rank=src_rank, group=group)
-        bs = data["attention_mask"].shape[0]
+        bs = get_batch_size(data)
         assert bs % granularity == 0
         all_data += [
             _slice_tensor_dict(data, i, i + granularity)

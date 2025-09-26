@@ -52,10 +52,35 @@ class CompletionWithTokenLogpReward:
                 child_output = self.tokenizer.decode(
                     resp.output_tokens, skip_special_tokens=False
                 )
-                print("[Debug] Parent input: ", parent_input)
-                print("[Debug] Parent output: ", parent_output)
-                print("[Debug] Child input: ", child_input)
-                print("[Debug] Child output: ", child_output)
+                print(
+                    f"[Debug] Parent input: {len(self.parent.response.input_tokens)}: **********************************************\n",
+                    parent_input,
+                )
+                print(
+                    "[Debug] Parent input end: **********************************************\n"
+                )
+                print(
+                    f"[Debug] Parent output: {len(self.parent.response.output_tokens)}: *********************************************\n",
+                    parent_output,
+                )
+                print(
+                    "[Debug] Parent output end: **********************************************\n"
+                )
+                print(
+                    f"[Debug] Child input: {len(resp.input_tokens)}: **********************************************\n",
+                    child_input,
+                )
+                print(
+                    "[Debug] Child input end: **********************************************\n"
+                )
+                print(
+                    f"[Debug] Child output: {len(resp.output_tokens)}: **********************************************\n",
+                    child_output,
+                )
+                print(
+                    "[Debug] Child output end: **********************************************\n"
+                )
+                raise e
 
             logprobs = (
                 parent_logprobs
