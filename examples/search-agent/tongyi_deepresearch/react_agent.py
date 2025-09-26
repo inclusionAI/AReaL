@@ -62,13 +62,15 @@ def parse_judge_result(raw_response):
             mbe = parse_fn(raw_response.split("```json")[-1].split("```")[0].strip())
             break
         except:
-            print(f"[WARNING] Error parsing {[raw_response]}")
+            # print(f"[WARNING] Error parsing {[raw_response]}")
+            print(f"[WARNING] Error parsing judge result with {parse_fn}.")
     if mbe is None and '"judgement": "incorrect"' in raw_response:
         mbe = dict(judgement="incorrect")
     if mbe is None and '"judgement": "correct"' in raw_response:
         mbe = dict(judgement="correct")
     if mbe is None:
-        print(f"[WARNING] Unknown judge result: {[raw_response]}")
+        # print(f"[WARNING] Unknown judge result: {[raw_response]}")
+        print(f"[WARNING] Unknown judge result: {raw_response}")
         mbe = dict(judgement="unknown")
     score = float("judgement" in mbe and mbe["judgement"] == "correct")
     return score
@@ -151,7 +153,7 @@ class MultiTurnReactAgent(FnCallAgent):
             num_llm_calls_available -= 1
             completion, content = await self.call_server(client, messages)
             completions.append(completion)
-            print(f"Round {round}: {content}")
+            # print(f"Round {round}: {content}")
             # if "<tool_response>" in content:
             #     pos = content.find("<tool_response>")
             #     content = content[:pos]
@@ -182,7 +184,7 @@ class MultiTurnReactAgent(FnCallAgent):
 
             max_tokens = self.max_total_tokens_before_finishing
             token_count = self.count_tokens(messages)
-            print(f"round: {round}, token count: {token_count}")
+            print(f"QID {data['qid']} Round: {round}, token count: {token_count}")
 
             if token_count > max_tokens:
                 print(f"Token quantity exceeds the limit: {token_count} > {max_tokens}")
