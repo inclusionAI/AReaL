@@ -507,6 +507,7 @@ class MegatronEngine(TrainEngine):
     ) -> int:
         param = all_gather_param(name, param)
         param = remove_padding(name, param, self.hf_config.vocab_size)
+        self.logger.info(f"self.is_pp_src_rank = {self.is_pp_src_rank}")
         if not self.is_pp_src_rank:
             return buffer_size
 
@@ -515,8 +516,8 @@ class MegatronEngine(TrainEngine):
             param_specs.append(self._get_bucket_param_specs(converted_named_tensors))
             buffer_size = 0
 
-        converted_named_tensors = convert_to_hf(
-            self.tf_config, self.hf_config.model_type, name, param
+        converted_named_tensors.extend(
+            convert_to_hf(self.tf_config, self.hf_config.model_type, name, param)
         )
         buffer_size += param_size
         return buffer_size
@@ -604,6 +605,9 @@ class MegatronEngine(TrainEngine):
         for name, param in self._get_named_parameters():
             if ".experts." in name:
                 continue
+            self.logger.info(
+                f"Processing param {name} with shape {param.shape} and specs {param_specs}"
+            )
             buffer_size = self._update_param_specs(
                 param_specs,
                 name,
@@ -612,9 +616,18 @@ class MegatronEngine(TrainEngine):
                 buffer_size,
                 weight_chunked_mem_size,
             )
+            self.logger.info(
+                f"specs {param_specs}, converted_named_tensors {converted_named_tensors}"
+            )
 
+        self.logger.info(
+            f"specs {param_specs}, converted_named_tensors {converted_named_tensors}"
+        )
         if converted_named_tensors:
             param_specs.append(self._get_bucket_param_specs(converted_named_tensors))
+            self.logger.info(
+                f"specs {param_specs}, converted_named_tensors {converted_named_tensors}"
+            )
 
         dist.barrier(device_ids=[self.device.index])
 
