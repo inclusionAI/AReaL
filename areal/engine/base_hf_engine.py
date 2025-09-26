@@ -171,6 +171,7 @@ class BaseHFEngine(TrainEngine):
                     disable_dropout_in_model(model)
         else:
             self.tokenizer = load_hf_tokenizer(self.config.path)
+            self.processor = None
             tik = time.perf_counter()
             with torch.device(current_platform.device_type):
                 model = self._create_llm_actor_or_critic()

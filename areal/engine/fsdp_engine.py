@@ -246,11 +246,7 @@ class FSDPEngine(BaseHFEngine):
             dist.barrier(device_ids=[self.device.index])
             current_platform.synchronize()
         elif meta.type == "disk":
-            self._save_model_to_hf(
-                meta.path,
-                getattr(self, "tokenizer", None),
-                getattr(self, "processor", None),
-            )
+            self._save_model_to_hf(meta.path, self.tokenizer, self.processor)
             # dist.barrier() are called when _save_model_to_hf finished
             if dist.get_rank() == 0:
                 update_name = names.update_weights_from_disk(
