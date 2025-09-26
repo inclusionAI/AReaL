@@ -123,7 +123,10 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
                 self.dump_dir, str(version), f"{qid}_{{traj_id}}.json"
             )
 
-        client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
+        clients = [
+            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
+            for _ in range(self.n_trajs)
+        ]
         judge_client = self.judge_client
 
         # Collect trajectories
@@ -131,7 +134,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
             *[
                 self.agent.make_trajectory(
                     data=data,
-                    client=client,
+                    client=clients[i],
                     judge_client=judge_client,
                     save_path=save_traj_path.format(traj_id=i),
                 )
@@ -139,8 +142,13 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
             ]
         )
         last_completions, all_stats = zip(*outputs)
-        completions_with_rewards = client.export_completions(style="concat")
+
         try:
+            completions_with_rewards = {}
+            for client in clients:
+                completion_with_rewards = client.export_completions(style="concat")
+                assert len(completion_with_rewards) == 1
+                completions_with_rewards.update(completion_with_rewards)
             assert len(last_completions) == self.n_trajs
             assert len(completions_with_rewards) == self.n_trajs
             results = []
