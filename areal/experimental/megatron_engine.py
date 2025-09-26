@@ -43,7 +43,7 @@ from areal.experimental.utils.megatron import (
 )
 from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names
+from areal.utils import datapack, logging, name_resolve, names
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
@@ -367,8 +367,11 @@ class MegatronEngine(TrainEngine):
             for param_spec in param_specs:
                 name = param_spec.name
                 param = named_parameters[name]
+                param = all_gather_param(name, param)
+                param = remove_padding(name, param, self.hf_config.vocab_size)
+
                 self.logger.info(
-                    f"ready to update {name} {param} from distributed source"
+                    f"rank {dist.get_rank()} ready to update {name} {param} from distributed source"
                 )
                 # if dist.get_rank() == 0:
                 #     self.logger.debug(f"Broadcasting {name} with shape {tensor.shape}")
@@ -469,6 +472,17 @@ class MegatronEngine(TrainEngine):
                 layer_idx = int(layer_idx) + layer_offset
                 yield f"module.module.decoder.layers.{layer_idx}.{rest}", buffer
 
+    def _bin_pack_param_specs(
+        self, param_specs: List[ParamSpec], chunked_mem_mb=1024
+    ) -> List[List[ParamSpec]]:
+        sizes = [param_spec.size for param_spec in param_specs]
+        chunked_mem_bytes = max(chunked_mem_mb * 1024 * 1024, max(sizes) + 10)
+        group_indices = datapack.ffd_allocate(sizes, chunked_mem_bytes, 1)
+        grouped_param_specs = [
+            [param_specs[i] for i in group_index] for group_index in group_indices
+        ]
+        return grouped_param_specs
+
     def get_param_specs(
         self, weight_chunked_mem_mb: int = 1024
     ) -> List[List[ParamSpec]]:
@@ -476,38 +490,22 @@ class MegatronEngine(TrainEngine):
         for name, param in self._get_named_parameters():
             param = all_gather_param(name, param)
             param = remove_padding(name, param, self.hf_config.vocab_size)
-            # if not self._is_pp_src_rank:
-            #     continue
 
             converted_named_tensors = convert_to_hf(
                 self.tf_config, self.hf_config.model_type, name, param
             )
-
-            print(
-                f"Processing param {name} with shape {param.shape}, converted_named_tensors = {converted_named_tensors}"
-            )
-
-            # param_specs.append(
-            #     ParamSpec(
-            #         name=name,
-            #         shape=tuple(tensor.shape),
-            #         dtype=str(tensor.dtype).split("torch.")[1],
-            #     )
-            # )
-
-            # if isinstance(param.data, DTensor):
-            #     tensor = param.data.full_tensor()
-            # else:
-            #     tensor = param.data
-            # param_specs.append(
-            #     ParamSpec(
-            #         name=name,
-            #         shape=tuple(tensor.shape),
-            #         dtype=str(tensor.dtype).split("torch.")[1],
-            #     )
-            # )
-            # del tensor  # free memory if full_tensor was created
-        raise NotImplementedError()
+            for converted_name, tensor in converted_named_tensors:
+                param_specs.append(
+                    ParamSpec(
+                        name=converted_name,
+                        shape=tuple(tensor.shape),
+                        dtype=str(tensor.dtype).split("torch.")[1],
+                    )
+                )
+                del tensor
+        return self._bin_pack_param_specs(
+            param_specs, chunked_mem_mb=weight_chunked_mem_mb
+        )
 
     def set_version(self, version: int):
         self._version = version
