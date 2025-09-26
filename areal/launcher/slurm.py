@@ -397,7 +397,7 @@ class SlurmLauncher:
 
 
 def main():
-    config, _ = parse_cli_args(sys.argv[2:])
+    config, _ = parse_cli_args(sys.argv[1:])
     slurm_main(config, run_id=0)
 
 
