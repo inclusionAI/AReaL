@@ -370,9 +370,13 @@ class MegatronEngine(TrainEngine):
                 param = all_gather_param(name, param)
                 param = remove_padding(name, param, self.hf_config.vocab_size)
 
-                self.logger.info(
-                    f"rank {dist.get_rank()} ready to update {name} {param} from distributed source"
+                converted_named_tensors = convert_to_hf(
+                    self.tf_config, self.hf_config.model_type, name, param
                 )
+                for converted_name, tensor in converted_named_tensors:
+                    self.logger.info(
+                        f"rank {dist.get_rank()} ready to update {converted_name} {tensor} from distributed source"
+                    )
                 # if dist.get_rank() == 0:
                 #     self.logger.debug(f"Broadcasting {name} with shape {tensor.shape}")
                 #     dist.broadcast(
