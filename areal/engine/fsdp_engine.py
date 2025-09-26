@@ -2,7 +2,6 @@ import dataclasses
 import math
 import os
 import time
-from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Callable, Dict, List
 
@@ -147,11 +146,6 @@ class FSDPEngine(BaseHFEngine):
         else:
             full_state = {}
         # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
-        if dist.get_rank() == 0:
-            full_state = self.model.state_dict()
-        else:
-            full_state = {}
-        # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
         parallelize_model(
             self.model,
             config=self.config,
@@ -213,15 +207,6 @@ class FSDPEngine(BaseHFEngine):
         # Get full state dict with FSDP2
         options = StateDictOptions(full_state_dict=True, cpu_offload=True)
         state_dict = get_model_state_dict(self.model, options=options)
-
-        def filter_lora_weights(state_dict):
-
-            filtered_state_dict = OrderedDict(
-                (key, value)
-                for key, value in state_dict.items()
-                if "lora" in key.lower()
-            )
-            return filtered_state_dict
 
         # save huggingface model on rank 0
         if dist.get_rank() == 0:

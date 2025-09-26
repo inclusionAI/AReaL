@@ -13,9 +13,7 @@ from hydra import initialize as hydra_init
 from omegaconf import MISSING, DictConfig, OmegaConf
 
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, pkg_version
-
-logger = logging.getLogger("CLI Args")
+from areal.utils import name_resolve, pkg_version
 
 
 @dataclass
