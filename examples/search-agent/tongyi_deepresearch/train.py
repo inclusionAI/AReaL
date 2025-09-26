@@ -140,15 +140,36 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         )
         last_completions, all_stats = zip(*outputs)
         completions_with_rewards = client.export_completions(style="concat")
-        results = []
-        for comp, stats in zip(last_completions, all_stats):
-            comp_with_reward = completions_with_rewards[comp.id]
-            result = comp_with_reward.to_tensor_dict()
-            for k, v in stats.items():
-                result[k] = torch.tensor([v])
-            result["begin_of_trajectory"] = torch.tensor([1])
-            results.append(result)
-        results = concat_padded_tensors(results)
+        try:
+            assert len(last_completions) == self.n_trajs
+            assert len(completions_with_rewards) == self.n_trajs
+            results = []
+            for comp, stats in zip(last_completions, all_stats):
+                comp_with_reward = completions_with_rewards[comp.id]
+                result = comp_with_reward.to_tensor_dict()
+                for k, v in stats.items():
+                    result[k] = torch.tensor([v])
+                result["begin_of_trajectory"] = torch.tensor([1])
+                results.append(result)
+            results = concat_padded_tensors(results)
+        except (AssertionError, KeyError) as e:
+            print(
+                f"[Debug] Leaf Completions mismatch: last_completions={len(last_completions)}, completions_with_rewards={len(completions_with_rewards)}, error={e}"
+            )
+            print(
+                f"[Debug] Last completion ids={[comp.id for comp in last_completions]}"
+            )
+            for comp in completions_with_rewards.values():
+                print(
+                    f"[Debug] Leaf Completion: id={comp.id}, parent_id={comp.parent.id}"
+                )
+                parent = comp.parent
+                count = 0
+                while parent is not None:
+                    print(f"[Debug] Parent {count} Completion: id={parent.id}")
+                    parent = parent.parent
+            raise e
+
         return results
 
 
