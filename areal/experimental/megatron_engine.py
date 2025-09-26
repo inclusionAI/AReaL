@@ -17,8 +17,10 @@ from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
 from megatron.core.utils import get_model_config
+from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
 from areal.api.cli_args import MicroBatchSpec
@@ -33,6 +35,11 @@ from areal.experimental.model.registry import make_hf_and_mcore_config, make_mco
 from areal.experimental.utils.mcore.determinisitc import set_deterministic_algorithms
 from areal.experimental.utils.mcore.packed_context_parallel import (
     packed_context_parallel_forward,
+)
+from areal.experimental.utils.megatron import (
+    all_gather_param,
+    convert_to_hf,
+    remove_padding,
 )
 from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.platforms import current_platform
@@ -49,6 +56,7 @@ from areal.utils.data import (
     unpack_sequence,
     unpad_logits,
 )
+from areal.utils.distributed import init_custom_process_group
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
@@ -57,8 +65,8 @@ from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 class MegatronEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
         self.config = config
-        self.hf_config = None
-        self.tf_config = None
+        self.hf_config: PretrainedConfig
+        self.tf_config: TransformerConfig
         self.model = None
         self.dtype = getattr(torch, self.config.dtype)
         self.device = None
@@ -69,6 +77,7 @@ class MegatronEngine(TrainEngine):
         self.lr_scheduler = None
         self.bridge = None
         self.initialized = False
+        self.weight_update_group_initialized = False
         self._version: int = 0
         self.rank = None
         self.world_size = None
@@ -90,7 +99,7 @@ class MegatronEngine(TrainEngine):
     def initialize(
         self,
         addr: str | None,
-        ft_spec: FinetuneSpec | None,
+        ft_spec: FinetuneSpec,
         parallel_strategy: ParallelStrategy,
         seed: int = 0,
     ):
@@ -334,11 +343,49 @@ class MegatronEngine(TrainEngine):
         self.model.train(mode=mode)
         return self
 
+    def _init_distributed_weight_update(self, meta: WeightUpdateMeta):
+        # NOTE: Processes launched with torchrun will set the following env var to True,
+        # which blocks creating another TCP store for weight update.
+        os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
+        if dist.get_rank() == 0:
+            assert meta.alloc_mode is not None
+            self.weight_update_group = init_custom_process_group(
+                backend=current_platform.communication_backend,
+                world_size=meta.alloc_mode.gen.world_size + 1,
+                init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
+                rank=0,
+                group_name=meta.nccl_group_name,
+            )
+            # NOTE: sglang v0.4.9.post2 or later does not have the barrier call
+        self.weight_update_group_initialized = True
+
+    def _update_weights_from_distributed(
+        self, grouped_param_specs: List[List[ParamSpec]]
+    ):
+        named_parameters = dict(self._get_named_parameters())
+        for param_specs in grouped_param_specs:
+            for param_spec in param_specs:
+                name = param_spec.name
+                param = named_parameters[name]
+                self.logger.info(
+                    f"ready to update {name} {param} from distributed source"
+                )
+                # if dist.get_rank() == 0:
+                #     self.logger.debug(f"Broadcasting {name} with shape {tensor.shape}")
+                #     dist.broadcast(
+                #         tensor, src=0, group=self.weight_update_group, async_op=False
+                #     )
+                # del tensor
+            dist.barrier(device_ids=[self.device.index])
+            current_platform.synchronize()
+
     def upload_weights(self, meta: WeightUpdateMeta):
         if meta.type == "nccl":
-            raise NotImplementedError(
-                "NCCL weight update is not yet supported in MegatronEngine."
-            )
+            if not self.weight_update_group_initialized:
+                self._init_distributed_weight_update(meta)
+            self._update_weights_from_distributed(meta.nccl_param_specs)
+            dist.barrier(device_ids=[self.device.index])
+            current_platform.synchronize()
         elif meta.type == "disk":
             self._save_model_to_hf(meta.path, self.tokenizer, None)
             # dist.barrier() are called when _save_model_to_hf finished
@@ -427,7 +474,29 @@ class MegatronEngine(TrainEngine):
     ) -> List[List[ParamSpec]]:
         param_specs = []
         for name, param in self._get_named_parameters():
-            self.logger.info(f"Param name: {name}, shape: {param.shape}")
+            param = all_gather_param(name, param)
+            param = remove_padding(name, param, self.vocab_size)
+            # if not self._is_pp_src_rank:
+            #     continue
+
+            print(
+                f"Processing param {name} with shape {param.shape} and type(param)={type(param)}"
+            )
+
+            convert_to_hf(self.tf_config, self.hf_config.model_type, name, param)
+
+            print(
+                f"convert_to_hf param {name} with shape {param.shape} and type(param)={type(param)}"
+            )
+
+            # param_specs.append(
+            #     ParamSpec(
+            #         name=name,
+            #         shape=tuple(tensor.shape),
+            #         dtype=str(tensor.dtype).split("torch.")[1],
+            #     )
+            # )
+
             # if isinstance(param.data, DTensor):
             #     tensor = param.data.full_tensor()
             # else:
