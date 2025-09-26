@@ -46,6 +46,7 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 - [GenerationHyperparameters](section-generation-hyperparameters)
 - [InferenceEngine Configuration](section-inference-engine)
 - [SGLang Configuration](section-sg-lang)
+- [vLLM Configuration](section-v-llm)
 
 ### Dataset
 
@@ -505,6 +506,34 @@ https://github.com/sgl-project/sglang for detailed documentation.
 | `show_time_cost`                  | boolean                 | `False`      | -           |
 | `enable_metrics`                  | boolean                 | `True`       | -           |
 | `decode_log_interval`             | integer                 | `1`          | -           |
+
+(section-v-llm)=
+
+## vLLM Configuration
+
+Configuration for vLLM runtime. Refer to:
+
+https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
+
+| Parameter                | Type            | Default                                                             | Description |
+| ------------------------ | --------------- | ------------------------------------------------------------------- | ----------- |
+| `model`                  | string          | `""`                                                                | -           |
+| `seed`                   | integer         | `1`                                                                 | -           |
+| `skip_tokenizer_init`    | boolean         | `False`                                                             | -           |
+| `enforce_eager`          | boolean         | `True`                                                              | -           |
+| `dtype`                  | string          | `"bfloat16"`                                                        | -           |
+| `max_num_seqs`           | integer         | `256`                                                               | -           |
+| `block_size`             | integer         | `16`                                                                | -           |
+| `swap_space`             | integer         | `4`                                                                 | -           |
+| `cpu_offload_gb`         | float           | `0`                                                                 | -           |
+| `max_seq_len_to_capture` | integer         | `32768`                                                             | -           |
+| `disable_sliding_window` | boolean         | `True`                                                              | -           |
+| `max_model_len`          | integer \| None | `32768`                                                             | -           |
+| `enable_chunked_prefill` | boolean         | `False`                                                             | -           |
+| `enable_prefix_caching`  | boolean         | `False`                                                             | -           |
+| `gpu_memory_utilization` | float           | `0.9`                                                               | -           |
+| `worker_extension_cls`   | string          | `"areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"` | -           |
+| `enable_sleep_mode`      | boolean         | `False`                                                             | -           |
 
 (section-dataset)=
 

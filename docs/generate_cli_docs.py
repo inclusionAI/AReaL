@@ -71,6 +71,7 @@ def categorize_dataclasses(
     inference_configs = [
         "InferenceEngineConfig",
         "SGLangConfig",
+        "vLLMConfig",
         "GenerationHyperparameters",
     ]
     dataset_configs = ["DatasetConfig"]
