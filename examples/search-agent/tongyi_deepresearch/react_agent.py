@@ -305,14 +305,18 @@ class MultiTurnReactAgent(FnCallAgent):
             gt_answer=str(ground_truth),
             pred_answer=pred_answer[:200],
         )
-        judge_completion = await judge_client.chat.completions.create(
-            messages=[{"role": "user", "content": judge_prompt}],
-            temperature=1.0,
-            max_tokens=8192,
-            max_completion_tokens=8192,
-        )
-        judge_response = judge_completion.choices[0].message.content
-        reward = parse_judge_result(judge_response)
+        try:
+            judge_completion = await judge_client.chat.completions.create(
+                messages=[{"role": "user", "content": judge_prompt}],
+                temperature=1.0,
+                max_tokens=8192,
+                max_completion_tokens=8192,
+            )
+            judge_response = judge_completion.choices[0].message.content
+            reward = parse_judge_result(judge_response)
+        except Exception as e:
+            print(f"Error in calling LLM judge: {e}")
+            reward = 0.0
         return reward
 
     async def make_trajectory(
