@@ -245,10 +245,10 @@ def main(args):
         get_search_dataset(
             config.train_dataset.path,
             tokenizer,
-            # actor.data_parallel_rank,
-            # actor.data_parallel_world_size,
+            actor.data_parallel_rank,
+            actor.data_parallel_world_size,
         ),
-        batch_size=config.train_dataset.batch_size,  # // actor.data_parallel_world_size,
+        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -330,32 +330,24 @@ def main(args):
 
         with stats_tracker.record_timing("rollout"):
             batch = None
-            if rank == 0:
-                assert actor.is_data_parallel_head()
-
             if actor.is_data_parallel_head():
-                if rank == 0:
-                    if config.async_training:
-                        batch = rollout.prepare_batch(
-                            train_dataloader,
-                            workflow=workflow,
-                            should_accept=lambda sample: True,
-                        )
-                    else:
-                        batch = rollout.rollout_batch(
-                            next(data_generator),
-                            workflow=workflow,
-                            should_accept=lambda sample: True,
-                        )
-                    batch = tensor_container_to(batch, actor.device)
+                if config.async_training:
+                    batch = rollout.prepare_batch(
+                        train_dataloader,
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
                 else:
-                    batch = None
+                    batch = rollout.rollout_batch(
+                        next(data_generator),
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
+                batch = tensor_container_to(batch, actor.device)
                 batch = redistribute(
                     batch,
                     group=actor.data_parallel_group,
                     granularity=config.n_trajs,
-                    mode="broadcast",
-                    src_rank=0,
                 ).data
             batch = broadcast_tensor_container(
                 batch,
