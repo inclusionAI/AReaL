@@ -82,7 +82,7 @@ def main() -> None:
     ref.initialize(None, ft_spec)
 
     weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
+        WeightUpdateMeta.from_fsdp_xccl(
             AllocationMode.from_str(config.allocation_mode), actor
         )
     ]

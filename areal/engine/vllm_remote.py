@@ -30,7 +30,11 @@ from areal.utils.http import arequest_with_retry, get_default_connector
 RID_CACHE_SIZE = 128
 
 
-class RemoteSGLangEngine(InferenceEngine):
+class RemotevLLMEngine(InferenceEngine):
+    """
+    A remote inference engine that communicates with vLLM servers to perform model inference.
+    This class manages multiple vLLM server instances and routes requests accordingly.
+    """
 
     def __init__(self, config: InferenceEngineConfig):
         self.config = config
@@ -73,13 +77,16 @@ class RemoteSGLangEngine(InferenceEngine):
         addr: str | List[str] | None = None,
         train_data_parallel_size: int | None = None,
     ):
+        """
+        Initialize the engine by waiting for all servers to be ready.
+        """
         if engine_id is None:
             if dist.is_initialized():
                 engine_id = str(dist.get_rank())
             else:
                 engine_id = uuid.uuid4().hex
         self.engine_id = engine_id
-        self.logger = logging.getLogger(f"[SGLang Remote Engine Rank {engine_id}]")
+        self.logger = logging.getLogger(f"[vLLM Remote Engine Rank {engine_id}]")
 
         if addr:
             self.addresses = addr if isinstance(addr, list) else [addr]
@@ -88,8 +95,8 @@ class RemoteSGLangEngine(InferenceEngine):
             self.addresses = os.getenv("AREAL_LLM_SERVER_ADDRS").split(",")
         if not self.addresses:
             raise RuntimeError(
-                "No configured SGLang servers. Please pass in SGLang server addresses by arguments "
-                "for `RemoteSGLangEngine.initialize` or environment variable `AREAL_LLM_SERVER_ADDRS`."
+                "No configured vLLM servers. Please pass in vLLM server addresses by arguments "
+                "for `RemotevLLMEngine.initialize` or environment variable `AREAL_LLM_SERVER_ADDRS`."
             )
 
         self.logger.info("Waiting for server ready...")
@@ -115,6 +122,15 @@ class RemoteSGLangEngine(InferenceEngine):
             return self._version
 
     def choose_server(self) -> str:
+        """
+        Choose a server based on the scheduling policy.
+
+        Returns:
+            str: Selected server address.
+
+        Raises:
+            NotImplementedError: If schedule policy other than round-robin is used.
+        """
         if self.config.schedule_policy == "round_robin":
             server = self.addresses[self.server_idx]
             self.server_idx = (self.server_idx + 1) % len(self.addresses)
@@ -126,11 +142,10 @@ class RemoteSGLangEngine(InferenceEngine):
         # Prepare request payload
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
-        stop = gconfig.stop
 
         if gconfig.n_samples != 1:
             raise ValueError(
-                "RemoteSGLangEngine does not support n_samples > 1. "
+                "RemotevLLMEngine does not support n_samples > 1. "
                 "Please call generate for multiple times with n_samples = 1."
             )
 
@@ -144,22 +159,16 @@ class RemoteSGLangEngine(InferenceEngine):
                 f"max_new_tokens={gconfig.max_new_tokens}."
             )
 
-        sample_params = {
+        # NOTE: rid should NOT be passed in payload
+        payload = {
+            "prompt": req.input_ids.copy(),
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
-            "max_new_tokens": max_new_tokens,
+            "max_tokens": max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
-            "frequency_penalty": gconfig.frequency_penalty,
-        }
-        if stop:
-            sample_params["stop"] = stop
-
-        payload = {
-            "input_ids": req.input_ids.copy(),
-            "image_data": req.image_data,  # ImageObject or str
-            "sampling_params": sample_params,
-            "return_logprob": True,
+            "return_tokens_as_token_ids": True,
+            "logprobs": 0,
             "stream": False,
         }
 
@@ -210,40 +219,34 @@ class RemoteSGLangEngine(InferenceEngine):
             result = await arequest_with_retry(
                 session=session,
                 addr=server_addr,
-                endpoint="/generate",
+                endpoint="/v1/completions",
                 payload=payload,
                 method="POST",
                 max_retries=self.config.request_retries,
                 timeout=self.config.request_timeout,
             )
 
-            meta_info = result["meta_info"]
+            meta_info = result["choices"][0]
             # Check if generation is complete
             finish_reason = meta_info["finish_reason"]
-            stop_reason = finish_reason["type"]
-            if (
-                stop_reason == "abort"
-                and finish_reason.get("message") == "Abort before prefill"
-            ):
-                continue
-
+            stop_reason = finish_reason
             # Parse response
-            output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
-            output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
+            output_tokens = meta_info["logprobs"]["tokens"]
+            output_tokens = [int(t.split(":")[1]) for t in output_tokens]
+            output_logprobs = meta_info["logprobs"]["token_logprobs"]
+
+            output_len = len(output_tokens)
+            if stop_reason == "abort" and output_len <= 0:
+                continue
 
             # Update accumulated outputs
             accumulated_output_tokens.extend(output_tokens)
             accumulated_output_logprobs.extend(output_logprobs)
             accumulated_versions.extend([self.get_version()] * len(output_tokens))
 
-            payload["input_ids"] += output_tokens
-            sample_params["max_new_tokens"] -= len(output_tokens)
+            payload["prompt"] += output_tokens
+            payload["max_tokens"] -= len(output_tokens)
 
-        if stop_reason == "abort":
-            # If stop_reason is "abort", the only reason we exit the loop is
-            # len(accumulated_output_tokens) >= gconfig.max_new_tokens
-            # so the actual reason is length
-            stop_reason = "length"
         await session.close()
         latency = time.perf_counter() - start_time
 
@@ -263,7 +266,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def update_weights(self, meta: WeightUpdateMeta):
         for addr in self.addresses:
-            res = requests.post(f"http://{addr}/pause_generation")
+            res = requests.post(f"http://{addr}/areal_pause_generation")
             res.raise_for_status()
         tik = time.perf_counter()
         fut = Future()
@@ -315,7 +318,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
         def callback(fut):
             for addr in self.addresses:
-                res = requests.post(f"http://{addr}/continue_generation")
+                res = requests.post(f"http://{addr}/areal_continue_generation")
                 res.raise_for_status()
 
         fut.add_done_callback(callback)
@@ -403,8 +406,8 @@ def update_weights_from_disk(
             arequest_with_retry(
                 addr=addr,
                 session=session,
-                endpoint="/update_weights_from_disk",
-                payload=dict(model_path=str(path), abort_all_request=True),
+                endpoint="/areal_update_weights",
+                payload=dict(model_path=str(path)),
                 method="POST",
                 max_retries=request_retries,
                 timeout=request_timeout,
@@ -429,6 +432,7 @@ def update_weights_from_distributed(
     ]
 
     async def _fn():
+        tik = time.perf_counter()
         if init_group:
             await asyncio.gather(
                 *[
@@ -436,18 +440,30 @@ def update_weights_from_distributed(
                     for i, addr in enumerate(addresses)
                 ]
             )
+            await asyncio.gather(
+                *[
+                    arequest_with_retry(
+                        addr=addr,
+                        endpoint="/areal_set_update_weight_meta",
+                        payload={
+                            "names": [pspec.name for pspec in nccl_param_specs],
+                            "dtypes": [pspec.dtype for pspec in nccl_param_specs],
+                            "shapes": [pspec.shape for pspec in nccl_param_specs],
+                            "group_name": meta.nccl_group_name,
+                        },
+                        method="POST",
+                        max_retries=1,
+                        timeout=request_timeout,
+                    )
+                    for addr in addresses
+                ]
+            )
         await asyncio.gather(
             *[
                 arequest_with_retry(
                     addr=addr,
-                    endpoint="/update_weights_from_distributed",
-                    payload={
-                        "names": [pspec.name for pspec in nccl_param_specs],
-                        "dtypes": [pspec.dtype for pspec in nccl_param_specs],
-                        "shapes": [pspec.shape for pspec in nccl_param_specs],
-                        "group_name": meta.nccl_group_name,
-                        "abort_all_requests": True,
-                    },
+                    endpoint="/areal_update_weights_xccl",
+                    payload={},
                     method="POST",
                     max_retries=1,
                     timeout=request_timeout,
@@ -455,6 +471,8 @@ def update_weights_from_distributed(
                 for addr in addresses
             ]
         )
+
+        logger.info(f"Distributed update weights done in {time.perf_counter() - tik}s")
 
     return uvloop.run(_fn())
 
@@ -481,7 +499,7 @@ async def ainit_weights_update_group(
     }
     res = await arequest_with_retry(
         addr=addr,
-        endpoint="/init_weights_update_group",
+        endpoint="/areal_init_weights_update_group",
         payload=payload,
         method="POST",
         max_retries=1,

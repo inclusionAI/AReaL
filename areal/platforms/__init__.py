@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import torch
+from transformers.utils.import_utils import is_torch_npu_available
 
 import areal.utils.logging as logging
 
 from .cpu import CpuPlatform
 from .cuda import CudaPlatform
+from .npu import NPUPlatform
 from .platform import Platform
 from .unknown import UnknownPlatform
 
 logger = logging.getLogger("Platform init")
+
+
+is_npu_available = is_torch_npu_available()
 
 
 def _init_platform() -> Platform:
@@ -30,6 +35,13 @@ def _init_platform() -> Platform:
             return CudaPlatform()
         logger.warning("Unrecognized CUDA device. Falling back to UnknownPlatform.")
         return UnknownPlatform()
+    elif is_npu_available:
+        from torch_npu.contrib import transfer_to_npu
+
+        # Prevent being marked as an unused package and deleted
+        _ = transfer_to_npu.is_available()
+        logger.info("Initializing NPU platform (NPU).")
+        return NPUPlatform()
     else:
         logger.info("No supported accelerator detected. Initializing CPU platform.")
         return CpuPlatform()
@@ -85,7 +97,4 @@ current_platform: Platform | _LazyPlatform = (
 )  # NOTE: This is a proxy, not a subclass of Platform.
 
 
-__all__ = [
-    "Platform",
-    "current_platform",
-]
+__all__ = ["Platform", "current_platform", "is_npu_available"]

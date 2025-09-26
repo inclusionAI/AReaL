@@ -26,6 +26,7 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 
 - [BaseExperiment Configuration](section-base-experiment)
 - [GRPO Configuration](section-grpo)
+- [PPO Configuration](section-ppo)
 - [RW Configuration](section-rw)
 - [SFT Configuration](section-sft)
 
@@ -37,6 +38,7 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 - [Norm Configuration](section-norm)
 - [Optimizer Configuration](section-optimizer)
 - [PPOActor Configuration](section-ppo-actor)
+- [PPOCritic Configuration](section-ppo-critic)
 - [TrainEngine Configuration](section-train-engine)
 
 ### Inference Configurations
@@ -131,6 +133,39 @@ experiments.
 | `rollout`            | [`InferenceEngineConfig`](section-inference-engine)               | **Required** | -                                                                                                                          |
 | `actor`              | [`PPOActorConfig`](section-ppo-actor)                             | **Required** | -                                                                                                                          |
 | `ref`                | [`PPOActorConfig`](section-ppo-actor)                             | **Required** | -                                                                                                                          |
+
+(section-ppo)=
+
+## PPO Configuration
+
+Configuration for Proximal Policy Optimization (PPO) reinforcement learning experiments.
+
+| Parameter            | Type                                                              | Default      | Description                                                                                                                |
+| -------------------- | ----------------------------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `experiment_name`    | string                                                            | **Required** | Name of the experiment (no '\_' or '/'). Required.                                                                         |
+| `trial_name`         | string                                                            | **Required** | Name of the trial (no '-' or '/'). Required.                                                                               |
+| `cluster`            | [`ClusterSpecConfig`](section-cluster)                            | **Required** | Cluster specification. Mainly used by slurm.                                                                               |
+| `allocation_mode`    | string                                                            | `""`         | GPU parallel strategy allocation mode. Options: manual/heuristic or pattern-based.                                         |
+| `seed`               | integer                                                           | `1`          | Random seed for reproducibility.                                                                                           |
+| `total_train_epochs` | integer                                                           | `1`          | Total number of epochs to train the model.                                                                                 |
+| `total_train_steps`  | integer \| None                                                   | `None`       | Terminate training after this number of steps. For benchmarking purposes only. None indicates normal training.             |
+| `total_train_n_seqs` | integer \| None                                                   | `None`       | Terminate training after consuming this number of samples. For benchmarking purposes only. None indicates normal training. |
+| `tokenizer_path`     | string                                                            | `""`         | Path to the tokenizer.                                                                                                     |
+| `train_dataset`      | [`DatasetConfig`](section-dataset)                                | **Required** | -                                                                                                                          |
+| `valid_dataset`      | [`DatasetConfig`](section-dataset) \| None                        | `None`       | -                                                                                                                          |
+| `saver`              | [`SaverConfig`](section-saver)                                    | **Required** | -                                                                                                                          |
+| `evaluator`          | [`EvaluatorConfig`](section-evaluator)                            | **Required** | -                                                                                                                          |
+| `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger)                       | **Required** | -                                                                                                                          |
+| `recover`            | [`RecoverConfig`](section-recover)                                | **Required** | -                                                                                                                          |
+| `sglang`             | [`SGLangConfig`](section-sg-lang)                                 | **Required** | -                                                                                                                          |
+| `launcher`           | [`LauncherConfig`](section-launcher)                              | **Required** | -                                                                                                                          |
+| `scheduler`          | [`SchedulerConfig`](section-scheduler)                            | **Required** | -                                                                                                                          |
+| `async_training`     | boolean                                                           | `True`       | Enable asynchronous training between rollout and policy update.                                                            |
+| `gconfig`            | [`GenerationHyperparameters`](section-generation-hyperparameters) | **Required** | -                                                                                                                          |
+| `rollout`            | [`InferenceEngineConfig`](section-inference-engine)               | **Required** | -                                                                                                                          |
+| `actor`              | [`PPOActorConfig`](section-ppo-actor)                             | **Required** | -                                                                                                                          |
+| `ref`                | [`PPOActorConfig`](section-ppo-actor)                             | **Required** | -                                                                                                                          |
+| `critic`             | [`PPOCriticConfig`](section-ppo-critic)                           | **Required** | -                                                                                                                          |
 
 (section-rw)=
 
@@ -309,6 +344,33 @@ Configuration for PPO actor model, a subclass of a TrainEngine.
 | `log_agent_stats`         | boolean                                        | `False`               | Log statistics for agent trajectories                                                                                                                                                                                                                                                                                      |
 | `log_agent_stats_keys`    | list of string                                 | **Required**          | Keys for logging agent trajectory statistics                                                                                                                                                                                                                                                                               |
 | `max_new_tokens`          | integer                                        | `1024`                | Maximum number of new tokens to generate                                                                                                                                                                                                                                                                                   |
+
+(section-ppo-critic)=
+
+## PPOCritic Configuration
+
+Configuration for PPO critic model, a subclass of a TrainEngine.
+
+| Parameter                | Type                                           | Default               | Description                                                                                                                             |
+| ------------------------ | ---------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `experiment_name`        | string                                         | **Required**          | -                                                                                                                                       |
+| `trial_name`             | string                                         | **Required**          | -                                                                                                                                       |
+| `path`                   | string                                         | `""`                  | Path to HuggingFace checkpoint                                                                                                          |
+| `attn_impl`              | string                                         | `"flash_attention_2"` | Attention implementation for huggingface transformers model. **Choices:** `flash_attention_2`                                           |
+| `init_from_scratch`      | boolean                                        | `False`               | Initialize model weights randomly                                                                                                       |
+| `is_critic`              | boolean                                        | `False`               | Whether to use a critic/reward model                                                                                                    |
+| `mb_spec`                | [`MicroBatchSpec`](section-micro-batch)        | **Required**          | -                                                                                                                                       |
+| `pad_to_maximum`         | boolean                                        | `False`               | Whether to pad each microbatch to the length upper bound specified by mb_spec. Can reduce memory fragmentation but slows down training. |
+| `disable_dropout`        | boolean                                        | `False`               | Disable dropout layers during training                                                                                                  |
+| `gradient_checkpointing` | boolean                                        | `True`                | Enable gradient checkpointing                                                                                                           |
+| `dtype`                  | string                                         | `"bfloat16"`          | Parameter data type.                                                                                                                    |
+| `grad_reduce_dtype`      | string                                         | `"float32"`           | Gradient reduction data type.                                                                                                           |
+| `optimizer`              | [`OptimizerConfig`](section-optimizer) \| None | `None`                | Optimizer configuration. None means no training.                                                                                        |
+| `backend`                | string                                         | `""`                  | Training backend (refer to documentation)                                                                                               |
+| `fsdp`                   | [`FSDPEngineConfig`](section-fsdp-engine)      | **Required**          | -                                                                                                                                       |
+| `ppo_n_minibatches`      | integer                                        | `4`                   | Number of minibatches for each PPO update                                                                                               |
+| `eps_clip`               | float                                          | `0.5`                 | Clipping factor for value loss                                                                                                          |
+| `mask_no_eos_with_zero`  | boolean                                        | `False`               | Mask truncated generations (no EOS token) and exclude from training                                                                     |
 
 (section-train-engine)=
 

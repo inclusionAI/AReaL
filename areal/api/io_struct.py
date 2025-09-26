@@ -123,7 +123,7 @@ class WeightUpdateMeta:
         )
 
     @classmethod
-    def from_fsdp_nccl(
+    def from_fsdp_xccl(
         cls,
         allocation_mode: AllocationMode,
         fsdp_engine: "TrainEngine",

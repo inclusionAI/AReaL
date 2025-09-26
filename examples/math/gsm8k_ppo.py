@@ -6,10 +6,11 @@ import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import GRPOConfig, load_expr_config
+from areal.api.cli_args import PPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
+from areal.engine.ppo.critic import FSDPPPOCritic
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
@@ -34,8 +35,8 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 
 
 def main(args):
-    config, _ = load_expr_config(args, GRPOConfig)
-    config: GRPOConfig
+    config, _ = load_expr_config(args, PPOConfig)
+    config: PPOConfig
 
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
@@ -48,6 +49,8 @@ def main(args):
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
+    critic = FSDPPPOCritic(config=config.critic)
+    critic.create_process_group(parallel_strategy=parallel_strategy)
 
     train_dataset = get_custom_dataset(
         path=config.train_dataset.path,
@@ -100,6 +103,7 @@ def main(args):
     eval_rollout.initialize()
 
     actor.initialize(None, ft_spec)
+    critic.initialize(None, ft_spec)
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
         ref = FSDPPPOActor(config=config.ref)
@@ -107,11 +111,11 @@ def main(args):
         ref.initialize(None, ft_spec)
 
     # NOTE: Weight update meta only requires address and free port of rank 0,
-    # but `WeightUpdateMeta.from_fsdp_xccl` has to be executed on all ranks
+    # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
     weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_xccl(
+        WeightUpdateMeta.from_fsdp_nccl(
             AllocationMode.from_str(config.allocation_mode), actor
         )
     ]
@@ -148,9 +152,10 @@ def main(args):
     stats_logger = StatsLogger(config.stats_logger, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
+    engines = {"default": actor, "critic": critic}
     recover_handler = RecoverHandler(config.recover, ft_spec)
     recover_info = recover_handler.load(
-        actor,
+        engines,
         saver,
         evaluator,
         stats_logger,
@@ -183,10 +188,16 @@ def main(args):
             batch = None
             if actor.is_data_parallel_head():
                 if config.async_training:
-                    batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
+                    batch = rollout.prepare_batch(
+                        train_dataloader,
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
                 else:
                     batch = rollout.rollout_batch(
-                        next(data_generator), workflow=workflow
+                        next(data_generator),
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
                     )
                 batch = tensor_container_to(batch, actor.device)
             batch = broadcast_tensor_container(
@@ -197,6 +208,11 @@ def main(args):
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
+
+        with stats_tracker.record_timing("critic_values"):
+            values = critic.compute_values(batch)
+            batch["values"] = values
+            log_gpu_stats("critic values")
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -215,11 +231,27 @@ def main(args):
 
         with (
             stats_tracker.record_timing("train_step"),
-            stats_tracker.scope("grpo_actor"),
+            stats_tracker.scope("ppo_actor"),
         ):
-            stats = actor.ppo_update(batch)
+            actor_stats = actor.ppo_update(batch)
             actor.step_lr_scheduler()
-            log_gpu_stats("ppo update")
+            log_gpu_stats("ppo actor update")
+
+        with (
+            stats_tracker.record_timing("train_step"),
+            stats_tracker.scope("ppo_critic"),
+        ):
+            critic_stats = critic.ppo_update(batch)
+            critic.step_lr_scheduler()
+            log_gpu_stats("ppo critic update")
+
+        assert len(actor_stats) == len(
+            critic_stats
+        ), "actor and critic should have same number of update steps"
+        stats = [
+            {**actor_stat, **critic_stat}
+            for actor_stat, critic_stat in zip(actor_stats, critic_stats)
+        ]
 
         # pause inference for updating weights, save, and evaluation
         rollout.pause()
@@ -234,18 +266,34 @@ def main(args):
             current_platform.synchronize()
 
             actor.set_version(global_step + 1)
+            critic.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
             eval_rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
+            saver.save(
+                critic, epoch, step, global_step, tokenizer=tokenizer, name="critic"
+            )
+
+        with stats_tracker.record_timing("checkpoint_for_recover"):
+            recover_handler.dump(
+                engines,
+                step_info,
+                saver,
+                evaluator,
+                stats_logger,
+                train_dataloader,
+                tokenizer=tokenizer,
+            )
+
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
 
         with stats_tracker.record_timing("eval"):
 
             def evaluate_fn():
                 if actor.is_data_parallel_head():
-                    # Stats are logged in the workflow
-                    # and will be exported later
                     cnt = 0
                     for data in valid_dataloader:
                         for item in data:
@@ -260,17 +308,6 @@ def main(args):
                 epoch,
                 step,
                 global_step,
-            )
-
-        with stats_tracker.record_timing("checkpoint_for_recover"):
-            recover_handler.dump(
-                actor,
-                step_info,
-                saver,
-                evaluator,
-                stats_logger,
-                train_dataloader,
-                tokenizer=tokenizer,
             )
 
         dist.barrier(device_ids=[actor.device.index])

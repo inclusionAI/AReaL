@@ -401,6 +401,107 @@ class PPOActorConfig(TrainEngineConfig):
 
 
 @dataclass
+class PPOCriticConfig(TrainEngineConfig):
+    """Configuration for PPO critic model, a subclass of a TrainEngine."""
+
+    ppo_n_minibatches: int = field(
+        default=4, metadata={"help": "Number of minibatches for each PPO update"}
+    )
+    eps_clip: float = field(
+        default=0.5, metadata={"help": "Clipping factor for value loss"}
+    )
+    mask_no_eos_with_zero: bool = field(
+        default=False,
+        metadata={
+            "help": "Mask truncated generations (no EOS token) and exclude from training"
+        },
+    )
+
+
+class vLLMConfig:
+    """Configuration for vLLM runtime."""
+
+    model: str = ""
+    seed: int = 1
+    skip_tokenizer_init: bool = False
+    enforce_eager: bool = True
+    dtype: str = "bfloat16"
+    distributed_executor_backend = "mp"
+    # original
+    max_num_seqs: int = 256
+    # kv_cache_type: str = "auto"
+    block_size: int = 16
+    swap_space: int = 4
+    cpu_offload_gb: float = 0
+    max_seq_len_to_capture: int = 32768
+    disable_sliding_window: bool = True
+    # NOTE: Defaults max_model_len to 32k because a larger value
+    # will enable chunked prefill in vLLM, which will cause
+    # evalution performance degeneration.
+    max_model_len: int | None = 32768
+    enable_chunked_prefill: bool = False
+    # NOTE: Setting enable_prefix_caching to False
+    # because it will reuse the block after
+    # model weights are updated. Using v0.7.2 reset_prefix_cache
+    # will fix this issue.
+    enable_prefix_caching: bool = False
+    gpu_memory_utilization: float = 0.9
+    worker_extension_cls: str = (
+        "areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"
+    )
+    enable_sleep_mode: bool = False
+
+    @staticmethod
+    def build_args(
+        vllm_config: "vLLMConfig",
+        tp_size,
+        host,
+        port,
+        dist_init_addr: str | None = None,
+    ):
+        args: Dict = conf_as_dict(vllm_config)
+        args = dict(
+            host=host,
+            port=port,
+            # Model and tokenizer
+            tokenizer=vllm_config.model,
+            load_format="auto",
+            trust_remote_code=True,
+            tensor_parallel_size=tp_size,
+            **args,
+        )
+        return args
+
+    @staticmethod
+    def build_cmd(
+        vllm_config: "vLLMConfig",
+        tp_size,
+        host,
+        port,
+        dist_init_addr: str | None = None,
+    ):
+        args = vLLMConfig.build_args(
+            vllm_config=vllm_config,
+            tp_size=tp_size,
+            host=host,
+            port=port,
+            dist_init_addr=dist_init_addr,
+        )
+        # convert to flags
+        flags = []
+        for k, v in args.items():
+            if v is None or v is False or v == "":
+                continue
+            if v is True:
+                flags.append(f"--{k.replace('_','-')}")
+            elif isinstance(v, list):
+                flags.append(f"--{k.replace('_','-')} {' '.join(map(str, v))}")
+            else:
+                flags.append(f"--{k.replace('_','-')} {v}")
+        return f"python3 -m areal.thirdparty.vllm.areal_vllm_server {' '.join(flags)}"
+
+
+@dataclass
 class SGLangConfig:
     """Configuration for SGLang runtime. Refer to:
     https://github.com/sgl-project/sglang for detailed documentation.
@@ -927,6 +1028,7 @@ class BaseExperimentConfig:
         default="",
         metadata={"help": "Path to the tokenizer."},
     )
+    weight_update_mode: str = field(default="disk")
 
     train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
     valid_dataset: DatasetConfig | None = field(default=None)
@@ -937,6 +1039,7 @@ class BaseExperimentConfig:
     recover: RecoverConfig = field(default_factory=RecoverConfig)
 
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
+    vllm: vLLMConfig = field(default_factory=vLLMConfig)
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
 
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
@@ -972,6 +1075,13 @@ class GRPOConfig(BaseExperimentConfig):
     rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
     ref: PPOActorConfig = field(default_factory=PPOActorConfig)
+
+
+@dataclass
+class PPOConfig(GRPOConfig):
+    """Configuration for Proximal Policy Optimization (PPO) reinforcement learning experiments."""
+
+    critic: PPOCriticConfig = field(default_factory=PPOCriticConfig)
 
 
 def parse_cli_args(argv: List[str]):

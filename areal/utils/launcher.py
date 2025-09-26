@@ -2,7 +2,6 @@ import dataclasses
 import enum
 import getpass
 import os
-import pathlib
 import time
 from typing import Dict, Optional
 
@@ -23,7 +22,7 @@ BASE_ENVIRONS = {
     "PYTORCH_KERNEL_CACHE_PATH": PYTORCH_KERNEL_CACHE_PATH,
     "TRITON_CACHE_DIR": TRITON_CACHE_PATH,
     "CUDA_DEVICE_MAX_CONNECTIONS": "1",
-    "PYTHONPATH": str(pathlib.Path(__file__).resolve().parent.parent.parent),
+    "PYTHONPATH": os.getenv("PYTHONPATH", ""),
 }
 NA132_ENVIRONS = {
     "NCCL_SOCKET_IFNAME": "bond0",
@@ -39,7 +38,7 @@ NA132_ENVIRONS = {
     "NCCL_DEBUG": "WARN",
     "NCCL_DEBUG_SUBSYS": "INIT,TUNING,GRAPH",
 }
-SGLANG_SERVER_WAIT_TIMEOUT_SECONDS = 360
+LLM_SERVER_WAIT_TIMEOUT_SECONDS = 360
 
 
 def get_env_vars(
@@ -91,29 +90,29 @@ class JobInfo:
     slurm_id: Optional[int] = None  # Slurm only. The Slurm id of the job.
 
 
-def wait_sglang_server_addrs(
+def wait_llm_server_addrs(
     experiment_name: str,
     trial_name: str,
-    n_sglang_servers: int,
+    n_rollout_servers: int,
 ):
-    # Get SGLang slurm nodes, find the hosts
+    # Get rollout nodes, find the hosts
     name = names.gen_servers(experiment_name, trial_name)
     start = time.perf_counter()
     while True:
-        sglang_addrs = name_resolve.get_subtree(name)
-        if len(sglang_addrs) >= n_sglang_servers:
+        rollout_addrs = name_resolve.get_subtree(name)
+        if len(rollout_addrs) >= n_rollout_servers:
             logger.info(
-                f"Found {len(sglang_addrs)} SGLang servers: {', '.join(sglang_addrs)}"
+                f"Found {len(rollout_addrs)} rollout servers: {', '.join(rollout_addrs)}"
             )
             break
 
         time.sleep(1)
-        if time.perf_counter() - start > SGLANG_SERVER_WAIT_TIMEOUT_SECONDS:
+        if time.perf_counter() - start > LLM_SERVER_WAIT_TIMEOUT_SECONDS:
             raise TimeoutError(
-                f"Timeout waiting for SGLang servers to be ready. "
-                f"Expected {n_sglang_servers} servers, found {len(sglang_addrs)}."
+                f"Timeout waiting for rollout servers to be ready. "
+                f"Expected {n_rollout_servers} servers, found {len(rollout_addrs)}."
             )
-    return sglang_addrs
+    return rollout_addrs
 
 
 def validate_config_for_distributed_launcher(config):
@@ -134,3 +133,11 @@ def validate_config_for_distributed_launcher(config):
         assert (
             allocation_mode.gen.pp_size == 1
         ), "Pipeline generation in SGLang is not supported for now."
+    elif allocation_mode.gen_backend == "vllm":
+        # Launcher should launch vLLM servers according to allocation mode.
+        assert (
+            allocation_mode.gen.pp_size == 1
+        ), "Pipeline generation in vLLM is not supported for now."
+        assert (
+            allocation_mode.gen.tp_size <= config.cluster.n_gpus_per_node
+        ), "Currently only support vLLM TP size less <= #GPUs per node."
