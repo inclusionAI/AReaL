@@ -164,6 +164,9 @@ class RemoteSGLangEngine(InferenceEngine):
             "stream": False,
         }
         if self.lora_init:
+            # Use the same lora name because we are unable to change
+            # the lora_name of an inflight request during weight update.
+            # If the lora_name mismatch, there'll be an error.
             payload["lora_path"] = f"lora_1"
 
         # Make request

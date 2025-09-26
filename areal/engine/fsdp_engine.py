@@ -149,10 +149,12 @@ class FSDPEngine(BaseHFEngine):
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
         tik = time.perf_counter()
-        if dist.get_rank() == 0:
-            full_state = self.model.state_dict()
-        else:
-            full_state = {}
+        # Prepare lora weights synchronization
+        if self.config.use_lora:
+            if dist.get_rank() == 0:
+                full_state = self.model.state_dict()
+            else:
+                full_state = {}
         # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
         parallelize_model(
             self.model,
@@ -163,12 +165,14 @@ class FSDPEngine(BaseHFEngine):
             cpu_offload=self.cpu_offload,
             wrap_policy=self.config.fsdp.wrap_policy,
         )
-        fsdp2_load_full_state_dict(
-            self.model,
-            full_state,
-            self.cpu_offload,
-            tie_word_embeddings=self.model_config.tie_word_embeddings,
-        )
+        # Synchronize initialized lora weights
+        if self.config.use_lora:
+            fsdp2_load_full_state_dict(
+                self.model,
+                full_state,
+                self.cpu_offload,
+                tie_word_embeddings=self.model_config.tie_word_embeddings,
+            )
         self.logger.info(
             f"Applying FSDP2 with N-D parallelism for {time.perf_counter() - tik:.2f} seconds"
         )
@@ -278,11 +282,7 @@ class FSDPEngine(BaseHFEngine):
             dist.barrier(device_ids=[self.device.index])
             current_platform.synchronize()
         elif meta.type == "disk":
-            self._save_model_to_hf(
-                meta.path,
-                getattr(self, "tokenizer", None),
-                getattr(self, "processor", None),
-            )
+            self._save_model_to_hf(meta.path, self.tokenizer, self.processor)
             # dist.barrier() are called when _save_model_to_hf finished
             if dist.get_rank() == 0:
                 update_name = names.update_weights_from_disk(
