@@ -36,8 +36,9 @@ class CompletionWithTokenLogpReward:
             assert parent_len == len(parent_loss_mask) == len(parent_versions)
             try:
                 assert resp.input_len >= parent_len, (
-                    "The input length of the child completion must be greater than or equal to "
-                    "the length of the parent completion."
+                    f"The input length of the child completion must be greater than or equal to "
+                    f"the length of the parent completion. Currently resp.input_len={resp.input_len}, "
+                    f"parent_len={parent_len}. "
                 )
             except AssertionError as e:
                 # for debugging
@@ -54,10 +55,14 @@ class CompletionWithTokenLogpReward:
                     resp.output_tokens, skip_special_tokens=False
                 )
                 print(
-                    "[Debug] >>> AssertionError: The input length of the child completion must be greater than or equal to the length of the parent completion."
+                    f"[Debug] >>> AssertionError: The input length of the child completion must be greater than or equal to the length of the parent completion. Currently resp.input_len={resp.input_len}, parent_len={parent_len}. "
                 )
-                print(f"[Debug] parent messages: \n{json.dumps(self.parent.messages)}")
-                print(f"[Debug] child messages: \n{json.dumps(self.messages)}")
+                print(
+                    f"[Debug] parent messages: \n{json.dumps(self.parent.messages, indent=4)}"
+                )
+                print(
+                    f"[Debug] child messages: \n{json.dumps(self.messages, indent=4)}"
+                )
                 print(
                     f"[Debug] Parent input: {len(self.parent.response.input_tokens)}: **********************************************\n",
                     parent_input,
