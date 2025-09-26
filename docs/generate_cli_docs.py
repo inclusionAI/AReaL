@@ -198,9 +198,6 @@ def format_default_value(field_obj) -> str:
             return "`[]`"
         elif isinstance(default_value, bool):
             return f"`{default_value}`"
-        elif str(default_value).startswith("<dataclasses._MISSING_TYPE object"):
-            # Handle MISSING objects with consistent representation
-            return "**Required**"
         else:
             return f"`{default_value}`"
     elif field_obj.default_factory is not inspect._empty:
