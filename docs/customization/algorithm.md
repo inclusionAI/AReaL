@@ -141,7 +141,7 @@ class FSDPReinforceActor(FSDPEngine):
    `train_batch` API.
 
 1. **Backend-Specific Features**: `FSDPReinforceActor` inherits from `FSDPEngine` to
-   provide backend-specific utilities like `save`, `load`, and `upload_weights`. For
+   provide backend-specific utilities like `save`, `load`, and `update_weights`. For
    other backends, you'd create `MegatronReinforceActor`, etc.
 
 > **Note**: This pattern is similar to interfaces in Go or traits in Rust, adapted for
@@ -160,6 +160,7 @@ def main(args):
     # Initialize training engine
     actor = FSDPReinforceActor(config=config.actor)
     actor.initialize(None, ft_spec)
+    actor.connect_engine(rollout)
 
     # Create rollout workflow
     workflow = ReMaxRLVRWorkflow(

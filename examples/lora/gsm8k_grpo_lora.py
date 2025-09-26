@@ -120,6 +120,8 @@ def main(args):
     eval_rollout.initialize()
 
     actor.initialize(None, ft_spec)
+    actor.connect_engine(rollout)
+
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
         ref = FSDPPPOActor(config=config.ref)
@@ -245,14 +247,7 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
-            # actor.upload_weights first - this operation takes time
-            # that allows sglang to schedule pending requests into running state,
-            # making sglang pause_generation work properly
-            actor.upload_weights(weight_update_meta)
-            if dist.get_rank() == 0:
-                rollout.update_weights(weight_update_meta).result()
-            dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
+            actor.update_weights(weight_update_meta)
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
