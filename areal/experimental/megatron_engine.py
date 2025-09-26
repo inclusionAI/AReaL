@@ -4,7 +4,7 @@ import gc
 import os
 import re
 from datetime import datetime
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 
 import mbridge
 import torch
@@ -20,6 +20,7 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
 from megatron.core.utils import get_model_config
+from torch import nn
 from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
@@ -43,7 +44,7 @@ from areal.experimental.utils.megatron import (
 )
 from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.platforms import current_platform
-from areal.utils import datapack, logging, name_resolve, names
+from areal.utils import logging, name_resolve, names
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
@@ -80,6 +81,7 @@ class MegatronEngine(TrainEngine):
         self.weight_update_group_initialized = False
         self._version: int = 0
         self.rank = None
+        self.is_pp_src_rank: bool
         self.world_size = None
         self.rank_generator = None
         self.checkpointer = None
@@ -116,6 +118,10 @@ class MegatronEngine(TrainEngine):
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
         self.rank = int(os.environ["RANK"])
         self.world_size = int(os.environ["WORLD_SIZE"])
+        self.is_pp_src_rank = (
+            mpu.get_data_parallel_rank(with_context_parallel=True) == 0
+            and mpu.get_tensor_model_parallel_rank() == 0
+        )
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
         self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
@@ -476,40 +482,167 @@ class MegatronEngine(TrainEngine):
                 layer_idx = int(layer_idx) + layer_offset
                 yield f"module.module.decoder.layers.{layer_idx}.{rest}", buffer
 
-    def _bin_pack_param_specs(
-        self, param_specs: List[ParamSpec], chunked_mem_mb=1024
-    ) -> List[List[ParamSpec]]:
-        sizes = [param_spec.size for param_spec in param_specs]
-        chunked_mem_bytes = max(chunked_mem_mb * 1024 * 1024, max(sizes) + 10)
-        group_indices = datapack.ffd_allocate(sizes, chunked_mem_bytes, 1)
-        grouped_param_specs = [
-            [param_specs[i] for i in group_index] for group_index in group_indices
+    def _get_bucket_param_specs(
+        self, converted_named_tensors: List[Tuple[str, nn.Parameter | torch.Tensor]]
+    ) -> List[ParamSpec]:
+        bucket_param_specs = [
+            ParamSpec(
+                name=name,
+                shape=tuple(tensor.shape),
+                dtype=str(tensor.dtype).split("torch.")[1],
+            )
+            for name, tensor in converted_named_tensors
         ]
-        return grouped_param_specs
+        converted_named_tensors.clear()
+        return bucket_param_specs
+
+    def _update_param_specs(
+        self,
+        param_specs: List[List[ParamSpec]],
+        name: str,
+        param: nn.Parameter | torch.Tensor,
+        converted_named_tensors: List[Tuple[str, nn.Parameter | torch.Tensor]],
+        buffer_size: int,
+        weight_chunked_mem_size: int,
+    ) -> int:
+        param = all_gather_param(name, param)
+        param = remove_padding(name, param, self.hf_config.vocab_size)
+        if not self.is_pp_src_rank:
+            return buffer_size
+
+        param_size = param.numel() * param.element_size()
+        if buffer_size + param_size > weight_chunked_mem_size:
+            param_specs.append(self._get_bucket_param_specs(converted_named_tensors))
+            buffer_size = 0
+
+        converted_named_tensors = convert_to_hf(
+            self.tf_config, self.hf_config.model_type, name, param
+        )
+        buffer_size += param_size
+        return buffer_size
+
+    def _get_expert_bucket_param_specs(
+        self, named_tensors: List[Tuple[str, nn.Parameter | torch.Tensor]]
+    ) -> List[ParamSpec] | None:
+        names = [name for name, _ in named_tensors]
+        all_names: List[str] = [None] * mpu.get_expert_model_parallel_world_size()
+        dist.all_gather_object(
+            all_names, names, group=mpu.get_expert_model_parallel_group()
+        )
+
+        for names in all_names:
+            assert len(named_tensors) == len(
+                names
+            ), f"mismatch names length: {len(named_tensors)} != {len(names)}"
+
+        all_gathered_params = [
+            [] for _ in range(mpu.get_expert_model_parallel_world_size())
+        ]
+        handles = []
+        for i, (name, param) in enumerate(named_tensors):
+            params = [
+                torch.empty_like(param.data, device=current_platform.current_device())
+                for _ in range(mpu.get_expert_model_parallel_world_size())
+            ]
+            handle = dist.all_gather(
+                params,
+                param.data,
+                group=mpu.get_expert_model_parallel_group(),
+                async_op=True,
+            )
+            handles.append(handle)
+            for ep_rank, names in enumerate(all_names):
+                all_gathered_params[ep_rank].append((names[i], params[ep_rank]))
+        for handle in handles:
+            handle.wait()
+
+        named_tensors.clear()
+        if not self.is_pp_src_rank:
+            return None
+
+        all_gathered_params = sum(all_gathered_params, [])
+        converted_hf_tensors = []
+        for name, param in all_gathered_params:
+            converted_hf_tensors = convert_to_hf(
+                self.tf_config, self.hf_config.model_type, name, param
+            )
+        return self._get_bucket_param_specs(converted_hf_tensors)
+
+    def _update_expert_param_specs(
+        self,
+        param_specs: List[List[ParamSpec]],
+        name: str,
+        param: nn.Parameter | torch.Tensor,
+        named_tensors: List[Tuple[str, nn.Parameter | torch.Tensor]],
+        buffer_size: int,
+        weight_chunked_mem_size: int,
+    ) -> int:
+        param = all_gather_param(name, param)
+        param = remove_padding(name, param, self.hf_config.vocab_size)
+
+        param_size = param.numel() * param.element_size()
+        if (
+            buffer_size + param_size
+        ) * mpu.get_expert_model_parallel_world_size() > weight_chunked_mem_size:
+            param_specs.append(self._get_expert_bucket_param_specs(named_tensors) or [])
+            buffer_size = 0
+
+        named_tensors.append((name, param))
+        buffer_size += param_size
+        return buffer_size
 
     def get_param_specs(
         self, weight_chunked_mem_mb: int = 1024
     ) -> List[List[ParamSpec]]:
-        param_specs = []
-        for name, param in self._get_named_parameters():
-            param = all_gather_param(name, param)
-            param = remove_padding(name, param, self.hf_config.vocab_size)
+        param_specs: List[List[ParamSpec]] = []
 
-            converted_named_tensors = convert_to_hf(
-                self.tf_config, self.hf_config.model_type, name, param
+        weight_chunked_mem_size = weight_chunked_mem_mb * 1024 * 1024
+
+        buffer_size = 0
+        converted_named_tensors = []
+
+        for name, param in self._get_named_parameters():
+            if ".experts." in name:
+                continue
+            buffer_size = self._update_param_specs(
+                param_specs,
+                name,
+                param,
+                converted_named_tensors,
+                buffer_size,
+                weight_chunked_mem_size,
             )
-            for converted_name, tensor in converted_named_tensors:
-                param_specs.append(
-                    ParamSpec(
-                        name=converted_name,
-                        shape=tuple(tensor.shape),
-                        dtype=str(tensor.dtype).split("torch.")[1],
-                    )
-                )
-                del tensor
-        return self._bin_pack_param_specs(
-            param_specs, chunked_mem_mb=weight_chunked_mem_mb
-        )
+
+        if converted_named_tensors:
+            param_specs.append(self._get_bucket_param_specs(converted_named_tensors))
+
+        dist.barrier(device_ids=[self.device.index])
+
+        buffer_size = 0
+        named_tensors = []
+
+        for name, param in self._get_named_parameters():
+            if ".experts." not in name:
+                continue
+            buffer_size = self._update_expert_param_specs(
+                param_specs,
+                name,
+                param,
+                named_tensors,
+                buffer_size,
+                weight_chunked_mem_size,
+            )
+
+        if named_tensors:
+            param_specs.append(self._get_expert_bucket_param_specs(named_tensors) or [])
+
+        dist.barrier(device_ids=[self.device.index])
+
+        self.logger.info(f"Got {param_specs} param spec buckets.")
+
+        raise RuntimeError("Stop here for debug")
+
+        return param_specs
 
     def set_version(self, version: int):
         self._version = version
