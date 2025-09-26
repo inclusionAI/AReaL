@@ -161,12 +161,14 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
             )
             for comp in completions_with_rewards.values():
                 print(
-                    f"[Debug] Leaf Completion: id={comp.id}, parent_id={comp.parent.id}"
+                    f"[Debug] Leaf Completion: id={comp.completion.id}, parent_id={comp.parent.completion.id}"
                 )
                 parent = comp.parent
                 count = 0
                 while parent is not None:
-                    print(f"[Debug] Parent {count} Completion: id={parent.id}")
+                    print(
+                        f"[Debug] Parent {count} Completion: id={parent.completion.id}"
+                    )
                     parent = parent.parent
             raise e
 
