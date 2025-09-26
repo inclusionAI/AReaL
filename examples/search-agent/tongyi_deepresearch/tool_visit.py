@@ -11,8 +11,6 @@ import tiktoken
 from openai import OpenAI
 from qwen_agent.tools.base import BaseTool, register_tool
 
-from areal.utils.http import get_default_connector
-
 try:
     from .prompt import *
 except ImportError:  # Fallback when executed directly (no package parent known)
@@ -80,15 +78,7 @@ class Visit(BaseTool):
         log_folder = "log"
         os.makedirs(log_folder, exist_ok=True)
 
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(
-                total=30,
-                sock_connect=10,
-                connect=10,
-            ),
-            read_bufsize=1024 * 1024 * 10,
-            connector=get_default_connector(),
-        ) as session:
+        async with aiohttp.ClientSession() as session:
             if isinstance(url, str):
                 response = await self.readpage_jina(session, url, goal)
             else:

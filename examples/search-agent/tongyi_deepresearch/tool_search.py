@@ -5,8 +5,6 @@ from typing import List, Optional, Union
 import aiohttp
 from qwen_agent.tools.base import BaseTool, register_tool
 
-from areal.utils.http import get_default_connector
-
 SERPER_KEY = os.environ.get("SERPER_KEY_ID", "")
 
 
@@ -102,15 +100,7 @@ class Search(BaseTool):
         except Exception:
             return "[Search] Invalid request format: Input must be a JSON object containing 'query' field"
 
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(
-                total=30,
-                sock_connect=10,
-                connect=10,
-            ),
-            read_bufsize=1024 * 1024 * 10,
-            connector=get_default_connector(),
-        ) as session:
+        async with aiohttp.ClientSession() as session:
             if isinstance(query, str):
                 return await self.search_with_serp(session, query)
             assert isinstance(query, List)
