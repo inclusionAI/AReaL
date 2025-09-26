@@ -272,7 +272,9 @@ def main(args):
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
-            saver.save(critic, epoch, step, global_step, tokenizer=tokenizer)
+            saver.save(
+                critic, epoch, step, global_step, tokenizer=tokenizer, name="critic"
+            )
 
         with stats_tracker.record_timing("checkpoint_for_recover"):
             recover_handler.dump(
