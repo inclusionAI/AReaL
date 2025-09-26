@@ -69,7 +69,7 @@ class ReMaxRLVRWorkflow(RolloutWorkflow):
         )
 
         # Package results for training
-        res = dict(
+        return dict(
             # Add batch dimension
             input_ids=torch.tensor(resp.input_tokens + resp.output_tokens).unsqueeze(0),
             loss_mask=torch.tensor([0] * resp.input_len + [1] * resp.output_len).unsqueeze(0),
@@ -78,8 +78,6 @@ class ReMaxRLVRWorkflow(RolloutWorkflow):
             # Use reward difference across all tokens
             rewards=torch.tensor([float(sample_reward - greedy_reward)] * (resp.input_len + resp.output_len)),
         )
-
-        return TensorDict(res, batch_size=[1])
 ```
 
 > **Note**: For detailed guidance on customizing rollout workflows, see the
@@ -119,7 +117,7 @@ class ReinforceActor:
     def __init__(self, engine: TrainEngine):
         self.engine = engine
 
-    def train_reinforce(self, data: TensorDict):
+    def train_reinforce(self, data: Dict[str, Any]):
         # Enable gradient checkpointing
         self.engine.train()
         return self.engine.train_batch(
@@ -171,13 +169,12 @@ def main(args):
     )
 
     # Main training loop
-    data_generator = itertools.cycle(dataloader)
+    data_generator = cycle_dataloader(dataloader)
     for global_step in range(max_steps):
         # Generate training data
         with stats_tracker.record_timing("rollout"):
             batch = rollout.rollout_batch(next(data_generator), workflow=workflow)
-
-        batch = batch.to(actor.device)
+        batch = tensor_container_to(batch, actor.device)
 
         # Synchronize all processes
         dist.barrier()

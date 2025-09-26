@@ -6,7 +6,6 @@ import aiofiles
 import aiofiles.os
 import colorama
 import torch
-from tensordict import TensorDict
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
@@ -128,7 +127,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
         )
         res = {k: v.unsqueeze(0) for k, v in res.items()}
         return (
-            TensorDict(res, batch_size=[1]),
+            res,
             prompt_str,
             completions_str,
             reward,

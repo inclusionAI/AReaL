@@ -5,14 +5,15 @@ from typing import Any, Callable, Dict, List
 
 import torch
 import torch.distributed as dist
-from tensordict import TensorDict
+from torch.distributed.distributed_c10d import _get_default_group
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
-    AutoProcessor,
+    AutoModelForTokenClassification,
     PretrainedConfig,
     PreTrainedTokenizerFast,
+    ProcessorMixin,
     get_constant_schedule_with_warmup,
     get_linear_schedule_with_warmup,
 )
@@ -37,10 +38,11 @@ from areal.utils.data import (
 from areal.utils.fsdp import get_cosine_schedule_with_warmup
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.model import (
-    VALID_VISION_MODELS,
     disable_dropout_in_model,
+    is_gemma3_model,
     is_qwen2_vl_model,
     is_qwen3_moe_model,
+    is_valid_vision_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
@@ -53,7 +55,7 @@ class BaseHFEngine(TrainEngine):
         self.model: torch.nn.Module
         self.optimizer: torch.optim.Optimizer
         self.tokenizer: PreTrainedTokenizerFast
-        self.processor: AutoProcessor | None = None
+        self.processor: ProcessorMixin | None
         # huggingface model config
         self.model_config: PretrainedConfig
         self._version: int = 0
@@ -69,7 +71,7 @@ class BaseHFEngine(TrainEngine):
             pretrained_model_name_or_path=self.config.path,
             trust_remote_code=True,
         )
-        self.is_vision_model = self.model_config.model_type in VALID_VISION_MODELS
+        self.is_vision_model = is_valid_vision_model(self.model_config.model_type)
 
         self.world_size = int(os.environ["WORLD_SIZE"])
 
@@ -87,7 +89,7 @@ class BaseHFEngine(TrainEngine):
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
         assert self.initialized
-        return self._parallelism_group
+        return _get_default_group()
 
     @property
     def data_parallel_rank(self) -> int:
@@ -111,9 +113,9 @@ class BaseHFEngine(TrainEngine):
     @property
     def parallelism_group(self) -> dist.ProcessGroup:
         assert self.initialized
-        return self._parallelism_group
+        return _get_default_group()
 
-    def create_process_group(self, parallel_strategy: ParallelStrategy):
+    def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         # Required by NCCL weight update group for SGLang
         os.environ["NCCL_CUMEM_ENABLE"] = "0"
         os.environ["NCCL_NVLS_ENABLE"] = "0"
@@ -126,9 +128,10 @@ class BaseHFEngine(TrainEngine):
                 timeout=NCCL_DEFAULT_TIMEOUT,
             )
             self.own_global_group = True
-        self._parallelism_group = dist.new_group()
         # Each process is its own model parallel group.
-        self.mp_group = dist.new_group([dist.get_rank()])
+        mp_group = dist.new_group([dist.get_rank()])
+        assert mp_group is not None
+        self.mp_group = mp_group
 
         self.logger = logging.getLogger(f"[HF Engine Rank {dist.get_rank()}]")
 
@@ -165,23 +168,7 @@ class BaseHFEngine(TrainEngine):
             self.tokenizer = load_hf_tokenizer(self.config.path)
             tik = time.perf_counter()
             with torch.device(current_platform.device_type):
-                if self.config.init_from_scratch:
-                    # initialize scratch model from config
-                    # NOTE: VLM cannot directly load state dict using this
-                    # random initialized model, so otherwise we call
-                    # from_pretrained rather than loading weights into this random model.
-                    model = AutoModelForCausalLM.from_config(
-                        self.model_config,
-                        torch_dtype=dtype,
-                        attn_implementation=self.config.attn_impl,
-                    )
-                else:
-                    model = AutoModelForCausalLM.from_pretrained(
-                        pretrained_model_name_or_path=self.config.path,
-                        trust_remote_code=True,
-                        torch_dtype=dtype,
-                        attn_implementation=self.config.attn_impl,
-                    )
+                model = self._create_llm_actor_or_critic()
                 if self.config.disable_dropout:
                     disable_dropout_in_model(model)
 
@@ -193,6 +180,44 @@ class BaseHFEngine(TrainEngine):
             f"Model creation and loading time: {time.perf_counter() - tik}"
         )
         self.model = model
+
+    def _create_llm_actor_or_critic(self):
+        dtype = getattr(torch, self.config.dtype)
+        if not self.config.is_critic:
+            if self.config.init_from_scratch:
+                # initialize model from config
+                # NOTE: VLM cannot directly load state dict using this
+                # random initialized model, so otherwise we call
+                # from_pretrained rather than loading weights into this random model.
+                model = AutoModelForCausalLM.from_config(
+                    self.model_config,
+                    torch_dtype=dtype,
+                    attn_implementation=self.config.attn_impl,
+                )
+            else:
+                model = AutoModelForCausalLM.from_pretrained(
+                    pretrained_model_name_or_path=self.config.path,
+                    trust_remote_code=True,
+                    torch_dtype=dtype,
+                    attn_implementation=self.config.attn_impl,
+                )
+        else:
+            if self.config.init_from_scratch:
+                model = AutoModelForTokenClassification.from_config(
+                    self.model_config,
+                    torch_dtype=dtype,
+                    num_labels=1,
+                    attn_implementation=self.config.attn_impl,
+                )
+            else:
+                model = AutoModelForTokenClassification.from_pretrained(
+                    pretrained_model_name_or_path=self.config.path,
+                    trust_remote_code=True,
+                    torch_dtype=dtype,
+                    num_labels=1,
+                    attn_implementation=self.config.attn_impl,
+                )
+        return model
 
     def create_optimizer(self, ft_spec: FinetuneSpec):
         if self.optimizer_config is None:
@@ -254,8 +279,9 @@ class BaseHFEngine(TrainEngine):
         gc.collect()
         current_platform.empty_cache()
         gc.collect()
-        dist.destroy_process_group(self.context_and_model_parallel_group)
-        dist.destroy_process_group(self.parallelism_group)
+        non_trivial_world = dist.get_world_size() > 1
+        if non_trivial_world:
+            dist.destroy_process_group(self.context_and_model_parallel_group)
         if self.own_global_group:
             dist.destroy_process_group()
         self.initialized = False
@@ -288,11 +314,9 @@ class BaseHFEngine(TrainEngine):
         assert self.lr_scheduler is not None
         self.lr_scheduler.step()
 
-    def prepare_mb_list(self, input_: TensorDict) -> MicroBatchList:
+    def prepare_mb_list(self, input_: Dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
 
-        if isinstance(input_, dict):
-            input_ = TensorDict(input_, batch_size=[input_["input_ids"].shape[0]])
         if is_qwen2_vl_model(self.model_config.model_type):
             # Create the special t,h,w position IDs for qwen 2.5 VL
             attn_mask = input_["attention_mask"]
@@ -340,14 +364,16 @@ class BaseHFEngine(TrainEngine):
         # packed input to be of shape [1, total_seqlen].
         mb_list = unsqueeze_mb_list(mb_list)
         if is_qwen2_vl_model(self.model_config.model_type):
+            assert mb_list.padded_mbs is not None
             for mb in mb_list.padded_mbs:
                 # [1, total_seqlen, 3] -> [3, 1, total_seqlen]
                 mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
 
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
-        # TODO: remove the usage of tensordict
+
         # Modern model implementations takes a dict as the input.
         # This eliminates a bug of Qwen2.5-VL for transformers<=4.53.1
+        assert mb_list.padded_mbs is not None
         for i, mb in enumerate(mb_list.mbs):
             mb_list.mbs[i] = dict(**mb)
         for i, mb in enumerate(mb_list.padded_mbs):
@@ -369,8 +395,10 @@ class BaseHFEngine(TrainEngine):
                 mb["attention_mask"] = None
                 padded_mb["attention_mask"] = None
             else:
-                mb["attention_mask"] = dict(full_attention=None)
-                padded_mb["attention_mask"] = dict(full_attention=None)
+                mb["attention_mask"] = dict(full_attention=None, sliding_attention=None)
+                padded_mb["attention_mask"] = dict(
+                    full_attention=None, sliding_attention=None
+                )
             if "multi_modal_input" in mb:
                 image_grid_thw_list = [
                     item["image_grid_thw"]
@@ -408,7 +436,7 @@ class BaseHFEngine(TrainEngine):
     def get_model_name_parameters(self):
         name_params_iterator = self.model.named_parameters()
         if self.is_vision_model and is_qwen2_vl_model(self.model_config.model_type):
-
+            # Qwen2_5_VLForConditionalGeneration has a different naming convention in SGLang
             def name_remapping_generator():
                 for name, value in name_params_iterator:
                     new_name = name.replace("model.", "", 1).replace(
@@ -417,26 +445,43 @@ class BaseHFEngine(TrainEngine):
                     yield new_name, value
 
             yield from name_remapping_generator()
+        elif self.is_vision_model and is_gemma3_model(self.model_config.model_type):
+            # Gemma3ForConditionalGeneration has a different naming convention in SGLang
+            def name_remapping_generator():
+                for name, value in name_params_iterator:
+                    new_name = name.replace("model.", "", 1)
+                    if new_name.startswith("language_model."):
+                        new_name = new_name.replace(
+                            "language_model.", "language_model.model.", 1
+                        )
+                    elif new_name.startswith("lm_head."):
+                        new_name = new_name.replace(
+                            "lm_head.", "language_model.lm_head.", 1
+                        )
+                    yield new_name, value
+
+            yield from name_remapping_generator()
         else:
             yield from name_params_iterator
 
     def train_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> Dict[str, float]:
         """Train on a batch using gradient accumulation."""
-        input_ = input_.to(self.device)
         assert self.optimizer is not None
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
 
         self.optimizer.zero_grad()
         mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
 
         total_loss_weight = (
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            torch.stack([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .sum()
             .detach()
             .clone()
             .to(dtype=torch.float32)
@@ -445,8 +490,8 @@ class BaseHFEngine(TrainEngine):
         dist.all_reduce(total_loss_weight)
 
         # Process microbatches with gradient accumulation
-        for i, (pad_length, padded_mb_input, mb_input) in enumerate(
-            zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
+        for pad_length, padded_mb_input, mb_input in zip(
+            mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
             outputs = self.model(**padded_mb_input)
 
@@ -488,23 +533,25 @@ class BaseHFEngine(TrainEngine):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: TensorDict,
-        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
-        loss_weight_fn: Callable[[TensorDict], float],
+        input_: Dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
-        input_ = input_.to(self.device)
         mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
+
         total_loss_weight = (
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            torch.stack([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .sum()
             .detach()
             .clone()
             .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
 
-        total_loss = 0.0
-        total_weight = 0.0
+        total_loss = torch.zeros(1, device=self.device, dtype=torch.float32)
+        total_weight = torch.zeros(1, device=self.device, dtype=torch.float32)
 
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
@@ -516,26 +563,27 @@ class BaseHFEngine(TrainEngine):
 
             # Simple weight calculation (could be improved)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
-            total_loss += loss.item() * loss_scale
+            total_loss += loss * loss_scale
             total_weight += loss_scale
 
-        return torch.tensor(total_loss / total_weight)
+        return total_loss / total_weight
 
     @torch.no_grad()
     def forward(
         self,
-        input_: TensorDict,
+        input_: Dict[str, Any],
         output_seqlens: List[int] | None = None,
-        post_hook: Callable[[torch.Tensor, TensorDict], Any] | None = None,
+        post_hook: Callable[[torch.Tensor, Dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""
-        input_ = input_.to(self.device)
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
         mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
 
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
+        assert output_seqlens is not None
 
         results = []
         for pad_length, padded_mb_input, mb_input in zip(

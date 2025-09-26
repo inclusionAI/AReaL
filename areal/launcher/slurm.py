@@ -17,6 +17,7 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
+from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import (
     JobException,
@@ -161,8 +162,8 @@ class SlurmLauncher:
             env_vars = dict()
         n_gpus_per_task = n_gpus_per_node // ntasks_per_node
         assert (
-            "CUDA_VISIBLE_DEVICES" not in env_vars
-        ), "CUDA_VISIBLE_DEVICES should be automatically resolved by Launcher instead of manually assigned."
+            current_platform.device_control_env_var not in env_vars
+        ), f"{current_platform.device_control_env_var} should be automatically resolved by Launcher instead of manually assigned."
 
         srun_cmds = []
         for i in range(count):
@@ -396,7 +397,7 @@ class SlurmLauncher:
 
 
 def main():
-    config, _ = parse_cli_args(sys.argv[2:])
+    config, _ = parse_cli_args(sys.argv[1:])
     slurm_main(config, run_id=0)
 
 

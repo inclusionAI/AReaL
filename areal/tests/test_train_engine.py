@@ -1,15 +1,15 @@
 """Test script for Engine implementation."""
 
 import os
-from typing import Dict
+from typing import Any, Dict
 
 import pytest
 import torch
-from tensordict import TensorDict
 from transformers import AutoTokenizer
 
 from areal.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
+from areal.platforms import current_platform
 
 VOCAB_SIZE = 100
 MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
@@ -22,8 +22,8 @@ def mock_input(
     batch_size=5,
     min_seqlen=10,
     max_seqlen=20,
-    device="cuda:0",
-) -> Dict:
+    device=current_platform.device_type,
+) -> Dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -42,7 +42,7 @@ def mock_input(
     ] = 1
     input_ids.masked_fill_(~attn_mask, pad_token_id)
 
-    return TensorDict(
+    return dict(
         input_ids=input_ids,
         attention_mask=attn_mask,
     )
@@ -61,6 +61,7 @@ def get_engine(engine_type: str, model_path: str):
         optimizer=OptimizerConfig(),
     )
     engine = engine_cls(engine_config)
+    engine.create_process_group()
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
     engine.initialize(None, ft_spec)
     return engine

@@ -1,3 +1,4 @@
+import argparse
 import itertools
 import pathlib
 import random
@@ -417,6 +418,21 @@ def create_countdown_datasets(
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--num_samples",
+        type=int,
+        default=500000,
+        help="Number of training samples to generate",
+    )
+    parser.add_argument(
+        "--eval_size",
+        type=int,
+        default=1000,
+        help="Number of validation/test samples to generate",
+    )
+    args = parser.parse_args()
+
     countdown = CountDown()
     task = countdown.get_task(apply_chat_template=True)
     print(task["query"])
@@ -433,7 +449,9 @@ if __name__ == "__main__":
     #  Step 2: 12 + 2 = 14
     # """
     #     print(countdown.verify_answer(14, q, answer))
-    train_data, val_data, test_data = create_countdown_datasets()
+    train_data, val_data, test_data = create_countdown_datasets(
+        num_samples=args.num_samples, eval_size=args.eval_size
+    )
     print(len(train_data), len(val_data), len(test_data))
     # save to each to jsonl file
     import json
@@ -441,7 +459,7 @@ if __name__ == "__main__":
     with open("./data/countdown/qwen/train_e.jsonl", "w") as f:
         for item in train_data:
             f.write(json.dumps(item) + "\n")
-    with open("./data/countdown/qwen/val_e.jsonl", "w") as f:
+    with open("./data/countdown/qwen/valid_e.jsonl", "w") as f:
         for item in val_data:
             f.write(json.dumps(item) + "\n")
     with open("./data/countdown/qwen/test_e.jsonl", "w") as f:

@@ -1,10 +1,8 @@
 import os
 import sys
 
-import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
@@ -13,8 +11,13 @@ from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
 from areal.experimental.api.cli_args import ExperimentalSFTConfig as SFTConfig
 from areal.experimental.megatron_lm_engine import MegatronLMEngine
+from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container, pad_sequences_to_tensors
+from areal.utils.data import (
+    broadcast_tensor_container,
+    pad_sequences_to_tensors,
+    tensor_container_to,
+)
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
@@ -33,6 +36,7 @@ def main(args):
 
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
     # Initialize Megatron parallel states
     # NOTE: we assume all MegatronEngine has the same parallel strategy.
@@ -119,14 +123,17 @@ def main(args):
                 epoch_step=step,
                 steps_per_epoch=len(train_dataloader),
             )
-            # NOTE: data are identical across model+context parallel group
-            data: TensorDict
-            data = data.to(torch.cuda.current_device())
-            data = broadcast_tensor_container(
-                data,
-                src_rank=engine.current_data_parallel_head(),
-                group=engine.context_and_model_parallel_group,
-            )
+            with stats_tracker.record_timing("to_device"):
+                # NOTE: data are identical across model+context parallel group
+                data = tensor_container_to(data, current_platform.current_device())
+
+            with stats_tracker.record_timing("bcast"):
+                data = broadcast_tensor_container(
+                    data,
+                    src_rank=engine.current_data_parallel_head(),
+                    group=engine.context_and_model_parallel_group,
+                )
+
             with (
                 stats_tracker.record_timing("train_step"),
                 stats_tracker.scope("sft"),
@@ -149,7 +156,7 @@ def main(args):
                 )
 
             dist.barrier(device_ids=[engine.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
 
             with stats_tracker.record_timing("eval"):
                 # No need to log anything. Logging will be handled outside
@@ -157,7 +164,9 @@ def main(args):
                 def evaluate_fn():
                     with stats_tracker.scope("sft-eval"):
                         for data in valid_dataloader:
-                            data = data.to(torch.cuda.current_device())
+                            data = tensor_container_to(
+                                data, current_platform.current_device()
+                            )
                             data = broadcast_tensor_container(
                                 data,
                                 src_rank=engine.current_data_parallel_head(),
@@ -173,7 +182,7 @@ def main(args):
                 )
 
             dist.barrier(device_ids=[engine.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
 
             stats.update(
                 stats_tracker.export_all(reduce_group=mpu.get_data_parallel_group())

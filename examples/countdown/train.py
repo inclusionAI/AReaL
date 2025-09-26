@@ -1,5 +1,4 @@
 import asyncio
-import itertools
 import os
 import sys
 import uuid
@@ -13,7 +12,6 @@ import torch.distributed as dist
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 from reward_score import compute_score
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PreTrainedTokenizerFast
 
@@ -33,13 +31,18 @@ from areal.api.io_struct import (
 from areal.api.workflow_api import RolloutWorkflow
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container, concat_padded_tensors
+from areal.utils.data import (
+    broadcast_tensor_container,
+    concat_padded_tensors,
+    cycle_dataloader,
+    tensor_container_to,
+)
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
-from areal.utils.redistributor import redistribute
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
@@ -102,17 +105,17 @@ class CountDownWorkflow(RolloutWorkflow):
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
             rewards.append(reward)
-            res = dict(
+            res = {
                 # unsqueeze to add an additional batch dimension
-                input_ids=torch.tensor(seq).unsqueeze(0),
-                loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                logprobs=torch.tensor(logprobs).unsqueeze(0),
-                versions=torch.tensor(versions).unsqueeze(0),
-                attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
+                "input_ids": torch.tensor(seq).unsqueeze(0),
+                "loss_mask": torch.tensor(loss_mask).unsqueeze(0),
+                "logprobs": torch.tensor(logprobs).unsqueeze(0),
+                "versions": torch.tensor(versions).unsqueeze(0),
+                "attention_mask": torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
                 # reward
-                rewards=torch.tensor([float(reward)]),
-            )
-            results.append(TensorDict(res, batch_size=[1]))
+                "rewards": torch.tensor([float(reward)]),
+            }
+            results.append(res)
 
         # logger.info(f"numbers: {data['numbers']} target: {data['target']} rewards: {rewards}")
 
@@ -168,19 +171,20 @@ def main(args):
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
-    # Initialize train engine
+    # Create process groups
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
     train_dataset = get_countdown_dataset(
         dataset_path=config.train_dataset.path,
-        rank=rank,
+        rank=actor.data_parallel_rank,
         world_size=actor.data_parallel_world_size,
     )
     valid_dataset = get_countdown_dataset(
         dataset_path=config.valid_dataset.path,
-        rank=rank,
+        rank=actor.data_parallel_rank,
         world_size=actor.data_parallel_world_size,
     )
 
@@ -209,12 +213,13 @@ def main(args):
 
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize()
+    rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
     eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
     # NOTE: eval does not have any offpolicyness control
     eval_rollout.config.max_head_offpolicyness = int(1e12)
     eval_rollout.initialize()
 
+    # Initialize train engine
     actor.initialize(None, ft_spec)
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
@@ -280,7 +285,7 @@ def main(args):
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    data_generator = itertools.cycle(train_dataloader)
+    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -292,10 +297,6 @@ def main(args):
         )
 
         with stats_tracker.record_timing("rollout"):
-            # NOTE: Megatron will ignore inputs from non data parallel heads.
-            # However, methods such as `compute_advantages` and `ppo_update`
-            # still requires data integrity to be called on every training process.
-            # Therefore, we still need to broadcast batch across context+model parallel group.
             batch = None
             if actor.is_data_parallel_head():
                 if config.async_training:
@@ -310,13 +311,7 @@ def main(args):
                         workflow=workflow,
                         should_accept=lambda sample: True,
                     )
-                batch = batch.to(actor.device)
-                if config.async_training or config.redistribute_rollout:
-                    batch = redistribute(
-                        batch,
-                        group=actor.data_parallel_group,
-                        granularity=config.actor.group_size,
-                    ).data
+                batch = tensor_container_to(batch, actor.device)
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
@@ -324,7 +319,7 @@ def main(args):
             )
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -359,7 +354,7 @@ def main(args):
             if dist.get_rank() == 0:
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
@@ -367,25 +362,6 @@ def main(args):
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
-
-        with stats_tracker.record_timing("eval"):
-
-            def evaluate_fn():
-                # Stats are logged in the workflow
-                # and will be exported later
-                cnt = 0
-                for data in valid_dataloader:
-                    for item in data:
-                        eval_rollout.submit(item, eval_workflow)
-                        cnt += 1
-                eval_rollout.wait(cnt, timeout=None)
-
-            evaluator.evaluate(
-                evaluate_fn,
-                epoch,
-                step,
-                global_step,
-            )
 
         with stats_tracker.record_timing("checkpoint_for_recover"):
             recover_handler.dump(
@@ -399,14 +375,41 @@ def main(args):
             )
 
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
+
+        with stats_tracker.record_timing("eval"):
+
+            def evaluate_fn():
+                if actor.is_data_parallel_head():
+                    # Stats are logged in workflow
+                    # and will be exported later
+                    cnt = 0
+                    for data in valid_dataloader:
+                        for item in data:
+                            eval_rollout.submit(item, eval_workflow)
+                            cnt += 1
+                    eval_rollout.wait(cnt, timeout=None)
+                dist.barrier(device_ids=[actor.device.index])
+                current_platform.synchronize()
+
+            evaluator.evaluate(
+                evaluate_fn,
+                epoch,
+                step,
+                global_step,
+            )
+
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
-        stats[0].update(stats_tracker.export_all(reduce_group=actor.parallelism_group))
+        stats[0].update(
+            stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+        )
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         # Resume rollout
         rollout.resume()

@@ -1,18 +1,19 @@
 import argparse
 import os
+from typing import Any, Dict
 
 import torch
 import torch.distributed as dist
-from tensordict import TensorDict
 
+from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import (
-    FSDPEngineConfig,
     MicroBatchSpec,
     OptimizerConfig,
     TrainEngineConfig,
 )
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPEngine
+from areal.platforms import current_platform
 
 MODEL_PATHS = {
     "qwen3": "/storage/openpsi/models/Qwen__Qwen3-1.7B/",
@@ -42,7 +43,7 @@ def setup_distributed_environment():
         world_size=world_size,
         rank=rank,
     )
-    torch.cuda.set_device(rank)
+    current_platform.set_device(rank)
 
 
 def mock_input(
@@ -50,7 +51,7 @@ def mock_input(
     batch_size=128,
     min_seqlen=1,
     max_seqlen=1024,
-) -> TensorDict:
+) -> Dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -69,7 +70,7 @@ def mock_input(
     ] = 1
     input_ids.masked_fill_(~attn_mask, pad_token_id)
 
-    return TensorDict(
+    return dict(
         input_ids=input_ids,
         attention_mask=attn_mask,
     )
@@ -82,11 +83,16 @@ def make_engine(model_type, mb_spec, ulysses_sp_size=1, init_optimizer=False):
         path=MODEL_PATHS[model_type],
         mb_spec=mb_spec,
         optimizer=OptimizerConfig() if init_optimizer else None,
-        fsdp=FSDPEngineConfig(ulysses_sp_size=ulysses_sp_size),
     )
     print(f"config = {config}")
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
     engine = FSDPEngine(config)
+    assert dist.get_world_size() >= ulysses_sp_size
+    parallel_strategy = ParallelStrategy(
+        data_parallel_size=dist.get_world_size() // ulysses_sp_size,
+        context_parallel_size=ulysses_sp_size,
+    )
+    engine.create_process_group(parallel_strategy=parallel_strategy)
     engine.initialize(addr=None, ft_spec=ft_spec)
     return engine
 
@@ -170,13 +176,11 @@ def test_ulysses(model_type: str):
         except AssertionError as e:
             print(f"AssertionError in torch.testing.assert_close: {e}")
 
-    torch.cuda.synchronize()
+    current_platform.synchronize()
     dist.barrier()
 
-    engine.destroy()
     engine_golden.destroy()
-
-    dist.destroy_process_group()
+    engine.destroy()
 
 
 def main():

@@ -8,6 +8,8 @@ from typing import List
 import torch
 import torch.distributed as dist
 
+from areal.platforms import current_platform
+
 INFINITE_DURATION = 60 * 60 * 24 * 365 * 1000
 
 
@@ -114,7 +116,7 @@ class FrequencyControl:
             if self.frequency_seconds is not None:
                 if dist.is_initialized():
                     interval_seconds = torch.tensor(
-                        self.__interval_seconds, device="cuda"
+                        self.__interval_seconds, device=current_platform.device_type
                     )
                     dist.all_reduce(
                         interval_seconds, op=dist.ReduceOp.MAX, group=self.group

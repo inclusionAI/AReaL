@@ -6,7 +6,6 @@ from typing import List, cast
 import torch
 import torch.distributed as dist
 import torch.utils.data
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 import areal.api.cli_args as cli_args
@@ -18,13 +17,18 @@ from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import SFTConfig
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.sft.lm_engine import FSDPLMEngine
-from areal.utils.data import broadcast_tensor_container
+from areal.platforms import current_platform
+from areal.utils.data import broadcast_tensor_container, tensor_container_to
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 
 
 def main() -> None:
     config, _ = cli_args.load_expr_config(sys.argv[1:], SFTConfig)
     assert isinstance(config, SFTConfig)
+    local_model_path = config.model.path.replace("/", "__")
+    local_model_path = os.path.join("/storage/openpsi/models", local_model_path)
+    if os.path.exists(local_model_path):
+        config.model.path = local_model_path
 
     rank = int(os.environ.get("RANK", "0"))
 
@@ -75,8 +79,7 @@ def main() -> None:
             ):
                 break
 
-            data: TensorDict
-            data = data.to(torch.cuda.current_device())
+            data = tensor_container_to(data, current_platform.current_device())
             data = broadcast_tensor_container(
                 data,
                 src_rank=engine.current_data_parallel_head(),

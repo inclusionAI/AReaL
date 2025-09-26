@@ -1,4 +1,3 @@
-import itertools
 import os
 import sys
 from copy import deepcopy
@@ -14,12 +13,15 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container
+from areal.utils.data import (
+    broadcast_tensor_container,
+    cycle_dataloader,
+    tensor_container_to,
+)
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
-from areal.utils.redistributor import redistribute
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
@@ -41,6 +43,7 @@ def main(args):
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
@@ -165,7 +168,7 @@ def main(args):
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    data_generator = itertools.cycle(train_dataloader)
+    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -191,13 +194,7 @@ def main(args):
                         workflow=workflow,
                         should_accept=lambda sample: True,
                     )
-                batch = batch.to(actor.device)
-                if config.async_training or config.redistribute_rollout:
-                    batch = redistribute(
-                        batch,
-                        group=actor.data_parallel_group,
-                        granularity=config.actor.group_size,
-                    ).data
+                batch = tensor_container_to(batch, actor.device)
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
@@ -249,25 +246,6 @@ def main(args):
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
 
-        with stats_tracker.record_timing("eval"):
-
-            def evaluate_fn():
-                # Stats are logged in the workflow
-                # and will be exported later
-                cnt = 0
-                for data in valid_dataloader:
-                    for item in data:
-                        eval_rollout.submit(item, eval_workflow)
-                        cnt += 1
-                eval_rollout.wait(cnt, timeout=None)
-
-            evaluator.evaluate(
-                evaluate_fn,
-                epoch,
-                step,
-                global_step,
-            )
-
         with stats_tracker.record_timing("checkpoint_for_recover"):
             recover_handler.dump(
                 actor,
@@ -277,6 +255,29 @@ def main(args):
                 stats_logger,
                 train_dataloader,
                 tokenizer=tokenizer,
+            )
+
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
+
+        with stats_tracker.record_timing("eval"):
+
+            def evaluate_fn():
+                if actor.is_data_parallel_head():
+                    cnt = 0
+                    for data in valid_dataloader:
+                        for item in data:
+                            eval_rollout.submit(item, eval_workflow)
+                            cnt += 1
+                    eval_rollout.wait(cnt, timeout=None)
+                dist.barrier(device_ids=[actor.device.index])
+                current_platform.synchronize()
+
+            evaluator.evaluate(
+                evaluate_fn,
+                epoch,
+                step,
+                global_step,
             )
 
         dist.barrier(device_ids=[actor.device.index])
