@@ -606,10 +606,10 @@ class InferenceEngineConfig:
     request_retries: int = field(
         default=3, metadata={"help": "Number of retries for failed requests."}
     )
-    pause_generation_clearance_period: float = field(
+    pause_grace_period: float = field(
         default=0.0,
         metadata={
-            "help": "The clearance period after calling pause generation. Wait until all requests have been dropped."
+            "help": "The grace period after calling /pause_generation. Wait until all requests have been dropped."
         },
     )
 

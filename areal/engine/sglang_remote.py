@@ -274,7 +274,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
         # The above http request may require some time to be scheduled and executed.
         # The following line waits until all requests are indeed dropped.
-        time.sleep(self.config.pause_generation_clearance_period)
+        time.sleep(self.config.pause_grace_period)
 
         tik = time.perf_counter()
         fut = Future()
