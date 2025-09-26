@@ -43,7 +43,6 @@ from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
-from areal.utils.redistributor import redistribute
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
@@ -350,11 +349,11 @@ def main(args):
                         should_accept=lambda sample: True,
                     )
                 batch = tensor_container_to(batch, actor.device)
-                batch = redistribute(
-                    batch,
-                    group=actor.data_parallel_group,
-                    granularity=config.n_trajs,
-                ).data
+                # batch = redistribute(
+                #     batch,
+                #     group=actor.data_parallel_group,
+                #     granularity=config.n_trajs,
+                # ).data
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
