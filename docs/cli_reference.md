@@ -72,7 +72,6 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 ### Others
 
 - [Scheduler Configuration](section-scheduler)
-- [vLLM Configuration](section-v-llm)
 
 ______________________________________________________________________
 
@@ -731,29 +730,3 @@ Configuration for worker scheduling. Used in the single-controller mode. Experim
 | `reward_functioncall_config`  | `Dict` | **Required**                        | -           |
 | `reward_model_path`           | string | `""`                                | -           |
 | `reward_model_service_url`    | string | `"http://localhost:30000/classify"` | -           |
-
-(section-v-llm)=
-
-## vLLM Configuration
-
-Configuration for vLLM runtime.
-
-| Parameter                | Type            | Default                                                             | Description |
-| ------------------------ | --------------- | ------------------------------------------------------------------- | ----------- |
-| `model`                  | string          | `""`                                                                | -           |
-| `seed`                   | integer         | `1`                                                                 | -           |
-| `skip_tokenizer_init`    | boolean         | `False`                                                             | -           |
-| `enforce_eager`          | boolean         | `True`                                                              | -           |
-| `dtype`                  | string          | `"bfloat16"`                                                        | -           |
-| `max_num_seqs`           | integer         | `256`                                                               | -           |
-| `block_size`             | integer         | `16`                                                                | -           |
-| `swap_space`             | integer         | `4`                                                                 | -           |
-| `cpu_offload_gb`         | float           | `0`                                                                 | -           |
-| `max_seq_len_to_capture` | integer         | `32768`                                                             | -           |
-| `disable_sliding_window` | boolean         | `True`                                                              | -           |
-| `max_model_len`          | integer \| None | `32768`                                                             | -           |
-| `enable_chunked_prefill` | boolean         | `False`                                                             | -           |
-| `enable_prefix_caching`  | boolean         | `False`                                                             | -           |
-| `gpu_memory_utilization` | float           | `0.9`                                                               | -           |
-| `worker_extension_cls`   | string          | `"areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"` | -           |
-| `enable_sleep_mode`      | boolean         | `False`                                                             | -           |
