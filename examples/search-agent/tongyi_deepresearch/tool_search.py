@@ -103,6 +103,11 @@ class Search(BaseTool):
             return "[Search] Invalid request format: Input must be a JSON object containing 'query' field"
 
         async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(
+                total=30,
+                sock_connect=10,
+                connect=10,
+            ),
             read_bufsize=1024 * 1024 * 10,
             connector=get_default_connector(),
         ) as session:

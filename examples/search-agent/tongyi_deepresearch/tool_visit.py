@@ -81,6 +81,11 @@ class Visit(BaseTool):
         os.makedirs(log_folder, exist_ok=True)
 
         async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(
+                total=30,
+                sock_connect=10,
+                connect=10,
+            ),
             read_bufsize=1024 * 1024 * 10,
             connector=get_default_connector(),
         ) as session:
