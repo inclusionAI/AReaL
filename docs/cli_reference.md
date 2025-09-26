@@ -381,7 +381,7 @@ Configuration for inference servers, including offpolicyness control.
 | `setup_timeout`                     | float           | `120.0`         | Timeout in seconds of connecting to remote servers or launching local servers.                                                                                      |
 | `request_timeout`                   | float           | `3600`          | Timeout for HTTP requests.                                                                                                                                          |
 | `request_retries`                   | integer         | `3`             | Number of retries for failed requests.                                                                                                                              |
-| `pause_generation_clearance_period` | float           | `1.0`           | The clearance period after calling pause generation. Wait until all requests have been dropped.                                                                     |
+| `pause_generation_clearance_period` | float           | `0.0`           | The clearance period after calling pause generation. Wait until all requests have been dropped.                                                                     |
 
 (section-sg-lang)=
 
