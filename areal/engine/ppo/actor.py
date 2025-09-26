@@ -425,10 +425,17 @@ class AdvNorm:
         mean_base_norm = self._calculate_adv_norm(
             *args, calculation_base="mean", **kwargs
         )
-        trajectory_certainty_degree = 0.5
+        success_trajectory_nums = 4
+        total_trajectory_nums = self.group_size
+        trajectory_certainty_degree = success_trajectory_nums / total_trajectory_nums
+
+        trajectory_reweight = 1 - (
+            4 * trajectory_certainty_degree * (1 - trajectory_certainty_degree)
+        )
+
         return (
-            1 - trajectory_certainty_degree
-        ) * deviation_base_norm + trajectory_certainty_degree * mean_base_norm
+            1 - trajectory_reweight
+        ) * deviation_base_norm + trajectory_reweight * mean_base_norm
 
     def _calculate_adv_norm(
         self,

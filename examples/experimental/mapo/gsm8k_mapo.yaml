@@ -1,10 +1,10 @@
-experiment_name: gsm8k-drgrpo
+experiment_name: gsm8k-mapo
 trial_name: trial0
 
 seed: 1
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
-async_training: true
+async_training: false
 
 cluster:
   n_nodes: 1
@@ -14,7 +14,7 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: sglang.d4p1t1+d4p1t1
+allocation_mode: sglang.d1p1t1+d1p1t1
 
 rollout:
   experiment_name: ${experiment_name}
@@ -35,7 +35,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen2.5-1.5B-Instruct
+  path: /mnt/models/Qwen2.5-VL-7B-Instruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: false
@@ -66,8 +66,10 @@ actor:
   dynamic_sampling: false
   adv_norm:
     mean_level: group
-    std_level: none
+    std_level: group
     group_size: ${gconfig.n_samples}
+    aggregation_mode: mix
+
 
 ref:
   experiment_name: ${experiment_name}
