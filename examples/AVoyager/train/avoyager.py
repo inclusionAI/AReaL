@@ -254,6 +254,7 @@ class AVoyagerWorkflow(RolloutWorkflow):
         if all([s==0 for s in scores]):
             return None
         #TODO 9.25 整理image逻辑，sglang使用image path，其他使用PIL.image,对整个arun_episode加一个全家multimodal判断，直接拼接token_ids，标记不同的token_id位置设置loss_mask，logprobs，versions统一构建multimodal
+        #TODO 这里对于search采用了累计的输入输出，即将一个trajs拆分成多个case输入训练，但是minio3中是将一个traj交错的输入输出作为一个case输入训练，采用交错mask，因此我们这里也暂时采用这个简单的方式
         trajs = [traj for _, _, traj, _ in trajs]
         for i, traj_memory in enumerate(trajs):
             seqs = []
