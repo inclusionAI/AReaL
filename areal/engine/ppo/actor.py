@@ -131,14 +131,19 @@ class PPOActor:
             torch.zeros(bs, dtype=torch.float32, device=values.device)
         ]
         lastgaelam = 0
+        nextvalues = values[:, max_seqlen - 1] * seq_no_eos_mask
         for t in reversed(range(max_seqlen - 1)):
-            nextvalues = values[:, t + 1]
-            if t == max_seqlen - 2:
-                nextvalues *= seq_no_eos_mask
             delta = rewards[:, t] + self.discount * nextvalues - values[:, t]
-            lastgaelam = delta + self.discount * self.gae_lambda * lastgaelam
+            newgaelam = delta + self.discount * self.gae_lambda * lastgaelam
+
+            # Skip tokens that do not contribute to the loss
+            mask = loss_mask[:, t]
+            nextvalues = nextvalues * (1 - mask) + values[:, t] * mask
+            lastgaelam = lastgaelam * (1 - mask) + newgaelam * mask
             advantages_reversed.append(lastgaelam)
+
         advantages = torch.stack(advantages_reversed[::-1], dim=1)
+        data["returns"] = advantages + values
 
         # Optionally perform advantage normalization.
         if self.adv_norm is not None:
