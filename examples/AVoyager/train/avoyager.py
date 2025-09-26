@@ -7,6 +7,7 @@ import sys
 import uuid
 import json
 import gc
+from click import prompt
 import torch
 import torch.distributed as dist
 from PIL import Image
@@ -252,7 +253,7 @@ class AVoyagerWorkflow(RolloutWorkflow):
         # logger.info(f"Scores @ qid={qid}: {raw_scores} -> {scores}")
         if all([s==0 for s in scores]):
             return None
-        #TODO 9.25 需要添加收集分类image的逻辑？整理清楚图片流，用路径还是image data
+        #TODO 9.25 整理image逻辑，sglang使用image path，其他使用PIL.image,对整个arun_episode加一个全家multimodal判断，直接拼接token_ids，标记不同的token_id位置设置loss_mask，logprobs，versions统一构建multimodal
         trajs = [traj for _, _, traj, _ in trajs]
         for i, traj_memory in enumerate(trajs):
             seqs = []

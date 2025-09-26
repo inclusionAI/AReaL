@@ -37,13 +37,20 @@ class AgentMemory:
     def filter_records(self, record_type):
         return [r for r in self.memory if r.type == record_type]
     
+    def prepare_image_list(self):
+        image_list = []
+        for r in self.memory:
+            if r.images is not None:
+                image_list.extend(r.images)
+        return image_list
+    
     def prepare_prompt(self):
         prompt = ""
         for r in self.memory:
             if r.type == "prompt":
                 prompt = r.text
             elif r.type in ["grounding"]: #grounding is an image-based tool call, so prompt=grounding_system_prompt (we have packed text in tool)
-                prompt =  prompt + "\n\n" + r.text +"\n\n"
+                prompt =  prompt + r.text 
             elif r.type == "llm_gen":
                 prompt = prompt + r.text
             else:
