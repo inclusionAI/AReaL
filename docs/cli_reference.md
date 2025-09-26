@@ -367,20 +367,21 @@ Controls text generation behavior for rollout.
 
 Configuration for inference servers, including offpolicyness control.
 
-| Parameter                 | Type            | Default         | Description                                                                                                                                                         |
-| ------------------------- | --------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `experiment_name`         | string \| None  | `None`          | -                                                                                                                                                                   |
-| `trial_name`              | string \| None  | `None`          | -                                                                                                                                                                   |
-| `max_concurrent_rollouts` | integer \| None | `None`          | Maximum number of concurrent rollouts to the inference engine. Defaults to consumer_batch_size.                                                                     |
-| `queue_size`              | integer \| None | `None`          | Input/Output queue size for async rollout.                                                                                                                          |
-| `consumer_batch_size`     | integer         | `1`             | Batch size for consuming rollouts from the queue.                                                                                                                   |
-| `max_head_offpolicyness`  | integer         | `0`             | Maximum off-policyness for the head. If the current version is more than this many versions behind, the request will not be accepted.                               |
-| `enable_rollout_tracing`  | boolean         | `False`         | Whether to output verbose tracing messages for each generation request.                                                                                             |
-| `check_trajectory_format` | boolean         | `False`         | Whether to check the format of produced trajectories of a customized workflow. Useful when debugging the workflow in isolation. Should be False during RL training. |
-| `schedule_policy`         | string          | `"round_robin"` | Request scheduling policy **Choices:** `round_robin`                                                                                                                |
-| `setup_timeout`           | float           | `120.0`         | Timeout in seconds of connecting to remote servers or launching local servers.                                                                                      |
-| `request_timeout`         | float           | `3600`          | Timeout for HTTP requests.                                                                                                                                          |
-| `request_retries`         | integer         | `3`             | Number of retries for failed requests.                                                                                                                              |
+| Parameter                           | Type            | Default         | Description                                                                                                                                                         |
+| ----------------------------------- | --------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `experiment_name`                   | string \| None  | `None`          | -                                                                                                                                                                   |
+| `trial_name`                        | string \| None  | `None`          | -                                                                                                                                                                   |
+| `max_concurrent_rollouts`           | integer \| None | `None`          | Maximum number of concurrent rollouts to the inference engine. Defaults to consumer_batch_size.                                                                     |
+| `queue_size`                        | integer \| None | `None`          | Input/Output queue size for async rollout.                                                                                                                          |
+| `consumer_batch_size`               | integer         | `1`             | Batch size for consuming rollouts from the queue.                                                                                                                   |
+| `max_head_offpolicyness`            | integer         | `0`             | Maximum off-policyness for the head. If the current version is more than this many versions behind, the request will not be accepted.                               |
+| `enable_rollout_tracing`            | boolean         | `False`         | Whether to output verbose tracing messages for each generation request.                                                                                             |
+| `check_trajectory_format`           | boolean         | `False`         | Whether to check the format of produced trajectories of a customized workflow. Useful when debugging the workflow in isolation. Should be False during RL training. |
+| `schedule_policy`                   | string          | `"round_robin"` | Request scheduling policy **Choices:** `round_robin`                                                                                                                |
+| `setup_timeout`                     | float           | `120.0`         | Timeout in seconds of connecting to remote servers or launching local servers.                                                                                      |
+| `request_timeout`                   | float           | `3600`          | Timeout for HTTP requests.                                                                                                                                          |
+| `request_retries`                   | integer         | `3`             | Number of retries for failed requests.                                                                                                                              |
+| `pause_generation_clearance_period` | float           | `1.0`           | The clearance period after calling pause generation. Wait until all requests have been dropped.                                                                     |
 
 (section-sg-lang)=
 

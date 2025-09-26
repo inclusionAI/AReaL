@@ -519,11 +519,12 @@ class SGLangConfig:
         node_rank: int = 0,
     ):
         # Map "all-linear" to "all"
-        if sglang_config.lora_target_modules:
-            sglang_config.lora_target_modules = [
-                x.replace("-linear", "") for x in sglang_config.lora_target_modules
-            ]
         args: Dict = conf_as_dict(sglang_config)
+        # Map "all-linear" to "all"
+        if "lora_target_modules" in args and args["lora_target_modules"]:
+            args["lora_target_modules"] = [
+                x.replace("-linear", "") for x in args["lora_target_modules"]
+            ]
         args = dict(
             host=host,
             port=port,
@@ -604,6 +605,12 @@ class InferenceEngineConfig:
     )
     request_retries: int = field(
         default=3, metadata={"help": "Number of retries for failed requests."}
+    )
+    pause_generation_clearance_period: float = field(
+        default=1.0,
+        metadata={
+            "help": "The clearance period after calling pause generation. Wait until all requests have been dropped."
+        },
     )
 
 
