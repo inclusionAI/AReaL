@@ -119,7 +119,7 @@ valid_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path:  openai/gsm8k
+  path: openai/gsm8k
   type: rl
 
 # Utilities
