@@ -479,14 +479,12 @@ class MegatronEngine(TrainEngine):
             # if not self._is_pp_src_rank:
             #     continue
 
-            print(
-                f"Processing param {name} with shape {param.shape} and type(param)={type(param)}"
+            converted_named_tensors = convert_to_hf(
+                self.tf_config, self.hf_config.model_type, name, param
             )
 
-            convert_to_hf(self.tf_config, self.hf_config.model_type, name, param)
-
             print(
-                f"convert_to_hf param {name} with shape {param.shape} and type(param)={type(param)}"
+                f"Processing param {name} with shape {param.shape}, converted_named_tensors = {converted_named_tensors}"
             )
 
             # param_specs.append(
