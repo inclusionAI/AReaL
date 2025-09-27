@@ -209,8 +209,8 @@ class Visit(BaseTool):
     async def html_readpage_jina(self, url: str) -> str:
         max_attempts = 8
         for attempt in range(max_attempts):
-            content = await self.jina_readpage(url)
             print(f"html_readpage_jina {url} attempt {attempt+1}/{max_attempts}")
+            content = await self.jina_readpage(url)
             print(f"html_readpage_jina content: {content}")
             if (
                 content
