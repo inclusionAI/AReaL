@@ -293,7 +293,7 @@ class Visit(BaseTool):
         # print(f"Parsed raw_obj: {raw_obj}")
 
         if raw_obj is None:
-            useful_information += f"The provided webpage content: {_content[:1000]}"
+            useful_information = f"The provided webpage content: {_content[:1000]}"
             return useful_information
 
         useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
