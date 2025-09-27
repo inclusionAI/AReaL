@@ -139,7 +139,6 @@ class Visit(BaseTool):
             client = self._llm_client
             summary_args = dict(
                 messages=msgs,
-                max_tokens=32768,
                 temperature=0.7,
             )
         os.environ.get("SUMMARY_MODEL_NAME", "")
@@ -268,6 +267,8 @@ class Visit(BaseTool):
         if isinstance(raw, str):
             raw = raw.replace("```json", "").replace("```", "").strip()
 
+        print("Final raw response:", raw)
+
         parse_retry_times = 0
         while parse_retry_times < 3:
             try:
@@ -278,6 +279,8 @@ class Visit(BaseTool):
                 parse_retry_times += 1
         else:
             raw_obj = None
+
+        print(f"Parsed raw_obj: {raw_obj}")
 
         if raw_obj is None:
             useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
