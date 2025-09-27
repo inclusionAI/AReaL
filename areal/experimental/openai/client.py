@@ -77,6 +77,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         top_p: Optional[float] | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
         use_chat_template: bool = True,
+        messages_delimiter_start: str = "<|im_start|>",
+        messages_delimiter_end: str = "<|im_end|>",
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
         # Extract and validate supported parameters
@@ -96,12 +98,12 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 **extra_body.get("chat_template_kwargs", {}),
             )
         else:
+            # By default, follows Qwen3 chat template.
+            start, end = messages_delimiter_start, messages_delimiter_end
             message_strs = []
             for msg in messages_list:
-                message_strs.append(
-                    f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
-                )
-            message_strs.append("<|im_start|>assistant\n<|im_start|>")
+                message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
+            message_strs.append(f"{start}assistant\n")
             prompt_token_ids = self.tokenizer.encode("".join(message_strs))
 
         temp = 1.0 if temperature is NOT_GIVEN else (temperature or 0.0)
