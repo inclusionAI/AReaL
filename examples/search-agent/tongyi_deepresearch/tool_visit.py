@@ -59,20 +59,20 @@ class Visit(BaseTool):
     # The `call` method is the main function of the tool.
     def __init__(self, cfg: Optional[dict] = None, summary_client=None):
         super().__init__(cfg)
-        self._session: Optional[aiohttp.ClientSession] = None
-        self._llm_client = None
+        # self._session: Optional[aiohttp.ClientSession] = None
+        self._llm_client = summary_client
         self.setupd = False
 
-    async def setup_tool(self):
-        if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=60)
-            self._session = aiohttp.ClientSession(timeout=timeout)
-            self.setupd = True
+    # async def setup_tool(self):
+    #     if self._session is None or self._session.closed:
+    #         timeout = aiohttp.ClientTimeout(total=60)
+    #         self._session = aiohttp.ClientSession(timeout=timeout)
+    #         self.setupd = True
 
-    async def destory_tool(self):
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self.setupd = False
+    # async def destory_tool(self):
+    #     if self._session and not self._session.closed:
+    #         await self._session.close()
+    #         self.setupd = False
 
     async def call(self, params: Union[str, dict], **kwargs) -> str:  # type: ignore[override]
         try:
@@ -176,30 +176,33 @@ class Visit(BaseTool):
         timeout = 50
         assert self.setupd
         print(f"entering jina_readpage url: {url}, jina_api_keys={JINA_API_KEYS}")
-        for attempt in range(max_retries):
-            headers = {"Authorization": f"Bearer {JINA_API_KEYS}"}
-            try:
-                async with self._session.get(  # type: ignore[union-attr]
-                    f"https://r.jina.ai/{url}", headers=headers, timeout=timeout
-                ) as response:
-                    if response.status == 200:
-                        webpage_content = await response.text()
+        async with aiohttp.ClientSession() as session:
+            for attempt in range(max_retries):
+                headers = {"Authorization": f"Bearer {JINA_API_KEYS}"}
+                try:
+                    async with session.get(  # type: ignore[union-attr]
+                        f"https://r.jina.ai/{url}", headers=headers, timeout=timeout
+                    ) as response:
+                        if response.status == 200:
+                            webpage_content = await response.text()
+                            print(
+                                f"jina_readpage {url} success, webpage length: {len(webpage_content)}"
+                            )
+                            return webpage_content
+                        else:
+                            text = await response.text()
+                            print(
+                                f"jina_readpage {url} failed with status {response.status}, response: {text}"
+                            )
+                            raise ValueError("jina readpage error")
+                except Exception as e:
+                    print(f"jina_readpage {url} failed with error {e}")
+                    if attempt == max_retries - 1:
                         print(
-                            f"jina_readpage {url} success, webpage length: {len(webpage_content)}"
+                            f"jina_readpage {url} failed after {max_retries} attempts"
                         )
-                        return webpage_content
-                    else:
-                        text = await response.text()
-                        print(
-                            f"jina_readpage {url} failed with status {response.status}, response: {text}"
-                        )
-                        raise ValueError("jina readpage error")
-            except Exception as e:
-                print(f"jina_readpage {url} failed with error {e}")
-                if attempt == max_retries - 1:
-                    print(f"jina_readpage {url} failed after {max_retries} attempts")
-                    return "[visit] Failed to read page."
-                await asyncio.sleep(0.5)
+                        return "[visit] Failed to read page."
+                    await asyncio.sleep(0.5)
 
         return "[visit] Failed to read page."
 

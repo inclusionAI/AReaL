@@ -27,19 +27,19 @@ class Search(BaseTool):
 
     def __init__(self, cfg: Optional[dict] = None):
         super().__init__(cfg)
-        self._session: Optional[aiohttp.ClientSession] = None
+        # self._session: Optional[aiohttp.ClientSession] = None
         self.setupd = False
 
-    async def setup_tool(self):
-        if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=30)
-            self._session = aiohttp.ClientSession(timeout=timeout)
-            self.setupd = True
+    # async def setup_tool(self):
+    #     if self._session is None or self._session.closed:
+    #         timeout = aiohttp.ClientTimeout(total=30)
+    #         self._session = aiohttp.ClientSession(timeout=timeout)
+    #         self.setupd = True
 
-    async def destory_tool(self):
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self.setupd = False
+    # async def destory_tool(self):
+    #     if self._session and not self._session.closed:
+    #         await self._session.close()
+    #         self.setupd = False
 
     async def google_search_with_serp(self, query: str):
         assert self.setupd
@@ -55,46 +55,53 @@ class Search(BaseTool):
         headers = {"X-API-KEY": SERPER_KEY or "", "Content-Type": "application/json"}
 
         last_exc = None
-        for attempt in range(5):
-            try:
-                async with self._session.post(
-                    "https://google.serper.dev/search", json=payload, headers=headers
-                ) as resp:
-                    text = await resp.text()
-                    try:
-                        results = json.loads(text)
-                    except Exception:
-                        return f"[Search] Failed to parse response for '{query}'."
+        async with aiohttp.ClientSession() as session:
+            for attempt in range(5):
+                try:
+                    async with session.post(
+                        "https://google.serper.dev/search",
+                        json=payload,
+                        headers=headers,
+                    ) as resp:
+                        text = await resp.text()
+                        try:
+                            results = json.loads(text)
+                        except Exception:
+                            return f"[Search] Failed to parse response for '{query}'."
 
-                    if "organic" not in results:
-                        return f"No results found for query: '{query}'. Use a less specific query."  # noqa: E501
+                        if "organic" not in results:
+                            return f"No results found for query: '{query}'. Use a less specific query."  # noqa: E501
 
-                    web_snippets = []
-                    for idx, page in enumerate(results.get("organic", []), start=1):
-                        date_published = (
-                            f"\nDate published: {page['date']}"
-                            if page.get("date")
-                            else ""
-                        )
-                        source = (
-                            f"\nSource: {page['source']}" if page.get("source") else ""
-                        )
-                        snippet = f"\n{page['snippet']}" if page.get("snippet") else ""
-                        redacted_version = f"{idx}. [{page.get('title','')}]({page.get('link','')}){date_published}{source}\n{snippet}"
-                        redacted_version = redacted_version.replace(
-                            "Your browser can't play this video.", ""
-                        )
-                        web_snippets.append(redacted_version)
+                        web_snippets = []
+                        for idx, page in enumerate(results.get("organic", []), start=1):
+                            date_published = (
+                                f"\nDate published: {page['date']}"
+                                if page.get("date")
+                                else ""
+                            )
+                            source = (
+                                f"\nSource: {page['source']}"
+                                if page.get("source")
+                                else ""
+                            )
+                            snippet = (
+                                f"\n{page['snippet']}" if page.get("snippet") else ""
+                            )
+                            redacted_version = f"{idx}. [{page.get('title','')}]({page.get('link','')}){date_published}{source}\n{snippet}"
+                            redacted_version = redacted_version.replace(
+                                "Your browser can't play this video.", ""
+                            )
+                            web_snippets.append(redacted_version)
 
-                    content = (
-                        f"A Google search for '{query}' found {len(web_snippets)} results:\n\n## Web Results\n"
-                        + "\n\n".join(web_snippets)
-                    )
-                    return content
-            except Exception as e:
-                last_exc = e
-                await asyncio.sleep(0.5)
-                continue
+                        content = (
+                            f"A Google search for '{query}' found {len(web_snippets)} results:\n\n## Web Results\n"
+                            + "\n\n".join(web_snippets)
+                        )
+                        return content
+                except Exception as e:
+                    last_exc = e
+                    await asyncio.sleep(0.5)
+                    continue
 
         return f"Google search Timeout or error ({last_exc}); return None, Please try again later."  # noqa: E501
 

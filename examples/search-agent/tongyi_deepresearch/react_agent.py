@@ -121,8 +121,8 @@ class MultiTurnReactAgent(FnCallAgent):
     async def run_agent(
         self, data, client: ArealOpenAI, save_path: str | None = None
     ) -> List[List[Message]]:
-        for tool in self.tool_class:
-            await tool.setup_tool()
+        # for tool in self.tool_class:
+        #     await tool.setup_tool()
         start_time = time.time()
         data["qid"]
         question = data["question"]
@@ -271,8 +271,8 @@ class MultiTurnReactAgent(FnCallAgent):
                 json.dump(to_dump, f, ensure_ascii=False, indent=4)
             print(f"Result dumped to {save_path}")
 
-        for tool in self.tool_class:
-            await tool.destory_tool()
+        # for tool in self.tool_class:
+        #     await tool.destory_tool()
         return result
 
     async def custom_call_tool(self, tool_name: str, tool_args: dict, **kwargs):
