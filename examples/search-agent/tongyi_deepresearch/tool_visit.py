@@ -140,7 +140,6 @@ class Visit(BaseTool):
                 messages=msgs,
                 temperature=0.7,
             )
-        os.environ.get("SUMMARY_MODEL_NAME", "")
         for attempt in range(max_retries):
             try:
                 chat_response = await client.chat.completions.create(**summary_args)
