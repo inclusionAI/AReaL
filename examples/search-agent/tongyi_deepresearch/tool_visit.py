@@ -183,14 +183,20 @@ class Visit(BaseTool):
                 ) as response:
                     if response.status == 200:
                         webpage_content = await response.text()
+                        print(
+                            f"jina_readpage {url} success, webpage length: {len(webpage_content)}"
+                        )
                         return webpage_content
                     else:
                         text = await response.text()
-                        print(text)
+                        print(
+                            f"jina_readpage {url} failed with status {response.status}, response: {text}"
+                        )
                         raise ValueError("jina readpage error")
             except Exception:
                 await asyncio.sleep(0.5)
                 if attempt == max_retries - 1:
+                    print(f"jina_readpage {url} failed after {max_retries} attempts")
                     return "[visit] Failed to read page."
 
         return "[visit] Failed to read page."
