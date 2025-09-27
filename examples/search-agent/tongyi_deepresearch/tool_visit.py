@@ -193,11 +193,12 @@ class Visit(BaseTool):
                             f"jina_readpage {url} failed with status {response.status}, response: {text}"
                         )
                         raise ValueError("jina readpage error")
-            except Exception:
-                await asyncio.sleep(0.5)
+            except Exception as e:
+                print(f"jina_readpage {url} failed with error {e}")
                 if attempt == max_retries - 1:
                     print(f"jina_readpage {url} failed after {max_retries} attempts")
                     return "[visit] Failed to read page."
+                await asyncio.sleep(0.5)
 
         return "[visit] Failed to read page."
 
