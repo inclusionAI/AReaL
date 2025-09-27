@@ -61,7 +61,7 @@ def parse_judge_result(raw_response):
         mbe = dict(judgement="correct")
     if mbe is None:
         # print(f"[WARNING] Unknown judge result: {[raw_response]}")
-        print(f"[WARNING] Unknown judge result: {raw_response}")
+        print(f"[WARNING] Unknown judge result")
         mbe = dict(judgement="unknown")
     score = float("judgement" in mbe and mbe["judgement"] == "correct")
     return score
@@ -82,7 +82,7 @@ class MultiTurnReactAgent(FnCallAgent):
         self.max_total_tokens = max_total_tokens
         self.max_total_tokens_before_finishing = int(max_total_tokens * 0.8)
         self.judge_client = judge_client
-        self.tool_class = [Visit(), Search()]
+        self.tool_class = [Visit(summary_client=self.judge_client), Search()]
         self.tool_map = {tool.name: tool for tool in self.tool_class}
 
     def count_tokens(self, messages):

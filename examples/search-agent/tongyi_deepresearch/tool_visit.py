@@ -57,9 +57,10 @@ class Visit(BaseTool):
     }
 
     # The `call` method is the main function of the tool.
-    def __init__(self, cfg: Optional[dict] = None):
+    def __init__(self, cfg: Optional[dict] = None, summary_client=None):
         super().__init__(cfg)
         self._session: Optional[aiohttp.ClientSession] = None
+        self._llm_client = None
         self.setupd = False
 
     async def setup_tool(self):
@@ -121,19 +122,30 @@ class Visit(BaseTool):
         return response.strip()
 
     async def call_server(self, msgs, max_retries=2):
-        api_key = os.environ.get("API_KEY")
-        url_llm = os.environ.get("API_BASE")
-        model_name = os.environ.get("SUMMARY_MODEL_NAME", "")
-        client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=url_llm,
-        )
+        if not self._llm_client:
+            api_key = os.environ.get("API_KEY")
+            url_llm = os.environ.get("API_BASE")
+            model_name = os.environ.get("SUMMARY_MODEL_NAME", "")
+            client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=url_llm,
+            )
+            summary_args = dict(
+                model=model_name,
+                messages=msgs,
+                temperature=0.7,
+            )
+        else:
+            client = self._llm_client
+            summary_args = dict(
+                messages=msgs,
+                max_tokens=32768,
+                temperature=0.7,
+            )
         os.environ.get("SUMMARY_MODEL_NAME", "")
         for attempt in range(max_retries):
             try:
-                chat_response = await client.chat.completions.create(
-                    model=model_name, messages=msgs, temperature=0.7
-                )
+                chat_response = await client.chat.completions.create(**summary_args)
                 content = chat_response.choices[0].message.content
                 if content:
                     try:
