@@ -121,8 +121,6 @@ class MultiTurnReactAgent(FnCallAgent):
     async def run_agent(
         self, data, client: ArealOpenAI, save_path: str | None = None
     ) -> List[List[Message]]:
-        # for tool in self.tool_class:
-        #     await tool.setup_tool()
         start_time = time.time()
         data["qid"]
         question = data["question"]
@@ -161,10 +159,6 @@ class MultiTurnReactAgent(FnCallAgent):
             num_llm_calls_available -= 1
             completion, content = await self.call_server(client, messages)
             completions.append(completion)
-            # print(f"Round {round}: {content}")
-            # if "<tool_response>" in content:
-            #     pos = content.find("<tool_response>")
-            #     content = content[:pos]
             messages.append({"role": "assistant", "content": content})
             if "<tool_call>" in content and "</tool_call>" in content:
                 tool_call = content.split("<tool_call>")[1].split("</tool_call>")[0]
@@ -198,10 +192,12 @@ class MultiTurnReactAgent(FnCallAgent):
 
             max_tokens = self.max_total_tokens_before_finishing
             token_count = self.count_tokens(messages)
-            print(f"QID {data['qid']} Round: {round}, token count: {token_count}")
+            print(f">>> QID {data['qid']} Round: {round}, token count: {token_count}")
 
             if token_count > max_tokens:
-                print(f"Token quantity exceeds the limit: {token_count} > {max_tokens}")
+                print(
+                    f">>> QID {data['qid']} Token quantity exceeds the limit: {token_count} > {max_tokens}"
+                )
                 # messages[-1][
                 #     "content"
                 # ] = "You have now reached the maximum context length you can handle. You should stop making tool calls and, based on all the information above, think again and provide what you consider the most likely answer in the following format:<think>your final thinking</think>\n<answer>your answer</answer>"
@@ -270,9 +266,6 @@ class MultiTurnReactAgent(FnCallAgent):
             with open(save_path, "w", encoding="utf-8") as f:
                 json.dump(to_dump, f, ensure_ascii=False, indent=4)
             print(f"Result dumped to {save_path}")
-
-        # for tool in self.tool_class:
-        #     await tool.destory_tool()
         return result
 
     async def custom_call_tool(self, tool_name: str, tool_args: dict, **kwargs):

@@ -27,18 +27,6 @@ class Search(BaseTool):
 
     def __init__(self, cfg: Optional[dict] = None):
         super().__init__(cfg)
-        # self._session: Optional[aiohttp.ClientSession] = None
-
-    # async def setup_tool(self):
-    #     if self._session is None or self._session.closed:
-    #         timeout = aiohttp.ClientTimeout(total=30)
-    #         self._session = aiohttp.ClientSession(timeout=timeout)
-    #         self.setupd = True
-
-    # async def destory_tool(self):
-    #     if self._session and not self._session.closed:
-    #         await self._session.close()
-    #         self.setupd = False
 
     async def google_search_with_serp(self, query: str):
         def contains_chinese_basic(text: str) -> bool:

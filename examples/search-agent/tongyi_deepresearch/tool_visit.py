@@ -60,19 +60,7 @@ class Visit(BaseTool):
     # The `call` method is the main function of the tool.
     def __init__(self, cfg: Optional[dict] = None, summary_client=None):
         super().__init__(cfg)
-        # self._session: Optional[aiohttp.ClientSession] = None
         self._llm_client = summary_client
-
-    # async def setup_tool(self):
-    #     if self._session is None or self._session.closed:
-    #         timeout = aiohttp.ClientTimeout(total=60)
-    #         self._session = aiohttp.ClientSession(timeout=timeout)
-    #         self.setupd = True
-
-    # async def destory_tool(self):
-    #     if self._session and not self._session.closed:
-    #         await self._session.close()
-    #         self.setupd = False
 
     async def call(self, params: Union[str, dict], **kwargs) -> str:  # type: ignore[override]
         try:
@@ -209,7 +197,6 @@ class Visit(BaseTool):
         for attempt in range(max_attempts):
             print(f"html_readpage_jina {url} attempt {attempt+1}/{max_attempts}")
             content = await self.jina_readpage(url)
-            # print(f"html_readpage_jina content: {content}")
             if (
                 content
                 and not content.startswith("[visit] Failed to read page.")
