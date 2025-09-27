@@ -90,6 +90,7 @@ def masked_normalization(
     high_precision=True,
     all_reduce=True,
     reduce_group=None,
+    calculation_base: str = "deviation",
 ):
     dtype = torch.float64 if high_precision else torch.float32
     x = x.to(dtype)
@@ -118,7 +119,17 @@ def masked_normalization(
     var = meansq - mean**2
     if unbiased:
         var *= factor / (factor - 1)
-    return ((x - mean) / (var.sqrt() + eps)).float()
+    assert calculation_base in [
+        "mean",
+        "deviation",
+    ], "calculation_base must be either mean or deviation"
+
+    std = var.sqrt() + eps
+    base = std if calculation_base == "deviation" else mean
+    # Ensure stability
+    base += eps
+    # Normalize
+    return (x - mean) / base.float()
 
 
 def ppo_actor_loss_fn(

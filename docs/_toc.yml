@@ -40,6 +40,7 @@ parts:
     - file: algorithms/dapo
     - file: algorithms/dr.GRPO
     - file: algorithms/litePPO
+    - file: algorithms/mapo
   - caption: Customization (Legacy)
     chapters:
     - file: legacy/customization/dataset

@@ -14,7 +14,7 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: sglang.d1p1t1+d1p1t1
+allocation_mode: sglang.d4p1t1+d4p1t1
 
 rollout:
   experiment_name: ${experiment_name}
@@ -35,7 +35,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /mnt/models/Qwen2.5-VL-7B-Instruct
+  path: Qwen/Qwen2.5-1.5B-Instruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: false
@@ -95,7 +95,7 @@ sglang:
 
 # datasets
 train_dataset:
-  batch_size: 64
+  batch_size: 256
   shuffle: true
   pin_memory: true
   num_workers: 4

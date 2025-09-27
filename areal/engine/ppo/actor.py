@@ -423,7 +423,12 @@ class AdvNorm:
         advantages = kwargs["advantages"]
 
         # Calculate the unique number of elements in advantages Tensor，exclude element of 0 (because 0 means adv over pad_token)
-        unique_elements = torch.unique(advantages[advantages != 0]).numel()
+        unique_elements = torch.unique(advantages[advantages != 0])
+        # the 'unique_upper_value' means the reward of success trajectory
+        unique_upper_value, unique_lower_value = max(unique_elements), min(
+            unique_elements
+        )
+        unique_elements = unique_elements.numel()
 
         assert unique_elements <= 2, (
             f"The MAPO only support reward modeling in a binary, but detected {unique_elements} unique elements in advantages Tensor. Please check: "
@@ -440,7 +445,7 @@ class AdvNorm:
             *args, calculation_base="mean", **kwargs
         )
 
-        bs, max_token = advantages.shape[0], advantages.shape[-1]
+        bs, max_token = int(advantages.shape[0] / self.group_size), advantages.shape[-1]
 
         # since the advantages is same within same trajectory, we can ge the trajectory_level advantage from first token
         advantages_ = advantages[:, 0]  # advantages shape [batch_size*group_size]
@@ -449,25 +454,33 @@ class AdvNorm:
         )  # advantages shape [batch_size, group_size]
 
         # the number of sucess trajectory within each group and batch
-        success_trajectory_nums_per_group = (advantages_ > 0).sum(
+        success_trajectory_nums_per_group = (advantages_ == unique_upper_value).sum(
             dim=1
         )  # success_trajectory_nums shape [batch_size]
         # the number of total trajectory within each group
-        total_trajectory_nums_per_group = advantages_.shape[
-            0
-        ]  # total_trajectory_nums shape [batch_size]
+        total_trajectory_nums_per_group = torch.tensor([self.group_size] * bs).to(
+            device=success_trajectory_nums_per_group.device,
+            dtype=success_trajectory_nums_per_group.dtype,
+        )  # total_trajectory_nums shape [batch_size]
         # the probability of success trajectory within each group and batch
-        trajectory_certainty_degree = success_trajectory_nums / total_trajectory_nums
+        trajectory_certainty_degree = (
+            success_trajectory_nums_per_group / total_trajectory_nums_per_group
+        )
 
-        # trajectory_reweight shape [batch_size, group_size]
+        # trajectory_reweight shape [batch_size], represent the reweight of
         trajectory_reweight = 1 - (
             4 * trajectory_certainty_degree * (1 - trajectory_certainty_degree)
         )
         # trajectory_reweight shape to expand each_token of advantages
-        # trajectory_reweight shape [batch_size*group_size, max_token]
-        trajectory_reweight = trajectory_reweight.expand(-1, max_token)
-
+        # trajectory_reweight [batch_size]->[batch_size*group_size]->[batch_size*group_size, max_token],each trajectory has same reweight for each token.
+        # i.e. trajectory_reweight granularity: group-level-> trajectory-level->token-level
+        trajectory_reweight = (
+            trajectory_reweight.repeat_interleave(self.group_size)
+            .unsqueeze(-1)
+            .expand(-1, max_token)
+        )
         # in this case 'trajectory_reweight' & 'deviation_base_norm' & 'mean_base_norm' have the same granularity
+        # torch auto broadcasting will automatically expand the dimension to do the calculation
         return (
             1 - trajectory_reweight
         ) * deviation_base_norm + trajectory_reweight * mean_base_norm
@@ -511,10 +524,13 @@ class AdvNorm:
                     high_precision=high_precision,
                     all_reduce=True,  # follow original code
                     reduce_group=reduce_group,
+                    calculation_base=calculation_base,
                 )
-            else:  # group or none
+            else:
+                # sub_case 1: both std and mean are none
                 if self.mean_level == "none":
                     return advantages.float()
+                # sub_case 2: both std and mean are group
                 adv_list = []
                 for i in range(0, bs // self.group_size):
                     s = slice(i * self.group_size, (i + 1) * self.group_size)
@@ -529,16 +545,12 @@ class AdvNorm:
                             high_precision=high_precision,
                             all_reduce=False,  # follow original code
                             reduce_group=reduce_group,
+                            calculation_base=calculation_base,
                         )
                     )
                 return torch.cat(adv_list, 0)
 
         # Cases: mean and std levels differ, or std_level is None
-
-        # Early return for no normalization case
-        if self.mean_level == "none" and self.std_level == "none":
-            return advantages.float()
-
         # Step 1: Compute mean
         if self.mean_level == "batch":
             mean = self._compute_mean(

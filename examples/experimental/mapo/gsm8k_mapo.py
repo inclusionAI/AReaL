@@ -22,9 +22,6 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 
-# debugpy.listen(("localhost", 5678))
-# debugpy.wait_for_client()
-
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
     from areal.reward.math_parser import process_results
