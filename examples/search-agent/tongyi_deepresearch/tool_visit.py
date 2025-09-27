@@ -202,13 +202,13 @@ class Visit(BaseTool):
         summary_page_func = self.call_server
         max_retries = int(os.getenv("VISIT_SERVER_MAX_RETRIES", 1))
         content = await self.html_readpage_jina(url)
-
         valid_content = (
             content
             and not content.startswith("[visit] Failed to read page.")
             and content != "[visit] Empty content."
             and not content.startswith("[document_parser]")
         )
+        print(f"readpage_jina content: {content}, valid_content: {valid_content}")
         if not valid_content:
             useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
                 url=url, goal=goal
@@ -291,4 +291,5 @@ class Visit(BaseTool):
         if len(useful_information) < 10 and summary_retries < 0:
             print("[visit] Could not generate valid summary after maximum retries")
             useful_information = "[visit] Failed to read page"
+        print(f"Final useful_information: {useful_information}")
         return useful_information
