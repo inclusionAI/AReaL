@@ -93,6 +93,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
             max_tokens_per_turn=self.gconfig.max_new_tokens,
             max_llm_calls_per_run=max_llm_calls_per_run,
             max_total_tokens=max_tokens,
+            judge_client=self.judge_client,
         )
 
     async def arun_episode(self, engine, data):
@@ -127,7 +128,6 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
                 ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
                 for _ in range(self.n_trajs)
             ]
-            judge_client = self.judge_client
 
             # Collect trajectories
             outputs = await asyncio.gather(
@@ -135,7 +135,6 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
                     self.agent.make_trajectory(
                         data=data,
                         client=clients[i],
-                        judge_client=judge_client,
                         save_path=save_traj_path.format(traj_id=i),
                     )
                     for i in range(self.n_trajs)

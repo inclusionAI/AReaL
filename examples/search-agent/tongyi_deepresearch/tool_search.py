@@ -1,8 +1,9 @@
-import http.client
+import asyncio
 import json
 import os
 from typing import List, Optional, Union
 
+import aiohttp
 from qwen_agent.tools.base import BaseTool, register_tool
 
 SERPER_KEY = os.environ.get("SERPER_KEY_ID")
@@ -26,95 +27,90 @@ class Search(BaseTool):
 
     def __init__(self, cfg: Optional[dict] = None):
         super().__init__(cfg)
+        self._session: Optional[aiohttp.ClientSession] = None
+        self.setupd = False
 
-    def google_search_with_serp(self, query: str):
+    async def setup_tool(self):
+        if self._session is None or self._session.closed:
+            timeout = aiohttp.ClientTimeout(total=30)
+            self._session = aiohttp.ClientSession(timeout=timeout)
+            self.setupd = True
+
+    async def destory_tool(self):
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self.setupd = False
+
+    async def google_search_with_serp(self, query: str):
+        assert self.setupd
+
         def contains_chinese_basic(text: str) -> bool:
             return any("\u4e00" <= char <= "\u9fff" for char in text)
 
-        conn = http.client.HTTPSConnection("google.serper.dev")
         if contains_chinese_basic(query):
-            payload = json.dumps(
-                {"q": query, "location": "China", "gl": "cn", "hl": "zh-cn"}
-            )
-
+            payload = {"q": query, "location": "China", "gl": "cn", "hl": "zh-cn"}
         else:
-            payload = json.dumps(
-                {"q": query, "location": "United States", "gl": "us", "hl": "en"}
-            )
-        headers = {"X-API-KEY": SERPER_KEY, "Content-Type": "application/json"}
+            payload = {"q": query, "location": "United States", "gl": "us", "hl": "en"}
 
-        for i in range(5):
+        headers = {"X-API-KEY": SERPER_KEY or "", "Content-Type": "application/json"}
+
+        last_exc = None
+        for attempt in range(5):
             try:
-                conn.request("POST", "/search", payload, headers)
-                res = conn.getresponse()
-                break
-            except Exception as e:
-                print(e)
-                if i == 4:
-                    return (
-                        f"Google search Timeout, return None, Please try again later."
+                async with self._session.post(
+                    "https://google.serper.dev/search", json=payload, headers=headers
+                ) as resp:
+                    text = await resp.text()
+                    try:
+                        results = json.loads(text)
+                    except Exception:
+                        return f"[Search] Failed to parse response for '{query}'."
+
+                    if "organic" not in results:
+                        return f"No results found for query: '{query}'. Use a less specific query."  # noqa: E501
+
+                    web_snippets = []
+                    for idx, page in enumerate(results.get("organic", []), start=1):
+                        date_published = (
+                            f"\nDate published: {page['date']}"
+                            if page.get("date")
+                            else ""
+                        )
+                        source = (
+                            f"\nSource: {page['source']}" if page.get("source") else ""
+                        )
+                        snippet = f"\n{page['snippet']}" if page.get("snippet") else ""
+                        redacted_version = f"{idx}. [{page.get('title','')}]({page.get('link','')}){date_published}{source}\n{snippet}"
+                        redacted_version = redacted_version.replace(
+                            "Your browser can't play this video.", ""
+                        )
+                        web_snippets.append(redacted_version)
+
+                    content = (
+                        f"A Google search for '{query}' found {len(web_snippets)} results:\n\n## Web Results\n"
+                        + "\n\n".join(web_snippets)
                     )
+                    return content
+            except Exception as e:
+                last_exc = e
+                await asyncio.sleep(0.5)
                 continue
 
-        data = res.read()
-        results = json.loads(data.decode("utf-8"))
+        return f"Google search Timeout or error ({last_exc}); return None, Please try again later."  # noqa: E501
 
-        try:
-            if "organic" not in results:
-                raise Exception(
-                    f"No results found for query: '{query}'. Use a less specific query."
-                )
+    async def search_with_serp(self, query: str):
+        return await self.google_search_with_serp(query)
 
-            web_snippets = list()
-            idx = 0
-            if "organic" in results:
-                for page in results["organic"]:
-                    idx += 1
-                    date_published = ""
-                    if "date" in page:
-                        date_published = "\nDate published: " + page["date"]
-
-                    source = ""
-                    if "source" in page:
-                        source = "\nSource: " + page["source"]
-
-                    snippet = ""
-                    if "snippet" in page:
-                        snippet = "\n" + page["snippet"]
-
-                    redacted_version = f"{idx}. [{page['title']}]({page['link']}){date_published}{source}\n{snippet}"
-                    redacted_version = redacted_version.replace(
-                        "Your browser can't play this video.", ""
-                    )
-                    web_snippets.append(redacted_version)
-
-            content = (
-                f"A Google search for '{query}' found {len(web_snippets)} results:\n\n## Web Results\n"
-                + "\n\n".join(web_snippets)
-            )
-            return content
-        except:
-            return f"No results found for '{query}'. Try with a more general query."
-
-    def search_with_serp(self, query: str):
-        result = self.google_search_with_serp(query)
-        return result
-
-    def call(self, params: Union[str, dict], **kwargs) -> str:
+    async def call(self, params: Union[str, dict], **kwargs) -> str:  # type: ignore[override]
         try:
             query = params["query"]
-        except:
+        except Exception:
             return "[Search] Invalid request format: Input must be a JSON object containing 'query' field"
 
         if isinstance(query, str):
-            # 单个查询
-            response = self.search_with_serp(query)
-        else:
-            # 多个查询
-            assert isinstance(query, List)
-            responses = []
-            for q in query:
-                responses.append(self.search_with_serp(q))
-            response = "\n=======\n".join(responses)
+            return await self.search_with_serp(query)
 
-        return response
+        assert isinstance(query, List)
+        tasks = [self.search_with_serp(q) for q in query]
+        responses = await asyncio.gather(*tasks)
+        return "\n=======\n".join(responses)

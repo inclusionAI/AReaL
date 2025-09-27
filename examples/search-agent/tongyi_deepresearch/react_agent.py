@@ -35,15 +35,6 @@ OBS_END = "\n</tool_response>"
 
 MAX_LLM_CALL_PER_RUN = int(os.getenv("MAX_LLM_CALL_PER_RUN", 100))
 
-TOOL_CLASS = [
-    # FileParser(),
-    # Scholar(),
-    Visit(),
-    Search(),
-    # PythonInterpreter(),
-]
-TOOL_MAP = {tool.name: tool for tool in TOOL_CLASS}
-
 import datetime
 
 
@@ -83,12 +74,16 @@ class MultiTurnReactAgent(FnCallAgent):
         max_tokens_per_turn: int = 10000,
         max_llm_calls_per_run: int = 100,
         max_total_tokens: int = 32768,
+        judge_client: ArealOpenAI | None = None,
     ):
         self.tokenizer = tokenizer
         self.max_tokens_per_turn = max_tokens_per_turn
         self.max_llm_calls_per_run = max_llm_calls_per_run
         self.max_total_tokens = max_total_tokens
         self.max_total_tokens_before_finishing = int(max_total_tokens * 0.8)
+        self.judge_client = judge_client
+        self.tool_class = [Visit(summary_client=self.judge_client), Search()]
+        self.tool_map = {tool.name: tool for tool in self.tool_class}
 
     def count_tokens(self, messages):
         message_strs = []
@@ -115,6 +110,8 @@ class MultiTurnReactAgent(FnCallAgent):
     async def run_agent(
         self, data, client: ArealOpenAI, save_path: str | None = None
     ) -> List[List[Message]]:
+        for tool in self.tool_class:
+            await tool.setup_tool()
         start_time = time.time()
         data["qid"]
         question = data["question"]
@@ -262,12 +259,15 @@ class MultiTurnReactAgent(FnCallAgent):
             with open(save_path, "w", encoding="utf-8") as f:
                 json.dump(to_dump, f, ensure_ascii=False, indent=4)
             print(f"Result dumped to {save_path}")
+
+        for tool in self.tool_class:
+            await tool.destory_tool()
         return result
 
     async def custom_call_tool(self, tool_name: str, tool_args: dict, **kwargs):
-        if tool_name in TOOL_MAP:
+        if tool_name in self.tool_map:
             tool_args["params"] = tool_args
-            raw_result = await TOOL_MAP[tool_name].call(tool_args, **kwargs)
+            raw_result = await self.tool_map[tool_name].call(tool_args, **kwargs)
             result = raw_result
             return result
         else:
@@ -276,7 +276,6 @@ class MultiTurnReactAgent(FnCallAgent):
     async def calc_reward_with_llm_judge(
         self,
         result: Dict[str, str],
-        judge_client: ArealOpenAI,
     ):
         # Compute reward with LLM-as-Judge
         # judge_client = ArealOpenAI(engine=rollout_engine, tokenizer=tokenizer)
@@ -306,7 +305,7 @@ class MultiTurnReactAgent(FnCallAgent):
             pred_answer=pred_answer[:200],
         )
         try:
-            judge_completion = await judge_client.chat.completions.create(
+            judge_completion = await self.judge_client.chat.completions.create(
                 messages=[{"role": "user", "content": judge_prompt}],
                 temperature=1.0,
                 max_tokens=8192,
@@ -323,12 +322,11 @@ class MultiTurnReactAgent(FnCallAgent):
         self,
         data: Dict[str, str],
         client: ArealOpenAI,
-        judge_client: ArealOpenAI,
         save_path: str | None = None,
     ) -> Dict:
         result = await self.run_agent(data, client, save_path=save_path)
         print(f">>>> QID: {data['qid']} `run_agent` returns.")
-        reward = await self.calc_reward_with_llm_judge(result, judge_client)
+        reward = await self.calc_reward_with_llm_judge(result)
         print(f">>>> QID: {data['qid']} `calc_reward_with_llm_judge` returns {reward}.")
         completions = result["completions"]
         last_completion = completions[-1]
