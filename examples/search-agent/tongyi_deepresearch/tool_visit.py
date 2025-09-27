@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import os
 import time
@@ -223,7 +224,8 @@ class Visit(BaseTool):
         print("entering readpage_jina")
         summary_page_func = self.call_server
         max_retries = int(os.getenv("VISIT_SERVER_MAX_RETRIES", 1))
-        content = await self.html_readpage_jina(url)
+        _content = await self.html_readpage_jina(url)
+        content = copy.deepcopy(_content)
         valid_content = (
             content
             and not content.startswith("[visit] Failed to read page.")
@@ -291,19 +293,7 @@ class Visit(BaseTool):
         # print(f"Parsed raw_obj: {raw_obj}")
 
         if raw_obj is None:
-            useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
-                url=url, goal=goal
-            )
-            useful_information += (
-                "Evidence in page: \n"
-                + "The provided webpage content could not be accessed. Please check the URL or file format."
-                + "\n\n"
-            )
-            useful_information += (
-                "Summary: \n"
-                + "The webpage content could not be processed, and therefore, no information is available."
-                + "\n\n"
-            )
+            useful_information += f"The provided webpage content: {_content[:1000]}"
             return useful_information
 
         useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
