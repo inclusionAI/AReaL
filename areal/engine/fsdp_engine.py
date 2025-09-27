@@ -8,21 +8,18 @@ from typing import Any, Callable, Dict, List
 import torch
 import torch.distributed as dist
 import torch.distributed.nn.functional as dist_F
-import torch.nn as nn
+from peft import (
+    LoraConfig,
+    TaskType,
+    get_peft_model,
+)
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
 )
-from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
-from torch.distributed.tensor import DTensor, Replicate, Shard
-from torch.distributed.tensor.parallel import (
-    ColwiseParallel,
-    ParallelStyle,
-    PrepareModuleInput,
-    RowwiseParallel,
-    SequenceParallel,
-    parallelize_module,
-)
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.fsdp import CPUOffloadPolicy
+from torch.distributed.tensor import DTensor
 from transformers import PreTrainedTokenizerFast, ProcessorMixin
 
 from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
@@ -39,15 +36,9 @@ from areal.utils.data import (
     unpack_sequence,
 )
 from areal.utils.distributed import init_custom_process_group
-from areal.utils.fsdp import (
-    CPUOffloadPolicy,
-    MixedPrecisionPolicy,
-    NoParallel,
-    apply_fsdp2,
-    fsdp2_clip_grad_norm,
-    fsdp2_load_full_state_dict,
-)
-from areal.utils.model import VALID_VISION_MODELS, is_gemma3_model
+from areal.utils.fsdp import fsdp2_load_full_state_dict
+from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
+from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
     set_ulysses_sequence_parallel_group,
@@ -60,12 +51,10 @@ class FSDPEngine(BaseHFEngine):
     def __init__(self, config: TrainEngineConfig):
         super().__init__(config)
         # FSDP options
-        self.fsdp_tp_device_mesh: DeviceMesh
         self.cpu_offload: CPUOffloadPolicy | None = None
 
-        self.dp_world_size: int
-        self.sp_world_size: int
-        self.tp_world_size: int
+        self.parallel_helper: ParallelHelper
+        self.world_mesh: DeviceMesh
 
         self.dp_group: dist.ProcessGroup
         self.sp_group: dist.ProcessGroup
@@ -84,7 +73,7 @@ class FSDPEngine(BaseHFEngine):
 
     @property
     def data_parallel_world_size(self) -> int:
-        return self.dp_world_size
+        return self.parallel_helper.dp_size
 
     def current_data_parallel_head(self) -> int:
         return self.dp_head
@@ -111,159 +100,28 @@ class FSDPEngine(BaseHFEngine):
 
         self.logger = logging.getLogger(f"[FSDP Engine Rank {dist.get_rank()}]")
 
-        self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
+        parallel_strategy = self._make_parallel_strategy(parallel_strategy)
 
-        self.dp_world_size = self.parallel_strategy.data_parallel_size
-        # This is Ulysses sequence parallelism
-        self.sp_world_size = self.parallel_strategy.context_parallel_size
-        self.tp_world_size = self.parallel_strategy.tensor_parallel_size
+        self.parallel_helper = ParallelHelper.from_parallel_strategy(parallel_strategy)
 
         self.logger.info(
-            f"Initializing device mesh with mode d{self.dp_world_size}s{self.sp_world_size}t{self.tp_world_size}."
+            f"Initializing device mesh with parallel dims {str(self.parallel_helper)}."
         )
 
-        self.fsdp_tp_device_mesh = init_device_mesh(
-            current_platform.device_type,
-            mesh_shape=(self.dp_world_size * self.sp_world_size, self.tp_world_size),
-            mesh_dim_names=("fsdp", "tp"),
-        )
+        self.world_mesh = self.parallel_helper.world_mesh
 
-        nd_device_mesh = init_device_mesh(
-            current_platform.device_type,
-            mesh_shape=(self.dp_world_size, self.sp_world_size, self.tp_world_size),
-            mesh_dim_names=("dp", "sp", "tp"),
-        )
+        self.dp_group = self.world_mesh["dp"].get_group()
+        self.sp_group = self.world_mesh["sp"].get_group()
 
-        self.dp_group = nd_device_mesh["dp"].get_group()
-        self.sp_group = nd_device_mesh["sp"].get_group()
-
-        # Combined model parallel group (tp + sp)
-        nd_device_mesh["sp", "tp"]._flatten(mesh_dim_name="mp")
-        self.mp_group = nd_device_mesh["mp"].get_group()
+        # Sequence and model parallel group (sp+tp)
+        self.mp_group = self.world_mesh["sp_tp"].get_group()
 
         self.rank = dist.get_rank()
 
-        self.dp_head = int(nd_device_mesh["mp"].mesh[0].item())
+        self.dp_head = int(self.world_mesh["sp_tp"].mesh[0].item())
         self.dp_rank = dist.get_rank(self.dp_group)
 
         self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
-
-    def apply_tensor_parallel(self, device_mesh: DeviceMesh):
-        num_attention_heads: int
-        num_key_value_heads: int
-        try:
-            num_attention_heads, num_key_value_heads = (
-                self.model.config.num_attention_heads,  # type: ignore
-                self.model.config.num_key_value_heads,  # type: ignore
-            )
-        except AttributeError:
-            num_attention_heads, num_key_value_heads = (
-                self.model.config.text_config.num_attention_heads,  # type: ignore
-                self.model.config.text_config.num_key_value_heads,  # type: ignore
-            )
-
-        if (
-            num_attention_heads % self.tp_world_size != 0
-            or num_key_value_heads % self.tp_world_size != 0
-        ):
-            raise ValueError(
-                f"num_attention_heads {num_attention_heads} and num_key_value_heads {num_key_value_heads} must be divisible by tensor_parallel_size {self.tp_world_size}"
-            )
-
-        if not isinstance(self.model.model, nn.Module):
-            raise RuntimeError("Model does not have the required submodule 'model'.")
-
-        # For model or model.language_model
-        model_tp_plan: dict[str, ParallelStyle] = {
-            "embed_tokens": RowwiseParallel(
-                input_layouts=Replicate(),
-                output_layouts=Shard(1),
-                use_local_output=False,
-            ),
-            "layers.*.input_layernorm": SequenceParallel(),
-            # All-gather
-            "layers.*.self_attn": PrepareModuleInput(
-                input_kwarg_layouts={"hidden_states": Shard(1)},
-                desired_input_kwarg_layouts={"hidden_states": Replicate()},
-            ),
-            "layers.*.self_attn.q_proj": ColwiseParallel(),
-            "layers.*.self_attn.k_proj": ColwiseParallel(),
-            "layers.*.self_attn.v_proj": ColwiseParallel(),
-            # special q/k norm for qwen3
-            "layers.*.self_attn.q_norm": NoParallel(),
-            "layers.*.self_attn.k_norm": NoParallel(),
-            # Reduce in RowwiseParallel, Scatter by Shard(1)
-            "layers.*.self_attn.o_proj": RowwiseParallel(
-                output_layouts=Shard(1),
-                use_local_output=False,
-            ),
-            "layers.*.post_attention_layernorm": SequenceParallel(),
-            # All-gather
-            "layers.*.mlp": PrepareModuleInput(
-                input_layouts=Shard(1),
-                desired_input_layouts=Replicate(),
-            ),
-            "layers.*.mlp.gate_proj": ColwiseParallel(),
-            "layers.*.mlp.up_proj": ColwiseParallel(),
-            # Reduce in RowwiseParallel, Scatter by Shard(1)
-            "layers.*.mlp.down_proj": RowwiseParallel(
-                output_layouts=Shard(1),
-                use_local_output=False,
-            ),
-            "norm": SequenceParallel(),
-        }
-
-        if is_gemma3_model(self.model_config.model_type):
-            model_tp_plan["layers.*.pre_feedforward_layernorm"] = SequenceParallel()
-            model_tp_plan["layers.*.post_feedforward_layernorm"] = SequenceParallel()
-
-        # For root module
-        root_tp_plan: dict[str, ParallelStyle] = {
-            # All-gather
-            "lm_head": ColwiseParallel(
-                input_layouts=Shard(1),
-                output_layouts=Replicate(),
-            ),
-        }
-
-        if self.is_vision_model:
-            if self.model_config.model_type not in VALID_VISION_MODELS:
-                self.logger.warning(
-                    f"Vision model type {self.model_config.model_type} not in supported list {VALID_VISION_MODELS}."
-                )
-
-            if isinstance(self.model.model.language_model, nn.Module):
-                # For vision-language models, avoid sharding the embedding layer because
-                # the visual components access it without tensor parallelism support.
-                # Instead, configure the first transformer layer to handle input
-                # sharding properly.
-                model_tp_plan.pop("embed_tokens", None)
-                model_tp_plan["layers.0"] = PrepareModuleInput(
-                    input_layouts=Replicate(),
-                    desired_input_layouts=Shard(1),
-                )
-
-                parallelize_module(
-                    self.model.model.language_model,
-                    device_mesh=device_mesh,
-                    parallelize_plan=model_tp_plan,
-                )
-            else:
-                self.logger.warning(
-                    f"Vision model does not have the required submodule 'model.language_model'."
-                )
-        else:
-            parallelize_module(
-                self.model.model,
-                device_mesh=device_mesh,
-                parallelize_plan=model_tp_plan,
-            )
-
-        self.model = parallelize_module(
-            self.model,
-            device_mesh=device_mesh,
-            parallelize_plan=root_tp_plan,
-        )
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
         # Initialize distributed enviroments and load model.
@@ -279,31 +137,45 @@ class FSDPEngine(BaseHFEngine):
         # Monkey patch: replace attention's forward() with Ulysses variant.
         apply_monkey_patch(
             model=self.model,
-            ulysses_sp_size=self.sp_world_size,
+            ulysses_sp_size=self.parallel_helper.sp_size,
         )
 
-        if self.tp_world_size > 1:
-            self.apply_tensor_parallel(self.fsdp_tp_device_mesh["tp"])
+        if self.config.use_lora:
+            self._apply_peft_wrapper()
 
         # sharding_strategy = ShardingStrategy.FULL_SHARD
         # Simple auto wrap policy
-        mixed_precision_policy = MixedPrecisionPolicy(
-            param_dtype=getattr(torch, self.config.dtype),
-            reduce_dtype=getattr(torch, self.config.grad_reduce_dtype),
-            cast_forward_inputs=True,
-        )
         self.cpu_offload = (
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
-        fsdp_kwargs = {
-            "mesh": self.fsdp_tp_device_mesh["fsdp"],
-            "mp_policy": mixed_precision_policy,
-            "offload_policy": self.cpu_offload,
-            "reshard_after_forward": True,
-        }
         tik = time.perf_counter()
-        apply_fsdp2(self.model, fsdp_kwargs, self.config.fsdp.wrap_policy)
-        self.logger.info(f"Applying FSDP2 time: {time.perf_counter() - tik}")
+        # Prepare lora weights synchronization
+        if self.config.use_lora:
+            if dist.get_rank() == 0:
+                full_state = self.model.state_dict()
+            else:
+                full_state = {}
+        # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
+        parallelize_model(
+            self.model,
+            config=self.config,
+            model_config=self.model_config,
+            nd_device_mesh=self.world_mesh,
+            parallel_helper=self.parallel_helper,
+            cpu_offload=self.cpu_offload,
+            wrap_policy=self.config.fsdp.wrap_policy,
+        )
+        # Synchronize initialized lora weights
+        if self.config.use_lora:
+            fsdp2_load_full_state_dict(
+                self.model,
+                full_state,
+                self.cpu_offload,
+                tie_word_embeddings=self.model_config.tie_word_embeddings,
+            )
+        self.logger.info(
+            f"Applying FSDP2 with N-D parallelism for {time.perf_counter() - tik:.2f} seconds"
+        )
 
         self.create_optimizer(ft_spec)
         self.initialized = True
@@ -374,8 +246,36 @@ class FSDPEngine(BaseHFEngine):
             tie_word_embeddings=self.model_config.tie_word_embeddings,
         )
 
+    def _apply_peft_wrapper(self):
+        config = self.config
+        if not config.target_modules or config.target_modules == ["all-linear"]:
+            target_modules = "all-linear"
+        else:
+            target_modules = config.target_modules
+        peft_config = {
+            "task_type": TaskType.CAUSAL_LM,
+            "r": config.lora_rank,
+            "lora_alpha": config.lora_alpha,
+            "target_modules": target_modules,
+            "bias": "none",
+        }
+        if self.config.peft_type == "lora":
+            peft_config = LoraConfig(**peft_config)
+        else:
+            raise NotImplementedError()
+
+        self.model.enable_input_require_grads()
+        self.model = get_peft_model(
+            self.model,
+            peft_config,
+            autocast_adapter_dtype=False,
+        )
+
+        if self.rank == 0:
+            self.model.print_trainable_parameters()
+
     def upload_weights(self, meta: WeightUpdateMeta):
-        if meta.type == "nccl":
+        if meta.type == current_platform.communication_backend:
             if not self.weight_update_group_initialized:
                 self._init_distributed_weight_update(meta)
             self._update_weights_from_distributed(meta.nccl_param_specs)
@@ -428,7 +328,9 @@ class FSDPEngine(BaseHFEngine):
                     tensor = param.data
                 if dist.get_rank() == 0:
                     self.logger.debug(f"Broadcasting {name} with shape {tensor.shape}")
-                    dist.broadcast(tensor, src=0, group=self.weight_update_group)
+                    dist.broadcast(
+                        tensor, src=0, group=self.weight_update_group, async_op=False
+                    )
                 del tensor
             dist.barrier(device_ids=[self.device.index])
             current_platform.synchronize()
@@ -476,7 +378,7 @@ class FSDPEngine(BaseHFEngine):
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
 
-        if self.sp_world_size > 1:
+        if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
         self.optimizer.zero_grad()
@@ -499,7 +401,7 @@ class FSDPEngine(BaseHFEngine):
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
             ulysses_pad_size = 0
-            if self.sp_world_size > 1:
+            if self.parallel_helper.sp_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
 
@@ -508,7 +410,9 @@ class FSDPEngine(BaseHFEngine):
                         ulysses_input_ids,
                         ulysses_position_ids,
                         ulysses_pad_size,
-                    ) = ulysses_pad(input_ids, position_ids, sp_size=self.sp_world_size)
+                    ) = ulysses_pad(
+                        input_ids, position_ids, sp_size=self.parallel_helper.sp_size
+                    )
                 else:
                     # Pad and slice the inputs
                     (
@@ -518,7 +422,7 @@ class FSDPEngine(BaseHFEngine):
                     ) = ulysses_pad_and_slice_inputs(
                         input_ids,
                         position_ids,
-                        sp_size=self.sp_world_size,
+                        sp_size=self.parallel_helper.sp_size,
                     )
 
                 if (
@@ -537,7 +441,7 @@ class FSDPEngine(BaseHFEngine):
             outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
-            if self.sp_world_size > 1:
+            if self.parallel_helper.sp_size > 1:
                 # Gather and remove Ulysses padding
                 gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
                 logits = torch.cat(gathered_logits, dim=0)
@@ -549,15 +453,14 @@ class FSDPEngine(BaseHFEngine):
 
             # Scale loss for accumulation
             # To reverse the gradient averaging for SP groups
-            loss_scale *= self.dp_world_size
+            loss_scale *= self.parallel_helper.dp_size
 
             loss *= loss_scale
             loss.backward()
 
-        # NOTE: grad norm clip function is different
         grad_norm = fsdp2_clip_grad_norm(
             list(self.model.parameters()),
-            self.fsdp_tp_device_mesh,
+            self.world_mesh,
             max_norm=self.optimizer_config.gradient_clipping,
         )
 
@@ -583,7 +486,7 @@ class FSDPEngine(BaseHFEngine):
         loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
-        if self.sp_world_size > 1:
+        if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
         mb_list = self.prepare_mb_list(input_)
@@ -605,7 +508,7 @@ class FSDPEngine(BaseHFEngine):
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
             ulysses_pad_size = 0
-            if self.sp_world_size > 1:
+            if self.parallel_helper.sp_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
 
@@ -614,7 +517,9 @@ class FSDPEngine(BaseHFEngine):
                         ulysses_input_ids,
                         ulysses_position_ids,
                         ulysses_pad_size,
-                    ) = ulysses_pad(input_ids, position_ids, sp_size=self.sp_world_size)
+                    ) = ulysses_pad(
+                        input_ids, position_ids, sp_size=self.parallel_helper.sp_size
+                    )
                 else:
                     # Pad and slice the inputs
                     (
@@ -624,7 +529,7 @@ class FSDPEngine(BaseHFEngine):
                     ) = ulysses_pad_and_slice_inputs(
                         input_ids,
                         position_ids,
-                        sp_size=self.sp_world_size,
+                        sp_size=self.parallel_helper.sp_size,
                     )
 
                 if (
@@ -643,7 +548,7 @@ class FSDPEngine(BaseHFEngine):
             outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
-            if self.sp_world_size > 1:
+            if self.parallel_helper.sp_size > 1:
                 # Gather and remove Ulysses padding
                 gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
                 logits = torch.cat(gathered_logits, dim=0)
@@ -671,7 +576,7 @@ class FSDPEngine(BaseHFEngine):
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""
-        if self.sp_world_size > 1:
+        if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
@@ -688,7 +593,7 @@ class FSDPEngine(BaseHFEngine):
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
             ulysses_pad_size = 0
-            if self.sp_world_size > 1:
+            if self.parallel_helper.sp_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
 
@@ -697,7 +602,9 @@ class FSDPEngine(BaseHFEngine):
                         ulysses_input_ids,
                         ulysses_position_ids,
                         ulysses_pad_size,
-                    ) = ulysses_pad(input_ids, position_ids, sp_size=self.sp_world_size)
+                    ) = ulysses_pad(
+                        input_ids, position_ids, sp_size=self.parallel_helper.sp_size
+                    )
                 else:
                     # Pad and slice the inputs
                     (
@@ -707,7 +614,7 @@ class FSDPEngine(BaseHFEngine):
                     ) = ulysses_pad_and_slice_inputs(
                         input_ids,
                         position_ids,
-                        sp_size=self.sp_world_size,
+                        sp_size=self.parallel_helper.sp_size,
                     )
 
                 if (
@@ -726,7 +633,7 @@ class FSDPEngine(BaseHFEngine):
             outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
-            if self.sp_world_size > 1:
+            if self.parallel_helper.sp_size > 1:
                 # Gather and remove Ulysses padding
                 gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
                 logits = torch.cat(gathered_logits, dim=0)

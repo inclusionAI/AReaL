@@ -1,6 +1,13 @@
+from dataclasses import dataclass, field
 from typing import List
 
-from areal.api.cli_args import *
+from areal.api.cli_args import (
+    BaseExperimentConfig,
+    GenerationHyperparameters,
+    InferenceEngineConfig,
+    PPOActorConfig,
+    TrainEngineConfig,
+)
 
 
 # TODO: Select useful options, add documentation string when moving out of experimental

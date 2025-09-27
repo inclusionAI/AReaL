@@ -51,10 +51,17 @@ def categorize_dataclasses(
     }
 
     # Define categorization rules - only include the most important configs
-    experiment_configs = ["BaseExperimentConfig", "SFTConfig", "GRPOConfig", "RWConfig"]
+    experiment_configs = [
+        "BaseExperimentConfig",
+        "SFTConfig",
+        "GRPOConfig",
+        "PPOConfig",
+        "RWConfig",
+    ]
     training_configs = [
         "TrainEngineConfig",
         "PPOActorConfig",
+        "PPOCriticConfig",
         "OptimizerConfig",
         "MicroBatchSpec",
         "NormConfig",
@@ -64,6 +71,7 @@ def categorize_dataclasses(
     inference_configs = [
         "InferenceEngineConfig",
         "SGLangConfig",
+        "vLLMConfig",
         "GenerationHyperparameters",
     ]
     dataset_configs = ["DatasetConfig"]

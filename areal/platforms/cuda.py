@@ -59,3 +59,7 @@ class CudaPlatform(Platform):
             "NCCL_NVLS_ENABLE": "0",
         }
         return env_vars
+
+    @classmethod
+    def synchronize(cls) -> None:
+        torch.cuda.synchronize()
