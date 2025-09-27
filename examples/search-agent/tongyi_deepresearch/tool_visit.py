@@ -183,15 +183,15 @@ class Visit(BaseTool):
                     ) as response:
                         if response.status == 200:
                             webpage_content = await response.text()
-                            print(
-                                f"jina_readpage {url} success, webpage length: {len(webpage_content)}"
-                            )
+                            # print(
+                            #     f"jina_readpage {url} success, webpage length: {len(webpage_content)}"
+                            # )
                             return webpage_content
                         else:
-                            text = await response.text()
-                            print(
-                                f"jina_readpage {url} failed with status {response.status}, response: {text}"
-                            )
+                            await response.text()
+                            # print(
+                            #     f"jina_readpage {url} failed with status {response.status}, response: {text}"
+                            # )
                             raise ValueError("jina readpage error")
                 except Exception as e:
                     print(f"jina_readpage {url} failed with error {e}")
@@ -209,7 +209,7 @@ class Visit(BaseTool):
         for attempt in range(max_attempts):
             print(f"html_readpage_jina {url} attempt {attempt+1}/{max_attempts}")
             content = await self.jina_readpage(url)
-            print(f"html_readpage_jina content: {content}")
+            # print(f"html_readpage_jina content: {content}")
             if (
                 content
                 and not content.startswith("[visit] Failed to read page.")
@@ -231,7 +231,7 @@ class Visit(BaseTool):
             and content != "[visit] Empty content."
             and not content.startswith("[document_parser]")
         )
-        print(f"readpage_jina content: {content}, valid_content: {valid_content}")
+        print(f"readpage_jina content: {len(content)}, valid_content: {valid_content}")
         if not valid_content:
             useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
                 url=url, goal=goal
@@ -276,7 +276,7 @@ class Visit(BaseTool):
         if isinstance(raw, str):
             raw = raw.replace("```json", "").replace("```", "").strip()
 
-        print("Final raw response:", raw)
+        print("Final raw response:", len(raw))
 
         parse_retry_times = 0
         while parse_retry_times < 3:
@@ -289,7 +289,7 @@ class Visit(BaseTool):
         else:
             raw_obj = None
 
-        print(f"Parsed raw_obj: {raw_obj}")
+        # print(f"Parsed raw_obj: {raw_obj}")
 
         if raw_obj is None:
             useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
