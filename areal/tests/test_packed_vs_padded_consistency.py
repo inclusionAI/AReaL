@@ -3,13 +3,12 @@ import random
 
 import pytest
 import torch
-from tensordict import TensorDict
 from torch.testing import assert_close
 
 from areal.api.cli_args import TrainEngineConfig
 from areal.engine.base_hf_engine import BaseHFEngine
 from areal.platforms import current_platform
-from areal.utils.data import concat_padded_tensors
+from areal.utils.data import concat_padded_tensors, tensor_container_to
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.network import find_free_ports
 
@@ -36,9 +35,11 @@ def mock_padded_llm_data():
             loss_mask=torch.tensor([0] * prompt_len + [1] * ans_len).unsqueeze(0),
             attention_mask=torch.tensor([1] * (prompt_len + ans_len)).unsqueeze(0),
         )
-        all_data.append(TensorDict(seq, batch_size=[1]))
+        all_data.append(seq)
 
-    return concat_padded_tensors(all_data).to(current_platform.device_type)
+    return tensor_container_to(
+        concat_padded_tensors(all_data), current_platform.device_type
+    )
 
 
 QWEN3_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B/"
@@ -75,7 +76,7 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
     engine.initialized = True
 
     # Prepare padded input
-    padded_input = mock_padded_llm_data.clone()
+    padded_input = mock_padded_llm_data
 
     # Get packed input using prepare_mb_list
     mb_list = engine.prepare_mb_list(padded_input)
@@ -184,11 +185,13 @@ def mock_padded_vlm_data(model_path):
                 "image_grid_thw"
             ]
 
-        td = TensorDict(seq, batch_size=[1])
+        td = seq
 
         all_data.append(td)
 
-    padded_data = concat_padded_tensors(all_data).to(current_platform.device_type)
+    padded_data = tensor_container_to(
+        concat_padded_tensors(all_data), current_platform.device_type
+    )
     if "multi_modal_input" in padded_data:
         for item in padded_data["multi_modal_input"]:
             if isinstance(item, dict):
@@ -224,8 +227,7 @@ def test_vlm_consistency(model_path):
     engine.create_device_model()
     engine.initialized = True
 
-    # Convert padded_input to dict because tensordict requires same batch size for pixelvalues and image_grid_thw
-    padded_input = dict(mock_padded_vlm_data(model_path))
+    padded_input = mock_padded_vlm_data(model_path)
 
     # Get packed input
     mb_list = engine.prepare_mb_list(padded_input)

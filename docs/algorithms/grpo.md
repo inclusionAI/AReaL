@@ -4,7 +4,7 @@ Last updated: Sep 11, 2025
 
 Author: [Ziyi ZENG](https://github.com/ZiyiTsang)
 
-![alt text](../figures/grpo.png)
+![grpo figure](../figures/grpo.png)
 
 Group Relative Policy Optimization (GRPO), introduced in DeepSeekMath (Shao et al.,
 2024), is an RL method that removes the need for a value function (critic). Instead, it

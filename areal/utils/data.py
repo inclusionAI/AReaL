@@ -9,14 +9,36 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from einops import rearrange
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import MicroBatchSpec
+from areal.api.cli_args import MicroBatchSpec, NormConfig, PPOActorConfig
 from areal.platforms import current_platform
 from areal.utils import datapack, logging
 
 logger = logging.getLogger("data utils")
+
+
+def get_batch_size(data: Dict[str, Any]) -> int:
+    if not data:
+        return 0
+
+    am = data.get("attention_mask")
+    if torch.is_tensor(am) and am.ndim >= 1:
+        return int(am.shape[0])
+
+    cu = data.get("cu_seqlens")
+    if torch.is_tensor(cu) and cu.ndim >= 1 and cu.numel() >= 1:
+        return max(int(cu.shape[0]) - 1, 0)
+
+    mmi = data.get("multi_modal_input")
+    if isinstance(mmi, list):
+        return len(mmi)
+
+    for v in data.values():
+        if torch.is_tensor(v) and v.ndim >= 1:
+            return int(v.shape[0])
+
+    return 0
 
 
 def reorder_list(xs: List, indices: List[int]) -> List:
@@ -58,10 +80,10 @@ def list_of_dict2dict_of_list(
 
 
 def pad_sequences_to_tensors(
-    sequence_list: List[TensorDict], pad_value: float = 0.0
-) -> TensorDict:
+    sequence_list: List[Dict[str, Any]], pad_value: float = 0.0
+) -> Dict[str, Any]:
     if not sequence_list:
-        return TensorDict()
+        return {}
     skip_keys = {"multi_modal_input"}
     max_length = max(
         len(seq)
@@ -103,7 +125,7 @@ def pad_sequences_to_tensors(
         for item in sequence_list
     ]
     result["attention_mask"] = torch.tensor(attention_mask, dtype=torch.bool)
-    return TensorDict(result, batch_size=[result["attention_mask"].shape[0]])
+    return result
 
 
 def unpad_input(
@@ -128,14 +150,11 @@ def pad_input(hidden_states, indices, batch, seqlen):
 
 
 def concat_padded_tensors(
-    tensor_dicts: List[TensorDict], pad_value: float = 0.0
-) -> TensorDict:
-    """Concatenate and pad tensors from multiple padded tensor dictionaries."""
+    tensor_dicts: List[Dict[str, Any]], pad_value: float = 0.0
+) -> Dict[str, Any]:
+    """Concatenate and pad tensors from multiple dictionaries of padded tensors."""
     if not tensor_dicts:
-        return TensorDict()
-
-    batch_sizes = [tuple(d.batch_size) for d in tensor_dicts]
-    new_batch_size = [sum(x[0] for x in batch_sizes), *batch_sizes[0][1:]]
+        return {}
 
     # Find max sequence length across all dictionaries
     assert all("attention_mask" in td for td in tensor_dicts)
@@ -151,7 +170,7 @@ def concat_padded_tensors(
 
         # Merge multi-modal data maintaining per-dp correspondence
         for tensor_dict in tensor_dicts:
-            td_batch_size = tensor_dict.batch_size[0]
+            td_batch_size = get_batch_size(tensor_dict)
 
             if "multi_modal_input" in tensor_dict:
                 # Has multi_modal_input - extend the lists
@@ -199,15 +218,7 @@ def concat_padded_tensors(
             tensors_to_concat.append(tensor)
 
         result[key] = torch.cat(tensors_to_concat, dim=0)
-    return TensorDict(result, batch_size=new_batch_size)
-
-
-def to_device(data: Dict[str, torch.Tensor | Any], device) -> Dict[str, torch.Tensor]:
-    """Move tensors in a dictionary to the specified device."""
-    return {
-        key: value.to(device) if torch.is_tensor(value) else value
-        for key, value in data.items()
-    }
+    return result
 
 
 def unpack_sequence(
@@ -252,8 +263,8 @@ def allocate_balanced_mbs_synced(
     )
 
 
-def pack_tensor_dict(data: TensorDict):
-    """Pack a tensordict of shape [B, S, ...] into [total_length, ...], leaving other keys unchanged.
+def pack_tensor_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Pack a dict of tensors of shape [B, S, ...] into [total_length, ...], leaving other keys unchanged.
 
     Args:
         data (Dict[str, Any]): Dictionary containing tensors to be packed. Should contain key "attention_mask" with shape [B, S].
@@ -301,7 +312,7 @@ def pack_tensor_dict(data: TensorDict):
         else:
             packed_data[key] = value
 
-    return TensorDict(**packed_data)
+    return packed_data
 
 
 def pad_and_stack_tensors_along_first_dim(tensor_list: List[torch.Tensor]):
@@ -329,9 +340,7 @@ def tensor_container_to(
     if torch.is_tensor(d):
         return d.to(*args, **kwargs)
     elif isinstance(d, list):
-        return [
-            tensor_container_to(*args, **kwargs) if torch.is_tensor(v) else v for v in d
-        ]
+        return [tensor_container_to(v, *args, **kwargs) for v in d]
     elif isinstance(d, dict):
         for key, value in d.items():
             if isinstance(value, dict) or isinstance(value, list):
@@ -347,43 +356,27 @@ def tensor_container_to(
 
 @dataclass
 class MicroBatchList:
-    data: TensorDict
+    data: Dict[str, Any]
     mb_spec: MicroBatchSpec
-    mbs: List[TensorDict]
+    mbs: List[Dict[str, Any]]
     forward_indices: List[int]
     backward_indices: List[int]
     group_lens: List[int]
-    padded_mbs: Optional[List[TensorDict]] = None
+    padded_mbs: List[Dict[str, Any]] | None = None
     # Batch-level padding information
-    padding_lengths: Optional[List[int]] = None
-    padded_to_lengths: Optional[List[int]] = None
+    padding_lengths: List[int] | None = None
+    padded_to_lengths: List[int] | None = None
     # sequence-level padding information
-    align_to_lengths: Optional[List[int]] = None
-    old_cu_seqlens_list: Optional[List[torch.Tensor]] = None
+    align_to_lengths: List[int] | None = None
+    old_cu_seqlens_list: List[torch.Tensor] | None = None
 
     def to(self, *args, **kwargs):
-        mbs = [
-            (
-                mb.to(*args, **kwargs)
-                if isinstance(mb, TensorDict)
-                else tensor_container_to(mb, *args, **kwargs)
-            )
-            for mb in self.mbs
-        ]
-        data = (
-            self.data.to(*args, **kwargs)
-            if isinstance(self.data, TensorDict)
-            else tensor_container_to(self.data, *args, **kwargs)
-        )
+        mbs = [tensor_container_to(mb, *args, **kwargs) for mb in self.mbs]
+        data = tensor_container_to(self.data, *args, **kwargs)
         padded_mbs = None
         if self.padded_mbs is not None:
             padded_mbs = [
-                (
-                    mb.to(*args, **kwargs)
-                    if isinstance(mb, TensorDict)
-                    else tensor_container_to(mb, *args, **kwargs)
-                )
-                for mb in self.padded_mbs
+                tensor_container_to(mb, *args, **kwargs) for mb in self.padded_mbs
             ]
         old_cu_seqlens_list = None
         if self.old_cu_seqlens_list is not None:
@@ -409,14 +402,14 @@ DEFAULT_MAX_TOKENS_PER_MB = int(1e12)
 
 
 def split_padded_tensor_dict_into_mb_list(
-    data: TensorDict,
+    data: Dict[str, Any],
     mb_spec: MicroBatchSpec,
     group: Optional[dist.ProcessGroup] = None,
 ) -> MicroBatchList:
-    """Split a padded tensordict into micro-batches based on the attention mask.
+    """Split a padded dict of tensors into micro-batches based on the attention mask.
 
     Args:
-        data (TensorDict): Dictionary containing padded tensors.
+        data (Dict): Dictionary containing padded tensors.
         mb_spec (MicroBatchSpec): Specification for micro-batch splitting.
         group (Optional[dist.ProcessGroup]): Process group for distributed synchronization.
 
@@ -513,7 +506,7 @@ def split_padded_tensor_dict_into_mb_list(
     # organize splitted micro batches
     assert len(mbs) == len(splitted_lens), (len(mbs), len(splitted_lens))
     for i, (mb, lens) in enumerate(zip(mbs, splitted_lens)):
-        results.append(TensorDict(**mb, **not_to_split))
+        results.append({**mb, **not_to_split})
 
     return MicroBatchList(
         data=data,
@@ -529,24 +522,24 @@ N_TOKENS_PER_PAGE = 256
 
 
 def pad_packed_tensor_dict(
-    data: TensorDict,
+    data: Dict[str, Any],
     pad_to_length: int,
     pad_value: float = 0.0,
     align_sequences: bool = False,
     align_to_multiple_of: Optional[int] = None,
-) -> Tuple[TensorDict, int, torch.Tensor, int]:
-    """Pad a packed tensor dict to a specified length.
+) -> Tuple[Dict[str, Any], int, torch.Tensor, int]:
+    """Pad a packed dict of tensors to a specified length.
     This function assumes that the input data contains "cu_seqlens" and "max_seqlen" key,
     and all other tensors of shape [total_length, ] will be padded to `pad_to_length`.
     This function will pad a new sequence filled with `pad_value` to the end of each tensor,
     and update the "cu_seqlens" and "max_seqlen" keys accordingly.
 
     Args:
-        data (TensorDict): Dictionary containing tensors to be packed.
+        data (Dict): Dictionary containing tensors to be packed.
         pad_to_length (int): The length to pad the tensors to. All tensors
 
     Returns:
-        TensorDict: Dictionary with padded tensors and modified "cu_seqlens" and
+        Dict: Dictionary with padded tensors and modified "cu_seqlens" and
             "max_seqlen".
         int: The pad length.
     """
@@ -632,7 +625,7 @@ def pad_packed_tensor_dict(
             else:
                 sequence_padded_data[key] = value
 
-        data = TensorDict(sequence_padded_data, batch_size=data.batch_size)
+        data = sequence_padded_data
         align_to_length = cu_seqlens_padded[-1].item()
         # ensure pad_to_length is a integer multiple of both align_to_multiple_of and N_TOKENS_PER_PAGE
         lcm = np.lcm(align_to_multiple_of, N_TOKENS_PER_PAGE).item()
@@ -682,7 +675,7 @@ def pad_packed_tensor_dict(
         else:
             padded_data[key] = value
     return (
-        TensorDict(padded_data, batch_size=data.batch_size),
+        padded_data,
         pad_length,
         old_cu_seqlens,
         align_to_length,
@@ -786,11 +779,14 @@ def unpad_logits(
             start = cu_seqlens[i].item()
             length = old_end - old_start
             new_logits[old_start:old_end] = logits[start : start + length]
+        return new_logits
 
-    return new_logits
+    return logits
 
 
-def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
+def unsqueeze_packed_tensor_dict(
+    data: Dict[str, Any],
+) -> Dict[str, Any]:
     assert "cu_seqlens" in data, "Input data must contain 'cu_seqlens' key."
     assert "max_seqlen" in data, "Input data must contain 'max_seqlen' key."
 
@@ -809,13 +805,13 @@ def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
             new_data[key] = value.unsqueeze(dim=0)
         else:
             new_data[key] = value
-    return TensorDict(new_data, batch_size=data.batch_size)
+    return new_data
 
 
 def unsqueeze_mb_list(
     mb_list: MicroBatchList,
 ) -> MicroBatchList:
-    """Unsqueeze the packed tensordict in the micro-batch list."""
+    """Unsqueeze the packed dict of tensors in the micro-batch list."""
     new_padded_mbs = []
     for i, mb in enumerate(mb_list.mbs):
         if mb_list.padded_mbs is not None:
@@ -824,7 +820,7 @@ def unsqueeze_mb_list(
     return mb_list
 
 
-def amend_position_ids(data: TensorDict) -> TensorDict:
+def amend_position_ids(data: Dict) -> Dict:
     assert "attention_mask" in data, "Input data must contain 'attention_mask' key."
 
     attn_mask = data["attention_mask"]
@@ -934,7 +930,7 @@ def all_gather_tensor_container(data, group=None) -> List:
         data = [all_gather_tensor_container(d, group=group) for d in data]
         return list(zip(*data))
 
-    if isinstance(data, (dict, TensorDict)):
+    if isinstance(data, dict):
         results = {
             k: all_gather_tensor_container(v, group=group) for k, v in data.items()
         }
@@ -942,11 +938,6 @@ def all_gather_tensor_container(data, group=None) -> List:
             {k: v[i] for k, v in results.items()}
             for i in range(dist.get_world_size(group))
         ]
-        if isinstance(data, TensorDict):
-            results = [
-                TensorDict(r, batch_size=[r["attention_mask"].shape[0]])
-                for r in results
-            ]
         return results
 
     results = [None for _ in range(dist.get_world_size(group))]
@@ -975,15 +966,6 @@ def broadcast_tensor_container(data, src_rank=0, group=None):
                 k: broadcast_tensor_container(None, src_rank=src_rank, group=group)
                 for k in keys
             }
-        elif data_type == "tensordict":
-            batch_size, keys = info
-            return TensorDict(
-                {
-                    k: broadcast_tensor_container(None, src_rank=src_rank, group=group)
-                    for k in keys
-                },
-                batch_size=batch_size,
-            )
         elif data_type == "object":
             to_broadcast = [None]
             dist.broadcast_object_list(to_broadcast, src=src_rank, group=group)
@@ -1013,16 +995,6 @@ def broadcast_tensor_container(data, src_rank=0, group=None):
                 k: broadcast_tensor_container(v, src_rank=src_rank, group=group)
                 for k, v in data.items()
             }
-        elif isinstance(data, TensorDict):
-            metadata = [("tensordict", (data.batch_size, list(data.keys())))]
-            dist.broadcast_object_list(metadata, src=src_rank, group=group)
-            return TensorDict(
-                {
-                    k: broadcast_tensor_container(v, src_rank=src_rank, group=group)
-                    for k, v in data.items()
-                },
-                batch_size=data.batch_size,
-            )
         else:
             metadata = [("object", None)]
             dist.broadcast_object_list(metadata, src=src_rank, group=group)
@@ -1096,3 +1068,618 @@ def cycle_dataloader(dataloader: StatefulDataLoader):
             yield next(g)
         except StopIteration:
             g = iter(dataloader)
+
+
+# base native normalization implementation (for both reward and adv norm)
+class Normalization:
+    """
+    Adaptive normalization with different levels.
+
+    Supports independent specification of normalization level for mean and std:
+    - "batch": normalize across entire batch (with optional all_reduce in distributed setting)
+    - "group": normalize within fixed-size groups
+    - None: no centering or no std scaling
+    """
+
+    def __init__(self, config: NormConfig):
+        if config.mean_level not in {"batch", "group", None}:
+            raise ValueError(
+                f"mean_level must be 'batch', 'group' or None, got {config.mean_level}"
+            )
+        if config.std_level not in {"batch", "group", None}:
+            raise ValueError(
+                f"std_level must be 'batch', 'group', or None, got {config.std_level}"
+            )
+        if (
+            config.mean_level == "group" or config.std_level == "group"
+        ) and config.group_size is None:
+            raise ValueError("group_size must be provided if using group normalization")
+
+        self.mean_level = config.mean_level
+        self.std_level = config.std_level
+        self.group_size = config.group_size
+
+    @torch.no_grad()
+    def __call__(
+        self,
+        x: torch.Tensor,
+        loss_mask: Optional[torch.Tensor] = None,
+        eps: float = 1e-5,
+        unbiased: bool = False,
+        high_precision: bool = True,
+        reduce_group=None,
+        calculation_base: str = "deviation",
+    ) -> torch.Tensor:
+        bs = x.size(0)
+
+        # Step 1: Compute mean
+        if self.mean_level == "batch":
+            mean = self._compute_mean(x, loss_mask, high_precision, True, reduce_group)
+            mean = mean.expand_as(x)
+        elif self.mean_level == "group":
+            mean = torch.zeros_like(x)
+            for i in range(0, bs // self.group_size):
+                s = slice(i * self.group_size, (i + 1) * self.group_size)
+                xx = x[s]
+                m = loss_mask[s] if loss_mask is not None else None
+                group_mean = self._compute_mean(
+                    xx,
+                    m,
+                    high_precision,
+                    all_reduce=False,
+                    reduce_group=None,
+                )
+                mean[s] = group_mean.expand_as(xx)
+        else:  # mean_level == "none"
+            mean = torch.zeros_like(x)
+
+        # Subtract mean
+        x_centered = x - mean
+
+        # Step 2: Compute std
+        if self.std_level == "batch":
+            std = self._compute_std(
+                x,
+                loss_mask,
+                mean,
+                unbiased,
+                high_precision,
+                True,
+                reduce_group,
+            )
+            std = std.expand_as(x)
+        elif self.std_level == "group":
+            std = torch.zeros_like(x)
+            for i in range(0, bs // self.group_size):
+                s = slice(i * self.group_size, (i + 1) * self.group_size)
+                xx = x[s]
+                m = loss_mask[s] if loss_mask is not None else None
+                group_mean_slice = mean[s]  # already computed and expanded
+                group_std = self._compute_std(
+                    xx,
+                    m,
+                    group_mean_slice,
+                    unbiased,
+                    high_precision,
+                    False,
+                    reduce_group,
+                )
+                std[s] = group_std.expand_as(xx)
+        else:
+            std = torch.ones_like(x)
+            eps = 0.0
+
+        assert calculation_base in [
+            "mean",
+            "deviation",
+        ], "calculation_base must be either mean or deviation"
+        base = std if calculation_base == "deviation" else mean
+        # Ensure stability
+        base += eps
+        # Normalize
+        return (x_centered / base).float()
+
+    @staticmethod
+    def _compute_mean(
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor],
+        high_precision: bool,
+        all_reduce: bool,
+        reduce_group,
+    ) -> torch.Tensor:
+        """Compute mean only, using masked_normalization internals."""
+        dtype = torch.float64 if high_precision else torch.float32
+        x = x.to(dtype)
+        dim = tuple(range(len(x.shape)))
+        if mask is None:
+            factor = torch.tensor(
+                np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
+            )
+            x_sum = x.sum(dim=dim, keepdim=True)
+        else:
+            mask = mask.to(dtype)
+            x_masked = x * mask
+            factor = mask.sum(dim, keepdim=True)
+            x_sum = x_masked.sum(dim=dim, keepdim=True)
+
+        if dist.is_initialized() and all_reduce:
+            dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
+            dist.all_reduce(x_sum, op=dist.ReduceOp.SUM, group=reduce_group)
+
+        mean = x_sum / factor
+        return mean
+
+    @staticmethod
+    def _compute_std(
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor],
+        mean: torch.Tensor,
+        unbiased: bool,
+        high_precision: bool,
+        all_reduce: bool,
+        reduce_group,
+    ) -> torch.Tensor:
+        """Compute std only, given precomputed mean."""
+        dtype = torch.float64 if high_precision else torch.float32
+        x = x.to(dtype)
+        dim = tuple(range(len(x.shape)))
+        if mask is None:
+            factor = torch.tensor(
+                np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
+            )
+            x_centered = x - mean
+            x_sum_sq = (x_centered**2).sum(dim=dim, keepdim=True)
+        else:
+            mask = mask.to(dtype)
+            x_masked = x * mask
+            factor = mask.sum(dim, keepdim=True)
+            x_centered = x_masked - mean * mask  # only apply mean where mask is 1
+            x_sum_sq = (x_centered**2).sum(dim=dim, keepdim=True)
+
+        if dist.is_initialized() and all_reduce:
+            dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
+            dist.all_reduce(x_sum_sq, op=dist.ReduceOp.SUM, group=reduce_group)
+
+        var = x_sum_sq / factor
+        if unbiased:
+            var *= factor / (factor - 1)
+        std = var.sqrt()
+        return std
+
+
+# the mixed adv norm implementation to paper MAPO, derived from base native normalization implementation
+class MAPOAdvNorm(Normalization):
+    def __init__(self, config):
+        super().__init__(config)
+
+    def __call__(self, *args, **kwargs):
+        return self._mix_adv_norm(*args, **kwargs)
+
+    @torch.no_grad()
+    def _mix_adv_norm(self, *args, **kwargs) -> torch.Tensor:
+
+        advantages = kwargs["advantages"]
+
+        # Calculate the unique number of elements in advantages Tensor，exclude element of 0 (because 0 means adv over pad_token)
+        unique_elements = torch.unique(advantages[advantages != 0])
+        # the 'unique_upper_value' means the reward of success trajectory
+        unique_upper_value, unique_lower_value = max(unique_elements), min(
+            unique_elements
+        )
+        unique_elements = unique_elements.numel()
+
+        assert unique_elements <= 2, (
+            f"The MAPO only support reward modeling in a binary, but detected {unique_elements} unique elements in advantages Tensor. Please check: "
+            f"1. the definition of reward_fun: return the binary number "
+            f"2. overlong_reward_panety set to false"
+        )
+
+        # deviation_base_norm shape [batch_size*group_size, max_token]
+        deviation_base_norm = super().__call__(
+            *args, calculation_base="deviation", **kwargs
+        )
+        # mean_base_norm shape [batch_size*group_size, max_token]
+        mean_base_norm = super().__call__(*args, calculation_base="mean", **kwargs)
+
+        bs, max_token = int(advantages.shape[0] / self.group_size), advantages.shape[-1]
+
+        # since the advantages is same within same trajectory, we can ge the trajectory_level advantage from first token
+        advantages_ = advantages[:, 0]  # advantages shape [batch_size*group_size]
+        advantages_ = advantages_.reshape(
+            bs, self.group_size
+        )  # advantages shape [batch_size, group_size]
+
+        # the number of sucess trajectory within each group and batch
+        success_trajectory_nums_per_group = (advantages_ == unique_upper_value).sum(
+            dim=1
+        )  # success_trajectory_nums shape [batch_size]
+        # the number of total trajectory within each group
+        total_trajectory_nums_per_group = torch.tensor([self.group_size] * bs).to(
+            device=success_trajectory_nums_per_group.device,
+            dtype=success_trajectory_nums_per_group.dtype,
+        )  # total_trajectory_nums shape [batch_size]
+        # the probability of success trajectory within each group and batch
+        trajectory_certainty_degree = (
+            success_trajectory_nums_per_group / total_trajectory_nums_per_group
+        )
+
+        # trajectory_reweight shape [batch_size], represent the reweight of
+        trajectory_reweight = 1 - (
+            4 * trajectory_certainty_degree * (1 - trajectory_certainty_degree)
+        )
+        # trajectory_reweight shape to expand each_token of advantages
+        # trajectory_reweight [batch_size]->[batch_size*group_size]->[batch_size*group_size, max_token],each trajectory has same reweight for each token.
+        # i.e. trajectory_reweight granularity: group-level-> trajectory-level->token-level
+        trajectory_reweight = (
+            trajectory_reweight.repeat_interleave(self.group_size)
+            .unsqueeze(-1)
+            .expand(-1, max_token)
+        )
+        # in this case 'trajectory_reweight' & 'deviation_base_norm' & 'mean_base_norm' have the same granularity
+        # torch auto broadcasting will automatically expand the dimension to do the calculation
+        return (
+            1 - trajectory_reweight
+        ) * deviation_base_norm + trajectory_reweight * mean_base_norm
+
+
+def get_reward_norm(config: PPOActorConfig):
+    if config.reward_norm:
+        return Normalization(config.reward_norm)
+    else:
+        return None
+
+
+def get_adv_norm(config: PPOActorConfig):
+    if config.adv_norm:
+        if config.adv_norm.adv_norm_mode == "mix":
+            return MAPOAdvNorm(config.adv_norm)
+        else:
+            return Normalization(config.adv_norm)
+
+
+# class AdvNorm:
+#     """
+#     Adaptive Advantage Normalization.
+
+#     Supports independent specification of normalization level for mean and std:
+#     - "batch": normalize across entire batch (with optional all_reduce in distributed setting)
+#     - "group": normalize within fixed-size groups
+#     - std_level can be None: only center the data (no scaling)
+
+#     If mean_level == std_level, uses original masked_normalization for efficiency.
+#     Otherwise, computes mean and std separately and combines.
+
+#     Args:
+#         mean_level (str): "batch" or "group"
+#         std_level (str or None): "batch", "group", or None (no std scaling)
+#         group_size (int, optional): required if any level is "group"
+#     """
+
+#     def __init__(
+#         self,
+#         advNorm_cfg,
+#     ):
+#         if advNorm_cfg is None:
+#             return None
+
+#         if advNorm_cfg.mean_level not in {"batch", "group", "none"}:
+#             raise ValueError(
+#                 f"mean_level must be 'batch', 'group' or 'none', got {advNorm_cfg.mean_level}"
+#             )
+#         if advNorm_cfg.std_level not in {"batch", "group", "none"}:
+#             raise ValueError(
+#                 f"std_level must be 'batch', 'group', or 'none', got {advNorm_cfg.std_level}"
+#             )
+#         if (
+#             advNorm_cfg.mean_level == "group" or advNorm_cfg.std_level == "group"
+#         ) and advNorm_cfg.group_size is None:
+#             raise ValueError("group_size must be provided if using group normalization")
+
+#         self.mean_level = advNorm_cfg.mean_level
+#         self.std_level = advNorm_cfg.std_level
+#         self.group_size = advNorm_cfg.group_size
+#         # aggregation_mode should be native or mix. native is the noral z-score normalization, for mix, pls refer to paper MAPO.
+#         self.aggregation_mode = advNorm_cfg.aggregation_mode
+
+#     # the native implementation of z-score adv-normalization
+#     @torch.no_grad()
+#     def _native_adv_norm(self, *args, **kwargs) -> torch.Tensor:
+#         return self._calculate_adv_norm(*args, calculation_base="deviation", **kwargs)
+
+#     # the improved implementation to paper MAPO
+#     @torch.no_grad()
+#     def _mix_adv_norm(self, *args, **kwargs) -> torch.Tensor:
+
+#         advantages = kwargs["advantages"]
+
+#         # Calculate the unique number of elements in advantages Tensor，exclude element of 0 (because 0 means adv over pad_token)
+#         unique_elements = torch.unique(advantages[advantages != 0])
+#         # the 'unique_upper_value' means the reward of success trajectory
+#         unique_upper_value, unique_lower_value = max(unique_elements), min(
+#             unique_elements
+#         )
+#         unique_elements = unique_elements.numel()
+
+#         assert unique_elements <= 2, (
+#             f"The MAPO only support reward modeling in a binary, but detected {unique_elements} unique elements in advantages Tensor. Please check: "
+#             f"1. the definition of reward_fun: return the binary number "
+#             f"2. overlong_reward_panety set to false"
+#         )
+
+#         # deviation_base_norm shape [batch_size*group_size, max_token]
+#         deviation_base_norm = self._calculate_adv_norm(
+#             *args, calculation_base="deviation", **kwargs
+#         )
+#         # mean_base_norm shape [batch_size*group_size, max_token]
+#         mean_base_norm = self._calculate_adv_norm(
+#             *args, calculation_base="mean", **kwargs
+#         )
+
+#         bs, max_token = int(advantages.shape[0] / self.group_size), advantages.shape[-1]
+
+#         # since the advantages is same within same trajectory, we can ge the trajectory_level advantage from first token
+#         advantages_ = advantages[:, 0]  # advantages shape [batch_size*group_size]
+#         advantages_ = advantages_.reshape(
+#             bs, self.group_size
+#         )  # advantages shape [batch_size, group_size]
+
+#         # the number of sucess trajectory within each group and batch
+#         success_trajectory_nums_per_group = (advantages_ == unique_upper_value).sum(
+#             dim=1
+#         )  # success_trajectory_nums shape [batch_size]
+#         # the number of total trajectory within each group
+#         total_trajectory_nums_per_group = torch.tensor([self.group_size] * bs).to(
+#             device=success_trajectory_nums_per_group.device,
+#             dtype=success_trajectory_nums_per_group.dtype,
+#         )  # total_trajectory_nums shape [batch_size]
+#         # the probability of success trajectory within each group and batch
+#         trajectory_certainty_degree = (
+#             success_trajectory_nums_per_group / total_trajectory_nums_per_group
+#         )
+
+#         # trajectory_reweight shape [batch_size], represent the reweight of
+#         trajectory_reweight = 1 - (
+#             4 * trajectory_certainty_degree * (1 - trajectory_certainty_degree)
+#         )
+#         # trajectory_reweight shape to expand each_token of advantages
+#         # trajectory_reweight [batch_size]->[batch_size*group_size]->[batch_size*group_size, max_token],each trajectory has same reweight for each token.
+#         # i.e. trajectory_reweight granularity: group-level-> trajectory-level->token-level
+#         trajectory_reweight = (
+#             trajectory_reweight.repeat_interleave(self.group_size)
+#             .unsqueeze(-1)
+#             .expand(-1, max_token)
+#         )
+#         # in this case 'trajectory_reweight' & 'deviation_base_norm' & 'mean_base_norm' have the same granularity
+#         # torch auto broadcasting will automatically expand the dimension to do the calculation
+#         return (
+#             1 - trajectory_reweight
+#         ) * deviation_base_norm + trajectory_reweight * mean_base_norm
+
+#     def _calculate_adv_norm(
+#         self,
+#         advantages: torch.Tensor,
+#         loss_mask: Optional[torch.Tensor] = None,
+#         eps: float = 1e-5,
+#         unbiased: bool = False,
+#         high_precision: bool = True,
+#         reduce_group=None,
+#         calculation_base: str = "deviation",
+#     ) -> torch.Tensor:
+#         """
+#         Normalize advantages tensor according to mean_level and std_level.
+
+#         Args:
+#             advantages (torch.Tensor): [...]
+#             loss_mask (torch.Tensor, optional): same shape as advantages
+#             eps (float): small constant for numerical stability
+#             unbiased (bool): whether to use unbiased variance
+#             high_precision (bool): use float64 for computation
+#             reduce_group: distributed group for all_reduce
+#             calculation_base: The denominator in the final calculation step. Default is "deviation", which means the x_center is divide by std. If set to "mean", the denominator will be the mean.
+
+#         Returns:
+#             normalized advantages (same shape, dtype=float32)
+#         """
+
+#         bs = advantages.size(0)
+
+#         # Case: same level → use original masked_normalization to maxize the robust to original code
+#         if self.mean_level == self.std_level:
+#             if self.mean_level == "batch":
+#                 return masked_normalization(
+#                     advantages,
+#                     mask=loss_mask,
+#                     unbiased=unbiased,
+#                     eps=eps,
+#                     high_precision=high_precision,
+#                     all_reduce=True,  # follow original code
+#                     reduce_group=reduce_group,
+#                     calculation_base=calculation_base,
+#                 )
+#             else:
+#                 # sub_case 1: both std and mean are none
+#                 if self.mean_level == "none":
+#                     return advantages.float()
+#                 # sub_case 2: both std and mean are group
+#                 adv_list = []
+#                 for i in range(0, bs // self.group_size):
+#                     s = slice(i * self.group_size, (i + 1) * self.group_size)
+#                     adv = advantages[s]
+#                     m = loss_mask[s] if loss_mask is not None else None
+#                     adv_list.append(
+#                         masked_normalization(
+#                             adv,
+#                             mask=m,
+#                             unbiased=unbiased,
+#                             eps=eps,
+#                             high_precision=high_precision,
+#                             all_reduce=False,  # follow original code
+#                             reduce_group=reduce_group,
+#                             calculation_base=calculation_base,
+#                         )
+#                     )
+#                 return torch.cat(adv_list, 0)
+
+#         # Cases: mean and std levels differ, or std_level is None
+#         # Step 1: Compute mean
+#         if self.mean_level == "batch":
+#             mean = self._compute_mean(
+#                 advantages, loss_mask, high_precision, True, reduce_group
+#             )
+#             # Expand batch mean to match input shape for mixed normalization
+#             mean = mean.expand_as(advantages)
+#         elif self.mean_level == "group":
+#             mean = torch.zeros_like(advantages)
+#             for i in range(0, bs // self.group_size):
+#                 s = slice(i * self.group_size, (i + 1) * self.group_size)
+#                 adv = advantages[s]
+#                 m = loss_mask[s] if loss_mask is not None else None
+#                 group_mean = self._compute_mean(
+#                     adv, m, high_precision, False, reduce_group
+#                 )
+#                 mean[s] = group_mean.expand_as(adv)
+#         else:  # mean_level == "none"
+#             mean = torch.zeros_like(advantages)
+
+#         # Subtract mean
+#         x_centered = advantages - mean
+
+#         # Step 2: Compute std
+#         if self.std_level == "none":
+#             return x_centered.float()
+
+#         if self.std_level == "batch":
+#             std = self._compute_std(
+#                 advantages,
+#                 loss_mask,
+#                 mean,
+#                 unbiased,
+#                 high_precision,
+#                 True,
+#                 reduce_group,
+#             )
+#             # Expand batch std to match input shape
+#             std = std.expand_as(advantages)
+#         else:  # group
+#             std = torch.zeros_like(advantages)
+#             for i in range(0, bs // self.group_size):
+#                 s = slice(i * self.group_size, (i + 1) * self.group_size)
+#                 adv = advantages[s]
+#                 m = loss_mask[s] if loss_mask is not None else None
+#                 group_mean_slice = mean[s]  # already computed and expanded
+#                 group_std = self._compute_std(
+#                     adv,
+#                     m,
+#                     group_mean_slice,
+#                     unbiased,
+#                     high_precision,
+#                     False,
+#                     reduce_group,
+#                 )
+#                 std[s] = group_std.expand_as(adv)
+
+#         assert calculation_base in [
+#             "mean",
+#             "deviation",
+#         ], "calculation_base must be either mean or deviation"
+#         base = std if calculation_base == "deviation" else mean
+#         # Ensure stability
+#         base += eps
+#         # Normalize
+#         return (x_centered / base).float()
+
+#     @torch.no_grad()
+#     def __call__(
+#         self,
+#         advantages: torch.Tensor,
+#         loss_mask: Optional[torch.Tensor] = None,
+#         eps: float = 1e-5,
+#         unbiased: bool = False,
+#         high_precision: bool = True,
+#         reduce_group=None,
+#     ) -> torch.Tensor:
+#         assert self.aggregation_mode in [
+#             "native",
+#             "mix",
+#         ], "aggregation_mode must be either native or mix"
+#         norm_func = (
+#             self._native_adv_norm
+#             if self.aggregation_mode == "native"
+#             else self._mix_adv_norm
+#         )
+#         return norm_func(
+#             advantages=advantages,
+#             loss_mask=loss_mask,
+#             eps=eps,
+#             unbiased=unbiased,
+#             high_precision=high_precision,
+#             reduce_group=reduce_group,
+#         )
+
+#     @staticmethod
+#     def _compute_mean(
+#         x: torch.Tensor,
+#         mask: Optional[torch.Tensor],
+#         high_precision: bool,
+#         all_reduce: bool,
+#         reduce_group,
+#     ) -> torch.Tensor:
+#         """Compute mean only, using masked_normalization internals."""
+#         dtype = torch.float64 if high_precision else torch.float32
+#         x = x.to(dtype)
+#         dim = tuple(range(len(x.shape)))
+#         if mask is None:
+#             factor = torch.tensor(
+#                 np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
+#             )
+#             x_sum = x.sum(dim=dim, keepdim=True)
+#         else:
+#             mask = mask.to(dtype)
+#             x_masked = x * mask
+#             factor = mask.sum(dim, keepdim=True)
+#             x_sum = x_masked.sum(dim=dim, keepdim=True)
+
+#         if dist.is_initialized() and all_reduce:
+#             dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
+#             dist.all_reduce(x_sum, op=dist.ReduceOp.SUM, group=reduce_group)
+
+#         mean = x_sum / factor
+#         return mean
+
+#     @staticmethod
+#     def _compute_std(
+#         x: torch.Tensor,
+#         mask: Optional[torch.Tensor],
+#         mean: torch.Tensor,
+#         unbiased: bool,
+#         high_precision: bool,
+#         all_reduce: bool,
+#         reduce_group,
+#     ) -> torch.Tensor:
+#         """Compute std only, given precomputed mean."""
+#         dtype = torch.float64 if high_precision else torch.float32
+#         x = x.to(dtype)
+#         dim = tuple(range(len(x.shape)))
+#         if mask is None:
+#             factor = torch.tensor(
+#                 np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
+#             )
+#         else:
+#             mask = mask.to(dtype)
+#             x_masked = x * mask
+#             factor = mask.sum(dim, keepdim=True)
+#             x_centered = x_masked - mean * mask  # only apply mean where mask is 1
+#             x_sum_sq = (x_centered**2).sum(dim=dim, keepdim=True)
+#         if mask is None:
+#             x_centered = x - mean
+#             x_sum_sq = (x_centered**2).sum(dim=dim, keepdim=True)
+
+#         if dist.is_initialized() and all_reduce:
+#             dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
+#             dist.all_reduce(x_sum_sq, op=dist.ReduceOp.SUM, group=reduce_group)
+
+#         var = x_sum_sq / factor
+#         if unbiased:
+#             var *= factor / (factor - 1)
+#         std = var.sqrt()
+#         return std

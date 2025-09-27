@@ -12,7 +12,6 @@ import torch.distributed as dist
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 from reward_score import compute_score
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PreTrainedTokenizerFast
 
@@ -38,6 +37,7 @@ from areal.utils.data import (
     broadcast_tensor_container,
     concat_padded_tensors,
     cycle_dataloader,
+    tensor_container_to,
 )
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
@@ -105,17 +105,17 @@ class CountDownWorkflow(RolloutWorkflow):
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
             rewards.append(reward)
-            res = dict(
+            res = {
                 # unsqueeze to add an additional batch dimension
-                input_ids=torch.tensor(seq).unsqueeze(0),
-                loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                logprobs=torch.tensor(logprobs).unsqueeze(0),
-                versions=torch.tensor(versions).unsqueeze(0),
-                attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
+                "input_ids": torch.tensor(seq).unsqueeze(0),
+                "loss_mask": torch.tensor(loss_mask).unsqueeze(0),
+                "logprobs": torch.tensor(logprobs).unsqueeze(0),
+                "versions": torch.tensor(versions).unsqueeze(0),
+                "attention_mask": torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
                 # reward
-                rewards=torch.tensor([float(reward)]),
-            )
-            results.append(TensorDict(res, batch_size=[1]))
+                "rewards": torch.tensor([float(reward)]),
+            }
+            results.append(res)
 
         # logger.info(f"numbers: {data['numbers']} target: {data['target']} rewards: {rewards}")
 
@@ -171,6 +171,7 @@ def main(args):
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
     # Create process groups
     actor = FSDPPPOActor(config=config.actor)
@@ -227,11 +228,11 @@ def main(args):
         ref.initialize(None, ft_spec)
 
     # NOTE: Weight update meta only requires address and free port of rank 0,
-    # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
+    # but `WeightUpdateMeta.from_fsdp_xccl` has to be executed on all ranks
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
     weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
+        WeightUpdateMeta.from_fsdp_xccl(
             AllocationMode.from_str(config.allocation_mode), actor
         )
     ]
@@ -310,7 +311,7 @@ def main(args):
                         workflow=workflow,
                         should_accept=lambda sample: True,
                     )
-                batch = batch.to(actor.device)
+                batch = tensor_container_to(batch, actor.device)
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),

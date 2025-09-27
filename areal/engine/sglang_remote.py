@@ -6,13 +6,13 @@ import time
 import uuid
 from concurrent.futures import Future, ProcessPoolExecutor
 from datetime import datetime
+from threading import Lock
 from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
 import requests
 import torch.distributed as dist
 import uvloop
-from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
@@ -44,6 +44,7 @@ class RemoteSGLangEngine(InferenceEngine):
         self.distributed_weight_update_initialized = False
         self._version = 0
 
+        self.lock = Lock()
         self.workflow_executor = WorkflowExecutor(
             config=config,
             inference_engine=self,
@@ -97,6 +98,7 @@ class RemoteSGLangEngine(InferenceEngine):
         self.server_idx = random.randint(0, len(self.addresses) - 1)
         self.logger.info("Servers are all ready!")
         self.executor = ProcessPoolExecutor(max_workers=1)
+        self.lora_init = False
         self.workflow_executor.initialize(
             logger=self.logger, train_data_parallel_size=train_data_parallel_size
         )
@@ -106,10 +108,12 @@ class RemoteSGLangEngine(InferenceEngine):
         self.executor.shutdown()
 
     def set_version(self, version):
-        self._version = version
+        with self.lock:
+            self._version = version
 
     def get_version(self):
-        return self._version
+        with self.lock:
+            return self._version
 
     def choose_server(self) -> str:
         if self.config.schedule_policy == "round_robin":
@@ -130,10 +134,21 @@ class RemoteSGLangEngine(InferenceEngine):
                 "RemoteSGLangEngine does not support n_samples > 1. "
                 "Please call generate for multiple times with n_samples = 1."
             )
+
+        max_new_tokens = min(
+            gconfig.max_tokens - len(req.input_ids), gconfig.max_new_tokens
+        )
+        if max_new_tokens <= 0:
+            raise RuntimeError(
+                f"max_new_tokens ({max_new_tokens}) is non-positive! "
+                f"max_tokens={gconfig.max_tokens}, prompt_len={len(req.input_ids)}, "
+                f"max_new_tokens={gconfig.max_new_tokens}."
+            )
+
         sample_params = {
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
-            "max_new_tokens": gconfig.max_new_tokens,
+            "max_new_tokens": max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
             "frequency_penalty": gconfig.frequency_penalty,
@@ -148,6 +163,11 @@ class RemoteSGLangEngine(InferenceEngine):
             "return_logprob": True,
             "stream": False,
         }
+        if self.lora_init:
+            # Use the same lora name because we are unable to change
+            # the lora_name of an inflight request during weight update.
+            # If the lora_name mismatch, there'll be an error.
+            payload["lora_path"] = f"lora_1"
 
         # Make request
         start_time = time.perf_counter()
@@ -220,8 +240,7 @@ class RemoteSGLangEngine(InferenceEngine):
             # Update accumulated outputs
             accumulated_output_tokens.extend(output_tokens)
             accumulated_output_logprobs.extend(output_logprobs)
-            # FIXME: Update with actual server versions
-            accumulated_versions.extend([-1] * len(output_tokens))
+            accumulated_versions.extend([self.get_version()] * len(output_tokens))
 
             payload["input_ids"] += output_tokens
             sample_params["max_new_tokens"] -= len(output_tokens)
@@ -252,9 +271,14 @@ class RemoteSGLangEngine(InferenceEngine):
         for addr in self.addresses:
             res = requests.post(f"http://{addr}/pause_generation")
             res.raise_for_status()
+
+        # The above http request may require some time to be scheduled and executed.
+        # The following line waits until all requests are indeed dropped.
+        time.sleep(self.config.pause_grace_period)
+
         tik = time.perf_counter()
         fut = Future()
-        if meta.type == "nccl":
+        if meta.type == current_platform.communication_backend:
             fut = self.executor.submit(
                 update_weights_from_distributed,
                 meta,
@@ -277,6 +301,20 @@ class RemoteSGLangEngine(InferenceEngine):
                 raise RuntimeError(
                     f"Experiment and trial names must be set for disk-based weight updates."
                 )
+            endpoints = ["update_weights_from_disk"]
+            payloads = [dict(model_path=str(meta.path), abort_all_requests=True)]
+            lora_name = "lora_1"
+            if meta.use_lora:
+                endpoints = []
+                payloads = []
+                if self.lora_init:
+                    endpoints.append("unload_lora_adapter")
+                    payloads.append(dict(lora_name=lora_name))
+                else:
+                    self.lora_init = True
+                endpoints.append("load_lora_adapter")
+                payloads.append(dict(lora_name=lora_name, lora_path=str(meta.path)))
+
             fut = self.executor.submit(
                 update_weights_from_disk,
                 self.config.experiment_name,
@@ -286,6 +324,8 @@ class RemoteSGLangEngine(InferenceEngine):
                 meta.path,
                 self.config.request_retries,
                 self.config.request_timeout,
+                endpoints,
+                payloads,
             )
 
             def callback(fut):
@@ -322,7 +362,7 @@ class RemoteSGLangEngine(InferenceEngine):
             should_accept=should_accept,
         )
 
-    def wait(self, count: int, timeout: float | None = None) -> TensorDict:
+    def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
         return self.workflow_executor.wait(count, timeout=timeout)
 
     def rollout_batch(
@@ -331,7 +371,7 @@ class RemoteSGLangEngine(InferenceEngine):
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
-    ) -> TensorDict:
+    ) -> Dict[str, Any]:
         return self.workflow_executor.rollout_batch(
             data=data,
             workflow=workflow,
@@ -370,6 +410,8 @@ def update_weights_from_disk(
     path,
     request_retries,
     request_timeout,
+    endpoints,
+    payloads,
 ):
     async def _fn():
         update_name = names.update_weights_from_disk(
@@ -386,19 +428,20 @@ def update_weights_from_disk(
             read_bufsize=1024 * 1024 * 10,
             connector=get_default_connector(),
         )
-        jobs = [
-            arequest_with_retry(
-                addr=addr,
-                session=session,
-                endpoint="/update_weights_from_disk",
-                payload=dict(model_path=str(path), abort_all_request=True),
-                method="POST",
-                max_retries=request_retries,
-                timeout=request_timeout,
-            )
-            for addr in addresses
-        ]
-        await asyncio.gather(*jobs)
+        for endpoint, payload in zip(endpoints, payloads):
+            jobs = [
+                arequest_with_retry(
+                    addr=addr,
+                    session=session,
+                    endpoint=f"/{endpoint}",
+                    payload=payload,
+                    method="POST",
+                    max_retries=request_retries,
+                    timeout=request_timeout,
+                )
+                for addr in addresses
+            ]
+            await asyncio.gather(*jobs)
         await session.close()
         return load_timestamp - save_timestamp
 
