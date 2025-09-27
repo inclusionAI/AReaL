@@ -1,4 +1,4 @@
-experiment_name: gsm8k-drgrpo
+experiment_name: gsm8k-mapo
 trial_name: trial0
 
 seed: 1
@@ -66,8 +66,10 @@ actor:
   dynamic_sampling: false
   adv_norm:
     mean_level: group
-    std_level: none
+    std_level: group
     group_size: ${gconfig.n_samples}
+    adv_norm_mode: mix
+  max_new_tokens: ${gconfig.max_new_tokens}
 
 ref:
   experiment_name: ${experiment_name}

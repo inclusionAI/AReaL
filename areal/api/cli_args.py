@@ -35,6 +35,18 @@ class NormConfig:
     group_size: int = field(
         default=1, metadata={"help": "Group size for group-level normalization"}
     )
+    adv_norm_mode: str = field(
+        default="native",
+        metadata={
+            "help": "native or mix. native is the noral z-score normalization. for mix, the normal z-score and mean-base z-score normalization will be calculate and aggragate (more info please refer to the paper of MAPO)."
+        },
+    )
+    reward_norm_mode: str = field(
+        default="native",
+        metadata={
+            "help": "TODO. if we need multiple reward_norm in the future, we can implement it here."
+        },
+    )
 
 
 @dataclass
