@@ -36,65 +36,6 @@ class CompletionWithTokenLogpReward:
             parent_versions = parent_res["versions"].squeeze(0).tolist()
             parent_len = len(parent_logprobs)
             assert parent_len == len(parent_loss_mask) == len(parent_versions)
-            # try:
-            #     assert resp.input_len >= parent_len, (
-            #         f"The input length of the child completion must be greater than or equal to "
-            #         f"the length of the parent completion. Currently resp.input_len={resp.input_len}, "
-            #         f"parent_len={parent_len}. "
-            #     )
-            # except AssertionError as e:
-            #     # for debugging
-            #     parent_input = self.tokenizer.decode(
-            #         self.parent.response.input_tokens, skip_special_tokens=False
-            #     )
-            #     parent_output = self.tokenizer.decode(
-            #         self.parent.response.output_tokens, skip_special_tokens=False
-            #     )
-            #     child_input = self.tokenizer.decode(
-            #         resp.input_tokens, skip_special_tokens=False
-            #     )
-            #     child_output = self.tokenizer.decode(
-            #         resp.output_tokens, skip_special_tokens=False
-            #     )
-            #     print(
-            #         f"[Debug] >>> AssertionError: The input length of the child completion must be greater than or equal to the length of the parent completion. Currently resp.input_len={resp.input_len}, parent_len={parent_len}. "
-            #     )
-            #     print(
-            #         f"[Debug] parent messages: \n{json.dumps(self.parent.messages, indent=4)}"
-            #     )
-            #     print(
-            #         f"[Debug] child messages: \n{json.dumps(self.messages, indent=4)}"
-            #     )
-            #     print(
-            #         f"[Debug] Parent input: {len(self.parent.response.input_tokens)}: **********************************************\n",
-            #         parent_input,
-            #     )
-            #     print(
-            #         "[Debug] Parent input end: **********************************************\n"
-            #     )
-            #     print(
-            #         f"[Debug] Parent output: {len(self.parent.response.output_tokens)}: *********************************************\n",
-            #         parent_output,
-            #     )
-            #     print(
-            #         "[Debug] Parent output end: **********************************************\n"
-            #     )
-            #     print(
-            #         f"[Debug] Child input: {len(resp.input_tokens)}: **********************************************\n",
-            #         child_input,
-            #     )
-            #     print(
-            #         "[Debug] Child input end: **********************************************\n"
-            #     )
-            #     print(
-            #         f"[Debug] Child output: {len(resp.output_tokens)}: **********************************************\n",
-            #         child_output,
-            #     )
-            #     print(
-            #         "[Debug] Child output end: **********************************************\n"
-            #     )
-            #     raise e
-
             if resp.input_len > parent_len:
                 logprobs = (
                     parent_logprobs
