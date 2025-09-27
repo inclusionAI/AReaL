@@ -203,6 +203,15 @@ class PPOActor:
             n_valid_tokens=loss_mask.bool(),
             **result_denominators,
         )
+        if self.config.log_agent_stats:
+            assert (
+                "begin_of_trajectory" in data
+            ), "'begin_of_trajectory' is expected to log agent statistics"
+            assert (
+                len(self.config.log_agent_stats_keys) > 0
+            ), "`log_agent_stats_keys` should not be empty when log_agent_stats=True"
+            agent_denominator = (data["begin_of_trajectory"] > 0).bool()
+            result_denominators["agent"] = agent_denominator
         stats_tracker.denominator(**global_denominators)
         stats_tracker.stat(
             correct_seq_len=seqlens.float(), denominator="correct_n_seqs"
@@ -239,6 +248,12 @@ class PPOActor:
         if self.config.behav_imp_weight_cap is not None:
             scalars["behav_imp_weight_cap"] = self.config.behav_imp_weight_cap
         stats_tracker.scalar(**scalars)
+
+        if self.config.log_agent_stats:
+            stats_tracker.stat(
+                **{k: data[k].float() for k in self.config.log_agent_stats_keys},
+                denominator="agent",
+            )
 
         global_stats = stats_tracker.export(reduce_group=stats_reduce_group)
         for k in global_denominators:
