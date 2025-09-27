@@ -95,17 +95,28 @@ class MultiTurnReactAgent(FnCallAgent):
         prompt_token_ids = self.tokenizer.encode("".join(message_strs))
         return len(prompt_token_ids)
 
-    async def call_server(self, client: ArealOpenAI, messages: List[Dict]) -> str:
-        completion = await client.chat.completions.create(
-            messages=messages,
-            temperature=1.0,
-            stop=["\n<tool_response>", "<tool_response>"],
-            max_completion_tokens=self.max_tokens_per_turn,
-            use_chat_template=False,
+    async def call_server(
+        self, client: ArealOpenAI, messages: List[Dict], max_attempts: int = 100
+    ) -> str:
+        attempts = 0
+        while attempts < max_attempts:
+            try:
+                completion = await client.chat.completions.create(
+                    messages=messages,
+                    temperature=1.0,
+                    stop=["\n<tool_response>", "<tool_response>"],
+                    max_completion_tokens=self.max_tokens_per_turn,
+                    use_chat_template=False,
+                )
+                content = completion.choices[0].message.content
+                assert content, "Error: LLM response is empty."
+                return completion, content
+            except RuntimeError as e:
+                print(f"RuntimeError during LLM call_server at attempt {attempts}: {e}")
+                continue
+        raise RuntimeError(
+            f"Failed to get response from LLM after {max_attempts} attempts."
         )
-        content = completion.choices[0].message.content
-        assert content, "Error: LLM response is empty."
-        return completion, content
 
     async def run_agent(
         self, data, client: ArealOpenAI, save_path: str | None = None

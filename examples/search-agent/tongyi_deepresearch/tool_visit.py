@@ -175,6 +175,7 @@ class Visit(BaseTool):
         max_retries = 3
         timeout = 50
         assert self.setupd
+        print(f"entering jina_readpage url: {url}")
         for attempt in range(max_retries):
             headers = {"Authorization": f"Bearer {JINA_API_KEYS}"}
             try:
