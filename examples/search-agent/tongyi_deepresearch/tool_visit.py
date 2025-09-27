@@ -61,7 +61,6 @@ class Visit(BaseTool):
         super().__init__(cfg)
         # self._session: Optional[aiohttp.ClientSession] = None
         self._llm_client = summary_client
-        self.setupd = False
 
     # async def setup_tool(self):
     #     if self._session is None or self._session.closed:
@@ -174,7 +173,6 @@ class Visit(BaseTool):
         """
         max_retries = 3
         timeout = 50
-        assert self.setupd
         print(f"entering jina_readpage url: {url}, jina_api_keys={JINA_API_KEYS}")
         async with aiohttp.ClientSession() as session:
             for attempt in range(max_retries):

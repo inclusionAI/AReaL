@@ -28,7 +28,6 @@ class Search(BaseTool):
     def __init__(self, cfg: Optional[dict] = None):
         super().__init__(cfg)
         # self._session: Optional[aiohttp.ClientSession] = None
-        self.setupd = False
 
     # async def setup_tool(self):
     #     if self._session is None or self._session.closed:
@@ -42,8 +41,6 @@ class Search(BaseTool):
     #         self.setupd = False
 
     async def google_search_with_serp(self, query: str):
-        assert self.setupd
-
         def contains_chinese_basic(text: str) -> bool:
             return any("\u4e00" <= char <= "\u9fff" for char in text)
 
