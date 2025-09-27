@@ -122,13 +122,13 @@ class Visit(BaseTool):
         print(f"Summary Length {len(response)}; Summary Content {response}")
         return response.strip()
 
-    async def call_server(self, client, msgs, max_retries=2):
+    async def call_server(self, msgs, max_retries=2):
         if self._llm_client is None:
             return ""
         os.environ.get("SUMMARY_MODEL_NAME", "")
         for attempt in range(max_retries):
             try:
-                chat_response = await client.chat.completions.create(  # type: ignore[attr-defined]
+                chat_response = await self._llm_client.chat.completions.create(  # type: ignore[attr-defined]
                     messages=msgs, temperature=0.7, max_completion_tokens=2048
                 )
                 content = chat_response.choices[0].message.content

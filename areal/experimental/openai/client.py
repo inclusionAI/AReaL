@@ -101,7 +101,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 message_strs.append(
                     f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
                 )
-            message_strs.append("<|im_start|>assistant\n")
+            message_strs.append("<|im_start|>assistant\n<|im_start|>")
             prompt_token_ids = self.tokenizer.encode("".join(message_strs))
 
         temp = 1.0 if temperature is NOT_GIVEN else (temperature or 0.0)
