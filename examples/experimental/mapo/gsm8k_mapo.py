@@ -2,7 +2,6 @@ import os
 import sys
 from copy import deepcopy
 
-import debugpy
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -23,8 +22,8 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 
-debugpy.listen(("0.0.0.0", 5678))
-debugpy.wait_for_client()
+# debugpy.listen(("localhost", 5678))
+# debugpy.wait_for_client()
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):

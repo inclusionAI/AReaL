@@ -411,28 +411,63 @@ class AdvNorm:
         # aggregation_mode should be native or mix. native is the noral z-score normalization, for mix, pls refer to paper MAPO.
         self.aggregation_mode = advNorm_cfg.aggregation_mode
 
+    # the native implementation of z-score adv-normalization
     @torch.no_grad()
     def _native_adv_norm(self, *args, **kwargs) -> torch.Tensor:
         return self._calculate_adv_norm(*args, calculation_base="deviation", **kwargs)
 
+    # the improved implementation to paper MAPO
     @torch.no_grad()
     def _mix_adv_norm(self, *args, **kwargs) -> torch.Tensor:
-        # the implementation to paper MAPO
 
+        advantages = kwargs["advantages"]
+
+        # Calculate the unique number of elements in advantages Tensor，exclude element of 0 (because 0 means adv over pad_token)
+        unique_elements = torch.unique(advantages[advantages != 0]).numel()
+
+        assert unique_elements <= 2, (
+            f"The MAPO only support reward modeling in a binary, but detected {unique_elements} unique elements in advantages Tensor. Please check: "
+            f"1. the definition of reward_fun: return the binary number "
+            f"2. overlong_reward_panety set to false"
+        )
+
+        # deviation_base_norm shape [batch_size*group_size, max_token]
         deviation_base_norm = self._calculate_adv_norm(
             *args, calculation_base="deviation", **kwargs
         )
+        # mean_base_norm shape [batch_size*group_size, max_token]
         mean_base_norm = self._calculate_adv_norm(
             *args, calculation_base="mean", **kwargs
         )
-        success_trajectory_nums = 4
-        total_trajectory_nums = self.group_size
+
+        bs, max_token = advantages.shape[0], advantages.shape[-1]
+
+        # since the advantages is same within same trajectory, we can ge the trajectory_level advantage from first token
+        advantages_ = advantages[:, 0]  # advantages shape [batch_size*group_size]
+        advantages_ = advantages_.reshape(
+            bs, self.group_size
+        )  # advantages shape [batch_size, group_size]
+
+        # the number of sucess trajectory within each group and batch
+        success_trajectory_nums_per_group = (advantages_ > 0).sum(
+            dim=1
+        )  # success_trajectory_nums shape [batch_size]
+        # the number of total trajectory within each group
+        total_trajectory_nums_per_group = advantages_.shape[
+            0
+        ]  # total_trajectory_nums shape [batch_size]
+        # the probability of success trajectory within each group and batch
         trajectory_certainty_degree = success_trajectory_nums / total_trajectory_nums
 
+        # trajectory_reweight shape [batch_size, group_size]
         trajectory_reweight = 1 - (
             4 * trajectory_certainty_degree * (1 - trajectory_certainty_degree)
         )
+        # trajectory_reweight shape to expand each_token of advantages
+        # trajectory_reweight shape [batch_size*group_size, max_token]
+        trajectory_reweight = trajectory_reweight.expand(-1, max_token)
 
+        # in this case 'trajectory_reweight' & 'deviation_base_norm' & 'mean_base_norm' have the same granularity
         return (
             1 - trajectory_reweight
         ) * deviation_base_norm + trajectory_reweight * mean_base_norm
@@ -588,15 +623,15 @@ class AdvNorm:
         norm_func = (
             self._native_adv_norm
             if self.aggregation_mode == "native"
-            else _mix_adv_norm
+            else self._mix_adv_norm
         )
         return norm_func(
-            advantages,
-            loss_mask,
-            eps,
-            unbiased,
-            high_precision,
-            reduce_group,
+            advantages=advantages,
+            loss_mask=loss_mask,
+            eps=eps,
+            unbiased=unbiased,
+            high_precision=high_precision,
+            reduce_group=reduce_group,
         )
 
     @staticmethod

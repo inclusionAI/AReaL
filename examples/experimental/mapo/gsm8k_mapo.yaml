@@ -57,7 +57,7 @@ actor:
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
-  reward_bias: -0.5
+  reward_bias: 0.5
   kl_ctl: 0.0
   ppo_n_minibatches: 1
   recompute_logprob: true
@@ -95,7 +95,7 @@ sglang:
 
 # datasets
 train_dataset:
-  batch_size: 256
+  batch_size: 64
   shuffle: true
   pin_memory: true
   num_workers: 4
