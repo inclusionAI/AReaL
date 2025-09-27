@@ -3,7 +3,6 @@ from typing import Dict, List, Optional
 
 import torch
 from openai.types.chat import ChatCompletion
-from transformers import PreTrainedTokenizer
 
 from areal.api.io_struct import ModelResponse
 from areal.utils import logging
@@ -20,16 +19,11 @@ class CompletionWithTokenLogpReward:
     messages: List[dict] = field(default_factory=list)
     reward: float | None = None
     parent: Optional["CompletionWithTokenLogpReward"] | None = None
-    use_chat_template: bool = False
-    tokenizer: Optional[PreTrainedTokenizer] = None
 
     def to_tensor_dict(self) -> Dict[str, torch.Tensor]:
         resp = self.response
         self.seq_tokens = seq = resp.input_tokens + resp.output_tokens
         if self.parent:
-            assert (
-                not self.use_chat_template
-            ), "Cannot use parent with completions that use chat template."
             parent_res = self.parent.to_tensor_dict()
             parent_logprobs = parent_res["logprobs"].squeeze(0).tolist()
             parent_loss_mask = parent_res["loss_mask"].squeeze(0).tolist()
