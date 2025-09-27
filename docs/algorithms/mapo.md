@@ -33,7 +33,7 @@ For more details:
 ## Notice
 For MAPO implementation, following constraints should be met:
 
-1. 'reward_function' should return binary result of any value. High value represents the sucessful trajectory, while the lower value represent the fail trajectory.
+1. 'reward_function' should return binary result of any value. High value represents the successful trajectory, while the lower value represent the fail trajectory.
 2. the 'overlong_reward_panelty' should be disable
 
 
