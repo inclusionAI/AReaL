@@ -177,6 +177,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
                             f"[Debug] Parent {count} Completion: id={parent.completion.id}"
                         )
                         parent = parent.parent
+                        count += 1
                 raise e
 
             return results

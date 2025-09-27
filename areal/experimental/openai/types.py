@@ -1,4 +1,3 @@
-import json
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -7,6 +6,9 @@ from openai.types.chat import ChatCompletion
 from transformers import PreTrainedTokenizer
 
 from areal.api.io_struct import ModelResponse
+from areal.utils import logging
+
+logger = logging.getLogger("CompletionWithTokenLogpReward")
 
 
 @dataclass
@@ -34,80 +36,92 @@ class CompletionWithTokenLogpReward:
             parent_versions = parent_res["versions"].squeeze(0).tolist()
             parent_len = len(parent_logprobs)
             assert parent_len == len(parent_loss_mask) == len(parent_versions)
-            try:
-                assert resp.input_len >= parent_len, (
-                    f"The input length of the child completion must be greater than or equal to "
-                    f"the length of the parent completion. Currently resp.input_len={resp.input_len}, "
-                    f"parent_len={parent_len}. "
-                )
-            except AssertionError as e:
-                # for debugging
-                parent_input = self.tokenizer.decode(
-                    self.parent.response.input_tokens, skip_special_tokens=False
-                )
-                parent_output = self.tokenizer.decode(
-                    self.parent.response.output_tokens, skip_special_tokens=False
-                )
-                child_input = self.tokenizer.decode(
-                    resp.input_tokens, skip_special_tokens=False
-                )
-                child_output = self.tokenizer.decode(
-                    resp.output_tokens, skip_special_tokens=False
-                )
-                print(
-                    f"[Debug] >>> AssertionError: The input length of the child completion must be greater than or equal to the length of the parent completion. Currently resp.input_len={resp.input_len}, parent_len={parent_len}. "
-                )
-                print(
-                    f"[Debug] parent messages: \n{json.dumps(self.parent.messages, indent=4)}"
-                )
-                print(
-                    f"[Debug] child messages: \n{json.dumps(self.messages, indent=4)}"
-                )
-                print(
-                    f"[Debug] Parent input: {len(self.parent.response.input_tokens)}: **********************************************\n",
-                    parent_input,
-                )
-                print(
-                    "[Debug] Parent input end: **********************************************\n"
-                )
-                print(
-                    f"[Debug] Parent output: {len(self.parent.response.output_tokens)}: *********************************************\n",
-                    parent_output,
-                )
-                print(
-                    "[Debug] Parent output end: **********************************************\n"
-                )
-                print(
-                    f"[Debug] Child input: {len(resp.input_tokens)}: **********************************************\n",
-                    child_input,
-                )
-                print(
-                    "[Debug] Child input end: **********************************************\n"
-                )
-                print(
-                    f"[Debug] Child output: {len(resp.output_tokens)}: **********************************************\n",
-                    child_output,
-                )
-                print(
-                    "[Debug] Child output end: **********************************************\n"
-                )
-                raise e
+            # try:
+            #     assert resp.input_len >= parent_len, (
+            #         f"The input length of the child completion must be greater than or equal to "
+            #         f"the length of the parent completion. Currently resp.input_len={resp.input_len}, "
+            #         f"parent_len={parent_len}. "
+            #     )
+            # except AssertionError as e:
+            #     # for debugging
+            #     parent_input = self.tokenizer.decode(
+            #         self.parent.response.input_tokens, skip_special_tokens=False
+            #     )
+            #     parent_output = self.tokenizer.decode(
+            #         self.parent.response.output_tokens, skip_special_tokens=False
+            #     )
+            #     child_input = self.tokenizer.decode(
+            #         resp.input_tokens, skip_special_tokens=False
+            #     )
+            #     child_output = self.tokenizer.decode(
+            #         resp.output_tokens, skip_special_tokens=False
+            #     )
+            #     print(
+            #         f"[Debug] >>> AssertionError: The input length of the child completion must be greater than or equal to the length of the parent completion. Currently resp.input_len={resp.input_len}, parent_len={parent_len}. "
+            #     )
+            #     print(
+            #         f"[Debug] parent messages: \n{json.dumps(self.parent.messages, indent=4)}"
+            #     )
+            #     print(
+            #         f"[Debug] child messages: \n{json.dumps(self.messages, indent=4)}"
+            #     )
+            #     print(
+            #         f"[Debug] Parent input: {len(self.parent.response.input_tokens)}: **********************************************\n",
+            #         parent_input,
+            #     )
+            #     print(
+            #         "[Debug] Parent input end: **********************************************\n"
+            #     )
+            #     print(
+            #         f"[Debug] Parent output: {len(self.parent.response.output_tokens)}: *********************************************\n",
+            #         parent_output,
+            #     )
+            #     print(
+            #         "[Debug] Parent output end: **********************************************\n"
+            #     )
+            #     print(
+            #         f"[Debug] Child input: {len(resp.input_tokens)}: **********************************************\n",
+            #         child_input,
+            #     )
+            #     print(
+            #         "[Debug] Child input end: **********************************************\n"
+            #     )
+            #     print(
+            #         f"[Debug] Child output: {len(resp.output_tokens)}: **********************************************\n",
+            #         child_output,
+            #     )
+            #     print(
+            #         "[Debug] Child output end: **********************************************\n"
+            #     )
+            #     raise e
 
-            logprobs = (
-                parent_logprobs
-                + [0.0] * (resp.input_len - parent_len)
-                + resp.output_logprobs
-            )
-            loss_mask = (
-                parent_loss_mask
-                + [0] * (resp.input_len - parent_len)
-                + [1] * resp.output_len
-            )
-            versions = (
-                parent_versions
-                + [-1] * (resp.input_len - parent_len)
-                + resp.output_versions
-            )
+            if resp.input_len > parent_len:
+                logprobs = (
+                    parent_logprobs
+                    + [0.0] * (resp.input_len - parent_len)
+                    + resp.output_logprobs
+                )
+                loss_mask = (
+                    parent_loss_mask
+                    + [0] * (resp.input_len - parent_len)
+                    + [1] * resp.output_len
+                )
+                versions = (
+                    parent_versions
+                    + [-1] * (resp.input_len - parent_len)
+                    + resp.output_versions
+                )
+            else:
+                # FIXME: Find out why this happens occasionally
+                logger.warning(
+                    f"The input length of the child completion ({resp.input_len}) is less than or "
+                    f"equal to the length of the parent completion {parent_len}. "
+                    "This should not happen if the messages are constructed properly."
+                    "Ignoring the parent completion by masking them out."
+                )
+                logprobs = [0.0] * resp.input_len + resp.output_logprobs
+                loss_mask = [0] * resp.input_len + [1] * resp.output_len
+                versions = [-1] * resp.input_len + resp.output_versions
         else:
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
             loss_mask = [0] * resp.input_len + [1] * resp.output_len
