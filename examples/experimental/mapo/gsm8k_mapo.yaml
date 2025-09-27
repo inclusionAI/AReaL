@@ -4,7 +4,7 @@ trial_name: trial0
 seed: 1
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
-async_training: false
+async_training: true
 
 cluster:
   n_nodes: 1
@@ -57,7 +57,7 @@ actor:
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
-  reward_bias: 0.5
+  reward_bias: -0.5
   kl_ctl: 0.0
   ppo_n_minibatches: 1
   recompute_logprob: true
@@ -68,8 +68,8 @@ actor:
     mean_level: group
     std_level: group
     group_size: ${gconfig.n_samples}
-    aggregation_mode: mix
-
+    adv_norm_mode: mix
+  max_new_tokens: ${gconfig.max_new_tokens}
 
 ref:
   experiment_name: ${experiment_name}
