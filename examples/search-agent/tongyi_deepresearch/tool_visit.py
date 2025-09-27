@@ -114,7 +114,7 @@ class Visit(BaseTool):
                     try:
                         cur_response = await self.readpage_jina(u, goal)
                     except Exception as e:
-                        cur_response = f"Error fetching {u}: {str(e)}"
+                        cur_response = f"Error fetching {u}: {e}"
                 response.append(cur_response)
             response = "\n=======\n".join(response)
 
