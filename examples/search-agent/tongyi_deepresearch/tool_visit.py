@@ -87,9 +87,11 @@ class Visit(BaseTool):
         os.makedirs(log_folder, exist_ok=True)
 
         if isinstance(url, str):
+            print(f"Visiting single URL: {url}")
             response = await self.readpage_jina(url, goal)
         else:
             response = []
+            print(f"Visiting multiple URLs: {url}")
             assert isinstance(url, List)
             start_time = time.time()
             for u in url:
@@ -186,8 +188,8 @@ class Visit(BaseTool):
         max_attempts = 8
         for attempt in range(max_attempts):
             content = await self.jina_readpage(url)
-            service = "jina"
-            print(service)
+            print(f"html_readpage_jina {url} attempt {attempt+1}/{max_attempts}")
+            print(f"html_readpage_jina content: {content}")
             if (
                 content
                 and not content.startswith("[visit] Failed to read page.")
@@ -199,6 +201,7 @@ class Visit(BaseTool):
 
     async def readpage_jina(self, url: str, goal: str) -> str:
         """Read and summarize a webpage using Jina + LLM extractor."""
+        print("entering readpage_jina")
         summary_page_func = self.call_server
         max_retries = int(os.getenv("VISIT_SERVER_MAX_RETRIES", 1))
         content = await self.html_readpage_jina(url)
