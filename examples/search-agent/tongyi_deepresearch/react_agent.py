@@ -82,7 +82,7 @@ class MultiTurnReactAgent(FnCallAgent):
         self.max_total_tokens = max_total_tokens
         self.max_total_tokens_before_finishing = int(max_total_tokens * 0.8)
         self.judge_client = judge_client
-        self.tool_class = [Visit(summary_client=self.judge_client), Search()]
+        self.tool_class = [Visit(), Search()]
         self.tool_map = {tool.name: tool for tool in self.tool_class}
 
     def count_tokens(self, messages):

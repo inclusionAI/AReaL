@@ -6,10 +6,9 @@ from typing import List, Optional, Union
 
 import aiohttp
 import tiktoken
+from openai import AsyncOpenAI
 from prompt import EXTRACTOR_PROMPT
 from qwen_agent.tools.base import BaseTool, register_tool
-
-from areal.experimental.openai import ArealOpenAI
 
 VISIT_SERVER_TIMEOUT = int(os.getenv("VISIT_SERVER_TIMEOUT", 200))
 WEBCONTENT_MAXLENGTH = int(os.getenv("WEBCONTENT_MAXLENGTH", 150000))
@@ -58,12 +57,9 @@ class Visit(BaseTool):
     }
 
     # The `call` method is the main function of the tool.
-    def __init__(
-        self, cfg: Optional[dict] = None, summary_client: ArealOpenAI | None = None
-    ):
+    def __init__(self, cfg: Optional[dict] = None):
         super().__init__(cfg)
         self._session: Optional[aiohttp.ClientSession] = None
-        self._llm_client: Optional[ArealOpenAI] = summary_client
         self.setupd = False
 
     async def setup_tool(self):
@@ -123,13 +119,18 @@ class Visit(BaseTool):
         return response.strip()
 
     async def call_server(self, msgs, max_retries=2):
-        if self._llm_client is None:
-            return ""
+        api_key = os.environ.get("API_KEY")
+        url_llm = os.environ.get("API_BASE")
+        model_name = os.environ.get("SUMMARY_MODEL_NAME", "")
+        client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=url_llm,
+        )
         os.environ.get("SUMMARY_MODEL_NAME", "")
         for attempt in range(max_retries):
             try:
-                chat_response = await self._llm_client.chat.completions.create(  # type: ignore[attr-defined]
-                    messages=msgs, temperature=0.7, max_completion_tokens=2048
+                chat_response = await client.chat.completions.create(
+                    model=model_name, messages=msgs, temperature=0.7
                 )
                 content = chat_response.choices[0].message.content
                 if content:
