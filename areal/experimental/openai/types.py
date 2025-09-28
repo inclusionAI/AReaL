@@ -19,6 +19,7 @@ class CompletionWithTokenLogpReward:
     messages: List[dict] = field(default_factory=list)
     reward: float | None = None
     parent: Optional["CompletionWithTokenLogpReward"] | None = None
+    use_chat_template: bool = True
     _cache: Dict[str, torch.Tensor] | None = None
 
     def to_tensor_dict(self) -> Dict[str, torch.Tensor]:
@@ -27,6 +28,7 @@ class CompletionWithTokenLogpReward:
         resp = self.response
         self.seq_tokens = seq = resp.input_tokens + resp.output_tokens
         if self.parent:
+            assert not self.use_chat_template
             parent_res = self.parent.to_tensor_dict()
             parent_logprobs = parent_res["logprobs"].squeeze(0).tolist()
             parent_loss_mask = parent_res["loss_mask"].squeeze(0).tolist()
