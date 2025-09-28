@@ -5,7 +5,7 @@ if TYPE_CHECKING:
     from transformers.processing_utils import ProcessorMixin
     from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
-VALID_DATASETS = ["gsm8k", "clevr_count_70k", "geometry3k", "hh-rlhf"]
+VALID_DATASETS = ["gsm8k", "clevr_count_70k", "geometry3k", "hh-rlhf", "torl_data"]
 
 
 def get_custom_dataset(
@@ -96,6 +96,18 @@ def get_custom_dataset(
         from .hhrlhf import get_hhrlhf_rw_dataset
 
         return get_hhrlhf_rw_dataset(
+            path=path,
+            split=split,
+            tokenizer=tokenizer,
+            rank=rank,
+            world_size=world_size,
+            max_length=max_length,
+            **kwargs,
+        )
+    elif "torl_data" in path and type == "rl":
+        from .torl_data import get_torl_data_rl_dataset
+
+        return get_torl_data_rl_dataset(
             path=path,
             split=split,
             tokenizer=tokenizer,

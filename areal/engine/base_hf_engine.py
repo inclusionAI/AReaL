@@ -38,11 +38,11 @@ from areal.utils.data import (
 from areal.utils.fsdp import get_cosine_schedule_with_warmup
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.model import (
-    VALID_VISION_MODELS,
     disable_dropout_in_model,
     is_gemma3_model,
     is_qwen2_vl_model,
     is_qwen3_moe_model,
+    is_valid_vision_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
@@ -55,7 +55,7 @@ class BaseHFEngine(TrainEngine):
         self.model: torch.nn.Module
         self.optimizer: torch.optim.Optimizer
         self.tokenizer: PreTrainedTokenizerFast
-        self.processor: ProcessorMixin | None
+        self.processor: ProcessorMixin | None = None
         # huggingface model config
         self.model_config: PretrainedConfig
         self._version: int = 0
@@ -71,7 +71,7 @@ class BaseHFEngine(TrainEngine):
             pretrained_model_name_or_path=self.config.path,
             trust_remote_code=True,
         )
-        self.is_vision_model = self.model_config.model_type in VALID_VISION_MODELS
+        self.is_vision_model = is_valid_vision_model(self.model_config.model_type)
 
         self.world_size = int(os.environ["WORLD_SIZE"])
 
@@ -116,15 +116,17 @@ class BaseHFEngine(TrainEngine):
         return _get_default_group()
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
-        # Required by NCCL weight update group for SGLang
-        os.environ["NCCL_CUMEM_ENABLE"] = "0"
-        os.environ["NCCL_NVLS_ENABLE"] = "0"
+        backend = current_platform.communication_backend
+        if current_platform.communication_backend == "nccl":
+            # Required by NCCL weight update group for SGLang
+            os.environ["NCCL_CUMEM_ENABLE"] = "0"
+            os.environ["NCCL_NVLS_ENABLE"] = "0"
         if not dist.is_initialized():
             # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
             # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
             # otherwise initializing the NCCL weight update group will be wrong!
             dist.init_process_group(
-                backend=current_platform.communication_backend,
+                backend=backend,
                 timeout=NCCL_DEFAULT_TIMEOUT,
             )
             self.own_global_group = True
@@ -155,7 +157,8 @@ class BaseHFEngine(TrainEngine):
             )
 
             tik = time.perf_counter()
-            with torch.device(current_platform.device_type):
+            device = current_platform.device_type
+            with torch.device(device):
                 model = AutoModelForImageTextToText.from_pretrained(
                     pretrained_model_name_or_path=self.config.path,
                     trust_remote_code=True,
@@ -166,6 +169,7 @@ class BaseHFEngine(TrainEngine):
                     disable_dropout_in_model(model)
         else:
             self.tokenizer = load_hf_tokenizer(self.config.path)
+            self.processor = None
             tik = time.perf_counter()
             with torch.device(current_platform.device_type):
                 model = self._create_llm_actor_or_critic()

@@ -10,9 +10,13 @@ documentation with appropriate categorization and hyperlinks.
 import inspect
 import sys
 import types
+from dataclasses import MISSING as DATACLASSES_MISSING
 from dataclasses import fields, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union, get_args, get_origin
+
+import mdformat
+from omegaconf import MISSING as OMEGACONF_MISSING
 
 # Add the project root to the path so we can import areal
 project_root = Path(__file__).parent.parent
@@ -47,10 +51,17 @@ def categorize_dataclasses(
     }
 
     # Define categorization rules - only include the most important configs
-    experiment_configs = ["BaseExperimentConfig", "SFTConfig", "GRPOConfig", "RWConfig"]
+    experiment_configs = [
+        "BaseExperimentConfig",
+        "SFTConfig",
+        "GRPOConfig",
+        "PPOConfig",
+        "RWConfig",
+    ]
     training_configs = [
         "TrainEngineConfig",
         "PPOActorConfig",
+        "PPOCriticConfig",
         "OptimizerConfig",
         "MicroBatchSpec",
         "NormConfig",
@@ -60,6 +71,7 @@ def categorize_dataclasses(
     inference_configs = [
         "InferenceEngineConfig",
         "SGLangConfig",
+        "vLLMConfig",
         "GenerationHyperparameters",
     ]
     dataset_configs = ["DatasetConfig"]
@@ -177,7 +189,7 @@ def format_default_value(field_obj) -> str:
     if field_obj.default is not inspect._empty:
         default_value = field_obj.default
         # Check for MISSING by string representation to avoid import issues
-        if default_value is cli_args_module.MISSING:
+        if default_value is DATACLASSES_MISSING or default_value is OMEGACONF_MISSING:
             return "**Required**"
         elif default_value is None:
             return "`None`"
@@ -335,6 +347,11 @@ def main():
 
     try:
         documentation = generate_cli_documentation()
+        documentation = mdformat.text(
+            documentation,
+            options={"wrap": 88},
+            extensions=["gfm", "tables", "frontmatter"],
+        )
 
         with open(output_path, "w") as f:
             f.write(documentation)
