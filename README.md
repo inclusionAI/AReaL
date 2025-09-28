@@ -96,12 +96,15 @@ For comprehensive setup instructions, see
 
 ## 📚 Examples
 
-| Task                                        | Description                                                               | Performance                                                        |
-| ------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| **[Math](examples/math/)**                  | GSM8K mathematical problem solving                                        | TBA                                                                |
-| **[VLM Math](examples/vlm/)**               | CLEVR visual counting tasks                                               | TBA                                                                |
-| **[Simple Reasoning](examples/countdown/)** | Countdown numbers game with custom rewards                                | [Training Curve](/examples/countdown/countdown_training_curve.png) |
-| **[Search Agent](examples/search-agent/)**  | An agent with end-to-end search, browsing, and summarization capabilities | [ASearcher Repo](https://github.com/inclusionAI/ASearcher)         |
+| Task                                           | Description                                                               | Performance                                                                       |
+| ---------------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| **[Math](examples/math/)**                     | Mathematical problem solving (SFT, GRPO, or PPO)                          | TBA                                                                               |
+| **[LoRA Math](examples/lora/)**                | Math Agent Trained With LoRA                                              | TBA                                                                               |
+| **[VLM Math](examples/vlm/)**                  | CLEVR visual counting tasks                                               | TBA                                                                               |
+| **[Simple Reasoning](examples/countdown/)**    | Countdown numbers game with custom rewards                                | [Training Curve](/examples/countdown/countdown_training_curve.png)                |
+| **[Search Agent](examples/search-agent/)**     | An agent with end-to-end search, browsing, and summarization capabilities | [ASearcher Repo](https://github.com/inclusionAI/ASearcher)                        |
+| **[Tool-Integrated Reasoning](examples/tir/)** | An agent that can invoke tools during reasoning                           | [TIR Example](https://github.com/inclusionAI/AReaL/tree/main/examples/tir)        |
+| **[RLHF](examples/alignment/)**                | RLHF for LLM Alignment                                                    | [RLHF Example](https://github.com/inclusionAI/AReaL/tree/main/examples/alignment) |
 
 ## 🔧 Support Matrix
 
