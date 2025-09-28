@@ -117,7 +117,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
 
         clients = [
             ArealOpenAI(
-                engine=engine, tokenizer=self.tokenizer, use_chat_template=False
+                engine=engine, tokenizer=self.tokenizer, chat_template_type="concat"
             )
             for _ in range(self.n_trajs)
         ]

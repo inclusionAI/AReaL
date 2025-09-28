@@ -3,7 +3,7 @@ trial_name: trial0
 
 cluster:
   fileroot: /storage/experiments
-  n_nodes: 8
+  n_nodes: 1
   n_gpus_per_node: 8
   name_resolve:
     type: nfs
@@ -12,7 +12,7 @@ seed: 1
 total_train_epochs: 10
 total_train_steps: null
 tokenizer_path: ${actor.path}
-allocation_mode: sglang:d32p1t1+megatron:d16p2t1
+allocation_mode: sglang:d4p1t1+megatron:d2p2t1
 async_training: true
 
 rollout:

@@ -1,5 +1,5 @@
+import datetime
 import os
-import time
 import uuid
 from collections import OrderedDict, defaultdict
 from copy import deepcopy
@@ -54,7 +54,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         tokenizer: "PreTrainedTokenizerFast",
         cache: Dict[str, CompletionWithTokenLogpReward],
         tool_call_parser: Optional[str] = None,
-        use_chat_template: bool = True,
+        chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
         messages_delimiter_end: str = "<|im_end|>",
     ):
@@ -63,7 +63,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
         self._cache = cache
-        self.use_chat_template = use_chat_template
+        self.chat_template_type = chat_template_type
         self.messages_delimiter_start = messages_delimiter_start
         self.messages_delimiter_end = messages_delimiter_end
 
@@ -92,7 +92,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             extra_body = {}
         # Convert messages to prompt format
         tools = tools if tools is not NOT_GIVEN else None
-        if self.use_chat_template:
+        if self.chat_template_type == "hf":
             prompt_token_ids = self.tokenizer.apply_chat_template(
                 messages_list,
                 tools=tools,
@@ -100,7 +100,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 tokenize=True,
                 **extra_body.get("chat_template_kwargs", {}),
             )
-        else:
+        elif self.chat_template_type == "concat":
             # By default, follows Qwen3 chat template.
             start, end = self.messages_delimiter_start, self.messages_delimiter_end
             message_strs = []
@@ -108,6 +108,10 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
             message_strs.append(f"{start}assistant\n")
             prompt_token_ids = self.tokenizer.encode("".join(message_strs))
+        else:
+            raise ValueError(
+                f"Unsupported chat_template_type {self.chat_template_type}"
+            )
 
         temp = 1.0 if temperature is NOT_GIVEN else (temperature or 0.0)
         max_new_tokens = 512
@@ -157,7 +161,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Convert response to OpenAI format
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
-        current_time = int(time.time())
+        current_time = datetime.datetime.now().timestamp()
 
         output_text = self.tokenizer.decode(response.output_tokens)
 
@@ -204,7 +208,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 completion=deepcopy(chat_completion),
                 response=response,  # Should not deepcopy response because of tokenizer
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
-                use_chat_template=self.use_chat_template,
+                chat_template_type=self.chat_template_type,
             )
         return chat_completion
 
@@ -217,7 +221,7 @@ class ArealOpenAI(AsyncOpenAI):
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
         tool_call_parser: Optional[str] = None,
-        use_chat_template: bool = True,
+        chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
         messages_delimiter_end: str = "<|im_end|>",
         **kwargs,
@@ -238,7 +242,7 @@ class ArealOpenAI(AsyncOpenAI):
             tokenizer,
             self._completion_cache,
             tool_call_parser=self.tool_call_parser,
-            use_chat_template=use_chat_template,
+            chat_template_type=chat_template_type,
             messages_delimiter_start=messages_delimiter_start,
             messages_delimiter_end=messages_delimiter_end,
         )
@@ -341,10 +345,10 @@ class ArealOpenAI(AsyncOpenAI):
 
         if style == "concat":
             for comp in self._completion_cache.values():
-                if comp.use_chat_template:
+                if comp.chat_template_type != "concat":
                     raise ValueError(
                         "Cannot export completions in 'concat' style when "
-                        "use_chat_template=True for any completion. "
+                        'comp.chat_template_type != "concat" for any completion. '
                         "This is because when applying chat template using some tokenizers, "
                         "there might be some tokens added or removed (e.g. think tokens), "
                         "making it impossible to construct the conversation tree. "
@@ -371,8 +375,8 @@ class ArealOpenAI(AsyncOpenAI):
             # 1) Construct parent-child relationships using longest prefix rule
             # Sort potential children by (message length asc, created asc) so parents are available
             ordered = sorted(
-                meta.items(),
-                key=lambda kv: (len(kv[1]["norm_msgs"]), kv[0]),
+                meta.values(),
+                key=lambda v: (len(v["norm_msgs"]), v["obj"].completion.created),
             )
 
             # Reset parents before rebuilding

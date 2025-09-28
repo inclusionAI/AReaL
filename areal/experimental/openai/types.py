@@ -21,7 +21,7 @@ class CompletionWithTokenLogpReward:
     messages: List[dict] = field(default_factory=list)
     reward: float | None = None
     parent: "CompletionWithTokenLogpReward" | None = None
-    use_chat_template: bool = True
+    chat_template_type: str = "hf"
     _cache: Dict[str, torch.Tensor] | None = None
 
     def to_tensor_dict(self) -> Dict[str, torch.Tensor]:
@@ -30,7 +30,7 @@ class CompletionWithTokenLogpReward:
         resp = self.response
         self.seq_tokens = seq = resp.input_tokens + resp.output_tokens
         if self.parent:
-            assert not self.use_chat_template
+            assert self.chat_template_type == "concat"
             parent_res = self.parent.to_tensor_dict()
             parent_logprobs = parent_res["logprobs"].squeeze(0).tolist()
             parent_loss_mask = parent_res["loss_mask"].squeeze(0).tolist()
@@ -59,7 +59,12 @@ class CompletionWithTokenLogpReward:
                     f"The input length of the child completion ({resp.input_len}) is less than or "
                     f"equal to the length of the parent completion {parent_len}. "
                     "This should not happen if the messages are constructed properly."
-                    "Ignoring the parent completion by masking them out."
+                    "Ignoring the parent completion by masking them out. \n"
+                    f"Parent input token ids: {self.parent.response.input_tokens}\n"
+                    f"Parent output token ids: {self.parent.response.output_tokens}\n"
+                    f"Child input token ids: {resp.input_tokens}\n"
+                    f"Parent input messages: {self.parent.messages}\n"
+                    f"Child input messages: {self.messages}",
                 )
                 logprobs = [0.0] * resp.input_len + resp.output_logprobs
                 loss_mask = [0] * resp.input_len + [1] * resp.output_len
