@@ -66,24 +66,13 @@ class MegatronEngine(TrainEngine):
         self.optimizer = None
         self.lr_scheduler = None
         self.bridge = None
-        self.initialized = False
+        self.process_group_initialized = False
         self._version: int = 0
         self.rank = None
         self.world_size = None
         self.rank_generator = None
         self.checkpointer = None
         self.seed = 0
-
-    def current_data_parallel_head(self) -> int:
-        """Get the rank of the head of the current data parallel group."""
-        assert self.initialized
-        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
-        return ranks[0]
-
-    def is_data_parallel_head(self) -> bool:
-        assert self.initialized
-        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
-        return ranks[0] == self.rank
 
     def initialize(
         self,
@@ -95,9 +84,6 @@ class MegatronEngine(TrainEngine):
         # TODO: add parallel_strategy & seed in engine api when moving out of experimental
         if self.parallel_strategy is None:
             self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
-        self._parallelism_group = dist.new_group()
-        self._context_and_model_parallel_group = None
-        self._init_context_and_model_parallel_group()
         self.seed = seed
 
         assert addr is None, "FSDPEngine does not support remote initialization."
@@ -154,7 +140,6 @@ class MegatronEngine(TrainEngine):
         model_config.finalize_model_grads_func = finalize_model_grads
 
         self.create_optimizer(ft_spec)
-        self.initialized = True
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
@@ -198,6 +183,10 @@ class MegatronEngine(TrainEngine):
         tensor_parallel.model_parallel_cuda_manual_seed(self.seed)
 
         self.logger = logging.getLogger(f"[Megatron Engine Rank {dist.get_rank()}]")
+        self._parallelism_group = dist.new_group()
+        self._context_and_model_parallel_group = None
+        self._init_context_and_model_parallel_group()
+        self.process_group_initialized = True
 
     def _init_context_and_model_parallel_group(self):
         # Initialize context and model parallel groups, which are only used in AReaL
@@ -302,13 +291,39 @@ class MegatronEngine(TrainEngine):
 
     @property
     def parallelism_group(self) -> dist.ProcessGroup:
-        assert self.initialized
+        assert self.process_group_initialized
         return self._parallelism_group
 
     @property
     def context_and_model_parallel_group(self) -> dist.ProcessGroup:
-        assert self.initialized
+        assert self.process_group_initialized
         return self._context_and_model_parallel_group
+
+    @property
+    def data_parallel_rank(self) -> int:
+        assert self.process_group_initialized
+        return mpu.get_data_parallel_rank()
+
+    @property
+    def data_parallel_world_size(self) -> int:
+        assert self.process_group_initialized
+        return mpu.get_data_parallel_world_size()
+
+    @property
+    def data_parallel_group(self) -> dist.ProcessGroup:
+        assert self.process_group_initialized
+        return mpu.get_data_parallel_group()
+
+    def current_data_parallel_head(self) -> int:
+        """Get the rank of the head of the current data parallel group."""
+        assert self.process_group_initialized
+        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
+        return ranks[0]
+
+    def is_data_parallel_head(self) -> bool:
+        assert self.process_group_initialized
+        ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
+        return ranks[0] == self.rank
 
     def destroy(self):
         if hasattr(self, "optimizer"):
@@ -320,13 +335,13 @@ class MegatronEngine(TrainEngine):
         gc.collect()
         dist.destroy_process_group(self.parallelism_group)
         dist.destroy_process_group(self.context_and_model_parallel_group)
-        self.initialized = False
 
     def destroy_process_groups(self):
         # Should be explicitly called after experiments.
         assert dist.is_initialized()
         mpu.destroy_model_parallel()
         dist.destroy_process_group()
+        self.process_group_initialized = False
 
     def train(self, mode: bool = True):
         self.model.train(mode=mode)
