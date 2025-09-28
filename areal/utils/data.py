@@ -1155,6 +1155,9 @@ class Normalization:
 
         # Subtract mean
         x_centered = x - mean
+        # mask unrelevant elements as 0
+        if loss_mask is not None:
+            x_centered = x_centered * loss_mask
 
         # Step 2: Compute std
         if self.std_level == "batch":

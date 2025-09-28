@@ -37,8 +37,10 @@ class NormConfig:
         },
     )
     std_unbiased: bool = field(
-        default=False,
-        metadata={"help": "Whether to use unbiased standard deviation computation."},
+        default=True,
+        metadata={
+            "help": "Whether to use unbiased standard deviation computation. Defaults to True (changed from False in v0.3.3)"
+        },
     )
     eps: float = field(
         default=1e-5,
