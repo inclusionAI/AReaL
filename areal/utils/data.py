@@ -1252,23 +1252,19 @@ class Normalization:
 
 # the mixed adv norm implementation to paper MAPO, derived from base native normalization implementation
 class MAPOAdvNorm(Normalization):
-    def __init__(self, config):
-        super().__init__(config)
-
-    def __call__(self, *args, **kwargs):
-        return self._mix_adv_norm(*args, **kwargs)
+    def __call__(self, advantages, loss_mask=None, **kwargs):
+        return self._mix_adv_norm(advantages, loss_mask=loss_mask, **kwargs)
 
     @torch.no_grad()
-    def _mix_adv_norm(self, *args, **kwargs) -> torch.Tensor:
-
-        # get advantages from first argument (thanks gemini!)
-        advantages = args[0]
+    def _mix_adv_norm(self, advantages, loss_mask=None, **kwargs) -> torch.Tensor:
 
         # Calculate the unique number of elements in advantages Tensor，exclude element of 0 (because 0 means adv over pad_token)
         unique_elements = torch.unique(advantages[advantages != 0])
 
         if unique_elements.numel() <= 1:
-            # Handle case with no non-zero advantages, e.g., by returning a default normalization.(Thanks gemini-review)
+            # case 1: unique_elements.numel()==0, means advantages are same to be 0
+            # case 2: unique_elements.numel()==1, means all advantages are same but not 0
+            # these 2 case just fall back to native implementation is ok
             return super().__call__(*args, calculation_base="deviation", **kwargs)
 
         # the 'unique_upper_value' means the reward of success trajectory
@@ -1293,7 +1289,10 @@ class MAPOAdvNorm(Normalization):
         bs, max_token = int(advantages.shape[0] / self.group_size), advantages.shape[-1]
 
         # since the advantages is same within same trajectory, we can get the trajectory_level advantage from first token
+        # base on assumption that the advantage on last dim are totally same
+
         advantages_ = advantages[:, 0]  # advantages shape [batch_size*group_size]
+
         advantages_ = advantages_.reshape(
             bs, self.group_size
         )  # advantages shape [batch_size, group_size]
@@ -1312,7 +1311,7 @@ class MAPOAdvNorm(Normalization):
             success_trajectory_nums_per_group / total_trajectory_nums_per_group
         )
 
-        # trajectory_reweight shape [batch_size], represent the reweight of
+        # trajectory_reweight shape [batch_size], represent the reweight of tragetories
         trajectory_reweight = 1 - (
             4 * trajectory_certainty_degree * (1 - trajectory_certainty_degree)
         )
