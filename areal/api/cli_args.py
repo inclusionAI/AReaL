@@ -26,10 +26,26 @@ class NormConfig:
             "help": "Mean level for normalization. Choices: batch, group. Omit for no mean normalization."
         },
     )
+    mean_leave1out: bool = field(
+        default=False,
+        metadata={"help": "Whether to use leave-one-out average."},
+    )
     std_level: str | None = field(
         default="batch",
         metadata={
             "help": "Standard deviation level for normalization. Choices: batch, group. Omit for no std normalization."
+        },
+    )
+    std_unbiased: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use unbiased standard deviation computation. Defaults to True (changed from False in v0.3.4)."
+        },
+    )
+    eps: float = field(
+        default=1e-5,
+        metadata={
+            "help": "The eps when dividing by standard deviation to avoid numerical issues."
         },
     )
     group_size: int = field(
