@@ -161,9 +161,4 @@ judge_engine:
 n_trajs: 8
 max_llm_calls_per_run: 100
 max_tokens_per_trajectory: 27648
-
-log_agent_stats: true
-log_agent_stats_keys:
-  - turns
-  - num_search
-  - num_access
+log_agent_stats: false
