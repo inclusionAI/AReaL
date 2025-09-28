@@ -39,7 +39,7 @@ class NormConfig:
     std_unbiased: bool = field(
         default=True,
         metadata={
-            "help": "Whether to use unbiased standard deviation computation. Defaults to True (changed from False in v0.3.3)"
+            "help": "Whether to use unbiased standard deviation computation. Defaults to True (changed from False in v0.3.4)."
         },
     )
     eps: float = field(
