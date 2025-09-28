@@ -1,4 +1,4 @@
-# Training with Tongyi-DeepResearch Agent Workflow in AReaL
+# Training a Multi-Turn GSM8K Math Agent in AReaL
 
 Files in this folder presents an example that train a multi-turn GSM8K math agent from
 Qwen/Qwen2-1.5B-Instruct, using `ArealOpenAI` APIs and its `individual` mode to organize
