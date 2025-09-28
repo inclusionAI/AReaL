@@ -1317,20 +1317,39 @@ class Normalization:
 
 # the mixed adv norm implementation to paper MAPO, derived from base native normalization implementation
 class MAPOAdvNorm(Normalization):
-    def __call__(self, advantages, loss_mask=None, **kwargs):
-        return self._mix_adv_norm(advantages, loss_mask=loss_mask, **kwargs)
-
-    @torch.no_grad()
-    def _mix_adv_norm(self, advantages, loss_mask=None, **kwargs) -> torch.Tensor:
-
+    def __call__(self, advantages, loss_mask=None, **kwargs) -> torch.Tensor:
         # Calculate the unique number of elements in advantages Tensor，exclude element of 0 (because 0 means adv over pad_token)
-        unique_elements = torch.unique(advantages[advantages != 0])
 
-        if unique_elements.numel() <= 1:
-            # case 1: unique_elements.numel()==0, means advantages are same to be 0
-            # case 2: unique_elements.numel()==1, means all advantages are same but not 0
-            # these 2 case just fall back to native implementation is ok
-            return super().__call__(*args, calculation_base="deviation", **kwargs)
+        # deviation_base_norm shape [batch_size*group_size, max_token]
+        deviation_base_norm = super().__call__(
+            advantages, loss_mask=loss_mask, calculation_base="deviation", **kwargs
+        )
+
+        unique_elements = torch.unique(advantages[advantages != 0]).numel()
+
+        if unique_elements >= 3 or unique_elements <= 1:
+            # means all advantages are same but not 0
+            if unique_elements >= 3:
+                logger.warning(
+                    (
+                        f"The MAPO only support reward modeling in a binary, but detected {unique_elements} unique elements in advantages Tensor. Please check: "
+                        f"1. the definition of reward_fun: return the binary number "
+                        f"2. overlong_reward_panalty set to false"
+                    )
+                )
+            # means all advantages are same but not 0
+            else:
+                logger.info(
+                    (
+                        f"the advantage are all same in the batch, please check your reward function"
+                    )
+                )
+
+            logger.info((f"falling back to native advantage normalization"))
+            # fall back to native implementation is ok
+            return super().__call__(
+                advantages, loss_mask=loss_mask, calculation_base="deviation", **kwargs
+            )
 
         # the 'unique_upper_value' means the reward of success trajectory
         unique_upper_value, unique_lower_value = max(unique_elements), min(
@@ -1344,12 +1363,10 @@ class MAPOAdvNorm(Normalization):
             f"2. overlong_reward_panalty set to false"
         )
 
-        # deviation_base_norm shape [batch_size*group_size, max_token]
-        deviation_base_norm = super().__call__(
-            *args, calculation_base="deviation", **kwargs
-        )
         # mean_base_norm shape [batch_size*group_size, max_token]
-        mean_base_norm = super().__call__(*args, calculation_base="mean", **kwargs)
+        mean_base_norm = super().__call__(
+            advantages, loss_mask=loss_mask, calculation_base="mean", **kwargs
+        )
 
         bs, max_token = int(advantages.shape[0] / self.group_size), advantages.shape[-1]
 
@@ -1377,7 +1394,7 @@ class MAPOAdvNorm(Normalization):
         )
 
         # trajectory_reweight shape [batch_size], represent the reweight of tragetories
-        trajectory_reweight = 1 - (
+        trajectory_reweight = (
             4 * trajectory_certainty_degree * (1 - trajectory_certainty_degree)
         )
         # trajectory_reweight shape to expand each_token of advantages

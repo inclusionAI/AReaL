@@ -629,6 +629,8 @@ class SGLangConfig:
         # convert to flags
         flags = []
         for k, v in args.items():
+            if "max_loaded_loras" in k:
+                continue
             if v is None or v is False or v == "":
                 continue
             if v is True:
@@ -637,6 +639,7 @@ class SGLangConfig:
                 flags.append(f"--{k.replace('_','-')} {' '.join(map(str, v))}")
             else:
                 flags.append(f"--{k.replace('_','-')} {v}")
+
         return f"python3 -m sglang.launch_server {' '.join(flags)}"
 
     @staticmethod
