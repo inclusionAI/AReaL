@@ -234,12 +234,6 @@ def check_trajectory_format(
 
 
 @dataclass
-class _TimedResult:
-    t: int
-    data: Dict[str, Any]
-
-
-@dataclass
 class _RolloutTaskInput:
     data: Dict[str, Any]
     workflow: RolloutWorkflow
@@ -251,6 +245,14 @@ class _RolloutTask:
     create_time: int
     task: asyncio.Task
     task_input: _RolloutTaskInput
+
+
+@dataclass
+class _RolloutTaskOutput:
+    create_time: int
+    task_id: str
+    task_input: _RolloutTaskInput
+    task_output: Dict[str, Any]
 
 
 def create_capacity_app(staleness_manager: "StalenessManager") -> FastAPI:
@@ -285,7 +287,15 @@ def create_capacity_app(staleness_manager: "StalenessManager") -> FastAPI:
     return app
 
 
-slogger = logging.getLogger("StalenessManager")
+staleness_logger = logging.getLogger("StalenessManager")
+
+
+@dataclass
+class _RolloutOutputMeta:
+    create_time: int
+    producer: str
+    task_id: str
+    accepted: bool
 
 
 class StalenessManager:
@@ -305,6 +315,8 @@ class StalenessManager:
         self.rollout_stat = RolloutStat()
         self.current_version = 0
         self.enable_rollout_tracing = enable_rollout_tracing
+
+        self.result_meta: List[_RolloutOutputMeta] = []
 
     def update_version(self, version: int):
         """Update the current model version for staleness control."""
@@ -340,15 +352,18 @@ class StalenessManager:
                 "accepted": self.rollout_stat.accepted,
             }
 
-    def release_capacity(self, completed: int, accepted: int):
+    def release_capacity(self, metas: List[_RolloutOutputMeta]):
         """Release capacity when rollouts complete."""
+        completed = len(metas)
+        accepted = sum(1 for m in metas if m.accepted)
         with self.lock:
+            self.result_meta += metas
             assert completed >= accepted
             self.rollout_stat.accepted += accepted
             assert completed <= self.rollout_stat.running
             self.rollout_stat.running -= completed
             if self.enable_rollout_tracing:
-                slogger.info(
+                staleness_logger.info(
                     f"Finish {completed} rollouts. "
                     f"Accepted: {accepted}/{completed} ({accepted/completed:.2%}). "
                     f"Submit: {self.rollout_stat.submitted}, "
@@ -361,6 +376,16 @@ class StalenessManager:
                 "running": self.rollout_stat.running,
                 "accepted": self.rollout_stat.accepted,
             }
+
+    def get_batch(self, bs: int):
+        with self.lock:
+            if len(self.result_meta) < bs:
+                raise ValueError(
+                    f"Cannot get batch: requested {bs} < {len(self.result_meta)}"
+                )
+            self.result_meta.sort(key=lambda x: x.create_time)
+            meta, self.result_meta = self.result_meta[:bs], self.result_meta[bs:]
+            return meta
 
 
 class StalenessManagerServer:
@@ -391,14 +416,14 @@ class StalenessManagerServer:
                 self.server.run()
             except Exception as e:
                 if not self._shutdown_event.is_set():
-                    slogger.error(f"Staleness server error: {e}")
+                    staleness_logger.error(f"Staleness server error: {e}")
 
         self.server_thread = threading.Thread(target=run_server, daemon=True)
         self.server_thread.start()
 
         # Wait for server to start
         time.sleep(0.5)
-        slogger.info(f"Staleness server started on {self.host}:{self.port}")
+        staleness_logger.info(f"Staleness server started on {self.host}:{self.port}")
 
     def stop(self):
         """Stop the staleness manager gracefully."""
@@ -434,7 +459,7 @@ class WorkflowExecutor:
         qsize = config.queue_size or self.max_concurrent_rollouts * 16
         self.input_queue = queue.Queue(maxsize=qsize)
         self.output_queue = queue.Queue(maxsize=qsize)
-        self.result_cache: List[_TimedResult] = []
+        self.result_cache: List[_RolloutTaskOutput] = []
 
         self.local_rollout_stat = RolloutStat()
 
@@ -590,14 +615,14 @@ class WorkflowExecutor:
                     rollout_tasks[str(rid)] = _RolloutTask(
                         create_time=time.monotonic_ns(), task=task, task_input=x
                     )
-                    self.rollout_stat.submitted += 1
-                    self.rollout_stat.running += 1
+                    self.local_rollout_stat.submitted += 1
+                    self.local_rollout_stat.running += 1
                     if self.config.enable_rollout_tracing:
                         self.logger.info(
                             f"Submit rollout rid {rid}. "
-                            f"Submit: {self.rollout_stat.submitted}, "
-                            f"running: {self.rollout_stat.running}, "
-                            f"accepted: {self.rollout_stat.accepted}."
+                            f"Submit: {self.local_rollout_stat.submitted}, "
+                            f"running: {self.local_rollout_stat.running}, "
+                            f"accepted: {self.local_rollout_stat.accepted}."
                         )
                     capacity -= 1
                     rid += 1
@@ -661,7 +686,12 @@ class WorkflowExecutor:
                             )
                         try:
                             self.output_queue.put_nowait(
-                                _TimedResult(task_obj.create_time, traj)
+                                _RolloutTaskOutput(
+                                    create_time=task_obj.create_time,
+                                    task_id=task_rid,
+                                    task_input=task_obj.task_input,
+                                    task_output=traj,
+                                )
                             )
                         except queue.Full:
                             raise RuntimeError(
@@ -671,7 +701,7 @@ class WorkflowExecutor:
                         if self.config.enable_rollout_tracing:
                             self.logger.info(f"Rollout is rejected.")
                         with self.lock:
-                            self.rollout_stat.accepted -= 1
+                            self.local_rollout_stat.accepted -= 1
 
                 await asyncio.sleep(1)
         except Exception:
@@ -713,7 +743,6 @@ class WorkflowExecutor:
         count: int,
         global_count: Optional[int] = None,
         timeout: float | None = None,
-        should_accept: Callable | None = None,
     ) -> Dict[str, Any]:
         """Wait for workflow results.
 
@@ -729,29 +758,12 @@ class WorkflowExecutor:
                 # Drain all outputs.
                 _accepted = _completed = 0
                 try:
-                    timed_result = self.output_queue.get_nowait()
-                    self.result_cache.append(timed_result)
+                    task_output = self.output_queue.get_nowait()
+                    self.result_cache.append(task_output)
                 except queue.Empty:
                     break
                 _completed += 1
 
-                if timed_result.data is not None and (
-                    should_accept is None or should_accept(timed_result.data)
-                ):
-                    # Check whether should accept. If so, increase accept counter.
-                    if self.config.enable_rollout_tracing:
-                        self.logger.info(
-                            f"Accept rollout result. "
-                            f"accepted/count = {len(self.result_cache)}/{count}"
-                        )
-                    _accepted += 1
-                    self.result_cache.append(timed_result)
-                else:
-                    # otherwise reject
-                    if self.config.enable_rollout_tracing:
-                        self.logger.info(f"Rollout is rejected.")
-                    with self.lock:
-                        self.local_rollout_stat.accepted -= 1
                 cur_global_accepted = self.release_capacity(
                     completed=_completed, accepted=_accepted
                 )["accepted"]
