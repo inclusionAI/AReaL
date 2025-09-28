@@ -103,6 +103,38 @@ For comprehensive setup instructions, see
 | **[Simple Reasoning](examples/countdown/)** | Countdown numbers game with custom rewards                                | [Training Curve](/examples/countdown/countdown_training_curve.png) |
 | **[Search Agent](examples/search-agent/)**  | An agent with end-to-end search, browsing, and summarization capabilities | [ASearcher Repo](https://github.com/inclusionAI/ASearcher)         |
 
+## 🔧 Support Matrix
+
+### Algorithms
+
+| GRPO | PPO | DAPO | RLOO | LitePPO | DrGRPO | Reward Modeling | SFT |
+| ---- | --- | ---- | ---- | ------- | ------ | --------------- | --- |
+| ✅   | ✅  | ✅   | ✅   | ✅      | ✅     | ✅              | ✅  |
+
+### Models
+
+| Model Family               | Megatron | PyTorch FSDP | Notes                                                    |
+| -------------------------- | -------- | ------------ | -------------------------------------------------------- |
+| **Qwen2/3**                | ✅       | ✅           | -                                                        |
+| **Qwen3-MoE**              | ✅       | ✅           | -                                                        |
+| **Qwen2.5-VL**             | ❌       | ✅           | Vision-language model                                    |
+| **Gemma 3**                | ❌       | ✅           | Vision-language model                                    |
+| **Other Hugging Face LLM** | ❌       | ✅           | Compatibility depending on the version of `transformers` |
+
+### Training Backends
+
+| Backend          | DP          | Tensor Parallel | Sequence Parallel within TP | Context Parallel | Pipeline Parallel | Expert Parallel | 1D Sequence Packing | LoRA |
+| ---------------- | ----------- | --------------- | --------------------------- | ---------------- | ----------------- | --------------- | ------------------- | ---- |
+| **Megatron**     | ✅ (ZeRO-1) | ✅              | ✅                          | ✅               | ✅                | ✅              | ✅                  | ❌   |
+| **PyTorch FSDP** | ✅ (FSDP2)  | ✅              | ✅                          | ✅               | ❌                | ❌              | ✅                  | ✅   |
+
+### Inference Backends
+
+| Backend    | Tensor Parallel | Context Parallel | Pipeline Parallel | Data Parallel Attention | Expert Parallel |
+| ---------- | --------------- | ---------------- | ----------------- | ----------------------- | --------------- |
+| **vLLM**   | ✅              | ❓               | ❓                | ❓                      | ❓              |
+| **SGLang** | ✅              | ❌               | ❌                | ✅                      | ✅              |
+
 ## 📖 Resources
 
 - [Documentation](https://inclusionai.github.io/AReaL/)
