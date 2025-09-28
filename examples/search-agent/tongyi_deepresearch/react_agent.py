@@ -104,7 +104,6 @@ class MultiTurnReactAgent(FnCallAgent):
                     temperature=1.0,
                     stop=["\n<tool_response>", "<tool_response>"],
                     max_completion_tokens=self.max_tokens_per_turn,
-                    use_chat_template=False,
                 )
                 content = completion.choices[0].message.content
                 assert content, "Error: LLM response is empty."

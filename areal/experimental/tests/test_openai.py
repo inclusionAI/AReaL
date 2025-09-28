@@ -87,7 +87,12 @@ def openai_client(sglang_server, tokenizer):
     os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
     engine = RemoteSGLangEngine(config)
     engine.initialize()
-    yield ArealOpenAI(engine=engine, tokenizer=tokenizer, tool_call_parser="qwen25")
+    yield ArealOpenAI(
+        engine=engine,
+        tokenizer=tokenizer,
+        tool_call_parser="qwen25",
+        use_chat_template=False,
+    )
     engine.destroy()
 
 
@@ -585,7 +590,7 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
 
     # Root
     c_root = await openai_client.chat.completions.create(
-        messages=base, use_chat_template=False
+        messages=base,
     )
 
     # Branch A1: root -> a -> a1
@@ -594,14 +599,14 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
         {"role": "user", "content": "Question A"},
     ]
     c_a = await openai_client.chat.completions.create(
-        messages=msgs_a, use_chat_template=False
+        messages=msgs_a,
     )
     msgs_a1 = msgs_a + [
         {"role": "assistant", "content": c_a.choices[0].message.content},
         {"role": "user", "content": "Follow-up A1"},
     ]
     c_a1 = await openai_client.chat.completions.create(
-        messages=msgs_a1, use_chat_template=False
+        messages=msgs_a1,
     )
 
     # Branch A2: root -> a -> a2
@@ -610,7 +615,7 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
         {"role": "user", "content": "Follow-up A2"},
     ]
     c_a2 = await openai_client.chat.completions.create(
-        messages=msgs_a2, use_chat_template=False
+        messages=msgs_a2,
     )
 
     # Branch B: root -> b -> b1
@@ -619,14 +624,14 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
         {"role": "user", "content": "Question B"},
     ]
     c_b = await openai_client.chat.completions.create(
-        messages=msgs_b, use_chat_template=False
+        messages=msgs_b,
     )
     msgs_b1 = msgs_b + [
         {"role": "assistant", "content": c_b.choices[0].message.content},
         {"role": "user", "content": "Follow-up B1"},
     ]
     c_b1 = await openai_client.chat.completions.create(
-        messages=msgs_b1, use_chat_template=False
+        messages=msgs_b1,
     )
 
     # Set rewards to leaf nodes only, which should be c_a1, c_a2, c_b1
