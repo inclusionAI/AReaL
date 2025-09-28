@@ -54,12 +54,18 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         tokenizer: "PreTrainedTokenizerFast",
         cache: Dict[str, CompletionWithTokenLogpReward],
         tool_call_parser: Optional[str] = None,
+        use_chat_template: bool = True,
+        messages_delimiter_start: str = "<|im_start|>",
+        messages_delimiter_end: str = "<|im_end|>",
     ):
         super().__init__(client)
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
         self._cache = cache
+        self.use_chat_template = use_chat_template
+        self.messages_delimiter_start = messages_delimiter_start
+        self.messages_delimiter_end = messages_delimiter_end
 
     async def create(
         self,
@@ -76,9 +82,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
         top_p: Optional[float] | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
-        use_chat_template: bool = True,
-        messages_delimiter_start: str = "<|im_start|>",
-        messages_delimiter_end: str = "<|im_end|>",
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
         # Extract and validate supported parameters
@@ -89,7 +92,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             extra_body = {}
         # Convert messages to prompt format
         tools = tools if tools is not NOT_GIVEN else None
-        if use_chat_template:
+        if self.use_chat_template:
             prompt_token_ids = self.tokenizer.apply_chat_template(
                 messages_list,
                 tools=tools,
@@ -99,7 +102,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             )
         else:
             # By default, follows Qwen3 chat template.
-            start, end = messages_delimiter_start, messages_delimiter_end
+            start, end = self.messages_delimiter_start, self.messages_delimiter_end
             message_strs = []
             for msg in messages_list:
                 message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
@@ -201,7 +204,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 completion=deepcopy(chat_completion),
                 response=response,  # Should not deepcopy response because of tokenizer
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
-                use_chat_template=use_chat_template,
+                use_chat_template=self.use_chat_template,
             )
         return chat_completion
 
@@ -214,6 +217,9 @@ class ArealOpenAI(AsyncOpenAI):
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
         tool_call_parser: Optional[str] = None,
+        use_chat_template: bool = True,
+        messages_delimiter_start: str = "<|im_start|>",
+        messages_delimiter_end: str = "<|im_end|>",
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -232,6 +238,9 @@ class ArealOpenAI(AsyncOpenAI):
             tokenizer,
             self._completion_cache,
             tool_call_parser=self.tool_call_parser,
+            use_chat_template=use_chat_template,
+            messages_delimiter_start=messages_delimiter_start,
+            messages_delimiter_end=messages_delimiter_end,
         )
 
     def get_completions(
@@ -328,7 +337,7 @@ class ArealOpenAI(AsyncOpenAI):
             If an unsupported ``style`` is provided.
         """
         if len(self._completion_cache) == 0:
-            return self._completion_cache
+            return {}
 
         if style == "concat":
             for comp in self._completion_cache.values():
@@ -336,6 +345,9 @@ class ArealOpenAI(AsyncOpenAI):
                     raise ValueError(
                         "Cannot export completions in 'concat' style when "
                         "use_chat_template=True for any completion. "
+                        "This is because when applying chat template using some tokenizers, "
+                        "there might be some tokens added or removed (e.g. think tokens), "
+                        "making it impossible to construct the conversation tree. "
                         "Please use 'individual' style instead."
                     )
 
@@ -383,7 +395,7 @@ class ArealOpenAI(AsyncOpenAI):
                             best_len = plen
                 child_info["obj"].parent = best_parent
 
-            # Build children mapping for discount propagation
+            # Build children mapping to find leaf nodes.
             children_map: Dict[str, List[CompletionWithTokenLogpReward]] = defaultdict(
                 list
             )

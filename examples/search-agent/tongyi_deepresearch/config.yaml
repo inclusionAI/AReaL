@@ -1,4 +1,4 @@
-experiment_name: mzy-judge-engine
+experiment_name: tongyi-deepresearch
 trial_name: trial0
 
 cluster:
@@ -25,6 +25,8 @@ rollout:
   enable_rollout_tracing: true
 
 gconfig:
+  # `n_sample` is not the actual group_size.
+  # Actual group_size is determined by `n_trajs` due to agent implementation
   n_samples: 1
   min_new_tokens: 0
   max_new_tokens: 8192
@@ -52,10 +54,9 @@ actor:
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
-  backend: fsdp
-  group_size: ${gconfig.n_samples}
+  group_size: ${n_trajs}
   adv_norm:
-    group_size: ${gconfig.n_samples}
+    group_size: ${n_trajs}
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -82,7 +83,6 @@ ref:
   mb_spec:
     max_tokens_per_mb: 10240
   optimizer: null
-  backend: megatron
 
 # SGLang
 sglang:
@@ -155,7 +155,7 @@ judge_engine:
   max_concurrent_rollouts: 32
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
-  max_head_offpolicyness: 4
+  max_head_offpolicyness: 1e12
   enable_rollout_tracing: false
 
 n_trajs: 8

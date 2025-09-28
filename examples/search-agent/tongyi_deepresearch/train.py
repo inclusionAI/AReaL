@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
 
-import torch
 import torch.distributed as dist
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
@@ -36,13 +35,13 @@ from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
-    concat_padded_tensors,
     tensor_container_to,
 )
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
+from areal.utils.redistributor import redistribute
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
@@ -71,6 +70,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         self,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
+        rollout_stat_scope: bool = "rollout",
         dump_dir: str | None = None,
         n_trajs: int = 1,
         max_tokens: int = 32768,
@@ -82,6 +82,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         self.tokenizer = tokenizer
         self.dump_dir = dump_dir
         self.max_tokens = max_tokens
+        self.rollout_stat_scope = rollout_stat_scope
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
@@ -97,95 +98,50 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         )
 
     async def arun_episode(self, engine, data):
-        try:
-            # Get the unique identifier for this prompt
-            qid = None
-            for key in ["query_id", "id", "qid"]:
-                qid = data.get(key, None)
-                if qid is not None:
-                    break
-            qid = str(qid) or uuid.uuid4().hex
-            data["qid"] = qid
+        # Get the unique identifier for this prompt
+        qid = None
+        for key in ["query_id", "id", "qid"]:
+            qid = data.get(key, None)
+            if qid is not None:
+                break
+        qid = str(qid) or uuid.uuid4().hex
+        data["qid"] = qid
 
-            # check for generated qid when resuming
-            # if self.dump_dir is not None:
-            #     import glob
+        # path to save trajs
+        version = engine.get_version()
+        if self.dump_dir is not None:
+            os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
+            save_traj_path = os.path.join(
+                self.dump_dir, str(version), f"{qid}_{{traj_id}}.json"
+            )
 
-            #     _pattern = os.path.join(self.dump_dir, "*", f"{qid}/*.jsonl")
-            #     if len(glob.glob(_pattern)) > 0:
-            #         logger.info(f"{qid} is already trained on")
-            #         return None
+        clients = [
+            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
+            for _ in range(self.n_trajs)
+        ]
 
-            # path to save trajs
-            version = engine.get_version()
-            if self.dump_dir is not None:
-                os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
-                save_traj_path = os.path.join(
-                    self.dump_dir, str(version), f"{qid}_{{traj_id}}.json"
+        # Collect trajectories
+        all_stats = await asyncio.gather(
+            *[
+                self.agent.make_trajectory(
+                    data=data,
+                    client=clients[i],
+                    save_path=save_traj_path.format(traj_id=i),
                 )
-
-            clients = [
-                ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
-                for _ in range(self.n_trajs)
+                for i in range(self.n_trajs)
             ]
+        )
+        for stats in all_stats:
+            stats_tracker.get(self.rollout_stat_scope).scalar(**stats)
 
-            # Collect trajectories
-            outputs = await asyncio.gather(
-                *[
-                    self.agent.make_trajectory(
-                        data=data,
-                        client=clients[i],
-                        save_path=save_traj_path.format(traj_id=i),
-                    )
-                    for i in range(self.n_trajs)
-                ]
-            )
-            last_completions, all_stats = zip(*outputs)
-
-            try:
-                completions_with_rewards = {}
-                for client in clients:
-                    completion_with_rewards = client.export_completions(style="concat")
-                    assert len(completion_with_rewards) == 1
-                    completions_with_rewards.update(completion_with_rewards)
-                assert len(last_completions) == self.n_trajs
-                assert len(completions_with_rewards) == self.n_trajs
-                results = []
-                for comp, stats in zip(last_completions, all_stats):
-                    comp_with_reward = completions_with_rewards[comp.id]
-                    result = comp_with_reward.to_tensor_dict()
-                    for k, v in stats.items():
-                        result[k] = torch.tensor([v])
-                    result["begin_of_trajectory"] = torch.tensor([1])
-                    results.append(result)
-                results = concat_padded_tensors(results)
-            except (AssertionError, KeyError) as e:
-                print(
-                    f"[Debug] Leaf Completions mismatch: last_completions={len(last_completions)}, completions_with_rewards={len(completions_with_rewards)}, error={e}"
-                )
-                print(
-                    f"[Debug] Last completion ids={[comp.id for comp in last_completions]}"
-                )
-                for comp in completions_with_rewards.values():
-                    print(
-                        f"[Debug] Leaf Completion: id={comp.completion.id}, parent_id={comp.parent.completion.id}"
-                    )
-                    parent = comp.parent
-                    count = 0
-                    while parent is not None:
-                        print(
-                            f"[Debug] Parent {count} Completion: id={parent.completion.id}"
-                        )
-                        parent = parent.parent
-                        count += 1
-                raise e
-
-            return results
-        except Exception as e:
-            print(
-                f">>>>>>>>>>>>>>>>>>>>>>> rank {dist.get_rank()} arun_episode error!! {e}"
-            )
-            raise e
+        completions_with_rewards = {}
+        for client in clients:
+            completion_with_rewards = client.export_completions(style="concat")
+            assert len(completion_with_rewards) == 1
+            completions_with_rewards.update(completion_with_rewards)
+        assert len(all_stats) == self.n_trajs
+        assert len(completions_with_rewards) == self.n_trajs
+        return completion_with_rewards
 
 
 @dataclass
@@ -270,6 +226,8 @@ def main(args):
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
     # Initialize judge inference engine
     judge_engine = RemoteSGLangEngine(config.judge_engine)
+    # NOTE: judge engine should not have off-policyness control.
+    judge_engine.config.max_head_offpolicyness = int(1e12)
     judge_engine.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
     actor.initialize(
@@ -349,11 +307,11 @@ def main(args):
                         should_accept=lambda sample: True,
                     )
                 batch = tensor_container_to(batch, actor.device)
-                # batch = redistribute(
-                #     batch,
-                #     group=actor.data_parallel_group,
-                #     granularity=config.n_trajs,
-                # ).data
+                batch = redistribute(
+                    batch,
+                    group=actor.data_parallel_group,
+                    granularity=config.n_trajs,
+                ).data
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
@@ -377,14 +335,6 @@ def main(args):
             stats_tracker.record_timing("train_step"),
             stats_tracker.scope("grpo_actor"),
         ):
-            if config.log_agent_stats:
-                agent_denominator = (batch["begin_of_trajectory"] > 0).bool()
-                stats_tracker.denominator(agent=agent_denominator)
-                stats_tracker.stat(
-                    **{k: batch[k].float() for k in config.log_agent_stats_keys},
-                    denominator="agent",
-                )
-
             stats = actor.ppo_update(batch)
             actor.step_lr_scheduler()
             log_gpu_stats("actor update")
@@ -403,6 +353,7 @@ def main(args):
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
+            judge_engine.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
@@ -435,6 +386,7 @@ def main(args):
 
     stats_logger.close()
     rollout.destroy()
+    judge_engine.destroy()
     actor.destroy()
     actor.destroy_process_groups()
 

@@ -1,5 +1,7 @@
+from __future__ import annotations  # noqa
+
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import torch
 from openai.types.chat import ChatCompletion
@@ -18,7 +20,7 @@ class CompletionWithTokenLogpReward:
     response: ModelResponse
     messages: List[dict] = field(default_factory=list)
     reward: float | None = None
-    parent: Optional["CompletionWithTokenLogpReward"] | None = None
+    parent: "CompletionWithTokenLogpReward" | None = None
     use_chat_template: bool = True
     _cache: Dict[str, torch.Tensor] | None = None
 

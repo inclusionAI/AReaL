@@ -53,15 +53,13 @@ def parse_judge_result(raw_response):
             mbe = parse_fn(raw_response.split("```json")[-1].split("```")[0].strip())
             break
         except:
-            # print(f"[WARNING] Error parsing {[raw_response]}")
-            print(f"[WARNING] Error parsing judge result with {parse_fn}.")
+            logger.warning(f"Error parsing judge result with {parse_fn}.")
     if mbe is None and '"judgement": "incorrect"' in raw_response:
         mbe = dict(judgement="incorrect")
     if mbe is None and '"judgement": "correct"' in raw_response:
         mbe = dict(judgement="correct")
     if mbe is None:
-        # print(f"[WARNING] Unknown judge result: {[raw_response]}")
-        print(f"[WARNING] Unknown judge result")
+        logger.warning(f"Unknown judge result. Raw response: {raw_response}")
         mbe = dict(judgement="unknown")
     score = float("judgement" in mbe and mbe["judgement"] == "correct")
     return score
@@ -112,7 +110,9 @@ class MultiTurnReactAgent(FnCallAgent):
                 assert content, "Error: LLM response is empty."
                 return completion, content
             except RuntimeError as e:
-                print(f"RuntimeError during LLM call_server at attempt {attempts}: {e}")
+                logger.warning(
+                    f"RuntimeError during LLM call_server at attempt {attempts}: {e}"
+                )
                 continue
         raise RuntimeError(
             f"Failed to get response from LLM after {max_attempts} attempts."
@@ -174,13 +174,11 @@ class MultiTurnReactAgent(FnCallAgent):
                 except Exception as e:
                     result = f'Error: {e} Tool call must be a valid json contain a valid "name" and "arguments" field.'
                 result = "<tool_response>\n" + result + "\n</tool_response>"
-                # print(result)
                 messages.append({"role": "user", "content": result})
             if "<answer>" in content and "</answer>" in content:
                 termination = "answer"
                 break
             if num_llm_calls_available <= 0 and "<answer>" not in content:
-                # messages[-1]["content"] = "Sorry, the number of llm calls exceeds the limit."
                 messages.append(
                     {
                         "role": "user",
@@ -192,15 +190,14 @@ class MultiTurnReactAgent(FnCallAgent):
 
             max_tokens = self.max_total_tokens_before_finishing
             token_count = self.count_tokens(messages)
-            print(f">>> QID {data['qid']} Round: {round}, token count: {token_count}")
+            logger.debug(
+                f"QID {data['qid']} Round: {round}, token count: {token_count}"
+            )
 
             if token_count > max_tokens:
-                print(
-                    f">>> QID {data['qid']} Token quantity exceeds the limit: {token_count} > {max_tokens}"
+                logger.debug(
+                    f"QID {data['qid']} Token quantity exceeds the limit: {token_count} > {max_tokens}"
                 )
-                # messages[-1][
-                #     "content"
-                # ] = "You have now reached the maximum context length you can handle. You should stop making tool calls and, based on all the information above, think again and provide what you consider the most likely answer in the following format:<think>your final thinking</think>\n<answer>your answer</answer>"
                 messages.append(
                     {
                         "role": "user",
@@ -265,7 +262,7 @@ class MultiTurnReactAgent(FnCallAgent):
             to_dump.pop("completions")
             with open(save_path, "w", encoding="utf-8") as f:
                 json.dump(to_dump, f, ensure_ascii=False, indent=4)
-            print(f"Result dumped to {save_path}")
+            logger.debug(f"Result dumped to {save_path}")
         return result
 
     async def custom_call_tool(self, tool_name: str, tool_args: dict, **kwargs):
@@ -318,7 +315,7 @@ class MultiTurnReactAgent(FnCallAgent):
             judge_response = judge_completion.choices[0].message.content
             reward = parse_judge_result(judge_response)
         except Exception as e:
-            print(f"Error in calling LLM judge: {e}")
+            logger.warning(f"Error in calling LLM judge: {e}")
             reward = 0.0
         return reward
 
@@ -329,12 +326,9 @@ class MultiTurnReactAgent(FnCallAgent):
         save_path: str | None = None,
     ) -> Dict:
         result = await self.run_agent(data, client, save_path=save_path)
-        print(f">>>> QID: {data['qid']} `run_agent` returns.")
         reward = await self.calc_reward_with_llm_judge(result)
-        print(f">>>> QID: {data['qid']} `calc_reward_with_llm_judge` returns {reward}.")
         completions = result["completions"]
         last_completion = completions[-1]
         client.set_reward(last_completion.id, reward)
         stats = result["stats"]
-        print(f">>>> QID: {data['qid']} `make_trajectory` finishes.")
-        return last_completion, stats
+        return stats
