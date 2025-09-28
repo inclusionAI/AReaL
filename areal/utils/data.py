@@ -1209,7 +1209,11 @@ class Normalization:
             dist.all_reduce(x_sum, op=dist.ReduceOp.SUM, group=reduce_group)
 
         if leave_one_out:
+            if factor.item() == 1:
+                return torch.zeros_like(x_sum)
             return (x_sum - x) / (factor - 1)
+        if factor.item() == 0:
+            return torch.zeros_like(x_sum)
         return x_sum / factor
 
     @staticmethod
