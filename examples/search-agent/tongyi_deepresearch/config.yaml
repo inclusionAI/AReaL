@@ -44,8 +44,8 @@ actor:
   pad_to_maximum: true
   optimizer:
     type: adam
-    lr: 5e-5
-    weight_decay: 0.01
+    lr: 3e-6
+    weight_decay: 0.003
     beta1: 0.9
     beta2: 0.999
     eps: 1e-8
