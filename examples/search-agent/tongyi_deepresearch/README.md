@@ -34,3 +34,7 @@ python3 -m areal.launcher.ray examples/search-agent/tongyi_deepresearch/train.py
     judge_engine.experiment_name=llm-judge trial_name=trial0 \
     launcher.trainer_env_vars=SERPER_KEY_ID=<your serper key>,JINA_API_KEYS=<your jina key>
 ```
+
+## Reward Curve
+
+<img align="center" alt="reward curve" src="reward_curve.png" width="100%">
