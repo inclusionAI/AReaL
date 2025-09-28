@@ -19,7 +19,7 @@ class CompletionWithTokenLogpReward:
     messages: List[dict] = field(default_factory=list)
     reward: float | None = None
     parent: Optional["CompletionWithTokenLogpReward"] | None = None
-    _cache: Dict[str, torch.Tensor] | None = field(default_factory=dict, init=False)
+    _cache: Dict[str, torch.Tensor] | None = None
 
     def to_tensor_dict(self) -> Dict[str, torch.Tensor]:
         if self._cache is not None:
