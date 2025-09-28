@@ -371,6 +371,7 @@ class ArealOpenAI(AsyncOpenAI):
                     "norm_msgs": comp.messages or [],
                     "obj": comp,
                 }
+                print(f">>> comp={comp}")
 
             # 1) Construct parent-child relationships using longest prefix rule
             # Sort potential children by (message length asc, created asc) so parents are available
