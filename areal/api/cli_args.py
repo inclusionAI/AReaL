@@ -38,13 +38,13 @@ class NormConfig:
     adv_norm_mode: str = field(
         default="native",
         metadata={
-            "help": "native or mix. native is the noral z-score normalization. for mix, the normal z-score and mean-base z-score normalization will be calculate and aggragate (more info please refer to the paper of MAPO)."
+            "help": "native or mix. 'native' is the normal z-score normalization. For 'mix', both normal z-score and mean-based z-score normalization will be calculated and aggregated (see MAPO paper for more details)."
         },
     )
     reward_norm_mode: str = field(
         default="native",
         metadata={
-            "help": "TODO. if we need multiple reward_norm in the future, we can implement it here."
+            "help": "Mode for reward normalization. Currently only 'native' is supported."
         },
     )
 

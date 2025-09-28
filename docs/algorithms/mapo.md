@@ -24,11 +24,11 @@ For more details:
 
 - AReal Detail: [Paper of AReal](https://arxiv.org/abs/2505.24298)
 
-- MAPO Detail: [Paper of DeepSeekMath](https://arxiv.org/abs/2509.18849v3)
+- MAPO Detail: [Paper of MAPO](https://arxiv.org/abs/2509.18849v3)
 
 ## Algorithm Core Parameters
 
-- `actor.adv_norm.aggregation_mode`: the implementation of adv_norm. 'native' is the z-score normalization used by GRPO, while the mix is the MAPO does.
+- `actor.adv_norm.aggregation_mode`: the implementation of adv_norm. 'native' is the z-score normalization used by GRPO, while 'mix' is the implementation for MAPO.
 
 ## Notice
 For MAPO implementation, following constraints should be met:
@@ -40,7 +40,7 @@ For MAPO implementation, following constraints should be met:
 ## Example Usage
 
 We recommend to change the parameter within the configuration file
-(i.e.gsm8k_grpo.yaml).
+(i.e. gsm8k_mapo.yaml).
 
 | Backend   | CMD                                                                                                                              |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------- |

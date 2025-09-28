@@ -274,13 +274,13 @@ Specification for splitting micro-batches during training.
 
 Configuration for reward/advantage normalization.
 
-| Parameter          | Type           | Default    | Description                                                                                                                                                                                              |
-| ------------------ | -------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mean_level`       | string \| None | `"batch"`  | Mean level for normalization. Choices: batch, group. Omit for no mean normalization.                                                                                                                     |
-| `std_level`        | string \| None | `"batch"`  | Standard deviation level for normalization. Choices: batch, group. Omit for no std normalization.                                                                                                        |
-| `group_size`       | integer        | `1`        | Group size for group-level normalization                                                                                                                                                                 |
-| `adv_norm_mode`    | string         | `"native"` | native or mix. native is the noral z-score normalization. for mix, the normal z-score and mean-base z-score normalization will be calculate and aggragate (more info please refer to the paper of MAPO). |
-| `reward_norm_mode` | string         | `"native"` | TODO. if we need multiple reward_norm in the future, we can implement it here.                                                                                                                           |
+| Parameter          | Type           | Default    | Description                                                                                                                                                                                           |
+| ------------------ | -------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mean_level`       | string \| None | `"batch"`  | Mean level for normalization. Choices: batch, group. Omit for no mean normalization.                                                                                                                  |
+| `std_level`        | string \| None | `"batch"`  | Standard deviation level for normalization. Choices: batch, group. Omit for no std normalization.                                                                                                     |
+| `group_size`       | integer        | `1`        | Group size for group-level normalization                                                                                                                                                              |
+| `adv_norm_mode`    | string         | `"native"` | native or mix. 'native' is the normal z-score normalization. For 'mix', both normal z-score and mean-based z-score normalization will be calculated and aggregated (see MAPO paper for more details). |
+| `reward_norm_mode` | string         | `"native"` | Mode for reward normalization. Currently only 'native' is supported.                                                                                                                                  |
 
 (section-optimizer)=
 

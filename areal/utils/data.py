@@ -1110,6 +1110,9 @@ class Normalization:
         reduce_group=None,
         calculation_base: str = "deviation",
     ) -> torch.Tensor:
+
+        # x can be advantage or reward in shape [bs*self.group_size, max_tokens]
+
         bs = x.size(0)
 
         # Step 1: Compute mean
@@ -1258,10 +1261,16 @@ class MAPOAdvNorm(Normalization):
     @torch.no_grad()
     def _mix_adv_norm(self, *args, **kwargs) -> torch.Tensor:
 
-        advantages = kwargs["advantages"]
+        # get advantages from first argument (thanks gemini!)
+        advantages = args[0]
 
         # Calculate the unique number of elements in advantages Tensor，exclude element of 0 (because 0 means adv over pad_token)
         unique_elements = torch.unique(advantages[advantages != 0])
+
+        if unique_elements.numel() <= 1:
+            # Handle case with no non-zero advantages, e.g., by returning a default normalization.(Thanks gemini-review)
+            return super().__call__(*args, calculation_base="deviation", **kwargs)
+
         # the 'unique_upper_value' means the reward of success trajectory
         unique_upper_value, unique_lower_value = max(unique_elements), min(
             unique_elements
@@ -1271,7 +1280,7 @@ class MAPOAdvNorm(Normalization):
         assert unique_elements <= 2, (
             f"The MAPO only support reward modeling in a binary, but detected {unique_elements} unique elements in advantages Tensor. Please check: "
             f"1. the definition of reward_fun: return the binary number "
-            f"2. overlong_reward_panety set to false"
+            f"2. overlong_reward_panalty set to false"
         )
 
         # deviation_base_norm shape [batch_size*group_size, max_token]
@@ -1283,7 +1292,7 @@ class MAPOAdvNorm(Normalization):
 
         bs, max_token = int(advantages.shape[0] / self.group_size), advantages.shape[-1]
 
-        # since the advantages is same within same trajectory, we can ge the trajectory_level advantage from first token
+        # since the advantages is same within same trajectory, we can get the trajectory_level advantage from first token
         advantages_ = advantages[:, 0]  # advantages shape [batch_size*group_size]
         advantages_ = advantages_.reshape(
             bs, self.group_size
@@ -1392,7 +1401,7 @@ def get_adv_norm(config: PPOActorConfig):
 
 #         advantages = kwargs["advantages"]
 
-#         # Calculate the unique number of elements in advantages Tensor，exclude element of 0 (because 0 means adv over pad_token)
+#         # Calculate the unique number of elements in advantages Tensor, exclude element of 0 (because 0 means adv over pad_token)
 #         unique_elements = torch.unique(advantages[advantages != 0])
 #         # the 'unique_upper_value' means the reward of success trajectory
 #         unique_upper_value, unique_lower_value = max(unique_elements), min(
@@ -1403,7 +1412,7 @@ def get_adv_norm(config: PPOActorConfig):
 #         assert unique_elements <= 2, (
 #             f"The MAPO only support reward modeling in a binary, but detected {unique_elements} unique elements in advantages Tensor. Please check: "
 #             f"1. the definition of reward_fun: return the binary number "
-#             f"2. overlong_reward_panety set to false"
+#             f"2. overlong_reward_penalty set to false"
 #         )
 
 #         # deviation_base_norm shape [batch_size*group_size, max_token]

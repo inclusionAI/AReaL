@@ -130,12 +130,12 @@ def masked_normalization(
         "deviation",
     ], "calculation_base must be either mean or deviation"
 
-    std = var.sqrt() + eps
+    std = var.sqrt()
     base = std if calculation_base == "deviation" else mean
     # Ensure stability
-    base += eps
+    base = base + eps
     # Normalize
-    return (x - mean) / base.float()
+    return ((x - mean) / base).float()
 
 
 def ppo_actor_loss_fn(
