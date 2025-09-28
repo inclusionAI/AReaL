@@ -11,6 +11,10 @@ from openai import AsyncOpenAI
 from prompt import EXTRACTOR_PROMPT
 from qwen_agent.tools.base import BaseTool, register_tool
 
+from areal.utils import logging
+
+logger = logging.getLogger("VisitTool")
+
 VISIT_SERVER_TIMEOUT = int(os.getenv("VISIT_SERVER_TIMEOUT", 200))
 WEBCONTENT_MAXLENGTH = int(os.getenv("WEBCONTENT_MAXLENGTH", 150000))
 
@@ -75,11 +79,11 @@ class Visit(BaseTool):
         os.makedirs(log_folder, exist_ok=True)
 
         if isinstance(url, str):
-            print(f"Visiting single URL: {url}")
+            logger.debug(f"Visiting single URL: {url}")
             response = await self.readpage_jina(url, goal)
         else:
             response = []
-            print(f"Visiting multiple URLs: {url}")
+            logger.debug(f"Visiting multiple URLs: {url}")
             assert isinstance(url, List)
             start_time = time.time()
             for u in url:
@@ -105,7 +109,7 @@ class Visit(BaseTool):
                 response.append(cur_response)
             response = "\n=======\n".join(response)
 
-        print(f"Summary Length {len(response)}; Summary Content {response}")
+        logger.debug(f"Summary Length {len(response)}; Summary Content {response}")
         return response.strip()
 
     async def call_server(self, msgs, max_retries=2):
@@ -160,7 +164,9 @@ class Visit(BaseTool):
         """
         max_retries = 3
         timeout = 50
-        print(f"entering jina_readpage url: {url}, jina_api_keys={JINA_API_KEYS}")
+        logger.debug(
+            f"entering jina_readpage url: {url}, jina_api_keys={JINA_API_KEYS}"
+        )
         async with aiohttp.ClientSession() as session:
             for attempt in range(max_retries):
                 headers = {"Authorization": f"Bearer {JINA_API_KEYS}"}
@@ -170,20 +176,14 @@ class Visit(BaseTool):
                     ) as response:
                         if response.status == 200:
                             webpage_content = await response.text()
-                            # print(
-                            #     f"jina_readpage {url} success, webpage length: {len(webpage_content)}"
-                            # )
                             return webpage_content
                         else:
                             await response.text()
-                            # print(
-                            #     f"jina_readpage {url} failed with status {response.status}, response: {text}"
-                            # )
                             raise ValueError("jina readpage error")
                 except Exception as e:
-                    print(f"jina_readpage {url} failed with error {e}")
+                    logger.debug(f"jina_readpage {url} failed with error {e}")
                     if attempt == max_retries - 1:
-                        print(
+                        logger.debug(
                             f"jina_readpage {url} failed after {max_retries} attempts"
                         )
                         return "[visit] Failed to read page."
@@ -194,7 +194,7 @@ class Visit(BaseTool):
     async def html_readpage_jina(self, url: str) -> str:
         max_attempts = 8
         for attempt in range(max_attempts):
-            print(f"html_readpage_jina {url} attempt {attempt+1}/{max_attempts}")
+            logger.debug(f"html_readpage_jina {url} attempt {attempt+1}/{max_attempts}")
             content = await self.jina_readpage(url)
             if (
                 content
@@ -207,7 +207,6 @@ class Visit(BaseTool):
 
     async def readpage_jina(self, url: str, goal: str) -> str:
         """Read and summarize a webpage using Jina + LLM extractor."""
-        print("entering readpage_jina")
         summary_page_func = self.call_server
         max_retries = int(os.getenv("VISIT_SERVER_MAX_RETRIES", 1))
         _content = await self.html_readpage_jina(url)
@@ -218,7 +217,9 @@ class Visit(BaseTool):
             and content != "[visit] Empty content."
             and not content.startswith("[document_parser]")
         )
-        print(f"readpage_jina content: {len(content)}, valid_content: {valid_content}")
+        logger.debug(
+            f"readpage_jina content: {len(content)}, valid_content: {valid_content}"
+        )
         if not valid_content:
             useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
                 url=url, goal=goal
@@ -251,7 +252,7 @@ class Visit(BaseTool):
                 if summary_retries > 0
                 else f"[visit] Summary url[{url}] failed after 3 attempts, final truncation to 25000 chars"
             )
-            print(status_msg)
+            logger.debug(status_msg)
             content = content[:truncate_length]
             extraction_prompt = EXTRACTOR_PROMPT.format(
                 webpage_content=content, goal=goal
@@ -263,7 +264,7 @@ class Visit(BaseTool):
         if isinstance(raw, str):
             raw = raw.replace("```json", "").replace("```", "").strip()
 
-        print("Final raw response:", len(raw))
+        logger.debug("Final raw response:", len(raw))
 
         parse_retry_times = 0
         while parse_retry_times < 3:
@@ -275,8 +276,6 @@ class Visit(BaseTool):
                 parse_retry_times += 1
         else:
             raw_obj = None
-
-        # print(f"Parsed raw_obj: {raw_obj}")
 
         if raw_obj is None:
             useful_information = f"The provided webpage content: {_content[:1000]}"
@@ -291,7 +290,9 @@ class Visit(BaseTool):
         useful_information += "Summary: \n" + str(raw_obj.get("summary", "")) + "\n\n"
 
         if len(useful_information) < 10 and summary_retries < 0:
-            print("[visit] Could not generate valid summary after maximum retries")
+            logger.debug(
+                "[visit] Could not generate valid summary after maximum retries"
+            )
             useful_information = "[visit] Failed to read page"
-        print(f"Final useful_information: {useful_information}")
+        logger.debug(f"Final useful_information: {useful_information}")
         return useful_information
