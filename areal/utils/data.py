@@ -1352,10 +1352,10 @@ class MAPOAdvNorm(Normalization):
             )
 
         # the 'unique_upper_value' means the reward of success trajectory
-        unique_upper_value, unique_lower_value = max(unique_elements), min(
-            unique_elements
+        unique_upper_value, unique_lower_value = (
+            max(unique_elements).item(),
+            min(unique_elements).item(),
         )
-        unique_elements = unique_elements.numel()
 
         assert unique_elements <= 2, (
             f"The MAPO only support reward modeling in a binary, but detected {unique_elements} unique elements in advantages Tensor. Please check: "
