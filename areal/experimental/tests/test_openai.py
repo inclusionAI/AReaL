@@ -583,6 +583,7 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
     """
     openai_client: ArealOpenAI
     openai_client.use_chat_template = False
+    openai_client.chat.completions.use_chat_template = False
     # Base conversation
     base = [
         {"role": "system", "content": "You are a helpful assistant."},
