@@ -1247,11 +1247,11 @@ class Normalization:
             dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
             dist.all_reduce(x_sum_sq, op=dist.ReduceOp.SUM, group=reduce_group)
 
-        var = x_sum_sq / factor
         if unbiased:
-            if factor.item() > 1:
-                var *= factor / (factor - 1)
-            else:
-                var.fill_(0.0)
-        std = var.sqrt()
-        return std
+            if factor.item() <= 1:
+                return torch.zeros_like(x_sum_sq)
+            return (x_sum_sq / (factor - 1)).sqrt()
+
+        if factor.item() == 0:
+            return torch.zeros_like(x_sum_sq)
+        return (x_sum_sq / factor).sqrt()
