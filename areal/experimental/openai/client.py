@@ -161,7 +161,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Convert response to OpenAI format
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
-        current_time = datetime.datetime.now().timestamp()
+        current_time = int(datetime.datetime.now().timestamp())
 
         output_text = self.tokenizer.decode(response.output_tokens)
 
