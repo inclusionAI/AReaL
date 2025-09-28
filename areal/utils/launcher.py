@@ -2,6 +2,7 @@ import dataclasses
 import enum
 import getpass
 import os
+import pathlib
 import time
 from typing import Dict, Optional
 
@@ -15,6 +16,11 @@ PYTORCH_KERNEL_CACHE_PATH = (
     f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/torch/kernels/"
 )
 TRITON_CACHE_PATH = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/triton/"
+PYTHONPATH = (
+    os.getenv("PYTHONPATH", "")
+    + ":"
+    + str(pathlib.Path(__file__).resolve().parent.parent.parent)
+)
 os.makedirs(PYTORCH_KERNEL_CACHE_PATH, exist_ok=True)
 os.makedirs(TRITON_CACHE_PATH, exist_ok=True)
 BASE_ENVIRONS = {
@@ -22,7 +28,7 @@ BASE_ENVIRONS = {
     "PYTORCH_KERNEL_CACHE_PATH": PYTORCH_KERNEL_CACHE_PATH,
     "TRITON_CACHE_DIR": TRITON_CACHE_PATH,
     "CUDA_DEVICE_MAX_CONNECTIONS": "1",
-    "PYTHONPATH": os.getenv("PYTHONPATH", ""),
+    "PYTHONPATH": PYTHONPATH,
 }
 NA132_ENVIRONS = {
     "NCCL_SOCKET_IFNAME": "bond0",
