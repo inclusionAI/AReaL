@@ -190,7 +190,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             )
         return chat_completion
 
-
+# TODO: 
 class ArealOpenAI(AsyncOpenAI):
     """Extended AsyncOpenAI client that uses AReaL's inference engine and supports reward setting."""
 

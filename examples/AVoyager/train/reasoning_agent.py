@@ -1,6 +1,9 @@
 import re
 import time
 from typing import Dict, List, Any, Optional
+from transformers import PreTrainedTokenizerFast, AutoProcessor
+from constants import TOOL_CROP_SYSTEM_PROMPT
+from areal.utils.image import get_multimodal_input_ids_len
 
 class ASearcherReasoningPrompts:
     THINK_AND_ACT_PROMPT_v1 =  \
@@ -134,50 +137,8 @@ Latest search results:
 Thought: ... // the thought to be completed
 """
 
-def process_webpage(content):
-    keys = [("title", "title"), ("p", "p"), ("li", "li", lambda c: "\n" not in c)] 
-    content_list = []
-    init_length = len(content)
-    while any([f"<{k[0]}" in content and f"</{k[1]}>" in content for k in keys]):
-        klr = []
-        for k in keys:
-            start = 0
-            # print(k)
-            while True:
-                ls = [content[start:].find(f"<{k[0]}{c}") for c in [">", " "]]
-                ls = [l for l in ls if l != -1]
-                l = -1 if len(ls) == 0 else min(ls)
-                # print(ls)
-                if l == -1:
-                    break
-                l += start
-                r = content[l:].find(f"</{k[1]}>")
-                if r == -1:
-                    break
-                if (len(k) <= 2) or (len(k) >= 3 and k[2](content[l:l+r])):
-                    # print(k, l, l+r)
-                    klr.append((k, l, l+r))
-                    break
-                start = l + r
 
-        if len(klr) == 0:
-            break
-        klr = sorted(klr, key=lambda x:x[1])
-        k, l, r = klr[0]
-        content_list.append(content[l:r+len(f"</{k[1]}>")])
-        # print(content_list[-1])
-        # input("stop...")
-        if k[0] == "p":
-            content_list[-1] += "\n\n"
-        elif k[0] == "li":
-            content_list[-1] += "\n"
-        content = content[r:]
-    content = "".join(content_list)
-    final_length = len(content)
-    print(f"process the webpage: {init_length} -> {final_length}. {content[:100]}")
-    return content
-
-class AReaLSearchReasoningAgentV1:
+class AReaLVOYAGEReasoningAgentV1:
     
     def __init__(self,
                  max_turns: int = 128,
@@ -192,24 +153,17 @@ class AReaLSearchReasoningAgentV1:
         # 保持与原agent相同的属性名
         self.stop = ["<|im_end|>", "<|endoftext|>"]
         self.stop_sequences = self.stop
-        
-        print(f"AReaLSearchAgentV1 初始化完成")
+
+        print(f"AReaLVOYAGEReasoningAgentV1 初始化完成")
 
     def get_query_from_text(self, text: str) -> Optional[str]:
-        pattern = r'<search>(.*?)</search>'
+        pattern = r'<grounding>(.*?)</grounding>'
         matches = re.findall(pattern, text, re.DOTALL)
         if matches:
-            return "<search>" + matches[-1].strip() + "</search>"
-        
+            return "<grounding>" + matches[-1].strip() + "</grounding>"
+
         return None
-    
-    def get_url_from_text(self, text: str) -> Optional[str]:
-        pattern = r'<access>(.*?)</access>'
-        matches = re.findall(pattern, text, re.DOTALL)
-        if matches:
-            return "<access>" + matches[-1].strip() + "</access>"
-        
-        return None
+
         
     def get_thought_from_text(self, text: str) -> Optional[str]:
         pattern = r'<thought>(.*?)</thought>'
@@ -228,22 +182,22 @@ class AReaLSearchReasoningAgentV1:
         
         return None
 
-    def print_search_debug_info(self, text: str):
-        query_starts = text.count('<search>')
-        query_ends = text.count('</search>')
+    def print_grounding_debug_info(self, text: str):
+        query_starts = text.count('<grounding>')
+        query_ends = text.count('</grounding>')
         # print(f"搜索标签统计: {query_starts}个开始标签, {query_ends}个结束标签")
 
-    def debug_generation_tags(self, text: str) -> Dict:
-        tags = {
-            'query': {'open': text.count('<|begin_of_query|>'), 'close': text.count('<|end_of_query|>')},
-            'documents': {'open': text.count('<|begin_of_documents|>'), 'close': text.count('<|end_of_documents|>')},
-            'answer': {'open': text.count('<answer>'), 'close': text.count('</answer>')}
-        }
+    # def debug_generation_tags(self, text: str) -> Dict:
+    #     tags = {
+    #         'query': {'open': text.count('<begin_of_query|>'), 'close': text.count('<end_of_query|>')},
+    #         'documents': {'open': text.count('<begin_of_documents|>'), 'close': text.count('<end_of_documents|>')},
+    #         'answer': {'open': text.count('<answer>'), 'close': text.count('</answer>')}
+    #     }
+    #
+    #     for tag_name, counts in tags.items():
+    #         tags[tag_name]['balanced'] = counts['open'] == counts['close']
         
-        for tag_name, counts in tags.items():
-            tags[tag_name]['balanced'] = counts['open'] == counts['close']
-        
-        return tags
+    #     return tags
 
     def all_finished(self, processes: List[Dict]) -> bool:
         finished = []
@@ -251,104 +205,114 @@ class AReaLSearchReasoningAgentV1:
             finished.append(not process.get("running", True))
         return all(finished)
 
-    def prepare_queries(self, tokenizer, processes: List[Dict]) -> List[Dict]:
+    def prepare_queries(self, tokenizer, processes: List[Dict], processor: AutoProcessor = None) -> List[Dict]:
+        #目前把history简化为question之后的内容，之后还需要拓展或者做if分支
         queries = []
         for process in processes:
             if "history" not in process:
                 assert "pred_answer" not in process
                 process["history"] = [dict(type="prompt", text=process["prompt"])]
                 process["running"] = True
-                process["phase"] = "search"
+                process["phase"] = "grounding"  
             
             if process["running"]:
+                #上一轮为调用工具，这一轮要分析，目前不适用
                 if "text" not in process["history"][-1] and "info_str" in process["history"][-1]:
-                    history = ""
-                    for idx, h in enumerate(process["history"][:-1]):
-                        history += h.get("short_info_str", h.get("text", ""))
-                    if len(history) > 25000:
-                        history = history[-25000:]
-                    
-                    if process["history"][-1]["type"] == "page":
-                        prompt = ASearcherReasoningPrompts.READ_PAGE_PROMPT.format(question=process["question"], history=history, content=process["history"][-1]["info_str"])
-                    elif process["history"][-1]["type"] == "documents":
-                        prompt = ASearcherReasoningPrompts.READ_SEARCH_RESULTS_PROMPT.format(question=process["question"], history=history, content=process["history"][-1]["info_str"])
-                    else:
-                        raise RuntimeError(f"Not supported history type: {process['history'][-1]['type']}")
-                    
-                    input_text = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True, tokenize=False)
-                    query_len = tokenizer([input_text], return_length=True)['length'][0]
-
-                    if query_len <= 28000:
-                        print(f"Reading @ Qid {process['id']}", len(tokenizer(input_text, add_special_tokens=False)["input_ids"]), len([h for h in process["history"] if h["type"] == "documents"]), len([h for h in process["history"] if h["type"] == "act"]), flush=True)
-                        queries.append(dict(
-                            type="llm",
-                            sampling=dict(stop=self.stop, max_new_tokens=31000-query_len),
-                            query_len=query_len,
-                            prompt=prompt, 
-                        ))
-                        continue
-                    
-                    if "cache_gen_text" in process:
-                        process.pop("cache_gen_text")
+                    pass
                 
+                #     history = ""
+                #     for idx, h in enumerate(process["history"][:-1]):
+                #         history += h.get("short_info_str", h.get("text", ""))
+                #     if len(history) > 25000:
+                #         history = history[-25000:]
+                    
+                #     if process["history"][-1]["type"] == "page":
+                #         prompt = ASearcherReasoningPrompts.READ_PAGE_PROMPT.format(question=process
+                #     else:
+                #         raise RuntimeError(f"Not supported history type: {process['history'][-1]['type']}")
+                    
+                #     input_text = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True, tokenize=False)
+                #     query_len = tokenizer([input_text], return_length=True)['length'][0]
+
+                #     if query_len <= 28000:
+                #         print(f"Reading @ Qid {process['id']}", len(tokenizer(input_text, add_special_tokens=False)["input_ids"]), len([h for h in process["history"] if h["type"] == "documents"]), len([h for h in process["history"] if h["type"] == "act"]), flush=True)
+                #         queries.append(dict(
+                #             type="llm",
+                #             sampling=dict(stop=self.stop, max_new_tokens=31000-query_len),
+                #             query_len=query_len,
+                #             prompt=prompt, 
+                #         ))
+                #         continue
+                    
+                #     if "cache_gen_text" in process:
+                #         process.pop("cache_gen_text")
+                
+                #上一轮回答了判断有没有工具调用
                 if "text" in process["history"][-1]:
                     last_text = process["history"][-1]["text"]
-                    if ("<search>" in last_text and 
-                        last_text.strip().endswith("</search>")):
+                    if ("<grounding>" in last_text and 
+                        last_text.strip().endswith("</grounding>")):
                         if True:
-                            query_text = last_text.split("<search>")[-1].split("</search>")[0].strip()
+                            query_text = last_text.split("<grounding>")[-1].split("</grounding>")[0].strip()
                             queries.append(dict(
-                                type="search", 
+                                type="grounding", 
                                 query=[query_text.strip()], 
-                                search_params=dict(topk=self.topk)
+                                search_params=dict(topk=self.topk),
+                                images=process.get("images", []),
                             ))
                             continue
-                    elif ("<access>" in last_text and 
-                        last_text.strip().endswith("</access>")):
-                        query_text = last_text.split("<access>")[-1].split("</access>")[0]
-                        queries.append(dict(
-                            type="access", 
-                            urls=[query_text.strip()], 
-                            # search_params=dict(topk=self.topk)
-                        ))
-                        continue
                 
+                
+                #初始情形，使用初始prompt
                 # input_text = "".join([h["text"] for h in process["history"]])
                 history = ""
                 for idx, h in enumerate(process["history"]):
                     history += h.get("short_info_str", h.get("text", ""))
                 if len(history) > 25000:
                     history = history[-25000:]
-                
-                prompt = ASearcherReasoningPrompts.THINK_AND_ACT_PROMPT.format(question=process["question"], history=history)
-                input_text = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True, tokenize=False) + process.get("cache_gen_text", "")
+
+                if "images" in process and len(process["images"]) > 0 and processor is not None:
+                    messages = [{"role": "system", "content": TOOL_CROP_SYSTEM_PROMPT}]
+                    messages.append({"role": "user", "content": process["question"]})
+                    messages.append({"role": "assistant", "content": history})
+                else:
+                    messages = [{"role": "user", "content": process["question"] + "\n\n" + history}]
+                # prompt = ASearcherReasoningPrompts.THINK_AND_ACT_PROMPT.format(question=process["question"], history=history)
+                input_text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False) + process.get("cache_gen_text", "")
+                # input_text = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True, tokenize=False) + process.get("cache_gen_text", "")
                 # print(f"Generate Act for Qid {process['id']}", len(tokenizer(input_text, add_special_tokens=False)["input_ids"]), len([h for h in process["history"] if h["type"] == "documents"]), len([h for h in process["history"] if h["type"] == "act"]), flush=True)
 
+                #超过轮数或者token数，直接回答
                 if any([
-                    len([h for h in process["history"] if h["type"] == "documents"]) >= 20,
+                    len([h for h in process["history"] if h["type"] == "grounding"]) >= 20,
                     len([h for h in process["history"] if h["type"] == "act"]) >= self.force_turns,
-                    process.get("phase", "search") == "answer",
+                    process.get("phase", "tool_call") == "answer",
                     ]):
                     process["phase"] = "answer"
-                    print(f"Direct Generate Answer for Qid {process['id']}", len(tokenizer(input_text, add_special_tokens=False)["input_ids"]), len([h for h in process["history"] if h["type"] == "documents"]), len([h for h in process["history"] if h["type"] == "act"]), flush=True)
-                    prompt = ASearcherReasoningPrompts.THINK_AND_ACT_PROMPT_v1.format(question=process["question"], history=history)
-                if self.force_valid:
-                    prompt = prompt.replace('4. If you find information contradicting context of the question, you should point out that the question is invalid and the incorrect information in the question.', "4. You should find the most likely answer even when conflicting information is founded.")
-                input_text = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True, tokenize=False) + process.get("cache_gen_text", "")
+                    print(f"Direct Generate Answer for Qid {process['id']}", len(tokenizer(input_text, add_special_tokens=False)["input_ids"]), len([h for h in process["history"] if h["type"] == "act"]), flush=True)
+                    if "images" in process and len(process["images"]) > 0 and processor is not None:
+                        messages = [{"role": "system", "content": TOOL_CROP_SYSTEM_PROMPT}]
+                        messages.append({"role": "user", "content": process["question"]})
+                        messages.append({"role": "assistant", "content": history})
+                    else:
+                        messages = [{"role": "user", "content": process["question"] + "\n\n" + history}]
+                # if self.force_valid:
+                    # prompt = prompt.replace('4. If you find information contradicting context of the question, you should point out that the question is invalid and the incorrect information in the question.', "4. You should find the most likely answer even when conflicting information is founded.")
+                input_text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False) + process.get("cache_gen_text", "")
 
                 # print("Query Input Length (llm):", process["id"], len(tokenizer(input_text, add_special_tokens=False)["input_ids"]),  len([h for h in process["history"] if h["type"] == "documents"]), len([h for h in process["history"] if h["type"] == "act"]), flush=True)
-                if len(tokenizer(input_text, add_special_tokens=False)["input_ids"]) > 32000 or self.get_answer_from_text(process["history"][-1].get("text", "")) is not None:
+                if get_multimodal_input_ids_len(text=process["question"], tokenizer=tokenizer, images=process.get("images"), processor=processor) > 32000 or self.get_answer_from_text(process["history"][-1].get("text", "")) is not None:
                     print("process is done (1)", process["id"])
                     process["running"] = False
                     continue
                 
-                query_len = tokenizer([input_text], return_length=True)['length'][0]
+                query_len = get_multimodal_input_ids_len(text=input_text, tokenizer=tokenizer, images=process.get("images"), processor=processor)
                 process["max_new_tokens"] = max(0, 31000 - query_len)
                 queries.append(dict(
                     type="llm", 
                     sampling=dict(stop=self.stop, max_new_tokens=process.get("max_new_tokens", 4096)),
                     query_len=query_len,
-                    prompt=prompt, 
+                    prompt=input_text, 
                 ))
                 process.pop("max_new_tokens")
         
@@ -393,7 +357,7 @@ class AReaLSearchReasoningAgentV1:
                         urls = []
                         # server_types = []
                     
-                    print(f"搜索结果文档数量: {len(documents)}")
+                    # print(f"搜索结果文档数量: {len(documents)}")
 
                     if len(documents) > 0:
                         doc_id_template = "[Doc {doc_id}]({url}):\n"
@@ -411,45 +375,7 @@ class AReaLSearchReasoningAgentV1:
                             info_str= "\n\n<information>\n" + "No Results Found." + "\n</information>\n\n",
                             short_info_str="\n\n<information>\n" + "No Results Found." + "\n</information>\n\n"
                         ))
-                elif q['type'] == "access":
-                    if isinstance(r, list):
-                        r = r[0]
-                    # process the webpage
-                    if isinstance(r, dict) and 'page' in r and isinstance(r["page"], str) and len(r["page"]) > 0:
-                        page = r["page"]
-                        page = page[:250000]
-                        if "page_cache" not in process:
-                            process["page_cache"] = []
-                        process["page_cache"] = []
-                        while len(page) > 0 and len(process["page_cache"]) < 10:
-                            _len = min(10000, len(page))
-                            process["page_cache"].append(f">>>> Page {len(process["page_cache"]) + 1} >>>>\n\n" + page[:_len])
-                            page = page[_len:]
-                        print("[DEBUG] add page", process["id"], len(r["page"]), len(process["page_cache"]), flush=True)
-   
-                        if "page_cache" in process and len(process["page_cache"]) > 0:
-                            page = process["page_cache"].pop(0)
-                            info_str = "\n\n<information>" + page + "\n</information>\n\n"
-                            short_info_str = "\n\n<information>\n" + page[:100] + "...\n\n" + "</information>\n\n"
-
-                            process["history"].append(dict(
-                                    type="page", 
-                                    info_str=info_str,
-                                    short_info_str=short_info_str
-                                ))
-                        
-                    else:
-                        page = ""
-                        process["page_cache"] = []
-                        info_str = "\n\n<information>\nNo More Information is Found for this URL.\n</information>\n\n"
-                        short_info_str = "\n\n<information>\nNo More Information is Found for this URL.\n</information>\n\n"
-
-                        process["history"].append(dict(
-                                type="page", 
-                                info_str=info_str,
-                                short_info_str=short_info_str
-                            ))
-
+               
                 elif q["type"] == "llm":
                     if hasattr(r, 'stop_reason') and hasattr(r, 'text'):
                         generated_text = r.text
@@ -590,9 +516,10 @@ def parse_judge_result(raw_response):
 async def run_agent(
               client: ArealOpenAI,
               judge_client: ArealOpenAI,
-              tokenizer,
+              tokenizer: PreTrainedTokenizerFast,
               data,
               toolbox,
+              processor: AutoProcessor = None,
               max_turns: int = 128,
               force_turns: int = 4,
               topk: int = 10,
@@ -604,7 +531,7 @@ async def run_agent(
     # client = ArealOpenAI(engine=rollout_engine, tokenizer=tokenizer)
 
     # Create ASearcher Reasoning Agent
-    agent = AReaLSearchReasoningAgentV1(max_turns=max_turns,
+    agent = AReaLVOYAGEReasoningAgentV1(max_turns=max_turns,
                                         force_turns=force_turns,
                                         topk=topk,
                                         force_valid=force_valid)
@@ -613,6 +540,7 @@ async def run_agent(
     process = dict(id=data["id"],
                    question=data["question"],
                    prompt=data["question"],
+                   images=data.get("images", []),
                    gt=data["answer"])
     
     completions = []
@@ -628,8 +556,8 @@ async def run_agent(
         print(f"Agent Loop: Qid={qid} rank={rank} cnt={cnt}", flush=True)
 
         # Prepare query
-        query = agent.prepare_queries(tokenizer, [process])[0]
-
+        query = agent.prepare_queries(tokenizer, [process], processor=processor)[0]
+        #TODO line
         if query is None:
             break
 
