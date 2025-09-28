@@ -1197,6 +1197,7 @@ class Normalization:
             factor = torch.tensor(
                 np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
             )
+            x_masked = x
             x_sum = x.sum(dim=dim, keepdim=True)
         else:
             mask = mask.to(dtype)
@@ -1211,7 +1212,7 @@ class Normalization:
         if leave_one_out:
             if factor.item() <= 1:
                 return torch.zeros_like(x_sum)
-            return (x_sum - x) / (factor - 1)
+            return (x_sum - x_masked) / (factor - 1)
         if factor.item() == 0:
             return torch.zeros_like(x_sum)
         return x_sum / factor
