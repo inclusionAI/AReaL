@@ -307,6 +307,7 @@ def export_all(reduce_group=None, reset=True) -> Dict[str, float]:
         tracker_keys = sorted(list(set(flat2d(all_trackers))))
     for tracker_key in tracker_keys:
         tracker = get(tracker_key)
+        print(f">>> trackerkey=", tracker_key)
         x = tracker.export(reduce_group=reduce_group, reset=reset)
         for k in x.keys():
             if k in stat:

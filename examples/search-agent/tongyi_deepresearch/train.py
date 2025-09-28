@@ -134,6 +134,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
             ]
         )
         for stats in all_stats:
+            print(f"stats tracker {stats}")
             stats_tracker.get(self.rollout_stat_scope).scalar(**stats)
 
         completions_with_rewards = {}
