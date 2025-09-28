@@ -164,15 +164,15 @@ class MultiTurnReactAgent(FnCallAgent):
                 tool_call = content.split("<tool_call>")[1].split("</tool_call>")[0]
                 try:
                     tool_call = json5.loads(tool_call)
-                    tool_name = tool_call.get("name", "")
+                    tool_name = tool_call["name"]
                     tool_args = tool_call.get("arguments", {})
                     result = await self.custom_call_tool(tool_name, tool_args)
                     if tool_name == "search":
                         stats["num_search"] += 1
                     elif tool_name == "visit":
                         stats["num_access"] += 1
-                except:
-                    result = 'Error: Tool call is not a valid JSON. Tool call must contain a valid "name" and "arguments" field.'
+                except Exception as e:
+                    result = f'Error: {e} Tool call must be a valid json contain a valid "name" and "arguments" field.'
                 result = "<tool_response>\n" + result + "\n</tool_response>"
                 # print(result)
                 messages.append({"role": "user", "content": result})

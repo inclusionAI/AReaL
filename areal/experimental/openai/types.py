@@ -19,8 +19,11 @@ class CompletionWithTokenLogpReward:
     messages: List[dict] = field(default_factory=list)
     reward: float | None = None
     parent: Optional["CompletionWithTokenLogpReward"] | None = None
+    _cache: Dict[str, torch.Tensor] | None = field(default_factory=dict, init=False)
 
     def to_tensor_dict(self) -> Dict[str, torch.Tensor]:
+        if self._cache is not None:
+            return self._cache
         resp = self.response
         self.seq_tokens = seq = resp.input_tokens + resp.output_tokens
         if self.parent:
@@ -62,7 +65,7 @@ class CompletionWithTokenLogpReward:
             loss_mask = [0] * resp.input_len + [1] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
         reward = self.reward if self.reward is not None else 0.0
-        return dict(
+        result = dict(
             # unsqueeze to add an additional batch dimension
             input_ids=torch.tensor(seq).unsqueeze(0),
             loss_mask=torch.tensor(loss_mask).unsqueeze(0),
@@ -72,3 +75,5 @@ class CompletionWithTokenLogpReward:
             # reward
             rewards=torch.tensor([float(reward)]),
         )
+        self._cache = result
+        return result

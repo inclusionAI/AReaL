@@ -17,7 +17,6 @@ WEBCONTENT_MAXLENGTH = int(os.getenv("WEBCONTENT_MAXLENGTH", 150000))
 JINA_API_KEYS = os.getenv("JINA_API_KEYS", "")
 
 
-@staticmethod
 def truncate_to_tokens(text: str, max_tokens: int = 95000) -> str:
     encoding = tiktoken.get_encoding("cl100k_base")
 

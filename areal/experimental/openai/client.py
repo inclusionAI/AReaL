@@ -3,7 +3,7 @@ import time
 import uuid
 from collections import OrderedDict, defaultdict
 from copy import deepcopy
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Union
 
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN, Body, NotGiven
@@ -201,8 +201,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 completion=deepcopy(chat_completion),
                 response=response,  # Should not deepcopy response because of tokenizer
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
-                use_chat_template=use_chat_template,
-                tokenizer=self.tokenizer,
             )
         return chat_completion
 
@@ -340,7 +338,7 @@ class ArealOpenAI(AsyncOpenAI):
                         "Please use 'individual' style instead."
                     )
 
-            def _is_prefix(a: List[Tuple[str, str]], b: List[Tuple[str, str]]) -> bool:
+            def _is_prefix(a: List[Dict], b: List[Dict]) -> bool:
                 # True if a is a strict prefix of b
                 if len(a) >= len(b):
                     return False
