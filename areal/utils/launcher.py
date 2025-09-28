@@ -16,10 +16,14 @@ PYTORCH_KERNEL_CACHE_PATH = (
     f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/torch/kernels/"
 )
 TRITON_CACHE_PATH = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/triton/"
-PYTHONPATH = (
-    os.getenv("PYTHONPATH", "")
-    + ":"
-    + str(pathlib.Path(__file__).resolve().parent.parent.parent)
+PYTHONPATH = os.pathsep.join(
+    filter(
+        None,
+        [
+            os.getenv("PYTHONPATH", None),
+            str(pathlib.Path(__file__).resolve().parent.parent.parent),
+        ],
+    )
 )
 os.makedirs(PYTORCH_KERNEL_CACHE_PATH, exist_ok=True)
 os.makedirs(TRITON_CACHE_PATH, exist_ok=True)
