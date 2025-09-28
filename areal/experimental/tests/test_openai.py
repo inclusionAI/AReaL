@@ -91,7 +91,7 @@ def openai_client(sglang_server, tokenizer):
         engine=engine,
         tokenizer=tokenizer,
         tool_call_parser="qwen25",
-        use_chat_template=False,
+        use_chat_template=True,
     )
     engine.destroy()
 
@@ -582,6 +582,7 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
     Rewards are explicitly set (no propagation). Export should return only leaves.
     """
     openai_client: ArealOpenAI
+    openai_client.use_chat_template = False
     # Base conversation
     base = [
         {"role": "system", "content": "You are a helpful assistant."},
