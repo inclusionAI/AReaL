@@ -280,6 +280,24 @@ class TrainEngineConfig:
     )
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
 
+    # Lora
+    use_lora: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to use LoRA. Only support FSDP. Note that should be enabled together with vLLM/SGLang."
+        },
+    )
+    lora_rank: int = field(default=32, metadata={"help": "lora rank"})
+    lora_alpha: int = field(default=16, metadata={"help": "lora alpha"})
+    target_modules: List[str] = field(
+        default_factory=list,
+        metadata={"help": "lora target_modules. None defaults to 'all-linear'"},
+    )
+    peft_type: str = field(
+        default="lora",
+        metadata={"help": "peft method type. Only LoRA is supported for now."},
+    )
+
 
 @dataclass
 class PPOActorConfig(TrainEngineConfig):
@@ -552,6 +570,14 @@ class SGLangConfig:
     kv_cache_dtype: str = "auto"
     dp_size: int = 1  # only used for dp attention
     ep_size: int = 1
+    # lora
+    enable_lora: bool | None = None
+    max_lora_rank: int | None = None
+    lora_target_modules: List[str] | None = None
+    lora_paths: List[str] | None = None
+    max_loaded_loras: int = 1
+    max_loras_per_batch: int = 1
+    lora_backend: str = "triton"
     # logging
     log_level: str = "warning"
     log_level_http: str | None = "warning"
@@ -610,8 +636,13 @@ class SGLangConfig:
         n_nodes: int = 1,
         node_rank: int = 0,
     ):
-
+        # Map "all-linear" to "all"
         args: Dict = conf_as_dict(sglang_config)
+        # Map "all-linear" to "all"
+        if "lora_target_modules" in args and args["lora_target_modules"]:
+            args["lora_target_modules"] = [
+                x.replace("-linear", "") for x in args["lora_target_modules"]
+            ]
         args = dict(
             host=host,
             port=port,
@@ -692,6 +723,12 @@ class InferenceEngineConfig:
     )
     request_retries: int = field(
         default=3, metadata={"help": "Number of retries for failed requests."}
+    )
+    pause_grace_period: float = field(
+        default=0.0,
+        metadata={
+            "help": "The grace period after calling /pause_generation. Wait until all requests have been dropped."
+        },
     )
 
 

@@ -330,6 +330,11 @@ Configuration for PPO actor model, a subclass of a TrainEngine.
 | `optimizer`               | [`OptimizerConfig`](section-optimizer) \| None | `None`                | Optimizer configuration. None means no training.                                                                                                                                                                                                                                                                           |
 | `backend`                 | string                                         | `""`                  | Training backend (refer to documentation)                                                                                                                                                                                                                                                                                  |
 | `fsdp`                    | [`FSDPEngineConfig`](section-fsdp-engine)      | **Required**          | -                                                                                                                                                                                                                                                                                                                          |
+| `use_lora`                | boolean                                        | `False`               | Whether to use LoRA. Only support FSDP. Note that should be enabled together with vLLM/SGLang.                                                                                                                                                                                                                             |
+| `lora_rank`               | integer                                        | `32`                  | lora rank                                                                                                                                                                                                                                                                                                                  |
+| `lora_alpha`              | integer                                        | `16`                  | lora alpha                                                                                                                                                                                                                                                                                                                 |
+| `target_modules`          | list of string                                 | **Required**          | lora target_modules. None defaults to 'all-linear'                                                                                                                                                                                                                                                                         |
+| `peft_type`               | string                                         | `"lora"`              | peft method type. Only LoRA is supported for now.                                                                                                                                                                                                                                                                          |
 | `group_size`              | integer                                        | `1`                   | Number of sequences in each group                                                                                                                                                                                                                                                                                          |
 | `ppo_n_minibatches`       | integer                                        | `4`                   | Number of minibatches for each PPO update                                                                                                                                                                                                                                                                                  |
 | `eps_clip`                | float                                          | `0.2`                 | Clipping factor for policy ratio                                                                                                                                                                                                                                                                                           |
@@ -406,6 +411,11 @@ Core configuration for model training, including optimization and backend settin
 | `optimizer`              | [`OptimizerConfig`](section-optimizer) \| None | `None`                | Optimizer configuration. None means no training.                                                                                        |
 | `backend`                | string                                         | `""`                  | Training backend (refer to documentation)                                                                                               |
 | `fsdp`                   | [`FSDPEngineConfig`](section-fsdp-engine)      | **Required**          | -                                                                                                                                       |
+| `use_lora`               | boolean                                        | `False`               | Whether to use LoRA. Only support FSDP. Note that should be enabled together with vLLM/SGLang.                                          |
+| `lora_rank`              | integer                                        | `32`                  | lora rank                                                                                                                               |
+| `lora_alpha`             | integer                                        | `16`                  | lora alpha                                                                                                                              |
+| `target_modules`         | list of string                                 | **Required**          | lora target_modules. None defaults to 'all-linear'                                                                                      |
+| `peft_type`              | string                                         | `"lora"`              | peft method type. Only LoRA is supported for now.                                                                                       |
 
 (section-generation-hyperparameters)=
 
@@ -447,6 +457,7 @@ Configuration for inference servers, including offpolicyness control.
 | `setup_timeout`           | float           | `120.0`         | Timeout in seconds of connecting to remote servers or launching local servers.                                                                                      |
 | `request_timeout`         | float           | `3600`          | Timeout for HTTP requests.                                                                                                                                          |
 | `request_retries`         | integer         | `3`             | Number of retries for failed requests.                                                                                                                              |
+| `pause_grace_period`      | float           | `0.0`           | The grace period after calling /pause_generation. Wait until all requests have been dropped.                                                                        |
 
 (section-sg-lang)=
 
@@ -498,6 +509,13 @@ https://github.com/sgl-project/sglang for detailed documentation.
 | `kv_cache_dtype`                  | string                  | `"auto"`     | -           |
 | `dp_size`                         | integer                 | `1`          | -           |
 | `ep_size`                         | integer                 | `1`          | -           |
+| `enable_lora`                     | boolean \| None         | `None`       | -           |
+| `max_lora_rank`                   | integer \| None         | `None`       | -           |
+| `lora_target_modules`             | list of string \| None  | `None`       | -           |
+| `lora_paths`                      | list of string \| None  | `None`       | -           |
+| `max_loaded_loras`                | integer                 | `1`          | -           |
+| `max_loras_per_batch`             | integer                 | `1`          | -           |
+| `lora_backend`                    | string                  | `"triton"`   | -           |
 | `log_level`                       | string                  | `"warning"`  | -           |
 | `log_level_http`                  | string \| None          | `"warning"`  | -           |
 | `log_requests`                    | boolean                 | `False`      | -           |

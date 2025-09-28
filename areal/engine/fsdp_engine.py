@@ -8,6 +8,11 @@ from typing import Any, Callable, Dict, List
 import torch
 import torch.distributed as dist
 import torch.distributed.nn.functional as dist_F
+from peft import (
+    LoraConfig,
+    TaskType,
+    get_peft_model,
+)
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
@@ -135,12 +140,21 @@ class FSDPEngine(BaseHFEngine):
             ulysses_sp_size=self.parallel_helper.sp_size,
         )
 
+        if self.config.use_lora:
+            self._apply_peft_wrapper()
+
         # sharding_strategy = ShardingStrategy.FULL_SHARD
         # Simple auto wrap policy
         self.cpu_offload = (
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
         tik = time.perf_counter()
+        # Prepare lora weights synchronization
+        if self.config.use_lora:
+            if dist.get_rank() == 0:
+                full_state = self.model.state_dict()
+            else:
+                full_state = {}
         # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
         parallelize_model(
             self.model,
@@ -151,6 +165,14 @@ class FSDPEngine(BaseHFEngine):
             cpu_offload=self.cpu_offload,
             wrap_policy=self.config.fsdp.wrap_policy,
         )
+        # Synchronize initialized lora weights
+        if self.config.use_lora:
+            fsdp2_load_full_state_dict(
+                self.model,
+                full_state,
+                self.cpu_offload,
+                tie_word_embeddings=self.model_config.tie_word_embeddings,
+            )
         self.logger.info(
             f"Applying FSDP2 with N-D parallelism for {time.perf_counter() - tik:.2f} seconds"
         )
@@ -223,6 +245,34 @@ class FSDPEngine(BaseHFEngine):
             self.cpu_offload,
             tie_word_embeddings=self.model_config.tie_word_embeddings,
         )
+
+    def _apply_peft_wrapper(self):
+        config = self.config
+        if not config.target_modules or config.target_modules == ["all-linear"]:
+            target_modules = "all-linear"
+        else:
+            target_modules = config.target_modules
+        peft_config = {
+            "task_type": TaskType.CAUSAL_LM,
+            "r": config.lora_rank,
+            "lora_alpha": config.lora_alpha,
+            "target_modules": target_modules,
+            "bias": "none",
+        }
+        if self.config.peft_type == "lora":
+            peft_config = LoraConfig(**peft_config)
+        else:
+            raise NotImplementedError()
+
+        self.model.enable_input_require_grads()
+        self.model = get_peft_model(
+            self.model,
+            peft_config,
+            autocast_adapter_dtype=False,
+        )
+
+        if self.rank == 0:
+            self.model.print_trainable_parameters()
 
     def upload_weights(self, meta: WeightUpdateMeta):
         if meta.type == current_platform.communication_backend:

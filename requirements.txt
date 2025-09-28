@@ -81,6 +81,7 @@ msgspec
 transformers==4.56.0
 openai==1.99.6
 sh
+peft
 mdformat==0.7.17
 mdformat-gfm
 mdformat-tables
