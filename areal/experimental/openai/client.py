@@ -28,8 +28,14 @@ from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import ModelRequest
 from areal.experimental.openai.tool_call_parser import process_tool_calls
 from areal.experimental.openai.types import CompletionWithTokenLogpReward
+from areal.utils.image import (
+    get_image_token,
+    image2base64,
+    load_image,
+)
 
 if TYPE_CHECKING:
+    from transformers import AutoProcessor
     from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
     from areal.api.engine_api import InferenceEngine
@@ -51,11 +57,13 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
         cache: Dict[str, CompletionWithTokenLogpReward],
+        processor: Optional["AutoProcessor"] = None,
         tool_call_parser: Optional[str] = None,
     ):
         super().__init__(client)
         self.engine = engine
         self.tokenizer = tokenizer
+        self.processor = processor
         self.tool_call_parser = tool_call_parser
         self._cache = cache
 
@@ -82,10 +90,69 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             raise ValueError("messages cannot be empty")
         if extra_body is None:
             extra_body = {}
+        # Handle multimodal messages: flatten parts, extract images, insert placeholder tokens
+        images_b64: List[str] = []
+        image_placeholder = get_image_token(getattr(self, "processor", None))
+
+        normalized_messages: List[dict] = []
+        for msg in messages_list:
+            role = msg.get("role") if isinstance(msg, dict) else None
+            content = msg.get("content") if isinstance(msg, dict) else None
+
+            if isinstance(content, list):
+                text_parts: List[str] = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    ptype = part.get("type")
+                    # Text-like parts
+                    if ptype in ("text", "input_text"):
+                        text_val = part.get("text") or part.get("input_text") or ""
+                        if isinstance(text_val, str) and text_val:
+                            text_parts.append(text_val)
+                        continue
+                    # Image-like parts
+                    if ptype in ("image_url", "input_image"):
+                        image_url = None
+                        if ptype == "image_url":
+                            iu = part.get("image_url")
+                            if isinstance(iu, dict):
+                                image_url = iu.get("url")
+                            elif isinstance(iu, str):
+                                image_url = iu
+                        else:
+                            # input_image usually mirrors image_url contract
+                            iu = part.get("image_url") or part.get("url")
+                            if isinstance(iu, dict):
+                                image_url = iu.get("url")
+                            elif isinstance(iu, str):
+                                image_url = iu
+
+                        if image_url:
+                            try:
+                                pil_img = load_image(image_url)
+                                b64 = image2base64(pil_img)
+                                # image2base64 returns List[str] when input is list; here it's str
+                                if isinstance(b64, list):
+                                    images_b64.extend(b64)
+                                else:
+                                    images_b64.append(b64)
+                                text_parts.append(image_placeholder)
+                            except Exception:
+                                # Skip malformed images but keep pipeline alive
+                                pass
+                        continue
+                new_msg = dict(msg)
+                new_msg["content"] = " ".join(tp for tp in text_parts if tp).strip()
+                normalized_messages.append(new_msg)
+            else:
+                # string or other types: forward as is
+                normalized_messages.append(msg)
+
         # Convert messages to prompt format
         tools = tools if tools is not NOT_GIVEN else None
         prompt_token_ids = self.tokenizer.apply_chat_template(
-            messages_list,
+            normalized_messages,
             tools=tools,
             add_generation_prompt=True,
             tokenize=True,
@@ -134,6 +201,16 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             metadata=metadata,
             tokenizer=self.tokenizer,
         )
+
+        # Attach images if present
+        if images_b64:
+            # Require a processor for multimodal inputs to be consistent downstream
+            if not hasattr(self, "processor") or getattr(self, "processor") is None:
+                raise ValueError(
+                    "Multimodal inputs detected but no processor provided to ArealOpenAI."
+                )
+            model_request.image_data = images_b64
+            model_request.processor = getattr(self, "processor")
 
         # Call inference engine
         response = await self.engine.agenerate(model_request)
@@ -190,7 +267,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             )
         return chat_completion
 
-# TODO: 
 class ArealOpenAI(AsyncOpenAI):
     """Extended AsyncOpenAI client that uses AReaL's inference engine and supports reward setting."""
 
@@ -199,12 +275,14 @@ class ArealOpenAI(AsyncOpenAI):
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
         tool_call_parser: Optional[str] = None,
+        processor: Optional["AutoProcessor"] = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
+        self.processor = processor
         self._completion_cache: Dict[str, CompletionWithTokenLogpReward] = {}
 
         # Override chat.completions with our extended implementation
@@ -213,6 +291,7 @@ class ArealOpenAI(AsyncOpenAI):
             engine,
             tokenizer,
             self._completion_cache,
+            processor=self.processor,
             tool_call_parser=self.tool_call_parser,
         )
 

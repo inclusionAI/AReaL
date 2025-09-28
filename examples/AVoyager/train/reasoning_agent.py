@@ -207,6 +207,28 @@ class AReaLVOYAGEReasoningAgentV1:
 
     def prepare_queries(self, tokenizer, processes: List[Dict], processor: AutoProcessor = None) -> List[Dict]:
         #目前把history简化为question之后的内容，之后还需要拓展或者做if分支
+        '''
+        process:[{
+            "id": "unique id",
+            "question": "the question",
+            "answer": "the answer (optional)",
+            "images": [PIL images] (optional),
+            "history": [
+                {"type": "prompt", "text": initial prompt text},
+                {"type": "documents", "info_str": "...", "short_info_str": "..."},
+                {"type": "page", "info_str": "...", "short_info_str": "..."},
+                {"type": "act", "text": "<think>...</think>\n\n<search>...</search>"},
+                {"type": "grounding", "text": "<grounding>...</grounding>"},
+                ...
+            ],
+            "running": True/False,
+            "phase": "grounding"/"tool_call"/"answer",
+            "cache_gen_text": "...", # optional, for caching incomplete generation
+            "llm_gen_fail": int, # optional, count of consecutive LLM generation failures
+            "page_cache": [page contents], # optional, cache of pages to be processed
+            ...
+        }]
+        '''
         queries = []
         for process in processes:
             if "history" not in process:
@@ -313,6 +335,7 @@ class AReaLVOYAGEReasoningAgentV1:
                     sampling=dict(stop=self.stop, max_new_tokens=process.get("max_new_tokens", 4096)),
                     query_len=query_len,
                     prompt=input_text, 
+                    images=process.get("images", [])
                 ))
                 process.pop("max_new_tokens")
         
@@ -557,7 +580,7 @@ async def run_agent(
 
         # Prepare query
         query = agent.prepare_queries(tokenizer, [process], processor=processor)[0]
-        #TODO line
+        #TODO line:修改messages以适配多模态，支持多个图片base64输入
         if query is None:
             break
 
