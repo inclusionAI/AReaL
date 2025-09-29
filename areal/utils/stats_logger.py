@@ -9,7 +9,7 @@ import wandb
 from megatron.core import parallel_state as mpu
 from tensorboardX import SummaryWriter
 
-from areal.api.cli_args import StatsLoggerConfig
+from areal.api.cli_args import BaseExperimentConfig, StatsLoggerConfig
 from areal.api.io_struct import FinetuneSpec
 from areal.utils import logging
 from areal.utils.printing import tabulate_stats
@@ -19,8 +19,9 @@ logger = logging.getLogger("StatsLogger", "system")
 
 class StatsLogger:
 
-    def __init__(self, config: StatsLoggerConfig, ft_spec: FinetuneSpec):
-        self.config = config
+    def __init__(self, config: BaseExperimentConfig, ft_spec: FinetuneSpec):
+        self.exp_config = config
+        self.config = config.stats_logger
         self.ft_spec = ft_spec
         self.init()
 
@@ -54,7 +55,7 @@ class StatsLogger:
             or f"{self.config.experiment_name}_{self.config.trial_name}",
             notes=self.config.wandb.notes,
             tags=self.config.wandb.tags,
-            config=self.config.wandb.config,
+            config=self.exp_config,  # save all experiment config to wandb
             dir=self.get_log_path(self.config),
             force=True,
             id=f"{self.config.experiment_name}_{self.config.trial_name}_{suffix}",
@@ -73,7 +74,7 @@ class StatsLogger:
         swanlab.init(
             project=swanlab_config.project or self.config.experiment_name,
             experiment_name=swanlab_config.name or self.config.trial_name + "_train",
-            config=swanlab_config.config,
+            config=swanlab_config.config,  # TODO: shall we use self.exp_config instead?
             logdir=self.get_log_path(self.config),
             mode=swanlab_config.mode,
         )

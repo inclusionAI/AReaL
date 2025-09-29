@@ -15,10 +15,7 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.reward.math_parser import process_results
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import (
-    broadcast_tensor_container,
-    tensor_container_to,
-)
+from areal.utils.data import broadcast_tensor_container, tensor_container_to
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -162,7 +159,7 @@ def main(args):
 
     # Run training
     saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     recover_handler = RecoverHandler(config.recover, ft_spec)
