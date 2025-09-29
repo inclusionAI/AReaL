@@ -367,7 +367,6 @@ class AReaLVOYAGEReasoningAgentV1:
                             image=None,
                         ))
                #上一轮没有调用工具，目前只可能是结束
-
                 elif q["type"] == "llm":
                     if hasattr(r, 'stop_reason') and hasattr(r, 'text'):
                         generated_text = r.text
@@ -414,6 +413,17 @@ class AReaLVOYAGEReasoningAgentV1:
                         if "cache_gen_text" in process:
                             process.pop("cache_gen_text")
                             
+                        if "page_cache" in process and len(process["page_cache"]) > 0:
+                            page = process["page_cache"].pop(0)
+                            print(f"{process['id']} pop page cache: {[page[:100]]}")
+                            info_str = "\n\n<information>" + page + "\n</information>\n\n"
+                            short_info_str = "\n\n<information>\n" + page[:100] + "...\n\n" + "</information>\n\n"
+
+                            process["history"].append(dict(
+                                    type="page", 
+                                    info_str=info_str,
+                                    short_info_str=short_info_str
+                                ))
                     elif len(raw_generated_text) == 0:
                         process["cache_gen_text"] = ""
                         process["llm_gen_fail"] = process.get("llm_gen_fail", 0) + 1
