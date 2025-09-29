@@ -15,7 +15,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PreTrainedTokenizerFast, AutoProcessor
 from areal.platforms import current_platform
 from areal.utils.evaluator import Evaluator
-from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.recover import RecoverHandler
 from dataclasses import dataclass, field
 from typing import List
@@ -218,10 +218,10 @@ class AgentRLConfig(GRPOConfig):
             "help": "We could collect multiple trajectories for a single query. By default n_trajs=1."
         }
     )
-    search_client_type: str = field(
-        default="async-online-search-access",
+    voyager_client_type:list = field(
+        default_factory=lambda: ["image-grounding"],
         metadata={
-            "help": "Type of tool (async-online-search-access/async-search-access). By default we use 'async-online-search-access'"
+            "help": "voyager client types"
         }
     )
     topk: int = field(
@@ -260,7 +260,7 @@ def main(args):
     config: AgentRLConfig
 
     rank = int(os.getenv("RANK"))
-    tokenizer = load_hf_tokenizer(config.tokenizer_path)
+    processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_name_or_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
@@ -312,9 +312,10 @@ def main(args):
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-    workflow = ASearcherReasoningWorkflow(
+    workflow = AVoyagerWorkflow(
         gconfig=config.gconfig,
         tokenizer=tokenizer,
+        processor=processor,
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
@@ -322,7 +323,7 @@ def main(args):
         max_turns=config.max_turns,
         force_turns=config.force_turns,
         n_trajs=config.n_trajs,
-        search_client_type=config.search_client_type,
+        voyager_client_types=[config.voyager_client_type],
         topk=config.topk,
         max_tokens=config.gconfig.max_new_tokens,
         judge_engine=judge_engine,
