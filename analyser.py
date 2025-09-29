@@ -10,10 +10,14 @@ Enhancements vs previous version:
 - Command-line toggles: --sim-threshold, --global-no-repeat
 
 Usage:
-python analyser.py --glob "*.txt" --sim-threshold 0.8 --root
+python analyser.py --glob "*.txt" --sim-threshold 0.8 \
+    --global-no-repeat --report_root report14-wt7b-vabl \
+    --root /storage/openpsi/experiments/logs/admin/xmy-werewolf-comp-14/werewolf-t7b-vs4-villager-abl/generated \
+    --abandon-werewolf-thought
 
 Options:
 --global-no-repeat
+--abandon-werewolf-thought
 
 Outputs:
 - data/thoughts.csv, data/interesting_thoughts.csv, data/keyword_counts.csv
@@ -147,8 +151,8 @@ def harvest_thoughts(path: Path, encoding: str, min_len: int, max_snippets: int,
     lines = raw.splitlines()
 
     traj_idx = None
-    for i, line in enumerate(lines):
-        if "Trajectory:" in line:
+    for i in range(len(lines)-1, -1, -1):
+        if "Trajectory:" in lines[i]:
             traj_idx = i
             break
 
@@ -358,6 +362,7 @@ def make_charts(df: pd.DataFrame, outdir: Path) -> None:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", type=str, required=True, help="Folder containing *.txt trajectories")
+    ap.add_argument("--report_root", type=str, default="report", help="Folder to place analyzations.")
     ap.add_argument("--glob", type=str, default="*.txt", help="Filename glob")
     ap.add_argument("--encoding", type=str, default="utf-8")
     ap.add_argument("--max-snippets", type=int, default=500)
@@ -395,7 +400,7 @@ def main():
     scores = df.apply(score_interest, axis=1, result_type="expand")
     df = pd.concat([df, scores], axis=1)
 
-    report_root = "report3"
+    report_root = args.report_root
 
     out_report = Path(f"{report_root}")
     out_data = Path(f"{report_root}/data")
