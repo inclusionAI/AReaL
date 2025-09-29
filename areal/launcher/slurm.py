@@ -14,9 +14,9 @@ from areal.api.cli_args import (
     LauncherConfig,
     RecoverConfig,
     SGLangConfig,
-    vLLMConfig,
     parse_cli_args,
     to_structured_cfg,
+    vLLMConfig,
 )
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
@@ -505,7 +505,9 @@ def slurm_main(config, run_id: int = 0):
             config.cluster.cluster_name,
             config.launcher.inference_server_env_vars,
         )
-        env_vars[current_platform.device_control_env_var] = ",".join(list(map(str, range(n_gpus_per_node))))
+        env_vars[current_platform.device_control_env_var] = ",".join(
+            list(map(str, range(n_gpus_per_node)))
+        )
         env_vars = [copy.deepcopy(env_vars) for _ in range(n_vllm_nodes)]
         base_seed = config.vllm.seed
         vllm_server_cmd_template = f"python3 -m areal.launcher.vllm_server {' '.join(sys.argv[2:])} vllm.seed={{seed}}"

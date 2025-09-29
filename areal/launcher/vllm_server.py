@@ -162,7 +162,9 @@ class vLLMServerWrapper:
 
             time.sleep(1)
 
-    def launch_one_server(self, cmd: str, host_ip: str, server_port: int, custom_env: dict | None = None):
+    def launch_one_server(
+        self, cmd: str, host_ip: str, server_port: int, custom_env: dict | None = None
+    ):
         server_process = launch_server_cmd(cmd, custom_env)
         wait_for_server(f"http://{host_ip}:{server_port}")
         name = names.gen_servers(self.experiment_name, self.trial_name)
