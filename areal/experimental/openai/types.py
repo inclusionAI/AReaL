@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 from openai.types.chat import ChatCompletion
@@ -15,8 +15,11 @@ class CompletionWithTokenLogpReward:
     response: ModelResponse
     messages: List[dict] = field(default_factory=list)
     reward: Optional[float] = None
+    # Optional precomputed multimodal payload (organized in dict form), e.g.:
+    # {"multi_modal_input": [{"pixel_values": Tensor, ...}]}
+    multimodal_data: Optional[Dict[str, Any]] = None
 
-    def to_tensor_dict(self) -> Dict[str, torch.Tensor]:
+    def to_tensor_dict(self) -> Dict[str, Any]:
         resp = self.response
         seq = resp.input_tokens + resp.output_tokens
         logprobs = [0.0] * resp.input_len + resp.output_logprobs
@@ -24,7 +27,7 @@ class CompletionWithTokenLogpReward:
         versions = [-1] * resp.input_len + resp.output_versions
         reward = self.reward
         assert reward is not None
-        return dict(
+        result: Dict[str, Any] = dict(
             # unsqueeze to add an additional batch dimension
             input_ids=torch.tensor(seq).unsqueeze(0),
             loss_mask=torch.tensor(loss_mask).unsqueeze(0),
@@ -34,3 +37,7 @@ class CompletionWithTokenLogpReward:
             # reward
             rewards=torch.tensor([float(reward)]),
         )
+        # Attach multimodal tensors if available
+        if self.multimodal_data is not None:
+            result.update(self.multimodal_data)
+        return result

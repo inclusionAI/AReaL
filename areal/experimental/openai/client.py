@@ -33,6 +33,10 @@ from areal.utils.image import (
     image2base64,
     load_image,
 )
+from io import BytesIO
+import base64
+from PIL import Image as PILImage
+from PIL.Image import Image as ImageObject
 
 if TYPE_CHECKING:
     from transformers import AutoProcessor
@@ -214,7 +218,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Call inference engine
         response = await self.engine.agenerate(model_request)
-
         # Convert response to OpenAI format
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         current_time = int(time.time())
@@ -417,5 +420,44 @@ class ArealOpenAI(AsyncOpenAI):
                 completion_data.reward += turn_discount * np.mean(
                     child_non_none_rewards
                 )
+
+        # Build multimodal_data for entries that included images using self.processor
+        # Note: input_images is guaranteed to be a list of base64 strings.
+        if self.processor is not None:
+            for comp in self._completion_cache.values():
+                resp = comp.response
+                if not resp.input_images:
+                    continue
+                images: List[ImageObject] = []
+                for b64 in resp.input_images:
+                    try:
+                        if isinstance(b64, str) and b64.startswith("data:"):
+                            pil = load_image(b64)
+                        else:
+                            data = base64.b64decode(b64)
+                            pil = PILImage.open(BytesIO(data)).convert("RGB")
+                        images.append(pil)
+                    except Exception:
+                        continue
+                if not images:
+                    continue
+                try:
+                    placeholder = get_image_token(self.processor)
+                    text_inputs = [placeholder] * len(images)
+                    processed = self.processor(
+                        images=images,
+                        text=text_inputs,
+                        return_tensors="pt",
+                        padding=False,
+                    )
+                    mm_item: Dict[str, object] = {}
+                    if "pixel_values" in processed:
+                        mm_item["pixel_values"] = processed["pixel_values"]
+                    if "image_grid_thw" in processed:
+                        mm_item["image_grid_thw"] = processed["image_grid_thw"]
+                    comp.multimodal_data = {"multi_modal_input": [mm_item]}
+                except Exception:
+                    # If processing fails, leave multimodal_data unset
+                    pass
 
         return self._completion_cache.copy()

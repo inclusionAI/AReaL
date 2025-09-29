@@ -163,8 +163,7 @@ class AReaLVOYAGEReasoningAgentV1:
             return "<grounding>" + matches[-1].strip() + "</grounding>"
 
         return None
-
-        
+      
     def get_thought_from_text(self, text: str) -> Optional[str]:
         pattern = r'<thought>(.*?)</thought>'
         matches = re.findall(pattern, text, re.DOTALL)
@@ -187,6 +186,7 @@ class AReaLVOYAGEReasoningAgentV1:
         query_ends = text.count('</grounding>')
         # print(f"搜索标签统计: {query_starts}个开始标签, {query_ends}个结束标签")
 
+    
     # def debug_generation_tags(self, text: str) -> Dict:
     #     tags = {
     #         'query': {'open': text.count('<begin_of_query|>'), 'close': text.count('<end_of_query|>')},
@@ -195,8 +195,7 @@ class AReaLVOYAGEReasoningAgentV1:
     #     }
     #
     #     for tag_name, counts in tags.items():
-    #         tags[tag_name]['balanced'] = counts['open'] == counts['close']
-        
+    #         tags[tag_name]['balanced'] = counts['open'] == counts['close']  
     #     return tags
 
     def all_finished(self, processes: List[Dict]) -> bool:
@@ -341,7 +340,12 @@ class AReaLVOYAGEReasoningAgentV1:
         
         return queries
 
-    def consume_responses(self, processes: List[Dict], queries: List[Dict], responses: List[Any]) -> List[Dict]:        
+    def consume_responses(self, processes: List[Dict], queries: List[Dict], responses: List[Any]) -> List[Dict]:       
+        '''
+        processes: 最开始的输入
+        queries: prepare_queries的输出
+        responses: 对应queries的输出
+        ''' 
         i = 0
         for process in processes:
             if process["running"]:
@@ -367,7 +371,6 @@ class AReaLVOYAGEReasoningAgentV1:
                             image=None,
                         ))
                #上一轮没有调用工具，目前只可能是结束
-
                 elif q["type"] == "llm":
                     if hasattr(r, 'stop_reason') and hasattr(r, 'text'):
                         generated_text = r.text
@@ -421,7 +424,7 @@ class AReaLVOYAGEReasoningAgentV1:
                             print("process is done (2)", process["id"], process["llm_gen_fail"])
                             process["running"] = False
                     else:
-                        if process["history"][-1]["type"] in ["page", "documents"]:
+                        if process["history"][-1]["type"] in ["grounding"]:
                             process["cache_gen_text"] = ""
                             process["history"].append(dict(
                                 type="act", 
@@ -552,6 +555,7 @@ async def run_agent(
         
         
         response = None
+        #
         if query["type"] == "llm":
             # Use like standard OpenAI client
             completion = await client.chat.completions.create(
@@ -569,8 +573,32 @@ async def run_agent(
             tool_call = f"<grounding>{query['query'][0]}</grounding>"
             response = (await toolbox.step((data["id"], [tool_call])))[0]
             stats["num_grounding"] += 1
-        #TODO line
         process = agent.consume_responses([process], [query], [response])[0]
+
+    # Compute reward directly from predicted answer vs ground truth (MCQ A/B/C/D)
+    def _extract_choice(text: Optional[str]) -> Optional[str]:
+        if text is None:
+            return None
+        t = str(text)
+        if "<answer>" in t and "</answer>" in t:
+            t = t.split("<answer>")[-1].split("</answer>")[0]
+        # find standalone A/B/C/D (case-insensitive)
+        m = re.search(r"(?i)\b([ABCD])\b", t)
+        return m.group(1).upper() if m else None
+
+    pred_answer = agent.answers([process])[0]
+    pred_choice = _extract_choice(pred_answer)
+
+    gt = data.get("answer")
+    if isinstance(gt, list):
+        gt_choices = [c for c in (_extract_choice(x) for x in gt) if c]
+    else:
+        gt_choices = [c for c in [_extract_choice(gt)] if c]
+
+    reward = 1.0 if (pred_choice is not None and pred_choice in set(gt_choices)) else 0.0
+    stats["score"] = reward
+    
+    print("Final for Qid={}. GT={}. Ans={}. Result: MBE={}".format(data["id"], str(gt_choices), pred_answer, reward))
     
     # Compute reward with LLM-as-Judge
     # judge_client = ArealOpenAI(engine=rollout_engine, tokenizer=tokenizer)
