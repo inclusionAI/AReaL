@@ -114,9 +114,9 @@ For comprehensive setup instructions, see
 - **[DAPO](docs/algorithms/dapo.md)**
 - **[LitePPO](docs/algorithms/litePPO.md)**
 - **[DrGRPO](docs/algorithms/dr.GRPO.md)**
-- **[RLHF Reward Modeling](https://github.com/inclusionAI/AReaL/tree/main/examples/alignment)**
-- **[PPO](https://github.com/inclusionAI/AReaL/tree/main/examples/math/gsm8k_ppo.py)**
-- **[SFT](https://github.com/inclusionAI/AReaL/tree/main/examples/math/gsm8k_sft.py)**
+- **[RLHF Reward Modeling](examples/alignment/)**
+- **[PPO](examples/math/gsm8k_ppo.py)**
+- **[SFT](examples/math/gsm8k_sft.py)**
 
 ### Models
 
