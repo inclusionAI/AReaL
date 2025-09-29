@@ -20,6 +20,11 @@ logger = logging.getLogger("StatsLogger", "system")
 class StatsLogger:
 
     def __init__(self, config: BaseExperimentConfig, ft_spec: FinetuneSpec):
+        if not isinstance(config, StatsLoggerConfig):
+            raise ValueError(
+                "Passing config.stats_logger as the config is deprecated. "
+                "Please pass the full config instead."
+            )
         self.exp_config = config
         self.config = config.stats_logger
         self.ft_spec = ft_spec
