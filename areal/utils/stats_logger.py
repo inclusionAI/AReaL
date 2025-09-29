@@ -79,7 +79,8 @@ class StatsLogger:
         swanlab.init(
             project=swanlab_config.project or self.config.experiment_name,
             experiment_name=swanlab_config.name or self.config.trial_name + "_train",
-            config=swanlab_config.config,  # TODO: shall we use self.exp_config instead?
+            # NOTE: change from swanlab_config.config to log all experiment config, to be tested
+            config=self.exp_config,
             logdir=self.get_log_path(self.config),
             mode=swanlab_config.mode,
         )
