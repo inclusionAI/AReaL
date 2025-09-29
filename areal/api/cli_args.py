@@ -433,7 +433,7 @@ class vLLMConfig:
     skip_tokenizer_init: bool = False
     enforce_eager: bool = True
     dtype: str = "bfloat16"
-    distributed_executor_backend = "mp"
+    distributed_executor_backend: str = "mp"
     # original
     max_num_seqs: int = 256
     # kv_cache_type: str = "auto"
@@ -457,6 +457,7 @@ class vLLMConfig:
         "areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"
     )
     enable_sleep_mode: bool = False
+    uvicorn_log_level: str = "warning"
 
     @staticmethod
     def build_args(
