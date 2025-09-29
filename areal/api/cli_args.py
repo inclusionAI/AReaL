@@ -148,7 +148,13 @@ class GenerationHyperparameters:
         args.update(kwargs)
         return GenerationHyperparameters(**args)
 
-
+@dataclass
+class PRMRewardHyperparameters:
+    reward_shaping_alpha: float = field(
+        default=0.02,
+        metadata={"help": "reward shaping alpha"},
+    )    
+    
 # Train Engine Configs
 
 
@@ -1118,6 +1124,19 @@ class GRPOConfig(BaseExperimentConfig):
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
     ref: PPOActorConfig = field(default_factory=PPOActorConfig)
 
+@dataclass
+class PRMConfig(BaseExperimentConfig):
+    async_training: bool = field(default=True)
+    prm_path: str = field(default="")
+    gconfig: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
+    prmconfig: PRMRewardHyperparameters = field(
+        default_factory=PRMRewardHyperparameters
+    )
+    rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
+    actor: PPOActorConfig = field(default_factory=PPOActorConfig)
+    ref: PPOActorConfig = field(default_factory=PPOActorConfig)
 
 @dataclass
 class PPOConfig(GRPOConfig):
