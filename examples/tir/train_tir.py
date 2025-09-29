@@ -15,10 +15,7 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.reward.math_parser import process_results
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import (
-    broadcast_tensor_container,
-    tensor_container_to,
-)
+from areal.utils.data import broadcast_tensor_container, tensor_container_to
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -122,7 +119,7 @@ def main(args):
 
     # Weight update meta
     weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
+        WeightUpdateMeta.from_fsdp_xccl(
             AllocationMode.from_str(config.allocation_mode), actor
         )
     ]
