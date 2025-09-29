@@ -7,10 +7,37 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import AnyStr
 
 import cloudpickle
+from tensordict import TensorDict
 
+from areal.api.controller_api import DistributedBatch
 from areal.utils import logging
 
 logger = logging.getLogger("RPCServer")
+
+
+def process_input_to_distributed_batch(*args, **kwargs):
+    for i in range(len(args)):
+        if isinstance(args[i], DistributedBatch):
+            args = list(args)
+            args[i] = args[i].get_data()
+            args = tuple(args)
+
+    for k in list(kwargs.keys()):
+        if isinstance(kwargs[k], DistributedBatch):
+            kwargs[k] = kwargs[k].get_data()
+
+    return args, kwargs
+
+
+def process_output_to_distributed_batch(result):
+    if isinstance(result, dict):
+        return DistributedBatch.from_dict(result)
+    elif isinstance(result, TensorDict):
+        return DistributedBatch.from_tensordict(result.to_dict())
+    elif isinstance(result, (list, tuple)):
+        return DistributedBatch.from_list(list(result))
+    else:
+        return result
 
 
 class EngineRPCServer(BaseHTTPRequestHandler):
@@ -66,7 +93,9 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 method = getattr(EngineRPCServer.engine, action)
                 # NOTE: DO NOT print args here, args may be a very huge tensor
                 logger.info(f"RPC server calling engine method: {action}")
+                args, kwargs = process_input_to_distributed_batch(*args, **kwargs)
                 result = method(*args, **kwargs)
+                result = process_output_to_distributed_batch(result)
                 self.send_response(HTTPStatus.OK)
                 self.end_headers()
                 self.wfile.write(cloudpickle.dumps(result))

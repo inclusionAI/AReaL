@@ -73,11 +73,11 @@ class RPCClient:
         req = (method, args, kwargs)
         serialized_data = cloudpickle.dumps(req)
 
-        return self.call_engine_with_serialized_data(
+        return self._call_engine_with_serialized_data(
             worker_id, serialized_data, max_retries
         )
 
-    def call_engine_with_serialized_data(
+    def _call_engine_with_serialized_data(
         self, worker_id: str, serialized_data: bytes, max_retries=3
     ) -> Any:
         """
