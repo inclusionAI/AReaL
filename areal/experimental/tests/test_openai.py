@@ -1,6 +1,5 @@
 # This file tests the functionality of our customized OpenAI client.
 # The client should be able to generate completions and correctly assign rewards with back-propagation.
-import asyncio
 import os
 import subprocess
 import sys
@@ -16,9 +15,9 @@ from areal.utils.hf_utils import load_hf_tokenizer
 
 EXPR_NAME = "test_openai"
 TRIAL_NAME = "trial_0"
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B/"
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen2-0.5B"
+    MODEL_PATH = "Qwen/Qwen3-1.7B"
 PORT, DIST_PORT = network.find_free_ports(2)
 HOST = network.gethostip()
 # set a large timeout since we may need to download the model from hub
@@ -88,7 +87,12 @@ def openai_client(sglang_server, tokenizer):
     os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
     engine = RemoteSGLangEngine(config)
     engine.initialize()
-    yield ArealOpenAI(engine=engine, tokenizer=tokenizer, tool_call_parser="qwen25")
+    yield ArealOpenAI(
+        engine=engine,
+        tokenizer=tokenizer,
+        tool_call_parser="qwen25",
+        chat_template_type="hf",
+    )
     engine.destroy()
 
 
@@ -101,7 +105,7 @@ async def test_single_turn_rollout(openai_client):
         ]
     )
     openai_client.set_reward(c.id, reward=0.5)
-    completions = openai_client.export_completions()
+    completions = openai_client.export_completions(style="individual")
     assert len(completions) == 1
     assert completions[c.id].reward == 0.5
 
@@ -132,9 +136,10 @@ async def test_multi_round_conversation(openai_client):
 
     # Set rewards - only the final completion gets explicit reward
     openai_client.set_reward(c3.id, reward=2.0)
+    openai_client.apply_reward_discount(turn_discount=0.9)
 
     # Export completions with reward backpropagation
-    completions = openai_client.export_completions(turn_discount=0.9)
+    completions = openai_client.export_completions(style="individual")
 
     # Verify structure
     assert len(completions) == 3
@@ -264,7 +269,7 @@ async def test_single_round_tool_calling(openai_client):
     assert c.choices[0].finish_reason == "tool_calls"
 
     openai_client.set_reward(c.id, reward=1.5)
-    completions = openai_client.export_completions()
+    completions = openai_client.export_completions(style="individual")
 
     assert len(completions) == 1
     assert completions[c.id].reward == 1.5
@@ -327,8 +332,9 @@ async def test_multi_round_tool_calling(openai_client):
     # Set rewards
     openai_client.set_reward(c2.id, reward=1.0)
     openai_client.set_reward(c3.id, reward=2.0)
+    openai_client.apply_reward_discount(turn_discount=0.8)
 
-    completions = openai_client.export_completions(turn_discount=0.8)
+    completions = openai_client.export_completions(style="individual")
 
     assert len(completions) == 3
     # c3 is leaf: gets explicit reward
@@ -391,8 +397,8 @@ async def test_parallel_tool_calling(openai_client):
     )
 
     openai_client.set_reward(c2.id, reward=2.0)
-
-    completions = openai_client.export_completions(turn_discount=0.9)
+    openai_client.apply_reward_discount(turn_discount=0.9)
+    completions = openai_client.export_completions(style="individual")
 
     assert len(completions) == 2
     # c2 is leaf
@@ -465,7 +471,8 @@ async def test_multi_round_conversation_with_thinking(openai_client):
     openai_client.set_reward(c2.id, reward=1.5)
     openai_client.set_reward(c3.id, reward=2.5)
 
-    completions = openai_client.export_completions(turn_discount=0.85)
+    openai_client.apply_reward_discount(turn_discount=0.85)
+    completions = openai_client.export_completions(style="individual")
 
     assert len(completions) == 3
     # c3 is leaf
@@ -556,7 +563,8 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
     openai_client.set_reward(c2.id, reward=2.0)
     openai_client.set_reward(c3.id, reward=1.5)
 
-    completions = openai_client.export_completions(turn_discount=0.9)
+    openai_client.apply_reward_discount(turn_discount=0.9)
+    completions = openai_client.export_completions(style="individual")
 
     assert len(completions) == 3
     # c3 is leaf
@@ -568,92 +576,143 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
 
 
 @pytest.mark.asyncio
-async def test_parallel_responses_with_merged_results(openai_client):
-    """Test collecting parallel LLM responses with same history but different questions, then merging them."""
+async def test_multi_round_conversation_concat_style_export(openai_client):
+    """Create a conversation tree using create() and verify parents and rewards.
 
-    # Base conversation history
-    base_messages = [
-        {"role": "system", "content": "You are a helpful research assistant."},
-        {
-            "role": "user",
-            "content": "I'm planning a trip to Japan. Can you help me with some information?",
-        },
+    Rewards are explicitly set (no propagation). Export should return only leaves.
+    """
+    openai_client: ArealOpenAI
+    openai_client.chat_template_type = "concat"
+    openai_client.chat.completions.chat_template_type = "concat"
+    # Base conversation
+    base = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Start the session."},
     ]
 
-    c0 = await openai_client.chat.completions.create(messages=base_messages)
-
-    base_messages = base_messages + [
-        {
-            "role": "assistant",
-            "content": "I'd be happy to help you plan your trip to Japan! What specific information would you like to know?",
-        }
-    ]
-
-    # Different parallel questions about the trip
-    parallel_questions = [
-        "What are the best months to visit for cherry blossoms?",
-        "What are some must-try traditional Japanese foods?",
-        "What cultural etiquette should I be aware of?",
-        "What are the most popular tourist destinations?",
-    ]
-
-    # Create parallel completion tasks with the same history but different questions
-    async def create_completion_with_question(question):
-        messages = base_messages + [{"role": "user", "content": question}]
-        return await openai_client.chat.completions.create(
-            messages=messages, max_tokens=128
-        )
-
-    # Execute all completions in parallel
-    parallel_tasks = [create_completion_with_question(q) for q in parallel_questions]
-    parallel_completions = await asyncio.gather(*parallel_tasks)
-
-    # Verify we got responses for all questions
-    assert len(parallel_completions) == 4
-    for i, completion in enumerate(parallel_completions):
-        assert completion.id is not None
-        assert completion.choices[0].message.role == "assistant"
-        assert len(completion.choices[0].message.content) > 0
-        # Set individual rewards for each parallel response
-        openai_client.set_reward(completion.id, reward=1.0 + i * 0.5)
-
-    # Now create a final completion that merges the insights from parallel responses
-    merged_messages = base_messages
-    for q, c in zip(parallel_questions, parallel_completions):
-        merged_messages += [
-            {"role": "user", "content": q},
-            {"role": "assistant", "content": c.choices[0].message.content},
-        ]
-    merged_messages = merged_messages + [
-        {
-            "role": "user",
-            "content": "Based on all the information about visiting Japan, please provide a comprehensive summary covering: cherry blossom timing, food recommendations, cultural etiquette, and top destinations.",
-        }
-    ]
-
-    final_completion = await openai_client.chat.completions.create(
-        messages=merged_messages, temperature=0.3, max_tokens=4096
+    # Root
+    c_root = await openai_client.chat.completions.create(
+        messages=base,
     )
 
-    # Set reward for the final merged response
-    openai_client.set_reward(final_completion.id, reward=3.0)
+    # Branch A1: root -> a -> a1
+    msgs_a = base + [
+        {"role": "assistant", "content": c_root.choices[0].message.content},
+        {"role": "user", "content": "Question A"},
+    ]
+    c_a = await openai_client.chat.completions.create(
+        messages=msgs_a,
+    )
+    msgs_a1 = msgs_a + [
+        {"role": "assistant", "content": c_a.choices[0].message.content},
+        {"role": "user", "content": "Follow-up A1"},
+    ]
+    c_a1 = await openai_client.chat.completions.create(
+        messages=msgs_a1,
+    )
 
-    # Export completions to verify the reward structure
-    completions = openai_client.export_completions(turn_discount=0.8)
+    # Branch A2: root -> a -> a2
+    msgs_a2 = msgs_a + [
+        {"role": "assistant", "content": c_a.choices[0].message.content},
+        {"role": "user", "content": "Follow-up A2"},
+    ]
+    c_a2 = await openai_client.chat.completions.create(
+        messages=msgs_a2,
+    )
 
-    # Verify we have all completions (1 base + 4 parallel + 1 final)
-    assert len(completions) == 6
+    # Branch B: root -> b -> b1
+    msgs_b = base + [
+        {"role": "assistant", "content": c_root.choices[0].message.content},
+        {"role": "user", "content": "Question B"},
+    ]
+    c_b = await openai_client.chat.completions.create(
+        messages=msgs_b,
+    )
+    msgs_b1 = msgs_b + [
+        {"role": "assistant", "content": c_b.choices[0].message.content},
+        {"role": "user", "content": "Follow-up B1"},
+    ]
+    c_b1 = await openai_client.chat.completions.create(
+        messages=msgs_b1,
+    )
 
-    # Verify final completion gets its reward + final reward
-    assert completions[final_completion.id].reward == 3.0  # 3.0 + 2.0
+    # Set rewards to leaf nodes only, which should be c_a1, c_a2, c_b1
+    openai_client.set_reward(c_a1.id, 2)
+    openai_client.set_reward(c_a2.id, 1.5)
+    openai_client.set_reward(c_b1.id, 3)
 
-    # Verify parallel completions have their individual rewards + final reward
-    expected_rewards = [1.0, 1.5, 2.0, 2.5]  # individual rewards
-    r = 0.0
-    for i, completion in enumerate(parallel_completions):
-        assert completions[completion.id].reward == expected_rewards[i] + 3.0 * 0.8
-        r += completions[completion.id].reward
+    # Export completions of leaf nodes, check whether all leaves are present
+    leaf_completions = openai_client.export_completions(style="concat")
+    all_completions = openai_client.export_completions(style="individual")
+    assert set(leaf_completions.keys()) == {c_a1.id, c_a2.id, c_b1.id}
+    assert set(all_completions.keys()) == {
+        c_root.id,
+        c_a.id,
+        c_a1.id,
+        c_a2.id,
+        c_b.id,
+        c_b1.id,
+    }
 
-    assert completions[c0.id].reward == 0.8 * r / len(
-        parallel_completions
-    )  # discounted from final completion
+    def wrapped_completion(chat_completion):
+        return all_completions[chat_completion.id]
+
+    # Check tree structure
+    assert wrapped_completion(c_b1).parent is wrapped_completion(c_b)
+    assert wrapped_completion(c_b).parent is wrapped_completion(c_root)
+    assert wrapped_completion(c_a2).parent is wrapped_completion(c_a)
+    assert wrapped_completion(c_a1).parent is wrapped_completion(c_a)
+    assert wrapped_completion(c_a).parent is wrapped_completion(c_root)
+
+    # Reward is not propagated to tree nodes, check reward values
+    assert wrapped_completion(c_b1).reward == 3
+    assert wrapped_completion(c_a2).reward == 1.5
+    assert wrapped_completion(c_a1).reward == 2
+
+    # Check loss masks produced by completions
+    # Ensure number of 1s in the loss masks is actually the number of tokens output by the model
+    c_a1_loss_mask = wrapped_completion(c_a1).to_tensor_dict()["loss_mask"].squeeze(0)
+    c_root_input_len = wrapped_completion(c_root).response.input_len
+    c_root_output_len = wrapped_completion(c_root).response.output_len
+    c_a_input_len = wrapped_completion(c_a).response.input_len
+    c_a_output_len = wrapped_completion(c_a).response.output_len
+    c_a1_input_len = wrapped_completion(c_a1).response.input_len
+    c_a1_output_len = wrapped_completion(c_a1).response.output_len
+
+    # c_a1 loss mask
+    assert c_a1_loss_mask.squeeze(0).tolist() == (
+        [0] * c_root_input_len
+        + [1] * c_root_output_len
+        + [0] * (c_a_input_len - (c_root_input_len + c_root_output_len))
+        + [1] * c_a_output_len
+        + [0] * (c_a1_input_len - (c_a_input_len + c_a_output_len))
+        + [1] * c_a1_output_len
+    )
+
+    # c_a2 loss mask
+    c_a2_loss_mask = wrapped_completion(c_a2).to_tensor_dict()["loss_mask"].squeeze(0)
+    c_a2_input_len = wrapped_completion(c_a2).response.input_len
+    c_a2_output_len = wrapped_completion(c_a2).response.output_len
+    assert c_a2_loss_mask.squeeze(0).tolist() == (
+        [0] * c_root_input_len
+        + [1] * c_root_output_len
+        + [0] * (c_a_input_len - (c_root_input_len + c_root_output_len))
+        + [1] * c_a_output_len
+        + [0] * (c_a2_input_len - (c_a_input_len + c_a_output_len))
+        + [1] * c_a2_output_len
+    )
+
+    # c_b1 loss mask
+    c_b1_loss_mask = wrapped_completion(c_b1).to_tensor_dict()["loss_mask"].squeeze(0)
+    c_b_input_len = wrapped_completion(c_b).response.input_len
+    c_b_output_len = wrapped_completion(c_b).response.output_len
+    c_b1_input_len = wrapped_completion(c_b1).response.input_len
+    c_b1_output_len = wrapped_completion(c_b1).response.output_len
+    assert c_b1_loss_mask.squeeze(0).tolist() == (
+        [0] * c_root_input_len
+        + [1] * c_root_output_len
+        + [0] * (c_b_input_len - (c_root_input_len + c_root_output_len))
+        + [1] * c_b_output_len
+        + [0] * (c_b1_input_len - (c_b_input_len + c_b_output_len))
+        + [1] * c_b1_output_len
+    )

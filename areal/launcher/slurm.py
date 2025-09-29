@@ -24,7 +24,7 @@ from areal.utils.launcher import (
     JobInfo,
     JobState,
     get_env_vars,
-    wait_sglang_server_addrs,
+    wait_llm_server_addrs,
 )
 from areal.utils.recover import check_if_recover
 from areal.utils.slurm import (
@@ -397,7 +397,7 @@ class SlurmLauncher:
 
 
 def main():
-    config, _ = parse_cli_args(sys.argv[2:])
+    config, _ = parse_cli_args(sys.argv[1:])
     slurm_main(config, run_id=0)
 
 
@@ -479,7 +479,7 @@ def slurm_main(config, run_id: int = 0):
         )
         # Get SGLang server addresses by name resolve
         try:
-            sglang_addrs = wait_sglang_server_addrs(
+            sglang_addrs = wait_llm_server_addrs(
                 config.experiment_name,
                 config.trial_name,
                 n_sglang_servers,
