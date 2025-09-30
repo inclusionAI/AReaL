@@ -17,11 +17,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import (
-    ModelRequest,
-    ModelResponse,
-    WeightUpdateMeta,
-)
+from areal.api.io_struct import ModelRequest, ModelResponse, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
@@ -361,12 +357,14 @@ class RemotevLLMEngine(InferenceEngine):
         workflow: Optional[RolloutWorkflow] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
+        single_rank_load: bool = False,
     ):
         return self.workflow_executor.prepare_batch(
             dataloader=dataloader,
             workflow=workflow,
             workflow_builder=workflow_builder,
             should_accept=should_accept,
+            single_rank_load=single_rank_load,
         )
 
     def pause(self):
