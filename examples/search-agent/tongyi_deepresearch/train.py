@@ -20,12 +20,7 @@ from areal.api.cli_args import (
     InferenceEngineConfig,
     load_expr_config,
 )
-from areal.api.io_struct import (
-    AllocationMode,
-    FinetuneSpec,
-    StepInfo,
-    WeightUpdateMeta,
-)
+from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.api.cli_args import ExperimentalGRPOConfig as GRPOConfig
@@ -33,10 +28,7 @@ from areal.experimental.megatron_actor import MegatronPPOActor
 from areal.experimental.openai import ArealOpenAI
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import (
-    broadcast_tensor_container,
-    tensor_container_to,
-)
+from areal.utils.data import broadcast_tensor_container, tensor_container_to
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -258,7 +250,7 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     # Recover

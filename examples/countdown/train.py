@@ -15,11 +15,7 @@ from reward_score import compute_score
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PreTrainedTokenizerFast
 
-from areal.api.cli_args import (
-    GenerationHyperparameters,
-    GRPOConfig,
-    load_expr_config,
-)
+from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     AllocationMode,
@@ -262,7 +258,7 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     recover_handler = RecoverHandler(config.recover, ft_spec)

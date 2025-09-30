@@ -96,22 +96,62 @@ For comprehensive setup instructions, see
 
 ## 📚 Examples
 
-| Task                                        | Description                                                               | Performance                                                        |
-| ------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| **[Math](examples/math/)**                  | GSM8K mathematical problem solving                                        | TBA                                                                |
-| **[VLM Math](examples/vlm/)**               | CLEVR visual counting tasks                                               | TBA                                                                |
-| **[Simple Reasoning](examples/countdown/)** | Countdown numbers game with custom rewards                                | [Training Curve](/examples/countdown/countdown_training_curve.png) |
-| **[Search Agent](examples/search-agent/)**  | An agent with end-to-end search, browsing, and summarization capabilities | [ASearcher Repo](https://github.com/inclusionAI/ASearcher)         |
+| Task                                           | Description                                                                          | Performance                                                                       |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| **[Math](examples/math/)**                     | Mathematical problem solving (SFT, GRPO, or PPO)                                     | TBA                                                                               |
+| **[LoRA Math](examples/lora/)**                | Math Agent Trained With LoRA                                                         | TBA                                                                               |
+| **[VLM Math](examples/vlm/)**                  | CLEVR visual counting tasks                                                          | TBA                                                                               |
+| **[Reasoning](examples/countdown/)**           | Countdown numbers game with custom rewards                                           | [Training Curve](/examples/countdown/countdown_training_curve.png)                |
+| **[Search Agent](examples/search-agent/)**     | An agent with end-to-end reasoning, search, browsing, and summarization capabilities | [ASearcher Repo](https://github.com/inclusionAI/ASearcher)                        |
+| **[Tool-Integrated Reasoning](examples/tir/)** | An agent that can invoke tools during reasoning                                      | [TIR Example](https://github.com/inclusionAI/AReaL/tree/main/examples/tir)        |
+| **[RLHF](examples/alignment/)**                | RLHF for LLM Alignment                                                               | [RLHF Example](https://github.com/inclusionAI/AReaL/tree/main/examples/alignment) |
+
+## 🔧 Support Matrix
+
+### Algorithms
+
+- **[GRPO](docs/algorithms/grpo.md)**
+- **[DAPO](docs/algorithms/dapo.md)**
+- **[LitePPO](docs/algorithms/litePPO.md)**
+- **[DrGRPO](docs/algorithms/dr.GRPO.md)**
+- **[RLHF Reward Modeling](examples/alignment/)**
+- **[PPO](examples/math/gsm8k_ppo.py)**
+- **[SFT](examples/math/gsm8k_sft.py)**
+
+### Models
+
+| Model Family               | Megatron | PyTorch FSDP | Notes                                                    |
+| -------------------------- | -------- | ------------ | -------------------------------------------------------- |
+| **Qwen2/3**                | ✅       | ✅           | -                                                        |
+| **Qwen3-MoE**              | ✅       | ✅           | -                                                        |
+| **Qwen2.5-VL**             | ❌       | ✅           | Vision-language model                                    |
+| **Gemma 3**                | ❌       | ✅           | Vision-language model                                    |
+| **Other Hugging Face LLM** | ❌       | ✅           | Compatibility depending on the version of `transformers` |
+
+### Training Backends
+
+| Backend          | DP          | Tensor Parallel | Sequence Parallel within TP | Context Parallel | Pipeline Parallel | Expert Parallel | 1D Sequence Packing | LoRA |
+| ---------------- | ----------- | --------------- | --------------------------- | ---------------- | ----------------- | --------------- | ------------------- | ---- |
+| **Megatron**     | ✅ (ZeRO-1) | ✅              | ✅                          | ✅               | ✅                | ✅              | ✅                  | ❌   |
+| **PyTorch FSDP** | ✅ (FSDP2)  | ✅              | ✅                          | ✅               | ❌                | ❌              | ✅                  | ✅   |
+
+### Inference Backends
+
+| Backend    | Tensor Parallel | Context Parallel | Pipeline Parallel | Data Parallel Attention | Expert Parallel |
+| ---------- | --------------- | ---------------- | ----------------- | ----------------------- | --------------- |
+| **vLLM**   | ✅              | ❓               | ❓                | ❓                      | ❓              |
+| **SGLang** | ✅              | ❌               | ❌                | ✅                      | ✅              |
 
 ## 📖 Resources
 
 - [Documentation](https://inclusionai.github.io/AReaL/)
+- [CLI Configurations](https://inclusionai.github.io/AReaL/cli_reference.html)
 - [Contributing](https://inclusionai.github.io/AReaL/contrib.html)
 
 ### Quickstart
 
 - [Installation](https://inclusionai.github.io/AReaL/tutorial/installation.html)
-- [AReaL-lite Quickstart](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
+- [Quickstart](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
 
 ### Code Walkthrough
 

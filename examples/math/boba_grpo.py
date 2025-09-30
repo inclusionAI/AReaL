@@ -8,11 +8,7 @@ from datasets.distributed import split_dataset_by_node
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.api.io_struct import (
-    AllocationMode,
-    FinetuneSpec,
-    StepInfo,
-)
+from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
@@ -164,7 +160,7 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
     recover_handler = RecoverHandler(config.recover, ft_spec)
     recover_info = recover_handler.load(
