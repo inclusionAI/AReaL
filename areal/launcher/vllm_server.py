@@ -123,7 +123,11 @@ class vLLMServerWrapper:
             host_ip = gethostip()
 
             base_gpu_id = (server_local_idx - server_idx_offset) * gpus_per_server
-            custom_env = {device_control_env_var: str(base_gpu_id)}
+            custom_env = {
+                device_control_env_var: ",".join(
+                    map(str, range(base_gpu_id, base_gpu_id + gpus_per_server))
+                )
+            }
             self.config.seed = base_random_seed + server_local_idx
             cmd = vLLMConfig.build_cmd(
                 self.config,
