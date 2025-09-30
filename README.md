@@ -69,31 +69,6 @@ state-of-the-art 7B and 32B models for mathematical reasoning. Check out our
 
 </details>
 
-## 🚀 Getting Started
-
-Our training scripts automatically download the required dataset (openai/gsm8k) and
-model (Qwen/Qwen2-1.5B-Instruct). To run on a single node:
-
-```bash
-python3 -m areal.launcher.local \
-  examples/math/gsm8k_grpo.py \
-  --config examples/math/gsm8k_grpo.yaml
-```
-
-To run on a Ray cluster with 2 nodes and 8 GPUs per node (remember to update paths in
-the YAML file to point to your shared storage):
-
-```bash
-python3 -m areal.launcher.ray \
-  examples/math/gsm8k_grpo.py \
-  --config examples/math/gsm8k_grpo.yaml \
-  cluster.n_nodes=2 \
-  cluster.n_gpus_per_node=8
-```
-
-For comprehensive setup instructions, see
-[our quickstart guide](https://inclusionai.github.io/AReaL/tutorial/quickstart.html).
-
 ## 📚 Examples
 
 | Task                                           | Description                                                                          | Performance                                                                       |
@@ -108,15 +83,19 @@ For comprehensive setup instructions, see
 
 ## 🔧 Support Matrix
 
-### Algorithms
+### 🧠 Algorithms
 
-- **[GRPO](docs/algorithms/grpo.md)**
-- **[DAPO](docs/algorithms/dapo.md)**
-- **[LitePPO](docs/algorithms/litePPO.md)**
-- **[DrGRPO](docs/algorithms/dr.GRPO.md)**
-- **[RLHF Reward Modeling](examples/alignment/)**
-- **[PPO](examples/math/gsm8k_ppo.py)**
-- **[SFT](examples/math/gsm8k_sft.py)**
+| Algorithm                | Documentation                         | Paper                                          | Configuration                                                |
+| ------------------------ | ------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------ |
+| **GRPO**                 | [📖 Docs](docs/algorithms/grpo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.03300)   | [🔗 GSM8K Example](examples/math/gsm8k_grpo.yaml)            |
+| **PPO**                  | -                                     | [📄 Paper](https://arxiv.org/pdf/2203.02155)   | [🔗 GSM8K Example](examples/math/gsm8k_ppo.yaml)             |
+| **DAPO**                 | [📖 Docs](docs/algorithms/dapo.md)    | [📄 Paper](https://arxiv.org/abs/2503.14476)   | [🔗 GSM8K Example](examples/experimental/dapo/gsm8k_dapo.py) |
+| **LitePPO**              | [📖 Docs](docs/algorithms/litePPO.md) | [📄 Paper](https://arxiv.org/abs/2508.08221)   | -                                                            |
+| **Dr.GRPO**              | [📖 Docs](docs/algorithms/dr.GRPO.md) | [📄 Paper](https://arxiv.org/abs/2503.20783)   | -                                                            |
+| **REINFORCE++**          | -                                     | [📄 Paper](https://arxiv.org/pdf/2501.03262)   | [🔗 GSM8K Example](examples/math/gsm8k_reinforce.yaml)       |
+| **RLOO**                 | [📖 Docs](docs/algorithms/rloo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)            |
+| **RLHF Reward Modeling** | -                                     | -                                              | [🔗 RLHF Example](examples/alignment/)                       |
+| **SFT**                  | -                                     | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)               |
 
 ### Models
 
@@ -142,16 +121,39 @@ For comprehensive setup instructions, see
 | **vLLM**   | ✅              | ❓               | ❓                | ❓                      | ❓              |
 | **SGLang** | ✅              | ❌               | ❌                | ✅                      | ✅              |
 
+## 🚀 Getting Started
+
+Our training scripts automatically download the required dataset (openai/gsm8k) and
+model (Qwen/Qwen2-1.5B-Instruct). To run on a single node:
+
+```bash
+python3 -m areal.launcher.local \
+  examples/math/gsm8k_grpo.py \
+  --config examples/math/gsm8k_grpo.yaml
+```
+
+To run on a Ray cluster with 2 nodes and 8 GPUs per node (remember to update paths in
+the YAML file to point to your shared storage):
+
+```bash
+python3 -m areal.launcher.ray \
+  examples/math/gsm8k_grpo.py \
+  --config examples/math/gsm8k_grpo.yaml \
+  cluster.n_nodes=2 \
+  cluster.n_gpus_per_node=8
+```
+
+For comprehensive setup instructions, see
+[our quickstart guide](https://inclusionai.github.io/AReaL/tutorial/quickstart.html).
+
 ## 📖 Resources
-
-- [Documentation](https://inclusionai.github.io/AReaL/)
-- [CLI Configurations](https://inclusionai.github.io/AReaL/cli_reference.html)
-- [Contributing](https://inclusionai.github.io/AReaL/contrib.html)
-
-### Quickstart
 
 - [Installation](https://inclusionai.github.io/AReaL/tutorial/installation.html)
 - [Quickstart](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
+- [CLI Configurations](https://inclusionai.github.io/AReaL/cli_reference.html)
+- [Debugging Best Practices](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
+- [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
+- [Contributing](https://inclusionai.github.io/AReaL/contrib.html)
 
 ### Code Walkthrough
 
@@ -162,11 +164,6 @@ For comprehensive setup instructions, see
 - [Customize dataset with AReaL-lite](https://inclusionai.github.io/AReaL/customization/dataset.html)
 - [Customize Agentic/RVLR rollout workflows with AReaL-lite](https://inclusionai.github.io/AReaL/customization/agent.html)
 - [Customize algorithms with AReaL-lite](https://inclusionai.github.io/AReaL/customization/algorithm.html)
-
-### Advanced Usage
-
-- [Debugging Best Practices](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
-- [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
 
 ## 🗺️ Future Roadmap
 
