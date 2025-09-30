@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export CUDA_VISIBLE_DEVICES=0,1,2
+export CUDA_VISIBLE_DEVICES=1,2
 N_GPU=2
-EXP_NAME=gsm8k-dapo
-TRIAL_NAME=trial1
+EXP_NAME=greso-dapo
+TRIAL_NAME=trial0
 FILE_ROOT=/data/yl/AReaL/tmp/areal/experiments
 ACTOR_PATH=/data/yl/model/Qwen/Qwen2.5-1.5B-Instruct
+TRAIN_DATASET_PATH=/data/yl/dataset/greso
+VALID_DATASET_PATH=/data/yl/dataset/greso
 
 TOTAL_TRAIN_EPOCHS=1
 
 python3 -m areal.launcher.local \
-    examples/experimental/dapo/gsm8k_dapo.py \
+    examples/experimental/dapo/greso_dapo.py \
     --config examples/experimental/dapo/gsm8k_dapo.yaml \
     experiment_name="$EXP_NAME" \
     trial_name="$TRIAL_NAME" \
@@ -19,7 +21,12 @@ python3 -m areal.launcher.local \
     cluster.n_nodes=1 \
     cluster.n_gpus_per_node="$N_GPU" \
     cluster.fileroot="$FILE_ROOT" \
+    +gconfig.top_p=0.7 \
     actor.path="$ACTOR_PATH" \
     actor.optimizer.lr=1e-6 \
-    actor.optimizer.weight_decay=0.1 \
-    actor.overlong_reward_penalty=false 
+    actor.optimizer.weight_decay=0.01 \
+    actor.overlong_reward_penalty=false \
+    actor.ppo_n_minibatches=64 \
+    +actor.c_clip=10.0 \
+    train_dataset.path="$TRAIN_DATASET_PATH" \
+    valid_dataset.path="$VALID_DATASET_PATH"
