@@ -66,7 +66,7 @@ actor:
   dynamic_sampling: false
   reward_norm:
     mean_level: group
-    std_level: none
+    std_level: null
     group_size: ${gconfig.n_samples}
   adv_norm:
     mean_level: batch
