@@ -432,7 +432,6 @@ def update_weights_from_distributed(
     ]
 
     async def _fn():
-        tik = time.perf_counter()
         if init_group:
             await asyncio.gather(
                 *[
@@ -471,8 +470,6 @@ def update_weights_from_distributed(
                 for addr in addresses
             ]
         )
-
-        logger.info(f"Distributed update weights done in {time.perf_counter() - tik}s")
 
     return uvloop.run(_fn())
 
