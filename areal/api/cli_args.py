@@ -51,6 +51,18 @@ class NormConfig:
     group_size: int = field(
         default=1, metadata={"help": "Group size for group-level normalization"}
     )
+    adv_norm_mode: str = field(
+        default="native",
+        metadata={
+            "help": "native or mix. 'native' is the normal z-score normalization. For 'mix', both normal z-score and mean-based z-score normalization will be calculated and aggregated (see MAPO paper for more details)."
+        },
+    )
+    reward_norm_mode: str = field(
+        default="native",
+        metadata={
+            "help": "Mode for reward normalization. Currently only 'native' is supported."
+        },
+    )
 
 
 @dataclass
@@ -617,6 +629,8 @@ class SGLangConfig:
         # convert to flags
         flags = []
         for k, v in args.items():
+            if "max_loaded_loras" in k:
+                continue
             if v is None or v is False or v == "":
                 continue
             if v is True:
@@ -625,6 +639,7 @@ class SGLangConfig:
                 flags.append(f"--{k.replace('_','-')} {' '.join(map(str, v))}")
             else:
                 flags.append(f"--{k.replace('_','-')} {v}")
+
         return f"python3 -m sglang.launch_server {' '.join(flags)}"
 
     @staticmethod

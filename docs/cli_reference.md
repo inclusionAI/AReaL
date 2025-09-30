@@ -274,14 +274,16 @@ Specification for splitting micro-batches during training.
 
 Configuration for reward/advantage normalization.
 
-| Parameter        | Type           | Default   | Description                                                                                       |
-| ---------------- | -------------- | --------- | ------------------------------------------------------------------------------------------------- |
-| `mean_level`     | string \| None | `"batch"` | Mean level for normalization. Choices: batch, group. Omit for no mean normalization.              |
-| `mean_leave1out` | boolean        | `False`   | Whether to use leave-one-out average.                                                             |
-| `std_level`      | string \| None | `"batch"` | Standard deviation level for normalization. Choices: batch, group. Omit for no std normalization. |
-| `std_unbiased`   | boolean        | `False`   | Whether to use unbiased standard deviation computation.                                           |
-| `eps`            | float          | `1e-05`   | The eps when dividing by standard deviation to avoid numerical issues.                            |
-| `group_size`     | integer        | `1`       | Group size for group-level normalization                                                          |
+| Parameter          | Type           | Default    | Description                                                                                                                                                                                           |
+| ------------------ | -------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mean_level`       | string \| None | `"batch"`  | Mean level for normalization. Choices: batch, group. Omit for no mean normalization.                                                                                                                  |
+| `mean_leave1out`   | boolean        | `False`    | Whether to use leave-one-out average.                                                                                                                                                                 |
+| `std_level`        | string \| None | `"batch"`  | Standard deviation level for normalization. Choices: batch, group. Omit for no std normalization.                                                                                                     |
+| `std_unbiased`     | boolean        | `True`     | Whether to use unbiased standard deviation computation. Defaults to True (changed from False in v0.3.4).                                                                                              |
+| `eps`              | float          | `1e-05`    | The eps when dividing by standard deviation to avoid numerical issues.                                                                                                                                |
+| `group_size`       | integer        | `1`        | Group size for group-level normalization                                                                                                                                                              |
+| `adv_norm_mode`    | string         | `"native"` | native or mix. 'native' is the normal z-score normalization. For 'mix', both normal z-score and mean-based z-score normalization will be calculated and aggregated (see MAPO paper for more details). |
+| `reward_norm_mode` | string         | `"native"` | Mode for reward normalization. Currently only 'native' is supported.                                                                                                                                  |
 
 (section-optimizer)=
 
@@ -384,6 +386,11 @@ Configuration for PPO critic model, a subclass of a TrainEngine.
 | `optimizer`              | [`OptimizerConfig`](section-optimizer) \| None | `None`                | Optimizer configuration. None means no training.                                                                                        |
 | `backend`                | string                                         | `""`                  | Training backend (refer to documentation)                                                                                               |
 | `fsdp`                   | [`FSDPEngineConfig`](section-fsdp-engine)      | **Required**          | -                                                                                                                                       |
+| `use_lora`               | boolean                                        | `False`               | Whether to use LoRA. Only support FSDP. Note that should be enabled together with vLLM/SGLang.                                          |
+| `lora_rank`              | integer                                        | `32`                  | lora rank                                                                                                                               |
+| `lora_alpha`             | integer                                        | `16`                  | lora alpha                                                                                                                              |
+| `target_modules`         | list of string                                 | **Required**          | lora target_modules. None defaults to 'all-linear'                                                                                      |
+| `peft_type`              | string                                         | `"lora"`              | peft method type. Only LoRA is supported for now.                                                                                       |
 | `ppo_n_minibatches`      | integer                                        | `4`                   | Number of minibatches for each PPO update                                                                                               |
 | `eps_clip`               | float                                          | `0.5`                 | Clipping factor for value loss                                                                                                          |
 | `mask_no_eos_with_zero`  | boolean                                        | `False`               | Mask truncated generations (no EOS token) and exclude from training                                                                     |
