@@ -7,7 +7,11 @@ from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.utils import stats_tracker
-from areal.utils.data import Normalization, split_padded_tensor_dict_into_mb_list
+from areal.utils.data import (
+    KLEstimator,
+    Normalization,
+    split_padded_tensor_dict_into_mb_list,
+)
 from areal.utils.functional import (
     dynamic_sampling,
     gather_logprobs,
@@ -30,6 +34,7 @@ class PPOActor:
         self.group_size = config.group_size
 
         self.kl_ctl = config.kl_ctl
+        self.kl_estimator = KLEstimator(config.kl_estimator)
 
         self.adv_norm = Normalization(config.adv_norm) if config.adv_norm else None
         self.reward_norm = (
@@ -110,7 +115,7 @@ class PPOActor:
         attn_mask = data["attention_mask"]
         seqlens = attn_mask.sum(-1).long()
         seq_no_eos_mask = seqlens == attn_mask.shape[1]
-        rewards = -self.kl_ctl * (old_logp - ref_logp)
+        rewards = -self.kl_ctl * self.kl_estimator(old_logp, ref_logp)
         kl_rewards = rewards.clone()
         # KL rewards at the next token after eos is zero.
         rewards[batch_indices, seqlens - 1] = 0
