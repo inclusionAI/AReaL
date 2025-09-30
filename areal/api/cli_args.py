@@ -1005,7 +1005,7 @@ class DatasetConfig:
     balance_batch: bool = field(
         default=False,
         metadata={
-            "help": "balance all rollouts across dp ranks by total tokens.now, it works only when single_rank_load was set true."
+            "help": "Balance all rollouts across DP ranks by total tokens. Note: this only works when `single_rank_load` is set to True."
         },
     )
     max_length: int | None = field(

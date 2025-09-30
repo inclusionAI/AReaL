@@ -231,7 +231,7 @@ def distributed_batch(
     balance_batch_enabled,
 ):
     """
-    Broadcast data when using signle controller (single_rank_load==True)
+    Broadcast data when using single controller (single_rank_load==True)
     """
     if rank == 0:
         if balance_batch_enabled:

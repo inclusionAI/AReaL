@@ -113,7 +113,7 @@ def main(args):
             dataset_config=config.train_dataset,
         )
     else:
-        # Create empty datqaloader for other ranks when using single rank load
+        # Create empty dataloader for other ranks when using single rank load
         train_dataloader = StatefulDataLoader([])
 
     device = torch.device(int(os.environ["LOCAL_RANK"]))
@@ -230,11 +230,11 @@ def main(args):
                         except StopIteration:
                             data_generator = iter(train_dataloader)
                             data = next(data_generator)
-                            batch = rollout.rollout_batch(
-                                data=data,
-                                workflow=workflow,
-                                should_accept=lambda sample: True,
-                            )
+                        batch = rollout.rollout_batch(
+                            data=data,
+                            workflow=workflow,
+                            should_accept=lambda sample: True,
+                        )
                     if not config.train_dataset.single_rank_load:
                         batch = tensor_container_to(batch, actor.device)
                 if not config.train_dataset.single_rank_load:
