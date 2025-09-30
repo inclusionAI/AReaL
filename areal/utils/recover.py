@@ -174,6 +174,7 @@ class RecoverHandler:
         tokenizer: PreTrainedTokenizerFast | None = None,
         processor: AutoProcessor | None = None,
         base_model_path: str | None = None,
+        single_rank_load: bool = False,
     ):
         if self.config.mode == "disabled":
             return
@@ -195,6 +196,8 @@ class RecoverHandler:
             )
 
         self.last_step_info = step_info
+        if single_rank_load and dist.is_initialized() and dist.get_rank() != 0:
+            return
         recover_info = RecoverInfo(
             last_step_info=self.last_step_info,
             saver_info=saver.state_dict(),

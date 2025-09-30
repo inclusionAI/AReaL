@@ -392,6 +392,7 @@ class RemotevLLMEngine(InferenceEngine):
         workflow: Optional[RolloutWorkflow] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
+        single_rank_load: bool = False,
     ):
         return self.workflow_executor.prepare_batch(
             dataloader=dataloader,

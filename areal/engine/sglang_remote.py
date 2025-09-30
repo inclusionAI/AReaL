@@ -411,13 +411,34 @@ class RemoteSGLangEngine(InferenceEngine):
         workflow: Optional[RolloutWorkflow] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
+        single_rank_load: bool = False,
     ):
         return self.workflow_executor.prepare_batch(
             dataloader=dataloader,
             workflow=workflow,
             workflow_builder=workflow_builder,
             should_accept=should_accept,
+            single_rank_load=single_rank_load,
         )
+
+    def pause_generation(self):
+        """Pause the generation of inference engine.
+
+        Used during updating weights from distributed or disk.
+        """
+        for addr in self.addresses:
+            res = requests.post(f"http://{addr}/pause_generation")
+            res.raise_for_status()
+
+        # The above http request may require some time to be scheduled and executed.
+        # The following line waits until all requests are indeed dropped.
+        time.sleep(self.config.pause_grace_period)
+
+    def continue_generation(self):
+        """Continue the generation of inference engine."""
+        for addr in self.addresses:
+            res = requests.post(f"http://{addr}/continue_generation")
+            res.raise_for_status()
 
     def pause_generation(self):
         """Pause the generation of inference engine.

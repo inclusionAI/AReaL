@@ -466,7 +466,9 @@ class WorkflowExecutor:
         except queue.Full:
             raise RuntimeError("Input queue full. Please increase queue_size.")
 
-    def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
+    def wait(
+        self, count: int, timeout: float | None = None, single_rank_load: bool = False
+    ) -> Dict[str, Any]:
         """Wait for workflow results.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.wait` for detailed documentation.
@@ -500,7 +502,10 @@ class WorkflowExecutor:
             self.result_cache[count:],
         )
         random.shuffle(results)
-        return concat_padded_tensors([r.data for r in results])
+        if single_rank_load:
+            return [r.data for r in results]
+        else:
+            return concat_padded_tensors([r.data for r in results])
 
     def rollout_batch(
         self,
@@ -528,6 +533,7 @@ class WorkflowExecutor:
         workflow: "RolloutWorkflow" | None = None,
         workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
+        single_rank_load: bool = False,
     ):
         """Prepare a batch with controlled staleness.
 
@@ -552,7 +558,9 @@ class WorkflowExecutor:
                         should_accept=should_accept,
                     )
             try:
-                return self.wait(dataloader.batch_size, timeout=1)
+                return self.wait(
+                    dataloader.batch_size, timeout=1, single_rank_load=single_rank_load
+                )
             except TimeoutError:
                 pass
 

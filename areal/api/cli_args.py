@@ -998,6 +998,16 @@ class DatasetConfig:
     drop_last: bool = field(
         default=True, metadata={"help": "Drop the last incomplete batch"}
     )
+    single_rank_load: bool = field(
+        default=False,
+        metadata={"help": "Use single rank rollout send/recive or not"},
+    )
+    balance_batch: bool = field(
+        default=False,
+        metadata={
+            "help": "balance all rollouts across dp ranks by total tokens.now, it works only when single_rank_load was set true."
+        },
+    )
     max_length: int | None = field(
         default=None,
         metadata={
