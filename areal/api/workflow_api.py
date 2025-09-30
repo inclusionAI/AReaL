@@ -468,7 +468,7 @@ class WorkflowExecutor:
 
     def wait(
         self, count: int, timeout: float | None = None, single_rank_load: bool = False
-    ) -> Dict[str, Any]:
+    ) -> Dict[str, Any] | List[Dict[str, Any]]:
         """Wait for workflow results.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.wait` for detailed documentation.
