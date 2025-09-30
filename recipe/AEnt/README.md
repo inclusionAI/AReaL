@@ -6,13 +6,13 @@ Entropy regularization has been a successful method for robotic and games RL, wh
 >One can observe this effect in a toy run on a synthetic MDP below, where as the number of optimal actions decrease (thus sparsity increases), entropy regularization no longer has an advantage over no regularization. The method to be proposed is more robust to this issue.
 ><div align="left">
   <img src="https://github.com/hanshen95/hanshen95.github.io/blob/master/images/toy_demo.png?raw=true" alt="issue" style="width: 96%; height: auto;">
-></div>
+</div>
 
 To address this issue, AEnt utilizes a clamped entropy regularization paired with adaptively adjusted coefficient. It is observed that AEnt achieves larger gains on multiple benchmarks when tested on different models and training datasets.
 > An example run on DeepSeek-R1-distilled-Qwen-1.5b on 40k verifiable samples from Openr1-math dataset
 ><div align="left">
   <img src="https://github.com/hanshen95/hanshen95.github.io/blob/master/images/score_demo.png?raw=true" alt="issue" style="width: 96%; height: auto;">
-></div>
+</div>
 
 
 ## Configuration
