@@ -9,6 +9,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from einops import rearrange
+from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import MicroBatchSpec, NormConfig
@@ -219,6 +220,256 @@ def concat_padded_tensors(
 
         result[key] = torch.cat(tensors_to_concat, dim=0)
     return result
+
+
+def distributed_batch(
+    batch: List[Dict[str, Any]],
+    rank,
+    batch_size,
+    device,
+    world_size,
+    balance_batch_enabled,
+):
+    """
+    Broadcast data when using signle controller (single_rank_load==True)
+    """
+    if rank == 0:
+        if balance_batch_enabled:
+            batch = balance_batch(batch, world_size)
+        batch = [batch]
+    else:
+        batch = [None]
+
+    # TODO: try to use scatter
+    dist.broadcast_object_list(batch, src=0)
+
+    if balance_batch_enabled:
+        return batch[0][rank]
+
+    local_bsz = batch_size // world_size
+    start, end = rank * local_bsz, (rank + 1) * local_bsz
+    batch = concat_padded_tensors(batch[0][start:end])
+    return batch
+
+
+def balance_batch(batch: List[Dict[str, Any]], world_size) -> List[Dict[str, Any]]:
+    """
+    Rebalance input data to achieve load balance across dp ranks.
+    """
+    has_any_multi_modal = any("multi_modal_input" in td for td in batch)
+    batch = concat_padded_tensors(batch)
+    no_tensor_batch = {}
+    non_tensor_batch_lst = []
+    if has_any_multi_modal:
+        no_tensor_batch["multi_modal_input"] = batch.pop("multi_modal_input")
+    batch_size = batch["attention_mask"].shape[0]
+    batch = TensorDict(batch, batch_size=batch_size)
+    global_seqlen_lst = batch["attention_mask"].view(batch_size, -1).sum(-1).tolist()
+    global_partition_lst = get_seqlen_balanced_partitions(
+        global_seqlen_lst, k_partitions=world_size, equal_size=True
+    )
+    global_idx = torch.tensor(
+        [j for partition in global_partition_lst for j in partition]
+    )
+    if has_any_multi_modal:
+        indices_np = global_idx.detach().numpy()
+        no_tensor_batch = {key: val[indices_np] for key, val in no_tensor_batch.items()}
+        non_tensor_batch_lst = chunk_no_tensor_batch(no_tensor_batch, world_size)
+    batch = batch[global_idx]
+    batches = batch.chunk(chunks=world_size, dim=0)
+    return repad_tensordict_inplace_for_dp_rank(batches, non_tensor_batch_lst)
+
+
+def chunk_no_tensor_batch(no_tensor_batch, chunks):
+    non_tensor_batch_lst = [{} for _ in range(chunks)]
+    for key, val in no_tensor_batch.items():
+        assert isinstance(
+            val, np.ndarray
+        ), "no_tensor_batch only support type numpy.ndarray now"
+        non_tensor_lst = np.array_split(val, chunks)
+        assert len(non_tensor_lst) == chunks
+        for i in range(chunks):
+            non_tensor_batch_lst[i][key] = non_tensor_lst[i]
+    return non_tensor_batch_lst
+
+
+def repad_tensordict_inplace_for_dp_rank(
+    batches: List[TensorDict], non_tensor_batch_lst
+):
+    attention_mask_key = "attention_mask"
+    dict_batches = []
+    has_no_tensor_batch = len(non_tensor_batch_lst) > 0
+    for index, tensordict in enumerate(batches):
+        attention_mask = tensordict[attention_mask_key]
+        actual_lengths = attention_mask.sum(dim=1)
+        max_actual_length = actual_lengths.max().item()
+
+        for key in list(tensordict.keys()):
+            tensor = tensordict[key]
+            assert torch.is_tensor(tensor)
+            if tensor.ndim >= 2:
+                tensordict[key] = tensor[:, :max_actual_length]
+        dict = tensordict.to_dict()
+        if has_no_tensor_batch:
+            dict.update(non_tensor_batch_lst[index])
+        dict_batches.append(dict)
+    return dict_batches
+
+
+def get_seqlen_balanced_partitions(
+    seqlen_list: List[int], k_partitions: int, equal_size: bool
+):
+    """
+    this code references from github.com/volcengine/verl/utils/seqlen_balancing.py::get_seqlen_balanced_partitions
+
+    get order of seq lengths to make partitions balanced, this is
+        used in balacing sum of seqlength across dp ranks and microbatches
+    Parameters:
+        seqlen_list (List[int]):
+            seq lengths of each items
+        k_partitions (int):
+            resulting number of partitions
+        equal_size (bool):
+            if True, number of items in each partitions must be equal.
+            if False, only consider balancing the sum, each partition can have
+            variable number of items
+    Returns:
+        partitions (List[List[int]]):
+            return k_partitions list containing the index of items.
+    """
+    assert (
+        len(seqlen_list) >= k_partitions
+    ), f"number of items:[{len(seqlen_list)}] < k_partitions:[{k_partitions}]"
+
+    def _check_and_sort_partitions(partitions):
+        assert len(partitions) == k_partitions, f"{len(partitions)} != {k_partitions}"
+        seen_idx = set()
+        sorted_partitions = [None] * k_partitions
+        for i, partition in enumerate(partitions):
+            assert len(partition) > 0, f"the {i}-th partition is empty"
+            for idx in partition:
+                seen_idx.add(idx)
+            sorted_partitions[i] = sorted(partition)
+        assert seen_idx == set(range(len(seqlen_list)))
+        return sorted_partitions
+
+    partitions = karmarkar_karp(
+        seqlen_list=seqlen_list, k_partitions=k_partitions, equal_size=equal_size
+    )
+    return _check_and_sort_partitions(partitions)
+
+
+def karmarkar_karp(seqlen_list: List[int], k_partitions: int, equal_size: bool):
+    import heapq
+
+    # see: https://en.wikipedia.org/wiki/Largest_differencing_method
+    class Set:
+
+        def __init__(self) -> None:
+            self.sum = 0
+            self.items = []
+
+        def add(self, idx: int, val: int):
+            self.items.append((idx, val))
+            self.sum += val
+
+        def merge(self, other):
+            for idx, val in other.items:
+                self.items.append((idx, val))
+                self.sum += val
+
+        def __lt__(self, other):
+            if self.sum != other.sum:
+                return self.sum < other.sum
+            if len(self.items) != len(other.items):
+                return len(self.items) < len(other.items)
+            return self.items < other.items
+
+    class State:
+
+        def __init__(self, items: List[Tuple[int, int]], k: int) -> None:
+            self.k = k
+            # sets should always be decreasing order
+            self.sets = [Set() for _ in range(k)]
+            assert len(items) in [1, k], f"{len(items)} not in [1, {k}]"
+            for i, (idx, seqlen) in enumerate(items):
+                self.sets[i].add(idx=idx, val=seqlen)
+            self.sets = sorted(self.sets, reverse=True)
+
+        def spread(self):
+            return self.sets[0].sum - self.sets[-1].sum
+
+        def get_partitions(self):
+            partitions = []
+            for i in range(len(self.sets)):
+                cur_partition = []
+                for idx, _ in self.sets[i].items:
+                    cur_partition.append(idx)
+                partitions.append(cur_partition)
+            return partitions
+
+        def merge(self, other):
+            for i in range(self.k):
+                self.sets[i].merge(other.sets[self.k - 1 - i])
+            self.sets = sorted(self.sets, reverse=True)
+
+        @property
+        def spread(self) -> int:
+            return self.sets[0].sum - self.sets[-1].sum
+
+        def __lt__(self, other):
+            # least heap, let the state with largest spread to be popped first,
+            # if the spread is the same, let the state who has the largest set
+            # to be popped first.
+            if self.spread != other.spread:
+                return self.spread > other.spread
+            return self.sets[0] > other.sets[0]
+
+        def __repr__(self) -> str:
+            repr_str = "["
+            for i in range(self.k):
+                if i > 0:
+                    repr_str += ","
+                repr_str += "{"
+                for j, (_, seqlen) in enumerate(self.sets[i].items):
+                    if j > 0:
+                        repr_str += ","
+                    repr_str += str(seqlen)
+                repr_str += "}"
+            repr_str += "]"
+            return repr_str
+
+    sorted_seqlen_list = sorted([(seqlen, i) for i, seqlen in enumerate(seqlen_list)])
+    states_pq = []
+    if equal_size:
+        assert (
+            len(seqlen_list) % k_partitions == 0
+        ), f"{len(seqlen_list)} % {k_partitions} != 0"
+        for offset in range(0, len(sorted_seqlen_list), k_partitions):
+            items = []
+            for i in range(k_partitions):
+                seqlen, idx = sorted_seqlen_list[offset + i]
+                items.append((idx, seqlen))
+            heapq.heappush(states_pq, State(items=items, k=k_partitions))
+    else:
+        for seqlen, idx in sorted_seqlen_list:
+            heapq.heappush(states_pq, State(items=[(idx, seqlen)], k=k_partitions))
+
+    while len(states_pq) > 1:
+        state0 = heapq.heappop(states_pq)
+        state1 = heapq.heappop(states_pq)
+        # merge states
+        state0.merge(state1)
+        heapq.heappush(states_pq, state0)
+
+    final_state = states_pq[0]
+    partitions = final_state.get_partitions()
+    if equal_size:
+        for i, partition in enumerate(partitions):
+            assert len(partition) * k_partitions == len(
+                seqlen_list
+            ), f"{len(partition)} * {k_partitions} != {len(seqlen_list)}"
+    return partitions
 
 
 def unpack_sequence(
