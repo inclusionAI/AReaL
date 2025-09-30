@@ -10,6 +10,7 @@ import cloudpickle
 from tensordict import TensorDict
 
 from areal.api.controller_api import DistributedBatch
+from areal.controller.batch import DistributedBatchMemory
 from areal.utils import logging
 
 logger = logging.getLogger("RPCServer")
@@ -31,11 +32,11 @@ def process_input_to_distributed_batch(*args, **kwargs):
 
 def process_output_to_distributed_batch(result):
     if isinstance(result, dict):
-        return DistributedBatch.from_dict(result)
+        return DistributedBatchMemory.from_dict(result)
     elif isinstance(result, TensorDict):
-        return DistributedBatch.from_tensordict(result.to_dict())
+        return DistributedBatchMemory.from_dict(result.to_dict())
     elif isinstance(result, (list, tuple)):
-        return DistributedBatch.from_list(list(result))
+        return DistributedBatchMemory.from_list(list(result))
     else:
         return result
 
