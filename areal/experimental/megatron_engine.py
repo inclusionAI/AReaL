@@ -430,7 +430,7 @@ class MegatronEngine(TrainEngine):
         param = all_gather_param(name, param)
         param = remove_padding(name, param, self.hf_config.vocab_size)
         if not self.is_pipeline_parallel_head():
-            return
+            return buffer_size
 
         param_size = param.numel() * param.element_size()
         if buffer_size + param_size > weight_chunked_mem_size:
