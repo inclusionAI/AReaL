@@ -896,6 +896,119 @@ def results_per_intent_telecom(
         plt.savefig(fig_dir / file_name, bbox_inches="tight", dpi=300)
         plt.close()
 
+    # Create averaged plot across all LLMs
+    logger.info("Creating averaged plot across all LLMs for intents...")
+
+    # Filter for default mode across all LLMs
+    df_default = df_phk_per_intent[df_phk_per_intent["mode"] == "default"]
+
+    if len(df_default) == 0:
+        logger.warning("No data found for default mode. Skipping averaged plot...")
+        return
+
+    # Get unique k values
+    k_values = sorted([col for col in df_default.columns if isinstance(col, int)])
+
+    # Get intents in order
+    intents = [
+        (intent, TELECOM_INTENTS_ORDER.get(intent, 0))
+        for intent in df_default["intent"].unique()
+    ]
+    intents = [i for i, _ in sorted(intents, key=lambda x: x[1])]
+
+    # Calculate averages and standard deviations across LLMs for each intent
+    averaged_data = {}
+    for intent in intents:
+        df_intent = df_default[df_default["intent"] == intent]
+        averaged_data[intent] = {}
+
+        for k in k_values:
+            if k in df_intent.columns:
+                # Extract means from all LLMs for this intent and k
+                means = []
+                for _, row in df_intent.iterrows():
+                    mean, _ = row[k]  # row[k] is a tuple (mean, std)
+                    means.append(mean)
+
+                # Calculate average and standard deviation across LLMs
+                avg_mean = np.mean(means)
+                avg_std = np.std(means)
+                averaged_data[intent][k] = (avg_mean, avg_std)
+            else:
+                averaged_data[intent][k] = (0, 0)
+
+    # Create averaged figure
+    plt.figure(figsize=(9, 4))
+    plt.title("Average across all models", fontsize=16)
+
+    # Set up bar positions
+    x = np.arange(len(k_values))
+    width = 0.8 / len(intents)  # Width of bars
+
+    # Plot each intent
+    for i, intent in enumerate(intents):
+        # Extract mean values and standard deviations
+        means = []
+        stds = []
+        for k in k_values:
+            mean, std = averaged_data[intent][k]
+            means.append(mean)
+            stds.append(std)
+
+        # Calculate x positions for bars
+        x_pos = x + i * width - 0.4 + width / 2
+
+        # Get color from TELECOM_INTENTS_COLORS
+        color = TELECOM_INTENTS_COLORS[intent]
+
+        # Plot bars with error bars
+        bars = plt.bar(
+            x_pos,
+            means,
+            width,
+            color=color,
+            label=intent,
+            alpha=0.7,
+            yerr=stds,
+            capsize=5,
+            error_kw={"linewidth": 1.5, "ecolor": "black", "alpha": 0.5},
+        )
+
+        # Add value labels on top of bars
+        for j, (bar, mean, std) in enumerate(zip(bars, means, stds)):
+            height = bar.get_height()
+            # Position the text above the error bar
+            text_y = height + std + 0.02 if std > 0 else height + 0.02
+            plt.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                text_y,
+                f"{mean:.2f}",
+                ha="center",
+                va="bottom",
+                fontsize=16,
+            )
+
+    plt.xlabel("k", fontsize=16)
+    plt.ylabel("Pass^k", fontsize=16)
+    plt.legend(loc="upper right", fontsize=14, framealpha=0.9)
+    plt.xticks(x, k_values, fontsize=14)
+    plt.yticks(fontsize=14)
+    # Ensure y-axis goes beyond 1 to accommodate legend
+    current_top = plt.gca().get_ylim()[1]
+    plt.ylim(
+        bottom=0, top=max(1.2, current_top * 1.1)
+    )  # Ensure at least 1.2 for legend space
+
+    # Remove top and right spines
+    plt.gca().spines["top"].set_visible(False)
+    plt.gca().spines["right"].set_visible(False)
+
+    plt.tight_layout()
+    file_name = f"pass_k_vs_k_per_intent_{telecom_version}_averaged.pdf"
+    plt.savefig(fig_dir / file_name, bbox_inches="tight", dpi=300)
+    plt.close()
+    logger.info(f"Saved averaged plot to {file_name}")
+
 
 def results_per_persona_telecom(
     fig_dir: Path, df_pass_hat_k: pd.DataFrame, telecom_version: str
@@ -1026,6 +1139,119 @@ def results_per_persona_telecom(
         file_name = f"pass_k_vs_k_per_persona_{telecom_version}_{llm}.pdf"
         plt.savefig(fig_dir / file_name, bbox_inches="tight", dpi=300)
         plt.close()
+
+    # Create averaged plot across all LLMs
+    logger.info("Creating averaged plot across all LLMs...")
+
+    # Filter for default mode across all LLMs
+    df_default = df_phk_per_persona[df_phk_per_persona["mode"] == "default"]
+
+    if len(df_default) == 0:
+        logger.warning("No data found for default mode. Skipping averaged plot...")
+        return
+
+    # Get unique k values
+    k_values = sorted([col for col in df_default.columns if isinstance(col, int)])
+
+    # Get personas in order
+    personas = [
+        (persona, TELECOM_PERSONAS_ORDER.get(persona, 0))
+        for persona in df_default["persona"].unique()
+    ]
+    personas = [i for i, _ in sorted(personas, key=lambda x: x[1])]
+
+    # Calculate averages and standard deviations across LLMs for each persona
+    averaged_data = {}
+    for persona in personas:
+        df_persona = df_default[df_default["persona"] == persona]
+        averaged_data[persona] = {}
+
+        for k in k_values:
+            if k in df_persona.columns:
+                # Extract means from all LLMs for this persona and k
+                means = []
+                for _, row in df_persona.iterrows():
+                    mean, _ = row[k]  # row[k] is a tuple (mean, std)
+                    means.append(mean)
+
+                # Calculate average and standard deviation across LLMs
+                avg_mean = np.mean(means)
+                avg_std = np.std(means)
+                averaged_data[persona][k] = (avg_mean, avg_std)
+            else:
+                averaged_data[persona][k] = (0, 0)
+
+    # Create averaged figure
+    plt.figure(figsize=(8, 4))
+    plt.title("Average across all models", fontsize=16)
+
+    # Set up bar positions
+    x = np.arange(len(k_values))
+    width = 0.8 / len(personas)  # Width of bars
+
+    # Plot each persona
+    for i, persona in enumerate(personas):
+        # Extract mean values and standard deviations
+        means = []
+        stds = []
+        for k in k_values:
+            mean, std = averaged_data[persona][k]
+            means.append(mean)
+            stds.append(std)
+
+        # Calculate x positions for bars
+        x_pos = x + i * width - 0.4 + width / 2
+
+        # Get color from PERSONA_COLORS, default to a gray if not found
+        color = PERSONA_COLORS.get(persona, "#808080")
+
+        # Plot bars with error bars
+        bars = plt.bar(
+            x_pos,
+            means,
+            width,
+            color=color,
+            label=persona,
+            alpha=0.7,
+            yerr=stds,
+            capsize=5,
+            error_kw={"linewidth": 1.5, "ecolor": "black", "alpha": 0.5},
+        )
+
+        # Add value labels on top of bars
+        for j, (bar, mean, std) in enumerate(zip(bars, means, stds)):
+            height = bar.get_height()
+            # Position the text above the error bar
+            text_y = height + std + 0.02 if std > 0 else height + 0.02
+            plt.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                text_y,
+                f"{mean:.2f}",
+                ha="center",
+                va="bottom",
+                fontsize=14,
+            )
+
+    plt.xlabel("k", fontsize=12)
+    plt.ylabel("Pass^k", fontsize=12)
+    plt.legend(loc="upper right", fontsize=12, framealpha=0.9)
+    plt.xticks(x, k_values, fontsize=12)
+    plt.yticks(fontsize=12)
+    # Ensure y-axis goes beyond 1 to accommodate legend
+    current_top = plt.gca().get_ylim()[1]
+    plt.ylim(
+        bottom=0, top=max(1.2, current_top * 1.1)
+    )  # Ensure at least 1.2 for legend space
+
+    # Remove top and right spines
+    plt.gca().spines["top"].set_visible(False)
+    plt.gca().spines["right"].set_visible(False)
+
+    plt.tight_layout()
+    file_name = f"pass_k_vs_k_per_persona_{telecom_version}_averaged.pdf"
+    plt.savefig(fig_dir / file_name, bbox_inches="tight", dpi=300)
+    plt.close()
+    logger.info(f"Saved averaged plot to {file_name}")
 
 
 def comparing_personas_to_solo_mode(
@@ -1607,9 +1833,11 @@ def plot_pass_k_vs_num_issues_all_llms(
 
     # Calculate num_issues from task_id, setting to -1 where num_actions is -1
     df_pass_hat_k_filtered["num_issues"] = df_pass_hat_k_filtered.apply(
-        lambda row: -1
-        if row["num_actions"] == -1
-        else get_num_issues_from_task_id(row["task_id"]),
+        lambda row: (
+            -1
+            if row["num_actions"] == -1
+            else get_num_issues_from_task_id(row["task_id"])
+        ),
         axis=1,
     )
 
@@ -1799,9 +2027,11 @@ def plot_pass_k_vs_num_issues(
     )
     # Calculate num_issues from task_id, setting to -1 where num_actions is -1
     df_pass_hat_k_filtered["num_issues"] = df_pass_hat_k_filtered.apply(
-        lambda row: -1
-        if row["num_actions"] == -1
-        else get_num_issues_from_task_id(row["task_id"]),
+        lambda row: (
+            -1
+            if row["num_actions"] == -1
+            else get_num_issues_from_task_id(row["task_id"])
+        ),
         axis=1,
     )
 
