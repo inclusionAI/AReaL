@@ -117,32 +117,27 @@ def start_rpc_server(port):
     server.serve_forever()
 
 
-def get_serve_port(args):
-    port = args.port
-    port_str = os.environ.get("PORT_LIST", "").strip()
+def get_server_ports(ports_str: str) -> int:
+    ports = [p.strip() for p in ports_str.split(",")]
+    word_size = int(os.environ.get("WORLD_SIZE", "1"))
+    rank = int(os.environ.get("RANK", "0"))
+    if len(ports) < word_size:
+        raise ValueError(
+            f"Not enough ports for the world size {word_size}, got {ports_str}"
+        )
+    return int(ports[rank])
 
-    # Check if PORT_LIST is set
-    if port_str:
-        # Split by comma and strip whitespace
-        ports = [p.strip() for p in port_str.split(",")]
-        # Use the first valid port from the list
-        if ports and ports[0]:
-            try:
-                return int(ports[0])
-            except ValueError:
-                logger.warning(
-                    f"Invalid port '{ports[0]}' in PORT_LIST. Falling back to --port argument."
-                )
-    return port
+def build_rpc_server_start_command(port):
+    return f"python3 -m areal.scheduler.rpc.rpc_server --port {port}"
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--port", type=int, required=False)
+    parser.add_argument("--rpc_ports", type=str, required=True)
 
     args, unknown = parser.parse_known_args()
-    port = get_serve_port(args)
+    port = get_server_ports(args.rpc_ports)
 
     logger.info(f"About to start RPC server on {port}")
 

@@ -22,6 +22,9 @@ class RPCClient:
         self._addrs[worker_id] = (ip, port)
         logger.info(f"Registered worker {worker_id} at {ip}:{port}")
 
+    def get_info(self, worker_id: str) -> tuple[str, int]:
+        return self._addrs[worker_id]
+
     def create_engine(
         self,
         worker_id: str,
