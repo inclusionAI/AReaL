@@ -3,6 +3,7 @@ import sys
 from copy import deepcopy
 
 import torch.distributed as dist
+import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
@@ -25,6 +26,8 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
+
+from areal.utils import logging
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
@@ -118,6 +121,8 @@ def main(args):
     dist.broadcast_object_list(weight_update_meta, src=0)
     weight_update_meta = weight_update_meta[0]
 
+    logger = logging.get_logger(f"[gsm8k_grpo rank {dist.get_rank()}]")
+
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
@@ -195,11 +200,17 @@ def main(args):
                         should_accept=lambda sample: True,
                     )
                 batch = tensor_container_to(batch, actor.device)
+            # 在 tp 组内广播数据
+            # self.dp_head = int(self.world_mesh["sp_tp"].mesh[0].item())
+            # 所以说 dp head 实际上是这个 dp 组内 rank 为 0 的进程
+            # 同时，FSDP 下面要求 pp == 1
+            logger.info(f"Before broadcast, {batch=}")
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
                 group=actor.context_and_model_parallel_group,
             )
+            logger.info(f"After broadcast, {batch=}")
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
