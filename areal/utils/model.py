@@ -46,17 +46,12 @@ def disable_dropout_in_model(model: torch.nn.Module) -> None:
             module.p = 0
 
 
-def get_model_update_meta(config, actor):
+def get_model_update_meta(config):
     if config.weight_update_mode == "disk":
-        weight_update_meta = [
-            WeightUpdateMeta.from_disk(
-                config.experiment_name, config.trial_name, config.cluster.fileroot
-            )
-        ]
+        return WeightUpdateMeta.from_disk(
+            config.experiment_name, config.trial_name, config.cluster.fileroot
+        )
     else:
-        weight_update_meta = [
-            WeightUpdateMeta.from_fsdp_xccl(
-                AllocationMode.from_str(config.allocation_mode), actor
-            )
-        ]
-    return weight_update_meta
+        return WeightUpdateMeta.from_fsdp_xccl(
+            AllocationMode.from_str(config.allocation_mode)
+        )

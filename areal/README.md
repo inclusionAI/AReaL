@@ -232,9 +232,7 @@ def main_grpo():
         stats = actor.ppo_update(batch)
 
         # Update inference engine weights (non-blocking to prevent NCCL blocking)
-        future = rollout.update_weights(wcfg)
-        actor.upload_weights(wcfg)
-        future.result()
+        actor.update_weights(wcfg)
 ```
 
 **Advantages:**
@@ -286,11 +284,7 @@ def main_grpo():
         stats = actor.ppo_update(batch)
 
         # Update weights (coordinated across processes)
-        if rank == 0:
-            future = rollout.update_weights(wcfg)
-        actor.upload_weights(wcfg)
-        if rank == 0:
-            future.result()
+        actor.update_weights(wcfg)
 ```
 
 The SPMD pattern uses only concepts familiar to AI researchers, though it requires some
@@ -318,8 +312,12 @@ class TrainEngine(abc.ABC):
         """Clean up engine resources and release GPU memory."""
         pass
 
-    def upload_weights(self, meta: WeightUpdateMeta):
+    def update_weights(self, meta: WeightUpdateMeta):
         """Upload weights to inference engine (blocking operation)."""
+        raise NotImplementedError()
+
+    def connect_engine(self, engine: "InferenceEngine"):
+        """Connect to an inference engine for online training."""
         raise NotImplementedError()
 
     def save(self, meta: SaveLoadMeta):
