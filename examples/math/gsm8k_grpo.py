@@ -121,7 +121,7 @@ def main(args):
     dist.broadcast_object_list(weight_update_meta, src=0)
     weight_update_meta = weight_update_meta[0]
 
-    logger = logging.get_logger(f"[gsm8k_grpo rank {dist.get_rank()}]")
+    logger = logging.getLogger(f"[gsm8k_grpo rank {dist.get_rank()}]")
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
