@@ -76,9 +76,10 @@ class EngineRPCServer(BaseHTTPRequestHandler):
         try:
             if self.path == "/create_engine":
                 decompressed_data = gzip.decompress(data)
-                engine_obj, init_args = cloudpickle.loads(decompressed_data)
+                engine_obj, args, kwargs = cloudpickle.loads(decompressed_data)
+                print(f"{engine_obj=}, {args=}, {kwargs=}")
                 EngineRPCServer.engine = engine_obj
-                result = EngineRPCServer.engine.initialize(init_args)
+                result = EngineRPCServer.engine.initialize(*args, **kwargs)
                 logger.info(f"Engine created and initialized on RPC server: {result}")
                 self.send_response(HTTPStatus.OK)
                 self.end_headers()
@@ -127,8 +128,9 @@ def get_server_ports(ports_str: str) -> int:
         )
     return int(ports[rank])
 
+
 def build_rpc_server_start_command(port):
-    return f"python3 -m areal.scheduler.rpc.rpc_server --port {port}"
+    return f"python3 -m areal.scheduler.rpc.rpc_server --rpc_ports {port}"
 
 
 if __name__ == "__main__":

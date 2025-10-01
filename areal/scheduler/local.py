@@ -1,36 +1,31 @@
-import subprocess
-import sys
-import re
-import time
-import os
 import getpass
+import os
+import re
 import signal as signal_module
-from collections import defaultdict
-from datetime import datetime
-from typing import Any, List
+import subprocess
+import time
 import uuid
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple, Union
 
-from areal.scheduler.base import Scheduler, Worker
-from areal.scheduler.rpc.rpc_client import RPCClient
-from areal.scheduler.rpc.rpc_server import build_rpc_server_start_command
+import psutil
+
 from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
     RecoverConfig,
     SGLangConfig,
-    parse_cli_args,
     to_structured_cfg,
-    vLLMConfig,
 )
+from areal.api.scheduler_api import Scheduler, Worker
+from areal.platforms import current_platform
+from areal.scheduler.rpc.rpc_client import RPCClient
+from areal.scheduler.rpc.rpc_server import build_rpc_server_start_command
 from areal.utils import logging, name_resolve, names
+from areal.utils.launcher import JobException, JobInfo, JobState, get_env_vars
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.recover import check_if_recover
-from areal.utils.launcher import JobException, JobInfo, JobState, get_env_vars
-from areal.platforms import current_platform
-
-import psutil
-from typing import Dict, List, Optional, Tuple, Union
 
 logger = logging.getLogger("LocalScheduler")
 JOB_STATE_TO_PROCESS_STATUS = {
@@ -129,8 +124,7 @@ class LocalLauncher:
                 # Allocate GPUs in a round-robin manner
                 visible_devices = []
                 for _ in range(gpu):
-                    available_device_id = self._gpu_counter % len(
-                        self._gpu_devices)
+                    available_device_id = self._gpu_counter % len(self._gpu_devices)
                     self._gpu_counter += 1
                     visible_devices.append(available_device_id)
                 env_vars[current_platform.device_control_env_var] = ",".join(
@@ -154,8 +148,7 @@ class LocalLauncher:
         gpu: int = 0,
         env_vars: Optional[Dict] = None,
     ):
-        self.submit_array(job_name=job_name, cmd=cmd,
-                          gpu=gpu, env_vars=env_vars)
+        self.submit_array(job_name=job_name, cmd=cmd, gpu=gpu, env_vars=env_vars)
 
     def stop(self, job_name, signal=None):
         assert any(k.startswith(job_name) for k in self._jobs)
@@ -224,10 +217,13 @@ class LocalLauncher:
             for job_name in list(left):
                 job = self._jobs[job_name]
                 pid = job.pid
-                process = psutil.Process(pid)
-                self._job_states[job_name] = PROCESS_STATUS_TO_JOB_STATE.get(
-                    process.status(), JobState.NOT_FOUND
-                )
+                try:
+                    process = psutil.Process(pid)
+                    self._job_states[job_name] = PROCESS_STATUS_TO_JOB_STATE.get(
+                        process.status(), JobState.NOT_FOUND
+                    )
+                except psutil.NoSuchProcess:
+                    self._job_states[job_name] = JobState.NOT_FOUND
 
             for job_name in list(left):
                 state = self._job_states[job_name]
@@ -260,12 +256,11 @@ class LocalScheduler(Scheduler):
         super().__init__(config)
         self.procs = []  # Store subprocess objects
         self.engine_workers: Dict[str, List[str]] = defaultdict(
-            Dict)  # role -> [worker_id]
+            list
+        )  # role -> [worker_id]
+        self.rpc_client = RPCClient()
 
-    def _build_rpc_client(self, config):
-        return RPCClient()
-
-    def create_workers(self, worker_role, config, *args, **kwargs):
+    def create_workers(self, worker_role, config, *args, **kwargs) -> None:
         config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
         config.recover = to_structured_cfg(config.recover, RecoverConfig)
         config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
@@ -296,7 +291,8 @@ class LocalScheduler(Scheduler):
                 config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
                 # each sglang need 2 ports
                 ports = find_free_ports(
-                    alloc_mode.gen.dp_size * 2, port_range=(10000, 50000))
+                    alloc_mode.gen.dp_size * 2, port_range=(10000, 50000)
+                )
                 host_ip = gethostip()
                 host = "localhost" if not config.sglang.enable_metrics else host_ip
                 for i in range(alloc_mode.gen.dp_size):
@@ -328,8 +324,9 @@ class LocalScheduler(Scheduler):
                 )
 
                 # create rpc server workers
-                worker_ports = find_free_ports(alloc_mode.gen.world_size, port_range=(
-                    10000, 50000))  # each sglang need 2 ports
+                worker_ports = find_free_ports(
+                    alloc_mode.gen.world_size, port_range=(10000, 50000)
+                )  # each sglang need 2 ports
                 for i in range(alloc_mode.gen.world_size):
                     cmd = build_rpc_server_start_command(worker_ports[i])
 
@@ -337,29 +334,30 @@ class LocalScheduler(Scheduler):
                         job_name="rollout_worker",
                         cmd=cmd,
                         gpu=0,
-                        env_vars=dict(**get_env_vars(
-                            config.cluster.cluster_name,
-                            # config.launcher.worker_env_vars,
-                        ),
-                            AREAL_LLM_SERVER_ADDRS=server_addrs[i %
-                                                                alloc_mode.gen.dp_size],
+                        env_vars=dict(
+                            **get_env_vars(
+                                config.cluster.cluster_name,
+                                # config.launcher.worker_env_vars,
+                            ),
+                            AREAL_LLM_SERVER_ADDRS=server_addrs[
+                                i % alloc_mode.gen.dp_size
+                            ],
                             AREAL_RECOVER_RUN=str(int(is_recover_run)),
-                        )
+                        ),
                     )
 
                     logger.info(
-                        f"RPC server for rollout worker launched at port: {worker_ports[i]}")
+                        f"RPC server for rollout worker launched at port: {worker_ports[i]}"
+                    )
 
                     worker_id = f"rollout_{i}_{uuid.uuid4().hex[:8]}"
                     self.rpc_client.register_worker(
                         worker_id, "localhost", worker_ports[i]
                     )
-                    self.engine_workers.setdefault(
-                        worker_role, []).append(worker_id)
+                    self.engine_workers.setdefault(worker_role, []).append(worker_id)
 
             else:
-                raise NotImplementedError(
-                    f"Unsupported allocation mode: {alloc_mode}")
+                raise NotImplementedError(f"Unsupported allocation mode: {alloc_mode}")
         elif worker_role == "actor":
             if alloc_mode.type_ == AllocationType.DECOUPLED_EVAL:
                 gpu = 0
@@ -393,13 +391,12 @@ class LocalScheduler(Scheduler):
         return workers
 
     def delete_workers(self):
-        raise NotImplementedError(
-            "LocalScheduler does not support delete_workers")
+        raise NotImplementedError("LocalScheduler does not support delete_workers")
 
     # Other methods remain the same
-    def create_engine(self, worker_id, engine_class, init_args):
+    def create_engine(self, worker_id, engine_obj, *args, **kwargs):
         # launch engine rpc server on the worker
-        self.rpc_client.create_engine(worker_id, engine_class, init_args)
+        self.rpc_client.create_engine(worker_id, engine_obj, init_args)
 
     def call_engine(self, worker_id, method, *args, **kwargs):
         return self.rpc_client.call_engine(worker_id, method, *args, **kwargs)

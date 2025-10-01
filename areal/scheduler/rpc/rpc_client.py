@@ -30,11 +30,13 @@ class RPCClient:
         worker_id: str,
         engine_obj: Union[InferenceEngine, TrainEngine],
         init_config: Union[InferenceEngineConfig, TrainEngineConfig],
+        *args,
+        **kwargs,
     ) -> None:
         ip, port = self._addrs[worker_id]
         url = f"http://{ip}:{port}/create_engine"
         logger.info(f"send create_engine to {worker_id} ({ip}:{port})")
-        payload = (engine_obj, init_config)
+        payload = (engine_obj, [init_config] + list(args), kwargs)
         serialized_data = cloudpickle.dumps(payload)
         serialized_obj = gzip.compress(serialized_data)
         resp = requests.post(url, data=serialized_obj)
