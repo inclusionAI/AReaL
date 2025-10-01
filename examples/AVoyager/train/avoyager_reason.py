@@ -104,11 +104,10 @@ class AVoyagerWorkflow(RolloutWorkflow):
     async def arun_episode(self, engine, data):
         '''
         data:{
-            messages
+            question
             qid
             answer
             images (optional)
-            image_paths (optional)
         }
         '''
         # Get the unique identifier for this prompt

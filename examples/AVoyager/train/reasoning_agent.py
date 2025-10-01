@@ -214,9 +214,7 @@ class AReaLVOYAGEReasoningAgentV1:
             "images": [PIL images] (optional),
             "history": [
                 {"type": "prompt", "text": initial prompt text},
-                {"type": "documents", "info_str": "...", "short_info_str": "..."},
-                {"type": "page", "info_str": "...", "short_info_str": "..."},
-                {"type": "act", "text": "<think>...</think>\n\n<search>...</search>"},
+                {"type": "act", "text": "<think>...</think>\n\n<grounding>...</grounding>"},
                 {"type": "grounding", "text": "<grounding>...</grounding>"},
                 ...
             ],
