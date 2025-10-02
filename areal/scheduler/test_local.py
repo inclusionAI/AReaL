@@ -139,7 +139,7 @@ workflow = RLVRWorkflow(
 with ThreadPoolExecutor(max_workers=len(rollout_workers)) as executor:
     def call_rollout(worker_id, data):
         try:
-            batch = shcheduler.call_engine(worker_id, "rollout_batch", 3, data, workflow=workflow, should_accept=lambda sample: True)
+            batch = shcheduler.call_engine(worker_id, "rollout_batch", data, workflow=workflow, should_accept=lambda sample: True)
             print(f"[wht debug] rollout {worker_id} done, got batch: {batch}")
             return batch
         except Exception as e:
