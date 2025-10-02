@@ -136,6 +136,7 @@ workflow = RLVRWorkflow(
     ),
 )
 
+batch = None
 with ThreadPoolExecutor(max_workers=len(rollout_workers)) as executor:
     def call_rollout(worker_id, data):
         try:
@@ -144,8 +145,7 @@ with ThreadPoolExecutor(max_workers=len(rollout_workers)) as executor:
             return batch
         except Exception as e:
             print(f"[wht debug] rollout {worker_id} failed, error: {e}")
-            # raise e
-            return None
+            raise e
 
     futures = []
     for i in range(len(rollout_workers)):
@@ -153,9 +153,45 @@ with ThreadPoolExecutor(max_workers=len(rollout_workers)) as executor:
     for future in futures:
         r = future.result()
         print(f"[wht debug] rollout result: {r}")
+        batch = r
 
 print("[wht debug] all rollout done.")
-# import time
-# time.sleep(1000)
 
+with ThreadPoolExecutor(max_workers=len(actor_workers)) as executor:
+    def call_ppo_update(worker_id, data):
+        try:
+            batch = shcheduler.call_engine(worker_id, "ppo_update", data)
+            print(f"[wht debug] ppo_update {worker_id} done, got batch: {batch}")
+            return batch
+        except Exception as e:
+            print(f"[wht debug] ppo_update {worker_id} failed, error: {e}")
+            raise e
+        
+    futures = []
+    for i in range(len(actor_workers)):
+        futures.append(executor.submit(call_ppo_update, actor_workers[i].id, batch))
 
+    for future in futures:
+        r = future.result()
+        print(f"[wht debug] ppo_update result: {r}")
+
+print("[wht debug] all ppo_update done.")
+
+with ThreadPoolExecutor(max_workers=len(actor_workers)) as executor:
+    def call_step_lr_scheduler(worker_id):
+        try:
+            res = shcheduler.call_engine(worker_id, "step_lr_scheduler")
+            print(f"[wht debug] step_lr_scheduler {worker_id} done, got res: {res}")
+            return res
+        except Exception as e:
+            print(f"[wht debug] step_lr_scheduler {worker_id} failed, error: {e}")
+            raise e
+        
+    futures = []
+    for i in range(len(actor_workers)):
+        futures.append(executor.submit(call_step_lr_scheduler, actor_workers[i].id))
+    for future in futures:
+        r = future.result()
+        print(f"[wht debug] step_lr_scheduler result: {r}")
+
+print("[wht debug] all step_lr_scheduler done.")
