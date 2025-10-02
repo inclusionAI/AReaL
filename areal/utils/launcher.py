@@ -11,7 +11,7 @@ from areal.utils import logging, name_resolve, names
 
 logger = logging.getLogger("Launcher Utils")
 
-LOCAL_CACHE_DIR = "/tmp/areal"
+LOCAL_CACHE_DIR = "/data/yl/AReaL/tmp/areal"
 PYTORCH_KERNEL_CACHE_PATH = (
     f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/torch/kernels/"
 )
