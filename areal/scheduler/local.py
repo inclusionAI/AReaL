@@ -414,6 +414,6 @@ class LocalScheduler(Scheduler):
         self.rpc_client.create_engine(worker_id, engine_obj, *args, **kwargs)
 
     def call_engine(self, worker_id, method, *args, **kwargs):
-        ret =  self.rpc_client.call_engine(worker_id, method, *args, **kwargs)
+        ret =  self.rpc_client.call_engine(worker_id, method, max_retries=3, *args, **kwargs)
         logger.info(f"[wht debug] call_engine {worker_id=}, {method=}, result: {ret}")
         return ret

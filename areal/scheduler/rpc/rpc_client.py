@@ -53,7 +53,7 @@ class RPCClient:
             )
 
     def call_engine(
-        self, worker_id: str, method: str, max_retries: int = 3, *args, **kwargs
+        self, worker_id: str, method: str, max_retries: int, *args, **kwargs
     ) -> Any:
         """
         call the rpc server with method name and args, retry on failure
