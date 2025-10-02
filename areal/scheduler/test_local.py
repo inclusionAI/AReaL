@@ -18,13 +18,19 @@ from areal.utils import seeding, stats_tracker
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.api.alloc_mode import AllocationMode
+from areal.platforms import current_platform
+from areal.utils import name_resolve, pkg_version
 
 
 init_config = {}
 
 create_workers_config, _ = parse_cli_args(sys.argv[1:])
 
-config, _ = load_expr_config(sys.argv[1:])
+from omegaconf import MISSING, DictConfig, OmegaConf
+# config, _ = load_expr_config(sys.argv[1:])
+config = to_structured_cfg(create_workers_config, config_cls=GRPOConfig)
+config = OmegaConf.to_object(config)
+name_resolve.reconfigure(config.cluster.name_resolve)
 config: GRPOConfig
 # seeding.set_random_seed(config.seed, key=f"trainer{rank}")
 allocation_mode = AllocationMode.from_str(config.allocation_mode)
