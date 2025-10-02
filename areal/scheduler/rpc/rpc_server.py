@@ -103,8 +103,8 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 action, args, kwargs = cloudpickle.loads(data)
                 method = getattr(EngineRPCServer.engine, action)
                 # NOTE: DO NOT print args here, args may be a very huge tensor
-                # logger.info(f"RPC server calling engine method: {action}, {args=}, {kwargs=}")
-                if method in ["compute_advantages", "ppo_update", "step_lr_scheduler"]:
+                logger.info(f"RPC server calling engine method: {action}")
+                if action in ["compute_advantages", "ppo_update", "step_lr_scheduler"]:
                     logger.info(f"RPC server calling engine method on device: {EngineRPCServer.engine.device}")
                     device = "cuda"
                 else:
