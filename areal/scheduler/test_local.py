@@ -1,5 +1,5 @@
 import sys
-
+import os
 import areal
 from areal.scheduler.local import LocalScheduler
 
@@ -21,6 +21,17 @@ from areal.api.alloc_mode import AllocationMode
 from areal.platforms import current_platform
 from areal.utils import name_resolve, pkg_version
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
+from areal.dataset import get_custom_dataset
+from areal.utils.hf_utils import load_hf_tokenizer
+from torchdata.stateful_dataloader import StatefulDataLoader
+from areal.utils.stats_logger import StatsLogger
+from areal.workflow.rlvr import RLVRWorkflow
+
+from areal.utils.data import (
+    broadcast_tensor_container,
+    cycle_dataloader,
+    tensor_container_to,
+)
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -55,6 +66,7 @@ rollout = RemoteSGLangEngine(config.rollout)
 with ThreadPoolExecutor(max_workers=len(rollout_workers)) as executor:
     def create_engine_and_init(worker_id):
         shcheduler.create_engine(worker_id, rollout, train_data_parallel_size=parallel_strategy.dp_size)
+        print(f"[wht debug] create rollout engine and init {worker_id}")
 
     for i in range(len(rollout_workers)):
         executor.submit(create_engine_and_init, rollout_workers[i].id)
@@ -69,9 +81,66 @@ actor = FSDPPPOActor(config=config.actor)
 with ThreadPoolExecutor(max_workers=len(actor_workers)) as executor:
     def create_engine_and_init(worker_id):
         shcheduler.create_engine(worker_id, actor, None, ft_spec, parallel_strategy=parallel_strategy)
+        print(f"[wht debug] create actor engine and init {worker_id}")
 
     for i in range(len(actor_workers)):
         executor.submit(create_engine_and_init, actor_workers[i].id)
 
+print("[wht debug] all engines created and initialized.")
+
+
+tokenizer = load_hf_tokenizer(config.tokenizer_path)
+train_dataset = get_custom_dataset(
+    path=config.train_dataset.path,
+    rank=actor.data_parallel_rank,
+    world_size=actor.data_parallel_world_size,
+    split="train",
+    max_length=config.train_dataset.max_length,
+    type=config.train_dataset.type,
+    tokenizer=tokenizer,
+)
+train_dataloader = StatefulDataLoader(
+    train_dataset,
+    batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
+    shuffle=config.train_dataset.shuffle,
+    num_workers=config.train_dataset.num_workers,
+    collate_fn=lambda x: x,
+    drop_last=config.train_dataset.drop_last,
+)
+data_generator = cycle_dataloader(train_dataloader)
+data = next(data_generator)
+
+print(f"[wht debug] get data batch: {data[0]}")
+
+
+def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
+    from areal.reward.math_parser import process_results
+
+    return int(process_results(completions, answer)[0])
+workflow = RLVRWorkflow(
+    reward_fn=gsm8k_reward_fn,
+    gconfig=config.gconfig,
+    tokenizer=tokenizer,
+    enable_thinking=False,
+    dump_dir=os.path.join(
+        StatsLogger.get_log_path(config.stats_logger), "generated"
+    ),
+)
+
+with ThreadPoolExecutor(max_workers=len(rollout_workers)) as executor:
+    def call_rollout(worker_id, data):
+        batch = shcheduler.call_engine(worker_id, "rollout_batch", data, workflow=workflow, should_accept=lambda sample: True)
+        print(f"[wht debug] rollout {worker_id} done, got batch: {batch}")
+        return batch
+    
+    futures = []
+    for i in range(len(rollout_workers)):
+        futures.append(executor.submit(call_rollout, rollout_workers[i].id, data))
+    for future in futures:
+        r = future.result()
+        print(f"[wht debug] rollout result: {r}")
+
 import time
 time.sleep(1000)
+
+
