@@ -105,7 +105,8 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 # NOTE: DO NOT print args here, args may be a very huge tensor
                 # logger.info(f"RPC server calling engine method: {action}, {args=}, {kwargs=}")
                 if method in ["compute_advantages", "ppo_update", "step_lr_scheduler"]:
-                    device = EngineRPCServer.engine.device
+                    logger.info(f"RPC server calling engine method on device: {EngineRPCServer.engine.device}")
+                    device = "cuda"
                 else:
                     device = "cpu"
 
