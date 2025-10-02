@@ -513,7 +513,9 @@ class WorkflowExecutor:
 
         See :meth:`~areal.api.engine_api.InferenceEngine.rollout_batch` for detailed documentation.
         """
+        self.logger.info(f"rollout_batch: submitting {len(data)} requests")
         for item in data:
+            self.logger.info(f"rollout_batch: submitting request {item}")
             self.submit(
                 data=item,
                 workflow=workflow,
