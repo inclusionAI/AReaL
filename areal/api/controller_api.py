@@ -315,7 +315,7 @@ class TrainController(abc.ABC):
         """
         raise NotImplementedError()
 
-    def get_version(self) -> int:
+    def get_version(self) -> List[int]:
         """Get the current weight version in the training engine.
 
         Returns
@@ -359,7 +359,7 @@ class TrainController(abc.ABC):
         input_: DistributedBatch,
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
-    ) -> Dict[str, float]:
+    ) -> List[Dict[str, float]]:
         """Update the model with a batch of data and a loss function.
 
         Note
@@ -382,7 +382,7 @@ class TrainController(abc.ABC):
 
         Returns
         -------
-        Dict[str, float]
+        List[Dict[str, float]]
             Scalar statistics after training, e.g., the current learning rate,
             gradient norm, etc.
         """
@@ -394,7 +394,7 @@ class TrainController(abc.ABC):
         input_: DistributedBatch,
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
-    ) -> torch.Tensor | None:
+    ) -> List[torch.Tensor]:
         """Evaluate the model using the forward pass and loss function.
 
         Note
