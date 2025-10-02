@@ -103,9 +103,14 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 action, args, kwargs = cloudpickle.loads(data)
                 method = getattr(EngineRPCServer.engine, action)
                 # NOTE: DO NOT print args here, args may be a very huge tensor
-                logger.info(f"RPC server calling engine method: {action}, {args=}, {kwargs=}")
-                args, kwargs = process_input_to_distributed_batch(EngineRPCServer.engine.device, *args, **kwargs)
-                logger.info(f"RPC server after process input to distributed batch: {args=}, {kwargs=}")
+                # logger.info(f"RPC server calling engine method: {action}, {args=}, {kwargs=}")
+                if method in ["compute_advantages", "ppo_update", "step_lr_scheduler"]:
+                    device = EngineRPCServer.engine.device
+                else:
+                    device = "cpu"
+
+                args, kwargs = process_input_to_distributed_batch(device, *args, **kwargs)
+                # logger.info(f"RPC server after process input to distributed batch: {args=}, {kwargs=}")
                 result = method(*args, **kwargs)
                 logger.info(f"RPC server engine method {action} done, result: {result}, processing output...")
                 result = process_output_to_distributed_batch(result)
