@@ -1,6 +1,7 @@
 import sys
 import os
 import areal
+import time
 from areal.scheduler.local import LocalScheduler
 
 from areal.api.cli_args import (
