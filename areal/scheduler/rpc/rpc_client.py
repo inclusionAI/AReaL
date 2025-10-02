@@ -112,9 +112,10 @@ class RPCClient:
                     f"Sent call to {worker_id} ({ip}:{port}), status={resp.status_code}, attempt {attempt + 1}/{max_retries}"
                 )
 
-                logger.info(f"[wht debug] Response with: {resp.status_code}, len = {len(resp.content)}")
+                logger.info(f"[wht debug] worker {worker_id} Response with: {resp.status_code}, len = {len(resp.content)}")
 
                 if response_ok(resp.status_code):
+                    logger.info(f"[wht debug] worker {worker_id} call_engine success, return type: {type(resp.content)}, return len: {len(resp.content)}")
                     return cloudpickle.loads(resp.content)
                 elif response_retryable(resp.status_code):
                     last_exception = RuntimeError(
