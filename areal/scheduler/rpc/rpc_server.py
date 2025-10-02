@@ -106,7 +106,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 logger.info(f"RPC server calling engine method: {action}")
                 if action in ["compute_advantages", "ppo_update", "step_lr_scheduler"]:
                     logger.info(f"RPC server calling engine method on device: {EngineRPCServer.engine.device}")
-                    device = "cuda"
+                    device = EngineRPCServer.engine.device
                 else:
                     device = "cpu"
 
