@@ -149,6 +149,7 @@ with ThreadPoolExecutor(max_workers=len(rollout_workers)) as executor:
         r = future.result()
         print(f"[wht debug] rollout result: {r}")
 
+print("[wht debug] all rollout done.")
 import time
 time.sleep(1000)
 
