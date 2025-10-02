@@ -101,7 +101,7 @@ train_dataset = get_custom_dataset(
 )
 train_dataloader = StatefulDataLoader(
     train_dataset,
-    batch_size=config.train_dataset.batch_siz,
+    batch_size=config.train_dataset.batch_size,
     shuffle=config.train_dataset.shuffle,
     num_workers=config.train_dataset.num_workers,
     collate_fn=lambda x: x,
