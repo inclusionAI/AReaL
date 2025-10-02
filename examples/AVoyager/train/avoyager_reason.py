@@ -51,7 +51,7 @@ import sys
 from pathlib import Path
 # sys.path.append("/storage/openpsi/users/xushusheng.xss/projects/ASearcher-Lite@0908")
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-
+from AVoyager.dataset.multimodal_dataset import get_multimodal_dataset
 from AVoyager.train.reasoning_agent import run_agent
 from AVoyager.utils.voyage_tool import VoyageToolBox
 
@@ -244,22 +244,12 @@ class AgentRLConfig(GRPOConfig):
     )
     judge_engine: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
 
-
-def get_search_dataset(dataset_path, tokenizer, rank, world_size):
-    dataset = load_dataset(
-        path="json",
-        split="train",
-        data_files=dataset_path,
-    )
-    # dataset = dataset.filter(lambda x: len(tokenizer.encode(x["question"])) <= 1024)
-    return split_dataset_by_node(dataset, rank=rank, world_size=world_size)
-
 def main(args):
     config, _ = load_expr_config(args, AgentRLConfig)
     config: AgentRLConfig
 
     rank = int(os.getenv("RANK"))
-    processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_name_or_path)
+    processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
@@ -271,7 +261,7 @@ def main(args):
 
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
-        get_search_dataset(config.train_dataset.path, tokenizer, actor.data_parallel_rank,  actor.data_parallel_world_size),
+        get_multimodal_dataset(config.train_dataset.path, "train", processor, actor.data_parallel_rank, actor.data_parallel_world_size),
         batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,

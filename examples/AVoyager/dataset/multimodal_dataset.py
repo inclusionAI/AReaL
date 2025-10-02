@@ -32,6 +32,8 @@ def convert_image(
     with BytesIO() as output:
         image.save(output, format="JPEG")
         return output.getvalue()
+    
+def get_
 
 
 def get_multimodal_dataset(
