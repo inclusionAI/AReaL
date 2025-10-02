@@ -322,6 +322,8 @@ class LocalScheduler(Scheduler):
                     f"LLM inference server launched at: AREAL_LLM_SERVER_ADDRS={','.join(server_addrs)}"
                 )
 
+                print(f"[wht debug] launch sglang servers: {server_cmd}")
+
                 # create rpc server workers
                 worker_ports = find_free_ports(
                     alloc_mode.gen.world_size, port_range=(10000, 50000)
@@ -355,6 +357,8 @@ class LocalScheduler(Scheduler):
                     )
                     self.engine_workers.setdefault(worker_role, []).append(worker_id)
 
+                print(f"[wht debug] launch rpc servers: {worker_ports}")
+
             else:
                 raise NotImplementedError(f"Unsupported allocation mode: {alloc_mode}")
         elif worker_role == "actor":
@@ -370,7 +374,7 @@ class LocalScheduler(Scheduler):
                 job_name="trainer",
                 cmd=f"torchrun --nnodes 1 --nproc-per-node {nprocs} "
                 f"--master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} "
-                f"-m areal.scheduler.rpc.rpc_server --rpc_ports {','.join(worker_ports)}",
+                f"-m areal.scheduler.rpc.rpc_server --rpc_ports {','.join(map(str, worker_ports))}",
                 gpu=gpu,
                 env_vars=dict(
                     **get_env_vars(
@@ -381,6 +385,8 @@ class LocalScheduler(Scheduler):
                     AREAL_RECOVER_RUN=str(int(is_recover_run)),
                 ),
             )
+
+            print(f"[wht debug] launch trainer: {worker_ports}")
             for i in range(alloc_mode.gen.world_size):
                 worker_id = f"actor_{i}_{uuid.uuid4().hex[:8]}"
                 self.rpc_client.register(
