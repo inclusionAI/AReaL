@@ -123,7 +123,8 @@ class FSDPEngine(BaseHFEngine):
 
         self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
 
-    def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
+    def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None, parallel_strategy: ParallelStrategy | None = None):
+        self.create_process_group(parallel_strategy)
         # Initialize distributed enviroments and load model.
         assert addr is None, "FSDPEngine does not support remote initialization."
         assert ft_spec is not None, "FSDPEngine requires FinetuneSpec to initialize."
