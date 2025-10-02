@@ -92,8 +92,8 @@ print("[wht debug] all engines created and initialized.")
 tokenizer = load_hf_tokenizer(config.tokenizer_path)
 train_dataset = get_custom_dataset(
     path=config.train_dataset.path,
-    rank=actor.data_parallel_rank,
-    world_size=actor.data_parallel_world_size,
+    rank=0,
+    world_size=1,
     split="train",
     max_length=config.train_dataset.max_length,
     type=config.train_dataset.type,
