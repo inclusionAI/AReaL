@@ -112,6 +112,8 @@ class RPCClient:
                     f"Sent call to {worker_id} ({ip}:{port}), status={resp.status_code}, attempt {attempt + 1}/{max_retries}"
                 )
 
+                logger.info(f"Response with: {resp.status_code}, {resp.content}")
+
                 if response_ok(resp.status_code):
                     return cloudpickle.loads(resp.content)
                 elif response_retryable(resp.status_code):
