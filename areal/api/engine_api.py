@@ -25,6 +25,8 @@ class Scheduling:
     cpu: int
     gpu: int
     mem: int
+    port_count: int
+    cmd: str | None = None
     nodelist: str | None = None
     exclude: str | None = None
     partition: str | None = None
@@ -138,7 +140,7 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def get_scheduling_config(self) -> Scheduling:
+    def get_scheduling_config(self) -> List[Scheduling]:
         """Get the scheduling configuration for the engine.
 
         This includes configuration such as container image, CPU/GPU/memory size.
