@@ -158,6 +158,26 @@ with ThreadPoolExecutor(max_workers=len(rollout_workers)) as executor:
 print("[wht debug] all rollout done.")
 
 with ThreadPoolExecutor(max_workers=len(actor_workers)) as executor:
+    def call_compute_advantages(worker_id, data):
+        try:
+            batch = shcheduler.call_engine(worker_id, "compute_advantages", data)
+            print(f"[wht debug] compute_advantages {worker_id} done, got batch: {batch}")
+            return batch
+        except Exception as e:
+            print(f"[wht debug] compute_advantages {worker_id} failed, error: {e}")
+            raise e
+        
+    futures = []
+    for i in range(len(actor_workers)):
+        futures.append(executor.submit(call_compute_advantages, actor_workers[i].id, batch))
+    for future in futures:
+        r = future.result()
+        print(f"[wht debug] compute_advantages result: {r}")
+        batch = r
+
+print("[wht debug] all compute_advantages done.")
+
+with ThreadPoolExecutor(max_workers=len(actor_workers)) as executor:
     def call_ppo_update(worker_id, data):
         try:
             batch = shcheduler.call_engine(worker_id, "ppo_update", data)
