@@ -20,6 +20,8 @@ from areal.utils.functional import (
     reward_overlong_penalty,
 )
 
+from areal.utils import logging
+logger = logging.getLogger("PPOActor")
 
 class PPOActor:
 
@@ -70,6 +72,7 @@ class PPOActor:
     def compute_advantages(self, data: Dict[str, Any]):
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
+        logger.info(f"[wht debug] compute_advantages {data["input_ids"].device=}")
         batch_indices = torch.arange(
             bs, device=data["input_ids"].device, dtype=torch.long
         )
@@ -132,6 +135,8 @@ class PPOActor:
             values = torch.zeros_like(rewards)
         else:
             values = data["values"]
+
+        logger.info(f"[wht debug] compute_advantages {values.device=}")
         advantages_reversed = [
             torch.zeros(bs, dtype=torch.float32, device=values.device)
         ]
