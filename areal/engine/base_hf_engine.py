@@ -73,7 +73,7 @@ class BaseHFEngine(TrainEngine):
         )
         self.is_vision_model = is_valid_vision_model(self.model_config.model_type)
 
-        self.world_size = int(os.environ["WORLD_SIZE"])
+        self.world_size: int
 
     def set_version(self, version: int):
         self._version = version

@@ -13,10 +13,16 @@ from areal.api.controller_api import DistributedBatch
 from areal.controller.batch import DistributedBatchMemory
 from areal.utils import logging
 
+from areal.utils.data import (
+    broadcast_tensor_container,
+    cycle_dataloader,
+    tensor_container_to,
+)
+
 logger = logging.getLogger("RPCServer")
 
 
-def process_input_to_distributed_batch(*args, **kwargs):
+def process_input_to_distributed_batch(to_device, *args, **kwargs):
     for i in range(len(args)):
         if isinstance(args[i], DistributedBatch):
             args = list(args)
@@ -27,10 +33,14 @@ def process_input_to_distributed_batch(*args, **kwargs):
         if isinstance(kwargs[k], DistributedBatch):
             kwargs[k] = kwargs[k].get_data()
 
+    args = tuple(tensor_container_to(list(args), to_device))
+    kwargs = tensor_container_to(kwargs, to_device)
+
     return args, kwargs
 
 
 def process_output_to_distributed_batch(result):
+    result = tensor_container_to(result, "cpu")
     if isinstance(result, dict):
         return DistributedBatchMemory.from_dict(result)
     elif isinstance(result, TensorDict):
@@ -76,9 +86,10 @@ class EngineRPCServer(BaseHTTPRequestHandler):
         try:
             if self.path == "/create_engine":
                 decompressed_data = gzip.decompress(data)
-                engine_obj, init_args = cloudpickle.loads(decompressed_data)
+                engine_obj, args, kwargs = cloudpickle.loads(decompressed_data)
+                print(f"{engine_obj=}, {args=}, {kwargs=}")
                 EngineRPCServer.engine = engine_obj
-                result = EngineRPCServer.engine.initialize(init_args)
+                result = EngineRPCServer.engine.initialize(*args, **kwargs)
                 logger.info(f"Engine created and initialized on RPC server: {result}")
                 self.send_response(HTTPStatus.OK)
                 self.end_headers()
@@ -94,9 +105,18 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 method = getattr(EngineRPCServer.engine, action)
                 # NOTE: DO NOT print args here, args may be a very huge tensor
                 logger.info(f"RPC server calling engine method: {action}")
-                args, kwargs = process_input_to_distributed_batch(*args, **kwargs)
+                if action in ["compute_advantages", "ppo_update", "step_lr_scheduler"]:
+                    logger.info(f"RPC server calling engine method on device: {EngineRPCServer.engine.device}")
+                    device = EngineRPCServer.engine.device
+                else:
+                    device = "cpu"
+
+                args, kwargs = process_input_to_distributed_batch(device, *args, **kwargs)
+                # logger.info(f"RPC server after process input to distributed batch: {args=}, {kwargs=}")
                 result = method(*args, **kwargs)
+                logger.info(f"RPC server engine method {action} done, result: {result}, processing output...")
                 result = process_output_to_distributed_batch(result)
+                logger.info(f"RPC server engine method {action} done, result processed, {result=}")
                 self.send_response(HTTPStatus.OK)
                 self.end_headers()
                 self.wfile.write(cloudpickle.dumps(result))
@@ -117,32 +137,28 @@ def start_rpc_server(port):
     server.serve_forever()
 
 
-def get_serve_port(args):
-    port = args.port
-    port_str = os.environ.get("PORT_LIST", "").strip()
+def get_server_ports(ports_str: str) -> int:
+    ports = [p.strip() for p in ports_str.split(",")]
+    word_size = int(os.environ.get("WORLD_SIZE", "1"))
+    rank = int(os.environ.get("RANK", "0"))
+    if len(ports) < word_size:
+        raise ValueError(
+            f"Not enough ports for the world size {word_size}, got {ports_str}"
+        )
+    return int(ports[rank])
 
-    # Check if PORT_LIST is set
-    if port_str:
-        # Split by comma and strip whitespace
-        ports = [p.strip() for p in port_str.split(",")]
-        # Use the first valid port from the list
-        if ports and ports[0]:
-            try:
-                return int(ports[0])
-            except ValueError:
-                logger.warning(
-                    f"Invalid port '{ports[0]}' in PORT_LIST. Falling back to --port argument."
-                )
-    return port
+
+def build_rpc_server_start_command(port):
+    return f"python3 -m areal.scheduler.rpc.rpc_server --rpc_ports {port}"
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--port", type=int, required=False)
+    parser.add_argument("--rpc_ports", type=str, required=True)
 
     args, unknown = parser.parse_known_args()
-    port = get_serve_port(args)
+    port = get_server_ports(args.rpc_ports)
 
     logger.info(f"About to start RPC server on {port}")
 

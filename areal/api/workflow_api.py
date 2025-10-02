@@ -330,17 +330,18 @@ class WorkflowExecutor:
         try:
             while not self.exiting.is_set():
                 # Check capacity
-                capacity = self.get_capacity()
+                # capacity = self.get_capacity()
+                # self.logger.info(f"Current rollout capacity: {capacity}")
                 # Create new rollout task
                 self.lock.acquire()
                 while (
-                    capacity > 0
-                    and not self.paused.is_set()
+                    not self.paused.is_set()
                     and self.input_queue.qsize() > 0
                 ):
+                    self.logger.info(f"Current input queue size: {self.input_queue.qsize()}, paused: {self.paused.is_set()}")
                     x = self.input_queue.get_nowait()
                     x: _RolloutTaskInput
-                    self.logger.debug(f"Get data from puller: {x.data}")
+                    self.logger.info(f"Get data from puller: {x.data}")
                     task = asyncio.create_task(
                         x.workflow.arun_episode(self.inference_engine, x.data),
                         name=str(rid),
@@ -357,7 +358,7 @@ class WorkflowExecutor:
                             f"running: {self.rollout_stat.running}, "
                             f"accepted: {self.rollout_stat.accepted}."
                         )
-                    capacity -= 1
+                    # capacity -= 1
                     rid += 1
                 tasks = [x.task for x in rollout_tasks.values()]
                 self.lock.release()
@@ -513,7 +514,9 @@ class WorkflowExecutor:
 
         See :meth:`~areal.api.engine_api.InferenceEngine.rollout_batch` for detailed documentation.
         """
+        self.logger.info(f"rollout_batch: submitting {len(data)} requests")
         for item in data:
+            self.logger.info(f"rollout_batch: submitting request {item}")
             self.submit(
                 data=item,
                 workflow=workflow,
