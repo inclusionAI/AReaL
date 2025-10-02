@@ -144,7 +144,7 @@ with ThreadPoolExecutor(max_workers=len(rollout_workers)) as executor:
             return batch
         except Exception as e:
             print(f"[wht debug] rollout {worker_id} failed, error: {e}")
-            return None
+            raise e
 
     futures = []
     for i in range(len(rollout_workers)):
