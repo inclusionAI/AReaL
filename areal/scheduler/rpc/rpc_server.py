@@ -40,6 +40,7 @@ def process_input_to_distributed_batch(to_device, *args, **kwargs):
 
 
 def process_output_to_distributed_batch(result):
+    result = tensor_container_to(result, "cpu")
     if isinstance(result, dict):
         return DistributedBatchMemory.from_dict(result)
     elif isinstance(result, TensorDict):
