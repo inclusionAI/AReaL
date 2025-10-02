@@ -338,7 +338,7 @@ class WorkflowExecutor:
                     not self.paused.is_set()
                     and self.input_queue.qsize() > 0
                 ):
-                    self.logger.info(f"Current input queue size: {self.input_queue.qsize()}, capacity: {capacity}, paused: {self.paused.is_set()}")
+                    self.logger.info(f"Current input queue size: {self.input_queue.qsize()}, paused: {self.paused.is_set()}")
                     x = self.input_queue.get_nowait()
                     x: _RolloutTaskInput
                     self.logger.info(f"Get data from puller: {x.data}")
