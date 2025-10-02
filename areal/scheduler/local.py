@@ -253,7 +253,6 @@ class LocalLauncher:
 
 class LocalScheduler(Scheduler):
     def __init__(self, config):
-        super().__init__(config)
         self.procs = []  # Store subprocess objects
         self.engine_workers: Dict[str, List[str]] = defaultdict(
             list
@@ -351,7 +350,7 @@ class LocalScheduler(Scheduler):
                     )
 
                     worker_id = f"rollout_{i}_{uuid.uuid4().hex[:8]}"
-                    self.rpc_client.register_worker(
+                    self.rpc_client.register(
                         worker_id, "localhost", worker_ports[i]
                     )
                     self.engine_workers.setdefault(worker_role, []).append(worker_id)
@@ -364,11 +363,14 @@ class LocalScheduler(Scheduler):
                 nprocs = 1
             else:
                 gpu = nprocs = alloc_mode.train.world_size
+
+            worker_ports = find_free_ports(alloc_mode.gen.world_size, (10000, 50000))
+
             launcher.submit(
                 job_name="trainer",
                 cmd=f"torchrun --nnodes 1 --nproc-per-node {nprocs} "
                 f"--master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} "
-                f"-m areal.scheduler.rpc.rpc_server --rpc_ports {','.join(find_free_ports(alloc_mode.gen.world_size, (10000, 50000)))}",
+                f"-m areal.scheduler.rpc.rpc_server --rpc_ports {','.join(worker_ports)}",
                 gpu=gpu,
                 env_vars=dict(
                     **get_env_vars(
@@ -379,6 +381,12 @@ class LocalScheduler(Scheduler):
                     AREAL_RECOVER_RUN=str(int(is_recover_run)),
                 ),
             )
+            for i in range(alloc_mode.gen.world_size):
+                worker_id = f"actor_{i}_{uuid.uuid4().hex[:8]}"
+                self.rpc_client.register(
+                    worker_id, "localhost", worker_ports[i]
+                )
+                self.engine_workers.setdefault(worker_role, []).append(worker_id)
         else:
             raise ValueError(f"Unknown worker role: {worker_role}")
 
