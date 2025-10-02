@@ -17,6 +17,7 @@ python3 -m areal.launcher.local \
     --config examples/experimental/dapo/gsm8k_dapo.yaml \
     experiment_name="$EXP_NAME" \
     trial_name="$TRIAL_NAME" \
+    +tokenizer_path="$PRM_PATH" \
     +prm_path="$PRM_PATH" \
     +prmconfig.reward_shaping_alpha=0.02 \
     total_train_epochs="$TOTAL_TRAIN_EPOCHS" \

@@ -76,9 +76,9 @@ class PRMRLVRWorkflow(RolloutWorkflow):
         results = []
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
-            logprobs = [0.0] * resp.input_len + resp.output_logprobs
-            loss_mask = [0] * resp.input_len + [1] * resp.output_len
-            versions = [-1] * resp.input_len + resp.output_versions
+            # logprobs = [0.0] * resp.input_len + resp.output_logprobs
+            # loss_mask = [0] * resp.input_len + [1] * resp.output_len
+            # versions = [-1] * resp.input_len + resp.output_versions
 
             prompt_str = self.tokenizer.decode(input_ids)
             completions_str = self.tokenizer.decode(resp.output_tokens)
@@ -105,20 +105,36 @@ class PRMRLVRWorkflow(RolloutWorkflow):
             # Log reward.
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=prm_reward)
 
-            rewards.append(prm_reward)
-            prm_rewards.append(prm_reward)
+            rewards.extend(prm_reward)
+            prm_rewards.extend(prm_reward)
             result_rewards.append(result_reward)
 
-            res = dict(
-                # unsqueeze to add an additional batch dimension
-                input_ids=torch.tensor(seq).unsqueeze(0),
-                loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                logprobs=torch.tensor(logprobs).unsqueeze(0),
-                versions=torch.tensor(versions).unsqueeze(0),
-                attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
-                # reward
-                rewards=torch.tensor([float(prm_reward)]),
-            )
+            # separate steps
+            EXTRA_ID = self.tokenizer.convert_tokens_to_ids('<extra_0>')
+            extra_pos = [i for i, t in enumerate(resp.output_tokens) if t == EXTRA_ID]
+            if not extra_pos or extra_pos[-1] != resp.output_len:
+                extra_pos.append(resp.output_len)
+            step_ranges = []
+            for start, end in zip(extra_pos[:-1], extra_pos[1:]):
+                step_ranges.append((start, end))
+            for step_idx, (start, end) in enumerate(step_ranges):
+                logprobs = [0.0] * resp.input_len + [0.0] * resp.output_logprobs
+                loss_mask = [0] * resp.input_len + [0] * resp.output_len
+                versions = [-1] * resp.input_len + [-1] * resp.output_versions
+                logprobs[start+resp.input_len:end+resp.input_len] = resp.output_logprobs[start:end]
+                loss_mask[start+resp.input_len:end+resp.input_len] = [1] * (end - start)
+                versions[start+resp.input_len:end+resp.input_len] = resp.output_versions[start:end]
+                
+                res = dict(
+                    # unsqueeze to add an additional batch dimension
+                    input_ids=torch.tensor(seq).unsqueeze(0),
+                    loss_mask=torch.tensor(loss_mask).unsqueeze(0),
+                    logprobs=torch.tensor(logprobs).unsqueeze(0),
+                    versions=torch.tensor(versions).unsqueeze(0),
+                    attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
+                    # reward
+                    rewards=torch.tensor([float(prm_reward[step_idx])]),
+                )
             results.append(res)
 
         # clip mechanism

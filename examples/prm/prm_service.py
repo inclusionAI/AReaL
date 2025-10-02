@@ -34,7 +34,7 @@ def score(req: PRMRequest):
         token_masks = (input_ids == step_sep_id)
         probabilities = F.softmax(outputs[0], dim=-1)* token_masks.unsqueeze(-1)
         sample = probabilities[0]
-        prm_reward = sample[sample != 0].view(-1, 2)[:, 1][0].item()
+        prm_reward = sample[sample != 0].view(-1, 2)[:, 1].cpu().tolist() # list
     return {"reward": prm_reward}
 
 if __name__ == "__main__":

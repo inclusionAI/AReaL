@@ -64,7 +64,14 @@ def load_greso_dataset(
     dataset = load_dataset("parquet", data_dir=path, split=split)
 
     def process(sample):
-        return {"messages": sample["messages"], "answer": sample["answer"]}
+        messages = [
+            {
+                "role": "user",
+                "content": sample["messages"]["content"]
+                + "\nAfter each intermediate result, end that line with exactly <extra_0>. Do not put any <extra_0> at the very end of the whole solution.",
+            }
+        ]
+        return {"messages": messages, "answer": sample["answer"]}
     
     dataset = dataset.map(process)
 
