@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export CUDA_VISIBLE_DEVICES=1,2
+export CUDA_VISIBLE_DEVICES=0,1
 N_GPU=2
 EXP_NAME=greso-dapo
 TRIAL_NAME=trial0
-FILE_ROOT=/data/yl/AReaL/tmp/areal/experiments
-ACTOR_PATH=/data/yl/model/Qwen/Qwen2.5-1.5B-Instruct
-TRAIN_DATASET_PATH=/data/yl/dataset/greso
-VALID_DATASET_PATH=/data/yl/dataset/greso
+FILE_ROOT=/data/yanglu/AReaL/tmp/areal/experiments
+ACTOR_PATH=/data/yanglu/model/Qwen/Qwen2.5-Math-7B
+TRAIN_DATASET_PATH=/data/yanglu/dataset/greso
+VALID_DATASET_PATH=/data/yanglu/dataset/greso
 
 TOTAL_TRAIN_EPOCHS=1
 

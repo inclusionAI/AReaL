@@ -154,7 +154,14 @@ class PRMRewardHyperparameters:
         default=0.02,
         metadata={"help": "reward shaping alpha"},
     )    
-    
+    use_clip: bool = field(
+        default=True,
+        metadata={"help": "Whether to use clip mechanism."},
+    )
+    use_delta: bool = field(
+        default=True,
+        metadata={"help": "Whether to use delta mechanism."},
+    )    
 # Train Engine Configs
 
 

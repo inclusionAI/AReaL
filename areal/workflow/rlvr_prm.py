@@ -70,6 +70,7 @@ class PRMRLVRWorkflow(RolloutWorkflow):
         completions_strs = []
         rewards = []
         prm_rewards = []
+        result_rewards = []
         seqlens = []
 
         results = []
@@ -100,13 +101,13 @@ class PRMRLVRWorkflow(RolloutWorkflow):
                 # self.prm_tokenizer,
                 **data,
             )
-            reward = self.prmconfig.reward_shaping_alpha * prm_reward + result_reward
-
+            
             # Log reward.
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+            stats_tracker.get(self.rollout_stat_scope).scalar(reward=prm_reward)
 
-            rewards.append(reward)
+            rewards.append(prm_reward)
             prm_rewards.append(prm_reward)
+            result_rewards.append(result_reward)
 
             res = dict(
                 # unsqueeze to add an additional batch dimension
@@ -116,15 +117,23 @@ class PRMRLVRWorkflow(RolloutWorkflow):
                 versions=torch.tensor(versions).unsqueeze(0),
                 attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
                 # reward
-                rewards=torch.tensor([float(reward)]),
+                rewards=torch.tensor([float(prm_reward)]),
             )
             results.append(res)
 
         # clip mechanism
-        avg_prm_reward = sum(prm_rewards) / len(prm_rewards)
-        for i, val in enumerate(prm_rewards):
-            if val > avg_prm_reward:
-                rewards[i] = 0
+        if self.prmconfig.use_clip:
+            avg_prm_reward = sum(prm_rewards) / len(prm_rewards)
+            for i, val in enumerate(prm_rewards):
+                if val > avg_prm_reward:
+                    rewards[i] = 0
+                else:
+                    rewards[i] = rewards[i] - avg_prm_reward
+        # delta mechanism
+        if self.prmconfig.use_delta:
+            for i, val in enumerate(rewards):
+                rewards[i] = self.prmconfig.reward_shaping_alpha * rewards[i] + result_rewards[i]
+
         for res, r in zip(results, rewards):
             res["rewards"] = torch.tensor([float(r)])
 
