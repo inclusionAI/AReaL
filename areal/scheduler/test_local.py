@@ -22,7 +22,7 @@ from areal.platforms import current_platform
 from areal.utils import name_resolve, pkg_version
 
 
-init_config = {}
+# init_config = {}
 
 create_workers_config, _ = parse_cli_args(sys.argv[1:])
 
@@ -37,7 +37,7 @@ allocation_mode = AllocationMode.from_str(config.allocation_mode)
 parallel_strategy = allocation_mode.train
 
 
-shcheduler = LocalScheduler(init_config)
+shcheduler = LocalScheduler(create_workers_config)
 shcheduler.create_workers("rollout", create_workers_config)
 shcheduler.create_workers("actor", create_workers_config)
 

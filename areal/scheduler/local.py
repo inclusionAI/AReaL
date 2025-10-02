@@ -258,15 +258,16 @@ class LocalScheduler(Scheduler):
             list
         )  # role -> [worker_id]
         self.rpc_client = RPCClient()
+        self.launcher = LocalLauncher(
+            config.experiment_name, config.trial_name, config.cluster.fileroot
+        )
 
     def create_workers(self, worker_role, config, *args, **kwargs) -> None:
         config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
         config.recover = to_structured_cfg(config.recover, RecoverConfig)
         config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
         is_recover_run = check_if_recover(config.recover, run_id=0)
-        launcher = LocalLauncher(
-            config.experiment_name, config.trial_name, config.cluster.fileroot
-        )
+        
 
         name_resolve.reconfigure(config.cluster.name_resolve)
         name_resolve.clear_subtree(
@@ -308,7 +309,7 @@ class LocalScheduler(Scheduler):
                     server_addrs.append(f"{host}:{ports[i * 2]}")
 
                 # Launch inference servers.
-                launcher.submit_array(
+                self.launcher.submit_array(
                     job_name="llm_server",
                     cmd=server_cmd,
                     count=alloc_mode.gen.dp_size,
@@ -331,7 +332,7 @@ class LocalScheduler(Scheduler):
                 for i in range(alloc_mode.gen.world_size):
                     cmd = build_rpc_server_start_command(worker_ports[i])
 
-                    launcher.submit(
+                    self.launcher.submit(
                         job_name="rollout_worker",
                         cmd=cmd,
                         gpu=0,
@@ -370,7 +371,7 @@ class LocalScheduler(Scheduler):
 
             worker_ports = find_free_ports(alloc_mode.gen.world_size, (10000, 50000))
 
-            launcher.submit(
+            self.launcher.submit(
                 job_name="trainer",
                 cmd=f"torchrun --nnodes 1 --nproc-per-node {nprocs} "
                 f"--master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} "
