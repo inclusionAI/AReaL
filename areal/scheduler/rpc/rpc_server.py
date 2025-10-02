@@ -13,10 +13,16 @@ from areal.api.controller_api import DistributedBatch
 from areal.controller.batch import DistributedBatchMemory
 from areal.utils import logging
 
+from areal.utils.data import (
+    broadcast_tensor_container,
+    cycle_dataloader,
+    tensor_container_to,
+)
+
 logger = logging.getLogger("RPCServer")
 
 
-def process_input_to_distributed_batch(*args, **kwargs):
+def process_input_to_distributed_batch(to_device, *args, **kwargs):
     for i in range(len(args)):
         if isinstance(args[i], DistributedBatch):
             args = list(args)
@@ -26,6 +32,9 @@ def process_input_to_distributed_batch(*args, **kwargs):
     for k in list(kwargs.keys()):
         if isinstance(kwargs[k], DistributedBatch):
             kwargs[k] = kwargs[k].get_data()
+
+    args = tuple(tensor_container_to(list(args), to_device))
+    kwargs = tensor_container_to(kwargs, to_device)
 
     return args, kwargs
 
@@ -95,7 +104,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 method = getattr(EngineRPCServer.engine, action)
                 # NOTE: DO NOT print args here, args may be a very huge tensor
                 logger.info(f"RPC server calling engine method: {action}, {args=}, {kwargs=}")
-                args, kwargs = process_input_to_distributed_batch(*args, **kwargs)
+                args, kwargs = process_input_to_distributed_batch(EngineRPCServer.engine.device, *args, **kwargs)
                 logger.info(f"RPC server after process input to distributed batch: {args=}, {kwargs=}")
                 result = method(*args, **kwargs)
                 logger.info(f"RPC server engine method {action} done, result: {result}, processing output...")
