@@ -396,7 +396,7 @@ class LocalScheduler(Scheduler):
     # Other methods remain the same
     def create_engine(self, worker_id, engine_obj, *args, **kwargs):
         # launch engine rpc server on the worker
-        self.rpc_client.create_engine(worker_id, engine_obj, init_args)
+        self.rpc_client.create_engine(worker_id, engine_obj, *args, **kwargs)
 
     def call_engine(self, worker_id, method, *args, **kwargs):
         return self.rpc_client.call_engine(worker_id, method, *args, **kwargs)
