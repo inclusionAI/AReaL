@@ -7,7 +7,7 @@ import uuid
 from concurrent.futures import Future, ProcessPoolExecutor
 from datetime import datetime
 from threading import Lock
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import aiohttp
 import requests
@@ -16,7 +16,7 @@ import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
-from areal.api.engine_api import InferenceEngine
+from areal.api.engine_api import InferenceEngine, Scheduling
 from areal.api.io_struct import (
     ModelRequest,
     ModelResponse,
@@ -350,17 +350,28 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def submit(
         self,
-        data: Dict[str, Any],
+        data: Union[Dict[str, Any], List[Dict[str, Any]]],
         workflow: Optional[RolloutWorkflow] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ) -> None:
-        return self.workflow_executor.submit(
-            data,
-            workflow=workflow,
-            workflow_builder=workflow_builder,
-            should_accept=should_accept,
-        )
+        if isinstance(data, Dict):
+            return self.workflow_executor.submit(
+                data,
+                workflow=workflow,
+                workflow_builder=workflow_builder,
+                should_accept=should_accept,
+            )
+        else:
+            for item in data:
+                self.workflow_executor.submit(
+                    item,
+                    workflow=workflow,
+                    workflow_builder=workflow_builder,
+                    should_accept=should_accept,
+                )
+            return None
+
 
     def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
         return self.workflow_executor.wait(count, timeout=timeout)
@@ -381,7 +392,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def prepare_batch(
         self,
-        dataloader: StatefulDataLoader,
+        dataloader: Union[StatefulDataLoader, List[Dict[str, Any]]],
         workflow: Optional[RolloutWorkflow] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
@@ -400,6 +411,10 @@ class RemoteSGLangEngine(InferenceEngine):
     def resume(self):
         """Resume request submission for async rollout."""
         return self.workflow_executor.resume()
+
+    def get_scheduling_config(self) -> List[Scheduling]:
+        # 部署 launcher/sglang_server.py, local_scheduler 注入一个ENGINE_PORTS的端口环境变量,里面有两个端口
+        raise NotImplementedError()
 
 
 def update_weights_from_disk(
