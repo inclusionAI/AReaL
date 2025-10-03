@@ -5,7 +5,8 @@ N_GPU=2
 EXP_NAME=greso-dapo
 TRIAL_NAME=trial0
 FILE_ROOT=/data/yanglu/AReaL/tmp/areal/experiments
-ACTOR_PATH=/data/yanglu/model/Qwen/Qwen2.5-Math-7B
+# ACTOR_PATH=/data/yanglu/model/Qwen/Qwen2.5-Math-7B
+ACTOR_PATH=/data/yanglu/model/Qwen/Qwen2.5-1.5B-Instruct
 TRAIN_DATASET_PATH=/data/yanglu/dataset/greso
 VALID_DATASET_PATH=/data/yanglu/dataset/greso
 

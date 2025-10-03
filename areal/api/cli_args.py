@@ -590,7 +590,7 @@ class SGLangConfig:
     max_lora_rank: int | None = None
     lora_target_modules: List[str] | None = None
     lora_paths: List[str] | None = None
-    max_loaded_loras: int = 1
+    # max_loaded_loras: int = 1
     max_loras_per_batch: int = 1
     lora_backend: str = "triton"
     # logging

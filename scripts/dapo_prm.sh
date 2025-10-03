@@ -6,6 +6,7 @@ EXP_NAME=greso-dapo-clip-delta
 TRIAL_NAME=trial0
 FILE_ROOT=/data/yanglu/AReaL/tmp/areal/experiments
 ACTOR_PATH=/data/yanglu/model/Qwen/Qwen2.5-Math-7B
+# ACTOR_PATH=/data/yanglu/model/Qwen/Qwen2.5-1.5B-Instruct
 PRM_PATH=/data/yanglu/model/Qwen/Qwen2.5-Math-PRM-7B
 TRAIN_DATASET_PATH=/data/yanglu/dataset/greso
 VALID_DATASET_PATH=/data/yanglu/dataset/greso
@@ -17,7 +18,7 @@ python3 -m areal.launcher.local \
     --config examples/experimental/dapo/gsm8k_dapo.yaml \
     experiment_name="$EXP_NAME" \
     trial_name="$TRIAL_NAME" \
-    +tokenizer_path="$PRM_PATH" \
+    tokenizer_path="$PRM_PATH" \
     +prm_path="$PRM_PATH" \
     +prmconfig.reward_shaping_alpha=0.02 \
     total_train_epochs="$TOTAL_TRAIN_EPOCHS" \

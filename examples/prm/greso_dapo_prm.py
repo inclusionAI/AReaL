@@ -6,7 +6,7 @@ import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import GRPOConfig, load_expr_config
+from areal.api.cli_args import GRPOConfig, load_expr_config, PRMConfig
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
@@ -28,6 +28,7 @@ from areal.workflow.rlvr import RLVRWorkflow
 from areal.workflow.rlvr_prm import PRMRLVRWorkflow
 
 import requests
+import aiohttp
 
 from typing import TYPE_CHECKING, Optional
 from datasets import load_dataset
@@ -43,11 +44,11 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
     return int(process_results(completions, answer)[0])
 
 def gsm8k_reward_fn_prm(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    conversation_str = f"{prompt}<|im_start|>assistant\n{completions}<extra_0><|im_end|><|endoftext|>"
-    print(f"conversation str: {conversation_str}")
+    conversation_str = f"{prompt}"[:-len("<|endoftext|>")] + f"<|im_start|>assistant\n{completions}"[:-len("<|im_end|>")] + "<extra_0><|im_end|><|endoftext|>"
+    # print(f"conversation str: {conversation_str}")
     resp = requests.post("http://localhost:8001/score", json={"text": conversation_str})
-    prm_reward = resp.json()["reward"]
-    print(f"prm_reward: {prm_reward}")
+    # print(f"prm_reward: {resp.json()["reward"]}")
+    prm_reward = resp.json()["reward"][2:][0]
     return prm_reward
 
 def load_greso_dataset(
@@ -67,7 +68,7 @@ def load_greso_dataset(
         messages = [
             {
                 "role": "user",
-                "content": sample["messages"]["content"]
+                "content": sample["messages"][0]["content"]
                 + "\nAfter each intermediate result, end that line with exactly <extra_0>. Do not put any <extra_0> at the very end of the whole solution.",
             }
         ]
@@ -91,8 +92,8 @@ def load_greso_dataset(
 
 
 def main(args):
-    config, _ = load_expr_config(args, GRPOConfig)
-    config: GRPOConfig
+    config, _ = load_expr_config(args, PRMConfig)
+    config: PRMConfig
 
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
@@ -206,7 +207,7 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     recover_handler = RecoverHandler(config.recover, ft_spec)
