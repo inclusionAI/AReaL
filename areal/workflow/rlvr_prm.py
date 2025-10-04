@@ -45,7 +45,7 @@ class PRMRLVRWorkflow(RolloutWorkflow):
         self.dump_dir = dump_dir
         self.rollout_stat_scope = rollout_stat_scope
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
-        self.async_reward_fn_prm = AsyncRewardWrapper(reward_fn_prm, timeout_seconds=100)
+        self.async_reward_fn_prm = AsyncRewardWrapper(reward_fn_prm)
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
@@ -70,16 +70,17 @@ class PRMRLVRWorkflow(RolloutWorkflow):
         prompt_strs = []
         completions_strs = []
         rewards = []
-        prm_rewards = []
         result_rewards = []
+        prm_rewards = []
+        reward_masks = []
         seqlens = []
 
         results = []
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
-            # logprobs = [0.0] * resp.input_len + resp.output_logprobs
-            # loss_mask = [0] * resp.input_len + [1] * resp.output_len
-            # versions = [-1] * resp.input_len + resp.output_versions
+            logprobs = [0.0] * resp.input_len + resp.output_logprobs
+            loss_mask = [0] * resp.input_len + [1] * resp.output_len
+            versions = [-1] * resp.input_len + resp.output_versions
 
             prompt_str = self.tokenizer.decode(input_ids)
             completions_str = self.tokenizer.decode(resp.output_tokens)
@@ -93,77 +94,98 @@ class PRMRLVRWorkflow(RolloutWorkflow):
                 resp.output_tokens,
                 **data,
             )
-            prm_reward_steps = []
-            steps = re.split(re.escape("<extra_0>"), completions_str)
-            steps = [s.strip() for s in steps if s.strip()]
-            step_strs = []
-            for i, p in enumerate(steps, 1):
-                step_strs.append(" ".join(steps[:i]))
-            for step_str in step_strs:
-                prm_reward = await self.async_reward_fn_prm(
-                    prompt_str,
-                    step_str,
-                    resp.input_tokens,
-                    resp.output_tokens,
-                    # self.prm_model,
-                    # self.prm_tokenizer,
-                    **data,
-                )
-                prm_reward_steps.append(prm_reward)
+
+            # separate steps
+            full_str = self.tokenizer.decode(resp.output_tokens, clean_up_tokenization_spaces=False)
+            raw_lines = full_str.split("\n")
+            lines = [line for line in raw_lines if line.strip() != ""]
+            ends = []
+            pos = 0
+            line_i = 0
+            for raw_line in raw_lines:
+                if raw_line.strip() == "":
+                    pos += len(raw_line) + 1 
+                    continue
+                pos += len(raw_line)
+                ends.append(pos)
+                pos += 1  
+                line_i += 1
+            last_indices = [None] * len(lines)
+            cur_len = 0
+            seg_i = 0
+            for idx, tok in enumerate(resp.output_tokens):
+                piece = self.tokenizer.decode([tok], clean_up_tokenization_spaces=False)
+                cur_len += len(piece)
+                while seg_i < len(ends) and cur_len >= ends[seg_i]:
+                    last_indices[seg_i] = idx
+                    seg_i += 1
+                if seg_i >= len(ends):
+                    break
+            if last_indices and last_indices[-1] != len(resp.output_tokens) - 2:
+                last_indices[-1] = len(resp.output_tokens) - 2
+
+            steps_str = "<extra_0>".join([line_text for line_text in lines])
+            cr_pos = [resp.input_len+last_indice for last_indice in last_indices]
+
+            prm_reward = await self.async_reward_fn_prm(
+                prompt_str,
+                steps_str,
+                resp.input_tokens,
+                resp.output_tokens,
+                # self.prm_model,
+                # self.prm_tokenizer,
+                **data,
+            )
             
             # Log reward.
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=result_reward)
 
-            # print(f"prm_reward_steps: {type(prm_reward_steps)}, {prm_reward_steps}")
-            rewards.extend(prm_reward_steps)
-            prm_rewards.extend(prm_reward_steps)          
+            rewards.append(prm_reward)         
+            prm_rewards.append(prm_reward)
             result_rewards.append(result_reward)
 
-            # separate steps
-            EXTRA_ID = self.tokenizer.convert_tokens_to_ids('<extra_0>')
-            extra_pos = [0] + [i for i, t in enumerate(resp.output_tokens) if t == EXTRA_ID]
-            if not extra_pos or extra_pos[-1] != resp.output_len:
-                extra_pos.append(resp.output_len)
-            step_ranges = []
-            for start, end in zip(extra_pos[:-1], extra_pos[1:]):
-                step_ranges.append((start, end))
-            # print(f"extra_pos:{extra_pos}, resp.output_len:{resp.output_len}, step_ranges: {step_ranges}")
-            for step_idx, (start, end) in enumerate(step_ranges):
-                logprobs = [0.0] * resp.input_len + [0.0] * len(resp.output_logprobs)
-                loss_mask = [0] * resp.input_len + [0] * resp.output_len
-                versions = [-1] * resp.input_len + [-1] * len(resp.output_versions)
-                logprobs[start+resp.input_len:end+resp.input_len] = resp.output_logprobs[start:end]
-                loss_mask[start+resp.input_len:end+resp.input_len] = [1] * (end - start)
-                versions[start+resp.input_len:end+resp.input_len] = resp.output_versions[start:end]
-                # print(f"logprobs before: {[0.0] * resp.input_len + resp.output_logprobs}, logprobs after: {logprobs}")
-                # print(f"loss mask before: {[0] * resp.input_len + [1] * resp.output_len}, loss mask after: {loss_mask}")
-                # print(f"versions before: {[-1] * resp.input_len + resp.output_versions}, versions after: {versions}")
-                res = dict(
-                    # unsqueeze to add an additional batch dimension
-                    input_ids=torch.tensor(seq).unsqueeze(0),
-                    loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                    logprobs=torch.tensor(logprobs).unsqueeze(0),
-                    versions=torch.tensor(versions).unsqueeze(0),
-                    attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
-                    # reward
-                    rewards=torch.tensor([float(prm_reward_steps[step_idx])]),
-                )
-                results.append(res)
+            # step reward
+            dense_reward = torch.zeros(len(seq), dtype=torch.float)
+            # print(f"cr_pos: {cr_pos}, prm_reward: {prm_reward}")
+            dense_reward[cr_pos] = torch.tensor(prm_reward, dtype=torch.float)
+            reward_mask = torch.zeros(len(seq), dtype=torch.bool)
+            reward_mask[cr_pos] = True
+            reward_masks.append(reward_mask)
+
+            res = dict(
+                # unsqueeze to add an additional batch dimension
+                input_ids=torch.tensor(seq).unsqueeze(0),
+                loss_mask=torch.tensor(loss_mask).unsqueeze(0),
+                logprobs=torch.tensor(logprobs).unsqueeze(0),
+                versions=torch.tensor(versions).unsqueeze(0),
+                attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
+                # reward
+                rewards=dense_reward.unsqueeze(0),
+            )
+            results.append(res)
+        # print(f"original rewards: {results[0]["rewards"]}")
+        # print(f"avg_prm_reward: {sum(prm_rewards[0]) / len(prm_rewards[0])}")
+
         # clip mechanism
         if self.prmconfig.use_clip:
-            avg_prm_reward = sum(prm_rewards) / len(prm_rewards)
-            for i, val in enumerate(prm_rewards):
-                if val > avg_prm_reward:
-                    rewards[i] = 0
+            for res, reward_mask, prm_reward in zip(results, reward_masks, prm_rewards):
+                dense_reward = res["rewards"]
+                if isinstance(prm_reward, list):
+                    avg_prm_reward = sum(prm_reward) / len(prm_reward)
                 else:
-                    rewards[i] = rewards[i] - avg_prm_reward
+                    avg_prm_reward = prm_reward
+                gt_mean = (dense_reward > avg_prm_reward) & reward_mask
+                ls_mean = (dense_reward <= avg_prm_reward) & reward_mask
+                res["rewards"][gt_mean] = 0  
+                res["rewards"][ls_mean] -= avg_prm_reward
+        # print(f"rewards after clip: {results[0]["rewards"]}")
+
         # delta mechanism
         if self.prmconfig.use_delta:
-            for i, val in enumerate(rewards):
-                rewards[i] = self.prmconfig.reward_shaping_alpha * rewards[i] + result_rewards[i]
-        for res, r in zip(results, rewards):
-            res["rewards"] = torch.tensor([float(r)])
+            for i, res in enumerate(results):
+                res["rewards"] = self.prmconfig.reward_shaping_alpha * res["rewards"] + result_rewards[i]
 
+        # print(f"rewards after delta: {results[0]["rewards"]}")
         if self.dump_dir is not None:
             dump_path = os.path.join(self.dump_dir, str(version))
             await aiofiles.os.makedirs(dump_path, exist_ok=True)

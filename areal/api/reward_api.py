@@ -103,7 +103,7 @@ class AsyncRewardWrapper:
                 return cls._executors[executor_key]
         return None
 
-    async def __call__(self, *args, **kwargs) -> float:
+    async def __call__(self, *args, **kwargs):
         last_exception = None
 
         for attempt in range(self.max_retries + 1):

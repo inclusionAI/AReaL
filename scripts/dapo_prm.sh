@@ -26,7 +26,6 @@ python3 -m areal.launcher.local \
     cluster.n_nodes=1 \
     cluster.n_gpus_per_node="$N_GPU" \
     cluster.fileroot="$FILE_ROOT" \
-    +gconfig.top_p=0.7 \
     actor.path="$ACTOR_PATH" \
     actor.optimizer.lr=1e-6 \
     actor.optimizer.weight_decay=0.01 \

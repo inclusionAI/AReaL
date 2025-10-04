@@ -4,10 +4,10 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import uvicorn
 import torch.nn.functional as F
-import sys, os
-logfile = open("prm_server.log", "a", buffering=1)
-sys.stdout = logfile
-sys.stderr = logfile
+# import sys, os
+# logfile = open("prm_server.log", "a", buffering=1)
+# sys.stdout = logfile
+# sys.stderr = logfile
 
 # 配置
 MODEL_PATH = "/data/yanglu/model/Qwen/Qwen2.5-Math-PRM-7B"

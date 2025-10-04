@@ -9,7 +9,7 @@ from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config, PRMConfig
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
-from areal.engine.ppo.actor import FSDPPPOActor
+from areal.engine.ppo.actor import FSDPPPOActor, FSDPPPOActorDense
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
@@ -48,7 +48,7 @@ def gsm8k_reward_fn_prm(prompt, completions, prompt_ids, completion_ids, answer,
     # print(f"conversation str: {conversation_str}")
     resp = requests.post("http://localhost:8001/score", json={"text": conversation_str})
     # print(f"prm_reward: {resp.json()["reward"]}")
-    prm_reward = resp.json()["reward"][2:][0]
+    prm_reward = resp.json()["reward"]
     return prm_reward
 
 def load_greso_dataset(
@@ -65,14 +65,7 @@ def load_greso_dataset(
     dataset = load_dataset("parquet", data_dir=path, split=split)
 
     def process(sample):
-        messages = [
-            {
-                "role": "user",
-                "content": sample["messages"][0]["content"]
-                + "\nAfter each intermediate result, end that line with exactly <extra_0>. Do not put any <extra_0> at the very end of the whole solution.",
-            }
-        ]
-        return {"messages": messages, "answer": sample["answer"]}
+        return {"messages": sample["messages"], "answer": sample["answer"]}
     
     dataset = dataset.map(process)
 
@@ -104,7 +97,7 @@ def main(args):
     assert parallel_strategy is not None
 
     # Initialize train engine
-    actor = FSDPPPOActor(config=config.actor)
+    actor = FSDPPPOActorDense(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
     train_dataset = load_greso_dataset(
