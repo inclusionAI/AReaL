@@ -3,10 +3,10 @@ set -euo pipefail
 export CUDA_VISIBLE_DEVICES=0,1
 N_GPU=2
 EXP_NAME=greso-dapo-clip-delta
-TRIAL_NAME=trial0
+TRIAL_NAME=trial5
 FILE_ROOT=/data/yanglu/AReaL/tmp/areal/experiments
-ACTOR_PATH=/data/yanglu/model/Qwen/Qwen2.5-Math-7B
-# ACTOR_PATH=/data/yanglu/model/Qwen/Qwen2.5-1.5B-Instruct
+# ACTOR_PATH=/data/yanglu/model/Qwen/Qwen2.5-Math-7B
+ACTOR_PATH=/data/yanglu/model/Qwen/Qwen2.5-1.5B-Instruct
 PRM_PATH=/data/yanglu/model/Qwen/Qwen2.5-Math-PRM-7B
 TRAIN_DATASET_PATH=/data/yanglu/dataset/greso
 VALID_DATASET_PATH=/data/yanglu/dataset/greso

@@ -146,7 +146,7 @@ class PRMRLVRWorkflow(RolloutWorkflow):
 
             # step reward
             dense_reward = torch.zeros(len(seq), dtype=torch.float)
-            # print(f"cr_pos: {cr_pos}, prm_reward: {prm_reward}")
+            # print(f"cr_pos: {cr_pos}")
             dense_reward[cr_pos] = torch.tensor(prm_reward, dtype=torch.float)
             reward_mask = torch.zeros(len(seq), dtype=torch.bool)
             reward_mask[cr_pos] = True
@@ -165,6 +165,7 @@ class PRMRLVRWorkflow(RolloutWorkflow):
             results.append(res)
         # print(f"original rewards: {results[0]["rewards"]}")
         # print(f"avg_prm_reward: {sum(prm_rewards[0]) / len(prm_rewards[0])}")
+        # print(f"prm_reward: {prm_rewards[0]}, result_reward: {result_rewards[0]}")
 
         # clip mechanism
         if self.prmconfig.use_clip:
@@ -182,10 +183,25 @@ class PRMRLVRWorkflow(RolloutWorkflow):
 
         # delta mechanism
         if self.prmconfig.use_delta:
-            for i, res in enumerate(results):
-                res["rewards"] = self.prmconfig.reward_shaping_alpha * res["rewards"] + result_rewards[i]
-
+            for res, reward_mask in zip(results, reward_masks):
+                rewards_1d = res["rewards"].squeeze(0)
+                valid = rewards_1d[reward_mask]
+                new_v = valid.clone()
+                K = new_v.numel()
+                new_v[-1] = 0
+                if K > 1:
+                    new_v[:-2] = valid[:-2] - valid[1:-1]
+                out = rewards_1d.clone()
+                out[reward_mask] = new_v
+                res["rewards"] = out.unsqueeze(0) 
         # print(f"rewards after delta: {results[0]["rewards"]}")
+
+        # success reward
+        for res, result_reward in zip(results, result_rewards):
+            seq_len = res["rewards"].shape[1]
+            res["rewards"][:, seq_len-2] = result_reward
+        # print(f"rewards add success reward: {results[0]["rewards"]}")
+
         if self.dump_dir is not None:
             dump_path = os.path.join(self.dump_dir, str(version))
             await aiofiles.os.makedirs(dump_path, exist_ok=True)
