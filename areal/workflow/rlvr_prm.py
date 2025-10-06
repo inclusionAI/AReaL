@@ -45,7 +45,7 @@ class PRMRLVRWorkflow(RolloutWorkflow):
         self.dump_dir = dump_dir
         self.rollout_stat_scope = rollout_stat_scope
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
-        self.async_reward_fn_prm = AsyncRewardWrapper(reward_fn_prm)
+        self.async_reward_fn_prm = AsyncRewardWrapper(reward_fn_prm, timeout_seconds=100)
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
@@ -136,7 +136,11 @@ class PRMRLVRWorkflow(RolloutWorkflow):
                 # self.prm_tokenizer,
                 **data,
             )
-            
+            if not isinstance(prm_reward, list):
+                prm_reward = [prm_reward] * len(cr_pos)
+            if len(prm_reward) != len(cr_pos):
+                truncated_rewards = [result_reward] * (len(cr_pos)-len(prm_reward))
+                prm_reward.extend(truncated_rewards)
             # Log reward.
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=result_reward)
 
@@ -146,7 +150,8 @@ class PRMRLVRWorkflow(RolloutWorkflow):
 
             # step reward
             dense_reward = torch.zeros(len(seq), dtype=torch.float)
-            # print(f"cr_pos: {cr_pos}")
+            # print(f"cr_pos: {cr_pos}, len(seq): {len(seq)}")
+            assert len(prm_reward) == len(cr_pos), f"Mismatch: prm_reward={len(prm_reward)}, cr_pos={len(cr_pos)}, len(seq)={len(seq)}, {prm_reward}, \n{steps_str}"
             dense_reward[cr_pos] = torch.tensor(prm_reward, dtype=torch.float)
             reward_mask = torch.zeros(len(seq), dtype=torch.bool)
             reward_mask[cr_pos] = True
