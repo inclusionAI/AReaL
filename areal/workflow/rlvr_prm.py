@@ -139,8 +139,8 @@ class PRMRLVRWorkflow(RolloutWorkflow):
             if not isinstance(prm_reward, list):
                 prm_reward = [prm_reward] * len(cr_pos)
             if len(prm_reward) != len(cr_pos):
-                truncated_rewards = [result_reward] * (len(cr_pos)-len(prm_reward))
-                prm_reward.extend(truncated_rewards)
+                # print(f"Mismatch: prm_reward={len(prm_reward)}, cr_pos={len(cr_pos)}")
+                continue
             # Log reward.
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=result_reward)
 
