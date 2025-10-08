@@ -10,6 +10,7 @@ import yaml
 uvloop.install()
 from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
+from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
 
 from areal.platforms import current_platform
@@ -1148,6 +1149,8 @@ def parse_cli_args(argv: List[str]):
     assert config_file.exists(), f"Config file {config_file} does not exist."
     # hydra only recognize relative paths
     relpath = Path(os.path.relpath(str(config_file), Path(__file__).parent.absolute()))
+    if GlobalHydra.instance().is_initialized():
+        GlobalHydra.instance().clear()
     hydra_init(config_path=str(relpath.parent), job_name="app", version_base=None)
     cfg = hydra_compose(
         config_name=str(relpath.name).split(".yaml")[0],
