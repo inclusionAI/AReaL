@@ -484,3 +484,249 @@ def test_gsm8k_liteppo(tmp_path_factory):
         )
     )
     assert success, f"GSM8K LitePPO example failed, return_code={return_code}"
+
+
+@pytest.mark.multi_gpu
+def test_gsm8k_ppo(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+
+    example_file = "examples/math/gsm8k_ppo.py"
+    config_name = "examples/math/gsm8k_ppo.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+fsdp:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=1024",
+            "critic.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+            f"critic.path={model_path}",
+        )
+    )
+    assert success, f"GSM8K PPO example failed, return_code={return_code}"
+
+
+@pytest.mark.multi_gpu
+def test_gsm8k_grpo_lora(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+
+    example_file = "examples/lora/gsm8k_grpo_lora.py"
+    config_name = "examples/lora/gsm8k_grpo_lora.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+fsdp:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+        )
+    )
+    assert success, f"GSM8K GRPO LoRA example failed, return_code={return_code}"
+
+
+@pytest.mark.multi_gpu
+def test_boba_grpo(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-Math-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-Math-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/boba_math/train.jsonl"
+    if not os.path.exists(dataset_path):
+        pytest.skip("Boba Math dataset not available")
+
+    example_file = "examples/math/boba_grpo.py"
+    config_name = "examples/math/boba_grpo_vllm.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=vllm:d1+fsdp:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+            f"tokenizer_path={model_path}",
+        )
+    )
+    assert success, f"Boba GRPO example failed, return_code={return_code}"
+
+
+@pytest.mark.multi_gpu
+def test_multi_turn_math(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+
+    example_file = "examples/multi-turn-math/train.py"
+    config_name = "examples/multi-turn-math/config.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+fsdp:d1",
+            "gconfig.n_samples=1",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+            "n_trajs=1",
+            "max_turns=2",
+        )
+    )
+    assert success, f"Multi-turn Math example failed, return_code={return_code}"
+
+
+@pytest.mark.gpu
+def test_hhrlhf_rw(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen3-0.6B"
+    dataset_path = "/storage/openpsi/data/hhrlhf"
+    if not os.path.exists(dataset_path):
+        dataset_path = "Anthropic/hh-rlhf"
+
+    example_file = "examples/alignment/hhrlhf_rw.py"
+    config_name = "examples/alignment/hhrlhf_rw.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=d1",
+            "model.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=1",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"model.path={model_path}",
+        )
+    )
+    assert success, f"HH-RLHF Reward Modeling example failed, return_code={return_code}"
+
+
+@pytest.mark.multi_gpu
+def test_tir_grpo(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+
+    example_file = "examples/tir/train_tir.py"
+    config_name = "examples/tir/tir_math_config.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+fsdp:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"valid_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+        )
+    )
+    assert success, f"TIR GRPO example failed, return_code={return_code}"
+
+
+@pytest.mark.multi_gpu
+def test_search_agent_deepresearch(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/tongyi_deepresearch"
+    if not os.path.exists(dataset_path):
+        pytest.skip("Tongyi DeepResearch dataset not available")
+
+    example_file = "examples/search-agent/tongyi_deepresearch/train.py"
+    config_name = "examples/search-agent/tongyi_deepresearch/config.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+megatron:d1",
+            "gconfig.n_samples=2",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=1024",
+            f"train_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+            "n_trajs=1",
+            "max_turns=2",
+        )
+    )
+    assert (
+        success
+    ), f"Search Agent DeepResearch example failed, return_code={return_code}"
