@@ -26,6 +26,7 @@ from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
+from areal.utils.launcher import wait_llm_server_addrs
 
 RID_CACHE_SIZE = 128
 
@@ -83,6 +84,13 @@ class RemoteSGLangEngine(InferenceEngine):
 
         if addr:
             self.addresses = addr if isinstance(addr, list) else [addr]
+        elif (
+            self.config.experiment_name is not None
+            and self.config.trial_name is not None
+        ):
+            self.addresses = wait_llm_server_addrs(
+                self.config.experiment_name, self.config.trial_name
+            )
         else:
             # When addr is not provided, fallback to reading addrs from env var
             self.addresses = os.getenv("AREAL_LLM_SERVER_ADDRS").split(",")

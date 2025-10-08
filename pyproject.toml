@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "build>=1.2.1"]
+requires = [ "setuptools<80,>=77.0.3", "build>=1.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -49,6 +49,7 @@ dependencies = [
     "megatron-core==0.13.1",
     "mbridge==0.13.0",
     "peft",
+    "qwen_agent",
 
     # Scientific computing
     "scipy",
@@ -78,6 +79,8 @@ dependencies = [
     "pybase64",
     "msgspec",
     "openai==1.99.6",
+    "dotenv",
+    "json5",
 
     # Monitoring and logging
     "wandb",
@@ -117,7 +120,7 @@ dependencies = [
     # Build and packaging tools
     "build>=1.2.1",
     "wheel>=0.43.0",
-    "setuptools>=62.3.0,<75.9",
+    "setuptools<80,>=77.0.3",
     "cookiecutter>2.1.1",
 
     # System utilities

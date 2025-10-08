@@ -101,7 +101,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   type: rl
-  path: path to ASearcher-LRM-35k.jsonl
+  path: inclusionAI__Asearcher-train-data/ASearcher-LRM-35k.jsonl
 
 # Utilities
 saver:

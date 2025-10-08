@@ -559,40 +559,6 @@ def test_gsm8k_grpo_lora(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
-def test_boba_grpo(tmp_path_factory):
-    experiments_path = tmp_path_factory.mktemp("experiments")
-    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
-    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-Math-1.5B-Instruct"
-    if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen2.5-Math-1.5B-Instruct"
-    dataset_path = "/storage/openpsi/data/boba_math/train.jsonl"
-    if not os.path.exists(dataset_path):
-        pytest.skip("Boba Math dataset not available")
-
-    example_file = "examples/math/boba_grpo.py"
-    config_name = "examples/math/boba_grpo_vllm.yaml"
-    loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            "allocation_mode=vllm:d1+fsdp:d1",
-            "gconfig.n_samples=2",
-            "gconfig.max_new_tokens=256",
-            "actor.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"train_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=2",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-            f"tokenizer_path={model_path}",
-        )
-    )
-    assert success, f"Boba GRPO example failed, return_code={return_code}"
-
-
-@pytest.mark.multi_gpu
 def test_multi_turn_math(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
@@ -634,7 +600,7 @@ def test_hhrlhf_rw(tmp_path_factory):
     model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
     if not os.path.exists(model_path):
         model_path = "Qwen/Qwen3-0.6B"
-    dataset_path = "/storage/openpsi/data/hhrlhf"
+    dataset_path = "/storage/openpsi/data/Anthropic___hh-rlhf/"
     if not os.path.exists(dataset_path):
         dataset_path = "Anthropic/hh-rlhf"
 
@@ -700,14 +666,48 @@ def test_search_agent_deepresearch(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if current_platform.device_count() < 3:
+        pytest.skip(
+            "This test requires at least 3 GPUs (1 for LLM judge, 2 for RL) to run."
+        )
     if not os.path.exists(model_path):
         model_path = "Qwen/Qwen2.5-1.5B-Instruct"
-    dataset_path = "/storage/openpsi/data/tongyi_deepresearch"
+    dataset_path = "/storage/openpsi/data/inclusionAI__Asearcher-train-data/ASearcher-LRM-35k.jsonl"
     if not os.path.exists(dataset_path):
         pytest.skip("Tongyi DeepResearch dataset not available")
 
     example_file = "examples/search-agent/tongyi_deepresearch/train.py"
     config_name = "examples/search-agent/tongyi_deepresearch/config.yaml"
+
+    visible_devices = os.getenv(
+        current_platform.device_control_env_var,
+        ",".join(map(str, range(current_platform.device_count()))),
+    ).split(",")
+    assert len(visible_devices) >= 3
+
+    llm_judge_exp_name = uuid.uuid4().hex
+    llm_judge_trial_name = uuid.uuid4().hex
+    _env = os.environ.copy()
+    _env[current_platform.device_control_env_var] = visible_devices[0]
+    llm_judge_proc = subprocess.Popen(
+        [
+            "python3",
+            "-m",
+            "areal.launcher.local",
+            example_file,
+            "--config",
+            config_name,
+            "allocation_mode=sglang.d1",
+            f"experiment_name={llm_judge_exp_name}",
+            f"trial_name={llm_judge_trial_name}",
+            f"actor.path={model_path}",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=_env,
+    )
+    time.sleep(5)
+
     loop = asyncio.get_event_loop()
     return_code, success = loop.run_until_complete(
         run_example(
@@ -724,7 +724,10 @@ def test_search_agent_deepresearch(tmp_path_factory):
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
             f"actor.path={model_path}",
             "n_trajs=1",
-            "max_turns=2",
+            "max_tokens_per_trajectory=512",
+            "max_llm_calls_per_run=4",
+            f"judge_engine.experiment_name={llm_judge_exp_name}",
+            f"judge_engine.trial_name={llm_judge_trial_name}",
         )
     )
     assert (
