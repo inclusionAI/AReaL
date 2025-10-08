@@ -15,6 +15,7 @@ LOCAL_CACHE_DIR = "/tmp/areal"
 PYTORCH_KERNEL_CACHE_PATH = (
     f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/torch/kernels/"
 )
+VLLM_CACHE_PATH = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/vllm/"
 TRITON_CACHE_PATH = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/triton/"
 PYTHONPATH = os.pathsep.join(
     filter(
@@ -26,11 +27,13 @@ PYTHONPATH = os.pathsep.join(
     )
 )
 os.makedirs(PYTORCH_KERNEL_CACHE_PATH, exist_ok=True)
+os.makedirs(VLLM_CACHE_PATH, exist_ok=True)
 os.makedirs(TRITON_CACHE_PATH, exist_ok=True)
 BASE_ENVIRONS = {
     "TOKENIZERS_PARALLELISM": "true",
     "PYTORCH_KERNEL_CACHE_PATH": PYTORCH_KERNEL_CACHE_PATH,
     "TRITON_CACHE_DIR": TRITON_CACHE_PATH,
+    "VLLM_CACHE_PATH": VLLM_CACHE_PATH,
     "CUDA_DEVICE_MAX_CONNECTIONS": "1",
     "PYTHONPATH": PYTHONPATH,
 }
@@ -48,7 +51,6 @@ NA132_ENVIRONS = {
     "NCCL_DEBUG": "WARN",
     "NCCL_DEBUG_SUBSYS": "INIT,TUNING,GRAPH",
 }
-LLM_SERVER_WAIT_TIMEOUT_SECONDS = 360
 
 
 def get_env_vars(
@@ -103,7 +105,8 @@ class JobInfo:
 def wait_llm_server_addrs(
     experiment_name: str,
     trial_name: str,
-    n_rollout_servers: int,
+    n_rollout_servers: int = 1,
+    timeout: int | None = 360,
 ):
     # Get rollout nodes, find the hosts
     name = names.gen_servers(experiment_name, trial_name)
@@ -117,7 +120,7 @@ def wait_llm_server_addrs(
             break
 
         time.sleep(1)
-        if time.perf_counter() - start > LLM_SERVER_WAIT_TIMEOUT_SECONDS:
+        if timeout is not None and time.perf_counter() - start > timeout:
             raise TimeoutError(
                 f"Timeout waiting for rollout servers to be ready. "
                 f"Expected {n_rollout_servers} servers, found {len(rollout_addrs)}."

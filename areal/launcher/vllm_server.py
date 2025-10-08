@@ -37,6 +37,10 @@ def launch_server_cmd(command: str, custom_env: dict | None = None) -> subproces
     triton_cache_path = _env.get("TRITON_CACHE_PATH", TRITON_CACHE_PATH)
     unique_triton_cache_path = os.path.join(triton_cache_path, str(uuid.uuid4()))
     _env["TRITON_CACHE_PATH"] = unique_triton_cache_path
+    # To avoid vllm compile cache conflict
+    vllm_cache_path = _env.get("VLLM_CACHE_ROOT")
+    if vllm_cache_path:
+        _env["VLLM_CACHE_ROOT"] = os.path.join(vllm_cache_path, str(uuid.uuid4()))
     if custom_env is not None:
         _env.update(custom_env)
     return subprocess.Popen(

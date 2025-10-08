@@ -117,10 +117,6 @@ class BaseHFEngine(TrainEngine):
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         backend = current_platform.communication_backend
-        if current_platform.communication_backend == "nccl":
-            # Required by NCCL weight update group for SGLang
-            os.environ["NCCL_CUMEM_ENABLE"] = "0"
-            os.environ["NCCL_NVLS_ENABLE"] = "0"
         if not dist.is_initialized():
             # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
             # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
