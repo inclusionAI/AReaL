@@ -42,9 +42,9 @@ def mock_padded_llm_data():
     )
 
 
-QWEN3_PATH = "/storage/openpsi/models/Qwen__Qwen3-1.7B/"
+QWEN3_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(QWEN3_PATH):
-    QWEN3_PATH = "Qwen/Qwen3-1.7B"
+    QWEN3_PATH = "Qwen/Qwen3-0.6B"
 QWEN25_PATH = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B/"
 if not os.path.exists(QWEN25_PATH):
     QWEN25_PATH = "Qwen/Qwen2.5-1.5B"
@@ -86,7 +86,6 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
         padded_logits = engine.model(
             input_ids=padded_input["input_ids"],
             attention_mask=padded_input["attention_mask"],
-            position_ids=padded_input["position_ids"],
         ).logits
         seqlens = padded_input["attention_mask"].sum(1)
         x1 = []
@@ -101,6 +100,7 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
         assert x1.shape == x2.shape, (x1.shape, x2.shape)
 
         assert_close(x1, x2, atol=2e-1, rtol=2e-1)
+    engine.destroy()
 
 
 QWEN25_VL_PATH = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
@@ -266,3 +266,4 @@ def test_vlm_consistency(model_path):
 
         assert x1.shape == x2.shape, f"Shape mismatch: {x1.shape} vs {x2.shape}"
         assert_close(x1, x2, atol=2e-1, rtol=2e-1)
+    engine.destroy()

@@ -320,6 +320,7 @@ class BaseHFEngine(TrainEngine):
 
     def prepare_mb_list(self, input_: Dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
+        input_ = input_.copy()
 
         if is_qwen2_vl_model(self.model_config.model_type):
             # Create the special t,h,w position IDs for qwen 2.5 VL

@@ -15,16 +15,19 @@ from areal.api.io_struct import WeightUpdateMeta
 from areal.utils import network
 from areal.utils.data import get_batch_size
 from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.pkg_version import is_available
 
 EXPR_NAME = "test_vllm_engine"
 TRIAL_NAME = "trial_0"
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen2-0.5B"
+    MODEL_PATH = "Qwen/Qwen3-0.6B"
 PORT, DIST_PORT = network.find_free_ports(2)
 HOST = network.gethostip()
 # set a large timeout since we may need to download the model from hub
 RUN_SERVER_TIMEOUT = 180
+
+IS_VLLM_INSTALLED = is_available("vllm")
 
 
 def check_server_health(base_url):
@@ -74,6 +77,9 @@ def _dummy_reward_fn(*args, **kwargs):
     return 1.0
 
 
+@pytest.mark.skipif(
+    not IS_VLLM_INSTALLED, reason="Skip the test because vllm is not installed."
+)
 @pytest.mark.parametrize("n_samples", [1, 2, 4])
 def test_remote_vllm_rollout(vllm_server, n_samples):
     from areal.engine.vllm_remote import RemotevLLMEngine
@@ -111,6 +117,9 @@ def test_remote_vllm_rollout(vllm_server, n_samples):
     engine.destroy()
 
 
+@pytest.mark.skipif(
+    not IS_VLLM_INSTALLED, reason="Skip the test because vllm is not installed."
+)
 @pytest.mark.parametrize("ofp", [1, 4, 16])
 @pytest.mark.parametrize("bs", [2, 4])
 @pytest.mark.parametrize("n_samples", [2, 1])
@@ -164,6 +173,9 @@ def test_remote_vllm_staleness_control(vllm_server, bs, ofp, n_samples):
     engine.destroy()
 
 
+@pytest.mark.skipif(
+    not IS_VLLM_INSTALLED, reason="Skip the test because vllm is not installed."
+)
 def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, vllm_server):
     # setup FSDP engine
     from areal.api.cli_args import OptimizerConfig, TrainEngineConfig

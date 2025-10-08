@@ -20,9 +20,9 @@ from areal.utils import network
 
 EXPR_NAME = "test_fsdp_engine_nccl"
 TRIAL_NAME = "trial_nccl"
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen2-0.5B"
+    MODEL_PATH = "Qwen/Qwen3-0.6B"
 PORT = 13998
 DIST_PORT = 15998
 GROUP_NAME = "test_nccl_group"

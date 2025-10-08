@@ -181,9 +181,9 @@ def test_gsm8k_grpo(tmp_path_factory):
 def test_gsm8k_sft(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
-    model_path = "/storage/openpsi/models/Qwen__Qwen3-1.7B"
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen3-1.7B"
+        model_path = "Qwen/Qwen3-0.6B"
     dataset_path = "/storage/openpsi/data/gsm8k"
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
@@ -352,9 +352,9 @@ def test_gsm8k_grpo_megatron(tmp_path_factory):
 def test_gsm8k_sft_megatron(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
-    model_path = "/storage/openpsi/models/Qwen__Qwen3-1.7B"
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen3-1.7B"
+        model_path = "Qwen/Qwen3-0.6B"
     dataset_path = "/storage/openpsi/data/gsm8k"
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
