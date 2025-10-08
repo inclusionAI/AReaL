@@ -49,7 +49,7 @@ def test_sft(tmp_path: str):
 
     cmd(
         f"cluster.fileroot={tmp_path}",
-        config=os.path.join(base_dir, f"config.yaml"),
+        config=os.path.join(tmp_path, "config", "config.yaml"),
         _err=sys.stderr,
         _out=sys.stdout,
         _env=os.environ,
