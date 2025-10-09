@@ -26,7 +26,7 @@ rollout:
   enable_rollout_tracing: false
 
 gconfig:
-  n_samples: 4
+  n_samples: 1
   min_new_tokens: 0
   max_new_tokens: 512
   greedy: false
@@ -53,8 +53,10 @@ actor:
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
   backend: fsdp
-  group_size: ${gconfig.n_samples}
+  group_size: ${n_trajs}
   eps_clip: 0.4
+  eps_clip_higher: 0.6
+  c_clip: 2.0
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
   reward_bias: -0.5
@@ -63,11 +65,14 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
-  dynamic_sampling: false
+  dynamic_sampling: true
+  overlong_reward_penalty: false
+  overlong_tokens: 64
+  overlong_penalty_factor: 1.0
   adv_norm:
     mean_level: group
     std_level: group
-    group_size: ${gconfig.n_samples}
+    group_size: ${n_trajs}
   max_new_tokens: ${gconfig.max_new_tokens}
 
 ref:
@@ -149,3 +154,6 @@ launcher:
   inference_server_mem_per_gpu: 32768
   trainer_cpus_per_gpu: 4
   trainer_mem_per_gpu: 32768
+
+# AVoyager workflow settings
+n_trajs: 4

@@ -71,16 +71,13 @@ class AVoyagerWorkflow(RolloutWorkflow):
         self,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
-        dataset_path: str,
         processor: AutoProcessor = None,
         dump_dir: str | None = None,
-        max_turns: int = 128,
-        force_turns: int = 4,
+        max_turns: int = 12,
         n_trajs: int = 1,
         voyager_client_types: list = ["image-grounding"],
         topk: int = 10,
         max_tokens: int = 30000,
-        judge_engine: RemoteSGLangEngine | None = None,
     ):
         self.gconfig = gconfig
         self.gconfig.n_samples = 1
@@ -92,14 +89,12 @@ class AVoyagerWorkflow(RolloutWorkflow):
             os.makedirs(self.dump_dir, exist_ok=True)
 
         # Search hyper-parameters
-        self.force_turns = force_turns
         self.max_turns = max_turns
         self.n_trajs = n_trajs
         self.topk = topk
         self.voyager_client_types = voyager_client_types
 
         self.toolbox = VoyageToolBox(voyage_client_types=voyager_client_types)
-        self.judge_client = ArealOpenAI(engine=judge_engine, tokenizer= tokenizer)
     
     async def arun_episode(self, engine, data):
         '''
@@ -135,19 +130,15 @@ class AVoyagerWorkflow(RolloutWorkflow):
             save_trajs_path = os.path.join(self.dump_dir, str(version), f"{qid}/ID.json")
 
         client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer, processor=self.processor)
-        judge_client = self.judge_client
 
         # Collect trajectories 
         trajs = await asyncio.gather(*[run_agent(client=client, 
-                                                 judge_client=judge_client,
                                                  tokenizer=self.tokenizer,
                                                  data=data,
                                                  toolbox=self.toolbox,
                                                  processor=self.processor,
                                                  max_turns=self.max_turns,
-                                                 force_turns=self.force_turns,
                                                  topk=self.topk,
-                                                 force_valid=True,
                                                  max_tokens=self.max_tokens,
                                                  save_path=save_trajs_path.replace("ID.json", f"{i}.json") if save_trajs_path is not None else None,
                                                  rank=i
@@ -200,15 +191,9 @@ class AVoyagerWorkflow(RolloutWorkflow):
 @dataclass
 class AgentRLConfig(GRPOConfig):
     max_turns: int = field(
-        default=128,
+        default=12,
         metadata={
             "help": "maximum number of turns for search agent"
-        }
-    )
-    force_turns: int = field(
-        default=4,
-        metadata={
-            "help": "minimum number of turns for search agent"
         }
     )
     n_trajs: int = field(
@@ -242,7 +227,6 @@ class AgentRLConfig(GRPOConfig):
             "help": "Keys of log stats for agent trajectories"
         },
     )
-    judge_engine: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
 
 def main(args):
     config, _ = load_expr_config(args, AgentRLConfig)
@@ -278,10 +262,6 @@ def main(args):
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
-    # Initialize judge inference engine
-    judge_engine = RemoteSGLangEngine(config.judge_engine)
-    judge_engine.initialize(train_data_parallel_size=parallel_strategy.dp_size)
-
     actor.initialize(None, ft_spec)
     ref = None
 
@@ -308,14 +288,11 @@ def main(args):
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
-        dataset_path=config.train_dataset.path,
         max_turns=config.max_turns,
-        force_turns=config.force_turns,
         n_trajs=config.n_trajs,
         voyager_client_types=config.voyager_client_type,
         topk=config.topk,
         max_tokens=config.gconfig.max_new_tokens,
-        judge_engine=judge_engine,
     )
 
     # Run training.

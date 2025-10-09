@@ -3,20 +3,17 @@ import uuid
 from typing import Dict, List, Any, Optional
 from transformers import PreTrainedTokenizerFast, AutoProcessor
 from AVoyager.train.constants import TOOL_CROP_SYSTEM_PROMPT
-from areal.utils.image import get_multimodal_input_ids_len, load_image
+from areal.utils.image import get_multimodal_input_ids_len, load_image, image2base64, get_image_token
 from AVoyager.utils.reward import compute_score
 
 class AReaLVOYAGEReasoningAgentV1:
     
     def __init__(self,
-                 max_turns: int = 128,
-                 force_turns: int = 4,
+                 max_turns: int = 12,
                  topk: int = 10,
-                 force_valid: bool = True):
+                 ):
 
         self.max_turns = max_turns
-        self.force_turns = force_turns
-        self.force_valid = force_valid
         self.topk = topk
         # 保持与原agent相同的属性名
         self.stop = ["<|im_end|>", "<|endoftext|>"]
@@ -32,8 +29,8 @@ class AReaLVOYAGEReasoningAgentV1:
 
         return None
       
-    def get_thought_from_text(self, text: str) -> Optional[str]:
-        pattern = r'<thought>(.*?)</thought>'
+    def get_think_from_text(self, text: str) -> Optional[str]:
+        pattern = r'<think>(.*?)</think>'
         matches = re.findall(pattern, text, re.DOTALL)
         if matches:
             return "<think>" + matches[-1].strip() + "</think>"
@@ -150,57 +147,90 @@ class AReaLVOYAGEReasoningAgentV1:
                             continue
                 
                 
-                #初始情形，使用初始prompt
-                # input_text = "".join([h["text"] for h in process["history"]])
+                # 初始情形：构造标准 messages，避免二次模板化
                 history = ""
                 for idx, h in enumerate(process["history"]):
                     history += h.get("short_info_str", h.get("text", ""))
                 if len(history) > 25000:
                     history = history[-25000:]
 
-                if "images" in process and len(process["images"]) > 0 and processor is not None:
-                    messages = [{"role": "system", "content": TOOL_CROP_SYSTEM_PROMPT}]
-                    messages.append({"role": "user", "content": process["question"]})
-                    messages.append({"role": "assistant", "content": history})
-                else:
-                    messages = [{"role": "user", "content": process["question"] + "\n\n" + history}]
-                # prompt = ASearcherReasoningPrompts.THINK_AND_ACT_PROMPT.format(question=process["question"], history=history)
-                input_text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False) + process.get("cache_gen_text", "")
-                # input_text = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True, tokenize=False) + process.get("cache_gen_text", "")
-                # print(f"Generate Act for Qid {process['id']}", len(tokenizer(input_text, add_special_tokens=False)["input_ids"]), len([h for h in process["history"] if h["type"] == "documents"]), len([h for h in process["history"] if h["type"] == "act"]), flush=True)
+                user_text = process["question"] + "\n\n" + history
+                messages = []
+                # 有图像并且具备多模处理器时，加入系统指令
+                if processor is not None and len(process.get("images", [])) > 0:
+                    messages.append({"role": "system", "content": TOOL_CROP_SYSTEM_PROMPT})
+
+                # 将文本与所有观察图像打包为一个 user 消息的 parts，并为每张图添加标签，明确 observation_i 对应关系
+                parts = []
+                images_urls = []
+                if processor is not None:
+                    for img in process.get("images", []) or []:
+                        if isinstance(img, str):
+                            url = img if img.startswith("data:") else f"data:image/jpeg;base64,{img}"
+                            images_urls.append(url)
+                        elif isinstance(img, (bytes, bytearray)):
+                            from io import BytesIO
+                            from PIL import Image as PILImage
+                            try:
+                                _pil = PILImage.open(BytesIO(img)).convert("RGB")
+                                b64 = image2base64(_pil)
+                                b64 = b64[0] if isinstance(b64, list) else b64
+                                images_urls.append(f"data:image/jpeg;base64,{b64}")
+                            except Exception:
+                                pass
+                # 先追加主问题与历史
+                parts.append({"type": "input_text", "text": user_text})
+                # 为每张图添加一个说明文本 + 图像，保证占位符与说明绑定
+                for idx, url in enumerate(images_urls):
+                    label = "Original image:" if idx == 0 else f"Observation {idx}:"
+                    parts.append({"type": "input_text", "text": label})
+                    parts.append({"type": "input_image", "image_url": url})
+
+                messages.append({"role": "user", "content": parts})
 
                 #超过轮数或者token数，直接回答
                 if any([
                     len([h for h in process["history"] if h["type"] == "grounding"]) >= 20,
-                    len([h for h in process["history"] if h["type"] == "act"]) >= self.force_turns,
+                    len([h for h in process["history"] if h["type"] == "act"]) >= self.max_turns,
                     process.get("phase", "tool_call") == "answer",
                     ]):
                     process["phase"] = "answer"
-                    print(f"Direct Generate Answer for Qid {process['id']}", len(tokenizer(input_text, add_special_tokens=False)["input_ids"]), len([h for h in process["history"] if h["type"] == "act"]), flush=True)
-                    if "images" in process and len(process["images"]) > 0 and processor is not None:
-                        messages = [{"role": "system", "content": TOOL_CROP_SYSTEM_PROMPT}]
-                        messages.append({"role": "user", "content": process["question"]})
-                        messages.append({"role": "assistant", "content": history})
-                    else:
-                        messages = [{"role": "user", "content": process["question"] + "\n\n" + history}]
-                # if self.force_valid:
-                    # prompt = prompt.replace('4. If you find information contradicting context of the question, you should point out that the question is invalid and the incorrect information in the question.', "4. You should find the most likely answer even when conflicting information is founded.")
-                input_text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False) + process.get("cache_gen_text", "")
+                    print(
+                        f"Direct Generate Answer for Qid {process['id']}",
+                        len([h for h in process["history"] if h["type"] == "act"]),
+                        flush=True,
+                    )
 
-                # print("Query Input Length (llm):", process["id"], len(tokenizer(input_text, add_special_tokens=False)["input_ids"]),  len([h for h in process["history"] if h["type"] == "documents"]), len([h for h in process["history"] if h["type"] == "act"]), flush=True)
-                if get_multimodal_input_ids_len(text=process["question"], tokenizer=tokenizer, images=process.get("images"), processor=processor) > 32000 or self.get_answer_from_text(process["history"][-1].get("text", "")) is not None:
+                # 估算与发送一致的长度（文本 + 图像占位符）
+                placeholder = get_image_token(processor) if processor is not None else ""
+                text_with_placeholders = user_text
+                if len(images_urls) > 0:
+                    text_with_placeholders += f" Original image: {placeholder}"
+                for idx in range(1, len(images_urls)):
+                    text_with_placeholders += f" Observation {idx}: {placeholder}"
+                try:
+                    prompt_ids = tokenizer.apply_chat_template(
+                        ([{"role": "system", "content": TOOL_CROP_SYSTEM_PROMPT}] if (processor is not None and len(images_urls) > 0) else [])
+                        + [{"role": "user", "content": text_with_placeholders}],
+                        add_generation_prompt=True,
+                        tokenize=True,
+                    )
+                    approx_query_len = len(prompt_ids)
+                except Exception:
+                    approx_query_len = get_multimodal_input_ids_len(text=user_text, tokenizer=tokenizer, images=process.get("images"), processor=processor)
+
+                if approx_query_len > 32000 or self.get_answer_from_text(process["history"][-1].get("text", "")) is not None:
                     print("process is done (1)", process["id"])
                     process["running"] = False
                     continue
-                
-                query_len = get_multimodal_input_ids_len(text=input_text, tokenizer=tokenizer, images=process.get("images"), processor=processor)
+
+                query_len = approx_query_len
                 process["max_new_tokens"] = max(0, 31000 - query_len)
                 queries.append(dict(
-                    type="llm", 
+                    type="llm",
                     sampling=dict(stop=self.stop, max_new_tokens=process.get("max_new_tokens", 4096)),
                     query_len=query_len,
-                    prompt=input_text, 
-                    images=process.get("images", [])
+                    messages=messages,
                 ))
                 process.pop("max_new_tokens")
         
@@ -223,17 +253,30 @@ class AReaLVOYAGEReasoningAgentV1:
                     if isinstance(r, list) and len(r) == 1:
                         r = r[0]
                     if r["status"] == "success":
+                        # 将裁剪得到的新图片加入全局 images 列表，供后续多轮对齐
+                        try:
+                            if r.get("image") is not None:
+                                b64 = image2base64(r["image"])  # list or str
+                                b64 = b64[0] if isinstance(b64, list) else b64
+                                if "images" not in process:
+                                    process["images"] = []
+                                process["images"].append(b64)
+                        except Exception:
+                            pass
+                        # 计算当前 action 与 observation 序号
+                        action_count = len([h for h in process["history"] if h.get("type") == "act"])
+                        obs_idx = len(process.get("images", [])) - 1  # 0 为原图
                         process["history"].append(dict(
                             type="grounding", 
-                            info_str=r["text"],
-                            short_info_str=r["text"],
+                            info_str=r.get("text", ""),
+                            short_info_str=f"After Action {action_count}, Observation {obs_idx} received.",
                             image=r["image"],
                         ))
                     else:
                         process["history"].append(dict(
                             type="grounding", 
-                            info_str=r["text"],
-                            short_info_str=r["text"],
+                            info_str=r.get("text", ""),
+                            short_info_str=r.get("text", "ERROR occurs during grounding.\n"),
                             image=None,
                         ))
                #上一轮没有调用工具，目前只可能是结束
@@ -253,20 +296,20 @@ class AReaLVOYAGEReasoningAgentV1:
 
 
                     self.print_grounding_debug_info(generated_text)
-                    
-                    extracted_thought = self.get_thought_from_text(generated_text)
+
+                    extracted_think = self.get_think_from_text(generated_text)
                     extracted_answer = self.get_answer_from_text(generated_text)
                     extracted_query = self.get_query_from_text(generated_text)
 
 
-                    # if the prompt is not asking to answer
-                    if "<answer>" not in q["prompt"] and extracted_answer is not None:
+                    # 仅在进入回答阶段时接受 <answer>
+                    if process.get("phase", "grounding") != "answer" and extracted_answer is not None:
                         print(f"Not time for producing answer for {process['id']}", extracted_answer, flush=True)
                         extracted_answer = None
                     
                     think_and_act = ""
-                    if extracted_thought is not None:
-                        think_and_act = think_and_act + extracted_thought
+                    if extracted_think is not None:
+                        think_and_act = think_and_act + extracted_think
                     for act in [extracted_query, extracted_answer]:
                         if act is not None:
                             think_and_act = think_and_act.strip() + "\n\n" + act
@@ -274,7 +317,7 @@ class AReaLVOYAGEReasoningAgentV1:
                     
                     ### print(">>> THINK & ACT >>>\n", think_and_act, flush=True)
 
-                    if extracted_thought is not None:
+                    if extracted_think is not None:
                         process["history"].append(dict(
                             type="act", 
                             full_reasoning_text = generated_text,
@@ -303,7 +346,7 @@ class AReaLVOYAGEReasoningAgentV1:
                             process["cache_gen_text"] = generated_text
                         # process["max_new_tokens"] = process.get("max_new_tokens", 2048) + 1024
                     action_count = len([h for h in process["history"] if h["type"] == "act"])
-                    if action_count >= self.max_turns + 20 or "<answer>" in think_and_act:
+                    if action_count >= self.max_turns or "<answer>" in think_and_act:
                         print("process is done (3)", process["id"], action_count, self.max_turns, "<answer>" in think_and_act, flush=True)
                         process["running"] = False
 
@@ -366,15 +409,12 @@ def parse_judge_result(raw_response):
 
 async def run_agent(
               client: ArealOpenAI,
-              judge_client: ArealOpenAI,
               tokenizer: PreTrainedTokenizerFast,
               data,
               toolbox,
               processor: AutoProcessor = None,
-              max_turns: int = 128,
-              force_turns: int = 4,
+              max_turns: int = 12,
               topk: int = 10,
-              force_valid: bool = True,
               max_tokens: int = 30000,
               save_path: str | None = None,
               rank: int = -1):
@@ -383,9 +423,7 @@ async def run_agent(
 
     # Create ASearcher Reasoning Agent
     agent = AReaLVOYAGEReasoningAgentV1(max_turns=max_turns,
-                                        force_turns=force_turns,
-                                        topk=topk,
-                                        force_valid=force_valid)
+                                        topk=topk)
 
     qid = str(data.get("id") or data.get("qid") or uuid.uuid4().hex)
     question = data.get("question") or data.get("questions")
@@ -428,14 +466,7 @@ async def run_agent(
         query = agent.prepare_queries(tokenizer, [process], processor=processor)[0]
         if query is None:
             break
-        _images = query.get("images") or []
-        if _images:
-            _parts = [{"type": "input_text", "text": query["prompt"]}]
-            for _b64 in _images:
-                _url = _b64 if (isinstance(_b64, str) and _b64.startswith("data:")) else f"data:image/jpeg;base64,{_b64}"
-                _parts.append({"type": "input_image", "image_url": _url})
-            # Replace prompt content with structured multimodal parts (Responses-style)
-            query["prompt"] = _parts
+        # messages 已包含文本和图像 parts，无需再次封装
         
         
         response = None
@@ -443,7 +474,7 @@ async def run_agent(
         if query["type"] == "llm":
             # Use like standard OpenAI client
             completion = await client.chat.completions.create(
-                messages=[{"role": "user", "content": query["prompt"]}],
+                messages=query["messages"],
                 temperature=1.0,
                 max_tokens=max_tokens,
                 max_completion_tokens=max(0, min(max_tokens, max_tokens - query["query_len"])),

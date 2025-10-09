@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Union
 import base64
 import torch
 import torch.distributed as dist
-from datasets import load_dataset
+from datasets import load_dataset, concatenate_datasets
 from datasets.distributed import split_dataset_by_node
 from PIL.Image import Image as ImageObject
 
@@ -177,7 +177,7 @@ def get_multimodal_dataset(
         # Do not use multi-processing (slow)
         num_proc = None
 
-    from datasets import concatenate_datasets
+
     # If use multiprocessing, it will load dataset in HF cache
     datasets = []
     for p in path:
