@@ -312,7 +312,7 @@ def main(args):
         max_turns=config.max_turns,
         force_turns=config.force_turns,
         n_trajs=config.n_trajs,
-        voyager_client_types=[config.voyager_client_type],
+        voyager_client_types=config.voyager_client_type,
         topk=config.topk,
         max_tokens=config.gconfig.max_new_tokens,
         judge_engine=judge_engine,

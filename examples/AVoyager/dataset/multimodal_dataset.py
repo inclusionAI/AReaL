@@ -3,6 +3,7 @@ import os
 import json
 from io import BytesIO
 from typing import Any, Dict, Optional, Union
+import base64
 import torch
 import torch.distributed as dist
 from datasets import load_dataset
@@ -10,6 +11,7 @@ from datasets.distributed import split_dataset_by_node
 from PIL.Image import Image as ImageObject
 
 from areal.utils import logging
+from areal.utils.image import load_image
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +21,12 @@ DATASET_NUM_PROC = 16
 def convert_image(
     image: Union[Dict[str, Any], ImageObject, str],
     max_pixels: Optional[int],
-) -> ImageObject:
+) -> str:
+    if isinstance(image, str):
+        # Assume path; open to PIL
+        from PIL import Image as PILImage
+        image = PILImage.open(image)
+
     if max_pixels is not None and (image.width * image.height) > max_pixels:
         resize_factor = math.sqrt(max_pixels / (image.width * image.height))
         width, height = int(image.width * resize_factor), int(
@@ -31,7 +38,8 @@ def convert_image(
         image = image.convert("RGB")
     with BytesIO() as output:
         image.save(output, format="JPEG")
-        return output.getvalue()
+        b64 = base64.b64encode(output.getvalue()).decode("utf-8")
+        return b64
 
 
 def get_multimodal_dataset(
@@ -117,18 +125,34 @@ def get_multimodal_dataset(
             # Build instruction + user prompt; replace <image> placeholders
             user_text = sample["problem"].replace("<image>", image_token)
 
-            return {"questions": user_text, "images": processed_images, "qid": sample["doc_id"], "answers": sample["solution"],"data_source": sample["data_source"]}
+            return {
+                "question": user_text,
+                "messages": user_text,
+                "images": processed_images,
+                "qid": str(sample["doc_id"]),
+                "answer": sample["solution"],
+                "data_source": sample.get("data_source", "unknown"),
+            }
 
-        dataset = dataset.map(process, num_proc=num_proc).remove_columns(["problem","solution","doc_id"])
+        dataset = dataset.map(process, num_proc=num_proc).remove_columns(["problem","solution","doc_id"]) if "problem" in dataset.column_names else dataset.map(process, num_proc=num_proc)
 
         # Filter out sequences longer than max_length if max_length is provided
         if max_length is not None:
 
             def filter_length(sample):
-                # Process the sample to get the total token count including image tokens
+                # Convert base64 images to PIL for processor
+                imgs = []
+                for img in sample.get("images", []):
+                    src = img if (isinstance(img, str) and img.startswith("data:")) else f"data:image/jpeg;base64,{img}"
+                    try:
+                        imgs.append(load_image(src))
+                    except Exception:
+                        pass
+                if not imgs:
+                    return True
                 processed_input = processor(
-                    text=[sample["messages"]],
-                    images=sample["images"],
+                    text=[sample.get("messages", sample.get("question", ""))],
+                    images=imgs,
                     padding=False,
                     return_tensors="pt",
                     return_length=True,
@@ -153,13 +177,12 @@ def get_multimodal_dataset(
         # Do not use multi-processing (slow)
         num_proc = None
 
+    from datasets import concatenate_datasets
     # If use multiprocessing, it will load dataset in HF cache
-    dataset=[]
+    datasets = []
     for p in path:
-        dataset.append(_do_preprocess(p, split, processor, max_length, num_proc))
-    dataset = torch.utils.data.ConcatDataset(dataset)
-    #打乱数据集
-    dataset=dataset.shuffle(seed=42)
+        datasets.append(_do_preprocess(p, split, processor, max_length, num_proc))
+    dataset = concatenate_datasets(datasets).shuffle(seed=42)
 
     dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset

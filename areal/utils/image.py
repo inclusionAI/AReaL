@@ -1,6 +1,6 @@
 import base64
 from io import BytesIO
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from PIL import Image
 from PIL.Image import Image as ImageObject
@@ -45,17 +45,39 @@ def pad_images_batch_to_max_size(images):
     return padded_images
 
 
-def get_multimodal_input_ids_len(text:str,tokenizer:PreTrainedTokenizerFast=None,images: List[ImageObject] | ImageObject=None,processor:AutoProcessor=None):
+def get_multimodal_input_ids_len(
+    text: str,
+    tokenizer: PreTrainedTokenizerFast = None,
+    images: Union[List[Union[ImageObject, str, bytes]], ImageObject, str, bytes, None] = None,
+    processor: AutoProcessor = None,
+):
     if tokenizer is None and processor is None:
         raise ValueError("Either tokenizer or processor must be provided.")
     if images is None:
         return len(tokenizer(text,add_special_tokens=False)['input_ids'])
     
-    if isinstance(images, ImageObject):
-        images = [images]
+    # Normalize images to a list of PIL Images
+    if isinstance(images, (ImageObject, str, bytes)):
+        images = [images]  # type: ignore[list-item]
+    pil_images: List[ImageObject] = []
+    for img in images:  # type: ignore[operator]
+        if isinstance(img, ImageObject):
+            pil_images.append(img)
+        elif isinstance(img, (bytes, bytearray)):
+            with BytesIO(img) as bio:
+                im = Image.open(bio).convert("RGB")
+                pil_images.append(im)
+        elif isinstance(img, str):
+            src = img if _is_data_url(img) else f"data:image/jpeg;base64,{img}"
+            try:
+                pil_images.append(load_image(src))
+            except Exception:
+                continue
+    if not pil_images:
+        return len(tokenizer(text, add_special_tokens=False)["input_ids"])  # type: ignore[index]
 
-    text_inputs = [text] * len(images)
-    inputs = processor(images=images, text=text_inputs, return_tensors="pt", padding=False, add_special_tokens=False)
+    text_inputs = [text] * len(pil_images)
+    inputs = processor(images=pil_images, text=text_inputs, return_tensors="pt", padding=False, add_special_tokens=False)
     return inputs['input_ids'].shape[1]
 
 

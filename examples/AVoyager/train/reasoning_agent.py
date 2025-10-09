@@ -1,8 +1,9 @@
 import re
+import uuid
 from typing import Dict, List, Any, Optional
 from transformers import PreTrainedTokenizerFast, AutoProcessor
-from constants import TOOL_CROP_SYSTEM_PROMPT
-from areal.utils.image import get_multimodal_input_ids_len
+from AVoyager.train.constants import TOOL_CROP_SYSTEM_PROMPT
+from areal.utils.image import get_multimodal_input_ids_len, load_image
 from AVoyager.utils.reward import compute_score
 
 class AReaLVOYAGEReasoningAgentV1:
@@ -386,12 +387,14 @@ async def run_agent(
                                         topk=topk,
                                         force_valid=force_valid)
 
-    qid = data["id"]
-    process = dict(id=data["id"],
-                   question=data["question"],
-                   prompt=data["question"],
+    qid = str(data.get("id") or data.get("qid") or uuid.uuid4().hex)
+    question = data.get("question") or data.get("questions")
+    answer = data.get("answer") or data.get("answers")
+    process = dict(id=qid,
+                   question=question,
+                   prompt=question,
                    images=data.get("images", []),
-                   gt=data["answer"])
+                   gt=answer)
     
     completions = []
     stats = dict(
@@ -401,6 +404,22 @@ async def run_agent(
         score=0.0,
     )
     cnt = 0
+    # Initialize toolbox clients if images are available
+    if process.get("images"):
+        try:
+            _img0 = process["images"][0]
+            if isinstance(_img0, str):
+                _src = _img0 if _img0.startswith("data:") else f"data:image/jpeg;base64,{_img0}"
+                _pil = load_image(_src)
+            else:
+                # Fallback: try to decode bytes into PIL
+                from io import BytesIO
+                from PIL import Image as PILImage
+                _pil = PILImage.open(BytesIO(_img0)).convert("RGB")
+            toolbox.init_grounding_client(_pil, processor)
+        except Exception:
+            pass
+
     while not agent.all_finished([process]):
         cnt += 1
         print(f"Agent Loop: Qid={qid} rank={rank} cnt={cnt}", flush=True)
@@ -436,8 +455,8 @@ async def run_agent(
         elif query["type"] == "grounding":
             # Grounding
             tool_call = f"<grounding>{query['query'][0]}</grounding>"
-            response = (await toolbox.step((data["id"], [tool_call])))[0]
-            stats["num_grounding"] += 1
+            response = (await toolbox.step((qid, [tool_call]), current_iteration=max(0, cnt - 1)))[0]
+            stats["num_grounding"] = stats.get("num_grounding", 0) + 1
         process = agent.consume_responses([process], [query], [response])[0]
 
     # Compute reward directly from predicted answer vs ground truth (MCQ A/B/C/D)
@@ -474,9 +493,14 @@ async def run_agent(
         "gpt_extract_answer": True,
         "extract_answer_tags": "strict",
     }
-    reward_tuple = compute_score(process["question"], predict_str_list, data.get("answer"), extra_info)
-    # compute_score may return a tuple (score, acc_score, format_score)
-    reward = reward_tuple[0] if isinstance(reward_tuple, (list, tuple)) else reward_tuple
+    raw_score = compute_score(process["question"], predict_str_list, data.get("answer"), extra_info)
+    # compute_score may return a tuple (score, acc_score, format_score), a float, or a dict on error
+    if isinstance(raw_score, (list, tuple)):
+        reward = float(raw_score[0])
+    elif isinstance(raw_score, dict):
+        reward = 0.0
+    else:
+        reward = float(raw_score)
     stats["score"] = reward
     
     print(f"Qid={qid} rank={rank} pred_answer: {pred_answer} pred_choice: {pred_choice} gt_choices: {gt_choices} reward: {reward} stats: {stats}", flush=True)
