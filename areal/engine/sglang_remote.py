@@ -34,6 +34,11 @@ RID_CACHE_SIZE = 128
 class RemoteSGLangEngine(InferenceEngine):
 
     def __init__(self, config: InferenceEngineConfig):
+        if current_platform.communication_backend == "nccl":
+            # Required by NCCL weight update group.
+            os.environ["NCCL_CUMEM_ENABLE"] = "0"
+            os.environ["NCCL_NVLS_ENABLE"] = "0"
+
         self.config = config
 
         self.rid_to_address = {}
@@ -84,16 +89,24 @@ class RemoteSGLangEngine(InferenceEngine):
 
         if addr:
             self.addresses = addr if isinstance(addr, list) else [addr]
-        elif (
-            self.config.experiment_name is not None
-            and self.config.trial_name is not None
-        ):
-            self.addresses = wait_llm_server_addrs(
-                self.config.experiment_name, self.config.trial_name
-            )
+            self.logger.info(f"Get server addresses from the `addr` argument.")
         else:
+            if (
+                self.config.experiment_name is not None
+                and self.config.trial_name is not None
+            ):
+                try:
+                    self.addresses = wait_llm_server_addrs(
+                        experiment_name=self.config.experiment_name,
+                        trial_name=self.config.trial_name,
+                        timeout=1,
+                    )
+                    self.logger.info(f"Get server addresses from name_resolve.")
+                except TimeoutError:
+                    pass
+        if not self.addresses and os.getenv("AREAL_LLM_SERVER_ADDRS"):
             # When addr is not provided, fallback to reading addrs from env var
-            self.addresses = os.getenv("AREAL_LLM_SERVER_ADDRS").split(",")
+            self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
         if not self.addresses:
             raise RuntimeError(
                 "No configured SGLang servers. Please pass in SGLang server addresses by arguments "
