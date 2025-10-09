@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from typing import Optional
 
 import psutil
@@ -182,9 +183,10 @@ class SGLangServerWrapper:
             host_ip = gethostip()
 
             base_gpu_id = (server_local_idx - server_idx_offset) * gpus_per_server
-            self.config.random_seed = base_random_seed + server_local_idx
+            config = deepcopy(self.config)
+            config.random_seed = base_random_seed + server_local_idx
             cmd = SGLangConfig.build_cmd(
-                self.config,
+                config,
                 tp_size=self.allocation_mode.gen.tp_size,
                 base_gpu_id=base_gpu_id,
                 host=host_ip,
