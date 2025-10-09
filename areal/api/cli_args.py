@@ -295,7 +295,7 @@ class TrainEngineConfig:
     lora_alpha: int = field(default=16, metadata={"help": "lora alpha"})
     target_modules: List[str] = field(
         default_factory=list,
-        metadata={"help": "lora target_modules. None defaults to 'all-linear'"},
+        metadata={"help": "lora target_modules."},
     )
     peft_type: str = field(
         default="lora",
