@@ -34,11 +34,6 @@ RID_CACHE_SIZE = 128
 class RemoteSGLangEngine(InferenceEngine):
 
     def __init__(self, config: InferenceEngineConfig):
-        if current_platform.communication_backend == "nccl":
-            # Required by NCCL weight update group.
-            os.environ["NCCL_CUMEM_ENABLE"] = "0"
-            os.environ["NCCL_NVLS_ENABLE"] = "0"
-
         self.config = config
 
         self.rid_to_address = {}

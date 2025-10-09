@@ -570,6 +570,14 @@ def slurm_main(config, run_id: int = 0):
 
     if allocation_mode.type_ != AllocationType.LLM_SERVER_ONLY:
         # launch trainers
+        _env_vars = dict(
+            AREAL_LLM_SERVER_ADDRS=",".join(llm_addrs),
+            AREAL_RECOVER_RUN=str(int(is_recover_run)),
+        )
+        if allocation_mode.gen_backend == "sglang":
+            # Required by NCCL weight update group.
+            _env_vars["NCCL_CUMEM_ENABLE"] = "0"
+            _env_vars["NCCL_NVLS_ENABLE"] = "0"
         launcher.submit_array(
             job_name="trainer",
             cmd=trainer_cmds,
@@ -588,8 +596,7 @@ def slurm_main(config, run_id: int = 0):
                     config.cluster.cluster_name,
                     config.launcher.trainer_env_vars,
                 ),
-                AREAL_LLM_SERVER_ADDRS=",".join(llm_addrs),
-                AREAL_RECOVER_RUN=str(int(is_recover_run)),
+                **_env_vars,
             ),
         )
 
