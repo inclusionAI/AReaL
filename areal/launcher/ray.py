@@ -363,67 +363,116 @@ def ray_main(config, run_id: int = 0):
 
     allocation_mode = config.allocation_mode
     allocation_mode = AllocationMode.from_str(allocation_mode)
-    sglang_addrs = []
-    n_sglang_nodes = 0
-    vllm_addrs = []
-    n_vllm_nodes = 0
-    if allocation_mode.gen_backend == "sglang":
-        # Launcher should launch SGLang servers according to allocation mode.
-        config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
-        n_sglang_servers = allocation_mode.gen.dp_size
-        n_sglang_nodes = allocation_mode.gen.world_size // n_gpus_per_node
-        node_group_size = max(1, allocation_mode.gen_instance_size // n_gpus_per_node)
-        n_servers_per_node = max(n_sglang_servers // n_sglang_nodes, 1)
-        cross_nodes = allocation_mode.gen_instance_size > n_gpus_per_node
+    llm_addrs = []
+    n_backend_nodes = 0
+    if allocation_mode.gen_backend in ("sglang", "vllm"):
+        # Launcher should launch llm servers according to allocation mode.
+        if allocation_mode.gen_backend == "sglang":
+            config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
+            random_seed = config.sglang.random_seed
+        else:
+            config.vllm = to_structured_cfg(config.vllm, vLLMConfig)
+            random_seed = config.vllm.seed
 
-        base_seed = config.sglang.random_seed
-        sglang_args_list = [
-            [
-                sys.argv[2:]
-                + [f"sglang.random_seed={base_seed + i * n_servers_per_node}"]
+        backend_spec = {
+            "sglang": {
+                "module": "sglang_server",
+                "seed_arg": "sglang.random_seed",
+                "prefix": "AREAL_SGLANG",
+            },
+            "vllm": {
+                "module": "vllm_server",
+                "seed_arg": "vllm.seed",
+                "prefix": "AREAL_VLLM",
+            },
+        }
+
+        def _build_llm_server_plan(backend: str, spec: Dict):
+            # Returns: args_list, entry_point, env_hook, n_nodes, n_servers
+
+            if backend not in backend_spec:
+                raise NotImplementedError(f"Unknown backend: {backend}")
+
+            spec = backend_spec[backend]
+
+            n_backend_servers = allocation_mode.gen.dp_size
+            n_backend_nodes = allocation_mode.gen.world_size // n_gpus_per_node
+            node_group_size = max(
+                1, allocation_mode.gen_instance_size // n_gpus_per_node
+            )
+            n_servers_per_node = max(n_backend_servers // n_backend_nodes, 1)
+            cross_nodes = allocation_mode.gen_instance_size > n_gpus_per_node
+
+            base_seed = random_seed
+            seed_arg = spec["seed_arg"]
+            module = spec["module"]
+            entry_point = str(
+                pathlib.Path(__file__).resolve().parent.joinpath(f"{module}.py")
+            )
+
+            args_list = [
+                [sys.argv[2:] + [f"{seed_arg}={base_seed + i * n_servers_per_node}"]]
+                for i in range(n_backend_nodes)
             ]
-            for i in range(n_sglang_nodes)
-        ]
-        sglang_entry_point = str(
-            pathlib.Path(__file__).resolve().parent.joinpath("sglang_server.py")
+
+            # FIXME: handle vllm cross-node settings
+            def _env_hook(
+                n_tasks: int, task_group_size: int, placement_group: PlacementGroup
+            ) -> List[Dict]:
+                master_addrs = []
+                master_ports = []
+                for i in range(0, n_tasks, task_group_size):
+                    host_ip, port = get_placement_group_master_ip_and_port(
+                        placement_group, i
+                    )
+                    master_addrs.append(host_ip)
+                    master_ports.append(port)
+
+                env_vars = []
+                for i in range(n_tasks):
+                    env_vars.append(
+                        {
+                            f"{spec['prefix']}_MULTI_NODE_RANK": str(
+                                i % task_group_size
+                            ),
+                            f"{spec['prefix']}_MULTI_NODE_MASTER_ADDR": master_addrs[
+                                i // task_group_size
+                            ],
+                            f"{spec['prefix']}_MULTI_NODE_MASTER_PORT": str(
+                                master_ports[i // task_group_size]
+                            ),
+                        }
+                    )
+
+                return env_vars
+
+            env_hook = (
+                partial(_env_hook, n_backend_nodes, node_group_size)
+                if cross_nodes
+                else None
+            )
+
+            return args_list, entry_point, env_hook, n_backend_nodes, n_backend_servers
+
+        (
+            backend_args_list,
+            backend_entry_point,
+            env_hook,
+            n_backend_nodes,
+            n_backend_servers,
+        ) = _build_llm_server_plan(
+            allocation_mode.gen_backend,
+            random_seed,
         )
 
-        def sglang_env_hook(
-            n_tasks: int, task_group_size: int, placement_group: PlacementGroup
-        ) -> List[Dict]:
-            master_addrs = []
-            master_ports = []
-            for i in range(0, n_tasks, task_group_size):
-                host_ip, port = get_placement_group_master_ip_and_port(
-                    placement_group, i
-                )
-                master_addrs.append(host_ip)
-                master_ports.append(port)
-
-            env_vars = []
-            for i in range(n_tasks):
-                env_vars.append(
-                    dict(
-                        AREAL_SGLANG_MULTI_NODE_RANK=str(i % task_group_size),
-                        AREAL_SGLANG_MULTI_NODE_MASTER_ADDR=master_addrs[
-                            i // task_group_size
-                        ],
-                        AREAL_SGLANG_MULTI_NODE_MASTER_PORT=str(
-                            master_ports[i // task_group_size]
-                        ),
-                    )
-                )
-
-            return env_vars
-
-        # launch a task to start all sglang servers in one node
+        # launch a task to start all llm servers in one node
         launcher.submit_array(
             job_name="llm_server",
-            file_path=sglang_entry_point,
+            file_path=backend_entry_point,
             func_name=DEFAULT_MAIN_FUNC_NAME,
-            count=n_sglang_nodes,
-            nodes=n_sglang_nodes,
-            list_args=sglang_args_list,
+            count=n_backend_nodes,
+            nodes=n_backend_nodes,
+            list_args=backend_args_list,
             gpus_per_task=n_gpus_per_node,
             cpus_per_task=config.launcher.inference_server_cpus_per_gpu
             * n_gpus_per_node,
@@ -432,80 +481,31 @@ def ray_main(config, run_id: int = 0):
                 config.cluster.cluster_name,
                 config.launcher.inference_server_env_vars,
             ),
-            env_hook=(
-                partial(sglang_env_hook, n_sglang_nodes, node_group_size)
-                if cross_nodes
-                else None
-            ),
+            env_hook=env_hook,
         )
-        # Get SGLang server addresses via name_resolve
+        # Get llm server addresses via name_resolve
         try:
-            sglang_addrs = wait_llm_server_addrs(
+            llm_addrs = wait_llm_server_addrs(
                 config.experiment_name,
                 config.trial_name,
-                n_sglang_servers,
+                n_backend_servers,
             )
         except (TimeoutError, KeyboardInterrupt) as e:
             launcher.stop_all(
-                force=False
+                force=False if allocation_mode.gen_backend == "sglang" else True
             )  # force=False will send KeyboardInterrupt to sglang_server.main() to further clean all sglang-related processes
-            raise e
-    elif allocation_mode.gen_backend == "vllm":
-        config.vllm = to_structured_cfg(config.vllm, vLLMConfig)
-        # Launcher should launch vLLM servers according to allocation mode.
-        vllm_tp_size = allocation_mode.gen.tp_size
-        n_vllm_servers = allocation_mode.gen.dp_size
-        n_vllm_nodes = allocation_mode.gen.world_size // n_gpus_per_node
-
-        base_seed = config.vllm.seed
-        vllm_args_list = [
-            [sys.argv[2:] + [f"vllm.seed={base_seed + i}"]]
-            for i in range(n_vllm_servers)
-        ]
-        vllm_entry_point = str(
-            pathlib.Path(__file__).resolve().parent.joinpath("vllm_server.py")
-        )
-        launcher.submit_array(
-            job_name="llm_server",
-            file_path=vllm_entry_point,
-            func_name=DEFAULT_MAIN_FUNC_NAME,
-            count=n_vllm_servers,
-            nodes=n_vllm_nodes,
-            list_args=vllm_args_list,
-            gpus_per_task=vllm_tp_size,
-            cpus_per_task=config.launcher.inference_server_cpus_per_gpu * vllm_tp_size,
-            mem_per_task=config.launcher.inference_server_mem_per_gpu * vllm_tp_size,
-            env_vars=get_env_vars(
-                config.cluster.cluster_name,
-                config.launcher.inference_server_env_vars,
-            ),
-        )
-        # Get vllm server addresses via name_resolve
-        try:
-            vllm_addrs = wait_llm_server_addrs(
-                config.experiment_name,
-                config.trial_name,
-                n_vllm_servers,
-            )
-        except (TimeoutError, KeyboardInterrupt) as e:
-            launcher.stop_all(force=True)
             raise e
 
     if allocation_mode.type_ == AllocationType.DECOUPLED_EVAL:
         trainer_n_nodes = 1
         gpus_per_task = 0
     else:
-        trainer_n_nodes = n_nodes - (
-            n_sglang_nodes if allocation_mode.gen_backend == "sglang" else n_vllm_nodes
-        )
+        trainer_n_nodes = n_nodes - n_backend_nodes
         gpus_per_task = 1
     trainer_entry_point = sys.argv[1]
     n_trainer_processes = trainer_n_nodes * config.cluster.n_gpus_per_node
     trainer_args_list = [[sys.argv[2:]] for _ in range(n_trainer_processes)]
     if allocation_mode.type_ != AllocationType.LLM_SERVER_ONLY:
-        llm_addrs = (
-            sglang_addrs if allocation_mode.gen_backend == "sglang" else vllm_addrs
-        )
 
         # In ray, we launch trainer in the granularity of processes (1 GPU per process)
         # We amend environment variable similar to torchrun to ensure correct initialization of
