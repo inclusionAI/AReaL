@@ -1,142 +1,9 @@
 import re
-import time
 from typing import Dict, List, Any, Optional
 from transformers import PreTrainedTokenizerFast, AutoProcessor
 from constants import TOOL_CROP_SYSTEM_PROMPT
 from areal.utils.image import get_multimodal_input_ids_len
-
-class ASearcherReasoningPrompts:
-    THINK_AND_ACT_PROMPT_v1 =  \
-"""Given a question, you are an autonomous agent trying to solve the question with web browser. Given the question and the history context, generate the thought as well as the next action (only one action). Tthe completed thought should contain analysis of available information and planning for future steps. Enclose the thought within <thought> </thought> tags. 
-
-The next action could be one of the following three, each with specific tags:
-1. Search w. a search engine, e.g. <search> the search query </search>
-
-2. Accessing some url found in prior history, e.g. <access> the url to access </access>
-
-3. Answering the question, e.g. <answer> the answer (usually in less than 10 words) </answer> (WARNING: Answer the question only after you double check the results with sufficient search!)
-
-Guidelines:
-1. You should double check previous conclusions and identified facts using search from different perspectives. 
-3. You can try different directions to solve the question, such as using different search queries.
-3. If you find related entries in the search results, it is usually useful to access the corresponding urls to find more information.
-4. You should find the most likely answer.
-5. The next action should follow after the thought.
-6. Make sure you choose only one action.
-7. Carefully select the type of language to conduct your search query (Chinese or English)
-
-Current Time: Today is 2025.07.21 
-
-Question:
-```txt
-{question}
-```
-
-Reasoning history:
-```txt
-{history}
-```
-
-Thought: ... // the thought to be completed
-
-Next Action: ... // the next action to be completed
-"""
-
-    THINK_AND_ACT_PROMPT = \
-"""Given a question, you are an autonomous agent trying to solve the question with web browser. Given the question and the history context, generate the thought as well as the next action (only one action). The completed thought should contain a detailed analysis of current situation and a plan for future steps. The action is either a query to google search or accessing some URL. Enclose the thought within <thought> </thought> tags. 
-
-The next action could be one of the following two, each with specific tags:
-1. Search w. a search engine, e.g. <search> the search query </search>
-
-2. Accessing some url found in prior history to find more information, e.g. <access> the url to access </access>
-
-Guidelines:
-1. You should double check previous conclusions and identified facts using search from different perspectives. 
-3. You can try different directions to solve the question, such as using different search queries.
-3. If you find related entries in the search results, it is usually useful to access the corresponding urls to find more information.
-4. The next action should follow after the thought.
-5. Make sure you should choose only one action.
-
-Current Time: Today is 2025.07.21 
-
-Question:
-```txt
-{question}
-```
-
-Reasoning history:
-```txt
-{history}
-```
-
-Thought: ... // the thought to be completed
-
-Next Action: ... // the next action to be completed
-"""
-
-    THINK_AND_ANSWER_PROMPT =  \
-"""Given a question, you are an autonomous agent trying to solve the question with web browser. Given the question and the history context, generate the thought as well as the final answer. The completed thought should contain detailed analysis of available information. Enclose the thought within <thought> </thought> tags, and the answer within <answer> </answer> tags.
-
-Guideline:
-1. Determine the answer based on the the available information.
-2. Try to make your best guess if the found information is not enough.
-
-
-Question:
-```txt
-{question}
-```
-
-Reasoning history:
-```txt
-{history}
-```
-
-Thought: ... // the thought to be completed
-
-Final Answer: ... // the final answer
-"""
-    READ_PAGE_PROMPT =  \
-"""Given a question, you are an autonomous agent trying to solve the question with web browser. Given the question, the history context, and the current web page, generate a thought after reading the webpage. The completed thought should contain information found related to the question, relevant links from the current webpage, and detailed analysis of available information. Enclose the thought within <thought> </thought> tags. 
-
-Question:
-```txt
-{question}
-```
-
-Reasoning history:
-```txt
-{history}
-```
-
-Current webpage:
-```txt
-{content}
-```
-
-Thought: ... // the thought to be completed
-"""
-    READ_SEARCH_RESULTS_PROMPT =  \
-"""Given a question, you are an autonomous agent trying to solve the question with web browser. Given the question, the history context, and the search results of the latest query, generate a thought after reading the search results. The completed thought should contain information found related to the question, relevant links from the latest search results that may help solve the question, and detailed analysis of available information. Enclose the thought within <thought> </thought> tags. 
-
-Question:
-```txt
-{question}
-```
-
-Reasoning history:
-```txt
-{history}
-```
-
-Latest search results:
-```txt
-{content}
-```
-
-Thought: ... // the thought to be completed
-"""
-
+from AVoyager.utils.reward import compute_score
 
 class AReaLVOYAGEReasoningAgentV1:
     
@@ -593,45 +460,26 @@ async def run_agent(
     else:
         gt_choices = [c for c in [_extract_choice(gt)] if c]
 
-    reward = 1.0 if (pred_choice is not None and pred_choice in set(gt_choices)) else 0.0
+    # Build predict sequence for compute_score
+    predict_str_list = [
+        h["text"] for h in process["history"] if h.get("type") == "act" and "text" in h
+    ]
+    # Ensure final step contains a direct answer for formatting reward
+    if not any(("<answer>" in s and "</answer>" in s) for s in predict_str_list):
+        predict_str_list.append(f"<think>\n\n</think>\n\n<answer>{pred_answer}</answer>")
+
+    extra_info = {
+        "acc_reward_weight": 1.0,
+        "format_reward_weight": 1.0,
+        "gpt_extract_answer": True,
+        "extract_answer_tags": "strict",
+    }
+    reward_tuple = compute_score(process["question"], predict_str_list, data.get("answer"), extra_info)
+    # compute_score may return a tuple (score, acc_score, format_score)
+    reward = reward_tuple[0] if isinstance(reward_tuple, (list, tuple)) else reward_tuple
     stats["score"] = reward
     
-    print("Final for Qid={}. GT={}. Ans={}. Result: MBE={}".format(data["id"], str(gt_choices), pred_answer, reward))
-    
-    # Compute reward with LLM-as-Judge
-    # judge_client = ArealOpenAI(engine=rollout_engine, tokenizer=tokenizer)
-    # judge_prompt_template = "You are an evaluation assistant. Please determine if the predicted answer is equivalent to the labeled answer.\n" \
-    # "You should first give your rationale for the judgement, and then give your judgement result (i.e., correct or incorrect).\n\n" \
-    # "\n" \
-    # "question: {question}\n" \
-    # "ground truth answers: {gt_answer}\n" \
-    # "pred_answer: {pred_answer}\n\n" \
-    # "Did the model give an answer **equivalent** to the labeled answer? \n\nThe output should in the following json format:\n" \
-    # "```json\n" \
-    # "{{\n" \
-    # """    "rationale": "your rationale for the judgement, as a text",\n""" \
-    # """    "judgement": "your judgement result, can only be 'correct' or 'incorrect'\n""" \
-    # "}}\n" \
-    # "```\n" \
-    # "Your output:" 
-    # pred_answer = agent.answers([process])[0]
-    # ground_truth = data["answer"]
-    # if isinstance(ground_truth, list) and len(ground_truth) == 1:
-    #     ground_truth = str(ground_truth[0])
-    # judge_prompt = judge_prompt_template.format(question=data["question"], gt_answer=str(ground_truth), pred_answer=pred_answer[:200])
-    # judge_completion = await judge_client.chat.completions.create(
-    #     messages=[{"role": "user", "content": judge_prompt}],
-    #     temperature=1.0,
-    #     max_tokens=8192,
-    #     max_completion_tokens=8192,
-    # )
-    # judge_response = judge_completion.choices[0].message.content
-    # reward = parse_judge_result(judge_response)
-    # stats["score"] = reward
-
-    # # client.set_reward(completion.id, reward)
-
-    # print("LLM as Judge for Qid={}. GT={}. Ans={}. Result: MBE={}. Raw Response={}".format(data["id"], ground_truth, pred_answer, reward, judge_response[:500]))
+    print(f"Qid={qid} rank={rank} pred_answer: {pred_answer} pred_choice: {pred_choice} gt_choices: {gt_choices} reward: {reward} stats: {stats}", flush=True)
 
     if save_path is not None:
         import os, json, sys
