@@ -463,13 +463,12 @@ class vLLMConfig:
     swap_space: int = 4
     cpu_offload_gb: float = 0
     max_seq_len_to_capture: int = 32768
-    enable_prefix_caching: bool = False
     disable_sliding_window: bool = True
     # NOTE: Defaults max_model_len to 32k because a larger value
     # will enable chunked prefill in vLLM, which will cause
     # evalution performance degeneration.
     max_model_len: int | None = 32768
-    chunked_prefill_enabled: bool = False
+    enable_chunked_prefill: bool = False
     # NOTE: Setting enable_prefix_caching to False
     # because it will reuse the block after
     # model weights are updated. Using v0.7.2 reset_prefix_cache

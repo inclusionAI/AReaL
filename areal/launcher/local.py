@@ -296,13 +296,11 @@ def local_main(config, run_id: int = 0):
             "sglang": {
                 "module": "areal.launcher.sglang_server",
                 "seed_arg": "sglang.random_seed",
-                "prefix": "AREAL_SGLANG",
                 "set_device_env": False,
             },
             "vllm": {
                 "module": "areal.launcher.vllm_server",
                 "seed_arg": "vllm.seed",
-                "prefix": "AREAL_VLLM",
                 "set_device_env": True,  # vLLM needs `device_control_env_var` to control GPU allocation
             },
         }

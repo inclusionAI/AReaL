@@ -15,7 +15,7 @@ LOCAL_CACHE_DIR = "/tmp/areal"
 PYTORCH_KERNEL_CACHE_PATH = (
     f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/torch/kernels/"
 )
-VLLM_CACHE_PATH = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/vllm/"
+VLLM_CACHE_ROOT = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/vllm/"
 TRITON_CACHE_PATH = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/triton/"
 PYTHONPATH = os.pathsep.join(
     filter(
@@ -27,13 +27,13 @@ PYTHONPATH = os.pathsep.join(
     )
 )
 os.makedirs(PYTORCH_KERNEL_CACHE_PATH, exist_ok=True)
-os.makedirs(VLLM_CACHE_PATH, exist_ok=True)
+os.makedirs(VLLM_CACHE_ROOT, exist_ok=True)
 os.makedirs(TRITON_CACHE_PATH, exist_ok=True)
 BASE_ENVIRONS = {
     "TOKENIZERS_PARALLELISM": "true",
     "PYTORCH_KERNEL_CACHE_PATH": PYTORCH_KERNEL_CACHE_PATH,
     "TRITON_CACHE_DIR": TRITON_CACHE_PATH,
-    "VLLM_CACHE_PATH": VLLM_CACHE_PATH,
+    "VLLM_CACHE_ROOT": VLLM_CACHE_ROOT,
     "CUDA_DEVICE_MAX_CONNECTIONS": "1",
     "PYTHONPATH": PYTHONPATH,
 }

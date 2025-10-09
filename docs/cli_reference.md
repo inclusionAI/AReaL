@@ -551,10 +551,10 @@ https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
 | `swap_space`                   | integer         | `4`                                                                 | -           |
 | `cpu_offload_gb`               | float           | `0`                                                                 | -           |
 | `max_seq_len_to_capture`       | integer         | `32768`                                                             | -           |
-| `enable_prefix_caching`        | boolean         | `False`                                                             | -           |
 | `disable_sliding_window`       | boolean         | `True`                                                              | -           |
 | `max_model_len`                | integer \| None | `32768`                                                             | -           |
-| `chunked_prefill_enabled`      | boolean         | `False`                                                             | -           |
+| `enable_chunked_prefill`       | boolean         | `False`                                                             | -           |
+| `enable_prefix_caching`        | boolean         | `False`                                                             | -           |
 | `gpu_memory_utilization`       | float           | `0.9`                                                               | -           |
 | `worker_extension_cls`         | string          | `"areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"` | -           |
 | `enable_sleep_mode`            | boolean         | `False`                                                             | -           |
