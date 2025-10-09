@@ -109,6 +109,7 @@ class RemotevLLMEngine(InferenceEngine):
         if not self.addresses and os.getenv("AREAL_LLM_SERVER_ADDRS"):
             # When addr is not provided, fallback to reading addrs from env var
             self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
+            self.logger.info(f"Get server addresses from environment variable.")
         if not self.addresses:
             raise RuntimeError(
                 "No configured vLLM servers. Please pass in vLLM server addresses by arguments "

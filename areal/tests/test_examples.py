@@ -4,11 +4,14 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import time
+import uuid
 from typing import Tuple
 
 import pytest
 
+from areal.platforms import current_platform
 from areal.utils import logging
 
 logger = logging.getLogger(__name__)
@@ -62,7 +65,7 @@ async def run_example(
         # Read output by line
         line = None
         try:
-            line = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=0.1)
             line = line.decode()
         except (ValueError, asyncio.TimeoutError):
             # NOTE: Here ValueError is raised when the input line is too long
@@ -688,25 +691,30 @@ def test_search_agent_deepresearch(tmp_path_factory):
     llm_judge_exp_name = uuid.uuid4().hex
     llm_judge_trial_name = uuid.uuid4().hex
     _env = os.environ.copy()
-    _env[current_platform.device_control_env_var] = visible_devices[0]
+    _env[current_platform.device_control_env_var] = visible_devices[-1]
     llm_judge_proc = subprocess.Popen(
-        [
-            "python3",
-            "-m",
-            "areal.launcher.local",
-            example_file,
-            "--config",
-            config_name,
-            "allocation_mode=sglang.d1",
-            f"experiment_name={llm_judge_exp_name}",
-            f"trial_name={llm_judge_trial_name}",
-            f"actor.path={model_path}",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        " ".join(
+            [
+                "python3",
+                "-m",
+                "areal.launcher.local",
+                example_file,
+                "--config",
+                config_name,
+                "allocation_mode=sglang.d1",
+                f"cluster.fileroot={str(experiments_path)}",
+                f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+                f"experiment_name={llm_judge_exp_name}",
+                f"trial_name={llm_judge_trial_name}",
+                f"actor.path={model_path}",
+            ]
+        ),
+        shell=True,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
         env=_env,
     )
-    time.sleep(5)
+    time.sleep(20)
 
     loop = asyncio.get_event_loop()
     return_code, success = loop.run_until_complete(
@@ -714,18 +722,17 @@ def test_search_agent_deepresearch(tmp_path_factory):
             example_file,
             config_name,
             "allocation_mode=sglang:d1+megatron:d1",
-            "gconfig.n_samples=2",
-            "gconfig.max_new_tokens=256",
-            "actor.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
+            "gconfig.n_samples=1",
+            "gconfig.max_new_tokens=128",
+            "actor.mb_spec.max_tokens_per_mb=2048",
+            f"train_dataset.batch_size=4",
             f"train_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=2",
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
             f"actor.path={model_path}",
-            "n_trajs=1",
-            "max_tokens_per_trajectory=512",
-            "max_llm_calls_per_run=4",
+            "n_trajs=2",
+            "max_tokens_per_trajectory=1024",
+            "max_llm_calls_per_run=2",
             f"judge_engine.experiment_name={llm_judge_exp_name}",
             f"judge_engine.trial_name={llm_judge_trial_name}",
         )
@@ -733,3 +740,5 @@ def test_search_agent_deepresearch(tmp_path_factory):
     assert (
         success
     ), f"Search Agent DeepResearch example failed, return_code={return_code}"
+    llm_judge_proc.terminate()
+    llm_judge_proc.wait(5)
