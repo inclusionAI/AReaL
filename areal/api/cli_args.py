@@ -541,7 +541,7 @@ class SGLangConfig:
     random_seed: int = 1
     skip_tokenizer_init: bool = False
     disable_cuda_graph: bool = False
-    disable_radix_cache: bool = False
+    disable_radix_cache: bool = True
     disable_cuda_graph_padding: bool = False
     enable_nccl_nvls: bool = False
     disable_outlines_disk_cache: bool = False

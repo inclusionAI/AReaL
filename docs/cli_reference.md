@@ -479,7 +479,7 @@ https://github.com/sgl-project/sglang for detailed documentation.
 | `random_seed`                     | integer                 | `1`          | -           |
 | `skip_tokenizer_init`             | boolean                 | `False`      | -           |
 | `disable_cuda_graph`              | boolean                 | `False`      | -           |
-| `disable_radix_cache`             | boolean                 | `False`      | -           |
+| `disable_radix_cache`             | boolean                 | `True`       | -           |
 | `disable_cuda_graph_padding`      | boolean                 | `False`      | -           |
 | `enable_nccl_nvls`                | boolean                 | `False`      | -           |
 | `disable_outlines_disk_cache`     | boolean                 | `False`      | -           |
