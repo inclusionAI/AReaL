@@ -990,6 +990,158 @@ class SlurmLauncherConfig:
 
 
 @dataclass
+class SkyPilotLauncherConfig:
+    """Configuration for launching the training jobs with SkyPilot."""
+
+    # Basic task metadata
+    name: str | None = field(
+        default=None,
+        metadata={"help": "Optional task name displayed in SkyPilot."},
+    )
+    workdir: str | None = field(
+        default=None,
+        metadata={
+            "help": "Local path or git repo spec to sync as working directory (mirrors SkyPilot YAML workdir)."
+        },
+    )
+
+    # Core resource specification (subset of SkyPilot resources.* fields)
+    infra: str | None = field(
+        default=None,
+        metadata={
+            "help": "Infrastructure spec <cloud>/<region>/<zone> or k8s[/context] (resources.infra).",
+        },
+    )
+    accelerators: str | None = field(
+        default=None,
+        metadata={
+            "help": "Accelerator request, e.g. 'H100:8'. Currently only single-type requests supported (resources.accelerators).",
+        },
+    )
+    accelerator_args: str | None = field(
+        default=None,
+        metadata={
+            "help": "Additional accelerator args (YAML/JSON string) (resources.accelerator_args).",
+        },
+    )
+    cpus: str | None = field(
+        default=None,
+        metadata={"help": "vCPU spec per node, e.g. '4+', '16' (resources.cpus)."},
+    )
+    memory: str | None = field(
+        default=None,
+        metadata={
+            "help": "Memory spec per node, e.g. '32+', '64GB' (resources.memory)."
+        },
+    )
+    instance_type: str | None = field(
+        default=None,
+        metadata={"help": "Explicit instance type (resources.instance_type)."},
+    )
+    use_spot: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to use spot/preemptible instances (resources.use_spot)."
+        },
+    )
+    disk_size: str | None = field(
+        default=None,
+        metadata={
+            "help": "Boot disk size with optional unit, e.g. '256', '256GB' (resources.disk_size)."
+        },
+    )
+    disk_tier: str = field(
+        default="medium",
+        metadata={
+            "help": "Disk performance tier (resources.disk_tier).",
+            "choices": ["low", "medium", "high", "ultra", "best"],
+        },
+    )
+    network_tier: str = field(
+        default="standard",
+        metadata={
+            "help": "Network tier (resources.network_tier).",
+            "choices": ["standard", "best"],
+        },
+    )
+    ports: str | None = field(
+        default=None,
+        metadata={
+            "help": "Ports to expose, supports single '8080', range '10052-10100', or comma list (resources.ports)."
+        },
+    )
+    image_id: str | None = field(
+        default=None,
+        metadata={"help": "Custom base or docker image id (resources.image_id)."},
+    )
+    labels: str | None = field(
+        default=None,
+        metadata={
+            "help": "Instance/pod labels as key=value pairs joined by commas (resources.labels)."
+        },
+    )
+
+    any_of: str | None = field(
+        default=None,
+        metadata={
+            "help": "YAML/JSON string list of candidate resource dicts (resources.any_of)."
+        },
+    )
+    ordered: str | None = field(
+        default=None,
+        metadata={
+            "help": "YAML/JSON string list of ordered resource dicts (resources.ordered)."
+        },
+    )
+    job_recovery: str | None = field(
+        default=None,
+        metadata={
+            "help": "Job recovery strategy spec (resources.job_recovery). Provide JSON/YAML."
+        },
+    )
+
+    # Autostop: store flexible spec as raw string
+    autostop: str | None = field(
+        default=None,
+        metadata={
+            "help": "Autostop configuration: true/false/10/10h or JSON object (resources.autostop)."
+        },
+    )
+
+    # Environment & secret injection
+    envs: str | None = field(
+        default=None,
+        metadata={
+            "help": "Environment variables (envs) as KEY=VAL pairs joined by commas."
+        },
+    )
+    secrets: str | None = field(
+        default=None,
+        metadata={
+            "help": "Secrets usable in setup/run as KEY=VAL pairs joined by commas (will be redacted)."
+        },
+    )
+
+    volumes: str | None = field(
+        default=None,
+        metadata={
+            "help": "Kubernetes volume mappings (volumes) as YAML/JSON string or shorthand mount spec."
+        },
+    )
+    file_mounts: str | None = field(
+        default=None,
+        metadata={
+            "help": "File mounts mapping remote_path:local_path lines or JSON/YAML string (file_mounts)."
+        },
+    )
+
+    config: str | None = field(
+        default=None,
+        metadata={"help": "Advanced config overrides (config.*) as YAML/JSON string."},
+    )
+
+
+@dataclass
 class LauncherConfig:
     """Configuration for launching the LLM server and trainer processes."""
 
@@ -1026,6 +1178,10 @@ class LauncherConfig:
     slurm: SlurmLauncherConfig = field(
         default_factory=SlurmLauncherConfig,
         metadata={"help": "Slurm launcher configuration."},
+    )
+    skypilot: SkyPilotLauncherConfig = field(
+        default_factory=SkyPilotLauncherConfig,
+        metadata={"help": "SkyPilot launcher configuration."},
     )
 
 
