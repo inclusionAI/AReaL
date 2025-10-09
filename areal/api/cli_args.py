@@ -295,7 +295,7 @@ class TrainEngineConfig:
     lora_alpha: int = field(default=16, metadata={"help": "lora alpha"})
     target_modules: List[str] = field(
         default_factory=list,
-        metadata={"help": "lora target_modules. None defaults to 'all-linear'"},
+        metadata={"help": "lora target_modules."},
     )
     peft_type: str = field(
         default="lora",
@@ -541,7 +541,7 @@ class SGLangConfig:
     random_seed: int = 1
     skip_tokenizer_init: bool = False
     disable_cuda_graph: bool = False
-    disable_radix_cache: bool = False
+    disable_radix_cache: bool = True
     disable_cuda_graph_padding: bool = False
     enable_nccl_nvls: bool = False
     disable_outlines_disk_cache: bool = False
