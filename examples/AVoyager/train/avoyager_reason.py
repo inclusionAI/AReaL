@@ -38,7 +38,7 @@ from areal.api.io_struct import (
 from areal.api.workflow_api import RolloutWorkflow
 from areal.api.cli_args import GRPOConfig
 from areal.engine.ppo.actor import FSDPPPOActor
-from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.utils.data import concat_padded_tensors, broadcast_tensor_container
 from areal.utils.device import log_gpu_stats
 from areal.utils.saver import Saver
@@ -282,7 +282,7 @@ def main(args):
     )
 
     # Initialize inference engine
-    rollout = RemoteSGLangEngine(config.rollout)
+    rollout = RemotevLLMEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
     actor.initialize(None, ft_spec)

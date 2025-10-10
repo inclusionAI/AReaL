@@ -180,6 +180,7 @@ class RemotevLLMEngine(InferenceEngine):
         # NOTE: rid should NOT be passed in payload
         payload = {
             "prompt": req.input_ids.copy(),
+            "image_data": req.image_data,
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
             "max_tokens": max_new_tokens,
