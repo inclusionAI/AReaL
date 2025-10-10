@@ -330,14 +330,11 @@ class WorkflowExecutor:
         try:
             while not self.exiting.is_set():
                 # Check capacity
-                capacity = self.get_capacity()
+                # capacity = self.get_capacity()
+                # self.logger.info(f"Current rollout capacity: {capacity}")
                 # Create new rollout task
                 self.lock.acquire()
-                while (
-                    capacity > 0
-                    and not self.paused.is_set()
-                    and self.input_queue.qsize() > 0
-                ):
+                while not self.paused.is_set() and self.input_queue.qsize() > 0:
                     x = self.input_queue.get_nowait()
                     x: _RolloutTaskInput
                     self.logger.debug(f"Get data from puller: {x.data}")
@@ -357,7 +354,7 @@ class WorkflowExecutor:
                             f"running: {self.rollout_stat.running}, "
                             f"accepted: {self.rollout_stat.accepted}."
                         )
-                    capacity -= 1
+                    # capacity -= 1
                     rid += 1
                 tasks = [x.task for x in rollout_tasks.values()]
                 self.lock.release()

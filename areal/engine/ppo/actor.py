@@ -67,7 +67,7 @@ class PPOActor:
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
         )
 
-    def compute_advantages(self, data: Dict[str, Any]) -> None:
+    def compute_advantages(self, data: Dict[str, Any]) -> Dict[str, Any]:
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
         batch_indices = torch.arange(
@@ -161,6 +161,8 @@ class PPOActor:
         data["loss_mask"] = loss_mask
         # because we have rolled old_logp by -1
         data["logprobs"] = old_logp
+
+        return data
 
     def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
 
@@ -286,8 +288,8 @@ class FSDPPPOActor(FSDPEngine):
         return self.actor.compute_logp(*args, **kwargs)
 
     @torch.no_grad()
-    def compute_advantages(self, *args, **kwargs) -> None:
-        self.actor.compute_advantages(*args, **kwargs)
+    def compute_advantages(self, *args, **kwargs):
+        return self.actor.compute_advantages(*args, **kwargs)
 
     def ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
         return self.actor.ppo_update(*args, **kwargs)
