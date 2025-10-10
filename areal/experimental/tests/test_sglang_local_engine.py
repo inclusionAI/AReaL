@@ -14,8 +14,6 @@ import time
 import uuid
 
 import pytest
-import torch
-from tensordict import TensorDict
 
 from areal.api.cli_args import (
     GenerationHyperparameters,
@@ -31,9 +29,9 @@ from areal.workflow.rlvr import RLVRWorkflow
 
 EXPR_NAME = "test_sglang_local_engine"
 TRIAL_NAME = "trial_0"
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen2-0.5B"
+    MODEL_PATH = "Qwen/Qwen3-0.6B"
 
 
 def build_engine_config(**kwargs):
@@ -102,11 +100,12 @@ def test_local_sglang_rollout(n_samples):
     )
 
     data = {"messages": [{"role": "user", "content": "Hello, how are you?"}]}
-    result = engine.rollout([data] * 2, workflow=workflow)
+    result = engine.rollout_batch([data] * 2, workflow=workflow)
 
     print("Here is the result ", result)
-    assert isinstance(result, TensorDict)
-    assert result.batch_size == torch.Size([2 * n_samples])
+    assert isinstance(result, dict)
+    assert "attention_mask" in result
+    assert result["attention_mask"].shape[0] == 2 * n_samples
     engine.destroy()
 
 

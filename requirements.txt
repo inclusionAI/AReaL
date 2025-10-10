@@ -30,7 +30,7 @@ pynvml
 pytest
 PyYAML
 pyzmq
-ray
+ray[default]
 redis
 scipy
 seaborn
@@ -57,7 +57,7 @@ etcd3
 rich
 orjson>=3.10.16
 flask
-setuptools>=62.3.0,<75.9
+setuptools<80,>=77.0.3
 func_timeout
 jupyter-book
 lark
@@ -78,6 +78,15 @@ tensordict
 deepspeed>=0.17.2
 pybase64
 msgspec
-transformers==4.54.0
+transformers==4.56.0
 openai==1.99.6
 sh
+peft
+mdformat==0.7.17
+mdformat-gfm
+mdformat-tables
+mdformat-frontmatter
+setproctitle
+qwen_agent
+dotenv
+json5

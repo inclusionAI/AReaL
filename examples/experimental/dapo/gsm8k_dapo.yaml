@@ -1,17 +1,20 @@
 experiment_name: gsm8k-dapo
 trial_name: trial0
-allocation_mode: sglang:d4 + fsdp:d4
-cluster:
-  fileroot: /tmp/areal/experiments
-  n_nodes: 1
-  n_gpus_per_node: 8
-  name_resolve:
-    type: nfs
-    nfs_record_root: /tmp/areal/name_resolve
+
 seed: 1
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
 async_training: true
+
+cluster:
+  n_nodes: 1
+  n_gpus_per_node: 8
+  fileroot: /tmp/areal/experiments
+  name_resolve:
+    type: nfs
+    nfs_record_root: /tmp/areal/name_resolve
+
+allocation_mode: sglang.d4+fsdp.d4
 
 rollout:
   experiment_name: ${experiment_name}
@@ -51,7 +54,6 @@ actor:
     warmup_steps_proportion: 0.001
   backend: fsdp
   group_size: ${gconfig.n_samples}
-  group_adv_norm: false
   eps_clip: 0.2
   eps_clip_higher: 0.28
   temperature: ${gconfig.temperature}
@@ -59,13 +61,21 @@ actor:
   reward_bias: -0.5
   overlong_reward_penalty: true
   overlong_tokens: 512
-  max_new_tokens: ${gconfig.max_new_tokens}
   overlong_penalty_factor: 1.0
   kl_ctl: 0.0
   ppo_n_minibatches: 1
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
+  dynamic_sampling: true
+  reward_norm:
+    mean_level: group
+    std_level: group
+    group_size: ${gconfig.n_samples}
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+  max_new_tokens: ${gconfig.max_new_tokens}
 
 
 ref:

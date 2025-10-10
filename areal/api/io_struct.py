@@ -10,6 +10,7 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GenerationHyperparameters
+from areal.platforms import current_platform
 from areal.utils.network import find_free_ports, gethostip
 
 if TYPE_CHECKING:
@@ -102,6 +103,8 @@ class WeightUpdateMeta:
     nccl_param_specs: List[List[ParamSpec]] = field(default_factory=list)
     nccl_group_name: str = "update_weight_group"
 
+    use_lora: bool = False
+
     @classmethod
     def from_disk(
         cls,
@@ -109,6 +112,7 @@ class WeightUpdateMeta:
         trial_name: str,
         file_root: str,
         name: str = "default",
+        use_lora: bool = False,
     ) -> "WeightUpdateMeta":
         from areal.utils.saver import Saver
 
@@ -119,10 +123,11 @@ class WeightUpdateMeta:
         return cls(
             type="disk",
             path=path,
+            use_lora=use_lora,
         )
 
     @classmethod
-    def from_fsdp_nccl(
+    def from_fsdp_xccl(
         cls,
         allocation_mode: AllocationMode,
         fsdp_engine: "TrainEngine",
@@ -131,7 +136,7 @@ class WeightUpdateMeta:
     ):
         param_specs = fsdp_engine.get_param_specs(weight_chunked_mem_mb)
         return cls(
-            type="nccl",
+            type=current_platform.communication_backend,
             alloc_mode=allocation_mode,
             nccl_master_address=gethostip(),
             nccl_master_port=find_free_ports(1)[0],

@@ -1,19 +1,21 @@
 experiment_name: asearcher-1.5b-zero-local
 trial_name: run1
 
-cluster:
-  fileroot: /tmp/areal/experiments
-  n_nodes: 1
-  n_gpus_per_node: 8
-  name_resolve:
-    type: nfs
-    nfs_record_root: /tmp/areal/name_resolve
 seed: 1
 total_train_epochs: 10
 total_train_steps: null
 tokenizer_path: ${actor.path}
-allocation_mode: sglang.d4p1t1+d4p1t1
 async_training: true
+
+cluster:
+  n_nodes: 1
+  n_gpus_per_node: 8
+  fileroot: /tmp/areal/experiments
+  name_resolve:
+    type: nfs
+    nfs_record_root: /tmp/areal/name_resolve
+
+allocation_mode: sglang.d4p1t1+d4p1t1
 
 rollout:
   experiment_name: ${experiment_name}
@@ -52,9 +54,7 @@ actor:
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
   backend: fsdp
-
   group_size: ${gconfig.n_samples}
-  group_adv_norm: false
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -64,6 +64,13 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
+  reward_norm:
+    mean_level: group
+    std_level: group
+    group_size: ${gconfig.n_samples}
+  adv_norm:
+    mean_level: batch
+    std_level: batch
   log_agent_stats: true
   log_agent_stats_keys:
     - num_input_tokens
@@ -147,6 +154,5 @@ launcher:
   inference_server_mem_per_gpu: 153600
   trainer_cpus_per_gpu: 15
   trainer_mem_per_gpu: 153600
-
 
 max_turns: 32

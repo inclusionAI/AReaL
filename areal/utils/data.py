@@ -9,12 +9,36 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from einops import rearrange
-from tensordict import TensorDict
+from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import MicroBatchSpec
+from areal.api.cli_args import MicroBatchSpec, NormConfig
+from areal.platforms import current_platform
 from areal.utils import datapack, logging
 
 logger = logging.getLogger("data utils")
+
+
+def get_batch_size(data: Dict[str, Any]) -> int:
+    if not data:
+        return 0
+
+    am = data.get("attention_mask")
+    if torch.is_tensor(am) and am.ndim >= 1:
+        return int(am.shape[0])
+
+    cu = data.get("cu_seqlens")
+    if torch.is_tensor(cu) and cu.ndim >= 1 and cu.numel() >= 1:
+        return max(int(cu.shape[0]) - 1, 0)
+
+    mmi = data.get("multi_modal_input")
+    if isinstance(mmi, list):
+        return len(mmi)
+
+    for v in data.values():
+        if torch.is_tensor(v) and v.ndim >= 1:
+            return int(v.shape[0])
+
+    return 0
 
 
 def reorder_list(xs: List, indices: List[int]) -> List:
@@ -56,11 +80,11 @@ def list_of_dict2dict_of_list(
 
 
 def pad_sequences_to_tensors(
-    sequence_list: List[TensorDict], pad_value: float = 0.0
-) -> TensorDict:
+    sequence_list: List[Dict[str, Any]], pad_value: float = 0.0
+) -> Dict[str, Any]:
     if not sequence_list:
-        return TensorDict()
-    skip_keys = {"pixel_values", "image_grid_thw"}
+        return {}
+    skip_keys = {"multi_modal_input"}
     max_length = max(
         len(seq)
         for item in sequence_list
@@ -70,8 +94,17 @@ def pad_sequences_to_tensors(
     result = {}
     for key in sequence_list[0].keys():
         padded = []
-        if key in skip_keys:
-            result[key] = [sequence_list[i][key] for i in range(len(sequence_list))]
+        if key == "multi_modal_input":
+            for i in range(len(sequence_list)):
+                if sequence_list[i][key]:
+                    item = sequence_list[i][key][0]
+                    for k, v in item.items():
+                        if not torch.is_tensor(v):
+                            item[k] = torch.tensor(v)
+            # list concat
+            result[key] = sum(
+                [sequence_list[i][key] for i in range(len(sequence_list))], []
+            )
             continue
         for item in sequence_list:
             x = item[key]
@@ -92,7 +125,7 @@ def pad_sequences_to_tensors(
         for item in sequence_list
     ]
     result["attention_mask"] = torch.tensor(attention_mask, dtype=torch.bool)
-    return TensorDict(result, batch_size=[result["attention_mask"].shape[0]])
+    return result
 
 
 def unpad_input(
@@ -117,14 +150,11 @@ def pad_input(hidden_states, indices, batch, seqlen):
 
 
 def concat_padded_tensors(
-    tensor_dicts: List[TensorDict], pad_value: float = 0.0
-) -> TensorDict:
-    """Concatenate and pad tensors from multiple padded tensor dictionaries."""
+    tensor_dicts: List[Dict[str, Any]], pad_value: float = 0.0
+) -> Dict[str, Any]:
+    """Concatenate and pad tensors from multiple dictionaries of padded tensors."""
     if not tensor_dicts:
-        return TensorDict()
-
-    batch_sizes = [tuple(d.batch_size) for d in tensor_dicts]
-    new_batch_size = [sum(x[0] for x in batch_sizes), *batch_sizes[0][1:]]
+        return {}
 
     # Find max sequence length across all dictionaries
     assert all("attention_mask" in td for td in tensor_dicts)
@@ -140,7 +170,7 @@ def concat_padded_tensors(
 
         # Merge multi-modal data maintaining per-dp correspondence
         for tensor_dict in tensor_dicts:
-            td_batch_size = tensor_dict.batch_size[0]
+            td_batch_size = get_batch_size(tensor_dict)
 
             if "multi_modal_input" in tensor_dict:
                 # Has multi_modal_input - extend the lists
@@ -188,15 +218,7 @@ def concat_padded_tensors(
             tensors_to_concat.append(tensor)
 
         result[key] = torch.cat(tensors_to_concat, dim=0)
-    return TensorDict(result, batch_size=new_batch_size)
-
-
-def to_device(data: Dict[str, torch.Tensor | Any], device) -> Dict[str, torch.Tensor]:
-    """Move tensors in a dictionary to the specified device."""
-    return {
-        key: value.to(device) if torch.is_tensor(value) else value
-        for key, value in data.items()
-    }
+    return result
 
 
 def unpack_sequence(
@@ -241,8 +263,8 @@ def allocate_balanced_mbs_synced(
     )
 
 
-def pack_tensor_dict(data: TensorDict):
-    """Pack a tensordict of shape [B, S, ...] into [total_length, ...], leaving other keys unchanged.
+def pack_tensor_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Pack a dict of tensors of shape [B, S, ...] into [total_length, ...], leaving other keys unchanged.
 
     Args:
         data (Dict[str, Any]): Dictionary containing tensors to be packed. Should contain key "attention_mask" with shape [B, S].
@@ -290,7 +312,7 @@ def pack_tensor_dict(data: TensorDict):
         else:
             packed_data[key] = value
 
-    return TensorDict(**packed_data)
+    return packed_data
 
 
 def pad_and_stack_tensors_along_first_dim(tensor_list: List[torch.Tensor]):
@@ -318,9 +340,7 @@ def tensor_container_to(
     if torch.is_tensor(d):
         return d.to(*args, **kwargs)
     elif isinstance(d, list):
-        return [
-            tensor_container_to(*args, **kwargs) if torch.is_tensor(v) else v for v in d
-        ]
+        return [tensor_container_to(v, *args, **kwargs) for v in d]
     elif isinstance(d, dict):
         for key, value in d.items():
             if isinstance(value, dict) or isinstance(value, list):
@@ -336,43 +356,27 @@ def tensor_container_to(
 
 @dataclass
 class MicroBatchList:
-    data: TensorDict
+    data: Dict[str, Any]
     mb_spec: MicroBatchSpec
-    mbs: List[TensorDict]
+    mbs: List[Dict[str, Any]]
     forward_indices: List[int]
     backward_indices: List[int]
     group_lens: List[int]
-    padded_mbs: Optional[List[TensorDict]] = None
+    padded_mbs: List[Dict[str, Any]] | None = None
     # Batch-level padding information
-    padding_lengths: Optional[List[int]] = None
-    padded_to_lengths: Optional[List[int]] = None
+    padding_lengths: List[int] | None = None
+    padded_to_lengths: List[int] | None = None
     # sequence-level padding information
-    align_to_lengths: Optional[List[int]] = None
-    old_cu_seqlens_list: Optional[List[torch.Tensor]] = None
+    align_to_lengths: List[int] | None = None
+    old_cu_seqlens_list: List[torch.Tensor] | None = None
 
     def to(self, *args, **kwargs):
-        mbs = [
-            (
-                mb.to(*args, **kwargs)
-                if isinstance(mb, TensorDict)
-                else tensor_container_to(mb, *args, **kwargs)
-            )
-            for mb in self.mbs
-        ]
-        data = (
-            self.data.to(*args, **kwargs)
-            if isinstance(self.data, TensorDict)
-            else tensor_container_to(self.data, *args, **kwargs)
-        )
+        mbs = [tensor_container_to(mb, *args, **kwargs) for mb in self.mbs]
+        data = tensor_container_to(self.data, *args, **kwargs)
         padded_mbs = None
         if self.padded_mbs is not None:
             padded_mbs = [
-                (
-                    mb.to(*args, **kwargs)
-                    if isinstance(mb, TensorDict)
-                    else tensor_container_to(mb, *args, **kwargs)
-                )
-                for mb in self.padded_mbs
+                tensor_container_to(mb, *args, **kwargs) for mb in self.padded_mbs
             ]
         old_cu_seqlens_list = None
         if self.old_cu_seqlens_list is not None:
@@ -398,14 +402,14 @@ DEFAULT_MAX_TOKENS_PER_MB = int(1e12)
 
 
 def split_padded_tensor_dict_into_mb_list(
-    data: TensorDict,
+    data: Dict[str, Any],
     mb_spec: MicroBatchSpec,
     group: Optional[dist.ProcessGroup] = None,
 ) -> MicroBatchList:
-    """Split a padded tensordict into micro-batches based on the attention mask.
+    """Split a padded dict of tensors into micro-batches based on the attention mask.
 
     Args:
-        data (TensorDict): Dictionary containing padded tensors.
+        data (Dict): Dictionary containing padded tensors.
         mb_spec (MicroBatchSpec): Specification for micro-batch splitting.
         group (Optional[dist.ProcessGroup]): Process group for distributed synchronization.
 
@@ -420,9 +424,20 @@ def split_padded_tensor_dict_into_mb_list(
         mb_spec = MicroBatchSpec.new(
             mb_spec, max_tokens_per_mb=DEFAULT_MAX_TOKENS_PER_MB
         )
+    granularity = mb_spec.granularity
     bs = data["attention_mask"].shape[0]
+    if bs % granularity != 0:
+        raise RuntimeError(f"Batch size {bs} cannot divide granularity {granularity}.")
     max_seqlen = data["attention_mask"].shape[1]
-    input_lens = data["attention_mask"].sum(1).long().cpu().numpy()
+    seq_lens = data["attention_mask"].sum(1).long().cpu().numpy().tolist()
+    input_lens = (
+        data["attention_mask"]
+        .view(bs // granularity, granularity, -1)
+        .sum(dim=(1, 2))
+        .long()
+        .cpu()
+        .numpy()
+    )
 
     # check tensor shape, split only 1d tensors with length "total_lens"
     to_split = {}
@@ -440,8 +455,14 @@ def split_padded_tensor_dict_into_mb_list(
 
     # split
     group_indices = allocate_balanced_mbs_synced(mb_spec, input_lens, group=group)
+    group_indices = [
+        datapack.flat2d(
+            [list(range(i * granularity, (i + 1) * granularity)) for i in group_index]
+        )
+        for group_index in group_indices
+    ]
     splitted_lens = [
-        [input_lens[i] for i in group_index] for group_index in group_indices
+        [seq_lens[i] for i in group_index] for group_index in group_indices
     ]
     group_n_seqs = [len(x) for x in splitted_lens]
     group_lens = [sum(x) for x in splitted_lens]
@@ -485,7 +506,7 @@ def split_padded_tensor_dict_into_mb_list(
     # organize splitted micro batches
     assert len(mbs) == len(splitted_lens), (len(mbs), len(splitted_lens))
     for i, (mb, lens) in enumerate(zip(mbs, splitted_lens)):
-        results.append(TensorDict(**mb, **not_to_split))
+        results.append({**mb, **not_to_split})
 
     return MicroBatchList(
         data=data,
@@ -501,24 +522,24 @@ N_TOKENS_PER_PAGE = 256
 
 
 def pad_packed_tensor_dict(
-    data: TensorDict,
+    data: Dict[str, Any],
     pad_to_length: int,
     pad_value: float = 0.0,
     align_sequences: bool = False,
     align_to_multiple_of: Optional[int] = None,
-) -> Tuple[TensorDict, int, torch.Tensor, int]:
-    """Pad a packed tensor dict to a specified length.
+) -> Tuple[Dict[str, Any], int, torch.Tensor, int]:
+    """Pad a packed dict of tensors to a specified length.
     This function assumes that the input data contains "cu_seqlens" and "max_seqlen" key,
     and all other tensors of shape [total_length, ] will be padded to `pad_to_length`.
     This function will pad a new sequence filled with `pad_value` to the end of each tensor,
     and update the "cu_seqlens" and "max_seqlen" keys accordingly.
 
     Args:
-        data (TensorDict): Dictionary containing tensors to be packed.
+        data (Dict): Dictionary containing tensors to be packed.
         pad_to_length (int): The length to pad the tensors to. All tensors
 
     Returns:
-        TensorDict: Dictionary with padded tensors and modified "cu_seqlens" and
+        Dict: Dictionary with padded tensors and modified "cu_seqlens" and
             "max_seqlen".
         int: The pad length.
     """
@@ -604,7 +625,7 @@ def pad_packed_tensor_dict(
             else:
                 sequence_padded_data[key] = value
 
-        data = TensorDict(sequence_padded_data, batch_size=data.batch_size)
+        data = sequence_padded_data
         align_to_length = cu_seqlens_padded[-1].item()
         # ensure pad_to_length is a integer multiple of both align_to_multiple_of and N_TOKENS_PER_PAGE
         lcm = np.lcm(align_to_multiple_of, N_TOKENS_PER_PAGE).item()
@@ -654,7 +675,7 @@ def pad_packed_tensor_dict(
         else:
             padded_data[key] = value
     return (
-        TensorDict(padded_data, batch_size=data.batch_size),
+        padded_data,
         pad_length,
         old_cu_seqlens,
         align_to_length,
@@ -758,11 +779,14 @@ def unpad_logits(
             start = cu_seqlens[i].item()
             length = old_end - old_start
             new_logits[old_start:old_end] = logits[start : start + length]
+        return new_logits
 
-    return new_logits
+    return logits
 
 
-def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
+def unsqueeze_packed_tensor_dict(
+    data: Dict[str, Any],
+) -> Dict[str, Any]:
     assert "cu_seqlens" in data, "Input data must contain 'cu_seqlens' key."
     assert "max_seqlen" in data, "Input data must contain 'max_seqlen' key."
 
@@ -781,13 +805,13 @@ def unsqueeze_packed_tensor_dict(data: TensorDict) -> TensorDict:
             new_data[key] = value.unsqueeze(dim=0)
         else:
             new_data[key] = value
-    return TensorDict(new_data, batch_size=data.batch_size)
+    return new_data
 
 
 def unsqueeze_mb_list(
     mb_list: MicroBatchList,
 ) -> MicroBatchList:
-    """Unsqueeze the packed tensordict in the micro-batch list."""
+    """Unsqueeze the packed dict of tensors in the micro-batch list."""
     new_padded_mbs = []
     for i, mb in enumerate(mb_list.mbs):
         if mb_list.padded_mbs is not None:
@@ -796,7 +820,7 @@ def unsqueeze_mb_list(
     return mb_list
 
 
-def amend_position_ids(data: TensorDict) -> TensorDict:
+def amend_position_ids(data: Dict) -> Dict:
     assert "attention_mask" in data, "Input data must contain 'attention_mask' key."
 
     attn_mask = data["attention_mask"]
@@ -862,7 +886,9 @@ def broadcast_tensor(tensor: torch.Tensor | None, src_rank=0, group=None):
         dtype = metadata["dtype"]
         device_type = metadata["device_type"]
         device = (
-            torch.device("cpu") if device_type == "cpu" else torch.cuda.current_device()
+            torch.device("cpu")
+            if device_type == "cpu"
+            else current_platform.current_device()
         )
         # Create tensor with the received shape and dtype
         tensor = torch.empty(tensor_shape, dtype=dtype, device=device)
@@ -904,7 +930,7 @@ def all_gather_tensor_container(data, group=None) -> List:
         data = [all_gather_tensor_container(d, group=group) for d in data]
         return list(zip(*data))
 
-    if isinstance(data, (dict, TensorDict)):
+    if isinstance(data, dict):
         results = {
             k: all_gather_tensor_container(v, group=group) for k, v in data.items()
         }
@@ -912,11 +938,6 @@ def all_gather_tensor_container(data, group=None) -> List:
             {k: v[i] for k, v in results.items()}
             for i in range(dist.get_world_size(group))
         ]
-        if isinstance(data, TensorDict):
-            results = [
-                TensorDict(r, batch_size=[r["attention_mask"].shape[0]])
-                for r in results
-            ]
         return results
 
     results = [None for _ in range(dist.get_world_size(group))]
@@ -967,7 +988,7 @@ def broadcast_tensor_container(data, src_rank=0, group=None):
                 broadcast_tensor_container(d, src_rank=src_rank, group=group)
                 for d in data
             ]
-        elif isinstance(data, (dict, TensorDict)):
+        elif isinstance(data, dict):
             metadata = [("dict", list(data.keys()))]
             dist.broadcast_object_list(metadata, src=src_rank, group=group)
             return {
@@ -1037,3 +1058,307 @@ def bcast_mb_list(
         old_cu_seqlens_list=old_cu_seqlens_list,
         align_to_lengths=align_to_lengths,
     )
+
+
+def cycle_dataloader(dataloader: StatefulDataLoader):
+    """Cycle through a dataloader indefinitely."""
+    g = iter(dataloader)
+    while True:
+        try:
+            yield next(g)
+        except StopIteration:
+            g = iter(dataloader)
+
+
+class Normalization:
+    """
+    Adaptive normalization with different levels.
+
+    Supports independent specification of normalization level for mean and std:
+    - "batch": normalize across entire batch (with optional all_reduce in distributed setting)
+    - "group": normalize within fixed-size groups
+    - None: no centering or no std scaling
+    """
+
+    def __init__(self, config: NormConfig):
+        if config.mean_level not in {"batch", "group", None}:
+            raise ValueError(
+                f"mean_level must be 'batch', 'group' or None, got {config.mean_level}"
+            )
+        if config.std_level not in {"batch", "group", None}:
+            raise ValueError(
+                f"std_level must be 'batch', 'group', or None, got {config.std_level}"
+            )
+        if (
+            config.mean_level == "group" or config.std_level == "group"
+        ) and config.group_size is None:
+            raise ValueError("group_size must be provided if using group normalization")
+
+        self.mean_level = config.mean_level
+        self.mean_leave1out = config.mean_leave1out
+        self.std_level = config.std_level
+        self.std_unbiased = config.std_unbiased
+        self.group_size = config.group_size
+        self.eps = config.eps
+
+    @torch.no_grad()
+    def __call__(
+        self,
+        x: torch.Tensor,
+        loss_mask: Optional[torch.Tensor] = None,
+        high_precision: bool = True,
+        reduce_group=None,
+    ) -> torch.Tensor:
+        bs = x.size(0)
+        eps = self.eps
+
+        # Early return if no elements are active (all masked out)
+        if loss_mask is not None and loss_mask.sum().item() == 0:
+            return x.float()
+
+        # Step 1: Compute mean
+        if self.mean_level == "batch":
+            mean = self._compute_mean(
+                x,
+                loss_mask,
+                high_precision=high_precision,
+                leave_one_out=self.mean_leave1out,
+                all_reduce=True,
+                reduce_group=reduce_group,
+            )
+            mean = mean.expand_as(x)
+        elif self.mean_level == "group":
+            mean = torch.zeros_like(x)
+            for i in range(0, bs // self.group_size):
+                s = slice(i * self.group_size, (i + 1) * self.group_size)
+                xx = x[s]
+                m = loss_mask[s] if loss_mask is not None else None
+
+                # Special case: with group_size=1 and leave_one_out=True, mean should be 0
+                if self.group_size == 1 and self.mean_leave1out:
+                    dtype = torch.float64 if high_precision else torch.float32
+                    group_mean = torch.zeros(
+                        (1, xx.shape[1]), dtype=dtype, device=xx.device
+                    )
+                else:
+                    group_mean = self._compute_mean(
+                        xx,
+                        m,
+                        high_precision=high_precision,
+                        leave_one_out=self.mean_leave1out,
+                        all_reduce=False,
+                        reduce_group=None,
+                    )
+                mean[s] = group_mean.expand_as(xx)
+        else:  # mean_level == "none"
+            mean = torch.zeros_like(x)
+
+        # Subtract mean
+        x_centered = x - mean
+        # mask unrelevant elements as 0
+        if loss_mask is not None:
+            x_centered = x_centered * loss_mask
+
+        # Step 2: Compute std
+        if self.std_level == "batch":
+            std = self._compute_std(
+                x,
+                loss_mask,
+                mean,
+                unbiased=self.std_unbiased,
+                high_precision=high_precision,
+                all_reduce=True,
+                reduce_group=reduce_group,
+            )
+            std = std.expand_as(x)
+        elif self.std_level == "group":
+            std = torch.zeros_like(x)
+            for i in range(0, bs // self.group_size):
+                s = slice(i * self.group_size, (i + 1) * self.group_size)
+                xx = x[s]
+                m = loss_mask[s] if loss_mask is not None else None
+                group_mean_slice = mean[s]  # already computed and expanded
+
+                # Special case: with group_size=1 and std_unbiased=True, std should be 1 for numerical stability
+                if self.group_size == 1 and self.std_unbiased:
+                    dtype = torch.float64 if high_precision else torch.float32
+                    group_std = torch.ones(
+                        (1, xx.shape[1]), dtype=dtype, device=xx.device
+                    )
+                else:
+                    group_std = self._compute_std(
+                        xx,
+                        m,
+                        group_mean_slice,
+                        unbiased=self.std_unbiased,
+                        high_precision=high_precision,
+                        all_reduce=False,
+                        reduce_group=reduce_group,
+                    )
+                std[s] = group_std.expand_as(xx)
+        else:
+            std = torch.ones_like(x)
+            eps = 0.0
+
+        # Normalize
+        return (x_centered / (std + eps)).float()
+
+    @staticmethod
+    def _compute_mean(
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor],
+        high_precision: bool,
+        leave_one_out: bool,
+        all_reduce: bool,
+        reduce_group,
+    ) -> torch.Tensor:
+        """Compute mean only, using masked_normalization internals."""
+        dtype = torch.float64 if high_precision else torch.float32
+        x = x.to(dtype)
+        dim = tuple(range(len(x.shape)))
+
+        if mask is None:
+            factor = torch.tensor(
+                np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
+            )
+            x_masked = x
+            x_sum = x.sum(dim=dim, keepdim=True)
+        else:
+            mask = mask.to(dtype)
+            x_masked = x * mask
+            factor = mask.sum(dim, keepdim=True)
+            x_sum = x_masked.sum(dim=dim, keepdim=True)
+
+        if dist.is_initialized() and all_reduce:
+            dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
+            dist.all_reduce(x_sum, op=dist.ReduceOp.SUM, group=reduce_group)
+
+        if leave_one_out:
+            if factor.item() <= 1:
+                return torch.zeros_like(x_sum)
+            # For leave-one-out, we need to compute mean excluding each element individually
+            # This requires broadcasting: (total_sum - each_element) / (count - 1)
+            if mask is None:
+                # Broadcast x_sum to original shape and subtract each element
+                x_sum_broadcast = x_sum.expand_as(x)
+                leave_one_out_sum = x_sum_broadcast - x
+                return leave_one_out_sum / (factor - 1)
+            else:
+                # For masked case, only subtract where mask is 1
+                x_sum_broadcast = x_sum.expand_as(x)
+                leave_one_out_sum = x_sum_broadcast - x_masked
+                # Only compute leave-one-out where mask is 1, elsewhere return global mean
+                regular_mean = x_sum / factor
+                leave_one_out_mean = leave_one_out_sum / torch.clamp(
+                    factor - mask, min=1.0
+                )
+                return torch.where(
+                    mask > 0, leave_one_out_mean, regular_mean.expand_as(x)
+                )
+
+        if factor.item() == 0:
+            return torch.zeros_like(x_sum)
+        return x_sum / factor
+
+    @staticmethod
+    def _compute_std(
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor],
+        mean: torch.Tensor,
+        unbiased: bool,
+        high_precision: bool,
+        all_reduce: bool,
+        reduce_group,
+    ) -> torch.Tensor:
+        """Compute std only, given precomputed mean."""
+        dtype = torch.float64 if high_precision else torch.float32
+        x = x.to(dtype)
+        mean = mean.to(dtype)
+        dim = tuple(range(len(x.shape)))
+
+        if mask is None:
+            factor = torch.tensor(
+                np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
+            )
+            x_centered = x - mean
+            x_sum_sq = (x_centered**2).sum(dim=dim, keepdim=True)
+        else:
+            mask = mask.to(dtype)
+            x_masked = x * mask
+            factor = mask.sum(dim, keepdim=True)
+            x_centered = x_masked - mean * mask  # only apply mean where mask is 1
+            x_sum_sq = (x_centered**2).sum(dim=dim, keepdim=True)
+
+        if dist.is_initialized() and all_reduce:
+            dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
+            dist.all_reduce(x_sum_sq, op=dist.ReduceOp.SUM, group=reduce_group)
+
+        if unbiased:
+            if factor.item() <= 1:
+                return torch.ones_like(x_sum_sq)
+            return (x_sum_sq / (factor - 1)).sqrt()
+
+        if factor.item() == 0:
+            return torch.ones_like(x_sum_sq)
+        return (x_sum_sq / factor).sqrt()
+
+
+class KLEstimator:
+    """
+    KL divergence estimator, supports k1, k2 and k3.
+    """
+
+    def __init__(self, kl_estimator: str = "k1", apply_clamp: bool = True):
+        self.kl_estimator = kl_estimator
+        if kl_estimator not in ["k1", "k2", "k3"]:
+            raise ValueError(
+                f"Invalid KL estimator: {kl_estimator}. Valid choices: k1, k2, k3"
+            )
+        self.apply_clamp = apply_clamp
+
+    def __call__(
+        self, log_probs: torch.Tensor, log_probs_base: torch.Tensor
+    ) -> torch.Tensor:
+        return self._compute_approx_kl(
+            log_probs, log_probs_base, self.kl_estimator, self.apply_clamp
+        )
+
+    # adapted from https://github.com/OpenRLHF/OpenRLHF/blob/main/openrlhf/models/utils.py#L7
+    @staticmethod
+    def _compute_approx_kl(
+        log_probs: torch.Tensor,
+        log_probs_base: torch.Tensor,
+        kl_estimator: str = "k1",
+        apply_clamp: bool = True,
+    ) -> torch.Tensor:
+        """
+        Compute the approximate KL divergence between two distributions.
+        Schulman blog: http://joschu.net/blog/kl-approx.html
+
+        Args:
+            log_probs: Log probabilities of the new distribution.
+            log_probs_base: Log probabilities of the base distribution.
+        """
+
+        if kl_estimator == "k1":
+            log_ratio = log_probs.float() - log_probs_base.float()
+
+        # The k2 estimator is the non negative kl approximation in
+        # http://joschu.net/blog/kl-approx.html
+        # The k2_loss is approximately equivalent to the
+        # one-step KL divergence penalty with the k1 estimator
+        # used in https://arxiv.org/pdf/2310.10505.
+        if kl_estimator == "k2":
+            log_ratio = log_probs.float() - log_probs_base.float()
+            log_ratio = log_ratio**2 / 2.0
+
+        # The k3 estimator is the non negative kl approximation in
+        # http://joschu.net/blog/kl-approx.html
+        if kl_estimator == "k3":
+            log_ratio = log_probs.float() - log_probs_base.float()
+            log_ratio = -log_ratio
+            log_ratio = log_ratio.exp() - 1 - log_ratio
+
+        if apply_clamp:
+            log_ratio = log_ratio.clamp(min=-10, max=10)
+        return log_ratio

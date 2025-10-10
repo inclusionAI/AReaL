@@ -15,6 +15,7 @@ from megatron.core import parallel_state as mpu
 from safetensors.torch import save_file
 from torch.distributed._functional_collectives import all_gather_into_tensor_coalesced
 
+from areal.platforms import current_platform
 from areal.utils import logging
 
 logger = logging.getLogger("HF WeightsSaver")
@@ -147,7 +148,7 @@ def save_weights_to_hf_with_mbridge_fast(
             if "_extra_state" not in x and "expert_bias" in x and x not in existing_keys
         ]
         for name in extra_keys:
-            param = state_dicts[vpp_rank][name].to(torch.cuda.current_device())
+            param = state_dicts[vpp_rank][name].to(current_platform.current_device())
             global_name = local_to_global_maps[vpp_rank][name]
             weight_specs.append(
                 McoreDistributedWeightSpec(

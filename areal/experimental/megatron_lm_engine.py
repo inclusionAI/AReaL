@@ -1,7 +1,6 @@
 import torch
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
-from tensordict import TensorDict
 
 from areal.api.engine_api import TrainEngine
 from areal.experimental.api.cli_args import (
@@ -17,7 +16,7 @@ class LMEngine:
     def __init__(self, engine: TrainEngine):
         self.engine = engine
 
-    def train_lm(self, data: TensorDict):
+    def train_lm(self, data):
         self.engine.train()
         return self.engine.train_batch(
             input_=data,
@@ -27,7 +26,7 @@ class LMEngine:
 
     def evaluate_lm(self, data):
         self.engine.eval()
-        self.engine.eval_batch(
+        return self.engine.eval_batch(
             input_=data,
             loss_fn=compute_packed_sft_loss,
             loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
@@ -46,7 +45,7 @@ class MegatronLMEngine(MegatronEngine):
         return self.lm_engine.evaluate_lm(data)
 
 
-def compute_packed_sft_loss(logits: torch.Tensor, input_: TensorDict) -> torch.Tensor:
+def compute_packed_sft_loss(logits: torch.Tensor, input_) -> torch.Tensor:
     packed_input_ids: torch.Tensor = input_["input_ids"]
     cu_seqlens: torch.Tensor = input_["cu_seqlens"]
     loss_mask = input_["loss_mask"].bool()

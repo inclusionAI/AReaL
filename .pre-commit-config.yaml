@@ -9,7 +9,7 @@ repos:
           - --fallback-style=Google
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       - id: check-yaml
         files: \.(yaml|yml)$
@@ -33,6 +33,7 @@ repos:
           - mdformat-gfm
           - mdformat-tables
           - mdformat-frontmatter
+        exclude: ^docs/algorithms/.*\.md$
 
   - repo: https://github.com/pycqa/autoflake
     rev: v2.3.1
@@ -87,3 +88,15 @@ repos:
         description: Sort imports in notebook cells
         additional_dependencies: [isort==6.0.1]
         args: [--profile=black]
+
+  # Generate CLI documentation
+  - repo: local
+    hooks:
+      - id: generate-cli-docs
+        name: Generate CLI documentation
+        entry: python docs/generate_cli_docs.py
+        language: system
+        files: ^(areal/api/cli_args\.py|docs/generate_cli_docs\.py)$
+        pass_filenames: false
+        always_run: false
+        require_serial: true

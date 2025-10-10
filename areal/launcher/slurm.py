@@ -16,15 +16,16 @@ from areal.api.cli_args import (
     SGLangConfig,
     parse_cli_args,
     to_structured_cfg,
+    vLLMConfig,
 )
+from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import (
     JobException,
     JobInfo,
     JobState,
     get_env_vars,
-    validate_config_for_distributed_launcher,
-    wait_sglang_server_addrs,
+    wait_llm_server_addrs,
 )
 from areal.utils.recover import check_if_recover
 from areal.utils.slurm import (
@@ -33,6 +34,7 @@ from areal.utils.slurm import (
     SRUN_CMD_TEMPLATE,
     cancel_jobs,
     query_jobs,
+    validate_config_for_slurm_launcher,
 )
 
 logger = logging.getLogger("SlurmLauncher")
@@ -161,8 +163,8 @@ class SlurmLauncher:
             env_vars = dict()
         n_gpus_per_task = n_gpus_per_node // ntasks_per_node
         assert (
-            "CUDA_VISIBLE_DEVICES" not in env_vars
-        ), "CUDA_VISIBLE_DEVICES should be automatically resolved by Launcher instead of manually assigned."
+            current_platform.device_control_env_var not in env_vars
+        ), f"{current_platform.device_control_env_var} should be automatically resolved by Launcher instead of manually assigned."
 
         srun_cmds = []
         for i in range(count):
@@ -396,7 +398,7 @@ class SlurmLauncher:
 
 
 def main():
-    config, _ = parse_cli_args(sys.argv[2:])
+    config, _ = parse_cli_args(sys.argv[1:])
     slurm_main(config, run_id=0)
 
 
@@ -404,7 +406,7 @@ def slurm_main(config, run_id: int = 0):
     config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
-    validate_config_for_distributed_launcher(config)
+    validate_config_for_slurm_launcher(config)
     is_recover_run = check_if_recover(config.recover, run_id)
     logger.info(
         f"SlurmLauncher: experiment_name={config.experiment_name}, "
@@ -430,58 +432,111 @@ def slurm_main(config, run_id: int = 0):
     n_gpus_per_node = config.cluster.n_gpus_per_node
     allocation_mode = config.allocation_mode
     allocation_mode = AllocationMode.from_str(allocation_mode)
-    sglang_cmds = []
-    sglang_addrs = []
-    n_sglang_nodes = 0
-    if allocation_mode.gen_backend == "sglang":
-        # Launcher should launch SGLang servers according to allocation mode.
-        config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
-        n_sglang_servers = allocation_mode.gen.dp_size
-        n_sglang_nodes = allocation_mode.gen.world_size // n_gpus_per_node
-        node_group_size = max(1, allocation_mode.gen_instance_size // n_gpus_per_node)
-        n_servers_per_node = max(n_sglang_servers // n_sglang_nodes, 1)
+    n_backend_nodes = 0
 
-        cross_nodes = allocation_mode.gen_instance_size > n_gpus_per_node
-        env_vars = get_env_vars(
-            config.cluster.cluster_name,
-            config.launcher.inference_server_env_vars,
-        )
-        env_vars = [copy.deepcopy(env_vars) for _ in range(n_sglang_nodes)]
-        base_seed = config.sglang.random_seed
-        sglang_server_cmd_template = f"python3 -m areal.launcher.sglang_server {' '.join(sys.argv[2:])} sglang.random_seed={{seed}}"
-        for i in range(n_sglang_nodes):
-            sglang_cmd = sglang_server_cmd_template.format(
-                seed=base_seed + i * n_servers_per_node
+    if allocation_mode.gen_backend in ("sglang", "vllm"):
+        # Launcher should launch llm servers according to allocation mode.
+        if allocation_mode.gen_backend == "sglang":
+            config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
+            random_seed = config.sglang.random_seed
+        else:
+            config.vllm = to_structured_cfg(config.vllm, vLLMConfig)
+            random_seed = config.vllm.seed
+
+        backend_spec = {
+            "sglang": {
+                "module": "areal.launcher.sglang_server",
+                "seed_arg": "sglang.random_seed",
+                "prefix": "AREAL_SGLANG",
+                "set_device_env": False,
+            },
+            "vllm": {
+                "module": "areal.launcher.vllm_server",
+                "seed_arg": "vllm.seed",
+                "prefix": "AREAL_VLLM",
+                "set_device_env": True,  # vLLM needs `device_control_env_var` to control GPU allocation
+            },
+        }
+
+        def _build_llm_server_plan(backend: str, spec: Dict):
+            # Returns: cmds, env_vars_list, n_nodes, n_servers
+
+            if backend not in backend_spec:
+                raise NotImplementedError(f"Unknown backend: {backend}")
+
+            spec = backend_spec[backend]
+
+            n_backend_servers = allocation_mode.gen.dp_size
+            n_backend_nodes = allocation_mode.gen.world_size // n_gpus_per_node
+            node_group_size = max(
+                1, allocation_mode.gen_instance_size // n_gpus_per_node
             )
-            sglang_cmds.append(sglang_cmd)
-            if cross_nodes:
-                # master_addrs and master_ports are the IP addresses and free ports of the all nodes in the job array, obtained in the SBATCH script.
-                env_vars[i] |= dict(
-                    AREAL_SGLANG_MULTI_NODE_RANK=i % node_group_size,
-                    AREAL_SGLANG_MULTI_NODE_MASTER_ADDR=f"${{master_addrs[{i // node_group_size * node_group_size}]}}",
-                    AREAL_SGLANG_MULTI_NODE_MASTER_PORT=f"${{master_ports[{i // node_group_size * node_group_size}]}}",
+            n_servers_per_node = max(n_backend_servers // n_backend_nodes, 1)
+
+            cross_nodes = allocation_mode.gen_instance_size > n_gpus_per_node
+            base_env_bars = get_env_vars(
+                config.cluster.cluster_name,
+                config.launcher.inference_server_env_vars,
+            )
+            if spec["set_device_env"]:
+                base_env_bars[current_platform.device_control_env_var] = ",".join(
+                    list(map(str, range(n_gpus_per_node)))
                 )
+            env_list = [copy.deepcopy(base_env_bars) for _ in range(n_backend_nodes)]
+
+            base_seed = random_seed
+            seed_arg = spec["seed_arg"]
+            module = spec["module"]
+            backend_server_cmd_template = (
+                f"python3 -m {module} {' '.join(sys.argv[1:])} {seed_arg}={{seed}}"
+            )
+
+            backend_cmds = []
+            for i in range(n_backend_nodes):
+                backend_cmd = backend_server_cmd_template.format(
+                    seed=base_seed + i * n_servers_per_node
+                )
+                backend_cmds.append(backend_cmd)
+                if cross_nodes:
+                    # master_addrs and master_ports are the IP addresses and free ports of the all nodes in the job array, obtained in the SBATCH script.
+                    prefix = spec["prefix"]
+                    env_list[i] |= dict(
+                        **{
+                            f"{prefix}_MULTI_NODE_RANK": i % node_group_size,
+                            f"{prefix}_MULTI_NODE_MASTER_ADDR": f"${{master_addrs[{i // node_group_size * node_group_size}]}}",
+                            f"{prefix}_MULTI_NODE_MASTER_PORT": f"${{master_ports[{i // node_group_size * node_group_size}]}}",
+                        }
+                    )
+
+            return backend_cmds, env_list, n_backend_nodes, n_backend_servers
+
+        backend_cmds, env_list, n_backend_nodes, n_backend_servers = (
+            _build_llm_server_plan(
+                allocation_mode.gen_backend,
+                random_seed,
+            )
+        )
 
         launcher.submit_array(
             job_name="llm_server",
-            cmd=sglang_cmds,
-            count=n_sglang_nodes,
-            nodes=n_sglang_nodes,
-            n_gpus_per_node=config.cluster.n_gpus_per_node,
+            cmd=backend_cmds,
+            count=n_backend_nodes,
+            nodes=n_backend_nodes,
+            n_gpus_per_node=n_gpus_per_node,
             cpus_per_task=config.launcher.inference_server_cpus_per_gpu
             * n_gpus_per_node,
             mem_per_task=config.launcher.inference_server_mem_per_gpu * n_gpus_per_node,
             srun_additional_args=config.launcher.slurm.srun_additional_args,
             container_image=config.launcher.slurm.inference_server_image,
             container_mounts=config.launcher.slurm.mount,
-            env_vars=env_vars,
+            env_vars=env_list,
         )
-        # Get SGLang server addresses by name resolve
+        # Get llm server addresses by name resolve
         try:
-            sglang_addrs = wait_sglang_server_addrs(
+            llm_addrs = wait_llm_server_addrs(
                 config.experiment_name,
                 config.trial_name,
-                n_sglang_servers,
+                n_backend_servers,
             )
         except (TimeoutError, KeyboardInterrupt) as e:
             launcher.stop_all(force=True)
@@ -491,7 +546,7 @@ def slurm_main(config, run_id: int = 0):
         trainer_n_nodes = 1
         gpus_per_node = 0
     else:
-        trainer_n_nodes = n_nodes - n_sglang_nodes
+        trainer_n_nodes = n_nodes - n_backend_nodes
         gpus_per_node = config.cluster.n_gpus_per_node
 
     # Here $head_node_ip is the IP address of the first node in the job array.
@@ -515,6 +570,14 @@ def slurm_main(config, run_id: int = 0):
 
     if allocation_mode.type_ != AllocationType.LLM_SERVER_ONLY:
         # launch trainers
+        _env_vars = dict(
+            AREAL_LLM_SERVER_ADDRS=",".join(llm_addrs),
+            AREAL_RECOVER_RUN=str(int(is_recover_run)),
+        )
+        if allocation_mode.gen_backend == "sglang":
+            # Required by NCCL weight update group.
+            _env_vars["NCCL_CUMEM_ENABLE"] = "0"
+            _env_vars["NCCL_NVLS_ENABLE"] = "0"
         launcher.submit_array(
             job_name="trainer",
             cmd=trainer_cmds,
@@ -533,8 +596,7 @@ def slurm_main(config, run_id: int = 0):
                     config.cluster.cluster_name,
                     config.launcher.trainer_env_vars,
                 ),
-                AREAL_LLM_SERVER_ADDRS=",".join(sglang_addrs),
-                AREAL_RECOVER_RUN=str(int(is_recover_run)),
+                **_env_vars,
             ),
         )
 

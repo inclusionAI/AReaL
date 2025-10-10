@@ -1,17 +1,20 @@
 experiment_name: countdown-grpo
 trial_name: trial0
-allocation_mode: sglang.d4p1t1+d4p1t1
-cluster:
-  fileroot: /tmp/areal/experiments
-  n_nodes: 1
-  n_gpus_per_node: 8
-  name_resolve:
-    type: nfs
-    nfs_record_root: /tmp/areal/name_resolve
+
 seed: 1
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
 async_training: true
+
+cluster:
+  n_nodes: 1
+  n_gpus_per_node: 8
+  fileroot: /tmp/areal/experiments
+  name_resolve:
+    type: nfs
+    nfs_record_root: /tmp/areal/name_resolve
+
+allocation_mode: sglang.d4p1t1+d4p1t1
 
 rollout:
   experiment_name: ${experiment_name}
@@ -50,10 +53,7 @@ actor:
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
   backend: fsdp
-  pad_to_maximum: true
-
   group_size: ${gconfig.n_samples}
-  group_adv_norm: false
   eps_clip: 0.2
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -63,6 +63,14 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
+  reward_norm:
+    mean_level: group
+    std_level: group
+    group_size: ${gconfig.n_samples}
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+  pad_to_maximum: true
 
 ref:
   experiment_name: ${experiment_name}
@@ -75,8 +83,6 @@ ref:
     max_tokens_per_mb: 10240
   optimizer: null
   backend: fsdp
-  fsdp:
-    ulysses_sp_size: 1
 
 # SGLang
 sglang:

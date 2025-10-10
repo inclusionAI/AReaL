@@ -1,6 +1,5 @@
 import pytest
 import torch
-from tensordict import TensorDict
 
 from areal.api.cli_args import MicroBatchSpec
 from areal.utils.data import (
@@ -32,14 +31,14 @@ def mock_padded_data():
             logprobs=torch.randn(prompt_len + ans_len),
             position_ids=torch.arange(prompt_len + ans_len),
         )
-        all_data.append(TensorDict(seq))
+        all_data.append(seq)
     return pad_sequences_to_tensors(all_data)
 
 
 @pytest.mark.parametrize("max_tokens_per_mb", [24, 36, 48, 100])
 @pytest.mark.parametrize("n_mbs", [1, 2, 4, 8])
 def test_micro_batch_split(mock_padded_data, n_mbs, max_tokens_per_mb):
-    mb_spec = MicroBatchSpec(n_mbs, max_tokens_per_mb)
+    mb_spec = MicroBatchSpec(n_mbs=n_mbs, max_tokens_per_mb=max_tokens_per_mb)
 
     # Unpad and split to microbatches
     packed_data = pack_tensor_dict(mock_padded_data)

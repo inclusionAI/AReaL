@@ -140,6 +140,78 @@ def _load_weight_with_bridge_worker(
         param.copy_(param_to_load, non_blocking=True)
 
 
+def make_filename_bins(
+    local_to_file_map: Dict[str, List[str]],
+) -> Tuple[List[List[str]], List[List[str]]]:
+    # Allocate local weight name into bins, where each bin access independent files
+    # Then we can use multiple threads to concurrently load each bin's parameters.
+    # This function has a complexity of O(F + L²)
+    # where F = total number of files, L = number of local names
+    if not local_to_file_map:
+        return [], []
+
+    local_names = list(local_to_file_map.keys())
+    n = len(local_names)
+
+    # Convert file lists to sets for O(1) lookups and create file-to-locals mapping
+    local_to_files = {name: set(local_to_file_map[name]) for name in local_names}
+    file_to_locals = defaultdict(set)
+    for local_name, files in local_to_files.items():
+        for file in files:
+            file_to_locals[file].add(local_name)
+
+    # Union-Find with path compression and union by rank
+    parent = list(range(n))
+    rank = [0] * n
+
+    def find(x):
+        if parent[x] != x:
+            parent[x] = find(parent[x])  # Path compression
+        return parent[x]
+
+    def union(x, y):
+        root_x, root_y = find(x), find(y)
+        if root_x == root_y:
+            return
+
+        # Union by rank
+        if rank[root_x] < rank[root_y]:
+            root_x, root_y = root_y, root_x
+        parent[root_y] = root_x
+        if rank[root_x] == rank[root_y]:
+            rank[root_x] += 1
+
+    # Create name-to-index mapping for O(1) lookups
+    name_to_idx = {name: i for i, name in enumerate(local_names)}
+
+    # Union locals that share files - O(F) where F is total number of files
+    for locals_sharing_file in file_to_locals.values():
+        if len(locals_sharing_file) > 1:
+            locals_list = list(locals_sharing_file)
+            first_idx = name_to_idx[locals_list[0]]
+            for local_name in locals_list[1:]:
+                union(first_idx, name_to_idx[local_name])
+
+    # Group by root - O(L)
+    root_to_group = defaultdict(list)
+    for i, name in enumerate(local_names):
+        root_to_group[find(i)].append(name)
+
+    # Build result groups - O(L + F)
+    grouped_local_names = []
+    grouped_filenames = []
+
+    for group in root_to_group.values():
+        grouped_local_names.append(group)
+        # Use set union to merge files from all locals in group
+        all_files = set()
+        for local_name in group:
+            all_files.update(local_to_files[local_name])
+        grouped_filenames.append(list(all_files))
+
+    return grouped_local_names, grouped_filenames
+
+
 def load_weights_from_hf_with_mbridge_fast(
     bridge: Bridge,
     models: list[torch.nn.Module],
@@ -148,6 +220,7 @@ def load_weights_from_hf_with_mbridge_fast(
 ) -> None:
     weights_path = bridge._get_actual_hf_path(weights_path)
     index_file = os.path.join(weights_path, "model.safetensors.index.json")
+    manual_tie_word_embedding = False
     index = {}
     if os.path.exists(index_file):
         with open(index_file, "r") as f:
@@ -162,6 +235,12 @@ def load_weights_from_hf_with_mbridge_fast(
                 with safe_open(safetensor_file, framework="pt", device="cpu") as f:
                     for k in f.keys():
                         index[k] = safetensor_file
+                if (
+                    "model.embed_tokens.weight" in index
+                    and "lm_head.weight" not in index
+                ):
+                    manual_tie_word_embedding = True
+                    index["lm_head.weight"] = index["model.embed_tokens.weight"]
         else:
             raise FileNotFoundError("No safetensors found in the model path to load.")
 
@@ -180,6 +259,12 @@ def load_weights_from_hf_with_mbridge_fast(
             for k, v in local_to_global_map.items()
             if "_extra_state" not in k
         }
+        if manual_tie_word_embedding:
+            for k, v in local_to_hf_map.items():
+                if "lm_head.weight" in v:
+                    v.remove("lm_head.weight")
+                    if "model.embed_tokens.weight" not in v:
+                        v.append("model.embed_tokens.weight")
 
         local_to_file_map = defaultdict(list)
         for local_name, hf_names in local_to_hf_map.items():
@@ -188,45 +273,7 @@ def load_weights_from_hf_with_mbridge_fast(
                 if filename not in local_to_file_map[local_name]:
                     local_to_file_map[local_name].append(filename)
 
-        # Allocate local weight name into bins, where each bin access independent files
-        # Then we can use multiple threads to concurrently load each bin's parameters
-        weight_name_bins = {}
-        file_name_to_bin_index = {}
-        bin_index = 0
-        for local_name, filenames in local_to_file_map.items():
-            if not all(filename in file_name_to_bin_index for filename in filenames):
-                # Some required filenames doesn't have existing bins
-                # Allocate a new bin, and merge all previous bins into this new bin
-                weight_name_bins[bin_index] = [local_name]
-                for filename in filenames:
-                    if filename in file_name_to_bin_index:
-                        i = file_name_to_bin_index.pop(filename)
-                        if i in weight_name_bins:
-                            weight_name_bins[bin_index] += weight_name_bins.pop(i)
-                    file_name_to_bin_index[filename] = bin_index
-                bin_index += 1
-            else:
-                # All required filenames have existing bins
-                # Use the head bin as the master bin, and merge all other bins into the master bin
-                head_i = file_name_to_bin_index[filenames[0]]
-                weight_name_bins[head_i].append(local_name)
-                if not all(
-                    file_name_to_bin_index[filename] == head_i for filename in filenames
-                ):
-                    # merge to head bin
-                    for filename in filenames[1:]:
-                        if file_name_to_bin_index[filename] != head_i:
-                            i = file_name_to_bin_index.pop(filename)
-                            if i in weight_name_bins:
-                                weight_name_bins[head_i] += weight_name_bins.pop(i)
-                            file_name_to_bin_index[filename] = head_i
-
-        bin_index_to_file_names = defaultdict(list)
-        for filename, bin_index in file_name_to_bin_index.items():
-            bin_index_to_file_names[bin_index].append(filename)
-
-        grouped_local_names = list(weight_name_bins.values())
-        grouped_filenames = list(bin_index_to_file_names[i] for i in weight_name_bins)
+        grouped_local_names, grouped_filenames = make_filename_bins(local_to_file_map)
 
         for local_names, filenames in zip(grouped_local_names, grouped_filenames):
             worker_args.append(

@@ -4,7 +4,6 @@ from importlib.metadata import version as get_version
 
 import pytest
 import torch
-from tensordict import TensorDict
 from transformers import AutoTokenizer
 
 from areal.api.alloc_mode import AllocationMode
@@ -17,15 +16,16 @@ from areal.experimental.api.cli_args import (
     OptimizerConfig,
 )
 from areal.experimental.megatron_engine import MegatronEngine
+from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.device import log_gpu_stats
 
 logger = logging.getLogger("MegatronEngine Test")
 
 VOCAB_SIZE = 100
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen3-1.7B"
+    MODEL_PATH = "Qwen/Qwen3-0.6B"
 
 
 @pytest.fixture(scope="module")
@@ -33,8 +33,8 @@ def mock_input(
     batch_size=5,
     min_seqlen=10,
     max_seqlen=20,
-    device="cuda:0",
-) -> TensorDict:
+    device=current_platform.device_type,
+) -> Dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -53,13 +53,13 @@ def mock_input(
     ] = 1
     input_ids.masked_fill_(~attn_mask, pad_token_id)
 
-    return TensorDict(
+    return dict(
         input_ids=input_ids,
         attention_mask=attn_mask,
     )
 
 
-def mock_loss_fn(logits: torch.Tensor, input_data: TensorDict) -> torch.Tensor:
+def mock_loss_fn(logits: torch.Tensor, input_data: dict) -> torch.Tensor:
     """Mock loss function for testing."""
     return torch.mean(logits)
 

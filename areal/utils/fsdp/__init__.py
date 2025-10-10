@@ -1,98 +1,54 @@
 import math
-from collections import defaultdict
+from abc import ABC
+from contextlib import contextmanager
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from torch.distributed.device_mesh import init_device_mesh
-from torch.distributed.tensor import DTensor
+from torch.distributed.fsdp import (
+    CPUOffloadPolicy,
+    fully_shard,
+)
 from transformers import PreTrainedModel
 
+from areal.platforms import current_platform
 from areal.utils import logging, pkg_version
 
-logger = logging.getLogger("FSDPEngine")
-
 if pkg_version.is_version_greater_or_equal("torch", "2.6.0"):
-    from torch.distributed.fsdp import (
-        CPUOffloadPolicy,
-        MixedPrecisionPolicy,
-        fully_shard,
-    )
-elif pkg_version.is_version_greater_or_equal("torch", "2.4.0"):
-    from torch.distributed._composable.fsdp import (
-        CPUOffloadPolicy,
-        MixedPrecisionPolicy,
-        fully_shard,
-    )
+    fully_shard_module = torch.distributed.fsdp._fully_shard._fully_shard
 else:
     raise ModuleNotFoundError(
-        "Current PyTorch version < 2.4.0 is not supported for FSDPEngine."
+        "Current PyTorch version < 2.6.0 is not supported for FSDPEngine."
     )
 
+
 __all__ = [
-    "CPUOffloadPolicy",
-    "MixedPrecisionPolicy",
-    "fully_shard",
-    "fsdp2_clip_grad_norm_",
-    "create_fsdp_device_mesh",
     "apply_fsdp2",
     "fsdp2_load_full_state_dict",
     "get_cosine_schedule_with_warmup",
 ]
 
 
-def fsdp2_clip_grad_norm_(
-    parameters, max_norm, norm_type=2.0, error_if_nonfinite=False, foreach=None
-):
-    """torch.nn.utils.clip_grad_norm_ cann't run on cpu parameter DTensor"""
-    from torch.nn.utils.clip_grad import _clip_grads_with_norm_, _get_total_norm
-
-    if isinstance(parameters, torch.Tensor):
-        parameters = [parameters]
-    else:
-        # prevent generators from being exhausted
-        parameters = list(parameters)
-
-    # parameters and grads will have different device meshes
-    # if both FSDP2 and tensor parallel are applied.
-    params_by_mesh = defaultdict(list)
-    grads_by_mesh = defaultdict(list)
-    for p in parameters:
-        if p.grad is not None:
-            grad = p.grad
-            if isinstance(grad, DTensor):
-                params_by_mesh[grad.device_mesh].append(p)
-                grads_by_mesh[grad.device_mesh].append(grad)
-            else:
-                params_by_mesh[grad.device].append(p)
-                grads_by_mesh[grad.device].append(grad)
-
-    norms = [
-        _get_total_norm(grads, norm_type, error_if_nonfinite, foreach).item()
-        for _, grads in grads_by_mesh.items()
-    ]
-    # vector_norm is from _get_total_norm
-    total_norm = torch.linalg.vector_norm(torch.tensor(norms), norm_type)
-
-    for _, params in params_by_mesh.items():
-        _clip_grads_with_norm_(params, max_norm, total_norm, foreach)
-    return total_norm
+logger = logging.getLogger("FSDPEngine")
 
 
-def create_fsdp_device_mesh(shard_size, world_size):
-    if shard_size < 0 or shard_size >= world_size:
-        device_mesh = init_device_mesh(
-            "cuda", mesh_shape=(world_size,), mesh_dim_names=("fsdp",)
-        )
-    else:
-        device_mesh = init_device_mesh(
-            "cuda",
-            mesh_shape=(world_size // shard_size, shard_size),
-            mesh_dim_names=("ddp", "fsdp"),
-        )
-    return device_mesh
+# Adapted from verl
+@contextmanager
+def maybe_patch_fsdp_module(model):
+    orig_fsdp_module = fully_shard_module.FSDPModule
+
+    class FSDPModuleABC(ABC, orig_fsdp_module):
+        pass
+
+    try:
+        if isinstance(model, ABC):
+            fully_shard_module.FSDPModule = FSDPModuleABC
+        yield
+    finally:
+        fully_shard_module.FSDPModule = orig_fsdp_module
 
 
+# Adapted from verl
 def apply_fsdp2(model, fsdp_kwargs, wrap_policy):
     """model: AutoModelForCausalLM"""
     assert (
@@ -123,11 +79,15 @@ def apply_fsdp2(model, fsdp_kwargs, wrap_policy):
 
     for idx, module in enumerate(modules):
         fully_shard(module, **fsdp_kwargs)
-    fully_shard(
-        model, **fsdp_kwargs
-    )  # fsdp2 will not reshard_after_forward for root module
+    # NOTE: FSDP2 is not compatible with AutoModelForSequenceClassification, so we needs the patch
+    # see: https://github.com/volcengine/verl/pull/3072
+    with maybe_patch_fsdp_module(model):
+        fully_shard(
+            model, **fsdp_kwargs
+        )  # fsdp2 will not reshard_after_forward for root module
 
 
+# Adapted from verl
 def fsdp2_load_full_state_dict(
     model: PreTrainedModel,
     full_state: dict,
@@ -147,7 +107,7 @@ def fsdp2_load_full_state_dict(
         set_model_state_dict,
     )
 
-    device = torch.cuda.current_device()
+    device = current_platform.current_device()
     model = model.to(device=device, non_blocking=True)
     cpu_offload = cpu_offload is not None
     options = StateDictOptions(

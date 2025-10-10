@@ -3,9 +3,9 @@ import subprocess
 
 import pytest
 import torch
-from tensordict import TensorDict
 from torch.testing import assert_close
 
+from areal.platforms import current_platform
 from areal.tests.utils import is_in_ci
 from areal.utils.data import concat_padded_tensors
 from areal.utils.network import find_free_ports
@@ -20,7 +20,7 @@ def assert_tensor_container_close(x1, x2):
         assert len(x1) == len(x2), (len(x1), len(x2))
         [assert_tensor_container_close(xx1, xx2) for xx1, xx2 in zip(x1, x2)]
         return
-    if isinstance(x1, (dict, TensorDict)):
+    if isinstance(x1, dict):
         assert x1.keys() == x2.keys(), (x1.keys(), x2.keys())
         for k in x1.keys():
             assert_tensor_container_close(x1[k], x2[k])
@@ -33,7 +33,7 @@ def assert_tensor_container_close(x1, x2):
 @pytest.mark.parametrize("world_size", [2, 4, 8])
 @pytest.mark.parametrize("granularity", [1, 2, 4])
 def test_redistribute(world_size, granularity, tmp_path):
-    if torch.cuda.device_count() < world_size:
+    if current_platform.device_count() < world_size:
         pytest.skip(f"Test requires {world_size} GPUs")
     port = find_free_ports(1)[0]
     try:
@@ -49,9 +49,11 @@ def test_redistribute(world_size, granularity, tmp_path):
                 f"--granularity={granularity}",
             ],
             check=True,
+            capture_output=True,
+            text=True,
         )
     except subprocess.CalledProcessError as e:
-        pytest.fail(f"Test failed with error: {e.stderr.decode()}")
+        pytest.fail(f"Test failed with error: {e.stderr}")
 
     redistributed_data = []
     for i in range(world_size):

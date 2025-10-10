@@ -2,12 +2,11 @@ import argparse
 import copy
 import os
 import tempfile
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
-from tensordict import TensorDict
 from transformers import AutoTokenizer
 
 from areal.api.alloc_mode import AllocationMode
@@ -22,15 +21,16 @@ from areal.experimental.api.cli_args import (
     OptimizerConfig,
 )
 from areal.experimental.megatron_engine import MegatronEngine
+from areal.platforms import current_platform
 from areal.utils import seeding
 from areal.utils.data import broadcast_tensor_container
 
 MODEL_PATHS = {
-    "qwen3": "/storage/openpsi/models/Qwen__Qwen3-1.7B/",
+    "qwen3": "/storage/openpsi/models/Qwen__Qwen3-0.6B/",
     "qwen3moe": "/storage/openpsi/models/Qwen__Qwen3-30B-A3B/",
 }
 HF_MODEL_PATHS = {
-    "qwen3": "Qwen/Qwen3-1.7B",
+    "qwen3": "Qwen/Qwen3-0.6B",
     # TODO: switch Qwen3MoE to smaller model initialized from scratch
     "qwen3moe": "Qwen/Qwen3-30B-A3B",
 }
@@ -62,8 +62,8 @@ def mock_input(
     batch_size=128,
     min_seqlen=1,
     max_seqlen=1024,
-    device="cuda:0",
-) -> TensorDict:
+    device=current_platform.device_type,
+) -> Dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -82,7 +82,7 @@ def mock_input(
     ] = 1
     input_ids.masked_fill_(~attn_mask, pad_token_id)
 
-    return TensorDict(
+    return dict(
         input_ids=input_ids,
         attention_mask=attn_mask,
     )
@@ -203,7 +203,7 @@ def test_forward(model_type: str, alloc_mode: str, output: Optional[str] = None)
             failed = True
             print(f"AssertionError in torch.testing.assert_close: {e}")
 
-    torch.cuda.synchronize()
+    current_platform.synchronize()
     dist.barrier()
     fsdp_engine.destroy()
     engine.destroy()
@@ -248,7 +248,7 @@ def test_train(model_type: str, alloc_mode: str, output: Optional[str] = None):
     )
 
     print(f"final rank {rank} train_result: {train_result}")
-    torch.cuda.synchronize()
+    current_platform.synchronize()
     dist.barrier()
     engine.destroy()
     engine.destroy_process_groups()
@@ -304,7 +304,7 @@ def test_train_dcp_save_load(
 
     print(f"final rank {rank} train_result: {train_result}")
 
-    torch.cuda.synchronize()
+    current_platform.synchronize()
     dist.barrier()
 
     # save checkpoint for recover
@@ -335,7 +335,7 @@ def test_train_dcp_save_load(
         loss_weight_fn=lambda x: x["cu_seqlens"][-1],
     )
 
-    torch.cuda.synchronize()
+    current_platform.synchronize()
     dist.barrier()
 
     with torch.no_grad():
@@ -350,7 +350,7 @@ def test_train_dcp_save_load(
                 succ = False
         assert succ, "Weights should be same after recover"
 
-    torch.cuda.synchronize()
+    current_platform.synchronize()
     dist.barrier()
 
     engine.destroy()
@@ -416,7 +416,7 @@ def test_simple_dcp_save_load(
                 succ = False
         assert succ, "Weights should be same after recover"
 
-    torch.cuda.synchronize()
+    current_platform.synchronize()
     dist.barrier()
 
     engine.destroy()

@@ -5,8 +5,6 @@ import time
 
 import pytest
 import requests
-import torch
-from tensordict import TensorDict
 
 from areal.api.cli_args import (
     GenerationHyperparameters,
@@ -15,13 +13,14 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import WeightUpdateMeta
 from areal.utils import network
+from areal.utils.data import get_batch_size
 from areal.utils.hf_utils import load_hf_tokenizer
 
 EXPR_NAME = "test_sglang_engine"
 TRIAL_NAME = "trial_0"
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen2-0.5B"
+    MODEL_PATH = "Qwen/Qwen3-0.6B"
 PORT, DIST_PORT = network.find_free_ports(2)
 HOST = network.gethostip()
 # set a large timeout since we may need to download the model from hub
@@ -108,9 +107,9 @@ def test_remote_sglang_rollout(sglang_server, n_samples):
         "messages": [{"role": "user", "content": "Hello, how are you?"}],
     }
     result = engine.rollout_batch([data] * 2, workflow=workflow)
-    assert isinstance(result, TensorDict)
-    bs = result.batch_size
-    assert bs == torch.Size([2 * n_samples])
+    assert isinstance(result, dict)
+    bs = get_batch_size(result)
+    assert bs == 2 * n_samples
     engine.destroy()
 
 
@@ -186,6 +185,7 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
         optimizer=OptimizerConfig(),
     )
     engine = FSDPEngine(engine_config)
+    engine.create_process_group()
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
     engine.initialize(None, ft_spec)
     engine.model_version = 100

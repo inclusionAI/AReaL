@@ -1,9 +1,7 @@
-import itertools
 import os
 import sys
 from copy import deepcopy
 
-import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -15,8 +13,13 @@ from areal.dataset import get_custom_dataset
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.api.cli_args import ExperimentalGRPOConfig as GRPOConfig
 from areal.experimental.megatron_actor import MegatronPPOActor
+from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container
+from areal.utils.data import (
+    broadcast_tensor_container,
+    cycle_dataloader,
+    tensor_container_to,
+)
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -42,6 +45,7 @@ def main(args):
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
     actor = MegatronPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
@@ -141,7 +145,7 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     recover_handler = RecoverHandler(config.recover, ft_spec)
@@ -164,7 +168,7 @@ def main(args):
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    data_generator = itertools.cycle(train_dataloader)
+    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -188,7 +192,7 @@ def main(args):
                     batch = rollout.rollout_batch(
                         next(data_generator), workflow=workflow
                     )
-                batch = batch.to(actor.device)
+                batch = tensor_container_to(batch, actor.device)
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
@@ -196,7 +200,7 @@ def main(args):
             )
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -231,7 +235,7 @@ def main(args):
             if dist.get_rank() == 0:
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
@@ -239,25 +243,6 @@ def main(args):
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
-
-        with stats_tracker.record_timing("eval"):
-
-            def evaluate_fn():
-                # Stats are logged in the workflow
-                # and will be exported later
-                cnt = 0
-                for data in valid_dataloader:
-                    for item in data:
-                        eval_rollout.submit(item, eval_workflow)
-                        cnt += 1
-                eval_rollout.wait(cnt, timeout=None)
-
-            evaluator.evaluate(
-                evaluate_fn,
-                epoch,
-                step,
-                global_step,
-            )
 
         with stats_tracker.record_timing("checkpoint_for_recover"):
             recover_handler.dump(
@@ -271,7 +256,32 @@ def main(args):
             )
 
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
+
+        with stats_tracker.record_timing("eval"):
+
+            def evaluate_fn():
+                if actor.is_data_parallel_head():
+                    # Stats are logged in workflow
+                    # and will be exported later
+                    cnt = 0
+                    for data in valid_dataloader:
+                        for item in data:
+                            eval_rollout.submit(item, eval_workflow)
+                            cnt += 1
+                    eval_rollout.wait(cnt, timeout=None)
+                dist.barrier(device_ids=[actor.device.index])
+                current_platform.synchronize()
+
+            evaluator.evaluate(
+                evaluate_fn,
+                epoch,
+                step,
+                global_step,
+            )
+
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
         stats[0].update(
@@ -280,7 +290,7 @@ def main(args):
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         # Resume rollout
         rollout.resume()

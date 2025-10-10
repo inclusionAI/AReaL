@@ -83,8 +83,7 @@ def gather_heads_scatter_seq(
     if dim_size % sp_world != 0:
         padding_size = sp_world - (dim_size % sp_world)
         x = _pad_tensor(x, seq_dim, padding_size)
-    res = SeqAllToAll.apply(group, x, seq_dim, head_dim, False)
-    return res
+    return SeqAllToAll.apply(group, x, seq_dim, head_dim, False)
 
 
 def _pad_tensor(x: Tensor, dim: int, padding_size: int) -> Tensor:
@@ -141,12 +140,10 @@ def all_to_all_tensor(
 
         def wait():
             comm.wait()
-            res = torch.cat(output_list, dim=gather_dim).contiguous()
-            return res
+            return torch.cat(output_list, dim=gather_dim).contiguous()
 
         return wait
-    res = torch.cat(output_list, dim=gather_dim).contiguous()
-    return res
+    return torch.cat(output_list, dim=gather_dim).contiguous()
 
 
 class SeqAllToAll(torch.autograd.Function):

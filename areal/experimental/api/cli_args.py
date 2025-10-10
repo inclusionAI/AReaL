@@ -1,6 +1,16 @@
-from areal.api.cli_args import *
+from dataclasses import dataclass, field
+from typing import List
+
+from areal.api.cli_args import (
+    BaseExperimentConfig,
+    GenerationHyperparameters,
+    InferenceEngineConfig,
+    PPOActorConfig,
+    TrainEngineConfig,
+)
 
 
+# TODO: Select useful options, add documentation string when moving out of experimental
 @dataclass
 class DistributedDataParallelConfig:
     """Configuration for Megatron's DistributedDataParallel.
@@ -13,7 +23,7 @@ class DistributedDataParallelConfig:
     align_param_gather: bool = False
     use_distributed_optimizer: bool = True
     check_for_nan_in_grad: bool = False
-    bucket_size: Optional[int] = None
+    bucket_size: int | None = None
     average_in_collective: bool = False
     fp8_param_gather: bool = False
 
@@ -45,6 +55,20 @@ class MegatronEngineConfig:
     # Checkpointing Configuration
     async_save: bool = False
     use_checkpoint_opt_param_scheduler: bool = True
+
+    # Deterministic Option
+    # NOTE: This option forces torch to use deterministic algorithms,
+    # which makes sure that two forward passes with the same input
+    # will produce the same output. However, it may have a performance impact.
+    # It is recommended to set this option to True for RL training on MoE models for stability.
+    use_deterministic_algorithms: bool = False
+
+    # Gradient checkpointing options, only effective when gradient_checkpointing=True
+    recompute_granularity: str | None = "full"
+    recompute_method: str | None = "uniform"
+    recompute_num_layers: int | None = 1
+    distribute_saved_activations: bool | None = None
+    recompute_modules: List[str] | None = None
 
 
 @dataclass

@@ -4,6 +4,9 @@
 format: jb-book
 root: intro
 parts:
+  - caption: Version History
+    chapters:
+    - file: version_history
   - caption: Getting Started with AReaL-lite
     chapters:
     - file: lite/gsm8k_grpo
@@ -13,6 +16,7 @@ parts:
     - file: tutorial/quickstart
     - file: tutorial/openai_workflows
     - file: tutorial/eval
+    - file: cli_reference
     - file: tutorial/quickstart_legacy
     # - file: tutorial/troubleshooting
   - caption: Best Practices
@@ -31,6 +35,13 @@ parts:
     chapters:
     - file: references/benchmark
     - file: references/reproduce
+  - caption: Algorithms
+    chapters:
+    - file: algorithms/grpo
+    - file: algorithms/rloo
+    - file: algorithms/dapo
+    - file: algorithms/dr.GRPO
+    - file: algorithms/litePPO
   - caption: Customization (Legacy)
     chapters:
     - file: legacy/customization/dataset

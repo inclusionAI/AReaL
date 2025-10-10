@@ -1,7 +1,6 @@
 experiment_name: clevr_count_70k-grpo
 trial_name: trial1
 
-
 seed: 1
 total_train_epochs: 3
 tokenizer_path: ${actor.path}
@@ -10,12 +9,10 @@ async_training: true
 cluster:
   n_nodes: 1
   n_gpus_per_node: 8
-  cluster_name: na132
-  fileroot: /storage/openpsi/experiments
+  fileroot: /tmp/areal/experiments
   name_resolve:
     type: nfs
-    nfs_record_root: /storage/openpsi/experiments/name_resolve/clevr_count_70k-grpo
-    etcd3_addr: etcd-client.openpsi-etcd.svc.sigma-na130-lingbo.na130.wl-robby.local:2379
+    nfs_record_root: /tmp/areal/name_resolve
 
 allocation_mode: sglang.d1p1t1+d7p1t1
 
@@ -38,7 +35,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen2.5-VL-3B-Instruct
+  path: Qwen/Qwen2.5-VL-3B-Instruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: false
@@ -56,9 +53,7 @@ actor:
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
   backend: fsdp
-
   group_size: ${gconfig.n_samples}
-  group_adv_norm: false
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -68,12 +63,22 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
+  dynamic_sampling: false
+  reward_norm:
+    mean_level: group
+    std_level: group
+    group_size: ${gconfig.n_samples}
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+  max_new_tokens: ${gconfig.max_new_tokens}
 
 ref:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: ${actor.path}
   init_from_scratch: false
+  disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
     max_tokens_per_mb: 4096
@@ -89,6 +94,7 @@ sglang:
   max_running_requests: 64
   context_length: 32768
   mem_fraction_static: 0.8
+  enable_multimodal: true
 
 # datasets
 train_dataset:
@@ -96,7 +102,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/data/clevr_count_70k/
+  path: BUAADreamer/clevr_count_70k
   type: rl
 
 valid_dataset:
@@ -104,7 +110,7 @@ valid_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/data/clevr_count_70k/
+  path: BUAADreamer/clevr_count_70k
   type: rl
 
 # Utilities

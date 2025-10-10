@@ -3,6 +3,7 @@ import os
 import sys
 from typing import List, cast
 
+import torch
 import torch.distributed as dist
 import torch.utils.data
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -12,10 +13,12 @@ import areal.dataset
 import areal.utils.data
 import areal.utils.seeding as seeding
 import areal.utils.stats_tracker as stats_tracker
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import SFTConfig
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.sft.lm_engine import FSDPLMEngine
-from areal.utils.data import broadcast_tensor_container
+from areal.platforms import current_platform
+from areal.utils.data import broadcast_tensor_container, tensor_container_to
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 
 
@@ -72,6 +75,7 @@ def main() -> None:
             ):
                 break
 
+            data = tensor_container_to(data, current_platform.current_device())
             data = broadcast_tensor_container(
                 data,
                 src_rank=engine.current_data_parallel_head(),

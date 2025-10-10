@@ -16,9 +16,10 @@ from areal.api.cli_args import GRPOConfig
 from areal.api.io_struct import FinetuneSpec, WeightUpdateMeta
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.platforms import current_platform
 from areal.reward.math_parser import process_results
 from areal.utils import seeding
-from areal.utils.data import broadcast_tensor_container
+from areal.utils.data import broadcast_tensor_container, tensor_container_to
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
@@ -37,6 +38,7 @@ def main() -> None:
     seeding.set_random_seed(config.seed, str(rank))
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
@@ -76,7 +78,7 @@ def main() -> None:
     ref.initialize(None, ft_spec)
 
     weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
+        WeightUpdateMeta.from_fsdp_xccl(
             AllocationMode.from_str(config.allocation_mode), actor
         )
     ]
@@ -111,7 +113,7 @@ def main() -> None:
             batch = None
             if actor.is_data_parallel_head():
                 batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
-                batch = batch.to(actor.device)
+                batch = tensor_container_to(batch, actor.device)
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
@@ -119,7 +121,7 @@ def main() -> None:
             )
 
             dist.barrier(device_ids=[actor.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
 
             batch["ref_logp"] = ref.compute_logp(batch)
 
@@ -137,7 +139,7 @@ def main() -> None:
             if future is not None:
                 future.result()
             dist.barrier(device_ids=[actor.device.index])
-            torch.cuda.synchronize()
+            current_platform.synchronize()
             rollout.resume()
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)

@@ -1,27 +1,23 @@
-import asyncio
-import threading
 import time
-import traceback
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from queue import Empty, Full, Queue
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from queue import Queue
+from typing import Any, Callable, Dict, List, Optional
 
 import sglang as sgl
 import torch.distributed as dist
-from tensordict import TensorDict
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     ModelRequest,
     ModelResponse,
-    RolloutStat,
     WeightUpdateMeta,
 )
+from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
 from areal.utils import logging, name_resolve, names, pkg_version
 
-if TYPE_CHECKING:
-    from areal.api.workflow_api import RolloutWorkflow
 logger = logging.getLogger(__name__)
 
 if pkg_version.is_available("sglang"):
@@ -46,9 +42,6 @@ class SGLangEngine(InferenceEngine):
         config: InferenceEngineConfig,
         engine_args: Optional[Dict[str, Any]] = None,
     ):
-        config.max_concurrent_rollouts = (
-            config.max_concurrent_rollouts or config.consumer_batch_size
-        )
         self.config = config
         self.engine_args = engine_args or {}
 
@@ -57,161 +50,40 @@ class SGLangEngine(InferenceEngine):
         self.output_queue = Queue(maxsize=qsize)
         self.result_cache = []
 
-        self.exiting = threading.Event()
-        self.lock = threading.Lock()
-
-        self.rollout_stat = RolloutStat()
-
         self._version = 0
 
-    def initialize(self, addr: str | None, ft_spec: Optional[Dict[str, Any]] = None):
+        self.workflow_executor = WorkflowExecutor(
+            config=config,
+            inference_engine=self,
+        )
+
+    def initialize(
+        self,
+        engine_id: Optional[str] = None,
+        train_data_parallel_size: int | None = None,
+    ):
+        if engine_id is None:
+            if dist.is_initialized():
+                engine_id = str(dist.get_rank())
+            else:
+                engine_id = uuid.uuid4().hex
+        self.engine_id = engine_id
+        self.logger = logging.getLogger(f"[SGLang Local Engine Rank {engine_id}]")
+
         self.engine = sgl.Engine(**self.engine_args)
 
-        self.rollout_thread = threading.Thread(target=self._rollout_thread)
-        self.rollout_thread.start()
+        self.workflow_executor.initialize(
+            logger=self.logger, train_data_parallel_size=train_data_parallel_size
+        )
 
     def destroy(self):
-        self.exiting.set()
-        self.rollout_thread.join()
-
-        if hasattr(self, "engine") and self.engine is not None:
-            try:
-                self.engine.shutdown()
-            except Exception as e:
-                logger.warning(f"Error shutting down engine: {e}")
+        self.workflow_executor.destroy()
 
     def set_version(self, version):
-        with self.lock:
-            self._version = version
+        self._version = version
 
     def get_version(self):
-        with self.lock:
-            return self._version
-
-    def _rollout_thread(self):
-        """Thread that runs the rollout loop."""
-        try:
-            asyncio.run(self._rollout_thread_async())
-        except Exception as e:
-            traceback.print_exc()
-            raise e
-
-    async def _rollout_thread_async(self):
-        data = None
-
-        rollout_tasks: Dict[str, asyncio.Task] = {}
-        rid = 0
-
-        try:
-            while not self.exiting.is_set():
-                # Load next data from controller
-                if data is None:
-                    try:
-                        data, workflow = self.input_queue.get_nowait()
-                        logger.info(f"Get data from puller: {data}")
-                    except Empty:
-                        logger.debug(f"No data from puller stream.")
-
-                # Check capacity
-                if dist.is_initialized():
-                    world_size = dist.get_world_size()
-                else:
-                    world_size = 1
-
-                cannot_rollout_reason = []
-                capacity = max(1, self.config.max_concurrent_rollouts // world_size)
-                can_rollout = len(rollout_tasks) < capacity
-                if not can_rollout:
-                    cannot_rollout_reason.append(
-                        f"Exceeding capacity: # running tasks {len(rollout_tasks)} >= capacity {capacity}"
-                    )
-
-                # Staleness control
-                version = self.get_version()
-                ofp = self.config.max_head_offpolicyness
-                with self.lock:
-                    sample_cnt = self.rollout_stat.accepted + self.rollout_stat.running
-                expected_version = sample_cnt // self.config.consumer_batch_size
-                not_staled = expected_version <= ofp + version
-                can_rollout &= not_staled
-                if not not_staled:
-                    cannot_rollout_reason.append(
-                        f"Staled: expected version ({expected_version}) = "
-                        f"global sample cnt ({sample_cnt}) // batch size ({self.config.consumer_batch_size}), "
-                        f"current latest version {version}, "
-                        f"offpolicyness {self.config.max_head_offpolicyness}."
-                    )
-
-                if not can_rollout:
-                    logger.debug(
-                        f"Cannot submit new rollouts. "
-                        + "\n".join(cannot_rollout_reason)
-                    )
-
-                # Create new rollout task
-                if can_rollout and data is not None:
-                    task = asyncio.create_task(
-                        workflow.arun_episode(self, data), name=str(rid)
-                    )
-                    rollout_tasks[str(rid)] = task
-
-                    with self.lock:
-                        self.rollout_stat.submitted += 1
-                        self.rollout_stat.running += 1
-                        logger.info(
-                            f"Submit rollout rid {rid}. "
-                            f"Submit: {self.rollout_stat.submitted}, "
-                            f"running: {self.rollout_stat.running}, "
-                            f"accepted: {self.rollout_stat.accepted}."
-                        )
-
-                    rid += 1
-                    data = None
-
-                # Wait for rollout completion
-                tasks = list(rollout_tasks.values())
-                done = []
-                if tasks:
-                    done, _ = await asyncio.wait(
-                        tasks,
-                        timeout=ROLLOUT_POLL_WAIT_TIME,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                else:
-                    await asyncio.sleep(ROLLOUT_POLL_WAIT_TIME)
-
-                # Collect done results
-                for task in done:
-                    traj = await task
-                    traj: TensorDict
-                    task_rid = task.get_name()
-                    rollout_tasks.pop(task_rid)
-                    self.rollout_stat.accepted += 1
-
-                    try:
-                        self.output_queue.put_nowait(traj)
-                    except Full:
-                        raise RuntimeError(
-                            "Output queue full. Please increase queue_size."
-                        )
-
-                    with self.lock:
-                        self.rollout_stat.running -= 1
-                        logger.info(
-                            f"Finish rollout {task_rid}. "
-                            f"Submit: {self.rollout_stat.submitted}, "
-                            f"running: {self.rollout_stat.running}, "
-                            f"accepted: {self.rollout_stat.accepted}."
-                        )
-        finally:
-            # Cancel remaining tasks
-            for task in rollout_tasks.values():
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
+        return self._version
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Async version of generate using local sglang engine."""
@@ -327,50 +199,55 @@ class SGLangEngine(InferenceEngine):
         else:
             raise NotImplementedError(f"Unsupported weight update type: {meta.type}")
 
-    def submit(self, data: Dict[str, Any], workflow: "RolloutWorkflow") -> None:
-        try:
-            self.input_queue.put_nowait((data, workflow))
-        except Full:
-            raise RuntimeError("Input queue full. Please increase queue_size.")
-
-    def wait(self, count: int, timeout: float, should_accept: Callable) -> TensorDict:
-        tik = time.perf_counter()
-        accepted = len(self.result_cache)
-        while (
-            accepted < count
-            and not self.exiting.is_set()
-            and time.perf_counter() - tik < timeout
-        ):
-            try:
-                result = self.output_queue.get(timeout=ROLLOUT_POLL_WAIT_TIME)
-                if should_accept(result):
-                    self.result_cache.append(result)
-                    accepted += 1
-                else:
-                    with self.lock:
-                        self.rollout_stat.accepted -= 1
-            except Empty:
-                time.sleep(ROLLOUT_POLL_WAIT_TIME)
-        if self.exiting.is_set():
-            raise RuntimeError("Rollout engine is exiting, cannot wait for results.")
-        if accepted < count:
-            raise TimeoutError(
-                f"Timed out waiting for {count} rollouts, " f"only received {accepted}."
-            )
-        results, self.result_cache = (
-            self.result_cache[:count],
-            self.result_cache[count:],
+    def submit(
+        self,
+        data: Dict[str, Any],
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
+    ) -> None:
+        return self.workflow_executor.submit(
+            data,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
+            should_accept=should_accept,
         )
-        return TensorDict.cat(results, dim=0)
 
-    def rollout(
-        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
-    ) -> TensorDict:
-        """Submit a batch of requests to the inference engine and wait for the results."""
-        for item in data:
-            self.submit(item, workflow)
-        return self.wait(
-            count=len(data),
-            timeout=self.config.request_timeout,
-            should_accept=lambda x: True,
+    def wait(self, count: int, timeout: float | None = None):
+        return self.workflow_executor.wait(count, timeout=timeout)
+
+    def rollout_batch(
+        self,
+        data: List[Dict[str, Any]],
+        workflow: Optional["RolloutWorkflow"] = None,
+        workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
+    ):
+        return self.workflow_executor.rollout_batch(
+            data=data,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
+            should_accept=should_accept,
         )
+
+    def prepare_batch(
+        self,
+        dataloader: StatefulDataLoader,
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
+    ):
+        return self.workflow_executor.prepare_batch(
+            dataloader=dataloader,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
+            should_accept=should_accept,
+        )
+
+    def pause(self):
+        """Pause request submission for async rollout. Used during evaluation to prevent data over generation."""
+        return self.workflow_executor.pause()
+
+    def resume(self):
+        """Resume request submission for async rollout."""
+        return self.workflow_executor.resume()

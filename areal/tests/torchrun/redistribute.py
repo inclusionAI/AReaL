@@ -5,17 +5,17 @@ import random
 
 import torch
 import torch.distributed as dist
-from tensordict import TensorDict
 
-from areal.utils.data import concat_padded_tensors
+from areal.platforms import current_platform
+from areal.utils.data import concat_padded_tensors, tensor_container_to
 from areal.utils.redistributor import redistribute
 
 
 def main(args):
     dist.init_process_group("nccl")
     rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(rank)
-    device = f"cuda:{rank}"
+    current_platform.set_device(rank)
+    device = f"{current_platform.device_type}:{rank}"
 
     bs = random.randint(1, 10) * args.granularity
     prompt_lens = [random.randint(1, 10) for _ in range(bs)]
@@ -40,13 +40,16 @@ def main(args):
             log_probs=log_probs.unsqueeze(0),
             attention_mask=attention_mask.unsqueeze(0),
         )
-        data.append(TensorDict(d, batch_size=1))
+        data.append(d)
 
-    data = concat_padded_tensors(data).to(device)
+    data = concat_padded_tensors(data)
+    data = tensor_container_to(data, device)
     redistributed = redistribute(data, granularity=args.granularity)
 
-    redistributed.all_data = [x.to("cpu") for x in redistributed.all_data]
-    redistributed.data = redistributed.data.to("cpu")
+    redistributed.all_data = [
+        tensor_container_to(x, "cpu") for x in redistributed.all_data
+    ]
+    redistributed.data = tensor_container_to(redistributed.data, "cpu")
 
     with open(
         os.path.join(args.dump_path, f"redistributed{dist.get_rank()}.pkl"), "wb"
