@@ -100,14 +100,14 @@ def main(args):
     eval_rollout.config.max_head_offpolicyness = int(1e12)
     eval_rollout.initialize()
 
-    weight_update_meta = WeightUpdateMeta.from_megatron_nccl(
-        allocation_mode,
-        nccl_group_name=actor.weight_update_group_name,
-    )
-
     # Initialize train engine
     actor.initialize(
         None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
+    )
+
+    weight_update_meta = WeightUpdateMeta.from_megatron_nccl(
+        allocation_mode,
+        nccl_group_name=actor.weight_update_group_name,
     )
     actor.connect_engine(rollout, weight_update_meta)
 
