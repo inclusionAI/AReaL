@@ -14,7 +14,7 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: sglang.d1p1t1+d7p1t1
+allocation_mode: sglang.d4p1t1+d4p1t1
 
 rollout:
   experiment_name: ${experiment_name}
@@ -35,7 +35,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path:  /storage/openpsi/models/Qwen__Qwen2.5-VL-3B-Instruct
+  path:  /storage/openpsi/models/Mini-o3-7B-SFT
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
@@ -104,7 +104,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: [Mini-o3/VisualProbe_train, Mini-o3/DeepEyes_train_4K]
+  path: [/storage/openpsi/data/VisualProbe_train, /storage/openpsi/data/DeepEyes_train_4K]
   type: rl
 
 valid_dataset:
@@ -112,7 +112,7 @@ valid_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: [Mini-o3/VisualProbe_train, Mini-o3/DeepEyes_train_4K]
+  path: [/storage/openpsi/data/VisualProbe_Easy, /storage/openpsi/data/VisualProbe_Medium, /storage/openpsi/data/VisualProbe_Hard, /storage/openpsi/data/Vstar_Bench]
   type: rl
 
 # Utilities
