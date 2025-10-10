@@ -46,6 +46,7 @@ from areal.utils.stats_logger import StatsLogger
 from areal.utils import seeding, logging, stats_tracker
 from areal.experimental.openai import ArealOpenAI
 from areal.utils.redistributor import redistribute
+from AVoyager.utils.reward import compute_score
 
 import sys
 from pathlib import Path
@@ -132,18 +133,21 @@ class AVoyagerWorkflow(RolloutWorkflow):
         client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer, processor=self.processor)
 
         # Collect trajectories 
-        trajs = await asyncio.gather(*[run_agent(client=client, 
-                                                 tokenizer=self.tokenizer,
-                                                 data=data,
-                                                 toolbox=self.toolbox,
-                                                 processor=self.processor,
-                                                 max_turns=self.max_turns,
-                                                 topk=self.topk,
-                                                 max_tokens=self.max_tokens,
-                                                 save_path=save_trajs_path.replace("ID.json", f"{i}.json") if save_trajs_path is not None else None,
-                                                 rank=i
-                                                 ) 
-                                       for i in range(self.n_trajs)])
+        trajs = await asyncio.gather(*[
+            run_agent(
+                client=client,
+                tokenizer=self.tokenizer,
+                data=data,
+                toolbox=self.toolbox,
+                processor=self.processor,
+                max_turns=self.max_turns,
+                topk=self.topk,
+                max_tokens=self.max_tokens,
+                save_path=save_trajs_path.replace("ID.json", f"{i}.json") if save_trajs_path is not None else None,
+                rank=i,
+            )
+            for i in range(self.n_trajs)
+        ])
 
         all_completions = [r[0] for r in trajs]
         rewards = np.asarray([r[1] for r in trajs])
@@ -252,6 +256,26 @@ def main(args):
         collate_fn=lambda x: x,
         drop_last=config.train_dataset.drop_last,
     )
+    # Build validation dataloaders per dataset (aligned with train)
+    valid_dataloaders = {}
+    if getattr(config, "valid_dataset", None) is not None and getattr(config.valid_dataset, "path", None):
+        vpaths = config.valid_dataset.path
+        if isinstance(vpaths, str):
+            vpaths = [vpaths]
+        for vp in vpaths:
+            try:
+                vds = StatefulDataLoader(
+                    get_multimodal_dataset([vp], "train", processor, actor.data_parallel_rank, actor.data_parallel_world_size),
+                    batch_size=config.valid_dataset.batch_size // actor.data_parallel_world_size,
+                    shuffle=config.valid_dataset.shuffle,
+                    num_workers=config.valid_dataset.num_workers,
+                    collate_fn=lambda x: x,
+                    drop_last=config.valid_dataset.drop_last,
+                )
+                vname = os.path.basename(str(vp).rstrip("/\\")) or str(vp)
+                valid_dataloaders[vname] = vds
+            except Exception as e:
+                logger.warning(f"Failed to build valid dataloader for {vp}: {e}")
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
         dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
@@ -418,6 +442,108 @@ def main(args):
                 stats_logger,
                 train_dataloader,
                 tokenizer=tokenizer,
+            )
+
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
+        
+        with stats_tracker.record_timing("eval"):
+
+            def evaluate_fn():
+                if not valid_dataloaders:
+                    return
+                if not actor.is_data_parallel_head():
+                    dist.barrier(device_ids=[actor.device.index])
+                    current_platform.synchronize()
+                    return
+
+                async def _eval_dataset(name, loader):
+                    client = ArealOpenAI(engine=rollout, tokenizer=tokenizer, processor=processor)
+                    total_correct = 0.0
+                    total = 0
+
+                    async def _eval_one(sample):
+                        nonlocal total_correct, total
+                        data = dict(
+                            id=str(sample.get("qid", sample.get("id", uuid.uuid4().hex))),
+                            question=sample.get("question") or sample.get("questions"),
+                            answer=sample.get("answer") or sample.get("answers"),
+                            images=sample.get("images", []),
+                        )
+                        completions, _, _stats = await run_agent(
+                            client=client,
+                            tokenizer=tokenizer,
+                            data=data,
+                            toolbox=VoyageToolBox(voyage_client_types=config.voyager_client_type),
+                            processor=processor,
+                            max_turns=config.max_turns,
+                            topk=config.topk,
+                            max_tokens=config.gconfig.max_new_tokens,
+                            save_path=None,
+                            rank=0,
+                        )
+                        # Extract last assistant content
+                        pred_text = None
+                        if completions:
+                            try:
+                                pred_text = completions[-1].choices[0].message.content
+                            except Exception:
+                                pred_text = None
+                        predict_str_list = []
+                        if pred_text:
+                            predict_str_list = [pred_text]
+                        extra_info = {
+                            "acc_reward_weight": 1.0,
+                            "format_reward_weight": 0.0,
+                            "tool_call_penalty": 0.0,
+                            "use_tool_reward_weight": 0.0,
+                            "gpt_extract_answer": True,
+                            "extract_answer_tags": "strict",
+                        }
+                        raw = compute_score(
+                            data["question"], predict_str_list, data["answer"], extra_info
+                        )
+                        if isinstance(raw, (list, tuple)):
+                            acc = float(raw[1])
+                        elif isinstance(raw, dict):
+                            acc = 0.0
+                        else:
+                            acc = float(raw)
+                        total_correct += 1.0 if acc >= 0.5 else 0.0
+                        total += 1
+
+                    for batch in loader:
+                        await asyncio.gather(*[_eval_one(sample) for sample in batch])
+                    acc = (total_correct / total) if total else 0.0
+                    return name, acc, total
+
+                async def _eval_all():
+                    results = {}
+                    overall_correct = 0.0
+                    overall_total = 0
+                    for name, loader in valid_dataloaders.items():
+                        name, acc, total = await _eval_dataset(name, loader)
+                        results[f"val/{name}/acc"] = acc
+                        results[f"val/{name}/count"] = total
+                        overall_correct += acc * total
+                        overall_total += total
+                    if overall_total > 0:
+                        results["val/overall/acc"] = overall_correct / overall_total
+                        results["val/overall/count"] = overall_total
+                    return results
+
+                eval_stats = asyncio.run(_eval_all())
+                if eval_stats:
+                    stats_logger.commit(epoch, step, global_step, eval_stats)
+
+                dist.barrier(device_ids=[actor.device.index])
+                current_platform.synchronize()
+
+            evaluator.evaluate(
+                evaluate_fn,
+                epoch,
+                step,
+                global_step,
             )
 
         dist.barrier(device_ids=[actor.device.index])
