@@ -400,8 +400,7 @@ class MegatronEngine(TrainEngine):
             for name, tensor in converted_named_tensors
         ]
 
-        meta.set_param_specs(param_specs)
-        fut = self.rollout_engine.update_weights_from_distributed(meta)
+        fut = self.rollout_engine.update_weights_from_distributed(meta, param_specs)
 
         handles = []
         for _, param in converted_named_tensors:
@@ -416,7 +415,6 @@ class MegatronEngine(TrainEngine):
         fut.result()
 
         converted_named_tensors.clear()
-        meta.clear_param_specs()
 
         self.engine_lock.release()
 
@@ -450,6 +448,19 @@ class MegatronEngine(TrainEngine):
         meta: WeightUpdateMeta,
         named_tensors: List[Tuple[str, nn.Parameter | torch.Tensor]],
     ):
+        """Gather a bucket of MoE expert weights and broadcast them.
+
+        This function handles the distributed update for a bucket of Mixture-of-Experts
+        (MoE) parameters. Since expert parameters are sharded across the expert
+        parallel group, this function first performs an `all_gather` to collect all
+        shards from all expert ranks.
+
+        Once the full expert parameters are reconstructed on the pipeline parallel
+        head, it converts them to the HuggingFace format and calls
+        `_update_bucket_weights_from_distributed` to perform the actual broadcast
+        to the inference engine.
+        """
+
         # Early exit when chunk size is relatively small
         if not named_tensors:
             return

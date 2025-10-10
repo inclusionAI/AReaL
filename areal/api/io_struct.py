@@ -101,9 +101,6 @@ class WeightUpdateMeta:
     nccl_group_name: str = "update_weight_group"
     weight_chunked_mem_mb: int = 1024
 
-    # For distributed weight update
-    param_specs: List[ParamSpec] = field(default_factory=list)
-
     use_lora: bool = False
 
     @classmethod
@@ -126,12 +123,6 @@ class WeightUpdateMeta:
             path=path,
             use_lora=use_lora,
         )
-
-    def set_param_specs(self, param_specs: List[ParamSpec]):
-        self.param_specs = param_specs
-
-    def clear_param_specs(self):
-        self.param_specs.clear()
 
     @classmethod
     def from_megatron_nccl(

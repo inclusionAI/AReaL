@@ -30,13 +30,18 @@ class DistributedLock:
         my_token = f"{dist.get_rank()}:{uuid.uuid4()}".encode("utf-8")
 
         while True:
-            current = self.store.add(self.key_counter, 1)
-            if current == 1:
-                self._set_owner(my_token)
-                self.token = my_token
-                return True
+            try:
+                current = self.store.add(self.key_counter, 1)
+                if current == 1:
+                    self._set_owner(my_token)
+                    self.token = my_token
+                    return True
 
-            self._rollback_counter()
+                self._rollback_counter()
+            except RuntimeError:
+                # A RuntimeError can occur from store.add under contention.
+                # We'll let the loop back off and retry.
+                pass
 
             if timeout is not None and (time.perf_counter() - start) > timeout:
                 return False

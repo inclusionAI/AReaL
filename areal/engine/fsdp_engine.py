@@ -303,8 +303,7 @@ class FSDPEngine(BaseHFEngine):
             for name, tensor in named_tensors
         ]
 
-        meta.set_param_specs(param_specs)
-        fut = self.rollout_engine.update_weights_from_distributed(meta)
+        fut = self.rollout_engine.update_weights_from_distributed(meta, param_specs)
 
         handles = []
         for _, tensor in named_tensors:
@@ -319,7 +318,6 @@ class FSDPEngine(BaseHFEngine):
         fut.result()
 
         named_tensors.clear()
-        meta.clear_param_specs()
 
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
         assert meta.type == current_platform.communication_backend

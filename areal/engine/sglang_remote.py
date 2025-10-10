@@ -20,6 +20,7 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     ModelRequest,
     ModelResponse,
+    ParamSpec,
     WeightUpdateMeta,
 )
 from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
@@ -309,12 +310,15 @@ class RemoteSGLangEngine(InferenceEngine):
 
         return fut
 
-    def update_weights_from_distributed(self, meta: WeightUpdateMeta) -> Future[None]:
+    def update_weights_from_distributed(
+        self, meta: WeightUpdateMeta, param_specs: List[ParamSpec]
+    ) -> Future[None]:
         assert meta.type == current_platform.communication_backend
 
         fut = self.executor.submit(
             update_weights_from_distributed,
             meta,
+            param_specs,
             self.addresses,
             self.config.request_timeout,
         )
@@ -502,11 +506,10 @@ def init_weights_update_group_remote(
 
 def update_weights_from_distributed(
     meta: WeightUpdateMeta,
+    param_specs: List[ParamSpec],
     addresses: List[str],
     request_timeout,
 ):
-    param_specs = meta.param_specs
-
     async def _fn():
         await asyncio.gather(
             *[

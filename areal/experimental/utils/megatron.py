@@ -307,17 +307,22 @@ def convert_qwen2_to_hf(
 
 
 # Adapted from slime
+# A registry for conversion functions is more extensible.
+_CONVERSION_FN_REGISTRY = {
+    "qwen3_moe": convert_qwen3moe_to_hf,
+    "qwen2": convert_qwen2_to_hf,
+    "qwen3": convert_qwen2_to_hf,
+}
+
+
 def convert_to_hf(
     tf_config: TransformerConfig, model_name: str, name: str, param: Parameter | Tensor
 ):
-    if "qwen3_moe" in model_name:
-        converted_named_tensors = convert_qwen3moe_to_hf(tf_config, name, param)
-    elif "qwen2" in model_name or "qwen3" in model_name:
-        converted_named_tensors = convert_qwen2_to_hf(tf_config, name, param)
-    else:
-        raise ValueError(f"Unsupported model: {model_name}")
+    for key, conversion_fn in _CONVERSION_FN_REGISTRY.items():
+        if key in model_name:
+            return conversion_fn(tf_config, name, param)
 
-    return converted_named_tensors
+    raise ValueError(f"Unsupported model for HF conversion: {model_name}")
 
 
 def get_named_parameters(model_module, num_experts):

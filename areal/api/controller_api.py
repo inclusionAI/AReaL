@@ -11,6 +11,7 @@ from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import (
     ModelRequest,
     ModelResponse,
+    ParamSpec,
     SaveLoadMeta,
     WeightUpdateMeta,
 )
@@ -539,13 +540,17 @@ class RolloutController(abc.ABC):
         """
         raise NotImplementedError()
 
-    def update_weights_from_distributed(self, meta: WeightUpdateMeta) -> Future[None]:
+    def update_weights_from_distributed(
+        self, meta: WeightUpdateMeta, param_specs: List[ParamSpec]
+    ) -> Future[None]:
         """Update weights in the inference engine in a non-blocking manner.
 
         Parameters
         ----------
         meta : WeightUpdateMeta
             Metadata containing information about the weight update
+        param_specs : List[ParamSpec]
+            A list of parameter specifications for the weights to be updated
 
         Returns
         -------
