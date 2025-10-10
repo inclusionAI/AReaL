@@ -296,8 +296,10 @@ def local_main(config, run_id: int = 0):
             config.vllm = to_structured_cfg(config.vllm, vLLMConfig)
             random_seed = config.vllm.seed
 
-        if alloc_mode.gen_backend == "sglang" and config.sglang.if_apply_sglang_patch:
-            apply_sglang_patch()
+        if alloc_mode.gen_backend == "sglang":
+            apply_patch = config.launcher.enable_multithread_load or config.launcher.enable_fast_load
+            if apply_patch:
+                apply_sglang_patch()
 
         backend_spec = {
             "sglang": {
