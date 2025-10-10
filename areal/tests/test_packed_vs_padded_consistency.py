@@ -75,32 +75,34 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
     engine.create_device_model()
     engine.initialized = True
 
-    # Prepare padded input
-    padded_input = mock_padded_llm_data
+    try:
+        # Prepare padded input
+        padded_input = mock_padded_llm_data
 
-    # Get packed input using prepare_mb_list
-    mb_list = engine.prepare_mb_list(padded_input)
-    assert len(mb_list.mbs) == 1
+        # Get packed input using prepare_mb_list
+        mb_list = engine.prepare_mb_list(padded_input)
+        assert len(mb_list.mbs) == 1
 
-    with torch.no_grad():
-        padded_logits = engine.model(
-            input_ids=padded_input["input_ids"],
-            attention_mask=padded_input["attention_mask"],
-        ).logits
-        seqlens = padded_input["attention_mask"].sum(1)
-        x1 = []
-        for i, s in enumerate(seqlens):
-            x1.append(padded_logits[i, :s])
-        x1 = torch.cat(x1)
+        with torch.no_grad():
+            padded_logits = engine.model(
+                input_ids=padded_input["input_ids"],
+                attention_mask=padded_input["attention_mask"],
+            ).logits
+            seqlens = padded_input["attention_mask"].sum(1)
+            x1 = []
+            for i, s in enumerate(seqlens):
+                x1.append(padded_logits[i, :s])
+            x1 = torch.cat(x1)
 
-        mb = mb_list.padded_mbs[0]
-        pad_len = mb_list.padding_lengths[0]
-        x2 = engine.model(**mb).logits.squeeze(0)[:-pad_len]
+            mb = mb_list.padded_mbs[0]
+            pad_len = mb_list.padding_lengths[0]
+            x2 = engine.model(**mb).logits.squeeze(0)[:-pad_len]
 
-        assert x1.shape == x2.shape, (x1.shape, x2.shape)
+            assert x1.shape == x2.shape, (x1.shape, x2.shape)
 
-        assert_close(x1, x2, atol=2e-1, rtol=2e-1)
-    engine.destroy()
+            assert_close(x1, x2, atol=2e-1, rtol=2e-1)
+    finally:
+        engine.destroy()
 
 
 QWEN25_VL_PATH = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
@@ -229,41 +231,45 @@ def test_vlm_consistency(model_path):
 
     padded_input = mock_padded_vlm_data(model_path)
 
-    # Get packed input
-    mb_list = engine.prepare_mb_list(padded_input)
-    assert len(mb_list.mbs) == 1
+    try:
+        # Get packed input
+        mb_list = engine.prepare_mb_list(padded_input)
+        assert len(mb_list.mbs) == 1
 
-    with torch.no_grad():
-        # Padded logits
-        if "multi_modal_input" in padded_input:
-            image_grid_thw_list = [
-                item["image_grid_thw"]
-                for item in padded_input["multi_modal_input"]
-                if "image_grid_thw" in item
-            ]
-            if image_grid_thw_list:
-                padded_input["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
-            pixel_values_list = [
-                item["pixel_values"]
-                for item in padded_input["multi_modal_input"]
-                if "pixel_values" in item
-            ]
-            if pixel_values_list:
-                padded_input["pixel_values"] = torch.cat(pixel_values_list, dim=0)
-        padded_logits = engine.model(**padded_input).logits
+        with torch.no_grad():
+            # Padded logits
+            if "multi_modal_input" in padded_input:
+                image_grid_thw_list = [
+                    item["image_grid_thw"]
+                    for item in padded_input["multi_modal_input"]
+                    if "image_grid_thw" in item
+                ]
+                if image_grid_thw_list:
+                    padded_input["image_grid_thw"] = torch.cat(
+                        image_grid_thw_list, dim=0
+                    )
+                pixel_values_list = [
+                    item["pixel_values"]
+                    for item in padded_input["multi_modal_input"]
+                    if "pixel_values" in item
+                ]
+                if pixel_values_list:
+                    padded_input["pixel_values"] = torch.cat(pixel_values_list, dim=0)
+            padded_logits = engine.model(**padded_input).logits
 
-        # Extract valid sequence logits
-        seqlens = padded_input["attention_mask"].sum(1)
-        x1 = []
-        for i, s in enumerate(seqlens):
-            x1.append(padded_logits[i, :s])
-        x1 = torch.cat(x1)
+            # Extract valid sequence logits
+            seqlens = padded_input["attention_mask"].sum(1)
+            x1 = []
+            for i, s in enumerate(seqlens):
+                x1.append(padded_logits[i, :s])
+            x1 = torch.cat(x1)
 
-        # Packed logits
-        mb = mb_list.padded_mbs[0]
-        pad_len = mb_list.padding_lengths[0]
-        x2 = engine.model(**mb).logits.squeeze(0)[:-pad_len]
+            # Packed logits
+            mb = mb_list.padded_mbs[0]
+            pad_len = mb_list.padding_lengths[0]
+            x2 = engine.model(**mb).logits.squeeze(0)[:-pad_len]
 
-        assert x1.shape == x2.shape, f"Shape mismatch: {x1.shape} vs {x2.shape}"
-        assert_close(x1, x2, atol=2e-1, rtol=2e-1)
-    engine.destroy()
+            assert x1.shape == x2.shape, f"Shape mismatch: {x1.shape} vs {x2.shape}"
+            assert_close(x1, x2, atol=2e-1, rtol=2e-1)
+    finally:
+        engine.destroy()
