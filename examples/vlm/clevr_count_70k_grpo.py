@@ -66,6 +66,7 @@ def main(args):
     seeding.set_random_seed(config.seed, f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
@@ -137,14 +138,14 @@ def main(args):
         ref.initialize(None, ft_spec)
 
     # NOTE: Weight update meta only requires address and free port of rank 0,
-    # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
+    # but `WeightUpdateMeta.from_fsdp_xccl` has to be executed on all ranks
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
     # weight_update_meta = [WeightUpdateMeta.from_disk(config.saver.experiment_name,config.saver.trial_name,config.saver.fileroot)]
     # dist.broadcast_object_list(weight_update_meta, src=0)
     # weight_update_meta = weight_update_meta[0]
     weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
+        WeightUpdateMeta.from_fsdp_xccl(
             AllocationMode.from_str(config.allocation_mode), actor
         )
     ]
@@ -181,7 +182,7 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     recover_handler = RecoverHandler(config.recover, ft_spec)

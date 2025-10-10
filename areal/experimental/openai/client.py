@@ -1,11 +1,10 @@
+import datetime
 import os
-import time
 import uuid
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from copy import deepcopy
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Union
 
-import numpy as np
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN, Body, NotGiven
 from openai.resources.chat.completions.completions import (
@@ -48,6 +47,8 @@ if TYPE_CHECKING:
 os.environ["OPENAI_API_KEY"] = "none"
 os.environ["OPENAI_BASE_URL"] = "none"
 
+logger = logging.getLogger("AReaLOpenAI Client")
+
 
 class AsyncCompletionsWithReward(BaseAsyncCompletions):
     """Extended AsyncCompletions that adds caching and reward functionality."""
@@ -63,6 +64,9 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         cache: Dict[str, CompletionWithTokenLogpReward],
         processor: Optional["AutoProcessor"] = None,
         tool_call_parser: Optional[str] = None,
+        chat_template_type: str = "hf",
+        messages_delimiter_start: str = "<|im_start|>",
+        messages_delimiter_end: str = "<|im_end|>",
     ):
         super().__init__(client)
         self.engine = engine
@@ -70,6 +74,9 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         self.processor = processor
         self.tool_call_parser = tool_call_parser
         self._cache = cache
+        self.chat_template_type = chat_template_type
+        self.messages_delimiter_start = messages_delimiter_start
+        self.messages_delimiter_end = messages_delimiter_end
 
     async def create(
         self,
@@ -220,7 +227,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         response = await self.engine.agenerate(model_request)
         # Convert response to OpenAI format
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
-        current_time = int(time.time())
+        current_time = int(datetime.datetime.now().timestamp())
 
         output_text = self.tokenizer.decode(response.output_tokens)
 
@@ -267,6 +274,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 completion=deepcopy(chat_completion),
                 response=response,  # Should not deepcopy response because of tokenizer
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
+                chat_template_type=self.chat_template_type,
             )
         return chat_completion
 
@@ -296,6 +304,9 @@ class ArealOpenAI(AsyncOpenAI):
             self._completion_cache,
             processor=self.processor,
             tool_call_parser=self.tool_call_parser,
+            chat_template_type=chat_template_type,
+            messages_delimiter_start=messages_delimiter_start,
+            messages_delimiter_end=messages_delimiter_end,
         )
 
     def get_completions(
@@ -310,154 +321,167 @@ class ArealOpenAI(AsyncOpenAI):
             raise KeyError(f"Completion with ID {completion_id} not found in cache")
         self._completion_cache[completion_id].reward = reward
 
-    def export_completions(
-        self, turn_discount: float = 1.0
-    ) -> Dict[str, CompletionWithTokenLogpReward]:
-        """Export all completions with rewards after backpropagation."""
+    def apply_reward_discount(self, turn_discount: float = 1.0) -> None:
+        """Apply backward discounted rewards across cached completions.
 
-        # Step 1: Build tree structure based on role prefix relationships
-        children = defaultdict(list)  # parent_id -> [child_ids]
-        parents = {}  # child_id -> parent_id
-        roots = set()  # completion_ids with no parents
+        This method iterates over the cached completions in reverse creation
+        (insertion) order and applies a geometric discount to propagate reward
+        signal backward in time. The most recent completion is treated as the
+        starting point. If it does not have an explicit reward, a warning is
+        logged and a default reward of ``0.0`` is used. For each earlier
+        completion, its reward is initialized to ``0.0`` if unset, then the
+        discounted reward from the next later completion is added:
 
-        # Convert messages to role sequence for easier comparison
-        def get_role_sequence(messages: List[dict]) -> Tuple[str, ...]:
-            return tuple(msg.get("role", "user") for msg in messages)
+        ``reward[i] += reward[i+1] * turn_discount``.
 
-        # Build role sequences for all completions
-        completion_roles = {}
-        for completion_id, completion_data in self._completion_cache.items():
-            completion_roles[completion_id] = get_role_sequence(
-                completion_data.messages
-            )
+        Typically called before exporting completions in 'individual' style
+        to each completion is assigned with a valid reward value.
 
-        # Find parent-child relationships based on role prefix matching
-        completion_ids = list(self._completion_cache.keys())
-        for i, child_id in enumerate(completion_ids):
-            child_roles = completion_roles[child_id]
-            parent_found = False
+        Parameters
+        ----------
+        turn_discount : float, optional
+            The per-turn discount factor applied when propagating reward
+            backward from a later completion to an earlier one, by default 1.0.
 
-            for j, potential_parent_id in enumerate(completion_ids):
-                if i == j:
-                    continue
-                parent_roles = completion_roles[potential_parent_id]
-
-                # Check if parent_roles is a prefix of child_roles
-                if (
-                    len(parent_roles) < len(child_roles)
-                    and child_roles[: len(parent_roles)] == parent_roles
-                ):
-
-                    # Find the best parent (longest prefix)
-                    if child_id not in parents or len(parent_roles) >= len(
-                        completion_roles[parents[child_id]]
-                    ):
-                        # Remove from previous parent if exists
-                        if child_id in parents and len(parent_roles) > len(
-                            completion_roles[parents[child_id]]
-                        ):
-                            old_parent = parents[child_id]
-                            children[old_parent].remove(child_id)
-
-                        parents[child_id] = potential_parent_id
-                        children[potential_parent_id].append(child_id)
-                        parent_found = True
-
-            if not parent_found:
-                roots.add(child_id)
-
-        # Step 2: Perform topological sorting on each tree
-        def topological_sort_tree(root_id: str) -> List[str]:
-            """Perform DFS-based topological sort starting from root."""
-            visited = set()
-            stack = []
-
-            def dfs(node_id: str):
-                if node_id in visited:
-                    return
-                visited.add(node_id)
-
-                # Visit all children first (post-order)
-                for child_id in children[node_id]:
-                    dfs(child_id)
-
-                # Add current node to stack after visiting children
-                stack.append(node_id)
-
-            dfs(root_id)
-            return stack
-
-        # Get topological order for all trees
-        topo_order = []
-        for root_id in roots:
-            topo_order.extend(topological_sort_tree(root_id))
-
-        # Step 3: Backpropagate rewards from leaves to roots
-        # Process nodes in topological order (leaves first, since topological_sort_tree returns post-order)
-        for completion_id in topo_order:
-            completion_data = self._completion_cache[completion_id]
-
-            # If this is a leaf node with a reward, keep it
-            if len(children[completion_id]) == 0:
-                # This is a leaf - its reward should already be set
-                if completion_data.reward is None:
-                    completion_data.reward = 0
-                continue
-
-            # Calculate reward as discounted sum from children
-            child_rewards = [
-                self._completion_cache[child_id].reward
-                for child_id in children[completion_id]
-            ]
-            if completion_data.reward is None:
-                completion_data.reward = 0.0
-            # Find the highest level/the minimum reward
-            # Do not overwrite the existing reward if explicitly set
-            child_non_none_rewards = list(
-                filter(lambda x: x is not None, child_rewards)
-            )
-            if len(child_non_none_rewards) > 0:
-                completion_data.reward += turn_discount * np.mean(
-                    child_non_none_rewards
+        Returns
+        -------
+        Dict[str, CompletionWithTokenLogpReward]
+            A shallow copy of the completion cache after rewards have been
+            updated in-place.
+        """
+        # Assign rewards to completions in cache based on their created time
+        comp_time_sequence = list(
+            reversed([comp for _, comp in self._completion_cache.items()])
+        )
+        # Check if the last-created completion has a reward set
+        if comp_time_sequence:
+            if comp_time_sequence[0].reward is None:
+                logger.warning(
+                    "The most recent completion does not have a reward set. "
+                    "All completions will have None reward."
                 )
+                comp_time_sequence[0].reward = 0.0
+            # Propagate rewards backwards with discounting if reward is not set
+            for i in range(1, len(comp_time_sequence)):
+                if comp_time_sequence[i].reward is None:
+                    comp_time_sequence[i].reward = 0.0
+                comp_time_sequence[i].reward += (
+                    comp_time_sequence[i - 1].reward * turn_discount
+                )
+        return dict(**self._completion_cache)
 
-        # Build multimodal_data for entries that included images using self.processor
-        # Note: input_images is guaranteed to be a list of base64 strings.
-        if self.processor is not None:
+    def export_completions(
+        self, style: str = "concat"
+    ) -> Dict[str, CompletionWithTokenLogpReward]:
+        """Export cached completions in different formats.
+
+        When ``style='concat'``, this method constructs a conversation tree by
+        linking completions whose input message lists form a strict-prefix
+        relationship. The longest-prefix rule is used to determine each node's
+        parent. It then returns only leaf-node completions (those without
+        children). No reward propagation is performed here.
+
+        When ``style='individual'``, all cached completions are returned as-is
+        without constructing the tree.
+
+        Parameters
+        ----------
+        style : str, optional
+            The export style, either ``'concat'`` (build tree and return leaves)
+            or ``'individual'`` (return all), by default 'concat'.
+
+        Returns
+        -------
+        Dict[str, CompletionWithTokenLogpReward]
+            A mapping from completion ID to completion objects. For
+            ``'concat'``, this contains only leaf nodes. For ``'individual'``,
+            this contains all cached completions.
+
+        Raises
+        ------
+        ValueError
+            If an unsupported ``style`` is provided.
+        """
+        if len(self._completion_cache) == 0:
+            return {}
+
+        if style == "concat":
             for comp in self._completion_cache.values():
-                resp = comp.response
-                if not resp.input_images:
-                    continue
-                images: List[ImageObject] = []
-                for b64 in resp.input_images:
-                    try:
-                        if isinstance(b64, str) and b64.startswith("data:"):
-                            pil = load_image(b64)
-                        else:
-                            data = base64.b64decode(b64)
-                            pil = PILImage.open(BytesIO(data)).convert("RGB")
-                        images.append(pil)
-                    except Exception:
-                        continue
-                if not images:
-                    continue
-                try:
-                    placeholder = get_image_token(self.processor)
-                    text_inputs = [placeholder] * len(images)
-                    processed = self.processor(
-                        images=images,
-                        text=text_inputs,
-                        return_tensors="pt",
-                        padding=False,
+                if comp.chat_template_type != "concat":
+                    raise ValueError(
+                        "Cannot export completions in 'concat' style when "
+                        'comp.chat_template_type != "concat" for any completion. '
+                        "This is because when applying chat template using some tokenizers, "
+                        "there might be some tokens added or removed (e.g. think tokens), "
+                        "making it impossible to construct the conversation tree. "
+                        "Please use 'individual' style instead."
                     )
-                    mm_item: Dict[str, object] = {}
-                    if "pixel_values" in processed:
-                        mm_item["pixel_values"] = processed["pixel_values"]
-                    if "image_grid_thw" in processed:
-                        mm_item["image_grid_thw"] = processed["image_grid_thw"]
-                    comp.multimodal_data = {"multi_modal_input": [mm_item]}
-                except Exception:
-                    # If processing fails, leave multimodal_data unset
-                    pass
 
-        return self._completion_cache.copy()
+            def _is_prefix(a: List[Dict], b: List[Dict]) -> bool:
+                # True if a is a strict prefix of b
+                if len(a) >= len(b):
+                    return False
+                for i in range(len(a)):
+                    if a[i] != b[i]:
+                        return False
+                return True
+
+            # Precompute normalized messages
+            meta = {}
+            for cid, comp in self._completion_cache.items():
+                meta[cid] = {
+                    "norm_msgs": comp.messages or [],
+                    "obj": comp,
+                }
+
+            # 1) Construct parent-child relationships using longest prefix rule
+            # Sort potential children by (message length asc, created asc) so parents are available
+            ordered = sorted(
+                meta.items(),
+                key=lambda kv: (
+                    len(kv[1]["norm_msgs"]),
+                    kv[1]["obj"].completion.created,
+                ),
+            )
+
+            # Reset parents before rebuilding
+            for _, info in ordered:
+                info["obj"].parent = None
+
+            for child_id, child_info in ordered:
+                child_msgs = child_info["norm_msgs"]
+                best_parent = None
+                best_len = -1
+                for parent_id, parent_info in ordered:
+                    if parent_id == child_id:
+                        continue
+                    parent_msgs = parent_info["norm_msgs"]
+                    if _is_prefix(parent_msgs, child_msgs):
+                        plen = len(parent_msgs)
+                        # choose the longest prefix
+                        if plen > best_len:
+                            best_parent = parent_info["obj"]
+                            best_len = plen
+                child_info["obj"].parent = best_parent
+
+            # Build children mapping to find leaf nodes.
+            children_map: Dict[str, List[CompletionWithTokenLogpReward]] = defaultdict(
+                list
+            )
+            for _, info in meta.items():
+                obj = info["obj"]
+                if obj.parent is not None:
+                    children_map[obj.parent.completion.id].append(obj)
+
+            # Return only leaf nodes (nodes without children)
+            parents_with_children = set(children_map.keys())
+            leaf_only: Dict[str, CompletionWithTokenLogpReward] = {}
+            for cid, info in meta.items():
+                obj = info["obj"]
+                if obj.completion.id not in parents_with_children:
+                    leaf_only[cid] = obj
+            return leaf_only
+        elif style == "individual":
+            return dict(**self._completion_cache)
+        else:
+            raise ValueError(f"Invalid export completions style {style}")

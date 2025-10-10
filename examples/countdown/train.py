@@ -15,11 +15,7 @@ from reward_score import compute_score
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PreTrainedTokenizerFast
 
-from areal.api.cli_args import (
-    GenerationHyperparameters,
-    GRPOConfig,
-    load_expr_config,
-)
+from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     AllocationMode,
@@ -171,6 +167,7 @@ def main(args):
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
     # Create process groups
     actor = FSDPPPOActor(config=config.actor)
@@ -227,11 +224,11 @@ def main(args):
         ref.initialize(None, ft_spec)
 
     # NOTE: Weight update meta only requires address and free port of rank 0,
-    # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
+    # but `WeightUpdateMeta.from_fsdp_xccl` has to be executed on all ranks
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
     weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
+        WeightUpdateMeta.from_fsdp_xccl(
             AllocationMode.from_str(config.allocation_mode), actor
         )
     ]
@@ -261,7 +258,7 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     recover_handler = RecoverHandler(config.recover, ft_spec)

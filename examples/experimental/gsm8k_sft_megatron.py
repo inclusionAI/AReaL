@@ -36,6 +36,7 @@ def main(args):
 
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
     # Initialize Megatron parallel states
     # NOTE: we assume all MegatronEngine has the same parallel strategy.
@@ -91,7 +92,7 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     recover_handler = RecoverHandler(config.recover, ft_spec)

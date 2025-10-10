@@ -1,5 +1,7 @@
 import torch
 
+from areal.api.io_struct import AllocationMode, WeightUpdateMeta
+
 VALID_VISION_MODELS = [
     "qwen2_vl",
     "qwen2_5_vl",
@@ -12,16 +14,30 @@ VALID_VISION_MODELS = [
 # If you want to add a new vision model, please make sure it works with AReaL.
 
 
-def is_qwen2_vl_model(model_type):
+def is_valid_vision_model(model_type: str) -> bool:
+    return model_type in VALID_VISION_MODELS
+
+
+def is_qwen2_vl_model(model_type: str) -> bool:
     return model_type in ["qwen2_vl", "qwen2_5_vl"]
 
 
-def is_qwen3_moe_model(model_type):
-    return model_type in ["qwen3_moe"]
-
-
-def is_gemma3_model(model_type):
+def is_gemma3_model(model_type: str) -> bool:
     return model_type in ["gemma3"]
+
+
+VALID_MOE_MODELS = [
+    "qwen3_moe",
+]
+# This registry is used to check if a model is a MoE model that we have checked it works with AReaL.
+
+
+def is_moe_model(model_type: str) -> bool:
+    return model_type in VALID_MOE_MODELS
+
+
+def is_qwen3_moe_model(model_type: str) -> bool:
+    return model_type in ["qwen3_moe"]
 
 
 # Copied from trl
@@ -29,3 +45,19 @@ def disable_dropout_in_model(model: torch.nn.Module) -> None:
     for module in model.modules():
         if isinstance(module, torch.nn.Dropout):
             module.p = 0
+
+
+def get_model_update_meta(config, actor):
+    if config.weight_update_mode == "disk":
+        weight_update_meta = [
+            WeightUpdateMeta.from_disk(
+                config.experiment_name, config.trial_name, config.cluster.fileroot
+            )
+        ]
+    else:
+        weight_update_meta = [
+            WeightUpdateMeta.from_fsdp_xccl(
+                AllocationMode.from_str(config.allocation_mode), actor
+            )
+        ]
+    return weight_update_meta

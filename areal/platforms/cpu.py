@@ -15,3 +15,7 @@ class CpuPlatform(Platform):
     @classmethod
     def get_custom_env_vars(cls) -> dict:
         return {}
+
+    @classmethod
+    def synchronize(cls) -> None:
+        raise NotImplementedError()

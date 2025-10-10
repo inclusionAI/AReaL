@@ -26,11 +26,11 @@ from areal.utils import seeding
 from areal.utils.data import broadcast_tensor_container
 
 MODEL_PATHS = {
-    "qwen3": "/storage/openpsi/models/Qwen__Qwen3-1.7B/",
+    "qwen3": "/storage/openpsi/models/Qwen__Qwen3-0.6B/",
     "qwen3moe": "/storage/openpsi/models/Qwen__Qwen3-30B-A3B/",
 }
 HF_MODEL_PATHS = {
-    "qwen3": "Qwen/Qwen3-1.7B",
+    "qwen3": "Qwen/Qwen3-0.6B",
     # TODO: switch Qwen3MoE to smaller model initialized from scratch
     "qwen3moe": "Qwen/Qwen3-30B-A3B",
 }

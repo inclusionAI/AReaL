@@ -1,3 +1,5 @@
+from __future__ import annotations  # noqa
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -5,6 +7,9 @@ import torch
 from openai.types.chat import ChatCompletion
 
 from areal.api.io_struct import ModelResponse
+from areal.utils import logging
+
+logger = logging.getLogger("CompletionWithTokenLogpReward")
 
 
 @dataclass

@@ -11,9 +11,9 @@ from transformers import (
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
     AutoModelForTokenClassification,
-    AutoProcessor,
     PretrainedConfig,
     PreTrainedTokenizerFast,
+    ProcessorMixin,
     get_constant_schedule_with_warmup,
     get_linear_schedule_with_warmup,
 )
@@ -38,11 +38,11 @@ from areal.utils.data import (
 from areal.utils.fsdp import get_cosine_schedule_with_warmup
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.model import (
-    VALID_VISION_MODELS,
     disable_dropout_in_model,
     is_gemma3_model,
     is_qwen2_vl_model,
     is_qwen3_moe_model,
+    is_valid_vision_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
@@ -55,7 +55,7 @@ class BaseHFEngine(TrainEngine):
         self.model: torch.nn.Module
         self.optimizer: torch.optim.Optimizer
         self.tokenizer: PreTrainedTokenizerFast
-        self.processor: AutoProcessor | None = None
+        self.processor: ProcessorMixin | None = None
         # huggingface model config
         self.model_config: PretrainedConfig
         self._version: int = 0
@@ -71,7 +71,7 @@ class BaseHFEngine(TrainEngine):
             pretrained_model_name_or_path=self.config.path,
             trust_remote_code=True,
         )
-        self.is_vision_model = self.model_config.model_type in VALID_VISION_MODELS
+        self.is_vision_model = is_valid_vision_model(self.model_config.model_type)
 
         self.world_size = int(os.environ["WORLD_SIZE"])
 
@@ -116,20 +116,20 @@ class BaseHFEngine(TrainEngine):
         return _get_default_group()
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
-        # Required by NCCL weight update group for SGLang
-        os.environ["NCCL_CUMEM_ENABLE"] = "0"
-        os.environ["NCCL_NVLS_ENABLE"] = "0"
+        backend = current_platform.communication_backend
         if not dist.is_initialized():
             # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
             # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
             # otherwise initializing the NCCL weight update group will be wrong!
             dist.init_process_group(
-                backend=current_platform.communication_backend,
+                backend=backend,
                 timeout=NCCL_DEFAULT_TIMEOUT,
             )
             self.own_global_group = True
         # Each process is its own model parallel group.
-        self.mp_group = dist.new_group([dist.get_rank()])
+        mp_group = dist.new_group([dist.get_rank()])
+        assert mp_group is not None
+        self.mp_group = mp_group
 
         self.logger = logging.getLogger(f"[HF Engine Rank {dist.get_rank()}]")
 
@@ -153,7 +153,8 @@ class BaseHFEngine(TrainEngine):
             )
 
             tik = time.perf_counter()
-            with torch.device(current_platform.device_type):
+            device = current_platform.device_type
+            with torch.device(device):
                 model = AutoModelForImageTextToText.from_pretrained(
                     pretrained_model_name_or_path=self.config.path,
                     trust_remote_code=True,
@@ -164,6 +165,7 @@ class BaseHFEngine(TrainEngine):
                     disable_dropout_in_model(model)
         else:
             self.tokenizer = load_hf_tokenizer(self.config.path)
+            self.processor = None
             tik = time.perf_counter()
             with torch.device(current_platform.device_type):
                 model = self._create_llm_actor_or_critic()
@@ -314,6 +316,7 @@ class BaseHFEngine(TrainEngine):
 
     def prepare_mb_list(self, input_: Dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
+        input_ = input_.copy()
 
         if is_qwen2_vl_model(self.model_config.model_type):
             # Create the special t,h,w position IDs for qwen 2.5 VL
@@ -362,6 +365,7 @@ class BaseHFEngine(TrainEngine):
         # packed input to be of shape [1, total_seqlen].
         mb_list = unsqueeze_mb_list(mb_list)
         if is_qwen2_vl_model(self.model_config.model_type):
+            assert mb_list.padded_mbs is not None
             for mb in mb_list.padded_mbs:
                 # [1, total_seqlen, 3] -> [3, 1, total_seqlen]
                 mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
@@ -370,6 +374,7 @@ class BaseHFEngine(TrainEngine):
 
         # Modern model implementations takes a dict as the input.
         # This eliminates a bug of Qwen2.5-VL for transformers<=4.53.1
+        assert mb_list.padded_mbs is not None
         for i, mb in enumerate(mb_list.mbs):
             mb_list.mbs[i] = dict(**mb)
         for i, mb in enumerate(mb_list.padded_mbs):
@@ -464,7 +469,7 @@ class BaseHFEngine(TrainEngine):
         self,
         input_: Dict[str, Any],
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], float],
+        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> Dict[str, float]:
         """Train on a batch using gradient accumulation."""
         assert self.optimizer is not None
@@ -476,7 +481,8 @@ class BaseHFEngine(TrainEngine):
         mb_list = mb_list.to(self.device)
 
         total_loss_weight = (
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            torch.stack([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .sum()
             .detach()
             .clone()
             .to(dtype=torch.float32)
@@ -485,8 +491,8 @@ class BaseHFEngine(TrainEngine):
         dist.all_reduce(total_loss_weight)
 
         # Process microbatches with gradient accumulation
-        for i, (pad_length, padded_mb_input, mb_input) in enumerate(
-            zip(mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs)
+        for pad_length, padded_mb_input, mb_input in zip(
+            mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
             outputs = self.model(**padded_mb_input)
 
@@ -530,22 +536,23 @@ class BaseHFEngine(TrainEngine):
         self,
         input_: Dict[str, Any],
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], float],
+        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
         total_loss_weight = (
-            sum([loss_weight_fn(mb) for mb in mb_list.mbs])
+            torch.stack([loss_weight_fn(mb) for mb in mb_list.mbs])
+            .sum()
             .detach()
             .clone()
             .to(dtype=torch.float32)
         )
         assert total_loss_weight != 0
 
-        total_loss = 0.0
-        total_weight = 0.0
+        total_loss = torch.zeros(1, device=self.device, dtype=torch.float32)
+        total_weight = torch.zeros(1, device=self.device, dtype=torch.float32)
 
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
@@ -557,10 +564,10 @@ class BaseHFEngine(TrainEngine):
 
             # Simple weight calculation (could be improved)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
-            total_loss += loss.item() * loss_scale
+            total_loss += loss * loss_scale
             total_weight += loss_scale
 
-        return torch.tensor(total_loss / total_weight)
+        return total_loss / total_weight
 
     @torch.no_grad()
     def forward(
@@ -577,6 +584,7 @@ class BaseHFEngine(TrainEngine):
 
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
+        assert output_seqlens is not None
 
         results = []
         for pad_length, padded_mb_input, mb_input in zip(

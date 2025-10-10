@@ -223,3 +223,27 @@ def ulysses_pad_and_slice_inputs(
             position_ids_rmpad, dim=1, padding=False
         )
     return input_ids_rmpad, position_ids_rmpad, pad_size
+
+
+def ulysses_prepare_inputs(padded_mb_input, ulysses_input_ids, ulysses_position_ids, sp_world_size):
+    # init inputs with padded_mb_input and ulysses_inputs
+    inputs = padded_mb_input.copy()
+    inputs["input_ids"] = ulysses_input_ids
+    if ulysses_position_ids is not None:
+        inputs["position_ids"] = ulysses_position_ids
+
+    # Pad and slice the loss inputs
+    padded_input_ids = padded_mb_input["input_ids"]
+    for key, value in inputs.items():
+        if key == "input_ids" or key == "position_ids":
+            continue
+        if torch.is_tensor(value) and value.shape[:2] == padded_input_ids.shape[:2]:
+            inputs[key] = value.squeeze(0)
+
+    # Roll and slice the full input_ids as the labels in Ulysses Sp.
+    rolled_input_ids = torch.roll(padded_input_ids, shifts=-1, dims=-1)
+    rolled_input_ids, _, pad_size = ulysses_pad_and_slice_inputs(
+        rolled_input_ids, sp_size=sp_world_size
+    )
+    inputs["rolled_input_ids"] = rolled_input_ids.squeeze(0)
+    return inputs

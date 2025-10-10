@@ -16,6 +16,7 @@ parts:
     - file: tutorial/quickstart
     - file: tutorial/openai_workflows
     - file: tutorial/eval
+    - file: cli_reference
     - file: tutorial/quickstart_legacy
     # - file: tutorial/troubleshooting
   - caption: Best Practices
@@ -37,6 +38,7 @@ parts:
   - caption: Algorithms
     chapters:
     - file: algorithms/grpo
+    - file: algorithms/rloo
     - file: algorithms/dapo
     - file: algorithms/dr.GRPO
     - file: algorithms/litePPO

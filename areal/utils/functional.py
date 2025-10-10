@@ -1,12 +1,19 @@
+import functools
 import warnings
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.distributed as dist
+import torch.distributed.nn.functional as dist_F
+
+from areal.platforms import is_npu_available
+from areal.utils.ulysses import (
+    get_ulysses_sequence_parallel_group,
+    get_ulysses_sequence_parallel_world_size,
+)
 
 
-@torch.compile
 def _gather_logprobs(
     logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
 ):
@@ -15,7 +22,6 @@ def _gather_logprobs(
     return log_probs_labels
 
 
-@torch.compile
 def _gather_logprobs_entropy(
     logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
 ):
@@ -23,6 +29,12 @@ def _gather_logprobs_entropy(
     entropy = -torch.sum(log_probs.exp() * log_probs, dim=-1)
     log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
     return log_probs_labels, entropy
+
+
+# remove torch.compile due to npu problems
+if not is_npu_available:
+    _gather_logprobs = torch.compile(_gather_logprobs)
+    _gather_logprobs_entropy = torch.compile(_gather_logprobs_entropy)
 
 
 def gather_logprobs(
@@ -57,10 +69,6 @@ def gather_logprobs_entropy(
     chunk_size: int = 1024,
 ):
     batch_size = logits.shape[0]
-
-    if batch_size <= chunk_size:
-        return _gather_logprobs_entropy(logits, labels, temperature)
-
     log_probs_labels_list = []
     entropy_list = []
 
@@ -76,7 +84,17 @@ def gather_logprobs_entropy(
         log_probs_labels_list.append(chunk_log_probs)
         entropy_list.append(chunk_entropy)
 
-    return torch.cat(log_probs_labels_list), torch.cat(entropy_list)
+    logprobs = torch.cat(log_probs_labels_list)
+    entropy = torch.cat(entropy_list)
+
+    if get_ulysses_sequence_parallel_world_size() > 1:
+        sp_group = get_ulysses_sequence_parallel_group()
+        logprobs = dist_F.all_gather(logprobs, group=sp_group)
+        logprobs = torch.cat(logprobs, dim=-1)
+        entropy = dist_F.all_gather(entropy, group=sp_group)
+        entropy = torch.cat(entropy, dim=-1)
+
+    return logprobs, entropy
 
 
 @torch.no_grad()
@@ -185,6 +203,82 @@ def ppo_actor_loss_fn(
         stat["behave_approx_kl"] = behav_kl
         stat["behave_mask"] = behav_mask
     return pg_loss, stat
+
+
+def _huber_loss(x: torch.Tensor, y: torch.Tensor, delta: float):
+    diff = torch.abs(x - y)
+    return torch.where(diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta))
+
+
+def _mse_loss(x: torch.Tensor, y: torch.Tensor):
+    return 0.5 * (x - y) ** 2
+
+
+def ppo_critic_loss_fn(
+    value: torch.FloatTensor,
+    old_value: torch.FloatTensor,
+    target_value: torch.FloatTensor,
+    value_eps_clip: float,
+    loss_mask: Optional[torch.Tensor] = None,
+    loss_fn_type: str = "mse",
+) -> Tuple[torch.Tensor, Dict]:
+    """Compute PPO critic loss function given padded batch inputs.
+
+    There is no shape requirements for the inputs, but they must have the same shape.
+    Either [bs, max_seqlen] for batch padded inputs or [tot_seqlen] for padded inputs.
+
+    Args:
+        value (torch.FloatTensor): Values. The position of the final token is not included.
+            (The whole generated sequence is not a state.)
+        old_value (torch.FloatTensor): Old values.
+        target_value (torch.FloatTensor): Returns computed by GAE.
+        value_eps_clip (float): Clip ratio.
+        loss_mask (Optional[torch.Tensor], optional): Mask for loss computation.
+            1 if valid else 0. Defaults to None.
+        loss_fn_type (str, optional): Type of loss function. Defaults to 'mse'.
+
+    Returns:
+        Tuple[torch.Tensor, Dict]: Scalar loss and statistics.
+    """
+    assert value.dtype == torch.float32
+    assert old_value.dtype == torch.float32
+    assert target_value.dtype == torch.float32
+
+    if loss_fn_type == "huber":
+        loss_fn = functools.partial(_huber_loss, delta=10.0)
+    elif loss_fn_type == "mse":
+        loss_fn = _mse_loss
+    else:
+        raise NotImplementedError(f"Unknown loss fn type: {loss_fn_type}")
+
+    if target_value.is_inference():
+        target_value = target_value.clone()  # clone a inference tensor
+
+    value_loss_original = loss_fn(value, target_value)
+
+    value_clipped = old_value + (value - old_value).clamp(
+        -value_eps_clip, value_eps_clip
+    )
+
+    value_loss_clipped = loss_fn(value_clipped, target_value)
+
+    value_loss = torch.max(value_loss_original, value_loss_clipped)
+
+    with torch.no_grad():
+        clip_mask = value_loss_clipped.detach() > value_loss_original.detach()
+        if loss_mask is not None:
+            clip_mask.logical_and_(loss_mask)
+
+        stat = dict(clip_mask=clip_mask, loss=value_loss.detach())
+
+    if loss_mask is not None:
+        value_loss = (
+            torch.where(loss_mask, value_loss, 0).sum() / loss_mask.count_nonzero()
+        )
+    else:
+        value_loss = value_loss.mean()
+
+    return value_loss, stat
 
 
 def dynamic_sampling(

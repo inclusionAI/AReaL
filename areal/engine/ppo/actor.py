@@ -1,27 +1,27 @@
 import functools
 from typing import Any, Dict, List, Optional
 
-import numpy as np
 import torch
-import torch.distributed as dist
 
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.utils import stats_tracker
-from areal.utils.data import split_padded_tensor_dict_into_mb_list
+from areal.utils.data import (
+    KLEstimator,
+    Normalization,
+    split_padded_tensor_dict_into_mb_list,
+)
 from areal.utils.functional import (
     dynamic_sampling,
     gather_logprobs,
     gather_logprobs_entropy,
-    masked_normalization,
     ppo_actor_loss_fn,
     reward_overlong_penalty,
 )
 
 
 class PPOActor:
-
     def __init__(self, config: PPOActorConfig, engine: TrainEngine):
         self.config = config
         self.engine = engine
@@ -30,12 +30,15 @@ class PPOActor:
         self.reward_scaling = config.reward_scaling
         self.reward_clip = config.reward_clip
 
-        self.group_reward_norm = config.group_reward_norm
         self.group_size = config.group_size
 
         self.kl_ctl = config.kl_ctl
+        self.kl_estimator = KLEstimator(config.kl_estimator)
 
-        self.adv_norm = AdvNorm(config.adv_norm) if config.adv_norm else None
+        self.adv_norm = Normalization(config.adv_norm) if config.adv_norm else None
+        self.reward_norm = (
+            Normalization(config.reward_norm) if config.reward_norm else None
+        )
 
         self.discount = config.discount
         self.gae_lambda = config.gae_lambda
@@ -50,7 +53,6 @@ class PPOActor:
         data: Dict[str, Any],
         temperature: Optional[float] = None,
     ) -> torch.Tensor | None:
-
         def calc_logprobs(logits, input_data):
             labels = torch.roll(input_data["input_ids"], shifts=-1, dims=-1)
             logprobs = gather_logprobs(logits, labels, temperature or 1.0)
@@ -70,10 +72,8 @@ class PPOActor:
             bs, device=data["input_ids"].device, dtype=torch.long
         )
 
-        # TODO:rewrite the reward into "reward" class __call__ method should be good. Like VeRL does.
         # Reward Penalty on length
         if self.config.overlong_reward_penalty:
-
             overlong_tokens = self.config.overlong_tokens
             overlong_penalty_factor = self.config.overlong_penalty_factor
 
@@ -90,11 +90,8 @@ class PPOActor:
         reward_score = torch.clip(
             reward_score, max=self.reward_clip, min=-self.reward_clip
         )
-        if self.group_reward_norm:
-            for i in range(bs // self.group_size):
-                s = slice(i * self.group_size, (i + 1) * self.group_size)
-                r = reward_score[s]
-                reward_score[s] = (r - r.mean()) / (r.std() + 1e-9)
+        if self.reward_norm:
+            reward_score = self.reward_norm(reward_score)
 
         loss_mask = data["loss_mask"].float()
         loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
@@ -115,7 +112,7 @@ class PPOActor:
         attn_mask = data["attention_mask"]
         seqlens = attn_mask.sum(-1).long()
         seq_no_eos_mask = seqlens == attn_mask.shape[1]
-        rewards = -self.kl_ctl * (old_logp - ref_logp)
+        rewards = -self.kl_ctl * self.kl_estimator(old_logp, ref_logp)
         kl_rewards = rewards.clone()
         # KL rewards at the next token after eos is zero.
         rewards[batch_indices, seqlens - 1] = 0
@@ -136,14 +133,19 @@ class PPOActor:
             torch.zeros(bs, dtype=torch.float32, device=values.device)
         ]
         lastgaelam = 0
+        nextvalues = values[:, max_seqlen - 1] * seq_no_eos_mask
         for t in reversed(range(max_seqlen - 1)):
-            nextvalues = values[:, t + 1]
-            if t == max_seqlen - 2:
-                nextvalues *= seq_no_eos_mask
             delta = rewards[:, t] + self.discount * nextvalues - values[:, t]
-            lastgaelam = delta + self.discount * self.gae_lambda * lastgaelam
+            newgaelam = delta + self.discount * self.gae_lambda * lastgaelam
+
+            # Skip tokens that do not contribute to the loss
+            mask = loss_mask[:, t]
+            nextvalues = nextvalues * (1 - mask) + values[:, t] * mask
+            lastgaelam = lastgaelam * (1 - mask) + newgaelam * mask
             advantages_reversed.append(lastgaelam)
+
         advantages = torch.stack(advantages_reversed[::-1], dim=1)
+        data["returns"] = advantages + values
 
         # Optionally perform advantage normalization.
         if self.adv_norm is not None:
@@ -158,7 +160,6 @@ class PPOActor:
         data["logprobs"] = old_logp
 
     def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
-
         if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
             data, sampling_stat = dynamic_sampling(data, self.group_size)
 
@@ -271,7 +272,6 @@ class PPOActor:
 
 
 class FSDPPPOActor(FSDPEngine):
-
     def __init__(self, config: PPOActorConfig):
         super().__init__(config)
         self.actor = PPOActor(config, self)
@@ -299,15 +299,16 @@ def grpo_loss_fn(
 ):
     """Loss function for actor step, all inputs should be splitted into
     pipeline micro batches, returns loss and logging stats."""
-    input_ids = input_data["input_ids"]
+    labels = input_data.get(
+        "rolled_input_ids",
+        torch.roll(input_data["input_ids"], shifts=-1, dims=-1),
+    )
     old_logp = input_data["logprobs"]
     advantages = input_data["advantages"]
     loss_mask = input_data["loss_mask"].bool()
     prox_logp = input_data["prox_logp"]
 
-    logprobs, entropy = gather_logprobs_entropy(
-        logits, torch.roll(input_ids, shifts=-1, dims=-1), temperature
-    )
+    logprobs, entropy = gather_logprobs_entropy(logits, labels, temperature)
     entropy = entropy.detach()
     loss, stat = ppo_actor_loss_fn(
         logprobs=logprobs,
@@ -364,240 +365,3 @@ def grpo_loss_fn(
         denominator="clipped_tokens",
     )
     return loss
-
-
-class AdvNorm:
-    """
-    Adaptive Advantage Normalization.
-
-    Supports independent specification of normalization level for mean and std:
-    - "batch": normalize across entire batch (with optional all_reduce in distributed setting)
-    - "group": normalize within fixed-size groups
-    - std_level can be None: only center the data (no scaling)
-
-    If mean_level == std_level, uses original masked_normalization for efficiency.
-    Otherwise, computes mean and std separately and combines.
-
-    Args:
-        mean_level (str): "batch" or "group"
-        std_level (str or None): "batch", "group", or None (no std scaling)
-        group_size (int, optional): required if any level is "group"
-    """
-
-    def __init__(
-        self,
-        advNorm_cfg,
-    ):
-        if advNorm_cfg is None:
-            return None
-
-        if advNorm_cfg.mean_level not in {"batch", "group", "none"}:
-            raise ValueError(
-                f"mean_level must be 'batch', 'group' or 'none', got {advNorm_cfg.mean_level}"
-            )
-        if advNorm_cfg.std_level not in {"batch", "group", "none"}:
-            raise ValueError(
-                f"std_level must be 'batch', 'group', or 'none', got {advNorm_cfg.std_level}"
-            )
-        if (
-            advNorm_cfg.mean_level == "group" or advNorm_cfg.std_level == "group"
-        ) and advNorm_cfg.group_size is None:
-            raise ValueError("group_size must be provided if using group normalization")
-
-        self.mean_level = advNorm_cfg.mean_level
-        self.std_level = advNorm_cfg.std_level
-        self.group_size = advNorm_cfg.group_size
-
-    @torch.no_grad()
-    def __call__(
-        self,
-        advantages: torch.Tensor,
-        loss_mask: Optional[torch.Tensor] = None,
-        eps: float = 1e-5,
-        unbiased: bool = False,
-        high_precision: bool = True,
-        reduce_group=None,
-    ) -> torch.Tensor:
-        """
-        Normalize advantages tensor according to mean_level and std_level.
-
-        Args:
-            advantages (torch.Tensor): [...]
-            loss_mask (torch.Tensor, optional): same shape as advantages
-            eps (float): small constant for numerical stability
-            unbiased (bool): whether to use unbiased variance
-            high_precision (bool): use float64 for computation
-            reduce_group: distributed group for all_reduce
-
-        Returns:
-            normalized advantages (same shape, dtype=float32)
-        """
-
-        bs = advantages.size(0)
-
-        # Case: same level → use original masked_normalization to maxize the robust to original code
-        if self.mean_level == self.std_level:
-            if self.mean_level == "batch":
-                return masked_normalization(
-                    advantages,
-                    mask=loss_mask,
-                    unbiased=unbiased,
-                    eps=eps,
-                    high_precision=high_precision,
-                    all_reduce=True,  # follow original code
-                    reduce_group=reduce_group,
-                )
-            else:  # group or none
-                if self.mean_level == "none":
-                    return advantages.float()
-                adv_list = []
-                for i in range(0, bs // self.group_size):
-                    s = slice(i * self.group_size, (i + 1) * self.group_size)
-                    adv = advantages[s]
-                    m = loss_mask[s] if loss_mask is not None else None
-                    adv_list.append(
-                        masked_normalization(
-                            adv,
-                            mask=m,
-                            unbiased=unbiased,
-                            eps=eps,
-                            high_precision=high_precision,
-                            all_reduce=False,  # follow original code
-                            reduce_group=reduce_group,
-                        )
-                    )
-                return torch.cat(adv_list, 0)
-
-        # Cases: mean and std levels differ, or std_level is None
-
-        # Early return for no normalization case
-        if self.mean_level == "none" and self.std_level == "none":
-            return advantages.float()
-
-        # Step 1: Compute mean
-        if self.mean_level == "batch":
-            mean = self._compute_mean(
-                advantages, loss_mask, high_precision, True, reduce_group
-            )
-            # Expand batch mean to match input shape for mixed normalization
-            mean = mean.expand_as(advantages)
-        elif self.mean_level == "group":
-            mean = torch.zeros_like(advantages)
-            for i in range(0, bs // self.group_size):
-                s = slice(i * self.group_size, (i + 1) * self.group_size)
-                adv = advantages[s]
-                m = loss_mask[s] if loss_mask is not None else None
-                group_mean = self._compute_mean(
-                    adv, m, high_precision, False, reduce_group
-                )
-                mean[s] = group_mean.expand_as(adv)
-        else:  # mean_level == "none"
-            mean = torch.zeros_like(advantages)
-
-        # Subtract mean
-        x_centered = advantages - mean
-
-        # Step 2: Compute std
-        if self.std_level == "none":
-            return x_centered.float()
-
-        if self.std_level == "batch":
-            std = self._compute_std(
-                advantages,
-                loss_mask,
-                mean,
-                unbiased,
-                high_precision,
-                True,
-                reduce_group,
-            )
-            # Expand batch std to match input shape
-            std = std.expand_as(advantages)
-        else:  # group
-            std = torch.zeros_like(advantages)
-            for i in range(0, bs // self.group_size):
-                s = slice(i * self.group_size, (i + 1) * self.group_size)
-                adv = advantages[s]
-                m = loss_mask[s] if loss_mask is not None else None
-                group_mean_slice = mean[s]  # already computed and expanded
-                group_std = self._compute_std(
-                    adv,
-                    m,
-                    group_mean_slice,
-                    unbiased,
-                    high_precision,
-                    False,
-                    reduce_group,
-                )
-                std[s] = group_std.expand_as(adv)
-
-        # Normalize
-        return (x_centered / (std + eps)).float()
-
-    @staticmethod
-    def _compute_mean(
-        x: torch.Tensor,
-        mask: Optional[torch.Tensor],
-        high_precision: bool,
-        all_reduce: bool,
-        reduce_group,
-    ) -> torch.Tensor:
-        """Compute mean only, using masked_normalization internals."""
-        dtype = torch.float64 if high_precision else torch.float32
-        x = x.to(dtype)
-        dim = tuple(range(len(x.shape)))
-        if mask is None:
-            factor = torch.tensor(
-                np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
-            )
-            x_sum = x.sum(dim=dim, keepdim=True)
-        else:
-            mask = mask.to(dtype)
-            x_masked = x * mask
-            factor = mask.sum(dim, keepdim=True)
-            x_sum = x_masked.sum(dim=dim, keepdim=True)
-
-        if dist.is_initialized() and all_reduce:
-            dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
-            dist.all_reduce(x_sum, op=dist.ReduceOp.SUM, group=reduce_group)
-
-        mean = x_sum / factor
-        return mean
-
-    @staticmethod
-    def _compute_std(
-        x: torch.Tensor,
-        mask: Optional[torch.Tensor],
-        mean: torch.Tensor,
-        unbiased: bool,
-        high_precision: bool,
-        all_reduce: bool,
-        reduce_group,
-    ) -> torch.Tensor:
-        """Compute std only, given precomputed mean."""
-        dtype = torch.float64 if high_precision else torch.float32
-        x = x.to(dtype)
-        dim = tuple(range(len(x.shape)))
-        if mask is None:
-            factor = torch.tensor(
-                np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
-            )
-        else:
-            mask = mask.to(dtype)
-            x_masked = x * mask
-            factor = mask.sum(dim, keepdim=True)
-            x_centered = x_masked - mean * mask  # only apply mean where mask is 1
-            x_sum_sq = (x_centered**2).sum(dim=dim, keepdim=True)
-        if mask is None:
-            x_centered = x - mean
-            x_sum_sq = (x_centered**2).sum(dim=dim, keepdim=True)
-
-        if dist.is_initialized() and all_reduce:
-            dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
-            dist.all_reduce(x_sum_sq, op=dist.ReduceOp.SUM, group=reduce_group)
-
-        var = x_sum_sq / factor
-        if unbiased:
-            var *= factor / (factor - 1)
-        std = var.sqrt()
-        return std

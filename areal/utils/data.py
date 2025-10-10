@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import MicroBatchSpec
+from areal.api.cli_args import MicroBatchSpec, NormConfig
 from areal.platforms import current_platform
 from areal.utils import datapack, logging
 
@@ -362,13 +362,13 @@ class MicroBatchList:
     forward_indices: List[int]
     backward_indices: List[int]
     group_lens: List[int]
-    padded_mbs: Optional[List[Dict[str, Any]]] = None
+    padded_mbs: List[Dict[str, Any]] | None = None
     # Batch-level padding information
-    padding_lengths: Optional[List[int]] = None
-    padded_to_lengths: Optional[List[int]] = None
+    padding_lengths: List[int] | None = None
+    padded_to_lengths: List[int] | None = None
     # sequence-level padding information
-    align_to_lengths: Optional[List[int]] = None
-    old_cu_seqlens_list: Optional[List[torch.Tensor]] = None
+    align_to_lengths: List[int] | None = None
+    old_cu_seqlens_list: List[torch.Tensor] | None = None
 
     def to(self, *args, **kwargs):
         mbs = [tensor_container_to(mb, *args, **kwargs) for mb in self.mbs]
@@ -1068,3 +1068,297 @@ def cycle_dataloader(dataloader: StatefulDataLoader):
             yield next(g)
         except StopIteration:
             g = iter(dataloader)
+
+
+class Normalization:
+    """
+    Adaptive normalization with different levels.
+
+    Supports independent specification of normalization level for mean and std:
+    - "batch": normalize across entire batch (with optional all_reduce in distributed setting)
+    - "group": normalize within fixed-size groups
+    - None: no centering or no std scaling
+    """
+
+    def __init__(self, config: NormConfig):
+        if config.mean_level not in {"batch", "group", None}:
+            raise ValueError(
+                f"mean_level must be 'batch', 'group' or None, got {config.mean_level}"
+            )
+        if config.std_level not in {"batch", "group", None}:
+            raise ValueError(
+                f"std_level must be 'batch', 'group', or None, got {config.std_level}"
+            )
+        if (
+            config.mean_level == "group" or config.std_level == "group"
+        ) and config.group_size is None:
+            raise ValueError("group_size must be provided if using group normalization")
+
+        self.mean_level = config.mean_level
+        self.mean_leave1out = config.mean_leave1out
+        self.std_level = config.std_level
+        self.std_unbiased = config.std_unbiased
+        self.group_size = config.group_size
+        self.eps = config.eps
+
+    @torch.no_grad()
+    def __call__(
+        self,
+        x: torch.Tensor,
+        loss_mask: Optional[torch.Tensor] = None,
+        high_precision: bool = True,
+        reduce_group=None,
+    ) -> torch.Tensor:
+        bs = x.size(0)
+        eps = self.eps
+
+        # Early return if no elements are active (all masked out)
+        if loss_mask is not None and loss_mask.sum().item() == 0:
+            return x.float()
+
+        # Step 1: Compute mean
+        if self.mean_level == "batch":
+            mean = self._compute_mean(
+                x,
+                loss_mask,
+                high_precision=high_precision,
+                leave_one_out=self.mean_leave1out,
+                all_reduce=True,
+                reduce_group=reduce_group,
+            )
+            mean = mean.expand_as(x)
+        elif self.mean_level == "group":
+            mean = torch.zeros_like(x)
+            for i in range(0, bs // self.group_size):
+                s = slice(i * self.group_size, (i + 1) * self.group_size)
+                xx = x[s]
+                m = loss_mask[s] if loss_mask is not None else None
+
+                # Special case: with group_size=1 and leave_one_out=True, mean should be 0
+                if self.group_size == 1 and self.mean_leave1out:
+                    dtype = torch.float64 if high_precision else torch.float32
+                    group_mean = torch.zeros(
+                        (1, xx.shape[1]), dtype=dtype, device=xx.device
+                    )
+                else:
+                    group_mean = self._compute_mean(
+                        xx,
+                        m,
+                        high_precision=high_precision,
+                        leave_one_out=self.mean_leave1out,
+                        all_reduce=False,
+                        reduce_group=None,
+                    )
+                mean[s] = group_mean.expand_as(xx)
+        else:  # mean_level == "none"
+            mean = torch.zeros_like(x)
+
+        # Subtract mean
+        x_centered = x - mean
+        # mask unrelevant elements as 0
+        if loss_mask is not None:
+            x_centered = x_centered * loss_mask
+
+        # Step 2: Compute std
+        if self.std_level == "batch":
+            std = self._compute_std(
+                x,
+                loss_mask,
+                mean,
+                unbiased=self.std_unbiased,
+                high_precision=high_precision,
+                all_reduce=True,
+                reduce_group=reduce_group,
+            )
+            std = std.expand_as(x)
+        elif self.std_level == "group":
+            std = torch.zeros_like(x)
+            for i in range(0, bs // self.group_size):
+                s = slice(i * self.group_size, (i + 1) * self.group_size)
+                xx = x[s]
+                m = loss_mask[s] if loss_mask is not None else None
+                group_mean_slice = mean[s]  # already computed and expanded
+
+                # Special case: with group_size=1 and std_unbiased=True, std should be 1 for numerical stability
+                if self.group_size == 1 and self.std_unbiased:
+                    dtype = torch.float64 if high_precision else torch.float32
+                    group_std = torch.ones(
+                        (1, xx.shape[1]), dtype=dtype, device=xx.device
+                    )
+                else:
+                    group_std = self._compute_std(
+                        xx,
+                        m,
+                        group_mean_slice,
+                        unbiased=self.std_unbiased,
+                        high_precision=high_precision,
+                        all_reduce=False,
+                        reduce_group=reduce_group,
+                    )
+                std[s] = group_std.expand_as(xx)
+        else:
+            std = torch.ones_like(x)
+            eps = 0.0
+
+        # Normalize
+        return (x_centered / (std + eps)).float()
+
+    @staticmethod
+    def _compute_mean(
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor],
+        high_precision: bool,
+        leave_one_out: bool,
+        all_reduce: bool,
+        reduce_group,
+    ) -> torch.Tensor:
+        """Compute mean only, using masked_normalization internals."""
+        dtype = torch.float64 if high_precision else torch.float32
+        x = x.to(dtype)
+        dim = tuple(range(len(x.shape)))
+
+        if mask is None:
+            factor = torch.tensor(
+                np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
+            )
+            x_masked = x
+            x_sum = x.sum(dim=dim, keepdim=True)
+        else:
+            mask = mask.to(dtype)
+            x_masked = x * mask
+            factor = mask.sum(dim, keepdim=True)
+            x_sum = x_masked.sum(dim=dim, keepdim=True)
+
+        if dist.is_initialized() and all_reduce:
+            dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
+            dist.all_reduce(x_sum, op=dist.ReduceOp.SUM, group=reduce_group)
+
+        if leave_one_out:
+            if factor.item() <= 1:
+                return torch.zeros_like(x_sum)
+            # For leave-one-out, we need to compute mean excluding each element individually
+            # This requires broadcasting: (total_sum - each_element) / (count - 1)
+            if mask is None:
+                # Broadcast x_sum to original shape and subtract each element
+                x_sum_broadcast = x_sum.expand_as(x)
+                leave_one_out_sum = x_sum_broadcast - x
+                return leave_one_out_sum / (factor - 1)
+            else:
+                # For masked case, only subtract where mask is 1
+                x_sum_broadcast = x_sum.expand_as(x)
+                leave_one_out_sum = x_sum_broadcast - x_masked
+                # Only compute leave-one-out where mask is 1, elsewhere return global mean
+                regular_mean = x_sum / factor
+                leave_one_out_mean = leave_one_out_sum / torch.clamp(
+                    factor - mask, min=1.0
+                )
+                return torch.where(
+                    mask > 0, leave_one_out_mean, regular_mean.expand_as(x)
+                )
+
+        if factor.item() == 0:
+            return torch.zeros_like(x_sum)
+        return x_sum / factor
+
+    @staticmethod
+    def _compute_std(
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor],
+        mean: torch.Tensor,
+        unbiased: bool,
+        high_precision: bool,
+        all_reduce: bool,
+        reduce_group,
+    ) -> torch.Tensor:
+        """Compute std only, given precomputed mean."""
+        dtype = torch.float64 if high_precision else torch.float32
+        x = x.to(dtype)
+        mean = mean.to(dtype)
+        dim = tuple(range(len(x.shape)))
+
+        if mask is None:
+            factor = torch.tensor(
+                np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
+            )
+            x_centered = x - mean
+            x_sum_sq = (x_centered**2).sum(dim=dim, keepdim=True)
+        else:
+            mask = mask.to(dtype)
+            x_masked = x * mask
+            factor = mask.sum(dim, keepdim=True)
+            x_centered = x_masked - mean * mask  # only apply mean where mask is 1
+            x_sum_sq = (x_centered**2).sum(dim=dim, keepdim=True)
+
+        if dist.is_initialized() and all_reduce:
+            dist.all_reduce(factor, op=dist.ReduceOp.SUM, group=reduce_group)
+            dist.all_reduce(x_sum_sq, op=dist.ReduceOp.SUM, group=reduce_group)
+
+        if unbiased:
+            if factor.item() <= 1:
+                return torch.ones_like(x_sum_sq)
+            return (x_sum_sq / (factor - 1)).sqrt()
+
+        if factor.item() == 0:
+            return torch.ones_like(x_sum_sq)
+        return (x_sum_sq / factor).sqrt()
+
+
+class KLEstimator:
+    """
+    KL divergence estimator, supports k1, k2 and k3.
+    """
+
+    def __init__(self, kl_estimator: str = "k1", apply_clamp: bool = True):
+        self.kl_estimator = kl_estimator
+        if kl_estimator not in ["k1", "k2", "k3"]:
+            raise ValueError(
+                f"Invalid KL estimator: {kl_estimator}. Valid choices: k1, k2, k3"
+            )
+        self.apply_clamp = apply_clamp
+
+    def __call__(
+        self, log_probs: torch.Tensor, log_probs_base: torch.Tensor
+    ) -> torch.Tensor:
+        return self._compute_approx_kl(
+            log_probs, log_probs_base, self.kl_estimator, self.apply_clamp
+        )
+
+    # adapted from https://github.com/OpenRLHF/OpenRLHF/blob/main/openrlhf/models/utils.py#L7
+    @staticmethod
+    def _compute_approx_kl(
+        log_probs: torch.Tensor,
+        log_probs_base: torch.Tensor,
+        kl_estimator: str = "k1",
+        apply_clamp: bool = True,
+    ) -> torch.Tensor:
+        """
+        Compute the approximate KL divergence between two distributions.
+        Schulman blog: http://joschu.net/blog/kl-approx.html
+
+        Args:
+            log_probs: Log probabilities of the new distribution.
+            log_probs_base: Log probabilities of the base distribution.
+        """
+
+        if kl_estimator == "k1":
+            log_ratio = log_probs.float() - log_probs_base.float()
+
+        # The k2 estimator is the non negative kl approximation in
+        # http://joschu.net/blog/kl-approx.html
+        # The k2_loss is approximately equivalent to the
+        # one-step KL divergence penalty with the k1 estimator
+        # used in https://arxiv.org/pdf/2310.10505.
+        if kl_estimator == "k2":
+            log_ratio = log_probs.float() - log_probs_base.float()
+            log_ratio = log_ratio**2 / 2.0
+
+        # The k3 estimator is the non negative kl approximation in
+        # http://joschu.net/blog/kl-approx.html
+        if kl_estimator == "k3":
+            log_ratio = log_probs.float() - log_probs_base.float()
+            log_ratio = -log_ratio
+            log_ratio = log_ratio.exp() - 1 - log_ratio
+
+        if apply_clamp:
+            log_ratio = log_ratio.clamp(min=-10, max=10)
+        return log_ratio

@@ -69,6 +69,59 @@ state-of-the-art 7B and 32B models for mathematical reasoning. Check out our
 
 </details>
 
+## 📚 Examples
+
+| Task                                             | Description                                                                          | Performance                                                                       |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| **[Math](examples/math/)**                       | Mathematical problem solving (SFT, GRPO, or PPO)                                     | TBA                                                                               |
+| **[Multi-Turn Math](examples/multi-turn-math/)** | Iterative mathematical problem solving with self-correction                          | [Training Curve](examples/multi-turn-math/reward_curve.png)                       |
+| **[LoRA Math](examples/lora/)**                  | Math Agent Trained With LoRA                                                         | TBA                                                                               |
+| **[VLM Math](examples/vlm/)**                    | CLEVR visual counting tasks                                                          | TBA                                                                               |
+| **[Reasoning](examples/countdown/)**             | Countdown numbers game with custom rewards                                           | [Training Curve](/examples/countdown/countdown_training_curve.png)                |
+| **[Search Agent](examples/search-agent/)**       | An agent with end-to-end reasoning, search, browsing, and summarization capabilities | [ASearcher Repo](https://github.com/inclusionAI/ASearcher)                        |
+| **[Tool-Integrated Reasoning](examples/tir/)**   | An agent that can invoke tools during reasoning                                      | [TIR Example](https://github.com/inclusionAI/AReaL/tree/main/examples/tir)        |
+| **[RLHF](examples/alignment/)**                  | RLHF for LLM Alignment                                                               | [RLHF Example](https://github.com/inclusionAI/AReaL/tree/main/examples/alignment) |
+
+## 🔧 Support Matrix
+
+### 🧠 Algorithms
+
+| Algorithm                | Documentation                         | Paper                                          | Configuration                                                |
+| ------------------------ | ------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------ |
+| **GRPO**                 | [📖 Docs](docs/algorithms/grpo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.03300)   | [🔗 GSM8K Example](examples/math/gsm8k_grpo.yaml)            |
+| **PPO**                  | -                                     | [📄 Paper](https://arxiv.org/pdf/2203.02155)   | [🔗 GSM8K Example](examples/math/gsm8k_ppo.yaml)             |
+| **DAPO**                 | [📖 Docs](docs/algorithms/dapo.md)    | [📄 Paper](https://arxiv.org/abs/2503.14476)   | [🔗 GSM8K Example](examples/experimental/dapo/gsm8k_dapo.py) |
+| **LitePPO**              | [📖 Docs](docs/algorithms/litePPO.md) | [📄 Paper](https://arxiv.org/abs/2508.08221)   | -                                                            |
+| **Dr.GRPO**              | [📖 Docs](docs/algorithms/dr.GRPO.md) | [📄 Paper](https://arxiv.org/abs/2503.20783)   | -                                                            |
+| **REINFORCE++**          | -                                     | [📄 Paper](https://arxiv.org/pdf/2501.03262)   | [🔗 GSM8K Example](examples/math/gsm8k_reinforce.yaml)       |
+| **RLOO**                 | [📖 Docs](docs/algorithms/rloo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)            |
+| **RLHF Reward Modeling** | -                                     | -                                              | [🔗 RLHF Example](examples/alignment/)                       |
+| **SFT**                  | -                                     | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)               |
+
+### Models
+
+| Model Family               | Megatron | PyTorch FSDP | Notes                                                    |
+| -------------------------- | -------- | ------------ | -------------------------------------------------------- |
+| **Qwen2/3**                | ✅       | ✅           | -                                                        |
+| **Qwen3-MoE**              | ✅       | ✅           | -                                                        |
+| **Qwen2.5-VL**             | ❌       | ✅           | Vision-language model                                    |
+| **Gemma 3**                | ❌       | ✅           | Vision-language model                                    |
+| **Other Hugging Face LLM** | ❌       | ✅           | Compatibility depending on the version of `transformers` |
+
+### Training Backends
+
+| Backend          | DP          | Tensor Parallel | Sequence Parallel within TP | Context Parallel | Pipeline Parallel | Expert Parallel | 1D Sequence Packing | LoRA |
+| ---------------- | ----------- | --------------- | --------------------------- | ---------------- | ----------------- | --------------- | ------------------- | ---- |
+| **Megatron**     | ✅ (ZeRO-1) | ✅              | ✅                          | ✅               | ✅                | ✅              | ✅                  | ❌   |
+| **PyTorch FSDP** | ✅ (FSDP2)  | ✅              | ✅                          | ✅               | ❌                | ❌              | ✅                  | ✅   |
+
+### Inference Backends
+
+| Backend    | Tensor Parallel | Context Parallel | Pipeline Parallel | Data Parallel Attention | Expert Parallel |
+| ---------- | --------------- | ---------------- | ----------------- | ----------------------- | --------------- |
+| **vLLM**   | ✅              | ❓               | ❓                | ❓                      | ❓              |
+| **SGLang** | ✅              | ❌               | ❌                | ✅                      | ✅              |
+
 ## 🚀 Getting Started
 
 Our training scripts automatically download the required dataset (openai/gsm8k) and
@@ -94,24 +147,14 @@ python3 -m areal.launcher.ray \
 For comprehensive setup instructions, see
 [our quickstart guide](https://inclusionai.github.io/AReaL/tutorial/quickstart.html).
 
-## 📚 Examples
-
-| Task                                        | Description                                                               | Performance                                                        |
-| ------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| **[Math](examples/math/)**                  | GSM8K mathematical problem solving                                        | TBA                                                                |
-| **[VLM Math](examples/vlm/)**               | CLEVR visual counting tasks                                               | TBA                                                                |
-| **[Simple Reasoning](examples/countdown/)** | Countdown numbers game with custom rewards                                | [Training Curve](/examples/countdown/countdown_training_curve.png) |
-| **[Search Agent](examples/search-agent/)**  | An agent with end-to-end search, browsing, and summarization capabilities | [ASearcher Repo](https://github.com/inclusionAI/ASearcher)         |
-
 ## 📖 Resources
 
-- [Documentation](https://inclusionai.github.io/AReaL/)
-- [Contributing](https://inclusionai.github.io/AReaL/contrib.html)
-
-### Quickstart
-
 - [Installation](https://inclusionai.github.io/AReaL/tutorial/installation.html)
-- [AReaL-lite Quickstart](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
+- [Quickstart](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
+- [CLI Configurations](https://inclusionai.github.io/AReaL/cli_reference.html)
+- [Debugging Best Practices](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
+- [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
+- [Contributing](https://inclusionai.github.io/AReaL/contrib.html)
 
 ### Code Walkthrough
 
@@ -122,11 +165,6 @@ For comprehensive setup instructions, see
 - [Customize dataset with AReaL-lite](https://inclusionai.github.io/AReaL/customization/dataset.html)
 - [Customize Agentic/RVLR rollout workflows with AReaL-lite](https://inclusionai.github.io/AReaL/customization/agent.html)
 - [Customize algorithms with AReaL-lite](https://inclusionai.github.io/AReaL/customization/algorithm.html)
-
-### Advanced Usage
-
-- [Debugging Best Practices](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
-- [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
 
 ## 🗺️ Future Roadmap
 
