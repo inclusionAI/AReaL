@@ -315,7 +315,7 @@ class TrainController(abc.ABC):
         """
         raise NotImplementedError()
 
-    def get_version(self) -> int:
+    def get_version(self) -> List[int]:
         """Get the current weight version in the training engine.
 
         Returns
@@ -359,7 +359,7 @@ class TrainController(abc.ABC):
         input_: DistributedBatch,
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
-    ) -> Dict[str, float]:
+    ) -> List[Dict[str, float]]:
         """Update the model with a batch of data and a loss function.
 
         Note
@@ -382,7 +382,7 @@ class TrainController(abc.ABC):
 
         Returns
         -------
-        Dict[str, float]
+        List[Dict[str, float]]
             Scalar statistics after training, e.g., the current learning rate,
             gradient norm, etc.
         """
@@ -394,7 +394,7 @@ class TrainController(abc.ABC):
         input_: DistributedBatch,
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
-    ) -> torch.Tensor | None:
+    ) -> List[torch.Tensor]:
         """Evaluate the model using the forward pass and loss function.
 
         Note
@@ -458,7 +458,6 @@ class TrainController(abc.ABC):
         """
         raise NotImplementedError()
 
-
 class RolloutController(abc.ABC):
     """A centralized controller that manages multiple distributed InferenceEngine workers for rollout generation.
 
@@ -506,21 +505,6 @@ class RolloutController(abc.ABC):
 
     def destroy(self):
         """Destroy the engine and release GPU memory for the local inference engine."""
-        raise NotImplementedError()
-
-    async def agenerate(self, req: ModelRequest) -> ModelResponse:
-        """Asynchronously generate a response for the given request.
-
-        Parameters
-        ----------
-        req : ModelRequest
-            The model request containing input data and generation parameters
-
-        Returns
-        -------
-        ModelResponse
-            The generated response from the model
-        """
         raise NotImplementedError()
 
     def update_weights(self, meta: WeightUpdateMeta) -> Future:
@@ -571,7 +555,7 @@ class RolloutController(abc.ABC):
 
     def submit(
         self,
-        data: Dict[str, Any],
+        data: DistributedBatch,
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
@@ -623,7 +607,7 @@ class RolloutController(abc.ABC):
 
     def rollout_batch(
         self,
-        data: List[Dict[str, Any]],
+        data: DistributedBatch,
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
@@ -652,7 +636,7 @@ class RolloutController(abc.ABC):
 
     def prepare_batch(
         self,
-        dataloader: StatefulDataLoader,
+        dataloader: DistributedBatch,
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
@@ -688,31 +672,4 @@ class RolloutController(abc.ABC):
 
     def resume(self):
         """Resume request submission for async rollout."""
-        raise NotImplementedError()
-
-    def register_callback_to_all_worker(
-        self, method: str, callback: Callable, **kwargs
-    ):
-        """Register a callback function for the specified method across all workers.
-
-        Partial rollout API. After successful registration, the controller will poll
-        and call the specified method in a background thread. When the return value
-        is obtained, it will be used as a parameter to call the `callback` function.
-
-        Parameters
-        ----------
-        method : str
-            The name of the method to register the callback for
-        callback : Callable
-            The callback function to be called with the method's return value
-        **kwargs
-            Additional keyword arguments for the callback registration
-        """
-        raise NotImplementedError()
-
-    def abort_all_requests(self) -> None:
-        """Abort all ongoing requests in the inference engine.
-
-        Partial rollout API for canceling all queued and in-progress requests.
-        """
         raise NotImplementedError()

@@ -524,7 +524,7 @@ class WorkflowExecutor:
 
     def prepare_batch(
         self,
-        dataloader: StatefulDataLoader,
+        dataloader: StatefulDataLoader | List[Dict[str, Any]],
         workflow: "RolloutWorkflow" | None = None,
         workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
@@ -533,28 +533,62 @@ class WorkflowExecutor:
 
         See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for detailed documentation.
         """
-        if not hasattr(self, "data_generator"):
-            self.data_generator = cycle_dataloader(dataloader)
-        assert dataloader.batch_size is not None
-        while True:
-            # Submit at least two batches to allow maximum overlap
-            if (
-                self.get_capacity() + dataloader.batch_size > 0
-                and self.input_queue.qsize() + dataloader.batch_size
-                < self.input_queue.maxsize
-            ):
-                data = next(self.data_generator)
-                for item in data:
+        if isinstance(dataloader, StatefulDataLoader):
+            # 处理StatefulDataLoader类型 - 保持原有逻辑不变
+            if not hasattr(self, "data_generator"):
+                self.data_generator = cycle_dataloader(dataloader)
+            assert dataloader.batch_size is not None
+            batch_size = dataloader.batch_size
+            
+            while True:
+                # Submit at least two batches to allow maximum overlap
+                if (
+                    self.get_capacity() + batch_size > 0
+                    and self.input_queue.qsize() + batch_size
+                    < self.input_queue.maxsize
+                ):
+                    data = next(self.data_generator)
+                    for item in data:
+                        self.submit(
+                            item,
+                            workflow=workflow,
+                            workflow_builder=workflow_builder,
+                            should_accept=should_accept,
+                        )
+                try:
+                    return self.wait(batch_size, timeout=1)
+                except TimeoutError:
+                    pass
+        else:
+            self.data_list_index = 0
+            
+            # 对于List类型，使用固定的batch_size=1
+            batch_size = 1
+            
+            while True:
+                # Submit at least two batches to allow maximum overlap
+                if (
+                    self.get_capacity() + batch_size > 0
+                    and self.input_queue.qsize() + batch_size
+                    < self.input_queue.maxsize
+                ):
+                    # 从List中获取数据，支持循环访问
+                    if self.data_list_index >= len(dataloader):
+                        self.data_list_index = 0  # 循环访问
+                    
+                    item = dataloader[self.data_list_index]
+                    self.data_list_index += 1
+                    
                     self.submit(
                         item,
                         workflow=workflow,
                         workflow_builder=workflow_builder,
                         should_accept=should_accept,
                     )
-            try:
-                return self.wait(dataloader.batch_size, timeout=1)
-            except TimeoutError:
-                pass
+                try:
+                    return self.wait(batch_size, timeout=1)
+                except TimeoutError:
+                    pass
 
     def pause(self):
         """Pause request submission for async rollout.
