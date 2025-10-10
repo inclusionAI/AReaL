@@ -37,12 +37,12 @@ class RecoverInfo:
     dataloader_info: Dict | List[Dict]
     checkpoint_info: Dict
 
-    def dump(self, dump_dir: str):
+    def dump(self, dump_dir: str, single_rank_load=False):
         # Dumps the recover info to multiple files in `dump_dir`:
         # 1. step_info.json: contains the recover info
         # 2. *_info.json or *_info.pkl: contains other informantion required for recover.
 
-        if dist.is_initialized():
+        if dist.is_initialized() and not single_rank_load:
             # Since dataloader state is different across distributed ranks,
             # we need to all gather the dataloader state from all ranks.
             # In this situation, saved dataloader_info is a list of states from all ranks.
@@ -212,7 +212,7 @@ class RecoverHandler:
             self.config.trial_name,
             self.config.fileroot,
         )
-        recover_info.dump(recover_info_path)
+        recover_info.dump(recover_info_path, single_rank_load)
 
     def load(
         self,
