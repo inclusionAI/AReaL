@@ -124,13 +124,21 @@ class FSDPEngine(BaseHFEngine):
 
         self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
 
-    def initialize(self, addr: str | None, ft_spec: FinetuneSpec | None):
+    def initialize(
+        self,
+        addr: str | None,
+        ft_spec: FinetuneSpec | None,
+        parallel_strategy: ParallelStrategy | None = None,
+    ):
+        self.create_process_group(parallel_strategy)
         # Initialize distributed enviroments and load model.
         assert addr is None, "FSDPEngine does not support remote initialization."
         assert ft_spec is not None, "FSDPEngine requires FinetuneSpec to initialize."
         assert pkg_version.is_version_greater_or_equal(
             "torch", "2.4.0"
         ), f"areal only supports FSDP2, which requires torch>=2.4.0"
+
+        self.world_size = int(os.environ["WORLD_SIZE"])
 
         # Create device model
         self.create_device_model()

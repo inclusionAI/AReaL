@@ -36,10 +36,11 @@ class SchedulingConfig:
 
 
 class Scheduler(abc.ABC):
-    def create_workers(self, worker_key, scheduler_config, *args, **kwargs) -> str:
+    def create_workers(self, worker_key, scheduler_config, *args, **kwargs) -> None:
         """
         Start workers, return job id
         """
+        raise NotImplementedError()
 
     def get_workers(self, worker_key, timeout=None) -> List[Worker]:
         """

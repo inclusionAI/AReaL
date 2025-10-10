@@ -45,11 +45,8 @@ class RemoteSGLangEngine(InferenceEngine):
         self.distributed_weight_update_initialized = False
         self._version = 0
 
-        self.lock = Lock()
-        self.workflow_executor = WorkflowExecutor(
-            config=config,
-            inference_engine=self,
-        )
+        self.lock: Lock
+        self.workflow_executor: WorkflowExecutor
 
     def _wait_for_server(self, address):
         base_url = f"http://{address}"
@@ -74,6 +71,11 @@ class RemoteSGLangEngine(InferenceEngine):
         addr: str | List[str] | None = None,
         train_data_parallel_size: int | None = None,
     ):
+        self.lock = Lock()
+        self.workflow_executor = WorkflowExecutor(
+            config=self.config,
+            inference_engine=self,
+        )
         if engine_id is None:
             if dist.is_initialized():
                 engine_id = str(dist.get_rank())

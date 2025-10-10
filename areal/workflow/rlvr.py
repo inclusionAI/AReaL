@@ -52,13 +52,15 @@ class RLVRWorkflow(RolloutWorkflow):
         self.enable_thinking = enable_thinking
         self.dump_dir = dump_dir
         self.rollout_stat_scope = rollout_stat_scope
-        self.async_reward_fn = AsyncRewardWrapper(reward_fn)
+        self.async_reward_fn = None
         self.get_input_ids_fn = get_input_ids_fn
         self.data_extract_prompt_fn = data_extract_prompt_fn
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
     async def arun_episode(self, engine: InferenceEngine, data):
+        if self.async_reward_fn is None:
+            self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
         input_ids = self.get_input_ids_fn(
             self.data_extract_prompt_fn(data), self.tokenizer, self.enable_thinking
         )
