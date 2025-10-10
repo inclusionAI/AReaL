@@ -79,7 +79,7 @@ deepspeed>=0.17.2
 pybase64
 msgspec
 transformers==4.56.0
-openai==1.99.6
+openai==2.3.0
 sh
 peft
 mdformat==0.7.17
