@@ -2,9 +2,9 @@ import re
 import uuid
 from typing import Dict, List, Any, Optional
 from transformers import PreTrainedTokenizerFast, AutoProcessor
-from AVoyager.train.constants import TOOL_CROP_SYSTEM_PROMPT
+from .constants import TOOL_CROP_SYSTEM_PROMPT
 from areal.utils.image import get_multimodal_input_ids_len, load_image, image2base64, get_image_token
-from AVoyager.utils.reward import compute_score
+from ..utils.reward import compute_score
 
 class AReaLVOYAGEReasoningAgentV1:
     

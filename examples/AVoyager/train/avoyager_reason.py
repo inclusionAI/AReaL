@@ -46,15 +46,15 @@ from areal.utils.stats_logger import StatsLogger
 from areal.utils import seeding, logging, stats_tracker
 from areal.experimental.openai import ArealOpenAI
 from areal.utils.redistributor import redistribute
-from AVoyager.utils.reward import compute_score
+from ..utils.reward import compute_score
 
 import sys
 from pathlib import Path
 # sys.path.append("/storage/openpsi/users/xushusheng.xss/projects/ASearcher-Lite@0908")
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from AVoyager.dataset.multimodal_dataset import get_multimodal_dataset
-from AVoyager.train.reasoning_agent import run_agent
-from AVoyager.utils.voyage_tool import VoyageToolBox
+from ..dataset.multimodal_dataset import get_multimodal_dataset
+from .reasoning_agent import run_agent
+from ..utils.voyage_tool import VoyageToolBox
 
 worker_id = uuid.uuid4().hex[:4]
 

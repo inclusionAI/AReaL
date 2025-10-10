@@ -3,7 +3,7 @@ import json
 from typing import List, Tuple
 from PIL import Image
 from areal.utils import logging
-from AVoyager.utils.voyage_client import make_voyage_client
+from .voyage_client import make_voyage_client
 
 
 logger = logging.getLogger("Voyage ToolBox")

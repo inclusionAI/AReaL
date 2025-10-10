@@ -750,10 +750,10 @@ class SchedulerConfig:
 
 @dataclass
 class DatasetConfig:
-    path: str = field(
+    path: List[str] | str = field(
         default=MISSING,
         metadata={
-            "help": "Path to the dataset. Can be a local path or a HuggingFace dataset name."
+            "help": "Dataset path(s). Accepts a single path or a list of paths (local or HuggingFace dataset names)."
         },
     )
     type: str = field(
