@@ -2,7 +2,7 @@ import argparse
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 import uvloop
 import yaml
@@ -750,7 +750,7 @@ class SchedulerConfig:
 
 @dataclass
 class DatasetConfig:
-    path: List[str] | str = field(
+    path: Any = field(
         default=MISSING,
         metadata={
             "help": "Dataset path(s). Accepts a single path or a list of paths (local or HuggingFace dataset names)."

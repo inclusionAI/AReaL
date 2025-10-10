@@ -90,6 +90,13 @@ def get_multimodal_dataset(
             '''
             from PIL import Image as PILImage
 
+            if "problem" not in sample:
+                # 打印详细信息
+                print(f"[ERROR] Missing 'problem' key in sample from path: {path}")
+                print(f"[ERROR] Available keys: {list(sample.keys())}")
+                # 抛出明确异常，便于在多进程 map 中快速报错
+                raise KeyError(f"Sample from {path} missing 'problem' field. Keys: {list(sample.keys())}")
+
             processed_images = []
             for img in sample.get("images", []):
                 if isinstance(img, str):
@@ -134,8 +141,7 @@ def get_multimodal_dataset(
                 "data_source": sample.get("data_source", "unknown"),
             }
 
-        dataset = dataset.map(process, num_proc=num_proc).remove_columns(["problem","solution","doc_id"]) if "problem" in dataset.column_names else dataset.map(process, num_proc=num_proc)
-
+        dataset = dataset.map(process, num_proc=num_proc)
         # Filter out sequences longer than max_length if max_length is provided
         if max_length is not None:
 
@@ -171,7 +177,8 @@ def get_multimodal_dataset(
         logger.warning("Please set HF_HOME to your NFS directory")
         if rank == 0:
             # First process data in rank 0, and use HF cache to load pre-processed dataset in other ranks
-            dataset = _do_preprocess(path, split, processor, max_length, num_proc)
+            for p in path:
+                _ = _do_preprocess(p, split, processor, max_length, num_proc)
         dist.barrier()
     else:
         # Do not use multi-processing (slow)
@@ -180,6 +187,7 @@ def get_multimodal_dataset(
 
     # If use multiprocessing, it will load dataset in HF cache
     datasets = []
+    
     for p in path:
         datasets.append(_do_preprocess(p, split, processor, max_length, num_proc))
     dataset = concatenate_datasets(datasets).shuffle(seed=42)

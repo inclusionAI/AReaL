@@ -2,8 +2,8 @@ from typing import Dict, Any, List
 import re
 from transformers import AutoProcessor
 from PIL import Image
-from .voyage_utils import prepare_grounding_inputs_multi_turn, crop_image, process_image
-from ..train.constants import TOOL_CALL_CROP_MULTI_TRUN_PROMPT, ERROR_INFO_MULTI_TURN_PROMPT
+from examples.AVoyager.utils.voyage_utils import prepare_grounding_inputs_multi_turn, crop_image, process_image
+from examples.AVoyager.train.constants import TOOL_CALL_CROP_MULTI_TRUN_PROMPT, ERROR_INFO_MULTI_TURN_PROMPT
 
 class ImageGroundingClient:
     def __init__(self, original_image: Image.Image, processor: AutoProcessor = None):

@@ -1,4 +1,4 @@
-experiment_name: clevr_count_70k-grpo
+experiment_name: AVoyager-grpo
 trial_name: trial1
 
 seed: 1
@@ -104,7 +104,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: [/storage/openpsi/data/VisualProbe_train, /storage/openpsi/data/DeepEyes_train_4K]
+  path: [/storage/openpsi/data/VisualProbe_train/train.json, /storage/openpsi/data/DeepEyes_train_4K/train.json]
   type: rl
 
 valid_dataset:
@@ -112,7 +112,7 @@ valid_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: [/storage/openpsi/data/VisualProbe_Easy, /storage/openpsi/data/VisualProbe_Medium, /storage/openpsi/data/VisualProbe_Hard, /storage/openpsi/data/Vstar_Bench]
+  path: [/storage/openpsi/data/VisualProbe_Easy/val.json, /storage/openpsi/data/VisualProbe_Medium/val.json, /storage/openpsi/data/VisualProbe_Hard/val.json, /storage/openpsi/data/Vstar_Bench/val.json]
   type: rl
 
 # Utilities
