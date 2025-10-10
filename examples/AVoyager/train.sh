@@ -1,2 +1,2 @@
 export BASE_IMAGE_DIR="/storage/openpsi/data"
-API_KEY="sk-43dd5f664179406d92fec42a9364f8a5" WANDB_BASE_URL=http://8.150.1.98:8080 WANDB_API_KEY=local-19d0958e7ee05589016d2b4e0518bf9f2ee84db9 python3 -m areal.launcher.local examples/AVoyager/train/avoyager_reason.py --config examples/AVoyager/train/config/avoyage.yaml
+python3 -m areal.launcher.local examples/AVoyager/train/avoyager_reason.py --config examples/AVoyager/train/config/avoyage.yaml

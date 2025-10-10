@@ -49,7 +49,11 @@ def get_multimodal_dataset(
     rank: int,
     world_size: int,
     max_length: Optional[int] = None,
-):
+):      
+    base_image_dir = os.getenv("BASE_IMAGE_DIR")
+    if base_image_dir is None:
+        raise ValueError("Please set BASE_IMAGE_DIR environment variable")
+    
     def _do_preprocess(
         path: str,
         split: str,
@@ -100,6 +104,7 @@ def get_multimodal_dataset(
             processed_images = []
             for img in sample.get("images", []):
                 if isinstance(img, str):
+                    img= os.path.join(base_image_dir, img)
                     try:
                         img_obj = PILImage.open(img)
                     except Exception:
