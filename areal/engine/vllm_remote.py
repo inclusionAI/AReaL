@@ -104,7 +104,8 @@ class RemotevLLMEngine(InferenceEngine):
                         timeout=1,
                     )
                     self.logger.info(f"Get server addresses from name_resolve.")
-                except TimeoutError:
+                except (TimeoutError, RuntimeError):
+                    # RuntimeError happens when name_resolve is not properly configured.
                     pass
         if not self.addresses and os.getenv("AREAL_LLM_SERVER_ADDRS"):
             # When addr is not provided, fallback to reading addrs from env var

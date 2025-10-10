@@ -88,6 +88,9 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     os.environ["LOCAL_RANK"] = "0"
     os.environ["MASTER_ADDR"] = HOST
     os.environ["MASTER_PORT"] = str(MASTER_PORT)
+    # required by sglang
+    os.environ["NCCL_CUMEM_ENABLE"] = "0"
+    os.environ["NCCL_NVLS_ENABLE"] = "0"
 
     # Initialize FSDPEngine
     engine_config = TrainEngineConfig(

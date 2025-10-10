@@ -47,6 +47,7 @@ def vllm_server():
         vllm_config=vLLMConfig(
             skip_tokenizer_init=False,
             model=MODEL_PATH,
+            gpu_memory_utilization=0.1,
         ),
         host=HOST,
         port=PORT,
