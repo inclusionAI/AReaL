@@ -78,7 +78,7 @@ dependencies = [
     "tensordict",
     "pybase64",
     "msgspec",
-    "openai==1.99.6",
+    "openai==2.3.0",
     "dotenv",
     "json5",
 
