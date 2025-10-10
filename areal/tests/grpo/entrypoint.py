@@ -32,10 +32,6 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 def main() -> None:
     config, _ = cli_args.load_expr_config(sys.argv[1:], GRPOConfig)
     assert isinstance(config, GRPOConfig)
-    local_model_path = config.actor.path.replace("/", "__")
-    local_model_path = os.path.join("/storage/openpsi/models", local_model_path)
-    if os.path.exists(local_model_path):
-        config.actor.path = local_model_path
 
     rank = int(os.environ.get("RANK", "0"))
 

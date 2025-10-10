@@ -20,9 +20,9 @@ from areal.utils import network
 
 EXPR_NAME = "test_fsdp_engine_nccl"
 TRIAL_NAME = "trial_nccl"
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen2-0.5B"
+    MODEL_PATH = "Qwen/Qwen3-0.6B"
 PORT = 13998
 DIST_PORT = 15998
 GROUP_NAME = "test_nccl_group"
@@ -88,6 +88,9 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     os.environ["LOCAL_RANK"] = "0"
     os.environ["MASTER_ADDR"] = HOST
     os.environ["MASTER_PORT"] = str(MASTER_PORT)
+    # required by sglang
+    os.environ["NCCL_CUMEM_ENABLE"] = "0"
+    os.environ["NCCL_NVLS_ENABLE"] = "0"
 
     # Initialize FSDPEngine
     engine_config = TrainEngineConfig(

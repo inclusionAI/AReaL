@@ -29,9 +29,9 @@ from areal.workflow.rlvr import RLVRWorkflow
 
 EXPR_NAME = "test_sglang_local_engine"
 TRIAL_NAME = "trial_0"
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen2-0.5B"
+    MODEL_PATH = "Qwen/Qwen3-0.6B"
 
 
 def build_engine_config(**kwargs):

@@ -6,7 +6,7 @@ Author: [Honghua DONG](https://github.com/dhh1995)
 
 ![rloo figure](../figures/reinforce.png)
 
-REINFORCE Leave One-Out (RLOO), introduced by Ahmadian et al. (2024), is an RL method that removes the need for a value function (critic). 
+REINFORCE Leave One-Out (RLOO), introduced by Ahmadian et al. (2024), is an RL method that removes the need for a value function (critic).
 Instead, it estimates the baseline by averaging rewards of other sampled responses for the same prompt within the group.
 
 The overall core objective is:
