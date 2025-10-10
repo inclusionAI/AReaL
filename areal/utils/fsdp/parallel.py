@@ -342,29 +342,21 @@ def apply_non_moe_tp(
     root_tp_plan: Dict[str, ParallelStyle] = {}
     if hasattr(model, "lm_head") and isinstance(model.lm_head, nn.Module):
         # All-gather
-        root_tp_plan.update(
-            {
-                "lm_head": ColwiseParallel(
-                    input_layouts=Shard(1),
-                    output_layouts=Replicate(),
-                )
-            }
+        root_tp_plan["lm_head"] = ColwiseParallel(
+            input_layouts=Shard(1),
+            output_layouts=Replicate(),
         )
     if hasattr(model, "score") and isinstance(model.score, nn.Module):
         # For PPO's critic model's score layer:
         # 1. The input is sharded by sequence parallelism
         # 2. `score` is a linear layer, but its weight is not a DTensor. Use local input.
         # 3. All-gather the output along the sequence dimension to get the full results.
-        root_tp_plan.update(
-            {
-                "score": PrepareModuleInputOutput(
-                    input_layouts=Shard(1),
-                    desired_input_layouts=Shard(1),
-                    use_local_input=True,
-                    output_layouts=Shard(1),
-                    desired_output_layouts=Replicate(),
-                )
-            }
+        root_tp_plan["score"] = PrepareModuleInputOutput(
+            input_layouts=Shard(1),
+            desired_input_layouts=Shard(1),
+            use_local_input=True,
+            output_layouts=Shard(1),
+            desired_output_layouts=Replicate(),
         )
 
     if is_valid_vision_model(model_config.model_type):
