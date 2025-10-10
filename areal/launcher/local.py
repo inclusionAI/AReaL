@@ -311,7 +311,7 @@ def local_main(config, run_id: int = 0):
         seed_arg = spec["seed_arg"]
         module = spec["module"]
         server_cmd = (
-            f"python3 -m {module} {' '.join(sys.argv[2:])} {seed_arg}={base_seed}"
+            f"python3 -m {module} {' '.join(sys.argv[1:])} {seed_arg}={base_seed}"
         )
 
         # Launch inference servers.
