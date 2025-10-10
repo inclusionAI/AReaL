@@ -297,7 +297,10 @@ def local_main(config, run_id: int = 0):
             random_seed = config.vllm.seed
 
         if alloc_mode.gen_backend == "sglang":
-            apply_patch = config.launcher.enable_multithread_load or config.launcher.enable_fast_load
+            apply_patch = (
+                config.sglang.enable_multithread_load
+                or config.sglang.enable_fast_load
+            )
             if apply_patch:
                 apply_sglang_patch()
 
