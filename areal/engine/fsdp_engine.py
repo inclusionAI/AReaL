@@ -44,7 +44,7 @@ from areal.utils.ulysses import (
     set_ulysses_sequence_parallel_group,
     ulysses_pad,
     ulysses_pad_and_slice_inputs,
-    ulysses_pad_and_slice_loss_inputs,
+    ulysses_prepare_inputs,
 )
 
 
@@ -432,12 +432,8 @@ class FSDPEngine(BaseHFEngine):
                 ):
                     ulysses_position_ids = ulysses_position_ids.contiguous()
 
-                inputs = padded_mb_input.copy()
-                inputs["input_ids"] = ulysses_input_ids
-                if ulysses_position_ids is not None:
-                    inputs["position_ids"] = ulysses_position_ids
-                inputs = ulysses_pad_and_slice_loss_inputs(
-                    inputs, padded_mb_input, self.parallel_helper.sp_size
+                inputs = ulysses_prepare_inputs(
+                    padded_mb_input, ulysses_input_ids, ulysses_position_ids, self.parallel_helper.sp_size
                 )
             else:
                 inputs = padded_mb_input
@@ -539,12 +535,8 @@ class FSDPEngine(BaseHFEngine):
                 ):
                     ulysses_position_ids = ulysses_position_ids.contiguous()
 
-                inputs = padded_mb_input.copy()
-                inputs["input_ids"] = ulysses_input_ids
-                if ulysses_position_ids is not None:
-                    inputs["position_ids"] = ulysses_position_ids
-                inputs = ulysses_pad_and_slice_loss_inputs(
-                    inputs, self.parallel_helper.sp_size
+                inputs = ulysses_prepare_inputs(
+                    padded_mb_input, ulysses_input_ids, ulysses_position_ids, self.parallel_helper.sp_size
                 )
             else:
                 inputs = padded_mb_input
