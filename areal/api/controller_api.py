@@ -15,7 +15,6 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.scheduler_api import Scheduler
-from areal.utils.lock import DistributedLock
 
 
 class DistributedBatch(abc.ABC):
@@ -288,7 +287,7 @@ class TrainController(abc.ABC):
         """
         raise NotImplementedError()
 
-    def connect_engine(self, engine: "InferenceEngine"):
+    def connect_engine(self, engine: "InferenceEngine", meta: WeightUpdateMeta):
         """Connect to an inference engine for online training.
 
         Parameters
@@ -516,24 +515,6 @@ class RolloutController(abc.ABC):
         """
         raise NotImplementedError()
 
-    def get_engine_lock(self) -> DistributedLock:
-        """Gets the distributed lock for the engine.
-
-        This method should be implemented by subclasses to provide a distributed
-        locking mechanism. The lock is used to synchronize access to the engine
-        across multiple processes or nodes, ensuring that critical operations
-        are performed atomically.
-
-        Raises
-        ----------
-            NotImplementedError: If the method is not implemented by a subclass.
-
-        Returns
-        ----------
-            DistributedLock: An object representing the distributed lock for the engine.
-        """
-        raise NotImplementedError()
-
     def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
         """Initialize the weight update process group for distributed weight updates.
 
@@ -558,33 +539,7 @@ class RolloutController(abc.ABC):
         """
         raise NotImplementedError()
 
-    def pause_generation(self):
-        """Pauses the ongoing generation process.
-        This method signals the generation engine to temporarily halt its
-        current task. The state of the generation is preserved, allowing it
-        to be resumed later from the point where it was paused.
-
-        Raises
-        ------
-        NotImplementedError
-            If the method is not implemented by a subclass.
-        """
-        raise NotImplementedError()
-
-    def continue_generation(self):
-        """Continues a previously paused generation process.
-        This method is intended to be called after a generation has been
-        initiated and subsequently paused. Subclasses must implement the logic
-        to resume generating output from where it left off.
-
-        Raises
-        ------
-        NotImplementedError
-            If the method is not implemented by a subclass.
-        """
-        raise NotImplementedError()
-
-    def update_weights_from_dist(self, meta: WeightUpdateMeta) -> Future[None]:
+    def update_weights_from_distributed(self, meta: WeightUpdateMeta) -> Future[None]:
         """Update weights in the inference engine in a non-blocking manner.
 
         Parameters

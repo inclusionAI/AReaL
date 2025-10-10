@@ -110,13 +110,13 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     remote_engine = RemoteSGLangEngine(config)
     remote_engine.initialize()
 
-    engine.connect_engine(remote_engine)
-
     # Get WeightUpdateMeta
     meta = WeightUpdateMeta.from_fsdp_xccl(
         AllocationMode.from_str("sglang.d1p1t1+d1p1t1"),
         nccl_group_name=GROUP_NAME,
     )
+
+    engine.connect_engine(remote_engine, meta)
 
     # Broadcast weights
     engine.update_weights(meta)

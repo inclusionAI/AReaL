@@ -285,7 +285,7 @@ class FSDPEngine(BaseHFEngine):
         if self.rank == 0:
             self.model.print_trainable_parameters()
 
-    def _update_bucket_weights_from_dist(
+    def _update_bucket_weights_from_distributed(
         self,
         meta: WeightUpdateMeta,
         named_tensors: List[Tuple[str, nn.Parameter | torch.Tensor]],
@@ -304,7 +304,7 @@ class FSDPEngine(BaseHFEngine):
         ]
 
         meta.set_param_specs(param_specs)
-        fut = self.rollout_engine.update_weights_from_dist(meta)
+        fut = self.rollout_engine.update_weights_from_distributed(meta)
 
         handles = []
         for _, tensor in named_tensors:
@@ -321,7 +321,7 @@ class FSDPEngine(BaseHFEngine):
         named_tensors.clear()
         meta.clear_param_specs()
 
-    def _init_weight_update_from_dist(self, meta: WeightUpdateMeta):
+    def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
         assert meta.type == current_platform.communication_backend
 
         # NOTE: Processes launched with torchrun will set the following env var to True,
@@ -348,13 +348,8 @@ class FSDPEngine(BaseHFEngine):
 
             fut.result()
 
-    def _update_weights_from_dist(self, meta: WeightUpdateMeta):
+    def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         """Broadcast parameters (chunked) from rank 0 (FSDP2 compatible)."""
-
-        if dist.get_rank() == 0:
-            self.rollout_engine.pause_generation()
-
-        dist.barrier(device_ids=[self.device.index])
 
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
@@ -374,7 +369,7 @@ class FSDPEngine(BaseHFEngine):
             tensor_size = tensor.numel() * tensor.element_size()
 
             if tensor_size + buffer_size > weight_chunked_mem_size:
-                self._update_bucket_weights_from_dist(meta, named_tensors)
+                self._update_bucket_weights_from_distributed(meta, named_tensors)
                 buffer_size = 0
 
             named_tensors.append((name, tensor))
@@ -382,22 +377,12 @@ class FSDPEngine(BaseHFEngine):
 
         # Only rank-0 CAN contain named tensors here
         if named_tensors:
-            self._update_bucket_weights_from_dist(meta, named_tensors)
-
-        dist.barrier(device_ids=[self.device.index])
-
-        if dist.get_rank() == 0:
-            self.rollout_engine.continue_generation()
+            self._update_bucket_weights_from_distributed(meta, named_tensors)
 
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
 
     def _update_weights_from_disk(self, meta: WeightUpdateMeta):
-        if dist.get_rank() == 0:
-            self.rollout_engine.pause_generation()
-
-        dist.barrier(device_ids=[self.device.index])
-
         fut = Future()
 
         if dist.get_rank() == 0:
@@ -418,30 +403,31 @@ class FSDPEngine(BaseHFEngine):
                 update_name, str(datetime.now().timestamp()), keepalive_ttl=120
             )
 
-            self.rollout_engine.continue_generation()
-
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
 
     def update_weights(self, meta: WeightUpdateMeta):
         if meta.type == current_platform.communication_backend:
-            assert self.rollout_engine is not None
-            if not self.weight_update_group_initialized:
-                self._init_weight_update_from_dist(meta)
-                self.weight_update_group_initialized = True
-                dist.barrier(device_ids=[self.device.index])
-            self._update_weights_from_dist(meta)
+            assert self.weight_update_group_initialized
+            self._update_weights_from_distributed(meta)
         elif meta.type == "disk":
             self._update_weights_from_disk(meta)
         else:
             raise ValueError(f"Unknown weight update type {meta.type}")
 
-    def connect_engine(self, engine: InferenceEngine):
+    def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
         if self.rollout_engine is not None and self.rollout_engine != engine:
             self.logger.warning(
                 f"Connected rollout engine changed from {self.rollout_engine} to {engine}."
             )
         self.rollout_engine = engine
+
+        if not self.weight_update_group_initialized:
+            self._init_weight_update_from_distributed(meta)
+            self.weight_update_group_initialized = True
+
+        dist.barrier(device_ids=[self.device.index])
+        current_platform.synchronize()
 
     def train_batch(
         self,

@@ -110,17 +110,17 @@ def main(args):
     eval_rollout.config.max_head_offpolicyness = int(1e12)
     eval_rollout.initialize()
 
+    # Weight update meta
+    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
+
     actor.initialize(None, ft_spec)
-    actor.connect_engine(rollout)
+    actor.connect_engine(rollout, weight_update_meta)
 
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
         ref = FSDPPPOActor(config=config.ref)
         ref.create_process_group(parallel_strategy=parallel_strategy)
         ref.initialize(None, ft_spec)
-
-    # Weight update meta
-    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
 
     reward_fn = math_reward_fn
 

@@ -224,14 +224,14 @@ def main(args):
     judge_engine.config.max_head_offpolicyness = int(1e12)
     judge_engine.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
-    actor.initialize(
-        None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
-    )
-    actor.connect_engine(rollout)
-
     weight_update_meta = WeightUpdateMeta.from_disk(
         config.experiment_name, config.trial_name, config.cluster.fileroot
     )
+
+    actor.initialize(
+        None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
+    )
+    actor.connect_engine(rollout, weight_update_meta)
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:

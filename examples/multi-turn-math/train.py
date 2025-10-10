@@ -202,10 +202,10 @@ def main(args):
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
-    actor.initialize(None, ft_spec)
-    actor.connect_engine(rollout)
-
     weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
+
+    actor.initialize(None, ft_spec)
+    actor.connect_engine(rollout, weight_update_meta)
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:

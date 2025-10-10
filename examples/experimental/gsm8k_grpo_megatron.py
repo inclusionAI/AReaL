@@ -100,11 +100,16 @@ def main(args):
     eval_rollout.config.max_head_offpolicyness = int(1e12)
     eval_rollout.initialize()
 
+    weight_update_meta = WeightUpdateMeta.from_megatron_nccl(
+        allocation_mode,
+        nccl_group_name=actor.weight_update_group_name,
+    )
+
     # Initialize train engine
     actor.initialize(
         None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
     )
-    actor.connect_engine(rollout)
+    actor.connect_engine(rollout, weight_update_meta)
 
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
@@ -112,12 +117,6 @@ def main(args):
         ref.initialize(
             None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
         )
-
-    weight_update_meta = WeightUpdateMeta.from_megatron_nccl(
-        allocation_mode,
-        nccl_group_name=actor.weight_update_group_name,
-        weight_chunked_mem_mb=256,
-    )
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:

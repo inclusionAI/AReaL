@@ -414,7 +414,7 @@ specified by the configuration.
 actor = FSDPPPOActor(config=config.actor)
 actor.create_process_group()
 actor.initialize(None, ft_spec)
-actor.connect_engine(rollout)
+actor.connect_engine(rollout, weight_update_meta)
 
 ref = None
 if config.actor.kl_ctl > 0 and config.ref is not None:

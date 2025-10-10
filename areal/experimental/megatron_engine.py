@@ -59,6 +59,7 @@ from areal.utils.data import (
 )
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.lock import DistributedLock
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
@@ -113,6 +114,7 @@ class MegatronEngine(TrainEngine):
         self.weight_update_group_name = (
             f"update_weight_group_{mpu.get_pipeline_model_parallel_rank()}"
         )
+        self.engine_lock = DistributedLock("train_engine_lock")
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
         self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
@@ -378,7 +380,7 @@ class MegatronEngine(TrainEngine):
         self.model.train(mode=mode)
         return self
 
-    def _update_bucket_weights_from_dist(
+    def _update_bucket_weights_from_distributed(
         self,
         meta: WeightUpdateMeta,
         converted_named_tensors: List[Tuple[str, nn.Parameter | torch.Tensor]],
@@ -399,7 +401,7 @@ class MegatronEngine(TrainEngine):
         ]
 
         meta.set_param_specs(param_specs)
-        fut = self.rollout_engine.update_weights_from_dist(meta)
+        fut = self.rollout_engine.update_weights_from_distributed(meta)
 
         handles = []
         for _, param in converted_named_tensors:
@@ -418,7 +420,7 @@ class MegatronEngine(TrainEngine):
 
         self.engine_lock.release()
 
-    def _impl_update_weight_from_dist(
+    def _impl_update_weight_from_distributed(
         self,
         meta: WeightUpdateMeta,
         name: str,
@@ -434,7 +436,7 @@ class MegatronEngine(TrainEngine):
 
         param_size = param.numel() * param.element_size()
         if buffer_size + param_size > weight_chunked_mem_size:
-            self._update_bucket_weights_from_dist(meta, converted_named_tensors)
+            self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
             buffer_size = 0
 
         converted_named_tensors.extend(
@@ -443,7 +445,7 @@ class MegatronEngine(TrainEngine):
         buffer_size += param_size
         return buffer_size
 
-    def _update_bucket_expert_weights_from_dist(
+    def _update_bucket_expert_weights_from_distributed(
         self,
         meta: WeightUpdateMeta,
         named_tensors: List[Tuple[str, nn.Parameter | torch.Tensor]],
@@ -490,9 +492,9 @@ class MegatronEngine(TrainEngine):
             converted_hf_tensors.extend(
                 convert_to_hf(self.tf_config, self.hf_config.model_type, name, param)
             )
-        return self._update_bucket_weights_from_dist(meta, converted_hf_tensors)
+        return self._update_bucket_weights_from_distributed(meta, converted_hf_tensors)
 
-    def _impl_update_expert_weight_from_dist(
+    def _impl_update_expert_weight_from_distributed(
         self,
         meta: WeightUpdateMeta,
         name: str,
@@ -508,14 +510,14 @@ class MegatronEngine(TrainEngine):
         if (
             buffer_size + param_size
         ) * mpu.get_expert_model_parallel_world_size() > weight_chunked_mem_size:
-            self._update_bucket_expert_weights_from_dist(meta, named_tensors)
+            self._update_bucket_expert_weights_from_distributed(meta, named_tensors)
             buffer_size = 0
 
         named_tensors.append((name, param))
         buffer_size += param_size
         return buffer_size
 
-    def _init_weight_update_from_dist(self, meta: WeightUpdateMeta):
+    def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
         assert meta.type == current_platform.communication_backend
 
         # NOTE: Processes launched with torchrun will set the following env var to True,
@@ -542,12 +544,7 @@ class MegatronEngine(TrainEngine):
 
             fut.result()
 
-    def _update_weights_from_dist(self, meta: WeightUpdateMeta):
-        if dist.get_rank() == 0:
-            self.rollout_engine.pause_generation()
-
-        dist.barrier(device_ids=[self.device.index])
-
+    def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         num_moe_experts = self.tf_config.num_moe_experts
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
@@ -557,7 +554,7 @@ class MegatronEngine(TrainEngine):
         for name, param in get_named_parameters(self.model, num_moe_experts):
             if ".experts." in name:
                 continue
-            buffer_size = self._impl_update_weight_from_dist(
+            buffer_size = self._impl_update_weight_from_distributed(
                 meta,
                 name,
                 param,
@@ -568,7 +565,7 @@ class MegatronEngine(TrainEngine):
 
         # Only pipeline parallel heads CAN contain named tensors here
         if converted_named_tensors:
-            self._update_bucket_weights_from_dist(meta, converted_named_tensors)
+            self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
 
         dist.barrier(device_ids=[self.device.index])
 
@@ -578,7 +575,7 @@ class MegatronEngine(TrainEngine):
         for name, param in get_named_parameters(self.model, num_moe_experts):
             if ".experts." not in name:
                 continue
-            buffer_size = self._impl_update_expert_weight_from_dist(
+            buffer_size = self._impl_update_expert_weight_from_distributed(
                 meta,
                 name,
                 param,
@@ -589,22 +586,12 @@ class MegatronEngine(TrainEngine):
 
         if named_tensors:
             # This function will early return if not pipeline parallel head
-            self._update_bucket_expert_weights_from_dist(meta, named_tensors)
-
-        dist.barrier(device_ids=[self.device.index])
-
-        if dist.get_rank() == 0:
-            self.rollout_engine.continue_generation()
+            self._update_bucket_expert_weights_from_distributed(meta, named_tensors)
 
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
 
     def _update_weights_from_disk(self, meta: WeightUpdateMeta):
-        if dist.get_rank() == 0:
-            self.rollout_engine.pause_generation()
-
-        dist.barrier(device_ids=[self.device.index])
-
         fut = Future()
 
         if dist.get_rank() == 0:
@@ -625,31 +612,31 @@ class MegatronEngine(TrainEngine):
                 update_name, str(datetime.now().timestamp()), keepalive_ttl=120
             )
 
-            self.rollout_engine.continue_generation()
-
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
 
     def update_weights(self, meta: WeightUpdateMeta):
         if meta.type == "nccl":
-            assert self.rollout_engine is not None
-            if not self.weight_update_group_initialized:
-                self.engine_lock = self.rollout_engine.get_engine_lock()
-                self._init_weight_update_from_dist(meta)
-                self.weight_update_group_initialized = True
-                dist.barrier(device_ids=[self.device.index])
-            self._update_weights_from_dist(meta)
+            assert self.weight_update_group_initialized
+            self._update_weights_from_distributed(meta)
         elif meta.type == "disk":
             self._update_weights_from_disk(meta)
         else:
             raise ValueError(f"Unknown weight update type {meta.type}")
 
-    def connect_engine(self, engine: InferenceEngine):
+    def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
         if self.rollout_engine is not None and self.rollout_engine != engine:
             self.logger.warning(
                 f"Connected rollout engine changed from {self.rollout_engine} to {engine}."
             )
         self.rollout_engine = engine
+
+        if not self.weight_update_group_initialized:
+            self._init_weight_update_from_distributed(meta)
+            self.weight_update_group_initialized = True
+
+        dist.barrier(device_ids=[self.device.index])
+        current_platform.synchronize()
 
     def set_version(self, version: int):
         self._version = version

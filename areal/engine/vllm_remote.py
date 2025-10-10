@@ -27,7 +27,6 @@ from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
-from areal.utils.lock import DistributedLock
 
 RID_CACHE_SIZE = 128
 
@@ -55,8 +54,6 @@ class RemotevLLMEngine(InferenceEngine):
             config=config,
             inference_engine=self,
         )
-
-        self.engine_lock = DistributedLock("vllm_rollout")
 
     def _wait_for_server(self, address):
         base_url = f"http://{address}"
@@ -285,23 +282,6 @@ class RemotevLLMEngine(InferenceEngine):
         )
         return response
 
-    def get_engine_lock(self) -> DistributedLock:
-        return self.engine_lock
-
-    def pause_generation(self):
-        for addr in self.addresses:
-            res = requests.post(f"http://{addr}/areal_pause_generation")
-            res.raise_for_status()
-
-        # The above http request may require some time to be scheduled and executed.
-        # The following line waits until all requests are indeed dropped.
-        time.sleep(self.config.pause_grace_period)
-
-    def continue_generation(self):
-        for addr in self.addresses:
-            res = requests.post(f"http://{addr}/areal_continue_generation")
-            res.raise_for_status()
-
     def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
         # No need to init group for non-NCCL update
         assert meta.type == current_platform.communication_backend
@@ -326,7 +306,7 @@ class RemotevLLMEngine(InferenceEngine):
 
         return fut
 
-    def update_weights_from_dist(self, meta: WeightUpdateMeta) -> Future[None]:
+    def update_weights_from_distributed(self, meta: WeightUpdateMeta) -> Future[None]:
         assert meta.type == current_platform.communication_backend
 
         fut = self.executor.submit(
@@ -418,10 +398,24 @@ class RemotevLLMEngine(InferenceEngine):
 
     def pause(self):
         """Pause request submission for async rollout. Used during evaluation to prevent data over generation."""
+
+        for addr in self.addresses:
+            res = requests.post(f"http://{addr}/areal_pause_generation")
+            res.raise_for_status()
+
+        # The above http request may require some time to be scheduled and executed.
+        # The following line waits until all requests are indeed dropped.
+        time.sleep(self.config.pause_grace_period)
+
         return self.workflow_executor.pause()
 
     def resume(self):
         """Resume request submission for async rollout."""
+
+        for addr in self.addresses:
+            res = requests.post(f"http://{addr}/areal_continue_generation")
+            res.raise_for_status()
+
         return self.workflow_executor.resume()
 
 

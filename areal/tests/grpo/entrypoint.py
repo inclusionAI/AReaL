@@ -71,14 +71,14 @@ def main() -> None:
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
+    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
+
     actor.initialize(None, ft_spec)
-    actor.connect_engine(rollout)
+    actor.connect_engine(rollout, weight_update_meta)
 
     ref = FSDPPPOActor(config=config.ref)
     ref.create_process_group(parallel_strategy=parallel_strategy)
     ref.initialize(None, ft_spec)
-
-    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
 
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(cast(int, tokenizer.pad_token_id))

@@ -160,7 +160,7 @@ def main(args):
     # Initialize training engine
     actor = FSDPReinforceActor(config=config.actor)
     actor.initialize(None, ft_spec)
-    actor.connect_engine(rollout)
+    actor.connect_engine(rollout, weight_update_meta)
 
     # Create rollout workflow
     workflow = ReMaxRLVRWorkflow(

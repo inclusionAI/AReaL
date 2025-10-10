@@ -316,7 +316,7 @@ class TrainEngine(abc.ABC):
         """Upload weights to inference engine (blocking operation)."""
         raise NotImplementedError()
 
-    def connect_engine(self, engine: "InferenceEngine"):
+    def connect_engine(self, engine: "InferenceEngine", meta: WeightUpdateMeta):
         """Connect to an inference engine for online training."""
         raise NotImplementedError()
 

@@ -255,7 +255,7 @@ class RecoverHandler:
 
             if inference_engine is not None:
                 update_engine = engine[inference_engine_update_from]
-                update_engine.connect_engine(inference_engine)
+                update_engine.connect_engine(inference_engine, weight_update_meta)
                 # update inference engine weights
                 inference_engine.pause()
                 update_engine.update_weights(weight_update_meta)
