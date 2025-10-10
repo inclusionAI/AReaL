@@ -77,7 +77,7 @@ if __name__ == "__main__":
 vim ../AReaL-Lite/examples/lite/configs/gsm8k_grpo.yaml
 
 sudo srun --mpi=pmi2 --ntasks=1 --gres=gpu:8 \
-    --cpus-per-task=10 --mem=1500G --pty \
+    --cpus-per-task=10 --mem=1500G --pty --job-name=xmy-oppi-werewolf\
     singularity shell --nv --no-home --writable-tmpfs \
     --bind /storage:/storage /storage/openpsi/images/sglang-v0.4.9.post2-cu126-v2.sif
 
@@ -87,8 +87,9 @@ export HF_ENDPOINT="https://hf-mirror.com"
 export WANDB_API_KEY=local-667d8d7f101dad4eb9597d718d0c68f40e3792f9
 export WANDB_BASE_URL=http://8.150.1.98:8080
 
+
 python -m areal.launcher.local examples/lite/infer_only.py \
     --config examples/lite/configs/infer_only.yaml \
     stats_logger.wandb.mode=disabled \
-    trial_name=opp_rollout2
+    trial_name=opp-t14b
 """

@@ -1,9 +1,9 @@
 experiment_name: werewolf-grpo
 trial_name: trial0
-allocation_mode: sglang.d8p1t1+d8p1t1
+allocation_mode: sglang.d8p1t1+d8p1t2
 cluster:
   fileroot: /storage/openpsi/experiments
-  n_nodes: 2
+  n_nodes: 3
   n_gpus_per_node: 8
   name_resolve:
     type: nfs
@@ -12,11 +12,12 @@ seed: 1
 total_train_epochs: 1
 tokenizer_path: ${actor.path}
 async_training: true
-opp_server_addrs: 33.215.20.167:19535,33.215.20.167:26673,33.215.20.167:32080,33.215.20.167:35984,33.215.20.167:40038,33.215.20.167:45566,33.215.20.167:47297
-# opp_tokenizer_path: ""
-teacher_server_addrs: 33.215.20.238:10934,33.215.20.238:11351,33.215.20.238:20676,33.215.20.238:22936,33.215.20.238:27888,33.215.20.238:35085,33.215.20.238:45307
+opp_server_addrs: 33.180.160.33:16922,33.180.160.33:19176,33.180.160.33:25822,33.180.160.33:27625,33.180.160.33:31144,33.180.160.33:41656,33.180.160.33:47551
+# opp_tokenizer_path: /storage/openpsi/models/Qwen__Qwen3-8B
+# teacher_server_addrs: 33.180.162.249:16022,33.180.162.249:18157,33.180.162.249:25449,33.180.162.249:32136,33.180.162.249:37084,33.180.162.249:43790,33.180.162.249:46694 #t14b
+# teacher_server_addrs: 33.180.160.212:11008,33.180.160.212:31199,33.180.160.212:34101,33.180.160.212:34794,33.180.160.212:42075,33.180.160.212:43070,33.180.160.212:47802 #t7b
 # teacher_tokenizer_path: ""
-role: werewolf
+role: villager
 
 rollout:
   experiment_name: ${experiment_name}
@@ -37,8 +38,11 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen__Qwen2.5-3B-Instruct
-  # path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-triple1/villager1.1/default/epoch0epochstep186globalstep186
+  paths: null
+  # path: /storage/openpsi/models/Qwen__Qwen2.5-7B-Instruct
+  # path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo-14/villager4-abl/default/epoch0epochstep59globalstep59
+  # path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo-14/villager4-t7b/default/epoch0epochstep59globalstep59
+  path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo-14/villager4-t14b/default/epoch0epochstep59globalstep59
   init_from_scratch: false
   disable_dropout: true
   dtype: bfloat16
@@ -46,13 +50,15 @@ actor:
     max_tokens_per_mb: 10240
   optimizer:
     type: adam
-    lr: 1.5e-6
+    # lr: 1e-6
+    lr: 1e-20
     gradient_clipping: 1.0
     lr_scheduler_type: cosine
-    min_lr_ratio: 0.2
+    min_lr_ratio: 0.6
     warmup_steps_proportion: 0
   backend: fsdp
 
+  sft_reg: 1.5
   group_size: ${gconfig.n_samples}
   eps_clip: 0.4
   reward_scaling: 1.0
@@ -84,11 +90,11 @@ sglang:
   mem_fraction_static: 0.8
 
 train_dataset:
-  batch_size: 16
+  batch_size: 512
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/users/xmy/inclusionAI/AReaL/data/Werewolf_placeholder_3k.jsonl
+  path: /storage/openpsi/users/xmy/inclusionAI/AReaL/data/Werewolf_placeholder_512.jsonl
   type: rl
 
 saver:
@@ -96,8 +102,8 @@ saver:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   freq_epochs: 1
-  freq_steps: 100
-  freq_secs: 10800
+  freq_steps: 10
+  freq_secs: 3600
 
 evaluator:
   experiment_name: ${experiment_name}

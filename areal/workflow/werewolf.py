@@ -158,16 +158,16 @@ class WerewolfWorkflow(RolloutWorkflow):
             qa_target_role = "a werewolf" if current_role != "werewolf" else "biggest living threat"
             qgen_prompt = (
                 f"{obs}\n"
-                f"Your previous summary: {prev_summary}\n\n"
+                # f"Your previous summary: {prev_summary}\n\n"
                 "Generate exactly three short questions whose answers can be deduced "
-                "from the known game state and public information (not hypothetical or vague). "
+                "from the current game state and public information (not hypothetical or vague). "
                 "Each question should be concrete, factual, and directly relevant to deciding "
                 "your best next action in this Werewolf game turn.\n\n"
                 "Example of acceptable questions:\n"
                 f'Q1: Which player do you think is the {qa_target_role} and why?\n'
                 'Q2: Who would you vote out in the next voting and why?\n'
                 'Q3: Are there dead players yet? If so, what roles are they?\n\n'
-                "Output strictly in the following format:\n"
+                "You shall ask questions, do not make decisions or deductions. Output strictly in the following format:\n"
                 "Q1: ...\nQ2: ...\nQ3: ...\n"
             )
 
@@ -256,8 +256,10 @@ class WerewolfWorkflow(RolloutWorkflow):
                 last_thought = agent_thoughts.get(f"{agt} ({_role})", "")
                 if last_thought != "":
                     if thought_str == "":
-                        thought_str = "You know for sure that: "
-                    thought_str += f"{agt} (who is a {_role}) thought in the last round: {last_thought}."
+                        thought_str = "Asa priviledged player, you know for sure that: "
+                    thought_str += f" {agt} is a {_role}, he thought in the last round: {last_thought[:75]}"
+                else:
+                    thought_str += f" {agt} is a {_role}."
             if thought_str != "":
                 thought_str += "You may use the information above to make deductions."
 
@@ -266,10 +268,10 @@ class WerewolfWorkflow(RolloutWorkflow):
                 for qi, q in enumerate(self_questions):
                     taprompt = (
                         f"{obs}\n"
-                        f"Previous agent summary: {prev_summary}\n"
-                        f"{thought_str}\n"
+                        f"you summarized the previous game states: {prev_summary}\n"
+                        f"{thought_str}\n\n"
                         f"You asked yourself this question: {q}\n"
-                        "Answer the question concisely and concretely for this turn only."
+                        "Answer the question concisely and concretely for this turn."
                     )
                     t0 = time.perf_counter()
                     ta_ids = (self.teacher_tokenizer or self.tokenizer).apply_chat_template(
@@ -304,11 +306,11 @@ class WerewolfWorkflow(RolloutWorkflow):
             t0 = time.perf_counter()
             if self.use_summary:
                 action_prompt = (
-                    f"{obs}\nYour previous summary: {prev_summary}\n\n"
+                    f"{obs}\nYou summarized the previous game states: {prev_summary}\n\n"
                     f"Your self-questions and answers:\n{qa_block}\n\n{guide}"
                 )
             else:
-                action_prompt = f"{obs}\n\nYour self-questions and answers:\n{qa_block}\n\n{guide}"
+                action_prompt = f"{obs}\n\nYou asked yourself these questions, and answered:\n{qa_block}\n\n{guide}"
             action_ids = self.tokenizer.apply_chat_template(
                 [{"role": "user", "content": action_prompt}],
                 tokenize=True,
@@ -406,9 +408,9 @@ class WerewolfWorkflow(RolloutWorkflow):
                 for qi, (q, t_ans) in enumerate(zip(self_questions, teacher_answers)):
                     taprompt = (
                         f"{obs}\n"
-                        f"Your previous summary: {prev_summary}\n"
+                        f"You summarized the previous game states: {prev_summary}\n"
                         f"Question: {q}\n"
-                        "Answer concisely and concretely for this turn only."
+                        "Answer concisely and concretely for this turn."
                     )
                     prompt_ids = self.tokenizer.apply_chat_template(
                         [{"role": "user", "content": taprompt}],
@@ -446,7 +448,7 @@ class WerewolfWorkflow(RolloutWorkflow):
                 action_txt = m[-1].strip().lower() if m else ""
                 summary_prompt = (
                     f"{obs} Your last action: {action_txt}. "
-                    f"Your previous summary: {prev_summary}. Provide a brief summary of your thoughts and current game state, "
+                    f"You summarized the previous game states: {prev_summary}. Provide a brief summary of your thoughts and current game state, "
                     "to guide your future planning and next action. Be concise and brief for this answer."
                 )
                 summary_ids = self.tokenizer.apply_chat_template(

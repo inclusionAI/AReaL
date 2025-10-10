@@ -11,8 +11,8 @@ Enhancements vs previous version:
 
 Usage:
 python analyser.py --glob "*.txt" --sim-threshold 0.8 \
-    --global-no-repeat --report_root report14-wt7b-vabl \
-    --root /storage/openpsi/experiments/logs/admin/xmy-werewolf-comp-14/werewolf-t7b-vs4-villager-abl/generated \
+    --global-no-repeat --report_root report14-w14b-v7b \
+    --root /storage/openpsi/experiments/logs/admin/xmy-werewolf-comp-14/werewolf-t14b-vs4-villager-t7b/generated \
     --abandon-werewolf-thought
 
 Options:
@@ -145,6 +145,170 @@ def slice_block(lines: List[str], start_idx: int, max_len: int = 6) -> str:
             break
         out.append(clean_text(lines[i]))
     return " ".join(out).strip()
+
+def phase_to_index(phase_type: str, number: int) -> int:
+    phase_type = phase_type.lower()
+    if number < 1:
+        number = 1
+    if phase_type.startswith("night"):
+        return (number - 1) * 2 + 1
+    return (number - 1) * 2 + 2
+
+
+def index_to_phase_label(idx: int) -> str:
+    if idx < 1:
+        idx = 1
+    zero_based = idx - 1
+    number = zero_based // 2 + 1
+    if zero_based % 2 == 0:
+        return f"Night {number}"
+    return f"Day {number}"
+
+
+def describe_phase_value(value: float) -> str:
+    if value <= 0:
+        return "Before Night 1"
+    rounded = round(value)
+    if math.isclose(value, rounded, rel_tol=1e-6):
+        return index_to_phase_label(int(rounded))
+    lower = math.floor(value)
+    upper = math.ceil(value)
+    if lower < 1:
+        lower = 1
+    if upper < 1:
+        upper = 1
+    lower_label = index_to_phase_label(lower)
+    upper_label = index_to_phase_label(upper)
+    if lower_label == upper_label:
+        return lower_label
+    return f"between {lower_label} and {upper_label}"
+
+
+def parse_initial_setup(line: str) -> Dict[str, str]:
+    assignments: Dict[str, str] = {}
+    if "->" in line:
+        _, right = line.split("->", 1)
+    else:
+        right = line
+    for chunk in right.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        m = re.match(r"(player\d+)\s*:\s*([A-Za-z]+)", chunk)
+        if not m:
+            continue
+        assignments[m.group(1).lower()] = m.group(2).lower()
+    return assignments
+
+
+def compute_game_stats(path: Path, encoding: str) -> Dict[str, object]:
+    raw = path.read_text(encoding=encoding, errors="ignore")
+    lines = raw.splitlines()
+
+    traj_idx = None
+    for i in range(len(lines) - 1, -1, -1):
+        if "Trajectory:" in lines[i]:
+            traj_idx = i
+            break
+
+    if traj_idx is None or traj_idx + 1 >= len(lines):
+        return {
+            "file": path.name,
+            "skip_actions": 0,
+            "werewolf_death_labels": [],
+            "werewolf_death_indices": [],
+        }
+
+    post_lines = lines[traj_idx + 1 :]
+
+    role_map: Dict[str, str] = {}
+    for line in lines:
+        if "initial setup" in line.lower():
+            role_map = parse_initial_setup(line)
+            if role_map:
+                break
+
+    current_phase_type = "Night"
+    current_night = 1
+    current_day = 0
+    skip_actions = 0
+    werewolf_deaths: List[Tuple[str, str, int]] = []
+    villager_team_deaths: List[Tuple[str, str, int]] = []
+    seen_dead_wolves: set[str] = set()
+    seen_dead_villager_team: set[str] = set()
+    villager_team_roles = {"villager", "witch", "foreseer", "hunter"}
+    tracked_roles = villager_team_roles | {"werewolf"}
+    winner: Optional[str] = None
+
+    for line in post_lines:
+        lower_line = line.lower()
+        if "->" in lower_line and "skip" in lower_line:
+            if re.search(r"->\s*skip", lower_line):
+                skip_actions += 1
+
+        parts = [p for p in re.split(r"(?<=[.!?])\s*", line) if p]
+        for part in parts:
+            lower_part = part.lower()
+
+            for m in re.finditer(r"(player\d+)\s+died", lower_part):
+                player = m.group(1)
+                role = role_map.get(player)
+                if role not in tracked_roles:
+                    continue
+                if current_phase_type.lower().startswith("night"):
+                    phase_number = current_night
+                else:
+                    phase_number = current_day if current_day else current_night
+                label = f"{current_phase_type} {phase_number}"
+                index = phase_to_index(current_phase_type, phase_number)
+                if role == "werewolf" and player not in seen_dead_wolves:
+                    werewolf_deaths.append((player, label, index))
+                    seen_dead_wolves.add(player)
+                elif role in villager_team_roles and player not in seen_dead_villager_team:
+                    villager_team_deaths.append((player, label, index))
+                    seen_dead_villager_team.add(player)
+
+            m_day = re.search(r"day\s*(\d+)", lower_part)
+            m_night = re.search(r"night\s*(\d+)", lower_part)
+
+            if "discussion begins" in lower_part:
+                current_phase_type = "Day"
+                current_day = current_night if current_day < current_night else current_day or current_night
+                continue
+
+            if "day ends" in lower_part:
+                current_phase_type = "Day"
+                if current_day < 1:
+                    current_day = current_night
+                continue
+
+            if winner is None:
+                if "villagers win" in lower_part or "confirm villagers win" in lower_part:
+                    winner = "villagers"
+                elif "werewolves win" in lower_part or "confirm werewolves win" in lower_part:
+                    winner = "werewolves"
+
+            if m_day:
+                current_day = int(m_day.group(1))
+                current_phase_type = "Day"
+            if m_night:
+                current_night = int(m_night.group(1))
+                current_phase_type = "Night"
+
+    death_labels = [label for _, label, _ in werewolf_deaths]
+    death_indices = [idx for *_, idx in werewolf_deaths]
+    villager_team_labels = [label for _, label, _ in villager_team_deaths]
+    villager_team_indices = [idx for *_, idx in villager_team_deaths]
+
+    return {
+        "file": path.name,
+        "skip_actions": skip_actions,
+        "werewolf_death_labels": death_labels,
+        "werewolf_death_indices": death_indices,
+        "villager_team_death_labels": villager_team_labels,
+        "villager_team_death_indices": villager_team_indices,
+        "winner": winner,
+    }
 
 def harvest_thoughts(path: Path, encoding: str, min_len: int, max_snippets: int, abandon_werewolf_thought: bool=False) -> List[Thought]:
     raw = path.read_text(encoding=encoding, errors="ignore")
@@ -382,9 +546,11 @@ def main():
         raise SystemExit(f"No files matching {args.glob!r} found in {root.resolve()}")
 
     all_thoughts: list[dict] = []
+    all_game_stats: list[dict] = []
     for p in files:
         thoughts = harvest_thoughts(p, args.encoding, args.min_thought_len, args.max_snippets, args.abandon_werewolf_thought)
         all_thoughts.extend(asdict(t) for t in thoughts)
+        all_game_stats.append(compute_game_stats(p, args.encoding))
         print(f"Harvested {len(thoughts)} thoughts from {p}!", flush=True)
         if len(all_thoughts) >= args.global_max_snippets:
             break
@@ -438,6 +604,99 @@ def main():
     kw_df = pd.DataFrame(kw_counts).sort_values("count", ascending=False)
     kw_df.to_csv(out_data / "keyword_counts.csv", index=False)
 
+    def compute_phase_summary(stats: List[dict], key: str, limit: int = 3) -> Dict[str, Dict[str, object]]:
+        out: Dict[str, Dict[str, object]] = {}
+        for idx in range(limit):
+            phase_values = []
+            for s in stats:
+                phases = s.get(key, [])
+                if isinstance(phases, list) and len(phases) > idx:
+                    phase_values.append(phases[idx])
+            if phase_values:
+                avg_val = float(np.mean(phase_values))
+                out[str(idx + 1)] = {
+                    "mean_phase_index": avg_val,
+                    "description": describe_phase_value(avg_val),
+                }
+        return out
+
+    if all_game_stats:
+        stats_df = pd.DataFrame(all_game_stats)
+        stats_df.to_csv(out_data / "game_stats.csv", index=False)
+
+        avg_skip = float(np.mean([s.get("skip_actions", 0) for s in all_game_stats]))
+        death_phase_avgs = compute_phase_summary(all_game_stats, "werewolf_death_indices")
+        villager_phase_avgs = compute_phase_summary(all_game_stats, "villager_team_death_indices", limit=5)
+
+        win_counts: Dict[str, int] = {}
+        skip_by_winner: Dict[str, float] = {}
+        werewolf_phase_by_winner: Dict[str, Dict[str, object]] = {}
+        villager_phase_by_winner: Dict[str, Dict[str, object]] = {}
+        analysis_notes: List[str] = []
+
+        if "winner" in stats_df.columns:
+            win_counts = (
+                stats_df.dropna(subset=["winner"])["winner"].value_counts().to_dict()
+            )
+            for winner, _count in win_counts.items():
+                subset = [s for s in all_game_stats if s.get("winner") == winner]
+                if subset:
+                    skip_vals = [s.get("skip_actions", 0) for s in subset]
+                    skip_by_winner[winner] = float(np.mean(skip_vals))
+                    werewolf_phase_by_winner[winner] = compute_phase_summary(subset, "werewolf_death_indices")
+                    villager_phase_by_winner[winner] = compute_phase_summary(subset, "villager_team_death_indices")
+
+        if skip_by_winner.get("villagers") is not None and skip_by_winner.get("werewolves") is not None:
+            diff = skip_by_winner["villagers"] - skip_by_winner["werewolves"]
+            if diff < 0:
+                analysis_notes.append(
+                    f"Villager wins featured {-diff:.2f} fewer skip actions on average than werewolf wins."
+                )
+            elif diff > 0:
+                analysis_notes.append(
+                    f"Werewolf wins featured {diff:.2f} fewer skip actions on average than villager wins."
+                )
+
+        def compare_phase_note(
+            mapping: Dict[str, Dict[str, Dict[str, object]]],
+            order: str,
+            subject: str,
+        ) -> None:
+            villager_val = mapping.get("villagers", {}).get(order, {}).get("mean_phase_index")
+            werewolf_val = mapping.get("werewolves", {}).get(order, {}).get("mean_phase_index")
+            if villager_val is None or werewolf_val is None:
+                return
+            diff_local = villager_val - werewolf_val
+            if diff_local < 0:
+                analysis_notes.append(
+                    f"Villager wins saw the {subject} about {-diff_local:.2f} phases earlier than werewolf wins."
+                )
+            elif diff_local > 0:
+                analysis_notes.append(
+                    f"Werewolf wins saw the {subject} about {diff_local:.2f} phases earlier than villager wins."
+                )
+
+        compare_phase_note(werewolf_phase_by_winner, "1", "first werewolf death")
+        compare_phase_note(villager_phase_by_winner, "1", "first villager-team death")
+
+        summary = {
+            "average_skip_actions": avg_skip,
+            "werewolf_death_phase_averages": death_phase_avgs,
+            "villager_team_death_phase_averages": villager_phase_avgs,
+            "win_counts": win_counts,
+            "skip_actions_by_winner": skip_by_winner,
+            "werewolf_death_phase_by_winner": werewolf_phase_by_winner,
+            "villager_team_death_phase_by_winner": villager_phase_by_winner,
+            "analysis_notes": analysis_notes,
+        }
+        (out_data / "game_stats_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    else:
+        avg_skip = None
+        death_phase_avgs = {}
+        villager_phase_avgs = {}
+        win_counts = {}
+        analysis_notes = []
+
     make_charts(df, out_plots)
 
     write_report(
@@ -456,6 +715,31 @@ def main():
         print("- Topic clustering skipped or failed (insufficient data).")
     print(f"- Charts in: {out_plots.resolve()}")
     print(f"- Report: {out_report / 'InterestingThoughts.md'}")
+    if all_game_stats:
+        print(f"- Saved game stats to: {out_data / 'game_stats.csv'}")
+        print(f"- Saved game stats summary to: {out_data / 'game_stats_summary.json'}")
+        print(f"- Average skip actions per game: {avg_skip:.2f}")
+        for order, info in death_phase_avgs.items():
+            print(
+                f"  • Avg phase for {order}{'st' if order=='1' else 'nd' if order=='2' else 'rd'} werewolf death: "
+                f"{info['mean_phase_index']:.2f} ({info['description']})"
+            )
+        for order, info in villager_phase_avgs.items():
+            suffix = 'st' if order == '1' else 'nd' if order == '2' else 'rd'
+            print(
+                f"  • Avg phase for {order}{suffix} villager-team death: "
+                f"{info['mean_phase_index']:.2f} ({info['description']})"
+            )
+        if win_counts:
+            win_bits = ", ".join(f"{team}: {count}" for team, count in win_counts.items())
+            print(f"- Win counts by faction: {win_bits}")
+            if skip_by_winner:
+                for team, val in skip_by_winner.items():
+                    print(f"  • Avg skips when {team} won: {val:.2f}")
+        for note in analysis_notes:
+            print(f"  • {note}")
+    else:
+        print("- Game-level statistics were not computed (no logs processed).")
 
 if __name__ == "__main__":
     main()

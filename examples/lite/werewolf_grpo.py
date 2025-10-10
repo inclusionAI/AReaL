@@ -42,6 +42,7 @@ LOGGING_KEYS = [
     "witch_correct_poisons",
     "hunter_shots",
     "hunter_correct_shots", # 17
+    "format_reward_scale", # 18
     "avgt_qgen",
     "avgt_agent_ans",
     "avgt_teacher_ans",
@@ -95,11 +96,13 @@ def main(args):
     if opp_server_addrs != "":
         opp_rollout = RemoteSGLangEngine(config.rollout, opp_server_addrs)
         opp_rollout.initialize(None, ft_spec)
+        logger.warning(f"Opp server initilized from address: {opp_server_addrs}")
     teacher_server_addrs = config.teacher_server_addrs
     teacher_rollout = None
     if teacher_server_addrs != "":
         teacher_rollout = RemoteSGLangEngine(config.rollout, teacher_server_addrs)
         teacher_rollout.initialize(None, ft_spec)
+        logger.warning(f"Teacher server initilized from address: {teacher_server_addrs}")
 
     actor = FSDPPPOActor(config=config.actor)
     actor.initialize(None, ft_spec)
@@ -279,7 +282,7 @@ if __name__ == "__main__":
 vim ../AReaL-Lite/examples/lite/configs/gsm8k_grpo.yaml
 
 sudo srun --mpi=pmi2 --ntasks=1 --gres=gpu:8 \
-    --cpus-per-task=10 --mem=1500G --pty \
+    --cpus-per-task=10 --mem=1500G --pty --job-name=xmy-teac-werewolf\
     singularity shell --nv --no-home --writable-tmpfs \
     --bind /storage:/storage /storage/openpsi/images/sglang-v0.4.9.post2-cu126-v2.sif
 
@@ -292,12 +295,15 @@ export WANDB_BASE_URL=http://8.150.1.98:8080
 python -m areal.launcher.slurm examples/lite/werewolf_grpo.py \
     --config examples/lite/configs/werewolf_grpo.yaml \
     stats_logger.wandb.mode=online \
-    experiment_name=xmy-werewolf-triple2 \
-    trial_name=villager1
+    experiment_name=xmy-werewolf-comp-14 \
+    trial_name=werewolf-t14b-vs4-villager-t14b
 
 python -m areal.launcher.slurm examples/lite/gsm8k_grpo.py \
     --config examples/lite/configs/gsm8k_grpo.yaml \
     stats_logger.wandb.mode=online \
     experiment_name=xmy-gsm8k-slurm \
     trial_name=trial1
+
+/storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo5/werewolf2-t14b-8k-1.5/default/epoch0epochstep74globalstep74
+/storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo5/villager2-t3b-8k-1.5/default/epoch0epochstep98globalstep98
 """
