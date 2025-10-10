@@ -660,8 +660,8 @@ class SGLangConfig:
         args: Dict = conf_as_dict(sglang_config)
         if sglang_config.enable_multithread_load or sglang_config.enable_fast_load:
             assert pkg_version.is_version_equal(
-                "sglang", "0.4.9.post2"
-            ), f"Customized model loading requires exact SGLang version 0.4.9.post2"
+                "sglang", "0.5.1.post3"
+            ), f"Customized model loading requires exact SGLang version 0.5.1.post3"
             model_loader_extra_config = dict(
                 enable_multithread_load=sglang_config.enable_multithread_load,
                 enable_fast_load=sglang_config.enable_fast_load,
