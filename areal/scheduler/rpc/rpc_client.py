@@ -6,7 +6,6 @@ from typing import Any, Union
 import cloudpickle
 import requests
 
-from areal.api.cli_args import InferenceEngineConfig, TrainEngineConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.utils import logging
 from areal.utils.http import response_ok, response_retryable
@@ -22,16 +21,21 @@ class RPCClient:
         self._addrs[worker_id] = (ip, port)
         logger.info(f"Registered worker {worker_id} at {ip}:{port}")
 
+    def get_info(self, worker_id: str) -> tuple[str, int]:
+        return self._addrs[worker_id]
+
     def create_engine(
         self,
         worker_id: str,
         engine_obj: Union[InferenceEngine, TrainEngine],
-        init_config: Union[InferenceEngineConfig, TrainEngineConfig],
+        # init_config: Union[InferenceEngineConfig, TrainEngineConfig],
+        *args,
+        **kwargs,
     ) -> None:
         ip, port = self._addrs[worker_id]
         url = f"http://{ip}:{port}/create_engine"
         logger.info(f"send create_engine to {worker_id} ({ip}:{port})")
-        payload = (engine_obj, init_config)
+        payload = (engine_obj, args, kwargs)
         serialized_data = cloudpickle.dumps(payload)
         serialized_obj = gzip.compress(serialized_data)
         resp = requests.post(url, data=serialized_obj)
@@ -48,7 +52,7 @@ class RPCClient:
             )
 
     def call_engine(
-        self, worker_id: str, method: str, max_retries: int = 3, *args, **kwargs
+        self, worker_id: str, method: str, max_retries: int, *args, **kwargs
     ) -> Any:
         """
         call the rpc server with method name and args, retry on failure

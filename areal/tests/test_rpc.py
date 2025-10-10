@@ -16,7 +16,7 @@ from areal.controller.batch import DistributedBatchMemory
 from areal.scheduler.rpc.rpc_client import RPCClient
 from areal.scheduler.rpc.rpc_server import (
     EngineRPCServer,
-    get_serve_port,
+    get_server_ports,
     process_input_to_distributed_batch,
     process_output_to_distributed_batch,
     start_rpc_server,
@@ -175,61 +175,53 @@ def test_process_output_to_distributed_batch_other_types():
 def test_get_serve_port_from_args():
     """Test getting port from command line arguments"""
     mock_args = Mock()
-    mock_args.port = 8080
+    mock_args.rpc_port = "8080"
 
     with patch.dict("os.environ", {}, clear=True):
-        port = get_serve_port(mock_args)
+        port = get_server_ports(mock_args.rpc_port)
         assert port == 8080
 
 
-def test_get_serve_port_from_env_single_port():
+def test_get_server_ports_default_from_multi_ports():
     """Test getting single port from PORT_LIST environment variable"""
     mock_args = Mock()
-    mock_args.port = 8080
+    mock_args.rpc_port = "8080,8081,8082,8083"
 
-    with patch.dict("os.environ", {"PORT_LIST": "9000"}):
-        port = get_serve_port(mock_args)
-        assert port == 9000
-
-
-def test_get_serve_port_from_env_multiple_ports():
-    """Test getting first port from multiple ports in PORT_LIST environment variable"""
-    mock_args = Mock()
-    mock_args.port = 8080
-
-    with patch.dict("os.environ", {"PORT_LIST": "9000, 9001, 9002"}):
-        port = get_serve_port(mock_args)
-        assert port == 9000
-
-
-def test_get_serve_port_invalid_env_port():
-    """Test fallback when PORT_LIST contains invalid ports"""
-    mock_args = Mock()
-    mock_args.port = 8080
-
-    with patch.dict("os.environ", {"PORT_LIST": "invalid_port, 9001"}):
-        port = get_serve_port(mock_args)
+    with patch.dict("os.environ", {}, clear=True):
+        port = get_server_ports(mock_args.rpc_port)
         assert port == 8080
 
 
-def test_get_serve_port_empty_env():
-    """Test fallback when PORT_LIST is empty"""
+def test_get_serve_port_from_multi_ports():
+    """Test getting single port from PORT_LIST environment variable"""
     mock_args = Mock()
-    mock_args.port = 8080
+    mock_args.rpc_port = "8080,8081,8082,8083"
 
-    with patch.dict("os.environ", {"PORT_LIST": ""}):
-        port = get_serve_port(mock_args)
+    with patch.dict("os.environ", {"WORLD_SIZE": "4", "RANK": "0"}):
+        port = get_server_ports(mock_args.rpc_port)
         assert port == 8080
 
+    with patch.dict("os.environ", {"WORLD_SIZE": "4", "RANK": "1"}):
+        port = get_server_ports(mock_args.rpc_port)
+        assert port == 8081
 
-def test_get_serve_port_whitespace_env():
-    """Test fallback when PORT_LIST contains only whitespace"""
+    with patch.dict("os.environ", {"WORLD_SIZE": "4", "RANK": "2"}):
+        port = get_server_ports(mock_args.rpc_port)
+        assert port == 8082
+
+    with patch.dict("os.environ", {"WORLD_SIZE": "4", "RANK": "3"}):
+        port = get_server_ports(mock_args.rpc_port)
+        assert port == 8083
+
+
+def test_get_serve_port_not_enough_ports():
+    """Test error when not enough ports for WORLD_SIZE"""
     mock_args = Mock()
-    mock_args.port = 8080
+    mock_args.rpc_port = "8080,8081"
 
-    with patch.dict("os.environ", {"PORT_LIST": "   "}):
-        port = get_serve_port(mock_args)
-        assert port == 8080
+    with patch.dict("os.environ", {"WORLD_SIZE": "4", "RANK": "0"}):
+        with pytest.raises(ValueError, match="Not enough ports for the world size"):
+            get_server_ports(mock_args.rpc_port)
 
 
 # RPC client and server integration tests

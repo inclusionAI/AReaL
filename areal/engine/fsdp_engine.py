@@ -152,6 +152,8 @@ class FSDPEngine(BaseHFEngine):
             "torch", "2.4.0"
         ), f"areal only supports FSDP2, which requires torch>=2.4.0"
 
+        self.world_size = int(os.environ["WORLD_SIZE"])
+
         # Create device model
         self.create_device_model()
 
