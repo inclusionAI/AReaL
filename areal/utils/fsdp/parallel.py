@@ -340,6 +340,9 @@ def apply_non_moe_tp(
     # For root module
     root_tp_plan: Dict[str, ParallelStyle] = {
         # All-gather
+        "score": ReplicateParallel(
+            input_layout=Shard(1),
+        ),
         "lm_head": ColwiseParallel(
             input_layouts=Shard(1),
             output_layouts=Replicate(),
