@@ -108,7 +108,7 @@ class MultiturnRLVRWorkflow(RolloutWorkflow):
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
         dump_dir: str | None = None,
-        rollout_stat_scope: bool = "rollout",
+        rollout_stat_scope: str = "rollout",
         n_trajs: int = 1,
         max_tokens: int = 32768,
         max_turns: int = 8,

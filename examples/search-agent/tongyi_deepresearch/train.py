@@ -62,7 +62,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         self,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
-        rollout_stat_scope: bool = "rollout",
+        rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
         n_trajs: int = 1,
         max_tokens: int = 32768,

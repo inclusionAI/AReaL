@@ -313,7 +313,7 @@ class TrainEngine(abc.ABC):
         pass
 
     def update_weights(self, meta: WeightUpdateMeta):
-        """Upload weights to inference engine (blocking operation)."""
+        """Update weights to inference engine (blocking operation)."""
         raise NotImplementedError()
 
     def connect_engine(self, engine: "InferenceEngine", meta: WeightUpdateMeta):

@@ -76,7 +76,7 @@ def convert_qwen3moe_to_hf(
             if tf_config.kv_channels is not None
             else tf_config.hidden_size // tf_config.num_attention_heads
         )
-    except:
+    except (AttributeError, TypeError):
         head_dim = tf_config.hidden_size // tf_config.num_attention_heads
     value_num_per_group = tf_config.num_attention_heads // tf_config.num_query_groups
 
@@ -233,7 +233,7 @@ def convert_qwen2_to_hf(
             if tf_config.kv_channels is not None
             else tf_config.hidden_size // tf_config.num_attention_heads
         )
-    except:
+    except (AttributeError, TypeError):
         head_dim = tf_config.hidden_size // tf_config.num_attention_heads
     value_num_per_group = tf_config.num_attention_heads // tf_config.num_query_groups
 

@@ -627,7 +627,7 @@ class MegatronEngine(TrainEngine):
         current_platform.synchronize()
 
     def update_weights(self, meta: WeightUpdateMeta):
-        if meta.type == "nccl":
+        if meta.type == current_platform.communication_backend:
             assert self.weight_update_group_initialized
             self._update_weights_from_distributed(meta)
         elif meta.type == "disk":
