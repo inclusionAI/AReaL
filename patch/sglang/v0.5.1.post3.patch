@@ -61,7 +61,7 @@ index 8d5b7c715..c83b99191 100644
  
          with set_default_torch_dtype(self.model_config.dtype):
 diff --git a/python/sglang/srt/model_loader/loader.py b/python/sglang/srt/model_loader/loader.py
-index 23d70be44..a3dba6687 100644
+index 23d70be44..5c44a9278 100644
 --- a/python/sglang/srt/model_loader/loader.py
 +++ b/python/sglang/srt/model_loader/loader.py
 @@ -62,6 +62,7 @@ from sglang.srt.model_loader.weight_utils import (
@@ -131,7 +131,7 @@ index 23d70be44..a3dba6687 100644
      def load_model(
          self,
          *,
-@@ -464,15 +469,24 @@ class DefaultModelLoader(BaseModelLoader):
+@@ -464,15 +469,23 @@ class DefaultModelLoader(BaseModelLoader):
                      self.load_config,
                  )
  
@@ -147,7 +147,6 @@ index 23d70be44..a3dba6687 100644
 -
          return model.eval()
  
-+    @debug_function
      @staticmethod
 -    def load_weights_and_postprocess(model, weights, target_device):
 -        model.load_weights(weights)
