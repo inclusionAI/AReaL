@@ -45,7 +45,7 @@ dependencies = [
     "huggingface_hub",
     "datasets",
     "accelerate",
-    "transformers==4.56.0",
+    "transformers==4.56.1",
     "megatron-core==0.13.1",
     "mbridge==0.13.0",
     "peft",

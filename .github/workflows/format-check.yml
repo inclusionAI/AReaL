@@ -18,7 +18,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python3 -m pip install --upgrade pip
-          pip install isort black clang-format autoflake
+          pip install isort==6.0.1 black==25.1.0 clang-format==19.1.7 autoflake==2.3.1
 
       - name: Check autoflake formatting
         run: |
