@@ -28,7 +28,6 @@ class RPCClient:
         self,
         worker_id: str,
         engine_obj: Union[InferenceEngine, TrainEngine],
-        # init_config: Union[InferenceEngineConfig, TrainEngineConfig],
         *args,
         **kwargs,
     ) -> None:
