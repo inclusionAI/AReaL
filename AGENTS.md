@@ -1,4 +1,4 @@
-% Think of this file as the go-to brief for AI coding agents working on AReaL.
+<!-- Think of this file as the go-to brief for AI coding agents working on AReaL. -->
 
 # AGENTS.md — AReaL Agent Operations Guide
 
