@@ -170,12 +170,16 @@ def apply_sglang_patch():
 
     target_path = ""
     sglang_meta = subprocess.check_output(
-        "python3 -m pip show sglang", shell=True
+        [sys.executable, "-m", "pip", "show", "sglang"]
     ).decode("ascii")
     for line in sglang_meta.split("\n"):
         line = line.strip()
         if line.startswith("Editable project location: "):
             target_path = str(Path(line.split(": ")[1]).parent)
+            break
+        elif line.startswith("Location: "):
+            target_path = str(Path(line.split(": ")[1]) / "sglang")
+            break
 
     if target_path:
         proc = subprocess.Popen(

@@ -26,7 +26,6 @@ from areal.utils.launcher import (
     JobException,
     JobInfo,
     JobState,
-    apply_sglang_patch,
     get_env_vars,
     wait_llm_server_addrs,
 )
@@ -142,8 +141,6 @@ class LocalLauncher:
                 + cmd[i]
             )
             c = f"{c} 2>&1 | tee -a {self.log_path_of(job_name)}"
-            # SGLang will somehow remove quotes in the command, so we need to escape the quotes
-            c = c.replace('"', '\\"')
             logger.info("Starting local process with command: %s", c)
             process = subprocess.Popen(
                 c, shell=isinstance(c, str), stdout=sys.stdout, stderr=sys.stdout
@@ -295,10 +292,6 @@ def local_main(config, run_id: int = 0):
         else:
             config.vllm = to_structured_cfg(config.vllm, vLLMConfig)
             random_seed = config.vllm.seed
-
-        if alloc_mode.gen_backend == "sglang":
-            if config.sglang.enable_multithread_load or config.sglang.enable_fast_load:
-                apply_sglang_patch()
 
         backend_spec = {
             "sglang": {
