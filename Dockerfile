@@ -21,7 +21,6 @@ ENV NVTE_WITH_USERBUFFERS=1 NVTE_FRAMEWORK=pytorch MPI_HOME=/usr/local/mpi TORCH
 # The following block is adapted from slime's Dockerfile
 # https://github.com/THUDM/slime/blob/ebf16c57c223d6f1f66ef89177d5e27938c6caaf/docker/Dockerfile
 
-RUN apt install -y nvtop
 RUN pip install git+https://github.com/fzyzcjy/torch_memory_saver.git --no-cache-dir --force-reinstall
 RUN pip install ray[default]
 RUN pip install httpx[http2] wandb pylatexenc blobfile accelerate "mcp[cli]"
@@ -75,5 +74,6 @@ RUN apt-get --purge remove -y --allow-change-held-packages libcudnn9* libcudnn9-
 
 # flash-attn3
 RUN git clone https://github.com/Dao-AILab/flash-attention -b v2.8.1
-RUN pip install -v ./flash-attention/hopper/
-COPY ./flash-attention/hopper/flash_attn_interface.py /usr/local/lib/python3.12/dist-packages/flash_attn_3/
+RUN pip install -v /flash-attention/hopper/
+RUN mkdir -p /usr/local/lib/python3.12/dist-packages/flash_attn_3/ && \
+    cp /flash-attention/hopper/flash_attn_interface.py /usr/local/lib/python3.12/dist-packages/flash_attn_3/
