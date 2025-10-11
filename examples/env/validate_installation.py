@@ -96,9 +96,9 @@ class InstallationValidator:
         )
         from sglang import Engine, launch_server  # noqa
 
-        assert Version(get_version("sglang")) == Version(
+        assert Version(get_version("sglang")) >= Version(
             "v0.5.2"
-        ), "SGLang version should be v0.5.2"
+        ), "SGLang version should be >= v0.5.2"
         print("  - SGLang imported successfully")
 
     def test_transformers(self, transformers_module):
