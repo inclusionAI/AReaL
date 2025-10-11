@@ -1,41 +1,16 @@
 diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/srt/model_executor/model_runner.py
-index 8d5b7c715..c83b99191 100644
+index aa0e2e0e6..2a79ad827 100644
 --- a/python/sglang/srt/model_executor/model_runner.py
 +++ b/python/sglang/srt/model_executor/model_runner.py
-@@ -108,6 +108,7 @@ from sglang.srt.torch_memory_saver_adapter import TorchMemorySaverAdapter
- from sglang.srt.utils import (
-     MultiprocessingSerializer,
-     cpu_has_amx_support,
-+    debug_function,
-     dynamic_import,
-     enable_show_time_cost,
-     get_available_gpu_memory,
-@@ -253,6 +254,8 @@ class ModelRunner:
+@@ -258,6 +258,7 @@ class ModelRunner:
          self._model_update_group = {}
  
      def initialize(self, min_per_gpu_memory: float):
-+        logger.info("SGLang v0.5.1.post3 is patched with customized weight loading.")
-+        print("[Debug] SGLang v0.5.1.post3 is patched with customized weight loading.")
++        logger.warning("SGLang v0.5.2 is patched with customized weight loading.")
          server_args = self.server_args
  
          self.memory_saver_adapter = TorchMemorySaverAdapter.create(
-@@ -644,6 +647,7 @@ class ModelRunner:
-         )
-         return min_per_gpu_memory
- 
-+    @debug_function
-     def load_model(self):
-         before_avail_memory = get_available_gpu_memory(self.device, self.gpu_id)
-         logger.info(
-@@ -764,6 +768,7 @@ class ModelRunner:
-             rank=self.tp_rank,
-         )
- 
-+    @debug_function
-     def update_weights_from_disk(
-         self, model_path: str, load_format: str
-     ) -> tuple[bool, str]:
-@@ -775,8 +780,11 @@ class ModelRunner:
+@@ -823,8 +824,11 @@ class ModelRunner:
  
          target_device = torch.device(self.device)
          self.model_config.model_path = model_path
@@ -49,7 +24,7 @@ index 8d5b7c715..c83b99191 100644
          # Only support DefaultModelLoader for now
          loader = get_model_loader(load_config)
          if not isinstance(loader, DefaultModelLoader):
-@@ -790,7 +798,9 @@ class ModelRunner:
+@@ -838,7 +842,9 @@ class ModelRunner:
              return iter
  
          def model_load_weights(model, iter):
@@ -61,18 +36,10 @@ index 8d5b7c715..c83b99191 100644
  
          with set_default_torch_dtype(self.model_config.dtype):
 diff --git a/python/sglang/srt/model_loader/loader.py b/python/sglang/srt/model_loader/loader.py
-index 23d70be44..5c44a9278 100644
+index d2b4c6bfc..9240ca9f5 100644
 --- a/python/sglang/srt/model_loader/loader.py
 +++ b/python/sglang/srt/model_loader/loader.py
-@@ -62,6 +62,7 @@ from sglang.srt.model_loader.weight_utils import (
-     set_runai_streamer_env,
- )
- from sglang.srt.utils import (
-+    debug_function,
-     get_bool_env_var,
-     get_device_capability,
-     is_npu,
-@@ -263,7 +264,7 @@ class DefaultModelLoader(BaseModelLoader):
+@@ -278,7 +278,7 @@ class DefaultModelLoader(BaseModelLoader):
      def __init__(self, load_config: LoadConfig):
          super().__init__(load_config)
          extra_config = load_config.model_loader_extra_config
@@ -81,21 +48,7 @@ index 23d70be44..5c44a9278 100644
          unexpected_keys = set(extra_config.keys()) - allowed_keys
  
          if unexpected_keys:
-@@ -299,6 +300,7 @@ class DefaultModelLoader(BaseModelLoader):
-             return model_path
-         return None
- 
-+    @debug_function
-     def _prepare_weights(
-         self, model_name_or_path: str, revision: Optional[str], fall_back_to_pt: bool
-     ) -> Tuple[str, List[str], bool]:
-@@ -379,11 +381,15 @@ class DefaultModelLoader(BaseModelLoader):
- 
-         return hf_folder, hf_weights_files, use_safetensors
- 
-+    @debug_function
-     def _get_weights_iterator(
-         self, source: "Source"
+@@ -399,6 +399,9 @@ class DefaultModelLoader(BaseModelLoader):
      ) -> Generator[Tuple[str, torch.Tensor], None, None]:
          """Get an iterator for the model weights based on the load format."""
          extra_config = self.load_config.model_loader_extra_config
@@ -105,7 +58,7 @@ index 23d70be44..5c44a9278 100644
          hf_folder, hf_weights_files, use_safetensors = self._prepare_weights(
              source.model_or_path, source.revision, source.fall_back_to_pt
          )
-@@ -426,16 +432,14 @@ class DefaultModelLoader(BaseModelLoader):
+@@ -441,8 +444,6 @@ class DefaultModelLoader(BaseModelLoader):
                  )
              else:
                  weights_iterator = pt_weights_iterator(hf_weights_files)
@@ -113,9 +66,8 @@ index 23d70be44..5c44a9278 100644
 -        # Apply the prefix.
          return ((source.prefix + name, tensor) for (name, tensor) in weights_iterator)
  
-+    @debug_function
      def _get_all_weights(
-         self,
+@@ -450,7 +451,6 @@ class DefaultModelLoader(BaseModelLoader):
          model_config: ModelConfig,
          model: nn.Module,
      ) -> Generator[Tuple[str, torch.Tensor], None, None]:
@@ -123,15 +75,7 @@ index 23d70be44..5c44a9278 100644
          primary_weights = DefaultModelLoader.Source.init_new(model_config, model)
          yield from self._get_weights_iterator(primary_weights)
  
-@@ -450,6 +454,7 @@ class DefaultModelLoader(BaseModelLoader):
-             model_config.model_path, model_config.revision, fall_back_to_pt=True
-         )
- 
-+    @debug_function
-     def load_model(
-         self,
-         *,
-@@ -464,15 +469,23 @@ class DefaultModelLoader(BaseModelLoader):
+@@ -479,15 +479,23 @@ class DefaultModelLoader(BaseModelLoader):
                      self.load_config,
                  )
  
@@ -160,19 +104,10 @@ index 23d70be44..5c44a9278 100644
          for _, module in model.named_modules():
              quant_method = getattr(module, "quant_method", None)
 diff --git a/python/sglang/srt/models/qwen3.py b/python/sglang/srt/models/qwen3.py
-index 042159a50..4f8b8a1d7 100644
+index bc5f054d7..aff429be0 100644
 --- a/python/sglang/srt/models/qwen3.py
 +++ b/python/sglang/srt/models/qwen3.py
-@@ -27,7 +27,7 @@ from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTe
- from sglang.srt.model_loader.weight_utils import default_weight_loader
- from sglang.srt.models.qwen2 import Qwen2MLP as Qwen3MLP
- from sglang.srt.models.qwen2 import Qwen2Model
--from sglang.srt.utils import add_prefix, is_cuda
-+from sglang.srt.utils import add_prefix, debug_function, is_cuda
- 
- Qwen3Config = None
- 
-@@ -415,6 +415,99 @@ class Qwen3ForCausalLM(nn.Module):
+@@ -418,6 +418,97 @@ class Qwen3ForCausalLM(nn.Module):
      def end_layer(self):
          return self.model.end_layer
  
@@ -255,7 +190,6 @@ index 042159a50..4f8b8a1d7 100644
 +                        f"Cannot find weight {local_name} in the loaded slices."
 +                    )
 +
-+    @debug_function
 +    def load_weights_from_path(self, path: str):
 +        # Customized weights loading from a given path of huggingface model
 +        from sglang.srt.models.utils.load import load_weights_with_hf_path_fast
@@ -268,11 +202,10 @@ index 042159a50..4f8b8a1d7 100644
 +            tie_word_embeddings=self.config.tie_word_embeddings,
 +        )
 +
-+    @debug_function
      def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
          stacked_params_mapping = [
              # (param_name, shard_name, shard_id)
-@@ -462,11 +555,11 @@ class Qwen3ForCausalLM(nn.Module):
+@@ -468,11 +559,11 @@ class Qwen3ForCausalLM(nn.Module):
              for param_name, weight_name, shard_id in stacked_params_mapping:
                  if weight_name not in name:
                      continue
@@ -288,10 +221,10 @@ index 042159a50..4f8b8a1d7 100644
                  weight_loader(param, loaded_weight, shard_id)
                  break
 diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
-index fcb45b947..e354e7a47 100644
+index c1c4c3638..c88de9d19 100644
 --- a/python/sglang/srt/models/qwen3_moe.py
 +++ b/python/sglang/srt/models/qwen3_moe.py
-@@ -739,6 +739,130 @@ class Qwen3MoeForCausalLM(nn.Module):
+@@ -770,6 +770,130 @@ class Qwen3MoeForCausalLM(nn.Module):
          else:
              self.model.layers_to_capture = [val + 1 for val in layer_ids]
  
@@ -599,7 +532,7 @@ index 000000000..035835a0f
 +        for _ in results:
 +            pass
 diff --git a/python/sglang/srt/utils.py b/python/sglang/srt/utils.py
-index b5f6626a2..a5ac2a2bd 100644
+index 846baeb01..5235c0563 100644
 --- a/python/sglang/srt/utils.py
 +++ b/python/sglang/srt/utils.py
 @@ -21,6 +21,7 @@ import ctypes
@@ -610,56 +543,3 @@ index b5f6626a2..a5ac2a2bd 100644
  import io
  import ipaddress
  import itertools
-@@ -3011,3 +3012,52 @@ def check_cuda_result(raw_output):
-         raise Exception(f"CUDA error: {err}")
- 
-     return results
-+
-+
-+def debug_function(func: Callable):
-+    """Decorator that logs function entry/exit with contextual information."""
-+
-+    if func is None:
-+        raise ValueError("debug_function decorator requires a function")
-+
-+    @functools.wraps(func)
-+    def wrapper(*args, **kwargs):
-+        def _resolve_class_name():
-+            qualname = getattr(func, "__qualname__", "")
-+            if qualname:
-+                parts = qualname.split(".")
-+                if len(parts) > 1 and parts[-2] != "<locals>":
-+                    return parts[-2]
-+            if args:
-+                instance = args[0]
-+                if hasattr(instance, "__class__"):
-+                    return instance.__class__.__name__
-+            return None
-+
-+        def _resolve_filename():
-+            try:
-+                source = inspect.getsourcefile(func) or inspect.getfile(func)
-+            except (TypeError, OSError):
-+                source = None
-+            if source is None:
-+                return "<unknown>"
-+            return Path(source).name
-+
-+        class_name = _resolve_class_name()
-+        filename = _resolve_filename()
-+        display_name = func.__name__
-+        if class_name:
-+            display_name = f"{class_name}.{display_name}"
-+
-+        print(f"[Debug] Entering {display_name} (file: {filename})", flush=True)
-+
-+        start_time = time.perf_counter()
-+        try:
-+            return func(*args, **kwargs)
-+        finally:
-+            elapsed_ms = (time.perf_counter() - start_time) * 1000
-+            print(
-+                f"[Debug] Exiting {display_name} (file: {filename}) - elapsed {elapsed_ms:.3f} ms"
-+            )
-+
-+    return wrapper
