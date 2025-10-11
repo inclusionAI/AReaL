@@ -4,20 +4,42 @@ import os
 import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import AnyStr
+from typing import Any, AnyStr, Dict, List
 
 import cloudpickle
+import torch
 from tensordict import TensorDict
 
 from areal.api.controller_api import DistributedBatch
 from areal.api.engine_api import InferenceEngine
 from areal.controller.batch import DistributedBatchMemory
 from areal.utils import logging
-from areal.utils.data import (
-    tensor_container_to,
-)
 
 logger = logging.getLogger("RPCServer")
+
+
+def tensor_container_to_safe(
+    d: Dict[str, Any] | torch.Tensor | List[torch.Tensor], *args, **kwargs
+):
+    """Apply `t.to(*args, **kwargs)` to all tensors in the dictionary.
+    Support nested dictionaries.
+    """
+    new_dict = {}
+    if torch.is_tensor(d):
+        return d.to(*args, **kwargs)
+    elif isinstance(d, list):
+        return [tensor_container_to_safe(v, *args, **kwargs) for v in d]
+    elif isinstance(d, dict):
+        for key, value in d.items():
+            if isinstance(value, dict) or isinstance(value, list):
+                new_dict[key] = tensor_container_to_safe(value, *args, **kwargs)
+            elif torch.is_tensor(value):
+                new_dict[key] = value.to(*args, **kwargs)
+            else:
+                new_dict[key] = value
+        return new_dict
+    else:
+        return d
 
 
 def process_input_to_distributed_batch(to_device, *args, **kwargs):
@@ -31,14 +53,14 @@ def process_input_to_distributed_batch(to_device, *args, **kwargs):
         if isinstance(kwargs[k], DistributedBatch):
             kwargs[k] = kwargs[k].get_data()
 
-    args = tuple(tensor_container_to(list(args), to_device))
-    kwargs = tensor_container_to(kwargs, to_device)
+    args = tuple(tensor_container_to_safe(list(args), to_device))
+    kwargs = tensor_container_to_safe(kwargs, to_device)
 
     return args, kwargs
 
 
 def process_output_to_distributed_batch(result):
-    result = tensor_container_to(result, "cpu")
+    result = tensor_container_to_safe(result, "cpu")
     if isinstance(result, dict):
         return DistributedBatchMemory.from_dict(result)
     elif isinstance(result, TensorDict):

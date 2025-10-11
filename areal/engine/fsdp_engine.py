@@ -122,6 +122,8 @@ class FSDPEngine(BaseHFEngine):
         self.dp_head = int(self.world_mesh["sp_tp"].mesh[0].item())
         self.dp_rank = dist.get_rank(self.dp_group)
 
+        self.world_size = int(os.environ["WORLD_SIZE"])
+
         self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
 
     def initialize(
@@ -137,8 +139,6 @@ class FSDPEngine(BaseHFEngine):
         assert pkg_version.is_version_greater_or_equal(
             "torch", "2.4.0"
         ), f"areal only supports FSDP2, which requires torch>=2.4.0"
-
-        self.world_size = int(os.environ["WORLD_SIZE"])
 
         # Create device model
         self.create_device_model()

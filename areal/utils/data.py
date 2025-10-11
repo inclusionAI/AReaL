@@ -351,10 +351,7 @@ def tensor_container_to(
                 new_dict[key] = value
         return new_dict
     else:
-        logger.warning(
-            f"Unsupported type in tensor_container_to: {type(d)}, returning original."
-        )
-        return d
+        raise ValueError(f"Unsupported type: {type(d)}")
 
 
 @dataclass
