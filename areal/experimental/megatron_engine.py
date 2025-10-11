@@ -138,7 +138,6 @@ class MegatronEngine(TrainEngine):
         ):
             model_config.param_sync_func = self.model.start_param_sync
         model_config.finalize_model_grads_func = finalize_model_grads
-
         self.create_optimizer(ft_spec)
 
     def _make_parallel_strategy(
