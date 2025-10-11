@@ -23,9 +23,9 @@ from areal.utils.device import log_gpu_stats
 logger = logging.getLogger("MegatronEngine Test")
 
 VOCAB_SIZE = 100
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen3-1.7B"
+    MODEL_PATH = "Qwen/Qwen3-0.6B"
 
 
 @pytest.fixture(scope="module")

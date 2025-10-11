@@ -274,14 +274,14 @@ Specification for splitting micro-batches during training.
 
 Configuration for reward/advantage normalization.
 
-| Parameter        | Type           | Default   | Description                                                                                       |
-| ---------------- | -------------- | --------- | ------------------------------------------------------------------------------------------------- |
-| `mean_level`     | string \| None | `"batch"` | Mean level for normalization. Choices: batch, group. Omit for no mean normalization.              |
-| `mean_leave1out` | boolean        | `False`   | Whether to use leave-one-out average.                                                             |
-| `std_level`      | string \| None | `"batch"` | Standard deviation level for normalization. Choices: batch, group. Omit for no std normalization. |
-| `std_unbiased`   | boolean        | `False`   | Whether to use unbiased standard deviation computation.                                           |
-| `eps`            | float          | `1e-05`   | The eps when dividing by standard deviation to avoid numerical issues.                            |
-| `group_size`     | integer        | `1`       | Group size for group-level normalization                                                          |
+| Parameter        | Type           | Default   | Description                                                                                                      |
+| ---------------- | -------------- | --------- | ---------------------------------------------------------------------------------------------------------------- |
+| `mean_level`     | string \| None | `"batch"` | Mean level for normalization. None for no mean normalization. **Choices:** `batch`, `group`, `None`              |
+| `mean_leave1out` | boolean        | `False`   | Whether to use leave-one-out average.                                                                            |
+| `std_level`      | string \| None | `"batch"` | Standard deviation level for normalization. None for no std normalization. **Choices:** `batch`, `group`, `None` |
+| `std_unbiased`   | boolean        | `True`    | Whether to use unbiased standard deviation computation. Defaults to True (changed from False in v0.3.4).         |
+| `eps`            | float          | `1e-05`   | The eps when dividing by standard deviation to avoid numerical issues.                                           |
+| `group_size`     | integer        | `1`       | Group size for group-level normalization                                                                         |
 
 (section-optimizer)=
 
@@ -333,7 +333,7 @@ Configuration for PPO actor model, a subclass of a TrainEngine.
 | `use_lora`                | boolean                                        | `False`               | Whether to use LoRA. Only support FSDP. Note that should be enabled together with vLLM/SGLang.                                                                                                                                                                                                                             |
 | `lora_rank`               | integer                                        | `32`                  | lora rank                                                                                                                                                                                                                                                                                                                  |
 | `lora_alpha`              | integer                                        | `16`                  | lora alpha                                                                                                                                                                                                                                                                                                                 |
-| `target_modules`          | list of string                                 | **Required**          | lora target_modules. None defaults to 'all-linear'                                                                                                                                                                                                                                                                         |
+| `target_modules`          | list of string                                 | **Required**          | lora target_modules.                                                                                                                                                                                                                                                                                                       |
 | `peft_type`               | string                                         | `"lora"`              | peft method type. Only LoRA is supported for now.                                                                                                                                                                                                                                                                          |
 | `group_size`              | integer                                        | `1`                   | Number of sequences in each group                                                                                                                                                                                                                                                                                          |
 | `ppo_n_minibatches`       | integer                                        | `4`                   | Number of minibatches for each PPO update                                                                                                                                                                                                                                                                                  |
@@ -353,6 +353,7 @@ Configuration for PPO actor model, a subclass of a TrainEngine.
 | `gae_lambda`              | float                                          | `1.0`                 | Lambda parameter for GAE                                                                                                                                                                                                                                                                                                   |
 | `adv_norm`                | [`NormConfig`](section-norm) \| None           | `None`                | Normalization configuration for advantages.                                                                                                                                                                                                                                                                                |
 | `kl_ctl`                  | float                                          | `0.1`                 | KL divergence coefficient                                                                                                                                                                                                                                                                                                  |
+| `kl_estimator`            | string                                         | `"k1"`                | KL divergence estimator **Choices:** `k1`, `k2`, `k3`                                                                                                                                                                                                                                                                      |
 | `recompute_logprob`       | boolean                                        | `False`               | Recompute log probability and replace the log probability returned by inference.                                                                                                                                                                                                                                           |
 | `use_decoupled_loss`      | boolean                                        | `False`               | Use the decoupled loss. Implicitly enables recompute_logprob.                                                                                                                                                                                                                                                              |
 | `behav_imp_weight_cap`    | float \| None                                  | `None`                | Filter out tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing loss. Must be > 1.0. use_decoupled_loss must be true.                                                                                                                                                                                 |
@@ -384,6 +385,11 @@ Configuration for PPO critic model, a subclass of a TrainEngine.
 | `optimizer`              | [`OptimizerConfig`](section-optimizer) \| None | `None`                | Optimizer configuration. None means no training.                                                                                        |
 | `backend`                | string                                         | `""`                  | Training backend (refer to documentation)                                                                                               |
 | `fsdp`                   | [`FSDPEngineConfig`](section-fsdp-engine)      | **Required**          | -                                                                                                                                       |
+| `use_lora`               | boolean                                        | `False`               | Whether to use LoRA. Only support FSDP. Note that should be enabled together with vLLM/SGLang.                                          |
+| `lora_rank`              | integer                                        | `32`                  | lora rank                                                                                                                               |
+| `lora_alpha`             | integer                                        | `16`                  | lora alpha                                                                                                                              |
+| `target_modules`         | list of string                                 | **Required**          | lora target_modules.                                                                                                                    |
+| `peft_type`              | string                                         | `"lora"`              | peft method type. Only LoRA is supported for now.                                                                                       |
 | `ppo_n_minibatches`      | integer                                        | `4`                   | Number of minibatches for each PPO update                                                                                               |
 | `eps_clip`               | float                                          | `0.5`                 | Clipping factor for value loss                                                                                                          |
 | `mask_no_eos_with_zero`  | boolean                                        | `False`               | Mask truncated generations (no EOS token) and exclude from training                                                                     |
@@ -414,7 +420,7 @@ Core configuration for model training, including optimization and backend settin
 | `use_lora`               | boolean                                        | `False`               | Whether to use LoRA. Only support FSDP. Note that should be enabled together with vLLM/SGLang.                                          |
 | `lora_rank`              | integer                                        | `32`                  | lora rank                                                                                                                               |
 | `lora_alpha`             | integer                                        | `16`                  | lora alpha                                                                                                                              |
-| `target_modules`         | list of string                                 | **Required**          | lora target_modules. None defaults to 'all-linear'                                                                                      |
+| `target_modules`         | list of string                                 | **Required**          | lora target_modules.                                                                                                                    |
 | `peft_type`              | string                                         | `"lora"`              | peft method type. Only LoRA is supported for now.                                                                                       |
 
 (section-generation-hyperparameters)=
@@ -473,7 +479,7 @@ https://github.com/sgl-project/sglang for detailed documentation.
 | `random_seed`                     | integer                 | `1`          | -           |
 | `skip_tokenizer_init`             | boolean                 | `False`      | -           |
 | `disable_cuda_graph`              | boolean                 | `False`      | -           |
-| `disable_radix_cache`             | boolean                 | `False`      | -           |
+| `disable_radix_cache`             | boolean                 | `True`       | -           |
 | `disable_cuda_graph_padding`      | boolean                 | `False`      | -           |
 | `enable_nccl_nvls`                | boolean                 | `False`      | -           |
 | `disable_outlines_disk_cache`     | boolean                 | `False`      | -           |
@@ -532,25 +538,27 @@ Configuration for vLLM runtime. Refer to:
 
 https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
 
-| Parameter                | Type            | Default                                                             | Description |
-| ------------------------ | --------------- | ------------------------------------------------------------------- | ----------- |
-| `model`                  | string          | `""`                                                                | -           |
-| `seed`                   | integer         | `1`                                                                 | -           |
-| `skip_tokenizer_init`    | boolean         | `False`                                                             | -           |
-| `enforce_eager`          | boolean         | `True`                                                              | -           |
-| `dtype`                  | string          | `"bfloat16"`                                                        | -           |
-| `max_num_seqs`           | integer         | `256`                                                               | -           |
-| `block_size`             | integer         | `16`                                                                | -           |
-| `swap_space`             | integer         | `4`                                                                 | -           |
-| `cpu_offload_gb`         | float           | `0`                                                                 | -           |
-| `max_seq_len_to_capture` | integer         | `32768`                                                             | -           |
-| `disable_sliding_window` | boolean         | `True`                                                              | -           |
-| `max_model_len`          | integer \| None | `32768`                                                             | -           |
-| `enable_chunked_prefill` | boolean         | `False`                                                             | -           |
-| `enable_prefix_caching`  | boolean         | `False`                                                             | -           |
-| `gpu_memory_utilization` | float           | `0.9`                                                               | -           |
-| `worker_extension_cls`   | string          | `"areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"` | -           |
-| `enable_sleep_mode`      | boolean         | `False`                                                             | -           |
+| Parameter                      | Type            | Default                                                             | Description |
+| ------------------------------ | --------------- | ------------------------------------------------------------------- | ----------- |
+| `model`                        | string          | `""`                                                                | -           |
+| `seed`                         | integer         | `1`                                                                 | -           |
+| `skip_tokenizer_init`          | boolean         | `False`                                                             | -           |
+| `enforce_eager`                | boolean         | `True`                                                              | -           |
+| `dtype`                        | string          | `"bfloat16"`                                                        | -           |
+| `distributed_executor_backend` | string          | `"mp"`                                                              | -           |
+| `max_num_seqs`                 | integer         | `256`                                                               | -           |
+| `block_size`                   | integer         | `16`                                                                | -           |
+| `swap_space`                   | integer         | `4`                                                                 | -           |
+| `cpu_offload_gb`               | float           | `0`                                                                 | -           |
+| `max_seq_len_to_capture`       | integer         | `32768`                                                             | -           |
+| `disable_sliding_window`       | boolean         | `True`                                                              | -           |
+| `max_model_len`                | integer \| None | `32768`                                                             | -           |
+| `enable_chunked_prefill`       | boolean         | `False`                                                             | -           |
+| `enable_prefix_caching`        | boolean         | `False`                                                             | -           |
+| `gpu_memory_utilization`       | float           | `0.9`                                                               | -           |
+| `worker_extension_cls`         | string          | `"areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"` | -           |
+| `enable_sleep_mode`            | boolean         | `False`                                                             | -           |
+| `uvicorn_log_level`            | string          | `"warning"`                                                         | -           |
 
 (section-dataset)=
 

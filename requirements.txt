@@ -57,7 +57,7 @@ etcd3
 rich
 orjson>=3.10.16
 flask
-setuptools>=62.3.0,<75.9
+setuptools<80,>=77.0.3
 func_timeout
 jupyter-book
 lark
@@ -87,3 +87,6 @@ mdformat-gfm
 mdformat-tables
 mdformat-frontmatter
 setproctitle
+qwen_agent
+dotenv
+json5

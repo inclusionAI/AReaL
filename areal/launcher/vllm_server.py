@@ -4,6 +4,7 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from typing import Optional
 
 import requests
@@ -37,6 +38,10 @@ def launch_server_cmd(command: str, custom_env: dict | None = None) -> subproces
     triton_cache_path = _env.get("TRITON_CACHE_PATH", TRITON_CACHE_PATH)
     unique_triton_cache_path = os.path.join(triton_cache_path, str(uuid.uuid4()))
     _env["TRITON_CACHE_PATH"] = unique_triton_cache_path
+    # To avoid vllm compile cache conflict
+    vllm_cache_path = _env.get("VLLM_CACHE_ROOT")
+    if vllm_cache_path:
+        _env["VLLM_CACHE_ROOT"] = os.path.join(vllm_cache_path, str(uuid.uuid4()))
     if custom_env is not None:
         _env.update(custom_env)
     return subprocess.Popen(
@@ -101,6 +106,7 @@ class vLLMServerWrapper:
             n_servers_per_proc = max(1, n_visible_devices // gpus_per_server)
             server_idx_offset = min(list(map(int, visible))) // gpus_per_server
         else:
+            visible = [str(i) for i in range(self.n_gpus_per_node)]
             n_servers_per_proc = n_servers_per_node
             server_idx_offset = 0
 
@@ -110,8 +116,8 @@ class vLLMServerWrapper:
         launch_server_args = []
         server_addresses = []
         base_random_seed = self.config.seed
-        for server_local_idx in range(
-            server_idx_offset, server_idx_offset + n_servers_per_proc
+        for j, server_local_idx in enumerate(
+            range(server_idx_offset, server_idx_offset + n_servers_per_proc)
         ):
             port_range = (
                 server_local_idx * ports_per_server + 10000,
@@ -122,15 +128,15 @@ class vLLMServerWrapper:
             dist_init_addr = f"localhost:{dist_init_port}"
             host_ip = gethostip()
 
-            base_gpu_id = (server_local_idx - server_idx_offset) * gpus_per_server
             custom_env = {
                 device_control_env_var: ",".join(
-                    map(str, range(base_gpu_id, base_gpu_id + gpus_per_server))
+                    visible[j * gpus_per_server : (j + 1) * gpus_per_server]
                 )
             }
-            self.config.seed = base_random_seed + server_local_idx
+            config = deepcopy(self.config)
+            config.seed = base_random_seed + server_local_idx
             cmd = vLLMConfig.build_cmd(
-                self.config,
+                config,
                 tp_size=self.allocation_mode.gen.tp_size,
                 host=host_ip,
                 port=server_port,

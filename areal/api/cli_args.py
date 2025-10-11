@@ -10,6 +10,7 @@ import yaml
 uvloop.install()
 from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
+from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
 
 from areal.platforms import current_platform
@@ -295,7 +296,7 @@ class TrainEngineConfig:
     lora_alpha: int = field(default=16, metadata={"help": "lora alpha"})
     target_modules: List[str] = field(
         default_factory=list,
-        metadata={"help": "lora target_modules. None defaults to 'all-linear'"},
+        metadata={"help": "lora target_modules."},
     )
     peft_type: str = field(
         default="lora",
@@ -541,7 +542,7 @@ class SGLangConfig:
     random_seed: int = 1
     skip_tokenizer_init: bool = False
     disable_cuda_graph: bool = False
-    disable_radix_cache: bool = False
+    disable_radix_cache: bool = True
     disable_cuda_graph_padding: bool = False
     enable_nccl_nvls: bool = False
     disable_outlines_disk_cache: bool = False
@@ -1148,6 +1149,8 @@ def parse_cli_args(argv: List[str]):
     assert config_file.exists(), f"Config file {config_file} does not exist."
     # hydra only recognize relative paths
     relpath = Path(os.path.relpath(str(config_file), Path(__file__).parent.absolute()))
+    if GlobalHydra.instance().is_initialized():
+        GlobalHydra.instance().clear()
     hydra_init(config_path=str(relpath.parent), job_name="app", version_base=None)
     cfg = hydra_compose(
         config_name=str(relpath.name).split(".yaml")[0],
