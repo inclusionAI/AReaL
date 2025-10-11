@@ -605,10 +605,6 @@ class SGLangConfig:
     enable_multithread_load: bool = False
     enable_fast_load: bool = False
 
-    @property
-    def if_apply_sglang_patch(self):
-        return self.enable_multithread_load or self.enable_fast_load
-
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
     def build_cmd(
