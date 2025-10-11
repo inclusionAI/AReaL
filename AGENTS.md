@@ -220,7 +220,7 @@ skipped.
 - **PR titles**: Mirror the main change using the same prefix style, e.g.,
   `feat: add discounted reward stats tracker hook`.
 - **PR checklist**:
-  - Summarize the change, highlight risks, list test commands run (or clearly state why
+  - Summarize the change, highlight risks (e.g., breaking changes, performance impacts, compatibility issues), list test commands run (or clearly state why
     tests are skipped).
   - Link related documentation updates; mention resource requirements for GPU-bound
     tests.
