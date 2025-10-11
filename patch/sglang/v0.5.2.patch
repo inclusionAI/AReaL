@@ -1,17 +1,16 @@
 diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/srt/model_executor/model_runner.py
-index 8d5b7c715..af294364a 100644
+index aa0e2e0e6..2a79ad827 100644
 --- a/python/sglang/srt/model_executor/model_runner.py
 +++ b/python/sglang/srt/model_executor/model_runner.py
-@@ -253,6 +253,8 @@ class ModelRunner:
+@@ -258,6 +258,7 @@ class ModelRunner:
          self._model_update_group = {}
  
      def initialize(self, min_per_gpu_memory: float):
-+        logger.info("SGLang v0.5.1.post3 is patched with customized weight loading.")
-+        print("[Debug] SGLang v0.5.1.post3 is patched with customized weight loading.")
++        logger.warning("SGLang v0.5.2 is patched with customized weight loading.")
          server_args = self.server_args
  
          self.memory_saver_adapter = TorchMemorySaverAdapter.create(
-@@ -775,8 +777,11 @@ class ModelRunner:
+@@ -823,8 +824,11 @@ class ModelRunner:
  
          target_device = torch.device(self.device)
          self.model_config.model_path = model_path
@@ -25,7 +24,7 @@ index 8d5b7c715..af294364a 100644
          # Only support DefaultModelLoader for now
          loader = get_model_loader(load_config)
          if not isinstance(loader, DefaultModelLoader):
-@@ -790,7 +795,9 @@ class ModelRunner:
+@@ -838,7 +842,9 @@ class ModelRunner:
              return iter
  
          def model_load_weights(model, iter):
@@ -37,10 +36,10 @@ index 8d5b7c715..af294364a 100644
  
          with set_default_torch_dtype(self.model_config.dtype):
 diff --git a/python/sglang/srt/model_loader/loader.py b/python/sglang/srt/model_loader/loader.py
-index 23d70be44..7e8968743 100644
+index d2b4c6bfc..9240ca9f5 100644
 --- a/python/sglang/srt/model_loader/loader.py
 +++ b/python/sglang/srt/model_loader/loader.py
-@@ -263,7 +263,7 @@ class DefaultModelLoader(BaseModelLoader):
+@@ -278,7 +278,7 @@ class DefaultModelLoader(BaseModelLoader):
      def __init__(self, load_config: LoadConfig):
          super().__init__(load_config)
          extra_config = load_config.model_loader_extra_config
@@ -49,7 +48,7 @@ index 23d70be44..7e8968743 100644
          unexpected_keys = set(extra_config.keys()) - allowed_keys
  
          if unexpected_keys:
-@@ -384,6 +384,9 @@ class DefaultModelLoader(BaseModelLoader):
+@@ -399,6 +399,9 @@ class DefaultModelLoader(BaseModelLoader):
      ) -> Generator[Tuple[str, torch.Tensor], None, None]:
          """Get an iterator for the model weights based on the load format."""
          extra_config = self.load_config.model_loader_extra_config
@@ -59,7 +58,7 @@ index 23d70be44..7e8968743 100644
          hf_folder, hf_weights_files, use_safetensors = self._prepare_weights(
              source.model_or_path, source.revision, source.fall_back_to_pt
          )
-@@ -426,8 +429,6 @@ class DefaultModelLoader(BaseModelLoader):
+@@ -441,8 +444,6 @@ class DefaultModelLoader(BaseModelLoader):
                  )
              else:
                  weights_iterator = pt_weights_iterator(hf_weights_files)
@@ -68,7 +67,7 @@ index 23d70be44..7e8968743 100644
          return ((source.prefix + name, tensor) for (name, tensor) in weights_iterator)
  
      def _get_all_weights(
-@@ -435,7 +436,6 @@ class DefaultModelLoader(BaseModelLoader):
+@@ -450,7 +451,6 @@ class DefaultModelLoader(BaseModelLoader):
          model_config: ModelConfig,
          model: nn.Module,
      ) -> Generator[Tuple[str, torch.Tensor], None, None]:
@@ -76,7 +75,7 @@ index 23d70be44..7e8968743 100644
          primary_weights = DefaultModelLoader.Source.init_new(model_config, model)
          yield from self._get_weights_iterator(primary_weights)
  
-@@ -464,15 +464,23 @@ class DefaultModelLoader(BaseModelLoader):
+@@ -479,15 +479,23 @@ class DefaultModelLoader(BaseModelLoader):
                      self.load_config,
                  )
  
@@ -105,10 +104,10 @@ index 23d70be44..7e8968743 100644
          for _, module in model.named_modules():
              quant_method = getattr(module, "quant_method", None)
 diff --git a/python/sglang/srt/models/qwen3.py b/python/sglang/srt/models/qwen3.py
-index 042159a50..399600b63 100644
+index bc5f054d7..aff429be0 100644
 --- a/python/sglang/srt/models/qwen3.py
 +++ b/python/sglang/srt/models/qwen3.py
-@@ -415,6 +415,97 @@ class Qwen3ForCausalLM(nn.Module):
+@@ -418,6 +418,97 @@ class Qwen3ForCausalLM(nn.Module):
      def end_layer(self):
          return self.model.end_layer
  
@@ -206,7 +205,7 @@ index 042159a50..399600b63 100644
      def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
          stacked_params_mapping = [
              # (param_name, shard_name, shard_id)
-@@ -462,11 +553,11 @@ class Qwen3ForCausalLM(nn.Module):
+@@ -468,11 +559,11 @@ class Qwen3ForCausalLM(nn.Module):
              for param_name, weight_name, shard_id in stacked_params_mapping:
                  if weight_name not in name:
                      continue
@@ -222,10 +221,10 @@ index 042159a50..399600b63 100644
                  weight_loader(param, loaded_weight, shard_id)
                  break
 diff --git a/python/sglang/srt/models/qwen3_moe.py b/python/sglang/srt/models/qwen3_moe.py
-index fcb45b947..e354e7a47 100644
+index c1c4c3638..c88de9d19 100644
 --- a/python/sglang/srt/models/qwen3_moe.py
 +++ b/python/sglang/srt/models/qwen3_moe.py
-@@ -739,6 +739,130 @@ class Qwen3MoeForCausalLM(nn.Module):
+@@ -770,6 +770,130 @@ class Qwen3MoeForCausalLM(nn.Module):
          else:
              self.model.layers_to_capture = [val + 1 for val in layer_ids]
  
@@ -533,7 +532,7 @@ index 000000000..035835a0f
 +        for _ in results:
 +            pass
 diff --git a/python/sglang/srt/utils.py b/python/sglang/srt/utils.py
-index b5f6626a2..8a8a69805 100644
+index 846baeb01..5235c0563 100644
 --- a/python/sglang/srt/utils.py
 +++ b/python/sglang/srt/utils.py
 @@ -21,6 +21,7 @@ import ctypes
