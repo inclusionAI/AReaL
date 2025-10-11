@@ -38,9 +38,6 @@ RUN NVCC_APPEND_FLAGS="--threads 4" \
 # transformer engine, we install with --no-deps to avoid installing torch and torch-extensions
 RUN pip install pybind11
 RUN pip -v install --no-build-isolation git+https://github.com/NVIDIA/TransformerEngine.git@stable
-RUN cd /TransformerEngine && \
-    export NVTE_FRAMEWORK=pytorch && \
-    pip install --no-build-isolation .
 
 # flash attn
 # the newest version megatron supports is v2.8.1
