@@ -48,7 +48,7 @@ megatron-core==0.13.1
 mbridge==0.13.0
 # To eliminate security risks
 torch>2.0.0
-black==25.9.0
+black==25.1.0
 cookiecutter>2.1.1
 asyncio
 aiohttp>=3.11.10
