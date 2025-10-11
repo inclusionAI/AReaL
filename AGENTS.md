@@ -30,7 +30,9 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
 | `examples/`                | Runnable entrypoints for math, multi-turn, RLHF, VLM, search agents.           |
 | `areal/launcher/`          | Entry scripts for local, Ray, and Slurm orchestration.                         |
 | `docs/`                    | Published docs (https://inclusionai.github.io/AReaL/).                         |
-| `realhf/`, `functioncall/` | Legacy integrations and tool-calling utilities reused in workflows.            |
+| `realhf/`                  | Legacy integrations retained for reference (read-only).                        |
+| `functioncall/`            | Tool-calling utilities reused in workflows.                                    |
+| `areal/platforms/`         | Cluster abstractions used by advanced agents.                                  |
 | `tests/`                   | Pytest suites (many require GPUs or mocked engines).                           |
 | `Dockerfile`, `Makefile`   | Container recipe and helper tasks (`make docs`, `make lint`).                  |
 
