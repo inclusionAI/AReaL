@@ -401,7 +401,6 @@ class FSDPEngine(BaseHFEngine):
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
-            ulysses_pad_size = 0
             if self.parallel_helper.sp_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
@@ -410,7 +409,7 @@ class FSDPEngine(BaseHFEngine):
                     (
                         ulysses_input_ids,
                         ulysses_position_ids,
-                        ulysses_pad_size,
+                        _,
                     ) = ulysses_pad(
                         input_ids, position_ids, sp_size=self.parallel_helper.sp_size
                     )
@@ -419,7 +418,7 @@ class FSDPEngine(BaseHFEngine):
                     (
                         ulysses_input_ids,
                         ulysses_position_ids,
-                        ulysses_pad_size,
+                        _,
                     ) = ulysses_pad_and_slice_inputs(
                         input_ids,
                         position_ids,
@@ -433,7 +432,10 @@ class FSDPEngine(BaseHFEngine):
                     ulysses_position_ids = ulysses_position_ids.contiguous()
 
                 inputs = ulysses_prepare_inputs(
-                    padded_mb_input, ulysses_input_ids, ulysses_position_ids, self.parallel_helper.sp_size
+                    padded_mb_input,
+                    ulysses_input_ids,
+                    ulysses_position_ids,
+                    self.parallel_helper.sp_size,
                 )
             else:
                 inputs = padded_mb_input
@@ -536,7 +538,10 @@ class FSDPEngine(BaseHFEngine):
                     ulysses_position_ids = ulysses_position_ids.contiguous()
 
                 inputs = ulysses_prepare_inputs(
-                    padded_mb_input, ulysses_input_ids, ulysses_position_ids, self.parallel_helper.sp_size
+                    padded_mb_input,
+                    ulysses_input_ids,
+                    ulysses_position_ids,
+                    self.parallel_helper.sp_size,
                 )
             else:
                 inputs = padded_mb_input
