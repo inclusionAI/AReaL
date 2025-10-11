@@ -289,23 +289,23 @@ Configuration for reward/advantage normalization.
 
 Configuration for model optimization during training.
 
-| Parameter                 | Type    | Default      | Description                                                              |
-| ------------------------- | ------- | ------------ | ------------------------------------------------------------------------ |
-| `type`                    | string  | `"adam"`     | Optimizer type **Choices:** `adam`                                       |
-| `lr`                      | float   | `2e-05`      | Learning rate                                                            |
-| `weight_decay`            | float   | `0.05`       | Weight decay                                                             |
-| `beta1`                   | float   | `0.9`        | Adam beta1 parameter                                                     |
-| `beta2`                   | float   | `0.95`       | Adam beta2 parameter                                                     |
-| `eps`                     | float   | `1e-05`      | Adam epsilon parameter                                                   |
-| `min_lr_ratio`            | float   | `0.0`        | Minimum learning rate ratio after annealing                              |
-| `lr_scheduler_type`       | string  | `"constant"` | Learning rate scheduler type **Choices:** `linear`, `cosine`, `constant` |
-| `warmup_steps_proportion` | float   | `0.001`      | Proportion of training steps for warmup                                  |
-| `offload`                 | boolean | `False`      | Enable optimizer state offloading                                        |
-| `initial_loss_scale`      | float   | `4294967296` | Initial loss scaling factor                                              |
-| `min_loss_scale`          | float   | `1.0`        | Minimum loss scaling factor                                              |
-| `loss_scale_window`       | float   | `5`          | Window size for loss scaling adjustment                                  |
-| `hysteresis`              | integer | `2`          | Hysteresis (scaling factor) for loss scaling                             |
-| `gradient_clipping`       | float   | `1.0`        | Gradient clipping threshold                                              |
+| Parameter                 | Type    | Default      | Description                                                                                             |
+| ------------------------- | ------- | ------------ | ------------------------------------------------------------------------------------------------------- |
+| `type`                    | string  | `"adam"`     | Optimizer type. Adam_bf16 currently only supported FSDP Engine. **Choices:** `adam`, `sgd`, `adam_bf16` |
+| `lr`                      | float   | `2e-05`      | Learning rate                                                                                           |
+| `weight_decay`            | float   | `0.05`       | Weight decay                                                                                            |
+| `beta1`                   | float   | `0.9`        | Adam beta1 parameter                                                                                    |
+| `beta2`                   | float   | `0.95`       | Adam beta2 parameter                                                                                    |
+| `eps`                     | float   | `1e-05`      | Adam epsilon parameter                                                                                  |
+| `min_lr_ratio`            | float   | `0.0`        | Minimum learning rate ratio after annealing                                                             |
+| `lr_scheduler_type`       | string  | `"constant"` | Learning rate scheduler type **Choices:** `linear`, `cosine`, `constant`                                |
+| `warmup_steps_proportion` | float   | `0.001`      | Proportion of training steps for warmup                                                                 |
+| `offload`                 | boolean | `False`      | Enable optimizer state offloading                                                                       |
+| `initial_loss_scale`      | float   | `4294967296` | Initial loss scaling factor                                                                             |
+| `min_loss_scale`          | float   | `1.0`        | Minimum loss scaling factor                                                                             |
+| `loss_scale_window`       | float   | `5`          | Window size for loss scaling adjustment                                                                 |
+| `hysteresis`              | integer | `2`          | Hysteresis (scaling factor) for loss scaling                                                            |
+| `gradient_clipping`       | float   | `1.0`        | Gradient clipping threshold                                                                             |
 
 (section-ppo-actor)=
 

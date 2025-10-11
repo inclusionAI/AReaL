@@ -161,7 +161,10 @@ class OptimizerConfig:
 
     type: str = field(
         default="adam",
-        metadata={"help": "Optimizer type", "choices": ["adam"]},
+        metadata={
+            "help": "Optimizer type. Adam_bf16 currently only supported FSDP Engine.",
+            "choices": ["adam", "sgd", "adam_bf16"],
+        },
     )
     lr: float = field(default=2e-5, metadata={"help": "Learning rate"})
     weight_decay: float = field(default=0.05, metadata={"help": "Weight decay"})

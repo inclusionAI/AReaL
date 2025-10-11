@@ -225,22 +225,41 @@ class BaseHFEngine(TrainEngine):
         assert self.model is not None
         # Set up optimizer
         tik = time.perf_counter()
-        assert (
-            self.optimizer_config.type == "adam"
-        ), "Only AdamW optimizer is supported in this engine."
+        assert self.optimizer_config.type in [
+            "adam",
+            "adam_bf16",
+            "sgd",
+        ], "Only adam/adam_bf16/sgd optimizer is supported in this engine."
         lr = self.optimizer_config.lr
         weight_decay = self.optimizer_config.weight_decay
         beta1 = self.optimizer_config.beta1
         beta2 = self.optimizer_config.beta2
         eps = self.optimizer_config.eps
+        if self.optimizer_config.type == "adam":
+            self.optimizer = torch.optim.AdamW(
+                self.model.parameters(),
+                lr=lr,
+                weight_decay=weight_decay,
+                betas=(beta1, beta2),
+                eps=eps,
+                fused=True,
+            )
+        elif self.optimizer_config.type == "adam_bf16":
+            from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=lr,
-            weight_decay=weight_decay,
-            betas=(beta1, beta2),
-            eps=eps,
-        )
+            self.optimizer = AnyPrecisionAdamW(
+                self.model.parameters(),
+                lr=lr,
+                weight_decay=weight_decay,
+                betas=(beta1, beta2),
+                eps=eps,
+            )
+        else:
+            self.optimizer = torch.optim.SGD(
+                self.model.parameters(),
+                lr=lr,
+                weight_decay=weight_decay,
+            )
         total_train_steps = ft_spec.total_train_steps
         num_warmup_steps = int(
             self.optimizer_config.warmup_steps_proportion * total_train_steps

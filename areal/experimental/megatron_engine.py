@@ -217,13 +217,14 @@ class MegatronEngine(TrainEngine):
             return
         assert self.model is not None
 
-        assert (
-            self.optimizer_config.type == "adam"
-        ), "Only AdamW optimizer is supported in this engine."
+        assert self.optimizer_config.type in [
+            "adam",
+            "sgd",
+        ], "Only AdamW/sgd optimizer is supported in this engine."
 
         # Make megatron optimizer config
         mcore_opt_config = MCoreOptimizerConfig(
-            optimizer="adam",
+            optimizer=self.optimizer_config.type,
             lr=self.optimizer_config.lr,
             min_lr=self.optimizer_config.min_lr_ratio * self.optimizer_config.lr,
             weight_decay=self.optimizer_config.weight_decay,
