@@ -78,10 +78,6 @@ class InstallationValidator:
         """Test vLLM basic functionality."""
         from vllm import LLM, SamplingParams  # noqa
 
-        assert Version(get_version("vllm")) == Version(
-            "0.10.2"
-        ), f"vLLM version should be 0.10.2, found {Version(get_version('vllm'))}"
-
         print("  - vLLM core classes imported successfully")
 
     def test_sglang_functionality(self, sglang_module):
@@ -96,15 +92,15 @@ class InstallationValidator:
         )
         from sglang import Engine, launch_server  # noqa
 
-        assert Version(get_version("sglang")) >= Version(
-            "v0.5.2"
-        ), "SGLang version should be >= v0.5.2"
+        assert Version(get_version("sglang")) == Version(
+            "0.4.9.post2"
+        ), "SGLang version should be v0.4.9.post2"
         print("  - SGLang imported successfully")
 
     def test_transformers(self, transformers_module):
         assert Version(get_version("transformers")) == Version(
-            "4.56.1"
-        ), "transformers version should be 4.56.1"
+            "4.54.0"
+        ), "transformers version should be 4.54.0"
         print("  - transformers imported successfully")
 
     def validate_critical_dependencies(self):
@@ -166,7 +162,7 @@ class InstallationValidator:
             "transformer_engine", required=False, test_func=self.test_te_functionality
         )
         self.test_import("grouped_gemm", required=False)
-        self.test_import("flash_attn_3", required=False)
+        self.test_import("flashattn_hopper", required=False)
 
         # Optional utilities
         self.test_import("tensorboardX", required=False)

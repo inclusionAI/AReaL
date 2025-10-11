@@ -433,10 +433,7 @@ class FSDPEngine(BaseHFEngine):
                     ulysses_position_ids = ulysses_position_ids.contiguous()
 
                 inputs = ulysses_prepare_inputs(
-                    padded_mb_input,
-                    ulysses_input_ids,
-                    ulysses_position_ids,
-                    self.parallel_helper.sp_size,
+                    padded_mb_input, ulysses_input_ids, ulysses_position_ids, self.parallel_helper.sp_size
                 )
             else:
                 inputs = padded_mb_input
@@ -539,10 +536,7 @@ class FSDPEngine(BaseHFEngine):
                     ulysses_position_ids = ulysses_position_ids.contiguous()
 
                 inputs = ulysses_prepare_inputs(
-                    padded_mb_input,
-                    ulysses_input_ids,
-                    ulysses_position_ids,
-                    self.parallel_helper.sp_size,
+                    padded_mb_input, ulysses_input_ids, ulysses_position_ids, self.parallel_helper.sp_size
                 )
             else:
                 inputs = padded_mb_input
