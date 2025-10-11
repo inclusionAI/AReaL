@@ -80,7 +80,7 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
 ### Code style & patterns
 
 - **Typing & dataclasses**: Prefer explicit type hints and reuse existing dataclasses in
-  `areal/api/cli_args.py` when extending configs. Keep new configs dataclass-based so
+  `areal/api/cli_args.py` when extending configs. When adding new configuration options, extend an existing dataclass if your changes are backward-compatible or the new config is a strict superset of an existing one. Create a new dataclass if the config is conceptually distinct or would introduce breaking changes. Keep new configs dataclass-based so
   Hydra/CLI integration stays consistent.
 - **Imports**: Avoid wildcard imports; keep third-party vs internal imports separate
   (`isort` handles ordering). Place heavy optional deps inside functions to prevent
