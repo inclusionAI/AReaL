@@ -64,10 +64,13 @@ actor:
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
   dynamic_sampling: false
-  adv_norm:
+  reward_norm:
     mean_level: group
-    std_level: none
+    std_level: null
     group_size: ${gconfig.n_samples}
+  adv_norm:
+    mean_level: batch
+    std_level: batch
 
 ref:
   experiment_name: ${experiment_name}

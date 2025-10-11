@@ -142,8 +142,8 @@ Check the "Transferring Weights to Inference Servers" section in the
 If you want to stick with NCCL, try reducing the memory buffer size for weight chunking:
 
 ```python
-# In WeightUpdateMeta.from_fsdp_nccl() calls
-WeightUpdateMeta.from_fsdp_nccl(
+# In WeightUpdateMeta.from_fsdp_xccl() calls
+WeightUpdateMeta.from_fsdp_xccl(
     ...,
     weight_chunked_mem_mb = 512,  # Reduce from default (typically 1024+)
 )

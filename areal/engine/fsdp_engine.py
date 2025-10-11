@@ -8,6 +8,11 @@ from typing import Any, Callable, Dict, List
 import torch
 import torch.distributed as dist
 import torch.distributed.nn.functional as dist_F
+from peft import (
+    LoraConfig,
+    TaskType,
+    get_peft_model,
+)
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
@@ -39,6 +44,7 @@ from areal.utils.ulysses import (
     set_ulysses_sequence_parallel_group,
     ulysses_pad,
     ulysses_pad_and_slice_inputs,
+    ulysses_prepare_inputs,
 )
 
 
@@ -135,12 +141,21 @@ class FSDPEngine(BaseHFEngine):
             ulysses_sp_size=self.parallel_helper.sp_size,
         )
 
+        if self.config.use_lora:
+            self._apply_peft_wrapper()
+
         # sharding_strategy = ShardingStrategy.FULL_SHARD
         # Simple auto wrap policy
         self.cpu_offload = (
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
         tik = time.perf_counter()
+        # Prepare lora weights synchronization
+        if self.config.use_lora:
+            if dist.get_rank() == 0:
+                full_state = self.model.state_dict()
+            else:
+                full_state = {}
         # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
         parallelize_model(
             self.model,
@@ -151,6 +166,14 @@ class FSDPEngine(BaseHFEngine):
             cpu_offload=self.cpu_offload,
             wrap_policy=self.config.fsdp.wrap_policy,
         )
+        # Synchronize initialized lora weights
+        if self.config.use_lora:
+            fsdp2_load_full_state_dict(
+                self.model,
+                full_state,
+                self.cpu_offload,
+                tie_word_embeddings=self.model_config.tie_word_embeddings,
+            )
         self.logger.info(
             f"Applying FSDP2 with N-D parallelism for {time.perf_counter() - tik:.2f} seconds"
         )
@@ -224,8 +247,36 @@ class FSDPEngine(BaseHFEngine):
             tie_word_embeddings=self.model_config.tie_word_embeddings,
         )
 
+    def _apply_peft_wrapper(self):
+        config = self.config
+        if not config.target_modules or config.target_modules == ["all-linear"]:
+            target_modules = "all-linear"
+        else:
+            target_modules = config.target_modules
+        peft_config = {
+            "task_type": TaskType.CAUSAL_LM,
+            "r": config.lora_rank,
+            "lora_alpha": config.lora_alpha,
+            "target_modules": target_modules,
+            "bias": "none",
+        }
+        if self.config.peft_type == "lora":
+            peft_config = LoraConfig(**peft_config)
+        else:
+            raise NotImplementedError()
+
+        self.model.enable_input_require_grads()
+        self.model = get_peft_model(
+            self.model,
+            peft_config,
+            autocast_adapter_dtype=False,
+        )
+
+        if self.rank == 0:
+            self.model.print_trainable_parameters()
+
     def upload_weights(self, meta: WeightUpdateMeta):
-        if meta.type == "nccl":
+        if meta.type == current_platform.communication_backend:
             if not self.weight_update_group_initialized:
                 self._init_distributed_weight_update(meta)
             self._update_weights_from_distributed(meta.nccl_param_specs)
@@ -278,7 +329,9 @@ class FSDPEngine(BaseHFEngine):
                     tensor = param.data
                 if dist.get_rank() == 0:
                     self.logger.debug(f"Broadcasting {name} with shape {tensor.shape}")
-                    dist.broadcast(tensor, src=0, group=self.weight_update_group)
+                    dist.broadcast(
+                        tensor, src=0, group=self.weight_update_group, async_op=False
+                    )
                 del tensor
             dist.barrier(device_ids=[self.device.index])
             current_platform.synchronize()
@@ -348,7 +401,6 @@ class FSDPEngine(BaseHFEngine):
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
-            ulysses_pad_size = 0
             if self.parallel_helper.sp_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
@@ -357,7 +409,7 @@ class FSDPEngine(BaseHFEngine):
                     (
                         ulysses_input_ids,
                         ulysses_position_ids,
-                        ulysses_pad_size,
+                        _,
                     ) = ulysses_pad(
                         input_ids, position_ids, sp_size=self.parallel_helper.sp_size
                     )
@@ -366,7 +418,7 @@ class FSDPEngine(BaseHFEngine):
                     (
                         ulysses_input_ids,
                         ulysses_position_ids,
-                        ulysses_pad_size,
+                        _,
                     ) = ulysses_pad_and_slice_inputs(
                         input_ids,
                         position_ids,
@@ -379,10 +431,12 @@ class FSDPEngine(BaseHFEngine):
                 ):
                     ulysses_position_ids = ulysses_position_ids.contiguous()
 
-                inputs = padded_mb_input.copy()
-                inputs["input_ids"] = ulysses_input_ids
-                if ulysses_position_ids is not None:
-                    inputs["position_ids"] = ulysses_position_ids
+                inputs = ulysses_prepare_inputs(
+                    padded_mb_input,
+                    ulysses_input_ids,
+                    ulysses_position_ids,
+                    self.parallel_helper.sp_size,
+                )
             else:
                 inputs = padded_mb_input
 
@@ -390,13 +444,10 @@ class FSDPEngine(BaseHFEngine):
 
             logits = outputs.logits.squeeze(0)
             if self.parallel_helper.sp_size > 1:
-                # Gather and remove Ulysses padding
-                gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
-                logits = torch.cat(gathered_logits, dim=0)
-                logits = logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
-            # Remove original padding
-            logits = logits[:-pad_length] if pad_length > 0 else logits
-            loss = loss_fn(logits, mb_input)
+                loss = loss_fn(logits, inputs)
+            else:
+                logits = logits[:-pad_length] if pad_length > 0 else logits
+                loss = loss_fn(logits, mb_input)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
 
             # Scale loss for accumulation
@@ -486,10 +537,12 @@ class FSDPEngine(BaseHFEngine):
                 ):
                     ulysses_position_ids = ulysses_position_ids.contiguous()
 
-                inputs = padded_mb_input.copy()
-                inputs["input_ids"] = ulysses_input_ids
-                if ulysses_position_ids is not None:
-                    inputs["position_ids"] = ulysses_position_ids
+                inputs = ulysses_prepare_inputs(
+                    padded_mb_input,
+                    ulysses_input_ids,
+                    ulysses_position_ids,
+                    self.parallel_helper.sp_size,
+                )
             else:
                 inputs = padded_mb_input
 

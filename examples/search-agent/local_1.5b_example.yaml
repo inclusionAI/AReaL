@@ -64,10 +64,13 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
-  adv_norm:
+  reward_norm:
     mean_level: group
     std_level: group
     group_size: ${gconfig.n_samples}
+  adv_norm:
+    mean_level: batch
+    std_level: batch
   log_agent_stats: true
   log_agent_stats_keys:
     - num_input_tokens

@@ -38,6 +38,7 @@ parts:
   - caption: Algorithms
     chapters:
     - file: algorithms/grpo
+    - file: algorithms/rloo
     - file: algorithms/dapo
     - file: algorithms/dr.GRPO
     - file: algorithms/litePPO

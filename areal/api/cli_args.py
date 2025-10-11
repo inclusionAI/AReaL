@@ -10,6 +10,7 @@ import yaml
 uvloop.install()
 from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
+from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
 
 from areal.platforms import current_platform
@@ -23,13 +24,31 @@ class NormConfig:
     mean_level: str | None = field(
         default="batch",
         metadata={
-            "help": "Mean level for normalization. Choices: batch, group. Omit for no mean normalization."
+            "help": "Mean level for normalization. None for no mean normalization.",
+            "choices": ["batch", "group", None],
         },
+    )
+    mean_leave1out: bool = field(
+        default=False,
+        metadata={"help": "Whether to use leave-one-out average."},
     )
     std_level: str | None = field(
         default="batch",
         metadata={
-            "help": "Standard deviation level for normalization. Choices: batch, group. Omit for no std normalization."
+            "help": "Standard deviation level for normalization. None for no std normalization.",
+            "choices": ["batch", "group", None],
+        },
+    )
+    std_unbiased: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use unbiased standard deviation computation. Defaults to True (changed from False in v0.3.4)."
+        },
+    )
+    eps: float = field(
+        default=1e-5,
+        metadata={
+            "help": "The eps when dividing by standard deviation to avoid numerical issues."
         },
     )
     group_size: int = field(
@@ -266,6 +285,24 @@ class TrainEngineConfig:
     )
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
 
+    # Lora
+    use_lora: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to use LoRA. Only support FSDP. Note that should be enabled together with vLLM/SGLang."
+        },
+    )
+    lora_rank: int = field(default=32, metadata={"help": "lora rank"})
+    lora_alpha: int = field(default=16, metadata={"help": "lora alpha"})
+    target_modules: List[str] = field(
+        default_factory=list,
+        metadata={"help": "lora target_modules."},
+    )
+    peft_type: str = field(
+        default="lora",
+        metadata={"help": "peft method type. Only LoRA is supported for now."},
+    )
+
 
 @dataclass
 class PPOActorConfig(TrainEngineConfig):
@@ -340,6 +377,10 @@ class PPOActorConfig(TrainEngineConfig):
 
     # KL Control
     kl_ctl: float = field(default=0.1, metadata={"help": "KL divergence coefficient"})
+    kl_estimator: str = field(
+        default="k1",
+        metadata={"help": "KL divergence estimator", "choices": ["k1", "k2", "k3"]},
+    )
 
     # Asynchronous RL
     recompute_logprob: bool = field(
@@ -387,6 +428,111 @@ class PPOActorConfig(TrainEngineConfig):
 
 
 @dataclass
+class PPOCriticConfig(TrainEngineConfig):
+    """Configuration for PPO critic model, a subclass of a TrainEngine."""
+
+    ppo_n_minibatches: int = field(
+        default=4, metadata={"help": "Number of minibatches for each PPO update"}
+    )
+    eps_clip: float = field(
+        default=0.5, metadata={"help": "Clipping factor for value loss"}
+    )
+    mask_no_eos_with_zero: bool = field(
+        default=False,
+        metadata={
+            "help": "Mask truncated generations (no EOS token) and exclude from training"
+        },
+    )
+
+
+@dataclass
+class vLLMConfig:
+    """Configuration for vLLM runtime. Refer to:
+    https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
+    """
+
+    model: str = ""
+    seed: int = 1
+    skip_tokenizer_init: bool = False
+    enforce_eager: bool = True
+    dtype: str = "bfloat16"
+    distributed_executor_backend: str = "mp"
+    # original
+    max_num_seqs: int = 256
+    # kv_cache_type: str = "auto"
+    block_size: int = 16
+    swap_space: int = 4
+    cpu_offload_gb: float = 0
+    max_seq_len_to_capture: int = 32768
+    disable_sliding_window: bool = True
+    # NOTE: Defaults max_model_len to 32k because a larger value
+    # will enable chunked prefill in vLLM, which will cause
+    # evalution performance degeneration.
+    max_model_len: int | None = 32768
+    enable_chunked_prefill: bool = False
+    # NOTE: Setting enable_prefix_caching to False
+    # because it will reuse the block after
+    # model weights are updated. Using v0.7.2 reset_prefix_cache
+    # will fix this issue.
+    enable_prefix_caching: bool = False
+    gpu_memory_utilization: float = 0.9
+    worker_extension_cls: str = (
+        "areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"
+    )
+    enable_sleep_mode: bool = False
+    uvicorn_log_level: str = "warning"
+
+    @staticmethod
+    def build_args(
+        vllm_config: "vLLMConfig",
+        tp_size,
+        host,
+        port,
+        dist_init_addr: str | None = None,
+    ):
+        args: Dict = conf_as_dict(vllm_config)
+        args = dict(
+            host=host,
+            port=port,
+            # Model and tokenizer
+            tokenizer=vllm_config.model,
+            load_format="auto",
+            trust_remote_code=True,
+            tensor_parallel_size=tp_size,
+            **args,
+        )
+        return args
+
+    @staticmethod
+    def build_cmd(
+        vllm_config: "vLLMConfig",
+        tp_size,
+        host,
+        port,
+        dist_init_addr: str | None = None,
+    ):
+        args = vLLMConfig.build_args(
+            vllm_config=vllm_config,
+            tp_size=tp_size,
+            host=host,
+            port=port,
+            dist_init_addr=dist_init_addr,
+        )
+        # convert to flags
+        flags = []
+        for k, v in args.items():
+            if v is None or v is False or v == "":
+                continue
+            if v is True:
+                flags.append(f"--{k.replace('_','-')}")
+            elif isinstance(v, list):
+                flags.append(f"--{k.replace('_','-')} {' '.join(map(str, v))}")
+            else:
+                flags.append(f"--{k.replace('_','-')} {v}")
+        return f"python3 -m areal.thirdparty.vllm.areal_vllm_server {' '.join(flags)}"
+
+
+@dataclass
 class SGLangConfig:
     """Configuration for SGLang runtime. Refer to:
     https://github.com/sgl-project/sglang for detailed documentation.
@@ -396,7 +542,7 @@ class SGLangConfig:
     random_seed: int = 1
     skip_tokenizer_init: bool = False
     disable_cuda_graph: bool = False
-    disable_radix_cache: bool = False
+    disable_radix_cache: bool = True
     disable_cuda_graph_padding: bool = False
     enable_nccl_nvls: bool = False
     disable_outlines_disk_cache: bool = False
@@ -434,6 +580,14 @@ class SGLangConfig:
     kv_cache_dtype: str = "auto"
     dp_size: int = 1  # only used for dp attention
     ep_size: int = 1
+    # lora
+    enable_lora: bool | None = None
+    max_lora_rank: int | None = None
+    lora_target_modules: List[str] | None = None
+    lora_paths: List[str] | None = None
+    max_loaded_loras: int = 1
+    max_loras_per_batch: int = 1
+    lora_backend: str = "triton"
     # logging
     log_level: str = "warning"
     log_level_http: str | None = "warning"
@@ -492,8 +646,13 @@ class SGLangConfig:
         n_nodes: int = 1,
         node_rank: int = 0,
     ):
-
+        # Map "all-linear" to "all"
         args: Dict = conf_as_dict(sglang_config)
+        # Map "all-linear" to "all"
+        if "lora_target_modules" in args and args["lora_target_modules"]:
+            args["lora_target_modules"] = [
+                x.replace("-linear", "") for x in args["lora_target_modules"]
+            ]
         args = dict(
             host=host,
             port=port,
@@ -574,6 +733,12 @@ class InferenceEngineConfig:
     )
     request_retries: int = field(
         default=3, metadata={"help": "Number of retries for failed requests."}
+    )
+    pause_grace_period: float = field(
+        default=0.0,
+        metadata={
+            "help": "The grace period after calling /pause_generation. Wait until all requests have been dropped."
+        },
     )
 
 
@@ -913,6 +1078,7 @@ class BaseExperimentConfig:
         default="",
         metadata={"help": "Path to the tokenizer."},
     )
+    weight_update_mode: str = field(default="disk")
 
     train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
     valid_dataset: DatasetConfig | None = field(default=None)
@@ -923,6 +1089,7 @@ class BaseExperimentConfig:
     recover: RecoverConfig = field(default_factory=RecoverConfig)
 
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
+    vllm: vLLMConfig = field(default_factory=vLLMConfig)
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
 
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
@@ -967,6 +1134,13 @@ class GRPOConfig(BaseExperimentConfig):
     ref: PPOActorConfig = field(default_factory=PPOActorConfig)
 
 
+@dataclass
+class PPOConfig(GRPOConfig):
+    """Configuration for Proximal Policy Optimization (PPO) reinforcement learning experiments."""
+
+    critic: PPOCriticConfig = field(default_factory=PPOCriticConfig)
+
+
 def parse_cli_args(argv: List[str]):
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -982,6 +1156,8 @@ def parse_cli_args(argv: List[str]):
     assert config_file.exists(), f"Config file {config_file} does not exist."
     # hydra only recognize relative paths
     relpath = Path(os.path.relpath(str(config_file), Path(__file__).parent.absolute()))
+    if GlobalHydra.instance().is_initialized():
+        GlobalHydra.instance().clear()
     hydra_init(config_path=str(relpath.parent), job_name="app", version_base=None)
     cfg = hydra_compose(
         config_name=str(relpath.name).split(".yaml")[0],

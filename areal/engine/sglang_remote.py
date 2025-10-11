@@ -26,6 +26,7 @@ from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
+from areal.utils.launcher import wait_llm_server_addrs
 
 RID_CACHE_SIZE = 128
 
@@ -84,9 +85,26 @@ class RemoteSGLangEngine(InferenceEngine):
 
         if addr:
             self.addresses = addr if isinstance(addr, list) else [addr]
+            self.logger.info(f"Get server addresses from the `addr` argument.")
         else:
+            if (
+                self.config.experiment_name is not None
+                and self.config.trial_name is not None
+            ):
+                try:
+                    self.addresses = wait_llm_server_addrs(
+                        experiment_name=self.config.experiment_name,
+                        trial_name=self.config.trial_name,
+                        timeout=1,
+                    )
+                    self.logger.info(f"Get server addresses from name_resolve.")
+                except (TimeoutError, RuntimeError):
+                    # RuntimeError happens when name_resolve is not properly configured.
+                    pass
+        if not self.addresses and os.getenv("AREAL_LLM_SERVER_ADDRS"):
             # When addr is not provided, fallback to reading addrs from env var
-            self.addresses = os.getenv("AREAL_LLM_SERVER_ADDRS").split(",")
+            self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
+            self.logger.info(f"Get server addresses from environment variable.")
         if not self.addresses:
             raise RuntimeError(
                 "No configured SGLang servers. Please pass in SGLang server addresses by arguments "
@@ -99,6 +117,7 @@ class RemoteSGLangEngine(InferenceEngine):
         self.server_idx = random.randint(0, len(self.addresses) - 1)
         self.logger.info("Servers are all ready!")
         self.executor = ProcessPoolExecutor(max_workers=1)
+        self.lora_init = False
         self.workflow_executor.initialize(
             logger=self.logger,
             manager_addr=manager_addr,
@@ -165,6 +184,11 @@ class RemoteSGLangEngine(InferenceEngine):
             "return_logprob": True,
             "stream": False,
         }
+        if self.lora_init:
+            # Use the same lora name because we are unable to change
+            # the lora_name of an inflight request during weight update.
+            # If the lora_name mismatch, there'll be an error.
+            payload["lora_path"] = f"lora_1"
 
         # Make request
         start_time = time.perf_counter()
@@ -268,9 +292,14 @@ class RemoteSGLangEngine(InferenceEngine):
         for addr in self.addresses:
             res = requests.post(f"http://{addr}/pause_generation")
             res.raise_for_status()
+
+        # The above http request may require some time to be scheduled and executed.
+        # The following line waits until all requests are indeed dropped.
+        time.sleep(self.config.pause_grace_period)
+
         tik = time.perf_counter()
         fut = Future()
-        if meta.type == "nccl":
+        if meta.type == current_platform.communication_backend:
             fut = self.executor.submit(
                 update_weights_from_distributed,
                 meta,
@@ -293,6 +322,20 @@ class RemoteSGLangEngine(InferenceEngine):
                 raise RuntimeError(
                     f"Experiment and trial names must be set for disk-based weight updates."
                 )
+            endpoints = ["update_weights_from_disk"]
+            payloads = [dict(model_path=str(meta.path), abort_all_requests=True)]
+            lora_name = "lora_1"
+            if meta.use_lora:
+                endpoints = []
+                payloads = []
+                if self.lora_init:
+                    endpoints.append("unload_lora_adapter")
+                    payloads.append(dict(lora_name=lora_name))
+                else:
+                    self.lora_init = True
+                endpoints.append("load_lora_adapter")
+                payloads.append(dict(lora_name=lora_name, lora_path=str(meta.path)))
+
             fut = self.executor.submit(
                 update_weights_from_disk,
                 self.config.experiment_name,
@@ -302,6 +345,8 @@ class RemoteSGLangEngine(InferenceEngine):
                 meta.path,
                 self.config.request_retries,
                 self.config.request_timeout,
+                endpoints,
+                payloads,
             )
 
             def callback(fut):
@@ -386,6 +431,8 @@ def update_weights_from_disk(
     path,
     request_retries,
     request_timeout,
+    endpoints,
+    payloads,
 ):
     async def _fn():
         update_name = names.update_weights_from_disk(
@@ -402,19 +449,20 @@ def update_weights_from_disk(
             read_bufsize=1024 * 1024 * 10,
             connector=get_default_connector(),
         )
-        jobs = [
-            arequest_with_retry(
-                addr=addr,
-                session=session,
-                endpoint="/update_weights_from_disk",
-                payload=dict(model_path=str(path), abort_all_request=True),
-                method="POST",
-                max_retries=request_retries,
-                timeout=request_timeout,
-            )
-            for addr in addresses
-        ]
-        await asyncio.gather(*jobs)
+        for endpoint, payload in zip(endpoints, payloads):
+            jobs = [
+                arequest_with_retry(
+                    addr=addr,
+                    session=session,
+                    endpoint=f"/{endpoint}",
+                    payload=payload,
+                    method="POST",
+                    max_retries=request_retries,
+                    timeout=request_timeout,
+                )
+                for addr in addresses
+            ]
+            await asyncio.gather(*jobs)
         await session.close()
         return load_timestamp - save_timestamp
 

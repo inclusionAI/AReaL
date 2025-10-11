@@ -55,7 +55,7 @@ class BaseHFEngine(TrainEngine):
         self.model: torch.nn.Module
         self.optimizer: torch.optim.Optimizer
         self.tokenizer: PreTrainedTokenizerFast
-        self.processor: ProcessorMixin | None
+        self.processor: ProcessorMixin | None = None
         # huggingface model config
         self.model_config: PretrainedConfig
         self._version: int = 0
@@ -116,15 +116,13 @@ class BaseHFEngine(TrainEngine):
         return _get_default_group()
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
-        # Required by NCCL weight update group for SGLang
-        os.environ["NCCL_CUMEM_ENABLE"] = "0"
-        os.environ["NCCL_NVLS_ENABLE"] = "0"
+        backend = current_platform.communication_backend
         if not dist.is_initialized():
             # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
             # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
             # otherwise initializing the NCCL weight update group will be wrong!
             dist.init_process_group(
-                backend=current_platform.communication_backend,
+                backend=backend,
                 timeout=NCCL_DEFAULT_TIMEOUT,
             )
             self.own_global_group = True
@@ -155,7 +153,8 @@ class BaseHFEngine(TrainEngine):
             )
 
             tik = time.perf_counter()
-            with torch.device(current_platform.device_type):
+            device = current_platform.device_type
+            with torch.device(device):
                 model = AutoModelForImageTextToText.from_pretrained(
                     pretrained_model_name_or_path=self.config.path,
                     trust_remote_code=True,
@@ -166,6 +165,7 @@ class BaseHFEngine(TrainEngine):
                     disable_dropout_in_model(model)
         else:
             self.tokenizer = load_hf_tokenizer(self.config.path)
+            self.processor = None
             tik = time.perf_counter()
             with torch.device(current_platform.device_type):
                 model = self._create_llm_actor_or_critic()
@@ -316,6 +316,7 @@ class BaseHFEngine(TrainEngine):
 
     def prepare_mb_list(self, input_: Dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
+        input_ = input_.copy()
 
         if is_qwen2_vl_model(self.model_config.model_type):
             # Create the special t,h,w position IDs for qwen 2.5 VL

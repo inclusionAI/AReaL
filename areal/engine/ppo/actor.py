@@ -7,7 +7,11 @@ from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.utils import stats_tracker
-from areal.utils.data import Normalization, split_padded_tensor_dict_into_mb_list
+from areal.utils.data import (
+    KLEstimator,
+    Normalization,
+    split_padded_tensor_dict_into_mb_list,
+)
 from areal.utils.functional import (
     dynamic_sampling,
     gather_logprobs,
@@ -18,7 +22,6 @@ from areal.utils.functional import (
 
 
 class PPOActor:
-
     def __init__(self, config: PPOActorConfig, engine: TrainEngine):
         self.config = config
         self.engine = engine
@@ -30,6 +33,7 @@ class PPOActor:
         self.group_size = config.group_size
 
         self.kl_ctl = config.kl_ctl
+        self.kl_estimator = KLEstimator(config.kl_estimator)
 
         self.adv_norm = Normalization(config.adv_norm) if config.adv_norm else None
         self.reward_norm = (
@@ -49,7 +53,6 @@ class PPOActor:
         data: Dict[str, Any],
         temperature: Optional[float] = None,
     ) -> torch.Tensor | None:
-
         def calc_logprobs(logits, input_data):
             labels = torch.roll(input_data["input_ids"], shifts=-1, dims=-1)
             logprobs = gather_logprobs(logits, labels, temperature or 1.0)
@@ -71,7 +74,6 @@ class PPOActor:
 
         # Reward Penalty on length
         if self.config.overlong_reward_penalty:
-
             overlong_tokens = self.config.overlong_tokens
             overlong_penalty_factor = self.config.overlong_penalty_factor
 
@@ -110,7 +112,7 @@ class PPOActor:
         attn_mask = data["attention_mask"]
         seqlens = attn_mask.sum(-1).long()
         seq_no_eos_mask = seqlens == attn_mask.shape[1]
-        rewards = -self.kl_ctl * (old_logp - ref_logp)
+        rewards = -self.kl_ctl * self.kl_estimator(old_logp, ref_logp)
         kl_rewards = rewards.clone()
         # KL rewards at the next token after eos is zero.
         rewards[batch_indices, seqlens - 1] = 0
@@ -131,14 +133,19 @@ class PPOActor:
             torch.zeros(bs, dtype=torch.float32, device=values.device)
         ]
         lastgaelam = 0
+        nextvalues = values[:, max_seqlen - 1] * seq_no_eos_mask
         for t in reversed(range(max_seqlen - 1)):
-            nextvalues = values[:, t + 1]
-            if t == max_seqlen - 2:
-                nextvalues *= seq_no_eos_mask
             delta = rewards[:, t] + self.discount * nextvalues - values[:, t]
-            lastgaelam = delta + self.discount * self.gae_lambda * lastgaelam
+            newgaelam = delta + self.discount * self.gae_lambda * lastgaelam
+
+            # Skip tokens that do not contribute to the loss
+            mask = loss_mask[:, t]
+            nextvalues = nextvalues * (1 - mask) + values[:, t] * mask
+            lastgaelam = lastgaelam * (1 - mask) + newgaelam * mask
             advantages_reversed.append(lastgaelam)
+
         advantages = torch.stack(advantages_reversed[::-1], dim=1)
+        data["returns"] = advantages + values
 
         # Optionally perform advantage normalization.
         if self.adv_norm is not None:
@@ -153,7 +160,6 @@ class PPOActor:
         data["logprobs"] = old_logp
 
     def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
-
         if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
             data, sampling_stat = dynamic_sampling(data, self.group_size)
 
@@ -266,7 +272,6 @@ class PPOActor:
 
 
 class FSDPPPOActor(FSDPEngine):
-
     def __init__(self, config: PPOActorConfig):
         super().__init__(config)
         self.actor = PPOActor(config, self)
@@ -294,15 +299,18 @@ def grpo_loss_fn(
 ):
     """Loss function for actor step, all inputs should be splitted into
     pipeline micro batches, returns loss and logging stats."""
-    input_ids = input_data["input_ids"]
+    labels = input_data.get(
+        "rolled_input_ids",
+        torch.roll(input_data["input_ids"], shifts=-1, dims=-1),
+    )
     old_logp = input_data["logprobs"]
     advantages = input_data["advantages"]
-    loss_mask = input_data["loss_mask"].bool()
+    # Use unsliced/full loss_mask.
+    # Ulysses SP will slice loss_mask in ulysses_prepare_inputs().
+    loss_mask = input_data["full_loss_mask"].bool()
     prox_logp = input_data["prox_logp"]
 
-    logprobs, entropy = gather_logprobs_entropy(
-        logits, torch.roll(input_ids, shifts=-1, dims=-1), temperature
-    )
+    logprobs, entropy = gather_logprobs_entropy(logits, labels, temperature)
     entropy = entropy.detach()
     loss, stat = ppo_actor_loss_fn(
         logprobs=logprobs,
