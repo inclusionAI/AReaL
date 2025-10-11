@@ -35,7 +35,7 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
     from areal.reward.math_parser import process_results
 
     return int(process_results(completions, answer)[0])
-
+    
 
 def main(args):
     config, _ = load_expr_config(args, AEntGRPOConfig)
@@ -149,7 +149,7 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     recover_handler = RecoverHandler(config.recover, ft_spec)

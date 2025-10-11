@@ -11,9 +11,13 @@ from areal.engine.ppo.actor import PPOActor
 from areal.utils import stats_tracker
 from areal.utils.data import split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import (
-    ppo_actor_loss_fn,
+    dynamic_sampling,
+    gather_logprobs,
     gather_logprobs_entropy,
+    ppo_actor_loss_fn,
+    reward_overlong_penalty,
 )
+
 
 from recipe.AEnt.aent_args import AEntPPOActorConfig
 from recipe.AEnt.functional import gather_logprobs_clamped_entropy
@@ -35,6 +39,9 @@ class AEntPPOActor(PPOActor):
             self.warmup_steps = config.aent.warmup_steps
 
     def aent_ppo_update(self, data: TensorDict, global_step: int) -> List[Dict[str, float]]:
+        if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
+            data, sampling_stat = dynamic_sampling(data, self.group_size)
+
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]
@@ -46,6 +53,15 @@ class AEntPPOActor(PPOActor):
             "correct_n_seqs": (reward_score > 0).bool(),
             "incorrect_n_seqs": (reward_score <= 0).bool(),
         }
+        if self.config.log_agent_stats:
+            assert (
+                "begin_of_trajectory" in data
+            ), "'begin_of_trajectory' is expected to log agent statistics"
+            assert (
+                len(self.config.log_agent_stats_keys) > 0
+            ), "`log_agent_stats_keys` should not be empty when log_agent_stats=True"
+            agent_denominator = (data["begin_of_trajectory"] > 0).bool()
+            result_denominators["agent"] = agent_denominator
         global_denominators = dict(
             n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
             n_tokens=torch.ones_like(loss_mask, dtype=torch.bool),
@@ -89,7 +105,15 @@ class AEntPPOActor(PPOActor):
             scalars["behav_imp_weight_cap"] = self.config.behav_imp_weight_cap
         stats_tracker.scalar(**scalars)
 
-        global_stats = stats_tracker.export(reduce_group=self.engine.parallelism_group)
+        if self.config.log_agent_stats:
+            stats_tracker.stat(
+                **{k: data[k].float() for k in self.config.log_agent_stats_keys},
+                denominator="agent",
+            )
+
+        global_stats = stats_tracker.export(
+            reduce_group=self.engine.data_parallel_group
+        )
         for k in global_denominators:
             keys = list(global_stats.keys())
             for k2 in keys:
@@ -113,6 +137,7 @@ class AEntPPOActor(PPOActor):
                     aent_grpo_loss_fn,
                     temperature=self.temperature,
                     eps_clip=self.config.eps_clip,
+                    eps_clip_higher=self.config.eps_clip_higher,
                     entropy_coeff=self.entropy_coeff,
                     entropy_clamp=self.entropy_clamp,
                     c_clip=self.config.c_clip,
@@ -122,14 +147,14 @@ class AEntPPOActor(PPOActor):
             )
             stats_tracker.scalar(**train_stat)
             all_stats.append(
-                stats_tracker.export(reduce_group=self.engine.parallelism_group)
+                stats_tracker.export(reduce_group=self.engine.data_parallel_group)
             )
             ent_trace.append(float(all_stats[-1]['grpo_actor/entropy/avg']))
         if self.adaptive_coeff and global_step > self.warmup_steps:
             entropy = sum(ent_trace)/len(ent_trace)
             self.entropy_coeff -= self.coeff_lr*(min(0,entropy-self.entropy_low)+max(0,entropy-self.entropy_high))
             self.entropy_coeff = min(max(self.entropy_coeff, self.coeff_box_low), self.coeff_box_high)
-
+            
         all_stats[0].update(global_stats)
         return all_stats
 
@@ -151,6 +176,7 @@ class FSDPAEntPPOActor(FSDPEngine):
     def aent_ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
         return self.actor.aent_ppo_update(*args, **kwargs)
 
+
 # AEnt regularized grpo loss
 def aent_grpo_loss_fn(
     logits: torch.Tensor,
@@ -159,12 +185,14 @@ def aent_grpo_loss_fn(
     eps_clip: float,
     entropy_coeff: float,
     entropy_clamp: float,
+    eps_clip_higher: float | None,
     c_clip: float | None,
     behav_imp_weight_cap: float | None,
 ):
-    """Loss function for actor step, all inputs should be split into
-    pipeline micro batches, returns loss and logging stats."""
-    input_ids = input_data["input_ids"]
+    labels = input_data.get(
+        "rolled_input_ids",
+        torch.roll(input_data["input_ids"], shifts=-1, dims=-1),
+    )
     old_logp = input_data["logprobs"]
     advantages = input_data["advantages"]
     loss_mask = input_data["loss_mask"].bool()
@@ -172,17 +200,18 @@ def aent_grpo_loss_fn(
 
     if entropy_clamp>0:
         logprobs, clamped_entropy = gather_logprobs_clamped_entropy(
-            logits, torch.roll(input_ids, shifts=-1, dims=-1), entropy_clamp, temperature
+            logits, labels, entropy_clamp, temperature
         )
     else:
         logprobs, clamped_entropy = gather_logprobs_entropy(
-            logits, torch.roll(input_ids, shifts=-1, dims=-1), temperature
+            logits, labels, temperature
         )
-    ppo_loss, stat = ppo_actor_loss_fn(
+    loss, stat = ppo_actor_loss_fn(
         logprobs=logprobs,
         old_logprobs=old_logp,
         advantages=advantages,
         eps_clip=eps_clip,
+        eps_clip_higher=eps_clip_higher,
         loss_mask=loss_mask,
         c_clip=c_clip,
         proximal_logprobs=prox_logp,
@@ -205,7 +234,7 @@ def aent_grpo_loss_fn(
         approx_kl=stat["approx_kl"],
         new_logp=logprobs.detach(),
         old_logp=old_logp,
-        entropy=clamped_entropy.detach().float(),
+        entropy=entropy.float(),
         actor_loss=stat["loss"],
         clip_ratio=stat["clip_mask"].float(),
         dual_clip_ratio=stat["dual_clip_mask"].float(),
@@ -235,6 +264,7 @@ def aent_grpo_loss_fn(
         denominator="clipped_tokens",
     )
     return loss
+
 
 def clamped_entropy_loss_fn(clamped_entropy: torch.Tensor, loss_mask: torch.Tensor):
     loss_mask_count = loss_mask.count_nonzero() or 1

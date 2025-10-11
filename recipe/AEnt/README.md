@@ -1,5 +1,8 @@
 ## Overview
 
+Last updated: Oct 11,2025
+Doc Author: Han Shen
+
 This is an AReaL-based implementation of [AEnt](https://www.arxiv.org/pdf/2509.03493), a clamped entropy regularization method for LLM-RL algorithms.
 
 Entropy regularization has been a successful method for robotic and games RL, while it offers weak gains for LLM RL. It is argued in the [paper](https://www.arxiv.org/pdf/2509.03493) that entropy regularization suffers from LLM tasks' sparse optimality and the immense response set. 
@@ -88,6 +91,16 @@ if self.adaptive_coeff and global_step > self.warmup_steps:
             self.entropy_coeff = min(max(self.entropy_coeff, self.coeff_box_low), self.coeff_box_high)
 ```
 
+## Toy example
+
+We recommend to change the parameter within the configuration file
+(i.e.gsm8k_aent_grpo.yaml).
+
+| Backend   | CMD                                                                                                                                            |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **local** | `python3 -m areal.launcher.local recipe/AEnt/gsm8k_aent_grpo.py --config recipe/AEnt/configs/gsm8k_aent_grpo.yaml --<other_args_to_overwrite>` |
+
+
 ## Citation
 ```bibtex
 @article{shen2025entropy,
@@ -99,7 +112,7 @@ if self.adaptive_coeff and global_step > self.warmup_steps:
 ```
 
 <!-- 
-## Toy run
+## Baseline
 
 Fine-tuning Qwen2.5-1.5b-Instruct on GSM8K. Results are last verified for the implementation based on **commit #298**.
 
