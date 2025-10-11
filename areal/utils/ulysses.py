@@ -225,7 +225,9 @@ def ulysses_pad_and_slice_inputs(
     return input_ids_rmpad, position_ids_rmpad, pad_size
 
 
-def ulysses_prepare_inputs(padded_mb_input, ulysses_input_ids, ulysses_position_ids, sp_world_size):
+def ulysses_prepare_inputs(
+    padded_mb_input, ulysses_input_ids, ulysses_position_ids, sp_world_size
+):
     # init inputs with padded_mb_input and ulysses_inputs
     inputs = padded_mb_input.copy()
     inputs["input_ids"] = ulysses_input_ids
