@@ -19,22 +19,22 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
 
 ## Repository map
 
-| Path                       | Purpose                                                                        |
-| -------------------------- | ------------------------------------------------------------------------------ |
-| `areal/api/`               | Core contracts: workflows, engines, CLI configs, IO structs, scheduler APIs.   |
-| `areal/workflow/`          | Rollout/agent implementations (`multi_turn`, `rlvr`, `vision_rlvr`).           |
-| `areal/engine/`            | Training backends (FSDP2, Megatron, PPO actors) and inference adapters.        |
-| `areal/dataset/`           | Dataset loaders & utilities that feed rollouts.                                |
-| `areal/reward/`            | Built-in reward functions plus helpers (math parsing, CLEVR counting).         |
-| `areal/utils/`             | Logging (`stats_tracker`), tensor helpers, recovery, evaluation, device utils. |
-| `examples/`                | Runnable entrypoints for math, multi-turn, RLHF, VLM, search agents.           |
-| `areal/launcher/`          | Entry scripts for local, Ray, and Slurm orchestration.                         |
-| `docs/`                    | Published docs (https://inclusionai.github.io/AReaL/).                         |
-| `realhf/`                  | Legacy integrations retained for reference (read-only).                        |
-| `functioncall/`            | Tool-calling utilities reused in workflows.                                    |
-| `areal/platforms/`         | Cluster abstractions used by advanced agents.                                  |
-| `tests/`                   | Pytest suites (many require GPUs or mocked engines).                           |
-| `Dockerfile`, `Makefile`   | Container recipe and helper tasks (`make docs`, `make lint`).                  |
+| Path                     | Purpose                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------ |
+| `areal/api/`             | Core contracts: workflows, engines, CLI configs, IO structs, scheduler APIs.   |
+| `areal/workflow/`        | Rollout/agent implementations (`multi_turn`, `rlvr`, `vision_rlvr`).           |
+| `areal/engine/`          | Training backends (FSDP2, Megatron, PPO actors) and inference adapters.        |
+| `areal/dataset/`         | Dataset loaders & utilities that feed rollouts.                                |
+| `areal/reward/`          | Built-in reward functions plus helpers (math parsing, CLEVR counting).         |
+| `areal/utils/`           | Logging (`stats_tracker`), tensor helpers, recovery, evaluation, device utils. |
+| `examples/`              | Runnable entrypoints for math, multi-turn, RLHF, VLM, search agents.           |
+| `areal/launcher/`        | Entry scripts for local, Ray, and Slurm orchestration.                         |
+| `docs/`                  | Published docs (https://inclusionai.github.io/AReaL/).                         |
+| `realhf/`                | Legacy integrations retained for reference (read-only).                        |
+| `functioncall/`          | Tool-calling utilities reused in workflows.                                    |
+| `areal/platforms/`       | Cluster abstractions used by advanced agents.                                  |
+| `tests/`                 | Pytest suites (many require GPUs or mocked engines).                           |
+| `Dockerfile`, `Makefile` | Container recipe and helper tasks (`make docs`, `make lint`).                  |
 
 ### Where to find things
 
@@ -82,8 +82,11 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
 ### Code style & patterns
 
 - **Typing & dataclasses**: Prefer explicit type hints and reuse existing dataclasses in
-  `areal/api/cli_args.py` when extending configs. When adding new configuration options, extend an existing dataclass if your changes are backward-compatible or the new config is a strict superset of an existing one. Create a new dataclass if the config is conceptually distinct or would introduce breaking changes. Keep new configs dataclass-based so
-  Hydra/CLI integration stays consistent.
+  `areal/api/cli_args.py` when extending configs. When adding new configuration options,
+  extend an existing dataclass if your changes are backward-compatible or the new config
+  is a strict superset of an existing one. Create a new dataclass if the config is
+  conceptually distinct or would introduce breaking changes. Keep new configs
+  dataclass-based so Hydra/CLI integration stays consistent.
 - **Imports**: Avoid wildcard imports; keep third-party vs internal imports separate
   (`isort` handles ordering). Place heavy optional deps inside functions to prevent
   import-time side effects.
@@ -194,10 +197,14 @@ skipped.
 
 ## Known constraints & best practices
 
-- Large downloads: models/datasets fetched via Hugging Face; ensure cache directories point to shared storage in multi-node runs.
-  - `HF_HOME` sets the root directory for all Hugging Face cache data (models, datasets, etc.).
-  - `TRANSFORMERS_CACHE` (if set) overrides the model cache location only, and takes precedence over `HF_HOME` for model files.
-  - Prefer setting `HF_HOME` for a unified cache; use `TRANSFORMERS_CACHE` only if you need to separate model files from other cache data.
+- Large downloads: models/datasets fetched via Hugging Face; ensure cache directories
+  point to shared storage in multi-node runs.
+  - `HF_HOME` sets the root directory for all Hugging Face cache data (models, datasets,
+    etc.).
+  - `TRANSFORMERS_CACHE` (if set) overrides the model cache location only, and takes
+    precedence over `HF_HOME` for model files.
+  - Prefer setting `HF_HOME` for a unified cache; use `TRANSFORMERS_CACHE` only if you
+    need to separate model files from other cache data.
 - Async training relies on weight versioning—never mutate versions manually; call
   `set_version`/`update_weights` like the examples.
 - Avoid blocking operations inside workflows; perform heavy I/O via `aiofiles` or
@@ -222,8 +229,9 @@ skipped.
 - **PR titles**: Mirror the main change using the same prefix style, e.g.,
   `feat: add discounted reward stats tracker hook`.
 - **PR checklist**:
-  - Summarize the change, highlight risks (e.g., breaking changes, performance impacts, compatibility issues), list test commands run (or clearly state why
-    tests are skipped).
+  - Summarize the change, highlight risks (e.g., breaking changes, performance impacts,
+    compatibility issues), list test commands run (or clearly state why tests are
+    skipped).
   - Link related documentation updates; mention resource requirements for GPU-bound
     tests.
   - Add screenshots or log snippets when touching user-facing outputs.
