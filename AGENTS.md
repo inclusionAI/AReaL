@@ -192,8 +192,10 @@ skipped.
 
 ## Known constraints & best practices
 
-- Large downloads: models/datasets fetched via Hugging Face; ensure `HF_HOME` (or
-  `TRANSFORMERS_CACHE`) points to shared storage in multi-node runs.
+- Large downloads: models/datasets fetched via Hugging Face; ensure cache directories point to shared storage in multi-node runs.
+  - `HF_HOME` sets the root directory for all Hugging Face cache data (models, datasets, etc.).
+  - `TRANSFORMERS_CACHE` (if set) overrides the model cache location only, and takes precedence over `HF_HOME` for model files.
+  - Prefer setting `HF_HOME` for a unified cache; use `TRANSFORMERS_CACHE` only if you need to separate model files from other cache data.
 - Async training relies on weight versioning—never mutate versions manually; call
   `set_version`/`update_weights` like the examples.
 - Avoid blocking operations inside workflows; perform heavy I/O via `aiofiles` or
