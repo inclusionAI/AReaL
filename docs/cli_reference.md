@@ -291,7 +291,7 @@ Configuration for model optimization during training.
 
 | Parameter                 | Type    | Default      | Description                                                                                             |
 | ------------------------- | ------- | ------------ | ------------------------------------------------------------------------------------------------------- |
-| `type`                    | string  | `"adam"`     | Optimizer type. Adam_bf16 currently only supported FSDP Engine. **Choices:** `adam`, `sgd`, `adam_bf16` |
+| `type`                    | string  | `"adam"`     | Optimizer type. adam_bf16 currently only supported FSDP Engine. **Choices:** `adam`, `sgd`, `adam_bf16` |
 | `lr`                      | float   | `2e-05`      | Learning rate                                                                                           |
 | `weight_decay`            | float   | `0.05`       | Weight decay                                                                                            |
 | `beta1`                   | float   | `0.9`        | Adam beta1 parameter                                                                                    |
