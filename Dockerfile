@@ -15,9 +15,7 @@ RUN apt install -y net-tools kmod ccache \
 
 RUN pip config set global.index-url https://pypi.antfin-inc.com/simple && pip config set global.extra-index-url "" && pip install -U pip setuptools uv
 
-
 ENV NVTE_WITH_USERBUFFERS=1 NVTE_FRAMEWORK=pytorch MPI_HOME=/usr/local/mpi TORCH_CUDA_ARCH_LIST="8.0 8.9 9.0 9.0a" MAX_JOBS=64
-
 
 ##############################################################
 # The following block is adapted from slime's Dockerfile
@@ -58,7 +56,6 @@ RUN git clone https://github.com/NVIDIA/Megatron-LM.git --recursive && \
     pip install -e .
 ##############################################################
 
-
 # cugae
 RUN git clone https://github.com/garrett4wade/cugae && pip install -e /cugae --no-build-isolation --verbose
 
@@ -84,10 +81,3 @@ RUN apt-get --purge remove -y --allow-change-held-packages libcudnn9* libcudnn9-
 RUN git clone https://github.com/Dao-AILab/flash-attention -b v2.8.1
 RUN pip install -v ./flash-attention/hopper/
 COPY ./flash-attention/hopper/flash_attn_interface.py /usr/local/lib/python3.12/dist-packages/flash_attn_3/
-
-
-
-
-
-
-
