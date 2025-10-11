@@ -140,7 +140,7 @@ dependencies = [
 dev = [
     "pytest",
     "ipython",
-    "black==25.1.0",
+    "black==25.9.0",
     "isort==6.0.1",
     "clang-format==19.1.7",
     "sh~=2.2",
