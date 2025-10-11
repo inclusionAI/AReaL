@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+import copy
 from dataclasses import dataclass, field
 
 import torch.distributed as dist
@@ -74,7 +75,7 @@ class MultiTurnMathAgent:
         self.async_reward_fn = AsyncRewardWrapper(gsm8k_reward_fn)
 
     async def run_agent(self, data, client: ArealOpenAI):
-        messages = data["messages"]
+        messages = copy.deepcopy(data["messages"])
         num_turns_left = self.max_turns
         completions = []
         while num_turns_left > 0:
