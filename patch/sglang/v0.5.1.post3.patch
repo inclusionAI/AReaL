@@ -424,10 +424,10 @@ index fcb45b947..e354e7a47 100644
              # (param_name, shard_name, shard_id)
 diff --git a/python/sglang/srt/models/utils/load.py b/python/sglang/srt/models/utils/load.py
 new file mode 100644
-index 000000000..f3cb03012
+index 000000000..035835a0f
 --- /dev/null
 +++ b/python/sglang/srt/models/utils/load.py
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,170 @@
 +import json
 +import os
 +from collections import defaultdict
@@ -444,6 +444,78 @@ index 000000000..f3cb03012
 +
 +def get_actual_hf_path(weight_path: str):
 +    return os.path.dirname(cached_file(weight_path, "config.json"))
++
++
++def make_filename_bins(
++    local_to_file_map: Dict[str, List[str]],
++) -> Tuple[List[List[str]], List[List[str]]]:
++    # Allocate local weight name into bins, where each bin access independent files
++    # Then we can use multiple threads to concurrently load each bin's parameters.
++    # This function has a complexity of O(F + L²)
++    # where F = total number of files, L = number of local names
++    if not local_to_file_map:
++        return [], []
++
++    local_names = list(local_to_file_map.keys())
++    n = len(local_names)
++
++    # Convert file lists to sets for O(1) lookups and create file-to-locals mapping
++    local_to_files = {name: set(local_to_file_map[name]) for name in local_names}
++    file_to_locals = defaultdict(set)
++    for local_name, files in local_to_files.items():
++        for file in files:
++            file_to_locals[file].add(local_name)
++
++    # Union-Find with path compression and union by rank
++    parent = list(range(n))
++    rank = [0] * n
++
++    def find(x):
++        if parent[x] != x:
++            parent[x] = find(parent[x])  # Path compression
++        return parent[x]
++
++    def union(x, y):
++        root_x, root_y = find(x), find(y)
++        if root_x == root_y:
++            return
++
++        # Union by rank
++        if rank[root_x] < rank[root_y]:
++            root_x, root_y = root_y, root_x
++        parent[root_y] = root_x
++        if rank[root_x] == rank[root_y]:
++            rank[root_x] += 1
++
++    # Create name-to-index mapping for O(1) lookups
++    name_to_idx = {name: i for i, name in enumerate(local_names)}
++
++    # Union locals that share files - O(F) where F is total number of files
++    for locals_sharing_file in file_to_locals.values():
++        if len(locals_sharing_file) > 1:
++            locals_list = list(locals_sharing_file)
++            first_idx = name_to_idx[locals_list[0]]
++            for local_name in locals_list[1:]:
++                union(first_idx, name_to_idx[local_name])
++
++    # Group by root - O(L)
++    root_to_group = defaultdict(list)
++    for i, name in enumerate(local_names):
++        root_to_group[find(i)].append(name)
++
++    # Build result groups - O(L + F)
++    grouped_local_names = []
++    grouped_filenames = []
++
++    for group in root_to_group.values():
++        grouped_local_names.append(group)
++        # Use set union to merge files from all locals in group
++        all_files = set()
++        for local_name in group:
++            all_files.update(local_to_files[local_name])
++        grouped_filenames.append(list(all_files))
++
++    return grouped_local_names, grouped_filenames
 +
 +
 +def load_weights_with_hf_path_fast(
@@ -502,49 +574,7 @@ index 000000000..f3cb03012
 +            if filename not in local_to_file_map[local_name]:
 +                local_to_file_map[local_name].add(filename)
 +
-+    # Use union find to create local_name groups with no file conflicts
-+    parent = {name: name for name in local_names}
-+    weight_groups = {name: [name] for name in local_names}
-+    file_groups = {name: local_to_file_map[name] for name in local_names}
-+    roots = [name for name in local_names]
-+    ranks = {name: 0 for name in local_names}
-+
-+    def find(x):
-+        if parent[x] != x:
-+            parent[x] = find(parent[x])
-+        return parent[x]
-+
-+    def union(x, y):
-+        root_x = find(x)
-+        root_y = find(y)
-+        if root_x != root_y:
-+            if ranks[root_x] > ranks[root_y]:
-+                parent[root_y] = root_x
-+                roots.remove(root_y)
-+            elif ranks[root_x] < ranks[root_y]:
-+                parent[root_x] = root_y
-+                roots.remove(root_x)
-+            else:
-+                parent[root_y] = root_x
-+                roots.remove(root_y)
-+                ranks[root_x] += 1
-+            # Merge file groups
-+            file_groups[root_x].update(file_groups[root_y])
-+            file_groups[root_y] = file_groups[root_x]
-+            # Merge weight groups
-+            weight_groups[root_x].extend(weight_groups[root_y])
-+            weight_groups[root_y] = weight_groups[root_x]
-+            return True
-+        return False
-+
-+    for i, weight1 in enumerate(local_names):
-+        for weight2 in local_names[i + 1 :]:
-+            # If two weights share any files, they conflict
-+            if any(fn in file_groups[weight1] for fn in file_groups[weight2]):
-+                union(weight1, weight2)
-+
-+    grouped_local_names = [weight_groups[root] for root in roots]
-+    grouped_filenames = [list(file_groups[root]) for root in roots]
++    grouped_local_names, grouped_filenames = make_filename_bins(local_to_file_map)
 +
 +    if max_workers is None:
 +        # assume all GPUs are used by SGLang servers
