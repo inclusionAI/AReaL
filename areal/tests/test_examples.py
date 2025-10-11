@@ -116,7 +116,14 @@ def test_countdown_example(tmp_path_factory):
     # generate countdown dataset
     shutil.copy("examples/countdown/countdown.py", tmp_path)
     subprocess.run(
-        ["python3", "countdown.py", "--num_samples=10000", "--eval_size=100"],
+        [
+            "python3",
+            "countdown.py",
+            "--num_samples=10000",
+            "--eval_size=100",
+            "--tokenizer_path",
+            model_path,
+        ],
         cwd=tmp_path,
         check=True,
     )
