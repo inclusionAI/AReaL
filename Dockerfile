@@ -35,10 +35,6 @@ RUN NVCC_APPEND_FLAGS="--threads 4" \
   pip -v install --disable-pip-version-check --no-cache-dir \
   --no-build-isolation \
   --config-settings "--build-option=--cpp_ext --cuda_ext --parallel 8" git+https://github.com/NVIDIA/apex.git
-RUN cd /apex && NVCC_APPEND_FLAGS="--threads 4" \
-  pip -v install --disable-pip-version-check --no-cache-dir \
-  --no-build-isolation \
-  --config-settings "--build-option=--cpp_ext --cuda_ext --parallel 8" .
 
 # transformer engine, we install with --no-deps to avoid installing torch and torch-extensions
 RUN pip install pybind11
