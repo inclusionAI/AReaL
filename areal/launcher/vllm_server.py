@@ -4,6 +4,7 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from typing import Optional
 
 import requests
@@ -24,18 +25,25 @@ from realhf.base import logging, name_resolve, names
 logger = logging.getLogger("vLLMServer Wrapper")
 
 
-def launch_server_cmd(command: str) -> subprocess.Popen:
+def launch_server_cmd(command: str, custom_env: dict | None = None) -> subprocess.Popen:
     """
     Execute a shell command and return its process handle.
     """
     # Replace newline continuations and split the command string.
     command = command.replace("\\\n", " ").replace("\\", " ")
+    logger.info(f"Launch command: {command}")
     parts = command.split()
     _env = os.environ.copy()
     # To avoid DirectoryNotEmpty error caused by triton
     triton_cache_path = _env.get("TRITON_CACHE_PATH", TRITON_CACHE_PATH)
     unique_triton_cache_path = os.path.join(triton_cache_path, str(uuid.uuid4()))
     _env["TRITON_CACHE_PATH"] = unique_triton_cache_path
+    # To avoid vllm compile cache conflict
+    vllm_cache_path = _env.get("VLLM_CACHE_ROOT")
+    if vllm_cache_path:
+        _env["VLLM_CACHE_ROOT"] = os.path.join(vllm_cache_path, str(uuid.uuid4()))
+    if custom_env is not None:
+        _env.update(custom_env)
     return subprocess.Popen(
         parts,
         text=True,
@@ -94,13 +102,11 @@ class vLLMServerWrapper:
         device_control_env_var = current_platform.device_control_env_var
         if device_control_env_var in os.environ:
             visible = os.getenv(device_control_env_var).split(",")
-            ordered = ",".join(sorted(visible, key=int))
-            os.environ[device_control_env_var] = ordered
             n_visible_devices = len(visible)
             n_servers_per_proc = max(1, n_visible_devices // gpus_per_server)
-            server_idx_offset = int(visible[0]) // gpus_per_server
+            server_idx_offset = min(list(map(int, visible))) // gpus_per_server
         else:
-            n_visible_devices = self.n_gpus_per_node
+            visible = [str(i) for i in range(self.n_gpus_per_node)]
             n_servers_per_proc = n_servers_per_node
             server_idx_offset = 0
 
@@ -109,8 +115,9 @@ class vLLMServerWrapper:
         ports_per_server = 40000 // n_servers_per_node
         launch_server_args = []
         server_addresses = []
-        for server_local_idx in range(
-            server_idx_offset, server_idx_offset + n_servers_per_proc
+        base_random_seed = self.config.seed
+        for j, server_local_idx in enumerate(
+            range(server_idx_offset, server_idx_offset + n_servers_per_proc)
         ):
             port_range = (
                 server_local_idx * ports_per_server + 10000,
@@ -121,15 +128,21 @@ class vLLMServerWrapper:
             dist_init_addr = f"localhost:{dist_init_port}"
             host_ip = gethostip()
 
-            (server_local_idx - server_idx_offset) * gpus_per_server
+            custom_env = {
+                device_control_env_var: ",".join(
+                    visible[j * gpus_per_server : (j + 1) * gpus_per_server]
+                )
+            }
+            config = deepcopy(self.config)
+            config.seed = base_random_seed + server_local_idx
             cmd = vLLMConfig.build_cmd(
-                self.config,
+                config,
                 tp_size=self.allocation_mode.gen.tp_size,
                 host=host_ip,
                 port=server_port,
                 dist_init_addr=dist_init_addr,
             )
-            launch_server_args.append((cmd, host_ip, server_port))
+            launch_server_args.append((cmd, host_ip, server_port, custom_env))
             server_addresses.append(f"http://{host_ip}:{server_port}")
 
         with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
@@ -159,8 +172,10 @@ class vLLMServerWrapper:
 
             time.sleep(1)
 
-    def launch_one_server(self, cmd, host_ip, server_port):
-        server_process = launch_server_cmd(cmd)
+    def launch_one_server(
+        self, cmd: str, host_ip: str, server_port: int, custom_env: dict | None = None
+    ):
+        server_process = launch_server_cmd(cmd, custom_env)
         wait_for_server(f"http://{host_ip}:{server_port}")
         name = names.gen_servers(self.experiment_name, self.trial_name)
         name_resolve.add_subentry(name, f"{host_ip}:{server_port}")

@@ -10,6 +10,7 @@ import yaml
 uvloop.install()
 from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
+from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
 
 from areal.platforms import current_platform
@@ -23,7 +24,8 @@ class NormConfig:
     mean_level: str | None = field(
         default="batch",
         metadata={
-            "help": "Mean level for normalization. Choices: batch, group. Omit for no mean normalization."
+            "help": "Mean level for normalization. None for no mean normalization.",
+            "choices": ["batch", "group", None],
         },
     )
     mean_leave1out: bool = field(
@@ -33,7 +35,8 @@ class NormConfig:
     std_level: str | None = field(
         default="batch",
         metadata={
-            "help": "Standard deviation level for normalization. Choices: batch, group. Omit for no std normalization."
+            "help": "Standard deviation level for normalization. None for no std normalization.",
+            "choices": ["batch", "group", None],
         },
     )
     std_unbiased: bool = field(
@@ -305,7 +308,7 @@ class TrainEngineConfig:
     lora_alpha: int = field(default=16, metadata={"help": "lora alpha"})
     target_modules: List[str] = field(
         default_factory=list,
-        metadata={"help": "lora target_modules. None defaults to 'all-linear'"},
+        metadata={"help": "lora target_modules."},
     )
     peft_type: str = field(
         default="lora",
@@ -386,6 +389,10 @@ class PPOActorConfig(TrainEngineConfig):
 
     # KL Control
     kl_ctl: float = field(default=0.1, metadata={"help": "KL divergence coefficient"})
+    kl_estimator: str = field(
+        default="k1",
+        metadata={"help": "KL divergence estimator", "choices": ["k1", "k2", "k3"]},
+    )
 
     # Asynchronous RL
     recompute_logprob: bool = field(
@@ -461,7 +468,7 @@ class vLLMConfig:
     skip_tokenizer_init: bool = False
     enforce_eager: bool = True
     dtype: str = "bfloat16"
-    distributed_executor_backend = "mp"
+    distributed_executor_backend: str = "mp"
     # original
     max_num_seqs: int = 256
     # kv_cache_type: str = "auto"
@@ -485,6 +492,7 @@ class vLLMConfig:
         "areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"
     )
     enable_sleep_mode: bool = False
+    uvicorn_log_level: str = "warning"
 
     @staticmethod
     def build_args(
@@ -546,7 +554,7 @@ class SGLangConfig:
     random_seed: int = 1
     skip_tokenizer_init: bool = False
     disable_cuda_graph: bool = False
-    disable_radix_cache: bool = False
+    disable_radix_cache: bool = True
     disable_cuda_graph_padding: bool = False
     enable_nccl_nvls: bool = False
     disable_outlines_disk_cache: bool = False
@@ -1156,6 +1164,8 @@ def parse_cli_args(argv: List[str]):
     assert config_file.exists(), f"Config file {config_file} does not exist."
     # hydra only recognize relative paths
     relpath = Path(os.path.relpath(str(config_file), Path(__file__).parent.absolute()))
+    if GlobalHydra.instance().is_initialized():
+        GlobalHydra.instance().clear()
     hydra_init(config_path=str(relpath.parent), job_name="app", version_base=None)
     cfg = hydra_compose(
         config_name=str(relpath.name).split(".yaml")[0],
