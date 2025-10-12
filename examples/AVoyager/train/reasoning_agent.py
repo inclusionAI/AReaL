@@ -95,7 +95,8 @@ class AReaLVOYAGEReasoningAgentV1:
         for process in processes:
             if "history" not in process:
                 assert "pred_answer" not in process
-                process["history"] = [dict(type="prompt", text=process["prompt"])]
+                # Do not store the current question inside history; keep prompt empty here.
+                process["history"] = [dict(type="prompt", text="")]
                 process["running"] = True
                 process["phase"] = "grounding"  
             
@@ -121,13 +122,23 @@ class AReaLVOYAGEReasoningAgentV1:
                 
                 
                 # 初始情形：构造标准 messages，避免二次模板化
-                history = ""
-                for idx, h in enumerate(process["history"]):
-                    history += h.get("short_info_str", h.get("text", ""))
+                history_parts = []
+                for h in process["history"]:
+                    htype = h.get("type")
+                    if htype == "prompt":
+                        continue
+                    seg = h.get("short_info_str") or h.get("info_str")
+                    if seg is None and htype == "act":
+                        seg = h.get("text", "")
+                    if seg and seg.strip():
+                        if process.get("question") and seg.strip() == process["question"].strip():
+                            continue
+                        history_parts.append(seg)
+                history = "\n".join(history_parts)
                 if len(history) > 25000:
                     history = history[-25000:]
 
-                user_text = process["question"] + "\n\n" + history
+                user_text = process["question"] if not history else (process["question"] + "\n\n" + history)
                 messages = []
                 # 有图像并且具备多模处理器时，加入系统指令
                 if processor is not None and len(process.get("images", [])) > 0:
