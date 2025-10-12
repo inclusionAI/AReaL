@@ -131,7 +131,7 @@ class AVoyagerWorkflow(RolloutWorkflow):
             os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
             save_trajs_path = os.path.join(self.dump_dir, str(version), f"{qid}/ID.json")
 
-        client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer, processor=self.processor)
+        client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer, processor=self.processor, chat_template_type="concat")
 
         # Collect trajectories 
         trajs = await asyncio.gather(*[
@@ -163,13 +163,20 @@ class AVoyagerWorkflow(RolloutWorkflow):
         else:
             return None
         
-        # Set advantages to all completions
+        # Assign reward only to the final step of each trajectory to avoid
+        # multi-turn trajectories accumulating larger total rewards.
         for completions, advantage in zip(all_completions, advantages):
-            for comp in completions:
-                client.set_reward(comp.id, advantage)
-        
-        # Export all cached completions; apply per-turn discount before export
-        completions_with_rewards = client.export_completions(style='individual', turn_discount=1.0)
+            if not completions:
+                continue
+            # zero reward for intermediate steps
+            for comp in completions[:-1]:
+                client.set_reward(comp.id, 0.0)
+            # assign full advantage to the final completion only
+            client.set_reward(completions[-1].id, float(advantage))
+
+        # Export all cached completions; no discount propagation to keep parity
+        # between single-turn and multi-turn episodes.
+        completions_with_rewards = client.export_completions(style='concat')
 
         results = []
         for i in range(self.n_trajs):
