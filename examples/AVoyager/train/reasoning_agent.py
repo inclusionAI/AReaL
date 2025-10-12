@@ -256,7 +256,7 @@ class AReaLVOYAGEReasoningAgentV1:
                 process["max_new_tokens"] = max(0, 31000 - query_len)
                 queries.append(dict(
                     type="llm",
-                    sampling=dict(stop=self.stop, max_new_tokens=process.get("max_new_tokens", 4096)),
+                    sampling=dict(stop=self.stop, max_new_tokens=4096),
                     query_len=query_len,
                     messages=messages,
                 ))
@@ -488,15 +488,15 @@ async def run_agent(
 
     while not agent.all_finished([process]):
         cnt += 1
-        print(f"Agent Loop: Qid={qid} rank={rank} cnt={cnt}", flush=True)
+        
 
         # Prepare query
         query = agent.prepare_queries(tokenizer, [process], processor=processor)[0]
         if query is None:
             break
-        print(query)
-        breakpoint()
-        
+        print(f"Agent Loop: Qid={qid} rank={rank} cnt={cnt}", flush=True)
+
+
         
         response = None
         #
@@ -518,6 +518,7 @@ async def run_agent(
             response = (await toolbox.step((qid, [tool_call]), current_iteration=max(0, cnt - 1)))[0]
             stats["num_grounding"] = stats.get("num_grounding", 0) + 1
         process = agent.consume_responses([process], [query], [response])[0]
+
 
     # Compute reward directly from predicted answer vs ground truth (MCQ A/B/C/D)
     def _extract_choice(text: Optional[str]) -> Optional[str]:
