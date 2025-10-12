@@ -104,33 +104,6 @@ class AReaLVOYAGEReasoningAgentV1:
                 if "text" not in process["history"][-1] and "info_str" in process["history"][-1]:
                     pass
                 
-                #     history = ""
-                #     for idx, h in enumerate(process["history"][:-1]):
-                #         history += h.get("short_info_str", h.get("text", ""))
-                #     if len(history) > 25000:
-                #         history = history[-25000:]
-                    
-                #     if process["history"][-1]["type"] == "page":
-                #         prompt = ASearcherReasoningPrompts.READ_PAGE_PROMPT.format(question=process
-                #     else:
-                #         raise RuntimeError(f"Not supported history type: {process['history'][-1]['type']}")
-                    
-                #     input_text = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True, tokenize=False)
-                #     query_len = tokenizer([input_text], return_length=True)['length'][0]
-
-                #     if query_len <= 28000:
-                #         print(f"Reading @ Qid {process['id']}", len(tokenizer(input_text, add_special_tokens=False)["input_ids"]), len([h for h in process["history"] if h["type"] == "documents"]), len([h for h in process["history"] if h["type"] == "act"]), flush=True)
-                #         queries.append(dict(
-                #             type="llm",
-                #             sampling=dict(stop=self.stop, max_new_tokens=31000-query_len),
-                #             query_len=query_len,
-                #             prompt=prompt, 
-                #         ))
-                #         continue
-                    
-                #     if "cache_gen_text" in process:
-                #         process.pop("cache_gen_text")
-                
                 #上一轮回答了判断有没有工具调用
                 if "text" in process["history"][-1]:
                     last_text = process["history"][-1]["text"]
@@ -180,6 +153,7 @@ class AReaLVOYAGEReasoningAgentV1:
                                 pass
                 # 先追加主问题与历史
                 parts.append({"type": "input_text", "text": user_text})
+                
                 # 为每张图添加一个说明文本 + 图像，保证占位符与说明绑定
                 for idx, url in enumerate(images_urls):
                     label = "Original image:" if idx == 0 else f"Observation {idx}:"
@@ -208,6 +182,49 @@ class AReaLVOYAGEReasoningAgentV1:
                     text_with_placeholders += f" Original image: {placeholder}"
                 for idx in range(1, len(images_urls)):
                     text_with_placeholders += f" Observation {idx}: {placeholder}"
+                # Recompute placeholder expansion using image_grid_thw for accurate length
+                if processor is not None and len(images_urls) > 0:
+                    try:
+                        pil_images = []
+                        for _img in process.get("images", []) or []:
+                            try:
+                                if hasattr(_img, "size"):
+                                    pil_images.append(_img)
+                                elif isinstance(_img, (bytes, bytearray)):
+                                    from io import BytesIO
+                                    from PIL import Image as PILImage
+                                    pil_images.append(PILImage.open(BytesIO(_img)).convert("RGB"))
+                                elif isinstance(_img, str):
+                                    _src = _img if _img.startswith("data:") else f"data:image/jpeg;base64,{_img}"
+                                    pil_images.append(load_image(_src))
+                            except Exception:
+                                continue
+                        image_token_counts = []
+                        if hasattr(processor, "image_processor") and len(pil_images) > 0:
+                            _inputs = processor.image_processor(pil_images, return_tensors="pt")
+                            _grid = _inputs.get("image_grid_thw", None)
+                            _merge_size = getattr(getattr(processor, "image_processor", None), "merge_size", 1)
+                            _merge_area = int(_merge_size) * int(_merge_size) if _merge_size else 1
+                            if _grid is not None:
+                                for _i in range(len(pil_images)):
+                                    try:
+                                        _t, _h, _w = _grid[_i].tolist()
+                                        _patches = int(_t) * int(_h) * int(_w)
+                                        _num = max(1, _patches // max(1, _merge_area))
+                                    except Exception:
+                                        _num = 1
+                                    image_token_counts.append(_num)
+                        if image_token_counts:
+                            # rebuild text_with_placeholders with correct counts
+                            text_with_placeholders = user_text
+                            for _idx, _cnt in enumerate(image_token_counts):
+                                _label = " Original image:" if _idx == 0 else f" Observation {_idx}:"
+                                text_with_placeholders += _label
+                                if _cnt <= 0:
+                                    _cnt = 1
+                                text_with_placeholders += " " + " ".join([placeholder] * _cnt)
+                    except Exception:
+                        pass
                 try:
                     prompt_ids = tokenizer.apply_chat_template(
                         ([{"role": "system", "content": TOOL_CROP_SYSTEM_PROMPT}] if (processor is not None and len(images_urls) > 0) else [])
@@ -217,7 +234,7 @@ class AReaLVOYAGEReasoningAgentV1:
                     )
                     approx_query_len = len(prompt_ids)
                 except Exception:
-                    approx_query_len = get_multimodal_input_ids_len(text=user_text, tokenizer=tokenizer, images=process.get("images"), processor=processor)
+                    approx_query_len = get_multimodal_input_ids_len(text=text_with_placeholders, tokenizer=tokenizer, images=process.get("images"), processor=processor)
 
                 if approx_query_len > 32000 or self.get_answer_from_text(process["history"][-1].get("text", "")) is not None:
                     print("process is done (1)", process["id"])

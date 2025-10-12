@@ -104,7 +104,12 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             extra_body = {}
         # Handle multimodal messages: flatten parts, extract images, insert placeholder tokens
         images_b64: List[str] = []
-        image_placeholder = get_image_token(getattr(self, "processor", None))
+        # Use a generic chat-template placeholder here. Backends (HF/vLLM/SGLang)
+        # typically expect "<image>" in the textual prompt, not low-level
+        # pad tokens like <|image_pad|>. The latter is model-specific and should
+        # be expanded internally based on grid_thw. Using <image> keeps the
+        # placeholder count aligned with provided images.
+        image_placeholder = "<image>"
 
         normalized_messages: List[dict] = []
         for msg in messages_list:
