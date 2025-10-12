@@ -19,7 +19,7 @@ class AReaLVOYAGEReasoningAgentV1:
         self.stop = ["<|im_end|>", "<|endoftext|>"]
         self.stop_sequences = self.stop
 
-        print(f"AReaLVOYAGEReasoningAgentV1 初始化完成")
+        # print(f"AReaLVOYAGEReasoningAgentV1 初始化完成")
 
     def get_query_from_text(self, text: str) -> Optional[str]:
         pattern = r'<grounding>(.*?)</grounding>'
@@ -466,7 +466,8 @@ async def run_agent(
         query = agent.prepare_queries(tokenizer, [process], processor=processor)[0]
         if query is None:
             break
-        # messages 已包含文本和图像 parts，无需再次封装
+        print(query)
+        breakpoint()
         
         
         response = None

@@ -482,6 +482,7 @@ class vLLMConfig:
     enable_sleep_mode: bool = False
     uvicorn_log_level: str = "warning"
 
+
     @staticmethod
     def build_args(
         vllm_config: "vLLMConfig",

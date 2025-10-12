@@ -135,7 +135,8 @@ def get_multimodal_dataset(
                 )
 
             # Build instruction + user prompt; replace <image> placeholders
-            user_text = sample["problem"].replace("<image>", image_token)
+            user_text = sample["problem"].replace("<image>", "")
+            # user_text = sample["problem"].replace("<image>", image_token)
 
             return {
                 "question": user_text,
