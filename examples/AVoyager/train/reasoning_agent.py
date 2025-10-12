@@ -119,149 +119,149 @@ class AReaLVOYAGEReasoningAgentV1:
                         ))
                         # Sync process phase with query type for gating in consume_responses
                         process["phase"] = "grounding"
-                else:
-                    # 初始情形：构造标准 messages，避免二次模板化
-                    history_parts = []
-                    for h in process["history"]:
-                        htype = h.get("type")
-                        if htype == "prompt":
-                            continue
-                        seg = h.get("short_info_str") or h.get("info_str")
-                        if seg is None and htype == "act":
-                            seg = h.get("text", "")
-                        if seg and seg.strip():
-                            if process.get("question") and seg.strip() == process["question"].strip():
-                                continue
-                            history_parts.append(seg)
-                    history = "\n".join(history_parts)
-                    if len(history) > 25000:
-                        history = history[-25000:]
-
-                    user_text = process["question"] if not history else (process["question"] + "\n\n" + history)
-                    messages = []
-                    # 有图像并且具备多模处理器时，加入系统指令
-                    if processor is not None and len(process.get("images", [])) > 0:
-                        messages.append({"role": "system", "content": TOOL_CROP_SYSTEM_PROMPT})
-
-                    # 将文本与所有观察图像打包为一个 user 消息的 parts，并为每张图添加标签，明确 observation_i 对应关系
-                    parts = []
-                    images_urls = []
-                    if processor is not None:
-                        for img in process.get("images", []) or []:
-                            if isinstance(img, str):
-                                url = img if img.startswith("data:") else f"data:image/jpeg;base64,{img}"
-                                images_urls.append(url)
-                            elif isinstance(img, (bytes, bytearray)):
-                                from io import BytesIO
-                                from PIL import Image as PILImage
-                                try:
-                                    _pil = PILImage.open(BytesIO(img)).convert("RGB")
-                                    b64 = image2base64(_pil)
-                                    b64 = b64[0] if isinstance(b64, list) else b64
-                                    images_urls.append(f"data:image/jpeg;base64,{b64}")
-                                except Exception:
-                                    pass
-                    # 先追加主问题与历史
-                    parts.append({"type": "input_text", "text": user_text})
-                    
-                    # 为每张图添加一个说明文本 + 图像，保证占位符与说明绑定
-                    for idx, url in enumerate(images_urls):
-                        label = "Original image:" if idx == 0 else f"Observation {idx}:"
-                        parts.append({"type": "input_text", "text": label})
-                        parts.append({"type": "input_image", "image_url": url})
-
-                    messages.append({"role": "user", "content": parts})
-
-                    #超过轮数或者token数，直接回答
-                    if any([
-                        len([h for h in process["history"] if h["type"] == "grounding"]) >= 20,
-                        len([h for h in process["history"] if h["type"] == "act"]) >= self.max_turns,
-                        process.get("phase", "tool_call") == "answer",
-                        ]):
-                        process["phase"] = "answer"
-                        print(
-                            f"Direct Generate Answer for Qid {process['id']}",
-                            len([h for h in process["history"] if h["type"] == "act"]),
-                            flush=True,
-                        )
-
-                    # 估算与发送一致的长度（文本 + 图像占位符）
-                    placeholder = get_image_token(processor) if processor is not None else ""
-                    text_with_placeholders = user_text
-                    if len(images_urls) > 0:
-                        text_with_placeholders += f" Original image: {placeholder}"
-                    for idx in range(1, len(images_urls)):
-                        text_with_placeholders += f" Observation {idx}: {placeholder}"
-                    # Recompute placeholder expansion using image_grid_thw for accurate length
-                    if processor is not None and len(images_urls) > 0:
-                        try:
-                            pil_images = []
-                            for _img in process.get("images", []) or []:
-                                try:
-                                    if hasattr(_img, "size"):
-                                        pil_images.append(_img)
-                                    elif isinstance(_img, (bytes, bytearray)):
-                                        from io import BytesIO
-                                        from PIL import Image as PILImage
-                                        pil_images.append(PILImage.open(BytesIO(_img)).convert("RGB"))
-                                    elif isinstance(_img, str):
-                                        _src = _img if _img.startswith("data:") else f"data:image/jpeg;base64,{_img}"
-                                        pil_images.append(load_image(_src))
-                                except Exception:
-                                    continue
-                            image_token_counts = []
-                            if hasattr(processor, "image_processor") and len(pil_images) > 0:
-                                _inputs = processor.image_processor(pil_images, return_tensors="pt")
-                                _grid = _inputs.get("image_grid_thw", None)
-                                _merge_size = getattr(getattr(processor, "image_processor", None), "merge_size", 1)
-                                _merge_area = int(_merge_size) * int(_merge_size) if _merge_size else 1
-                                if _grid is not None:
-                                    for _i in range(len(pil_images)):
-                                        try:
-                                            _t, _h, _w = _grid[_i].tolist()
-                                            _patches = int(_t) * int(_h) * int(_w)
-                                            _num = max(1, _patches // max(1, _merge_area))
-                                        except Exception:
-                                            _num = 1
-                                        image_token_counts.append(_num)
-                            if image_token_counts:
-                                # rebuild text_with_placeholders with correct counts
-                                text_with_placeholders = user_text
-                                for _idx, _cnt in enumerate(image_token_counts):
-                                    _label = " Original image:" if _idx == 0 else f" Observation {_idx}:"
-                                    text_with_placeholders += _label
-                                    if _cnt <= 0:
-                                        _cnt = 1
-                                    text_with_placeholders += " " + " ".join([placeholder] * _cnt)
-                        except Exception:
-                            pass
-                    try:
-                        prompt_ids = tokenizer.apply_chat_template(
-                            ([{"role": "system", "content": TOOL_CROP_SYSTEM_PROMPT}] if (processor is not None and len(images_urls) > 0) else [])
-                            + [{"role": "user", "content": text_with_placeholders}],
-                            add_generation_prompt=True,
-                            tokenize=True,
-                        )
-                        approx_query_len = len(prompt_ids)
-                    except Exception:
-                        approx_query_len = get_multimodal_input_ids_len(text=text_with_placeholders, tokenizer=tokenizer, images=process.get("images"), processor=processor)
-
-                    if approx_query_len > 32000 or self.get_answer_from_text(process["history"][-1].get("text", "")) is not None:
-                        print("process is done (1)", process["id"])
-                        process["running"] = False
                         continue
+                # 初始情形：构造标准 messages，避免二次模板化
+                history_parts = []
+                for h in process["history"]:
+                    htype = h.get("type")
+                    if htype == "prompt":
+                        continue
+                    seg = h.get("short_info_str") or h.get("info_str")
+                    if seg is None and htype == "act":
+                        seg = h.get("text", "")
+                    if seg and seg.strip():
+                        if process.get("question") and seg.strip() == process["question"].strip():
+                            continue
+                        history_parts.append(seg)
+                history = "\n".join(history_parts)
+                if len(history) > 25000:
+                    history = history[-25000:]
 
-                    query_len = approx_query_len
-                    process["max_new_tokens"] = max(0, 31000 - query_len)
-                    queries.append(dict(
-                        type="llm",
-                        sampling=dict(stop=self.stop, max_new_tokens=4096),
-                        query_len=query_len,
-                        messages=messages,
-                    ))
-                    # Sync process phase with query type so answers from llm are accepted
+                user_text = process["question"] if not history else (process["question"] + "\n\n" + history)
+                messages = []
+                # 有图像并且具备多模处理器时，加入系统指令
+                if processor is not None and len(process.get("images", [])) > 0:
+                    messages.append({"role": "system", "content": TOOL_CROP_SYSTEM_PROMPT})
+
+                # 将文本与所有观察图像打包为一个 user 消息的 parts，并为每张图添加标签，明确 observation_i 对应关系
+                parts = []
+                images_urls = []
+                if processor is not None:
+                    for img in process.get("images", []) or []:
+                        if isinstance(img, str):
+                            url = img if img.startswith("data:") else f"data:image/jpeg;base64,{img}"
+                            images_urls.append(url)
+                        elif isinstance(img, (bytes, bytearray)):
+                            from io import BytesIO
+                            from PIL import Image as PILImage
+                            try:
+                                _pil = PILImage.open(BytesIO(img)).convert("RGB")
+                                b64 = image2base64(_pil)
+                                b64 = b64[0] if isinstance(b64, list) else b64
+                                images_urls.append(f"data:image/jpeg;base64,{b64}")
+                            except Exception:
+                                pass
+                # 先追加主问题与历史
+                parts.append({"type": "input_text", "text": user_text})
+                    
+                # 为每张图添加一个说明文本 + 图像，保证占位符与说明绑定
+                for idx, url in enumerate(images_urls):
+                    label = "Original image:" if idx == 0 else f"Observation {idx}:"
+                    parts.append({"type": "input_text", "text": label})
+                    parts.append({"type": "input_image", "image_url": url})
+
+                messages.append({"role": "user", "content": parts})
+
+                #超过轮数或者token数，直接回答
+                if any([
+                    len([h for h in process["history"] if h["type"] == "grounding"]) >= 20,
+                    len([h for h in process["history"] if h["type"] == "act"]) >= self.max_turns,
+                    process.get("phase", "tool_call") == "answer",
+                    ]):
                     process["phase"] = "answer"
-                    process.pop("max_new_tokens")
+                    print(
+                        f"Direct Generate Answer for Qid {process['id']}",
+                        len([h for h in process["history"] if h["type"] == "act"]),
+                        flush=True,
+                    )
+
+                # 估算与发送一致的长度（文本 + 图像占位符）
+                placeholder = get_image_token(processor) if processor is not None else ""
+                text_with_placeholders = user_text
+                if len(images_urls) > 0:
+                    text_with_placeholders += f" Original image: {placeholder}"
+                for idx in range(1, len(images_urls)):
+                    text_with_placeholders += f" Observation {idx}: {placeholder}"
+                # Recompute placeholder expansion using image_grid_thw for accurate length
+                if processor is not None and len(images_urls) > 0:
+                    try:
+                        pil_images = []
+                        for _img in process.get("images", []) or []:
+                            try:
+                                if hasattr(_img, "size"):
+                                    pil_images.append(_img)
+                                elif isinstance(_img, (bytes, bytearray)):
+                                    from io import BytesIO
+                                    from PIL import Image as PILImage
+                                    pil_images.append(PILImage.open(BytesIO(_img)).convert("RGB"))
+                                elif isinstance(_img, str):
+                                    _src = _img if _img.startswith("data:") else f"data:image/jpeg;base64,{_img}"
+                                    pil_images.append(load_image(_src))
+                            except Exception:
+                                continue
+                        image_token_counts = []
+                        if hasattr(processor, "image_processor") and len(pil_images) > 0:
+                            _inputs = processor.image_processor(pil_images, return_tensors="pt")
+                            _grid = _inputs.get("image_grid_thw", None)
+                            _merge_size = getattr(getattr(processor, "image_processor", None), "merge_size", 1)
+                            _merge_area = int(_merge_size) * int(_merge_size) if _merge_size else 1
+                            if _grid is not None:
+                                for _i in range(len(pil_images)):
+                                    try:
+                                        _t, _h, _w = _grid[_i].tolist()
+                                        _patches = int(_t) * int(_h) * int(_w)
+                                        _num = max(1, _patches // max(1, _merge_area))
+                                    except Exception:
+                                        _num = 1
+                                    image_token_counts.append(_num)
+                        if image_token_counts:
+                            # rebuild text_with_placeholders with correct counts
+                            text_with_placeholders = user_text
+                            for _idx, _cnt in enumerate(image_token_counts):
+                                _label = " Original image:" if _idx == 0 else f" Observation {_idx}:"
+                                text_with_placeholders += _label
+                                if _cnt <= 0:
+                                    _cnt = 1
+                                text_with_placeholders += " " + " ".join([placeholder] * _cnt)
+                    except Exception:
+                        pass
+                try:
+                    prompt_ids = tokenizer.apply_chat_template(
+                        ([{"role": "system", "content": TOOL_CROP_SYSTEM_PROMPT}] if (processor is not None and len(images_urls) > 0) else [])
+                        + [{"role": "user", "content": text_with_placeholders}],
+                        add_generation_prompt=True,
+                        tokenize=True,
+                    )
+                    approx_query_len = len(prompt_ids)
+                except Exception:
+                    approx_query_len = get_multimodal_input_ids_len(text=text_with_placeholders, tokenizer=tokenizer, images=process.get("images"), processor=processor)
+
+                if approx_query_len > 32000 or self.get_answer_from_text(process["history"][-1].get("text", "")) is not None:
+                    print("process is done (1)", process["id"])
+                    process["running"] = False
+                    continue
+
+                query_len = approx_query_len
+                process["max_new_tokens"] = max(0, 31000 - query_len)
+                queries.append(dict(
+                    type="llm",
+                    sampling=dict(stop=self.stop, max_new_tokens=4096),
+                     query_len=query_len,
+                    messages=messages,
+                ))
+                # Sync process phase with query type so answers from llm are accepted
+                process["phase"] = "answer"
+                process.pop("max_new_tokens")
         
         return queries
 
@@ -534,7 +534,7 @@ async def run_agent(
 
     pred_answer = agent.answers([process])[0]
     pred_choice = _extract_choice(pred_answer)
-    breakpoint()
+
     gt = data.get("answer")
     if isinstance(gt, list):
         gt_choices = [c for c in (_extract_choice(x) for x in gt) if c]
