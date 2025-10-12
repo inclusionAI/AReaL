@@ -168,7 +168,8 @@ class AVoyagerWorkflow(RolloutWorkflow):
             for comp in completions:
                 client.set_reward(comp.id, advantage)
         
-        completions_with_rewards = client.export_completions(turn_discount=1.0)
+        # Export all cached completions; apply per-turn discount before export
+        completions_with_rewards = client.export_completions(style='individual', turn_discount=1.0)
 
         results = []
         for i in range(self.n_trajs):
