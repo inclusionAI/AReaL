@@ -286,6 +286,7 @@ class ArealOpenAI(AsyncOpenAI):
         self,
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
+        processor: Optional["AutoProcessor"] = None,
         tool_call_parser: Optional[str] = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
@@ -295,6 +296,7 @@ class ArealOpenAI(AsyncOpenAI):
         super().__init__(**kwargs)
         self.engine = engine
         self.tokenizer = tokenizer
+        self.processor = processor
         self.tool_call_parser = tool_call_parser
         # Use an ordered dict to maintain insertion order of completions
         self._completion_cache: OrderedDict[str, CompletionWithTokenLogpReward] = (
@@ -307,6 +309,7 @@ class ArealOpenAI(AsyncOpenAI):
             engine,
             tokenizer,
             self._completion_cache,
+            processor,
             tool_call_parser=self.tool_call_parser,
             chat_template_type=chat_template_type,
             messages_delimiter_start=messages_delimiter_start,

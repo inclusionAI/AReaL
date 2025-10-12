@@ -8,6 +8,7 @@ import gc
 import torch
 import torch.distributed as dist
 import numpy as np
+import wandb
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
 from tensordict import TensorDict
@@ -234,6 +235,8 @@ class AgentRLConfig(GRPOConfig):
 def main(args):
     config, _ = load_expr_config(args, AgentRLConfig)
     config: AgentRLConfig
+    
+    wandb.init(project=config.stats_logger.wandb.project)
 
     rank = int(os.getenv("RANK"))
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
@@ -411,6 +414,8 @@ def main(args):
                 )
 
             stats = actor.ppo_update(batch)
+            wandb.log({"final_reward": stats[0]["grpo_actor/final_reward/avg"]})
+            wandb.log({"task_reward": stats[0]["grpo_actor/task_reward/avg"]})
             actor.step_lr_scheduler()
             log_gpu_stats("actor update")
 
@@ -565,6 +570,8 @@ def main(args):
     if ref is not None:
         ref.destroy()
     actor.destroy()
+    wandb.finish()
+
 
 
 if __name__ == "__main__":
