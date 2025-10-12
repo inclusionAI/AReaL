@@ -168,7 +168,7 @@ class AVoyagerWorkflow(RolloutWorkflow):
             for comp in completions:
                 client.set_reward(comp.id, advantage)
         
-        completions_with_rewards = client.export_completions(turn_discount=0.0)
+        completions_with_rewards = client.export_completions(turn_discount=1.0)
 
         results = []
         for i in range(self.n_trajs):

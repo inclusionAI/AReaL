@@ -380,7 +380,7 @@ class ArealOpenAI(AsyncOpenAI):
         return dict(**self._completion_cache)
 
     def export_completions(
-        self, style: str = "concat"
+        self, style: str = "concat", turn_discount: float | None = None
     ) -> Dict[str, CompletionWithTokenLogpReward]:
         """Export cached completions in different formats.
 
@@ -399,6 +399,15 @@ class ArealOpenAI(AsyncOpenAI):
             The export style, either ``'concat'`` (build tree and return leaves)
             or ``'individual'`` (return all), by default 'concat'.
 
+        Parameters
+        ----------
+        style : str, optional
+            Export style: 'concat' (build tree and return leaves) or 'individual'
+            (return all), by default 'concat'.
+        turn_discount : float | None, optional
+            If provided, apply discounted reward propagation before exporting,
+            equivalent to calling ``apply_reward_discount(turn_discount)``.
+
         Returns
         -------
         Dict[str, CompletionWithTokenLogpReward]
@@ -413,6 +422,11 @@ class ArealOpenAI(AsyncOpenAI):
         """
         if len(self._completion_cache) == 0:
             return {}
+
+        # Optionally apply reward discounting prior to export so callers can
+        # pass the parameter directly here.
+        if turn_discount is not None:
+            self.apply_reward_discount(turn_discount=turn_discount)
 
         if style == "concat":
             for comp in self._completion_cache.values():
