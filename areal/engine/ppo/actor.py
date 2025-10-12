@@ -307,7 +307,14 @@ def grpo_loss_fn(
     advantages = input_data["advantages"]
     # Use unsliced/full loss_mask.
     # Ulysses SP will slice loss_mask in ulysses_prepare_inputs().
-    loss_mask = input_data["full_loss_mask"].bool()
+
+    loss_mask = (
+        input_data["full_loss_mask"]
+        if "full_loss_mask" in input_data
+        else input_data["loss_mask"]
+    )
+    loss_mask = loss_mask.bool()
+
     prox_logp = input_data["prox_logp"]
 
     logprobs, entropy = gather_logprobs_entropy(logits, labels, temperature)

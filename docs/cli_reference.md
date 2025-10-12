@@ -291,12 +291,12 @@ Configuration for model optimization during training.
 
 | Parameter                 | Type    | Default      | Description                                                                                             |
 | ------------------------- | ------- | ------------ | ------------------------------------------------------------------------------------------------------- |
-| `type`                    | string  | `"adam"`     | Optimizer type. adam_bf16 currently only supported FSDP Engine. **Choices:** `adam`, `sgd`, `adam_bf16` |
+| `type`                    | string  | `"adam"`     | Optimizer type. Adam_bf16 currently only supported FSDP Engine. **Choices:** `adam`, `sgd`, `adam_bf16` |
 | `lr`                      | float   | `2e-05`      | Learning rate                                                                                           |
 | `weight_decay`            | float   | `0.05`       | Weight decay                                                                                            |
-| `beta1`                   | float   | `0.9`        | Adam beta1 parameter                                                                                    |
-| `beta2`                   | float   | `0.95`       | Adam beta2 parameter                                                                                    |
-| `eps`                     | float   | `1e-05`      | Adam epsilon parameter                                                                                  |
+| `beta1`                   | float   | `0.9`        | Adam beta1 parameter. Only effective when optimizer_type is adam/adam_bf16                              |
+| `beta2`                   | float   | `0.95`       | Adam beta2 parameter. Only effective when optimizer_type is adam/adam_bf16                              |
+| `eps`                     | float   | `1e-05`      | Adam epsilon parameter. Only effective when optimizer_type is adam/adam_bf16                            |
 | `min_lr_ratio`            | float   | `0.0`        | Minimum learning rate ratio after annealing                                                             |
 | `lr_scheduler_type`       | string  | `"constant"` | Learning rate scheduler type **Choices:** `linear`, `cosine`, `constant`                                |
 | `warmup_steps_proportion` | float   | `0.001`      | Proportion of training steps for warmup                                                                 |

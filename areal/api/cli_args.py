@@ -7,6 +7,8 @@ from typing import Dict, List
 import uvloop
 import yaml
 
+from areal.utils.pkg_version import is_version_less
+
 uvloop.install()
 from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
@@ -168,9 +170,24 @@ class OptimizerConfig:
     )
     lr: float = field(default=2e-5, metadata={"help": "Learning rate"})
     weight_decay: float = field(default=0.05, metadata={"help": "Weight decay"})
-    beta1: float = field(default=0.9, metadata={"help": "Adam beta1 parameter"})
-    beta2: float = field(default=0.95, metadata={"help": "Adam beta2 parameter"})
-    eps: float = field(default=1e-5, metadata={"help": "Adam epsilon parameter"})
+    beta1: float = field(
+        default=0.9,
+        metadata={
+            "help": "Adam beta1 parameter. Only effective when optimizer_type is adam/adam_bf16"
+        },
+    )
+    beta2: float = field(
+        default=0.95,
+        metadata={
+            "help": "Adam beta2 parameter. Only effective when optimizer_type is adam/adam_bf16"
+        },
+    )
+    eps: float = field(
+        default=1e-5,
+        metadata={
+            "help": "Adam epsilon parameter. Only effective when optimizer_type is adam/adam_bf16"
+        },
+    )
     min_lr_ratio: float = field(
         default=0.0,
         metadata={
@@ -628,6 +645,8 @@ class SGLangConfig:
         # convert to flags
         flags = []
         for k, v in args.items():
+            if is_version_less("sglang", "0.4.10.post2") and "max_loaded_loras" in k:
+                continue
             if v is None or v is False or v == "":
                 continue
             if v is True:

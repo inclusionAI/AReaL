@@ -44,6 +44,7 @@ from areal.utils.data import (
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.fsdp import fsdp2_load_full_state_dict
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
+from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
@@ -671,6 +672,10 @@ class FSDPEngine(BaseHFEngine):
             "adam_bf16",
             "sgd",
         ], "Only adam/adam_bf16/sgd optimizer is supported in this engine."
+        if self.optimizer_config.type in ["sgd", "adam_bf16"]:
+            self.logger.warning(
+                f"Using {self.optimizer_config.type} optimizer with FSDP may lead to suboptimal performance. Consider using SGD optimizer for better efficiency."
+            )
         lr = self.optimizer_config.lr
         weight_decay = self.optimizer_config.weight_decay
         beta1 = self.optimizer_config.beta1
@@ -686,8 +691,6 @@ class FSDPEngine(BaseHFEngine):
                 fused=True,
             )
         elif self.optimizer_config.type == "adam_bf16":
-            from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
-
             self.optimizer = AnyPrecisionAdamW(
                 self.model.parameters(),
                 lr=lr,
