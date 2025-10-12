@@ -320,7 +320,7 @@ def main(args):
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     # Recover

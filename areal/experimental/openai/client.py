@@ -25,6 +25,7 @@ from openai.types.shared_params.metadata import Metadata
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import ModelRequest
+from areal.utils import logging
 from areal.experimental.openai.tool_call_parser import process_tool_calls
 from areal.experimental.openai.types import CompletionWithTokenLogpReward
 from areal.utils.image import (
@@ -286,15 +287,19 @@ class ArealOpenAI(AsyncOpenAI):
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
         tool_call_parser: Optional[str] = None,
-        processor: Optional["AutoProcessor"] = None,
+        chat_template_type: str = "hf",
+        messages_delimiter_start: str = "<|im_start|>",
+        messages_delimiter_end: str = "<|im_end|>",
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
-        self.processor = processor
-        self._completion_cache: Dict[str, CompletionWithTokenLogpReward] = {}
+        # Use an ordered dict to maintain insertion order of completions
+        self._completion_cache: OrderedDict[str, CompletionWithTokenLogpReward] = (
+            OrderedDict()
+        )
 
         # Override chat.completions with our extended implementation
         self.chat.completions = AsyncCompletionsWithReward(
@@ -302,7 +307,6 @@ class ArealOpenAI(AsyncOpenAI):
             engine,
             tokenizer,
             self._completion_cache,
-            processor=self.processor,
             tool_call_parser=self.tool_call_parser,
             chat_template_type=chat_template_type,
             messages_delimiter_start=messages_delimiter_start,
