@@ -571,13 +571,12 @@ async def run_agent(
             [f"[{h['type']}]: {h['text']}" for h in process["history"] if h.get("type") in ["act", "grounding"] and "text" in h]
         ) + "\n")
 
-    
-    if save_path is not None:
-        import os, json, sys
-        if "images" in process:
-            process.pop("images")
-        if not os.path.exists(os.path.dirname(save_path)):
-            os.makedirs(os.path.dirname(save_path))
-        json.dump(process, open(save_path, "w"))
+    # if save_path is not None:
+    #     import os, json, sys
+    #     if "images" in process:
+    #         process.pop("images")
+    #     if not os.path.exists(os.path.dirname(save_path)):
+    #         os.makedirs(os.path.dirname(save_path))
+    #     json.dump(process, open(save_path, "w"))
 
     return completions, reward, stats

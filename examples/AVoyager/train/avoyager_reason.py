@@ -194,10 +194,11 @@ class AVoyagerWorkflow(RolloutWorkflow):
                 res = completions_with_rewards[comp.id].to_tensor_dict()
                 
                 res["begin_of_trajectory"]=torch.tensor([int(first_completion)])
-                for k, v in stats[i].items():
-                    res[k] = torch.tensor([v])
+                # for k, v in stats[i].items():
+                #     res[k] = torch.tensor([v])
                 first_completion = False
                 results.append(res)
+
         results = concat_padded_tensors(results)
         return results
 
