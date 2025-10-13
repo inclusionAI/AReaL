@@ -158,6 +158,31 @@ class WeightUpdateMeta:
 
 
 @dataclass
+class HttpRequest:
+    """Represents an HTTP request to be sent to a remote inference server."""
+
+    endpoint: str
+    payload: Dict[str, Any]
+    method: str = "POST"
+
+
+@dataclass
+class HttpGenerationResult:
+    """Parsed result from a generation response."""
+
+    output_tokens: List[int]
+    output_logprobs: List[float]
+    stop_reason: str
+
+
+@dataclass
+class WeightUpdateRequests:
+    """Collection of HTTP requests needed for a weight update operation."""
+
+    requests: List[HttpRequest]
+
+
+@dataclass
 class SaveLoadMeta:
     path: str
     weight_format: str
