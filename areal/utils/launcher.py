@@ -177,7 +177,7 @@ def apply_sglang_patch():
     for line in sglang_meta.split("\n"):
         line = line.strip()
         if line.startswith("Editable project location: "):
-            target_path = str(Path(line.split(": ")[1]).parent)
+            target_path = str(Path(line.split(": ")[1]) / "sglang")
             break
     else:
         for line in sglang_meta.split("\n"):

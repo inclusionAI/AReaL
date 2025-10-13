@@ -1,6 +1,6 @@
-diff -ruN ./srt/model_executor/model_runner.py ../../../sglang/python/sglang/srt/model_executor/model_runner.py
---- ./srt/model_executor/model_runner.py	2025-10-11 15:06:03.052603197 +0800
-+++ ../../../sglang/python/sglang/srt/model_executor/model_runner.py	2025-10-13 13:20:52.071417615 +0800
+diff -ruN ../../../my-sglang/python/sglang/srt/model_executor/model_runner.py ./srt/model_executor/model_runner.py
+--- ../../../my-sglang/python/sglang/srt/model_executor/model_runner.py	2025-10-11 15:06:03.052603197 +0800
++++ ./srt/model_executor/model_runner.py	2025-10-13 13:20:52.071417615 +0800
 @@ -258,7 +258,6 @@
          self._model_update_group = {}
  
@@ -34,9 +34,9 @@ diff -ruN ./srt/model_executor/model_runner.py ../../../sglang/python/sglang/srt
              return model
  
          with set_default_torch_dtype(self.model_config.dtype):
-diff -ruN ./srt/model_loader/loader.py ../../../sglang/python/sglang/srt/model_loader/loader.py
---- ./srt/model_loader/loader.py	2025-10-11 15:03:31.201989298 +0800
-+++ ../../../sglang/python/sglang/srt/model_loader/loader.py	2025-10-13 13:20:52.071417615 +0800
+diff -ruN ../../../my-sglang/python/sglang/srt/model_loader/loader.py ./srt/model_loader/loader.py
+--- ../../../my-sglang/python/sglang/srt/model_loader/loader.py	2025-10-11 15:03:31.201989298 +0800
++++ ./srt/model_loader/loader.py	2025-10-13 13:20:52.071417615 +0800
 @@ -278,7 +278,7 @@
      def __init__(self, load_config: LoadConfig):
          super().__init__(load_config)
@@ -101,9 +101,9 @@ diff -ruN ./srt/model_loader/loader.py ../../../sglang/python/sglang/srt/model_l
  
          for _, module in model.named_modules():
              quant_method = getattr(module, "quant_method", None)
-diff -ruN ./srt/models/qwen3_moe.py ../../../sglang/python/sglang/srt/models/qwen3_moe.py
---- ./srt/models/qwen3_moe.py	2025-10-11 15:03:31.207989560 +0800
-+++ ../../../sglang/python/sglang/srt/models/qwen3_moe.py	2025-10-13 13:20:52.077417877 +0800
+diff -ruN ../../../my-sglang/python/sglang/srt/models/qwen3_moe.py ./srt/models/qwen3_moe.py
+--- ../../../my-sglang/python/sglang/srt/models/qwen3_moe.py	2025-10-11 15:03:31.207989560 +0800
++++ ./srt/models/qwen3_moe.py	2025-10-13 13:20:52.077417877 +0800
 @@ -770,130 +770,6 @@
          else:
              self.model.layers_to_capture = [val + 1 for val in layer_ids]
@@ -235,9 +235,9 @@ diff -ruN ./srt/models/qwen3_moe.py ../../../sglang/python/sglang/srt/models/qwe
      def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
          stacked_params_mapping = [
              # (param_name, shard_name, shard_id)
-diff -ruN ./srt/models/qwen3.py ../../../sglang/python/sglang/srt/models/qwen3.py
---- ./srt/models/qwen3.py	2025-10-11 15:03:31.207989560 +0800
-+++ ../../../sglang/python/sglang/srt/models/qwen3.py	2025-10-13 13:20:52.076417833 +0800
+diff -ruN ../../../my-sglang/python/sglang/srt/models/qwen3.py ./srt/models/qwen3.py
+--- ../../../my-sglang/python/sglang/srt/models/qwen3.py	2025-10-11 15:03:31.207989560 +0800
++++ ./srt/models/qwen3.py	2025-10-13 13:20:52.076417833 +0800
 @@ -418,97 +418,6 @@
      def end_layer(self):
          return self.model.end_layer
@@ -351,9 +351,9 @@ diff -ruN ./srt/models/qwen3.py ../../../sglang/python/sglang/srt/models/qwen3.p
                  weight_loader = param.weight_loader
                  weight_loader(param, loaded_weight, shard_id)
                  break
-diff -ruN ./srt/models/utils/load.py ../../../sglang/python/sglang/srt/models/utils/load.py
---- ./srt/models/utils/load.py	2025-10-11 15:01:36.754004483 +0800
-+++ ../../../sglang/python/sglang/srt/models/utils/load.py	1970-01-01 08:00:00.000000000 +0800
+diff -ruN ../../../my-sglang/python/sglang/srt/models/utils/load.py ./srt/models/utils/load.py
+--- ../../../my-sglang/python/sglang/srt/models/utils/load.py	2025-10-11 15:01:36.754004483 +0800
++++ ./srt/models/utils/load.py	1970-01-01 08:00:00.000000000 +0800
 @@ -1,170 +0,0 @@
 -import json
 -import os
@@ -525,9 +525,9 @@ diff -ruN ./srt/models/utils/load.py ../../../sglang/python/sglang/srt/models/ut
 -        # Consume all results to make result all tasks complete
 -        for _ in results:
 -            pass
-diff -ruN ./srt/utils.py ../../../sglang/python/sglang/srt/utils.py
---- ./srt/utils.py	2025-10-11 15:03:52.182903128 +0800
-+++ ../../../sglang/python/sglang/srt/utils.py	2025-10-13 13:20:52.081418051 +0800
+diff -ruN ../../../my-sglang/python/sglang/srt/utils.py ./srt/utils.py
+--- ../../../my-sglang/python/sglang/srt/utils.py	2025-10-11 15:03:52.182903128 +0800
++++ ./srt/utils.py	2025-10-13 13:20:52.081418051 +0800
 @@ -21,7 +21,6 @@
  import dataclasses
  import functools
