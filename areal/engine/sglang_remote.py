@@ -46,10 +46,9 @@ class RemoteSGLangEngine(InferenceEngine):
         self._version = 0
 
         self.lock = Lock()
-        self.workflow_executor = WorkflowExecutor(
-            config=config,
-            inference_engine=self,
-        )
+
+        # Workflow executor will be initialized in initialize()
+        self.workflow_executor: WorkflowExecutor
 
     def _wait_for_server(self, address):
         base_url = f"http://{address}"
@@ -117,6 +116,12 @@ class RemoteSGLangEngine(InferenceEngine):
         self.logger.info("Servers are all ready!")
         self.executor = ProcessPoolExecutor(max_workers=1)
         self.lora_init = False
+
+        # Create workflow executor
+        self.workflow_executor = WorkflowExecutor(
+            config=self.config,
+            inference_engine=self,
+        )
         self.workflow_executor.initialize(
             logger=self.logger, train_data_parallel_size=train_data_parallel_size
         )
