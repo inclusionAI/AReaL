@@ -244,9 +244,9 @@ class MegatronEngine(TrainEngine):
             "adam",
             "sgd",
         ], "Only AdamW/sgd optimizer is supported in this engine."
-        if self.optimizer_config.type in ["sgd", "adam_bf16"]:
+        if self.optimizer_config.type == "sgd":
             self.logger.warning(
-                f"Using {self.optimizer_config.type} optimizer with FSDP may lead to suboptimal performance. Consider using SGD optimizer for better efficiency."
+                f"Using the 'sgd' optimizer with Megatron may be less stable. Consider using the 'adam' (AdamW) optimizer for improved stability."
             )
 
         # Make megatron optimizer config
