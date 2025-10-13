@@ -169,8 +169,8 @@ class OptimizerConfig:
             "choices": ["adam", "sgd", "adam_bf16"],
         },
     )
-    lr: float = field(default=2e-5, metadata={"help": "Learning rate"})
-    weight_decay: float = field(default=0.05, metadata={"help": "Weight decay"})
+    lr: float = field(default=1e-3, metadata={"help": "Learning rate"})
+    weight_decay: float = field(default=0.0, metadata={"help": "Weight decay"})
     beta1: float = field(
         default=0.9,
         metadata={
@@ -178,13 +178,13 @@ class OptimizerConfig:
         },
     )
     beta2: float = field(
-        default=0.95,
+        default=0.999,
         metadata={
             "help": "Adam beta2 parameter. Only effective when optimizer_type is adam/adam_bf16"
         },
     )
     eps: float = field(
-        default=1e-5,
+        default=1e-8,
         metadata={
             "help": "Adam epsilon parameter. Only effective when optimizer_type is adam/adam_bf16"
         },
@@ -290,7 +290,7 @@ class TrainEngineConfig:
         default=False, metadata={"help": "Disable dropout layers during training"}
     )
     gradient_checkpointing: bool = field(
-        default=True, metadata={"help": "Enable gradient checkpointing"}
+        default=False, metadata={"help": "Enable gradient checkpointing"}
     )
     dtype: str = field(default="bfloat16", metadata={"help": "Parameter data type."})
     grad_reduce_dtype: str = field(
