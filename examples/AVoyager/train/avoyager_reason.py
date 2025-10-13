@@ -40,7 +40,7 @@ from areal.api.workflow_api import RolloutWorkflow
 from areal.api.cli_args import GRPOConfig
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.utils.data import concat_padded_tensors, broadcast_tensor_container
+from areal.utils.data import concat_padded_tensors, broadcast_tensor_container,tensor_container_to
 from areal.utils.device import log_gpu_stats
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
@@ -385,7 +385,7 @@ def main(args):
                         workflow=workflow,
                         should_accept=lambda sample: True,
                     )
-                batch = batch.to(actor.device)
+                batch = tensor_container_to(batch, actor.device)
                 batch = redistribute(batch, group=actor.data_parallel_group).data
             batch = broadcast_tensor_container(
                 batch,
@@ -415,13 +415,13 @@ def main(args):
             stats_tracker.record_timing("train_step"),
             stats_tracker.scope("grpo_actor"),
         ):
-            if config.log_agent_stats:
-                agent_denominator = (batch["begin_of_trajectory"] > 0).bool()
-                stats_tracker.denominator(agent=agent_denominator)
-                stats_tracker.stat(
-                    **{k: batch[k].float() for k in config.log_agent_stats_keys},
-                    denominator="agent",
-                )
+            # if config.log_agent_stats:
+            #     agent_denominator = (batch["begin_of_trajectory"] > 0).bool()
+            #     stats_tracker.denominator(agent=agent_denominator)
+            #     stats_tracker.stat(
+            #         **{k: batch[k].float() for k in config.log_agent_stats_keys},
+            #         denominator="agent",
+            #     )
 
             stats = actor.ppo_update(batch)
             wandb.log({"final_reward": stats[0]["grpo_actor/final_reward/avg"]})
@@ -580,6 +580,7 @@ def main(args):
     if ref is not None:
         ref.destroy()
     actor.destroy()
+
     wandb.finish()
 
 
