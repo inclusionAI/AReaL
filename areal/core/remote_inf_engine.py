@@ -368,8 +368,12 @@ class RemoteInfEngine:
         ModelResponse
             The generated response from the model
         """
+        # Create a shallow copy of the input request
+        # we are going to modify it in-place
+        req = req.copy()
+
         # Validate n_samples
-        gconfig = req.gconfig.new()
+        gconfig = req.gconfig
         if gconfig.n_samples != 1:
             raise ValueError(
                 "Inference engines do not support n_samples > 1. "
@@ -459,6 +463,11 @@ class RemoteInfEngine:
             # Update request for next iteration
             req.input_ids += gen_result.output_tokens
             req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
+            assert req.gconfig.max_new_tokens >= 0, (
+                req.gconfig.max_new_tokens,
+                len(gen_result.output_tokens),
+                len(gen_result.input_tokens),
+            )
 
         # Final abort handling
         if stop_reason == "abort":

@@ -183,6 +183,7 @@ class RemoteSGLangEngine(InferenceEngine):
     """
 
     def __init__(self, config: InferenceEngineConfig):
+        self.config = config
         # Pure composition - create internal engine with SGLang backend
         self._engine = RemoteInfEngine(config, SGLangBackend())
 

@@ -32,6 +32,17 @@ class ModelRequest:
     image_data: Optional[List[ImageObject | str]] = field(default_factory=list)
     processor: Optional["AutoProcessor"] = None
 
+    def copy(self):
+        return ModelRequest(
+            rid=self.rid,
+            input_ids=self.input_ids.copy(),
+            gconfig=self.gconfig.new(),
+            metadata=self.metadata.copy(),
+            tokenizer=self.tokenizer,
+            image_data=self.image_data,
+            processor=self.processor,
+        )
+
 
 @dataclass
 class ModelResponse:

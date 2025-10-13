@@ -156,6 +156,7 @@ class RemotevLLMEngine(InferenceEngine):
     """
 
     def __init__(self, config: InferenceEngineConfig):
+        self.config = config
         # Pure composition - create internal engine with vLLM backend
         self._engine = RemoteInfEngine(config, VLLMBackend())
 
