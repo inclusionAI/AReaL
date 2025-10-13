@@ -321,22 +321,8 @@ class WorkflowExecutor:
         self.rollout_thread.join()
 
     def get_capacity(self):
-        """Get available capacity for new rollouts.
-
-        This method delegates the capacity calculation to the configured
-        `staleness_controller`, which considers both concurrency and staleness
-        constraints.
-
-        Returns
-        -------
-        int
-            Number of new rollout slots available
-        """
-
-        # Get capacity from staleness controller
         version = self.inference_engine.get_version()
         capacity = self.staleness_controller.get_capacity(version)
-
         return capacity
 
     def _rollout_thread(self):
