@@ -3,7 +3,7 @@ import os
 import uuid
 from collections import OrderedDict, defaultdict
 from copy import deepcopy
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set, Union
 
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN, Body, NotGiven
@@ -104,6 +104,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             extra_body = {}
         # Handle multimodal messages: flatten parts, extract images, insert placeholder tokens
         images_b64: List[str] = []
+        images_pil: List["ImageObject"] = []  # collected PIL images for processor
 
         image_placeholder = "<|vision_start|><|image_pad|><|vision_end|>"
 
@@ -151,6 +152,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                                 else:
                                     images_b64.append(b64)
                                 text_parts.append(image_placeholder)
+                                images_pil.append(pil_img)
                             except Exception:
                                 # Skip malformed images but keep pipeline alive
                                 pass
@@ -279,6 +281,23 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
                 chat_template_type=self.chat_template_type,
             )
+            # If images are present and processor is available, prepare multi-modal inputs
+            try:
+                if images_pil and getattr(self, "processor", None) is not None:
+                    proc = getattr(self, "processor")
+                    image_inputs = proc.image_processor(images_pil, return_tensors="pt")
+                    mm: Dict[str, Any] = {}
+                    # Common keys from vision processors
+                    if "pixel_values" in image_inputs:
+                        mm["pixel_values"] = image_inputs["pixel_values"]
+                    if "image_grid_thw" in image_inputs:
+                        mm["image_grid_thw"] = image_inputs["image_grid_thw"]
+                    if mm:
+                        # Wrap into a list to match engine expectations
+                        self._cache[completion_id].multi_modal_input = [mm]
+            except Exception:
+                # Best-effort; do not fail cache on multimodal packing
+                pass
         return chat_completion
 
 class ArealOpenAI(AsyncOpenAI):

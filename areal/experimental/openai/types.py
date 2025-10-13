@@ -25,7 +25,8 @@ class CompletionWithTokenLogpReward:
     _cache: Dict[str, torch.Tensor] | None = None
     # Optional precomputed multimodal payload (organized in dict form), e.g.:
     # {"multi_modal_input": [{"pixel_values": Tensor, ...}]}
-    multimodal_data: Optional[Dict[str, Any]] = None
+    # Preferred naming aligned with engine/utils expectations
+    multi_modal_input: Optional[Dict[str, Any]] = None
 
     def to_tensor_dict(self) -> Dict[str, torch.Tensor]:
         if self._cache is not None:
@@ -88,8 +89,9 @@ class CompletionWithTokenLogpReward:
             rewards=torch.tensor([float(reward)]),
         )
         # Attach multimodal tensors if available
-        if self.multimodal_data is not None:
-            result["multimodal_data"]=self.multimodal_data
+        # Attach multimodal tensors if available. Prefer key "multi_modal_input".
+        if self.multi_modal_input is not None:
+            result["multi_modal_input"] = self.multi_modal_input
         self._cache = result
 
         return result
