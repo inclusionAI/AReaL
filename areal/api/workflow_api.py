@@ -9,9 +9,6 @@ if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
 
 
-ROLLOUT_POLL_WAIT_TIME = 0.05
-
-
 class RolloutWorkflow:
 
     async def arun_episode(

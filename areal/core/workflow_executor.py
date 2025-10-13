@@ -17,10 +17,13 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
-from areal.core import StalenessController
 from areal.experimental.openai.types import CompletionWithTokenLogpReward
 from areal.utils import logging
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
+
+from .staleness_controller import StalenessController
+
+ROLLOUT_POLL_WAIT_TIME = 0.05
 
 
 def check_trajectory_format(
