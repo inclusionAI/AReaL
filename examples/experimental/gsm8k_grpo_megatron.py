@@ -105,7 +105,7 @@ def main(args):
         None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
     )
 
-    weight_update_meta = WeightUpdateMeta.from_megatron_nccl(
+    weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
         allocation_mode,
         nccl_group_name=actor.weight_update_group_name,
     )

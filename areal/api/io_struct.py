@@ -125,7 +125,7 @@ class WeightUpdateMeta:
         )
 
     @classmethod
-    def from_megatron_nccl(
+    def from_megatron_xccl(
         cls,
         allocation_mode: AllocationMode,
         nccl_group_name: str = "update_weight_group",
