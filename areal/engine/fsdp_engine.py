@@ -420,10 +420,7 @@ class FSDPEngine(BaseHFEngine):
             )
         self.rollout_engine = engine
 
-        if meta.type == "disk":
-            return
-
-        if not self.weight_update_group_initialized:
+        if meta.type != "disk" and not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 
