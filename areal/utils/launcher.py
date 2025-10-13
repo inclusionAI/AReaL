@@ -168,12 +168,10 @@ def apply_sglang_patch():
         / "sglang"
         / f"v{pkg_version.get_version('sglang')}.patch"
     )
-    logger.info(f"[Debug] p={p}, patch_path={patch_path}")
-
     target_path = None
     sglang_meta = subprocess.check_output(
         [sys.executable, "-m", "pip", "show", "sglang"]
-    ).decode("ascii")
+    ).decode("utf-8")
     # Prioritize editable install location, since pip show lists both locations
     # if installed in editable mode.
     for line in sglang_meta.split("\n"):
