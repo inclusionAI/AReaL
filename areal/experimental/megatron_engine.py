@@ -607,7 +607,7 @@ class MegatronEngine(TrainEngine):
         dist.barrier(device_ids=[self.device.index])
 
         if dist.get_rank() == 0:
-            self.rollout_engine.pause_generation()
+            self.rollout_engine.continue_generation()
 
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
