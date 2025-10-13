@@ -168,11 +168,13 @@ def apply_sglang_patch():
         / "sglang"
         / f"v{pkg_version.get_version('sglang')}.patch"
     )
+    logger.info(f"[Debug] p={p}, patch_path={patch_path}")
 
     target_path = ""
     sglang_meta = subprocess.check_output(
         [sys.executable, "-m", "pip", "show", "sglang"]
     ).decode("ascii")
+    logger.info(f"[Debug] sglang_meta=\n{sglang_meta}")
     for line in sglang_meta.split("\n"):
         line = line.strip()
         if line.startswith("Editable project location: "):
@@ -182,13 +184,14 @@ def apply_sglang_patch():
             target_path = str(Path(line.split(": ")[1]) / "sglang")
             break
 
+    logger.info(f"[Debug] target_path={target_path}")
     if target_path:
         patch_binary = shutil.which("patch")
         if not patch_binary:
-            logger.warning(
-                "Could not locate the `patch` command; skipping SGLang patch application."
+            raise RuntimeError(
+                "Could not locate the `patch` command; SGLang patch application failed."
             )
-            return
+            
 
         result = subprocess.run(
             [patch_binary, "-p1", "-N", "-i", patch_path],
@@ -215,3 +218,5 @@ def apply_sglang_patch():
             raise RuntimeError(
                 f"SGLang patch {patch_path} failed with exit code {result.returncode}."
             )
+    else:
+        raise RuntimeError("Could not determine the installation path of SGLang.")
