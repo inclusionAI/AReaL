@@ -59,7 +59,7 @@ class NormConfig:
     adv_norm_mode: str = field(
         default="native",
         metadata={
-            "help": "native or mix. 'native' is the normal z-score normalization. For 'mix', both normal z-score and mean-based z-score normalization will be calculated and aggregated (see MAPO paper for more details)."
+            "help": "native or mix. native is the normal z-score normalization. for mix, the normal z-score and mean-base z-score normalization will be calculated and aggregated (more info please refer to the paper of MAPO)."
         },
     )
     reward_norm_mode: str = field(

@@ -1392,11 +1392,9 @@ class MAPOAdvNorm(Normalization):
             # means all advantages are same but not 0
             if unique_elements >= 3:
                 logger.warning(
-                    (
-                        f"The MAPO only support reward modeling in a binary, but detected {unique_elements} unique elements in advantages Tensor. Please check: "
-                        f"1. the definition of reward_fun: return the binary number "
-                        f"2. overlong_reward_panalty set to false"
-                    )
+                    msg=f"The MAPO only support reward modeling in a binary, but detected {unique_elements} unique elements in advantages Tensor. Please check: "
+                    f"1. the definition of reward_fun: return the binary number "
+                    f"2. overlong_reward_panalty set to false"
                 )
             # means all advantages are same but not 0
             else:
@@ -1450,14 +1448,14 @@ class MAPOAdvNorm(Normalization):
             dtype=success_trajectory_nums_per_group.dtype,
         )  # total_trajectory_nums shape [batch_size]
         # the probability of success trajectory within each group and batch
-        trajectory_certainty_degree = (
-            success_trajectory_nums_per_group / total_trajectory_nums_per_group
-        )
+        p = success_trajectory_nums_per_group / total_trajectory_nums_per_group
 
         # trajectory_reweight shape [batch_size], represent the reweight of tragetories
-        trajectory_reweight = (
-            4 * trajectory_certainty_degree * (1 - trajectory_certainty_degree)
-        )
+        # p==0: all trajectory are fail -> trajectory_reweight==1-> only use mean_base_norm
+        # p==1: all trajectory are success -> trajectory_reweight==1-> only use mean_base_norm
+        # p==0.5: half trajectory are success -> trajectory_reweight==0 ->only use deviation_base_norm
+        trajectory_reweight = 1 - (4 * p * (1 - p))
+
         # trajectory_reweight shape to expand each_token of advantages
         # trajectory_reweight [batch_size]->[batch_size*group_size]->[batch_size*group_size, max_token],each trajectory has same reweight for each token.
         # i.e. trajectory_reweight granularity: group-level-> trajectory-level->token-level
