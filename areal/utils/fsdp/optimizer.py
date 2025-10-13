@@ -59,7 +59,7 @@ class AnyPrecisionAdamW(torch.optim.Optimizer):
 
             # Any Precision specific
             use_kahan_summation = creates auxiliary buffer to ensure high precision
-            model param updates (default: False)
+            model param updates (default: True)
             momentum_dtype = dtype for momentum  (default: bfloat16)
             variance_dtype = dtype for uncentered variance (default: bfloat16)
             compensation_buffer_dtype = dtype for Kahan summation buffer (default: bfloat16)
@@ -67,7 +67,7 @@ class AnyPrecisionAdamW(torch.optim.Optimizer):
             # Usage
             This optimizer implements optimizer states, and Kahan summation
             for high precision updates, all in user controlled dtypes.
-            Defaults are variance in BF16, Momentum in FP32.
+            Defaults are variance in BF16, Momentum in BF16.
             This can be run in FSDP mixed precision, amp, or full precision,
             depending on what training pipeline you wish to work with.
 

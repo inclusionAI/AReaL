@@ -1,7 +1,6 @@
 import gc
 import os
 import time
-from abc import abstractmethod
 from typing import Any, Callable, Dict, List
 
 import torch
@@ -20,7 +19,6 @@ from transformers import (
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import TrainEngine
-from areal.api.io_struct import FinetuneSpec
 from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.data import (
@@ -130,12 +128,6 @@ class BaseHFEngine(TrainEngine):
         self.mp_group = mp_group
 
         self.logger = logging.getLogger(f"[HF Engine Rank {dist.get_rank()}]")
-
-    @abstractmethod
-    def create_optimizer(self, ft_spec: FinetuneSpec):
-        # since create_optimizer is different for different engines,
-        # we leave it to the subclass to implement
-        pass
 
     def create_device_model(self):
         current_platform.set_device(int(os.environ["LOCAL_RANK"]))

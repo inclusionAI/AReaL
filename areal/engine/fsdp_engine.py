@@ -697,6 +697,8 @@ class FSDPEngine(BaseHFEngine):
                 weight_decay=weight_decay,
                 betas=(beta1, beta2),
                 eps=eps,
+                momentum_dtype="bfloat16",
+                variance_dtype="bfloat16",
             )
         else:
             self.optimizer = torch.optim.SGD(
