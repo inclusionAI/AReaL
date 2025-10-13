@@ -400,9 +400,11 @@ class RemotevLLMEngine(InferenceEngine):
             should_accept=should_accept,
         )
 
-    def pause(self):
-        """Pause request submission for async rollout. Used during evaluation to prevent data over generation."""
+    def pause_generation(self):
+        """Pause the generation of inference engine.
 
+        Used during updating weights from distributed or disk.
+        """
         for addr in self.addresses:
             res = requests.post(f"http://{addr}/areal_pause_generation")
             res.raise_for_status()
@@ -411,15 +413,18 @@ class RemotevLLMEngine(InferenceEngine):
         # The following line waits until all requests are indeed dropped.
         time.sleep(self.config.pause_grace_period)
 
-        return self.workflow_executor.pause()
-
-    def resume(self):
-        """Resume request submission for async rollout."""
-
+    def continue_generation(self):
+        """Continue the generation of inference engine."""
         for addr in self.addresses:
             res = requests.post(f"http://{addr}/areal_continue_generation")
             res.raise_for_status()
 
+    def pause(self):
+        """Pause request submission for async rollout. Used during evaluation to prevent data over generation."""
+        return self.workflow_executor.pause()
+
+    def resume(self):
+        """Resume request submission for async rollout."""
         return self.workflow_executor.resume()
 
 

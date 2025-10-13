@@ -349,6 +349,11 @@ class FSDPEngine(BaseHFEngine):
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         """Broadcast parameters (chunked) from rank 0 (FSDP2 compatible)."""
 
+        if dist.get_rank() == 0:
+            self.rollout_engine.pause_generation()
+
+        dist.barrier(device_ids=[self.device.index])
+
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
         buffer_size = 0
@@ -376,6 +381,11 @@ class FSDPEngine(BaseHFEngine):
         # Only rank-0 CAN contain named tensors here
         if named_tensors:
             self._update_bucket_weights_from_distributed(meta, named_tensors)
+
+        dist.barrier(device_ids=[self.device.index])
+
+        if dist.get_rank() == 0:
+            self.rollout_engine.continue_generation()
 
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
