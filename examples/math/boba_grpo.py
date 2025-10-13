@@ -83,32 +83,38 @@ def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
     rank = int(os.getenv("RANK"))
-    world_size = int(os.getenv("WORLD_SIZE"))
-    assert (
-        config.train_dataset.batch_size >= world_size
-    ), f"batch size({config.train_dataset.batch_size}) must larger or equal than world_size({world_size})!"
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
+
+    # Initialize train engine
+    actor = FSDPPPOActor(config=config.actor)
+    actor.create_process_group(parallel_strategy=parallel_strategy)
+
+    world_size = actor.data_parallel_world_size
+    assert (
+        config.train_dataset.batch_size >= world_size
+    ), f"batch size({config.train_dataset.batch_size}) must larger or equal than world_size({world_size})!"
+
     train_dataset = get_boba_math_dataset(
-        config.train_dataset.path, tokenizer, rank=rank, world_size=world_size
+        config.train_dataset.path,
+        tokenizer,
+        rank=actor.data_parallel_rank,
+        world_size=world_size,
     )
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         train_dataset,
-        batch_size=config.train_dataset.batch_size,
+        batch_size=config.train_dataset.batch_size // world_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
         collate_fn=lambda x: x,
         drop_last=config.train_dataset.drop_last,
     )
-    config.rollout.consumer_batch_size *= world_size
-    config.rollout.max_concurrent_rollouts *= world_size
 
-    actor = FSDPPPOActor(config=config.actor)
-    actor.create_process_group(parallel_strategy=parallel_strategy)
     device = torch.device(int(os.environ["LOCAL_RANK"]))
     train_dataset_len = len(train_dataloader)
     dateset_len_tensor = torch.tensor(
@@ -122,25 +128,22 @@ def main(args):
     )
 
     # Initialize inference engine
-    allocation_mode = config.allocation_mode
-    allocation_mode = AllocationMode.from_str(allocation_mode)
     if allocation_mode.gen_backend == "vllm":
         rollout = RemotevLLMEngine(config.rollout)
     elif allocation_mode.gen_backend == "sglang":
         rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
+    weight_update_meta = get_model_update_meta(config)
+
     # Initialize train engine
     actor.initialize(None, ft_spec)
+    actor.connect_engine(rollout, weight_update_meta)
+
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
         ref = FSDPPPOActor(config=config.ref)
         ref.initialize(None, ft_spec)
-
-    # NOTE: Weight update meta only requires address and free port of rank 0,
-    # but `WeightUpdateMeta.from_fsdp_xccl` has to be executed on all ranks
-    weight_update_meta = get_model_update_meta(config, actor)
-    weight_update_meta = weight_update_meta[0]
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -250,16 +253,12 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
-            if dist.get_rank() == 0:
-                future = rollout.update_weights(weight_update_meta)
-            actor.upload_weights(weight_update_meta)
-            if dist.get_rank() == 0:
-                future.result()
-            dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
-            rollout.resume()
+            actor.update_weights(weight_update_meta)
+
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
+
+        rollout.resume()
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
@@ -274,7 +273,21 @@ def main(args):
                 train_dataloader,
                 tokenizer=tokenizer,
             )
+
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
+
+        # Upload statistics to the logger (e.g., wandb)
+        stats[0].update(
+            stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+        )
         stats_logger.commit(epoch, step, global_step, stats)
+
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
+
+        # Resume rollout
+        rollout.resume()
 
     stats_logger.close()
     rollout.destroy()

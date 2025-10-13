@@ -170,8 +170,8 @@ class TrainEngine(abc.ABC):
         """
         return self.train(False)
 
-    def upload_weights(self, meta: WeightUpdateMeta):
-        """Upload weights to the inference engine in a blocking manner.
+    def update_weights(self, meta: WeightUpdateMeta):
+        """Update weights to the inference engine in a blocking manner.
 
         Parameters
         ----------
@@ -180,20 +180,13 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def get_param_specs(
-        self, weight_chunked_mem_mb: int = 1024
-    ) -> List[List[ParamSpec]]:
-        """Get the parameter specifications for the model.
+    def connect_engine(self, engine: "InferenceEngine", meta: WeightUpdateMeta):
+        """Connect to an inference engine for online training.
 
         Parameters
         ----------
-        weight_chunked_mem_mb : int, optional
-            Memory size in MB for weight chunking, by default 1024
-
-        Returns
-        -------
-        List[List[ParamSpec]]
-            List of parameter specifications for the model
+        engine : InferenceEngine
+            The inference engine to connect to
         """
         raise NotImplementedError()
 
@@ -387,19 +380,51 @@ class InferenceEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def update_weights(self, meta: WeightUpdateMeta) -> Future:
+    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
+        """Initialize the weight update process group for distributed weight updates.
+
+        This method should be called before performing any weight updates to ensure
+        that the necessary communication groups are set up correctly.
+
+        Parameters
+        ----------
+        meta : WeightUpdateMeta
+            Metadata containing information about the weight update, such as the
+            type of communication backend and allocation mode.
+
+        Raises
+        ------
+        NotImplementedError
+            If the method is not implemented by a subclass.
+
+        Returns
+        -------
+        Future[None]
+            A future object representing the asynchronous initialization operation.
+        """
+        raise NotImplementedError()
+
+    def update_weights_from_distributed(
+        self, meta: WeightUpdateMeta, param_specs: List[ParamSpec]
+    ) -> Future[None]:
         """Update weights in the inference engine in a non-blocking manner.
 
-        The reason for using a non-blocking API is that we want this API to be
-        compatible with XCCL collective communications, e.g.::
+        Parameters
+        ----------
+        meta : WeightUpdateMeta
+            Metadata containing information about the weight update
+        param_specs : List[ParamSpec]
+            A list of parameter specifications for the weights to be updated
 
-            fut = rollout.update_weights(meta)
-            actor.upload_weights(meta)
-            fut.result()
+        Returns
+        -------
+        Future[None]
+            A future object representing the asynchronous weight update operation
+        """
+        raise NotImplementedError()
 
-        Note that the `upload_weights` API of `TrainEngine` is blocking.
-        If this API is blocking as well, then we will not trigger `actor.upload_weights`,
-        and weight updates will get stuck.
+    def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
+        """Update weights in the inference engine from disk in a non-blocking manner.
 
         Parameters
         ----------
@@ -408,7 +433,7 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        Future
+        Future[None]
             A future object representing the asynchronous weight update operation
         """
         raise NotImplementedError()

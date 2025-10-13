@@ -20,6 +20,7 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     ModelRequest,
     ModelResponse,
+    ParamSpec,
     WeightUpdateMeta,
 )
 from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
@@ -282,64 +283,76 @@ class RemotevLLMEngine(InferenceEngine):
         )
         return response
 
-    def update_weights(self, meta: WeightUpdateMeta):
-        for addr in self.addresses:
-            res = requests.post(f"http://{addr}/areal_pause_generation")
-            res.raise_for_status()
-        tik = time.perf_counter()
-        fut = Future()
-        if meta.type == current_platform.communication_backend:
-            fut = self.executor.submit(
-                update_weights_from_distributed,
-                meta,
-                self.addresses,
-                self.config.request_timeout,
-                not self.distributed_weight_update_initialized,
-            )
+    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
+        # No need to init group for non-NCCL update
+        assert meta.type == current_platform.communication_backend
+        assert (
+            not self.distributed_weight_update_initialized
+        ), "Weight update group already initialized."
 
-            def callback(fut):
-                self.logger.info(
-                    f"Distributed update weights done in {time.perf_counter() - tik}s"
-                )
-                self.distributed_weight_update_initialized = True
-
-            fut.add_done_callback(callback)
-        elif meta.type == "disk":
-            # Update weights from disk
-            # Use ProcessPool to bypass python GIL for running async coroutines
-            if self.config.experiment_name is None or self.config.trial_name is None:
-                raise RuntimeError(
-                    f"Experiment and trial names must be set for disk-based weight updates."
-                )
-            fut = self.executor.submit(
-                update_weights_from_disk,
-                self.config.experiment_name,
-                self.config.trial_name,
-                self.get_version(),
-                self.addresses,
-                meta.path,
-                self.config.request_retries,
-                self.config.request_timeout,
-            )
-
-            def callback(fut):
-                respond_time = fut.result()
-                self.logger.info(
-                    f"Loading weights from disk done in {(time.perf_counter() - tik):.2f}s. "
-                    f"Respond time: {respond_time:.2f}s."
-                )
-                shutil.rmtree(meta.path, ignore_errors=True)
-
-            fut.add_done_callback(callback)
-        else:
-            raise NotImplementedError(f"Unsupported weight update type: {meta.type}")
+        fut = self.executor.submit(
+            init_weights_update_group_remote,
+            meta,
+            self.addresses,
+            self.config.request_timeout,
+        )
 
         def callback(fut):
-            for addr in self.addresses:
-                res = requests.post(f"http://{addr}/areal_continue_generation")
-                res.raise_for_status()
+            self.logger.info(
+                f"Initialized XCCL group for distributed weight update for {meta.nccl_group_name}."
+            )
+            self.distributed_weight_update_initialized = True
 
         fut.add_done_callback(callback)
+
+        return fut
+
+    def update_weights_from_distributed(
+        self, meta: WeightUpdateMeta, param_specs: List[ParamSpec]
+    ) -> Future[None]:
+        assert meta.type == current_platform.communication_backend
+
+        fut = self.executor.submit(
+            update_weights_from_distributed,
+            meta,
+            param_specs,
+            self.addresses,
+            self.config.request_timeout,
+        )
+
+        return fut
+
+    def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
+        assert meta.type == "disk"
+
+        tik = time.perf_counter()
+
+        # Use ProcessPool to bypass python GIL for running async coroutines
+        if self.config.experiment_name is None or self.config.trial_name is None:
+            raise RuntimeError(
+                f"Experiment and trial names must be set for disk-based weight updates."
+            )
+        fut = self.executor.submit(
+            update_weights_from_disk,
+            self.config.experiment_name,
+            self.config.trial_name,
+            self.get_version(),
+            self.addresses,
+            meta.path,
+            self.config.request_retries,
+            self.config.request_timeout,
+        )
+
+        def callback(fut):
+            respond_time = fut.result()
+            self.logger.info(
+                f"Loading weights from disk done in {(time.perf_counter() - tik):.2f}s. "
+                f"Respond time: {respond_time:.2f}s."
+            )
+            shutil.rmtree(meta.path, ignore_errors=True)
+
+        fut.add_done_callback(callback)
+
         return fut
 
     def submit(
@@ -389,10 +402,24 @@ class RemotevLLMEngine(InferenceEngine):
 
     def pause(self):
         """Pause request submission for async rollout. Used during evaluation to prevent data over generation."""
+
+        for addr in self.addresses:
+            res = requests.post(f"http://{addr}/areal_pause_generation")
+            res.raise_for_status()
+
+        # The above http request may require some time to be scheduled and executed.
+        # The following line waits until all requests are indeed dropped.
+        time.sleep(self.config.pause_grace_period)
+
         return self.workflow_executor.pause()
 
     def resume(self):
         """Resume request submission for async rollout."""
+
+        for addr in self.addresses:
+            res = requests.post(f"http://{addr}/areal_continue_generation")
+            res.raise_for_status()
+
         return self.workflow_executor.resume()
 
 
@@ -439,42 +466,47 @@ def update_weights_from_disk(
     return uvloop.run(_fn())
 
 
-def update_weights_from_distributed(
+def init_weights_update_group_remote(
     meta: WeightUpdateMeta,
     addresses: List[str],
     request_timeout,
-    init_group: bool,
 ):
-    nccl_param_specs = [
-        spec for param_specs in meta.nccl_param_specs for spec in param_specs
-    ]
-
     async def _fn():
-        if init_group:
-            await asyncio.gather(
-                *[
-                    ainit_weights_update_group(addr, i, meta, request_timeout)
-                    for i, addr in enumerate(addresses)
-                ]
-            )
-            await asyncio.gather(
-                *[
-                    arequest_with_retry(
-                        addr=addr,
-                        endpoint="/areal_set_update_weight_meta",
-                        payload={
-                            "names": [pspec.name for pspec in nccl_param_specs],
-                            "dtypes": [pspec.dtype for pspec in nccl_param_specs],
-                            "shapes": [pspec.shape for pspec in nccl_param_specs],
-                            "group_name": meta.nccl_group_name,
-                        },
-                        method="POST",
-                        max_retries=1,
-                        timeout=request_timeout,
-                    )
-                    for addr in addresses
-                ]
-            )
+        await asyncio.gather(
+            *[
+                ainit_weights_update_group(addr, i, meta, request_timeout)
+                for i, addr in enumerate(addresses)
+            ]
+        )
+
+    return uvloop.run(_fn())
+
+
+def update_weights_from_distributed(
+    meta: WeightUpdateMeta,
+    param_specs: List[ParamSpec],
+    addresses: List[str],
+    request_timeout,
+):
+    async def _fn():
+        await asyncio.gather(
+            *[
+                arequest_with_retry(
+                    addr=addr,
+                    endpoint="/areal_set_update_weight_meta",
+                    payload={
+                        "names": [pspec.name for pspec in param_specs],
+                        "dtypes": [pspec.dtype for pspec in param_specs],
+                        "shapes": [pspec.shape for pspec in param_specs],
+                        "group_name": meta.nccl_group_name,
+                    },
+                    method="POST",
+                    max_retries=1,
+                    timeout=request_timeout,
+                )
+                for addr in addresses
+            ]
+        )
         await asyncio.gather(
             *[
                 arequest_with_retry(
