@@ -25,11 +25,13 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
     WeightUpdateRequests,
 )
-from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
+from areal.api.workflow_api import RolloutWorkflow
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
+
+from .workflow_executor import WorkflowExecutor
 
 RID_CACHE_SIZE = 128
 

@@ -15,7 +15,8 @@ from areal.api.io_struct import (
     ModelResponse,
     WeightUpdateMeta,
 )
-from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
+from areal.api.workflow_api import RolloutWorkflow
+from areal.core import WorkflowExecutor
 from areal.utils import logging, name_resolve, names, pkg_version
 
 logger = logging.getLogger(__name__)

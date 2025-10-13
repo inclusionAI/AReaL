@@ -5,9 +5,11 @@ from .remote_inf_engine import (
     RemoteInfEngine,
 )
 from .staleness_controller import StalenessController
+from .workflow_executor import WorkflowExecutor
 
 __all__ = [
     "RemoteInfBackendProtocol",
     "RemoteInfEngine",
     "StalenessController",
+    "WorkflowExecutor",
 ]
