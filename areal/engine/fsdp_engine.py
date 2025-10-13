@@ -390,8 +390,6 @@ class FSDPEngine(BaseHFEngine):
         # dist.barrier() are called when _save_model_to_hf finished
 
         if dist.get_rank() == 0:
-            fut.result()
-
             update_name = names.update_weights_from_disk(
                 self.config.experiment_name,
                 self.config.trial_name,
@@ -400,6 +398,8 @@ class FSDPEngine(BaseHFEngine):
             name_resolve.add(
                 update_name, str(datetime.now().timestamp()), keepalive_ttl=120
             )
+
+            fut.result()
 
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
@@ -420,7 +420,10 @@ class FSDPEngine(BaseHFEngine):
             )
         self.rollout_engine = engine
 
-        if not self.weight_update_group_initialized:
+        if (
+            meta.type == current_platform.communication_backend
+            and not self.weight_update_group_initialized
+        ):
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 

@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -599,6 +600,11 @@ class SGLangConfig:
     # The interval (in decoding iterations) to log throughput
     # and update prometheus metrics
     decode_log_interval: int = 1
+    # Extra loader arguments
+    # NOTE: These arguments will be parsed into a dict json-string
+    # and passed as `model_loader_extra_config` to SGLang.
+    enable_multithread_load: bool = False
+    enable_fast_load: bool = False
 
     # Use staticmethod to make OmegaConf happy.
     @staticmethod
@@ -649,6 +655,19 @@ class SGLangConfig:
     ):
         # Map "all-linear" to "all"
         args: Dict = conf_as_dict(sglang_config)
+        if sglang_config.enable_multithread_load or sglang_config.enable_fast_load:
+            assert pkg_version.is_version_equal(
+                "sglang", "0.5.2"
+            ), f"Customized model loading requires exact SGLang version 0.5.2"
+            model_loader_extra_config = dict(
+                enable_multithread_load=sglang_config.enable_multithread_load,
+                enable_fast_load=sglang_config.enable_fast_load,
+            )
+            args.pop("enable_multithread_load", None)
+            args.pop("enable_fast_load", None)
+            args["model_loader_extra_config"] = json.dumps(
+                model_loader_extra_config, separators=(",", ":")
+            )
         # Map "all-linear" to "all"
         if "lora_target_modules" in args and args["lora_target_modules"]:
             args["lora_target_modules"] = [
