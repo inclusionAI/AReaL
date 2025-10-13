@@ -202,6 +202,7 @@ class AVoyagerWorkflow(RolloutWorkflow):
                     assert image_tok_cnt > 0, (
                         f"[AVoyager] input_ids contains no <|image_pad|> tokens while multi_modal_input present. "
                         f"cid={cc.completion.id}"
+                        f" input_ids={tok_list}"
                     )
 
                 res["begin_of_trajectory"]=torch.tensor([int(first_completion)])
