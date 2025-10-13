@@ -502,14 +502,23 @@ async def run_agent(
         response = None
         #
         if query["type"] == "llm":
+            # Compute remaining token budget and guard against too-small values
+            remaining = max_tokens - query["query_len"]
+            if remaining <= 0:
+                print(f"Qid={qid} rank={rank} cnt={cnt} no token budget left; terminating.", flush=True)
+                process["running"] = False
+                continue
+            low_budget = remaining < 200
             # Use like standard OpenAI client
             completion = await client.chat.completions.create(
                 messages=query["messages"],
                 temperature=1.0,
                 max_tokens=max_tokens,
-                max_completion_tokens=max(0, min(max_tokens, max_tokens - query["query_len"])),
+                max_completion_tokens=max(1, min(max_tokens, max_tokens - query["query_len"])) ,
             )
             response = completion.choices[0].message.content
+            if low_budget:
+                process["running"] = False
             # print(f"Qid={qid} rank={rank} cnt={cnt} llm gen response: {[response]} query_len={query['query_len']} max_completion_tokens={max(0, min(max_tokens, max_tokens - query['query_len']))}")
             completions.append(completion)
             stats["turns"] += 1

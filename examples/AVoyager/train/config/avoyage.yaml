@@ -13,7 +13,8 @@ cluster:
   name_resolve:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
-
+# AVoyager workflow settings
+n_trajs: 2
 allocation_mode: sglang.d4p1t1+d4p1t1
 
 rollout:
@@ -100,7 +101,7 @@ sglang:
 
 # datasets
 train_dataset:
-  batch_size: 32
+  batch_size: 8
   shuffle: true
   pin_memory: true
   num_workers: 4
@@ -108,7 +109,7 @@ train_dataset:
   type: rl
 
 valid_dataset:
-  batch_size: 32
+  batch_size: 8
   shuffle: true
   pin_memory: true
   num_workers: 4
@@ -155,5 +156,4 @@ launcher:
   trainer_cpus_per_gpu: 4
   trainer_mem_per_gpu: 32768
 
-# AVoyager workflow settings
-n_trajs: 4
+
