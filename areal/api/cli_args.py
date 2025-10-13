@@ -281,6 +281,7 @@ class TrainEngineConfig:
         metadata={"help": "Optimizer configuration. None means no training."},
     )
 
+    weight_update_mode: str = field(default="disk")
     backend: str = field(
         default="", metadata={"help": "Training backend (refer to documentation)"}
     )
@@ -1097,7 +1098,6 @@ class BaseExperimentConfig:
         default="",
         metadata={"help": "Path to the tokenizer."},
     )
-    weight_update_mode: str = field(default="disk")
 
     train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
     valid_dataset: DatasetConfig | None = field(default=None)

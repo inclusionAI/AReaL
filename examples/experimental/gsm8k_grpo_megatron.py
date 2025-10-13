@@ -2,8 +2,8 @@ import os
 import sys
 from copy import deepcopy
 
-import torch.distributed as dist
 from megatron.core import parallel_state as mpu
+from torch import distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
@@ -104,19 +104,19 @@ def main(args):
     actor.initialize(
         None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
     )
+
+    weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
+        allocation_mode,
+        nccl_group_name=actor.weight_update_group_name,
+    )
+    actor.connect_engine(rollout, weight_update_meta)
+
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
         ref = MegatronPPOActor(config=config.ref)
         ref.initialize(
             None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
         )
-
-    # NOTE: megatron engine currently does not support nccl weight update
-    weight_update_meta = WeightUpdateMeta.from_disk(
-        config.experiment_name,
-        config.trial_name,
-        config.cluster.fileroot,
-    )
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -229,13 +229,7 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
-            if dist.get_rank() == 0:
-                future = rollout.update_weights(weight_update_meta)
-            actor.upload_weights(weight_update_meta)
-            if dist.get_rank() == 0:
-                future.result()
-            dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
+            actor.update_weights(weight_update_meta)
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)

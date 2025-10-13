@@ -16,8 +16,6 @@ from areal.utils.network import find_free_ports, gethostip
 if TYPE_CHECKING:
     from transformers import AutoProcessor
 
-    from areal.api.engine_api import TrainEngine
-
 
 @dataclass
 class ModelRequest:
@@ -100,8 +98,8 @@ class WeightUpdateMeta:
 
     nccl_master_address: str = "127.0.0.1"
     nccl_master_port: int = 29500
-    nccl_param_specs: List[List[ParamSpec]] = field(default_factory=list)
     nccl_group_name: str = "update_weight_group"
+    weight_chunked_mem_mb: int = 1024
 
     use_lora: bool = False
 
@@ -127,21 +125,35 @@ class WeightUpdateMeta:
         )
 
     @classmethod
-    def from_fsdp_xccl(
+    def from_megatron_xccl(
         cls,
         allocation_mode: AllocationMode,
-        fsdp_engine: "TrainEngine",
         nccl_group_name: str = "update_weight_group",
         weight_chunked_mem_mb: int = 1024,
     ):
-        param_specs = fsdp_engine.get_param_specs(weight_chunked_mem_mb)
         return cls(
             type=current_platform.communication_backend,
             alloc_mode=allocation_mode,
             nccl_master_address=gethostip(),
             nccl_master_port=find_free_ports(1)[0],
-            nccl_param_specs=param_specs,
             nccl_group_name=nccl_group_name,
+            weight_chunked_mem_mb=weight_chunked_mem_mb,
+        )
+
+    @classmethod
+    def from_fsdp_xccl(
+        cls,
+        allocation_mode: AllocationMode,
+        nccl_group_name: str = "update_weight_group",
+        weight_chunked_mem_mb: int = 1024,
+    ):
+        return cls(
+            type=current_platform.communication_backend,
+            alloc_mode=allocation_mode,
+            nccl_master_address=gethostip(),
+            nccl_master_port=find_free_ports(1)[0],
+            nccl_group_name=nccl_group_name,
+            weight_chunked_mem_mb=weight_chunked_mem_mb,
         )
 
 
