@@ -108,7 +108,7 @@ class MultiturnRLVRWorkflow(RolloutWorkflow):
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
         dump_dir: str | None = None,
-        rollout_stat_scope: bool = "rollout",
+        rollout_stat_scope: str = "rollout",
         n_trajs: int = 1,
         max_tokens: int = 32768,
         max_turns: int = 8,
@@ -201,15 +201,11 @@ def main(args):
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
-    actor.initialize(None, ft_spec)
 
-    weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_xccl(
-            AllocationMode.from_str(config.allocation_mode), actor
-        )
-    ]
-    dist.broadcast_object_list(weight_update_meta, src=0)
-    weight_update_meta = weight_update_meta[0]
+    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
+
+    actor.initialize(None, ft_spec)
+    actor.connect_engine(rollout, weight_update_meta)
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -310,13 +306,7 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
-            if dist.get_rank() == 0:
-                future = rollout.update_weights(weight_update_meta)
-            actor.upload_weights(weight_update_meta)
-            if dist.get_rank() == 0:
-                future.result()
-            dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
+            actor.update_weights(weight_update_meta)
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
