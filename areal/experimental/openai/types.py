@@ -91,32 +91,6 @@ class CompletionWithTokenLogpReward:
 
         # Attach multimodal tensors if available. Prefer key "multi_modal_input".
         if self.multi_modal_input is not None:
-            # Enforce image token count equals number of pixel_values entries
-            resp_tokens = seq  # use full sequence as requested
-            img_token_count = None
-
-            image_token_id = 151655
-
-            if image_token_id is not None and isinstance(resp_tokens, list):
-                img_token_count = resp_tokens.count(image_token_id)
-
-            # Count number of pixel_values provided in multi_modal_input
-            mm = self.multi_modal_input
-            pixel_count = sum(
-                1 for it in mm["multi_modal_input"] if isinstance(it, dict) and ("pixel_values" in it)
-            )
-
-
-            if img_token_count is not None and img_token_count != pixel_count:
-                msg = (
-                    f"Image token/pixel_values mismatch: tokens={img_token_count}, "
-                    f"pixel_values={pixel_count}, input_len={resp.input_len}, output_len={resp.output_len}"
-                )
-                # Output info then raise error
-                try:
-                    logger.error(msg)
-                finally:
-                    raise ValueError(msg)
 
             result["multi_modal_input"] = self.multi_modal_input
         self._cache = result

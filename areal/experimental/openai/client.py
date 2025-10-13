@@ -105,19 +105,21 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             raise ValueError("messages cannot be empty")
         if extra_body is None:
             extra_body = {}
-        # Handle multimodal messages: flatten parts, extract images, insert placeholder tokens
+        # Handle multimodal messages: build both tokenizer-friendly and processor-friendly messages
         images_b64: List[str] = []
         images_pil: List["ImageObject"] = []  # collected PIL images for processor
 
         image_placeholder = "<|vision_start|><|image_pad|><|vision_end|>"
 
         normalized_messages: List[dict] = []
+        processor_messages: List[dict] = []
         for msg in messages_list:
             role = msg.get("role") if isinstance(msg, dict) else None
             content = msg.get("content") if isinstance(msg, dict) else None
 
             if isinstance(content, list):
                 text_parts: List[str] = []
+                proc_parts: List[Dict[str, Any]] = []
                 for part in content:
                     if not isinstance(part, dict):
                         continue
@@ -127,6 +129,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                         text_val = part.get("text") or part.get("input_text") or ""
                         if isinstance(text_val, str) and text_val:
                             text_parts.append(text_val)
+                            proc_parts.append({"type": "text", "text": text_val})
                         continue
                     # Image-like parts
                     if ptype in ("image_url", "input_image"):
@@ -154,7 +157,10 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                                     images_b64.extend(b64)
                                 else:
                                     images_b64.append(b64)
+                                # For tokenizer path, keep a placeholder
                                 text_parts.append(image_placeholder)
+                                # For processor path, embed the image directly
+                                proc_parts.append({"type": "image", "image": pil_img})
                                 images_pil.append(pil_img)
                             except Exception:
                                 # Skip malformed images but keep pipeline alive
@@ -163,19 +169,34 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 new_msg = dict(msg)
                 new_msg["content"] = " ".join(tp for tp in text_parts if tp).strip()
                 normalized_messages.append(new_msg)
+                pm = dict(msg)
+                pm["content"] = proc_parts
+                processor_messages.append(pm)
             else:
                 # string or other types: forward as is
                 normalized_messages.append(msg)
+                if isinstance(content, str):
+                    processor_messages.append({"role": role, "content": [{"type": "text", "text": content}]})
+                else:
+                    processor_messages.append(msg)
 
-        # Convert messages to prompt format
+        # Convert messages to prompt format using processor only (mandatory for correct image pad counts)
         tools = tools if tools is not NOT_GIVEN else None
-        prompt_token_ids = self.tokenizer.apply_chat_template(
-            normalized_messages,
-            tools=tools,
+
+        proc_kwargs = dict(
             add_generation_prompt=True,
             tokenize=True,
-            **extra_body.get("chat_template_kwargs", {}),
         )
+        proc_kwargs.update(extra_body.get("chat_template_kwargs", {}))
+        # Ensure images are embedded in messages; pass message parts with PIL images
+        proc_inputs = self.processor.apply_chat_template(
+            processor_messages,
+            return_dict=True,
+            return_tensors="pt",
+            **proc_kwargs,
+        )
+        
+        prompt_token_ids = proc_inputs["input_ids"][0].tolist()
 
         temp = 1.0 if temperature is NOT_GIVEN else (temperature or 0.0)
         max_new_tokens = 512

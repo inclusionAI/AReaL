@@ -341,17 +341,9 @@ class BaseHFEngine(TrainEngine):
                 ]
                 if video_grid_thw_list:
                     video_grid_thw = torch.cat(video_grid_thw_list)
-            for i in range(input_ids.shape[0]):
-                has_token = (input_ids[i] == 151655).any().item()
-                if not has_token:
-                    torch.set_printoptions(threshold=100000, linewidth=2000)
-                    print(f"[Error] Sample {i} missing image_token_id (151655)")
-                    print("input_ids[{}]:".format(i), input_ids[i].cpu())
-                    torch.set_printoptions(profile="default")
-                    # 抛出异常终止程序
-                    raise ValueError(f"Sample {i} missing image_token_id (151655)")
-            position_ids, _ = self.model.model.get_rope_index(
-                input_ids, image_grid_thw, video_grid_thw, attn_mask
+            from areal.models.transformers.qwen2_vl import get_rope_index
+            position_ids, _ = get_rope_index(
+                self.processor, input_ids, image_grid_thw, video_grid_thw, attn_mask
             )
             # [3, bs, seqlen] -> [bs, seqlen, 3]
             position_ids = torch.einsum("ijk->jki", position_ids)
