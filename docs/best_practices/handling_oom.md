@@ -120,6 +120,19 @@ allocation_mode: sglang:d4+fsdp:d2c2
 > - These work: `1, 2, 4, 8`
 > - These don't: `16, 32`
 
+### 3. Change Lightweight Optimizer
+
+Depending on the training engine, areal support different optimizers.
+
+| Optimizer       | FSDP | Megatron | Name      |
+| --------------- | ---- | -------- | --------- |
+| AdamW (default) | ✅   | ✅       | adam      |
+| SGD             | ✅   | ✅       | sgd       |
+| AdamW_bf16      | ✅   | ❌       | adam_bf16 |
+
+When encounted OOM, you may change to lightweight optimizer by state
+`actor.optimizer.type: name` in the yaml.
+
 ## Resolving Weight Update OOM Errors
 
 Weight updates can eat up a lot of memory, especially when using NCCL synchronization
