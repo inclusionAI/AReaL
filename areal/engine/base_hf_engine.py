@@ -316,6 +316,7 @@ class BaseHFEngine(TrainEngine):
 
     def prepare_mb_list(self, input_: Dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
+        
         input_ = input_.copy()
 
         if is_qwen2_vl_model(self.model_config.model_type):
@@ -340,6 +341,53 @@ class BaseHFEngine(TrainEngine):
                 ]
                 if video_grid_thw_list:
                     video_grid_thw = torch.cat(video_grid_thw_list)
+                    
+            if "multi_modal_input" in input_ and len(input_["multi_modal_input"]) > 0:
+                # Token ids for Qwen2-VL vision markers
+                image_pad_id =151655
+                # If tokens are not defined for this tokenizer, skip the check
+                if image_pad_id != self.tokenizer.unk_token_id :
+                    # Normalize input_ids to [B, S]
+                    ids = input_ids if input_ids.ndim == 2 else input_ids.unsqueeze(0)
+                    am = attn_mask if attn_mask.ndim == 2 else attn_mask.unsqueeze(0)
+                    bsz = ids.shape[0]
+                    # Count number of images per sample using <|vision_start|>
+                    img_per_sample = []
+                    for b in range(bsz):
+                        valid = ids[b][am[b] == 1].tolist() if am is not None else ids[b].tolist()
+
+                    # Build a mapping from flattened multi_modal_input to per-sample groups
+                    mm = input_["multi_modal_input"]
+                    groups = []
+                    cursor = 0
+                    for c in img_per_sample:
+                        groups.append(mm[cursor: cursor + c])
+                        cursor += c
+
+                    # Log per-case shapes and assert presence of image tokens when images exist
+                    for b in range(bsz):
+                        if img_per_sample[b] > 0:
+                            valid = ids[b][am[b] == 1].tolist() if am is not None else ids[b].tolist()
+                            img_token_cnt = sum(1 for t in valid if t == image_pad_id)
+                            if img_token_cnt == 0:
+                                self.logger.error(
+                                    f"[Qwen2-VL] Missing <|image_pad|> in input_ids for sample #{b}. "
+                                    f"input_ids[{b}] (valid): {valid}"
+                                )
+                                # Print multi-modal pixel_values shapes mapped per case
+                                for bi, grp in enumerate(groups):
+                                    shapes = []
+                                    for item in grp:
+                                        if isinstance(item, dict) and "pixel_values" in item:
+                                            pv = item["pixel_values"]
+                                            shapes.append(tuple(pv.shape))
+
+                                    self.logger.error(
+                                            f"  case #{bi}: pixel_values shapes={shapes}" 
+                                        )
+                            assert img_token_cnt > 0, (
+                                f"Missing <|image_pad|> token for sample #{b} while multi_modal_input present."
+                                )
 
             position_ids, _ = self.model.model.get_rope_index(
                 input_ids, image_grid_thw, video_grid_thw, attn_mask
