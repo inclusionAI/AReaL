@@ -262,7 +262,7 @@ class WorkflowExecutor:
         )
         self.config = config
         self.exiting = threading.Event()
-        self.suspended = threading.Event()
+        self.paused = threading.Event()
         self.lock = threading.Lock()
 
         self.inference_engine = inference_engine
@@ -335,7 +335,7 @@ class WorkflowExecutor:
                 self.lock.acquire()
                 while (
                     capacity > 0
-                    and not self.suspended.is_set()
+                    and not self.paused.is_set()
                     and self.input_queue.qsize() > 0
                 ):
                     x = self.input_queue.get_nowait()
@@ -556,16 +556,16 @@ class WorkflowExecutor:
             except TimeoutError:
                 pass
 
-    def suspend(self):
+    def pause(self):
         """Suspend request submission for async rollout.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.suspend` for detailed documentation.
         """
-        self.suspended.set()
+        self.paused.set()
 
     def resume(self):
         """Resume request submission for async rollout.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.resume` for detailed documentation.
         """
-        self.suspended.clear()
+        self.paused.clear()
