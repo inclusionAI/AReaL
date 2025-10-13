@@ -560,6 +560,11 @@ class MegatronEngine(TrainEngine):
             fut.result()
 
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
+        if dist.get_rank() == 0:
+            self.rollout_engine.pause_generation()
+
+        dist.barrier(device_ids=[self.device.index])
+
         num_moe_experts = self.tf_config.num_moe_experts
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
@@ -602,6 +607,11 @@ class MegatronEngine(TrainEngine):
         if named_tensors:
             # This function will early return if not pipeline parallel head
             self._update_bucket_expert_weights_from_distributed(meta, named_tensors)
+
+        dist.barrier(device_ids=[self.device.index])
+
+        if dist.get_rank() == 0:
+            self.rollout_engine.continue_generation()
 
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
