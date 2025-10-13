@@ -7,6 +7,8 @@ from typing import Dict, List
 import uvloop
 import yaml
 
+from areal.utils.pkg_version import is_version_less
+
 uvloop.install()
 from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
@@ -637,7 +639,7 @@ class SGLangConfig:
         # convert to flags
         flags = []
         for k, v in args.items():
-            if "max_loaded_loras" in k:
+            if is_version_less("sglang", "0.4.10.post2") and "max_loaded_loras" in k:
                 continue
             if v is None or v is False or v == "":
                 continue
