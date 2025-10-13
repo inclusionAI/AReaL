@@ -341,9 +341,8 @@ class BaseHFEngine(TrainEngine):
                 ]
                 if video_grid_thw_list:
                     video_grid_thw = torch.cat(video_grid_thw_list)
-            from areal.models.transformers.qwen2_vl import get_rope_index
-            position_ids, _ = get_rope_index(
-                self.processor, input_ids, image_grid_thw, video_grid_thw, attn_mask
+            position_ids, _ = self.model.model.get_rope_index(
+                input_ids, image_grid_thw, video_grid_thw, attn_mask
             )
             # [3, bs, seqlen] -> [bs, seqlen, 3]
             position_ids = torch.einsum("ijk->jki", position_ids)
