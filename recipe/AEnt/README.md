@@ -1,6 +1,6 @@
 ## Overview
 
-Last updated: Oct 11,2025
+Last updated: Oct 13,2025
 Doc Author: Han Shen
 
 This is an AReaL-based implementation of [AEnt](https://www.arxiv.org/pdf/2509.03493), a clamped entropy regularization method for LLM-RL algorithms.
@@ -28,7 +28,7 @@ Related configs:
 actor:
     aent:
         entropy_coeff: 0.0002
-        entropy_clamp: 0.4
+        entropy_clamp: 0.3
 ```
 
 `entropy_coeff` weighs the entropy regularization and `entropy_clamp` specifies value clamping percentage p in the paper.
@@ -86,9 +86,9 @@ Most related code in `actor.py`:
 
 ```python
 if self.adaptive_coeff and global_step > self.warmup_steps:
-            entropy = sum(ent_trace)/len(ent_trace)
-            self.entropy_coeff -= self.coeff_lr*(min(0,entropy-self.entropy_low)+max(0,entropy-self.entropy_high))
-            self.entropy_coeff = min(max(self.entropy_coeff, self.coeff_box_low), self.coeff_box_high)
+    entropy = sum(ent_trace)/len(ent_trace)
+    self.entropy_coeff -= self.coeff_lr*(min(0,entropy-self.entropy_low)+max(0,entropy-self.entropy_high))
+    self.entropy_coeff = min(max(self.entropy_coeff, self.coeff_box_low), self.coeff_box_high)
 ```
 
 ## Toy example
@@ -100,16 +100,6 @@ We recommend to change the parameter within the configuration file
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | **local** | `python3 -m areal.launcher.local recipe/AEnt/gsm8k_aent_grpo.py --config recipe/AEnt/configs/gsm8k_aent_grpo.yaml --<other_args_to_overwrite>` |
 
-
-## Citation
-```bibtex
-@article{shen2025entropy,
-  title={On Entropy Control in LLM-RL Algorithms},
-  author={Shen, Han},
-  journal={arXiv preprint arXiv:2509.03493},
-  year={2025}
-}
-```
 
 <!-- 
 ## Baseline
@@ -140,3 +130,14 @@ The baseline result achieved by unregularized GRPO as reported in `examples/math
 - Max_new_tokens: 1024
 - Max_head_offpolicyness: 2
 - Training Time: ~70 minutes -->
+
+
+## Citation
+```bibtex
+@article{shen2025entropy,
+  title={On Entropy Control in LLM-RL Algorithms},
+  author={Shen, Han},
+  journal={arXiv preprint arXiv:2509.03493},
+  year={2025}
+}
+```

@@ -236,7 +236,7 @@ def aent_grpo_loss_fn(
         approx_kl=stat["approx_kl"],
         new_logp=logprobs.detach(),
         old_logp=old_logp,
-        entropy=entropy.float(),
+        entropy=clamped_entropy.float(),
         actor_loss=stat["loss"],
         clip_ratio=stat["clip_mask"].float(),
         dual_clip_ratio=stat["dual_clip_mask"].float(),
