@@ -198,6 +198,7 @@ def apply_sglang_patch():
         )
 
         output = (result.stdout or "") + (result.stderr or "")
+        logger.info("Patch command output:\n%s", output.strip())
         if result.returncode == 0:
             logger.info(f"Applied SGLang patch {patch_path} to {target_path}")
         elif "Reversed (or previously applied) patch detected" in output or "Skipping patch." in output:
