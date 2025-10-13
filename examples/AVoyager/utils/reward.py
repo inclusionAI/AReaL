@@ -2,7 +2,6 @@ import re
 import os
 import time
 import requests
-import openai
 
 
 SYSTEM_PROMPT = "You are an intelligent chatbot designed for evaluating the correctness of generative outputs for question-answer pairs.\nYour task is to compare the predicted answer with the correct answer and determine if they match meaningfully. Here's how you can accomplish the task:\n------\n##INSTRUCTIONS:\n- Focus on the meaningful match between the predicted answer and the correct answer.\n- Consider synonyms or paraphrases as valid matches.\n- Evaluate the correctness of the prediction compared to the answer."
@@ -14,8 +13,8 @@ API_KEY = os.getenv("API_KEY")
 
 
 def query(prompt: str, system_prompt: str = None,
-          max_retries: int = 5, initial_delay: float = 3.0,
-          model: str = "gemini-2.5-pro") -> str:
+            max_retries: int = 5, initial_delay: float = 3.0,
+            model: str = "gemini-2.5-pro") -> str:
 
     if system_prompt is not None:
         messages = [
@@ -35,6 +34,7 @@ def query(prompt: str, system_prompt: str = None,
     attempt = 0
     delay = max(0.0, float(initial_delay))
 
+    last_error: Exception | None = None
     while attempt < max_retries:
         try:
             temperature = min(0.2 * attempt, 1.0)
@@ -60,7 +60,12 @@ def query(prompt: str, system_prompt: str = None,
                     raise ValueError(f"Unexpected response: {result}")
                 answer_text = result["choices"][0]["message"]["content"]
             elif resp.status_code == 429:
-                raise openai.RateLimitError(resp.text)
+                # Backoff retry on rate limit with capped delay (30s)
+                print("Received 429 too many requests. Backing off...")
+                time.sleep(min(delay, 30))
+                delay = min(delay * 2, 30)
+                attempt += 1
+                continue
             else:
                 raise requests.HTTPError(
                     f"HTTP {resp.status_code}: {resp.text}"
@@ -83,31 +88,36 @@ def query(prompt: str, system_prompt: str = None,
 
             return extract_score
 
-        except openai.RateLimitError as e:
-            print(str(e))
-            time.sleep(3)
-            attempt += 1
-            continue
-        except (requests.Timeout, requests.ConnectionError) as e:
+        except requests.Timeout as e:
+            # On timeout, raise immediately as requested
+            print("=" * 100)
+            print(f"Timeout error: {e}")
+            print("messages:", messages)
+            print("=" * 100)
+            raise
+        except requests.ConnectionError as e:
             print("=" * 100)
             print(f"Network error: {e}")
             print("messages:", messages)
             print("=" * 100)
-            time.sleep(delay)
-            delay = min(delay * 2, 60)
+            time.sleep(min(delay, 30))
+            delay = min(delay * 2, 30)
             attempt += 1
+            last_error = e
             continue
         except Exception as e:
             print("=" * 100)
             print(f"Error: {e}")
             print("messages:", messages)
             print("=" * 100)
-            time.sleep(1)
+            time.sleep(min(delay, 30))
+            delay = min(delay * 2, 30)
             attempt += 1
+            last_error = e
             continue
 
-    print(f"Warning: Failed after {max_retries} attempts")
-    return ""
+    # Exceeded retries: raise with context
+    raise RuntimeError(f"Failed after {max_retries} attempts") from last_error
 
 
 
