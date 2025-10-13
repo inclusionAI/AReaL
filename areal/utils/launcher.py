@@ -174,7 +174,6 @@ def apply_sglang_patch():
     sglang_meta = subprocess.check_output(
         [sys.executable, "-m", "pip", "show", "sglang"]
     ).decode("ascii")
-    logger.info(f"[Debug] sglang_meta=\n{sglang_meta}")
     # Prioritize editable install location, since pip show lists both locations
     # if installed in editable mode.
     for line in sglang_meta.split("\n"):
@@ -192,7 +191,6 @@ def apply_sglang_patch():
     if not target_path or not os.path.exists(target_path):
         raise RuntimeError("Could not determine the installation path of SGLang.")
 
-    logger.info(f"[Debug] target_path={target_path}")
     patch_binary = shutil.which("patch")
     if not patch_binary:
         raise RuntimeError(
@@ -206,7 +204,6 @@ def apply_sglang_patch():
     )
 
     output = (result.stdout or "") + (result.stderr or "")
-    logger.info("Patch command output:\n%s", output.strip())
     if result.returncode == 0:
         logger.info(f"Applied SGLang patch {patch_path} to {target_path}")
     elif "Reversed (or previously applied) patch detected" in output or "Skipping patch." in output:
