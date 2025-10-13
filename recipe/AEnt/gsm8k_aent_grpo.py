@@ -25,17 +25,15 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
-
-
-from recipe.AEnt.aent_args import AEntGRPOConfig
 from recipe.AEnt.actor import FSDPAEntPPOActor
+from recipe.AEnt.aent_args import AEntGRPOConfig
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
     from areal.reward.math_parser import process_results
 
     return int(process_results(completions, answer)[0])
-    
+
 
 def main(args):
     config, _ = load_expr_config(args, AEntGRPOConfig)
@@ -219,7 +217,7 @@ def main(args):
             stats_tracker.record_timing("train_step"),
             stats_tracker.scope("grpo_actor"),
         ):
-            stats = actor.aent_ppo_update(batch,global_step)
+            stats = actor.aent_ppo_update(batch, global_step)
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 

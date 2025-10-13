@@ -17,8 +17,6 @@ from areal.utils.functional import (
     ppo_actor_loss_fn,
     reward_overlong_penalty,
 )
-
-
 from recipe.AEnt.aent_args import AEntPPOActorConfig
 from recipe.AEnt.functional import gather_logprobs_clamped_entropy
 
@@ -38,7 +36,9 @@ class AEntPPOActor(PPOActor):
             self.coeff_box_low = config.aent.coeff_box_low
             self.warmup_steps = config.aent.warmup_steps
 
-    def aent_ppo_update(self, data: TensorDict, global_step: int) -> List[Dict[str, float]]:
+    def aent_ppo_update(
+        self, data: TensorDict, global_step: int
+    ) -> List[Dict[str, float]]:
         if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
             data, sampling_stat = dynamic_sampling(data, self.group_size)
 
@@ -149,12 +149,16 @@ class AEntPPOActor(PPOActor):
             all_stats.append(
                 stats_tracker.export(reduce_group=self.engine.data_parallel_group)
             )
-            ent_trace.append(float(all_stats[-1]['grpo_actor/entropy/avg']))
+            ent_trace.append(float(all_stats[-1]["grpo_actor/entropy/avg"]))
         if self.adaptive_coeff and global_step > self.warmup_steps:
-            entropy = sum(ent_trace)/len(ent_trace)
-            self.entropy_coeff -= self.coeff_lr*(min(0,entropy-self.entropy_low)+max(0,entropy-self.entropy_high))
-            self.entropy_coeff = min(max(self.entropy_coeff, self.coeff_box_low), self.coeff_box_high)
-            
+            entropy = sum(ent_trace) / len(ent_trace)
+            self.entropy_coeff -= self.coeff_lr * (
+                min(0, entropy - self.entropy_low) + max(0, entropy - self.entropy_high)
+            )
+            self.entropy_coeff = min(
+                max(self.entropy_coeff, self.coeff_box_low), self.coeff_box_high
+            )
+
         all_stats[0].update(global_stats)
         return all_stats
 
@@ -200,14 +204,12 @@ def aent_grpo_loss_fn(
     loss_mask = input_data.get("full_loss_mask", input_data["loss_mask"]).bool()
     prox_logp = input_data["prox_logp"]
 
-    if entropy_clamp>0:
+    if entropy_clamp > 0:
         logprobs, clamped_entropy = gather_logprobs_clamped_entropy(
             logits, labels, entropy_clamp, temperature
         )
     else:
-        logprobs, clamped_entropy = gather_logprobs_entropy(
-            logits, labels, temperature
-        )
+        logprobs, clamped_entropy = gather_logprobs_entropy(logits, labels, temperature)
     ppo_loss, stat = ppo_actor_loss_fn(
         logprobs=logprobs,
         old_logprobs=old_logp,
@@ -270,5 +272,7 @@ def aent_grpo_loss_fn(
 
 def clamped_entropy_loss_fn(clamped_entropy: torch.Tensor, loss_mask: torch.Tensor):
     loss_mask_count = loss_mask.count_nonzero() or 1
-    clamped_ent_loss = torch.where(loss_mask.bool(), clamped_entropy, 0.0).sum() / loss_mask_count
+    clamped_ent_loss = (
+        torch.where(loss_mask.bool(), clamped_entropy, 0.0).sum() / loss_mask_count
+    )
     return clamped_ent_loss

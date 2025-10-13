@@ -3,8 +3,9 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 import torch
 import torch.distributed as dist
-import torch.nn.functional as F
 import torch.distributed.nn.functional as dist_F
+import torch.nn.functional as F
+
 from areal.utils.ulysses import (
     get_ulysses_sequence_parallel_group,
     get_ulysses_sequence_parallel_world_size,
@@ -16,17 +17,17 @@ def clamped_softmax_entropy(logits: torch.Tensor, entropy_clamp: float):
     """Assuming softmax policy, calculate entropy with token space clamping."""
     logits_cpu = logits.cpu().detach()
     # compute token space clamping mask
-    with torch.no_grad():   
-        k = int(logits_cpu.size(-1)*entropy_clamp)
-        _, rm_indices = torch.topk(logits_cpu,k=k,dim=-1,largest=False)
+    with torch.no_grad():
+        k = int(logits_cpu.size(-1) * entropy_clamp)
+        _, rm_indices = torch.topk(logits_cpu, k=k, dim=-1, largest=False)
         row_indices = torch.arange(logits_cpu.size(0)).unsqueeze(1)
-        rm_mask = torch.zeros_like(logits_cpu,dtype=torch.bool)
-        rm_mask[row_indices,rm_indices]=True
+        rm_mask = torch.zeros_like(logits_cpu, dtype=torch.bool)
+        rm_mask[row_indices, rm_indices] = True
         del logits_cpu, row_indices, rm_indices
     rm_mask = rm_mask.to(logits.device)
     clamped_logits = logits.masked_fill(rm_mask, -torch.inf)
     clamped_logprobs = F.log_softmax(clamped_logits, dim=-1)
-    clamped_logprobs = torch.where(rm_mask, 0., clamped_logprobs)
+    clamped_logprobs = torch.where(rm_mask, 0.0, clamped_logprobs)
     del rm_mask
     torch.cuda.empty_cache()
     clamped_probs = F.softmax(clamped_logits, dim=-1)
@@ -37,10 +38,15 @@ def clamped_softmax_entropy(logits: torch.Tensor, entropy_clamp: float):
 
 @torch.compile
 def _gather_logprobs_clamped_entropy(
-    logits: torch.Tensor, labels: torch.Tensor, entropy_clamp: float, temperature: float = 1.0,
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    entropy_clamp: float,
+    temperature: float = 1.0,
 ):
     log_probs = torch.nn.functional.log_softmax(logits.float() / temperature, dim=-1)
-    clamped_entropy = clamped_softmax_entropy(logits.float() / temperature, entropy_clamp)
+    clamped_entropy = clamped_softmax_entropy(
+        logits.float() / temperature, entropy_clamp
+    )
     log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
     return log_probs_labels, clamped_entropy
 
