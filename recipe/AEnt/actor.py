@@ -195,7 +195,9 @@ def aent_grpo_loss_fn(
     )
     old_logp = input_data["logprobs"]
     advantages = input_data["advantages"]
-    loss_mask = input_data["loss_mask"].bool()
+    # Use unsliced/full loss_mask.
+    # Ulysses SP will slice loss_mask in ulysses_prepare_inputs().
+    loss_mask = input_data.get("full_loss_mask", input_data["loss_mask"]).bool()
     prox_logp = input_data["prox_logp"]
 
     if entropy_clamp>0:
@@ -206,7 +208,7 @@ def aent_grpo_loss_fn(
         logprobs, clamped_entropy = gather_logprobs_entropy(
             logits, labels, temperature
         )
-    loss, stat = ppo_actor_loss_fn(
+    ppo_loss, stat = ppo_actor_loss_fn(
         logprobs=logprobs,
         old_logprobs=old_logp,
         advantages=advantages,
