@@ -736,7 +736,7 @@ class FSDPEngine(BaseHFEngine):
         ], "Only adam/adam_bf16/sgd optimizer is supported in this engine."
         if self.optimizer_config.type in ["sgd", "adam_bf16"]:
             self.logger.warning(
-                f"Using {self.optimizer_config.type} optimizer with FSDP may lead to suboptimal performance. Consider using SGD optimizer for better efficiency."
+                f"Using the '{self.optimizer_config.type}' optimizer with FSDP may be less stable. Consider using the 'adam' (AdamW) optimizer for improved stability and performance."
             )
         lr = self.optimizer_config.lr
         weight_decay = self.optimizer_config.weight_decay
