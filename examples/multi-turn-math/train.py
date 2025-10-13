@@ -74,7 +74,7 @@ class MultiTurnMathAgent:
         self.async_reward_fn = AsyncRewardWrapper(gsm8k_reward_fn)
 
     async def run_agent(self, data, client: ArealOpenAI):
-        messages = data["messages"]
+        messages = data["messages"].copy()
         num_turns_left = self.max_turns
         completions = []
         while num_turns_left > 0:

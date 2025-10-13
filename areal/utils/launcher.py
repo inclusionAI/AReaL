@@ -3,6 +3,7 @@ import enum
 import getpass
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import time
@@ -182,11 +183,34 @@ def apply_sglang_patch():
             break
 
     if target_path:
-        proc = subprocess.Popen(
-            ["git", "apply", patch_path],
+        patch_binary = shutil.which("patch")
+        if not patch_binary:
+            logger.warning(
+                "Could not locate the `patch` command; skipping SGLang patch application."
+            )
+            return
+
+        result = subprocess.run(
+            [patch_binary, "-p1", "-N", "-i", patch_path],
             cwd=target_path,
-            stderr=sys.stdout,
-            stdout=sys.stdout,
+            capture_output=True,
+            text=True,
         )
-        proc.wait()
-        logger.info(f"Applied SGLang patch {patch_path} to {target_path}")
+
+        output = (result.stdout or "") + (result.stderr or "")
+        if result.returncode == 0:
+            logger.info(f"Applied SGLang patch {patch_path} to {target_path}")
+        elif "Reversed (or previously applied) patch detected" in output or "Skipping patch." in output:
+            logger.warning(
+                f"SGLang patch {patch_path} appears to be already applied for {target_path}."
+            )
+        else:
+            logger.error(
+                "Failed to apply SGLang patch %s to %s. Output:\n%s",
+                patch_path,
+                target_path,
+                output.strip(),
+            )
+            raise RuntimeError(
+                f"SGLang patch {patch_path} failed with exit code {result.returncode}."
+            )

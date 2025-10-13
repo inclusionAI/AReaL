@@ -21,7 +21,6 @@ ENV NVTE_WITH_USERBUFFERS=1 NVTE_FRAMEWORK=pytorch MPI_HOME=/usr/local/mpi TORCH
 # The following block is adapted from slime's Dockerfile
 # https://github.com/THUDM/slime/blob/ebf16c57c223d6f1f66ef89177d5e27938c6caaf/docker/Dockerfile
 
-RUN apt install -y nvtop
 RUN pip install git+https://github.com/fzyzcjy/torch_memory_saver.git --no-cache-dir --force-reinstall
 RUN pip install ray[default]
 RUN pip install httpx[http2] wandb pylatexenc blobfile accelerate "mcp[cli]"
@@ -35,17 +34,10 @@ RUN NVCC_APPEND_FLAGS="--threads 4" \
   pip -v install --disable-pip-version-check --no-cache-dir \
   --no-build-isolation \
   --config-settings "--build-option=--cpp_ext --cuda_ext --parallel 8" git+https://github.com/NVIDIA/apex.git
-RUN cd /apex && NVCC_APPEND_FLAGS="--threads 4" \
-  pip -v install --disable-pip-version-check --no-cache-dir \
-  --no-build-isolation \
-  --config-settings "--build-option=--cpp_ext --cuda_ext --parallel 8" .
 
 # transformer engine, we install with --no-deps to avoid installing torch and torch-extensions
 RUN pip install pybind11
 RUN pip -v install --no-build-isolation git+https://github.com/NVIDIA/TransformerEngine.git@stable
-RUN cd /TransformerEngine && \
-    export NVTE_FRAMEWORK=pytorch && \
-    pip install --no-build-isolation .
 
 # flash attn
 # the newest version megatron supports is v2.8.1
@@ -79,5 +71,6 @@ RUN apt-get --purge remove -y --allow-change-held-packages libcudnn9* libcudnn9-
 
 # flash-attn3
 RUN git clone https://github.com/Dao-AILab/flash-attention -b v2.8.1
-RUN pip install -v ./flash-attention/hopper/
-COPY ./flash-attention/hopper/flash_attn_interface.py /usr/local/lib/python3.12/dist-packages/flash_attn_3/
+RUN pip install -v /flash-attention/hopper/
+RUN mkdir -p /usr/local/lib/python3.12/dist-packages/flash_attn_3/ && \
+    cp /flash-attention/hopper/flash_attn_interface.py /usr/local/lib/python3.12/dist-packages/flash_attn_3/
