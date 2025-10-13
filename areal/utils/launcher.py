@@ -170,53 +170,56 @@ def apply_sglang_patch():
     )
     logger.info(f"[Debug] p={p}, patch_path={patch_path}")
 
-    target_path = ""
+    target_path = None
     sglang_meta = subprocess.check_output(
         [sys.executable, "-m", "pip", "show", "sglang"]
     ).decode("ascii")
     logger.info(f"[Debug] sglang_meta=\n{sglang_meta}")
+    # Prioritize editable install location, since pip show lists both locations
+    # if installed in editable mode.
     for line in sglang_meta.split("\n"):
         line = line.strip()
         if line.startswith("Editable project location: "):
             target_path = str(Path(line.split(": ")[1]).parent)
             break
-        elif line.startswith("Location: "):
-            target_path = str(Path(line.split(": ")[1]) / "sglang")
-            break
+    else:
+        for line in sglang_meta.split("\n"):
+            line = line.strip()
+            if line.startswith("Location: "):
+                target_path = str(Path(line.split(": ")[1]) / "sglang")
+                break
+    
+    if not target_path or not os.path.exists(target_path):
+        raise RuntimeError("Could not determine the installation path of SGLang.")
 
     logger.info(f"[Debug] target_path={target_path}")
-    if target_path:
-        patch_binary = shutil.which("patch")
-        if not patch_binary:
-            raise RuntimeError(
-                "Could not locate the `patch` command; SGLang patch application failed."
-            )
-            
-
-        result = subprocess.run(
-            [patch_binary, "-p1", "-N", "-i", patch_path],
-            cwd=target_path,
-            capture_output=True,
-            text=True,
+    patch_binary = shutil.which("patch")
+    if not patch_binary:
+        raise RuntimeError(
+            "Could not locate the `patch` command; SGLang patch application failed."
         )
+    result = subprocess.run(
+        [patch_binary, "-p1", "-N", "-i", patch_path],
+        cwd=target_path,
+        capture_output=True,
+        text=True,
+    )
 
-        output = (result.stdout or "") + (result.stderr or "")
-        logger.info("Patch command output:\n%s", output.strip())
-        if result.returncode == 0:
-            logger.info(f"Applied SGLang patch {patch_path} to {target_path}")
-        elif "Reversed (or previously applied) patch detected" in output or "Skipping patch." in output:
-            logger.warning(
-                f"SGLang patch {patch_path} appears to be already applied for {target_path}."
-            )
-        else:
-            logger.error(
-                "Failed to apply SGLang patch %s to %s. Output:\n%s",
-                patch_path,
-                target_path,
-                output.strip(),
-            )
-            raise RuntimeError(
-                f"SGLang patch {patch_path} failed with exit code {result.returncode}."
-            )
+    output = (result.stdout or "") + (result.stderr or "")
+    logger.info("Patch command output:\n%s", output.strip())
+    if result.returncode == 0:
+        logger.info(f"Applied SGLang patch {patch_path} to {target_path}")
+    elif "Reversed (or previously applied) patch detected" in output or "Skipping patch." in output:
+        logger.warning(
+            f"SGLang patch {patch_path} appears to be already applied for {target_path}."
+        )
     else:
-        raise RuntimeError("Could not determine the installation path of SGLang.")
+        logger.error(
+            "Failed to apply SGLang patch %s to %s. Output:\n%s",
+            patch_path,
+            target_path,
+            output.strip(),
+        )
+        raise RuntimeError(
+            f"SGLang patch {patch_path} failed with exit code {result.returncode}."
+        )
