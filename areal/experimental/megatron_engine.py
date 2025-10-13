@@ -612,8 +612,6 @@ class MegatronEngine(TrainEngine):
         # dist.barrier() are called when _save_model_to_hf finished
 
         if dist.get_rank() == 0:
-            fut.result()
-
             update_name = names.update_weights_from_disk(
                 self.config.experiment_name,
                 self.config.trial_name,
@@ -622,6 +620,8 @@ class MegatronEngine(TrainEngine):
             name_resolve.add(
                 update_name, str(datetime.now().timestamp()), keepalive_ttl=120
             )
+            
+            fut.result()
 
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
