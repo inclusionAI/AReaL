@@ -62,7 +62,7 @@ class StalenessController:
         1. Total concurrent rollouts (running + accepted) don't exceed max_concurrent_rollouts
         2. Samples don't become too stale by limiting based on:
            - current_version: The current model version
-           - max_head_offpolicyness: Maximum allowed version difference
+           - max_staleness: Maximum allowed version difference
            - consumer_batch_size: Expected batch size for training
 
         Parameters
@@ -78,7 +78,7 @@ class StalenessController:
         Notes
         -----
         The staleness control formula is:
-        max_samples = (max_offpolicyness + current_version + 1) * consumer_batch_size
+        max_samples = (max_staleness + current_version + 1) * consumer_batch_size
         capacity = min(concurrency_limit, max_samples - current_samples)
 
         This ensures that by the time samples are consumed, they won't exceed

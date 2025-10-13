@@ -323,8 +323,9 @@ class WorkflowExecutor:
     def get_capacity(self):
         """Get available capacity for new rollouts.
 
-        Delegates to the staleness controller, but also considers the actual
-        number of running tasks to ensure accurate concurrency limits.
+        This method delegates the capacity calculation to the configured
+        `staleness_controller`, which considers both concurrency and staleness
+        constraints.
 
         Returns
         -------
