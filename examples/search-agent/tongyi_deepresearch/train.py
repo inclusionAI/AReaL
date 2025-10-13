@@ -62,7 +62,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         self,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
-        rollout_stat_scope: bool = "rollout",
+        rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
         n_trajs: int = 1,
         max_tokens: int = 32768,
@@ -224,12 +224,14 @@ def main(args):
     judge_engine.config.max_head_offpolicyness = int(1e12)
     judge_engine.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
-    actor.initialize(
-        None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
-    )
     weight_update_meta = WeightUpdateMeta.from_disk(
         config.experiment_name, config.trial_name, config.cluster.fileroot
     )
+
+    actor.initialize(
+        None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
+    )
+    actor.connect_engine(rollout, weight_update_meta)
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -337,13 +339,7 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
-            if dist.get_rank() == 0:
-                future = rollout.update_weights(weight_update_meta)
-            actor.upload_weights(weight_update_meta)
-            if dist.get_rank() == 0:
-                future.result()
-            dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
+            actor.update_weights(weight_update_meta)
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)

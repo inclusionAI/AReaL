@@ -41,7 +41,7 @@ class RLVRWorkflow(RolloutWorkflow):
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
         enable_thinking: bool = False,
-        rollout_stat_scope: bool = "rollout",
+        rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
         get_input_ids_fn: Callable = default_get_input_ids_fn,
         data_extract_prompt_fn: Callable = default_data_extract_prompt_fn,

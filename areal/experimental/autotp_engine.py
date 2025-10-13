@@ -127,5 +127,5 @@ class DeepSpeedAutoTPEngine(BaseHFEngine):
         if meta.with_optim:
             self.load_optimizer_state(meta.path)
 
-    def upload_weights(self, meta: WeightUpdateMeta):
+    def update_weights(self, meta: WeightUpdateMeta):
         raise ValueError(f"update weight not implemented {meta.type}")

@@ -2,8 +2,9 @@ import dataclasses
 import functools
 import gc
 import os
+from concurrent.futures import Future
 from datetime import datetime
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 
 import mbridge
 import torch
@@ -16,11 +17,14 @@ from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.transformer import TransformerConfig
 from megatron.core.utils import get_model_config
+from torch import nn
+from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
 from areal.api.cli_args import MicroBatchSpec
-from areal.api.engine_api import TrainEngine
+from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.experimental.api.cli_args import (
     ExperimentalTrainEngineConfig as TrainEngineConfig,
@@ -31,6 +35,12 @@ from areal.experimental.model.registry import make_hf_and_mcore_config, make_mco
 from areal.experimental.utils.mcore.determinisitc import set_deterministic_algorithms
 from areal.experimental.utils.mcore.packed_context_parallel import (
     packed_context_parallel_forward,
+)
+from areal.experimental.utils.megatron import (
+    all_gather_param,
+    convert_to_hf,
+    get_named_parameters,
+    remove_padding,
 )
 from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.platforms import current_platform
@@ -47,7 +57,9 @@ from areal.utils.data import (
     unpack_sequence,
     unpad_logits,
 )
+from areal.utils.distributed import init_custom_process_group
 from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.lock import DistributedLock
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
@@ -55,8 +67,8 @@ from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 class MegatronEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
         self.config = config
-        self.hf_config = None
-        self.tf_config = None
+        self.hf_config: PretrainedConfig
+        self.tf_config: TransformerConfig
         self.model = None
         self.dtype = getattr(torch, self.config.dtype)
         self.device = None
@@ -67,8 +79,12 @@ class MegatronEngine(TrainEngine):
         self.lr_scheduler = None
         self.bridge = None
         self.process_group_initialized = False
+        self.rollout_engine: InferenceEngine | None = None
+        self.weight_update_group_initialized: bool = False
+        self.weight_update_group_name: str
         self._version: int = 0
         self.rank = None
+        self.is_pp_head: bool
         self.world_size = None
         self.rank_generator = None
         self.checkpointer = None
@@ -77,7 +93,7 @@ class MegatronEngine(TrainEngine):
     def initialize(
         self,
         addr: str | None,
-        ft_spec: FinetuneSpec | None,
+        ft_spec: FinetuneSpec,
         parallel_strategy: ParallelStrategy,
         seed: int = 0,
     ):
@@ -91,6 +107,14 @@ class MegatronEngine(TrainEngine):
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
         self.rank = int(os.environ["RANK"])
         self.world_size = int(os.environ["WORLD_SIZE"])
+        self.is_pp_head = (
+            mpu.get_data_parallel_rank(with_context_parallel=True) == 0
+            and mpu.get_tensor_model_parallel_rank() == 0
+        )
+        self.weight_update_group_name = (
+            f"update_weight_group_{mpu.get_pipeline_model_parallel_rank()}"
+        )
+        self.engine_lock = DistributedLock("train_engine_lock")
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
         self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
@@ -329,6 +353,15 @@ class MegatronEngine(TrainEngine):
         ranks = dist.get_process_group_ranks(self.context_and_model_parallel_group)
         return ranks[0] == self.rank
 
+    @property
+    def pipeline_parallel_rank(self) -> int:
+        assert self.process_group_initialized
+        return mpu.get_pipeline_model_parallel_rank()
+
+    def is_pipeline_parallel_head(self) -> bool:
+        assert self.process_group_initialized
+        return self.is_pp_head
+
     def destroy(self):
         if hasattr(self, "optimizer"):
             del self.optimizer
@@ -351,30 +384,277 @@ class MegatronEngine(TrainEngine):
         self.model.train(mode=mode)
         return self
 
-    def upload_weights(self, meta: WeightUpdateMeta):
-        if meta.type == "nccl":
-            raise NotImplementedError(
-                "NCCL weight update is not yet supported in MegatronEngine."
+    def _update_bucket_weights_from_distributed(
+        self,
+        meta: WeightUpdateMeta,
+        converted_named_tensors: List[Tuple[str, nn.Parameter | torch.Tensor]],
+    ):
+        # Early exit when chunk size is relatively small
+        if not converted_named_tensors:
+            return
+
+        self.engine_lock.acquire()
+
+        param_specs = [
+            ParamSpec(
+                name=name,
+                shape=tuple(tensor.shape),
+                dtype=str(tensor.dtype).split("torch.")[1],
             )
+            for name, tensor in converted_named_tensors
+        ]
+
+        fut = self.rollout_engine.update_weights_from_distributed(meta, param_specs)
+
+        handles = []
+        for _, param in converted_named_tensors:
+            handles.append(
+                dist.broadcast(
+                    param.data, 0, group=self.weight_update_group, async_op=True
+                )
+            )
+        for handle in handles:
+            handle.wait()
+
+        fut.result()
+
+        converted_named_tensors.clear()
+
+        self.engine_lock.release()
+
+    def _impl_update_weight_from_distributed(
+        self,
+        meta: WeightUpdateMeta,
+        name: str,
+        param: nn.Parameter | torch.Tensor,
+        converted_named_tensors: List[Tuple[str, nn.Parameter | torch.Tensor]],
+        buffer_size: int,
+        weight_chunked_mem_size: int,
+    ) -> int:
+        param = all_gather_param(name, param)
+        param = remove_padding(name, param, self.hf_config.vocab_size)
+        if not self.is_pipeline_parallel_head():
+            return buffer_size
+
+        param_size = param.numel() * param.element_size()
+        if buffer_size + param_size > weight_chunked_mem_size:
+            self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
+            buffer_size = 0
+
+        converted_named_tensors.extend(
+            convert_to_hf(self.tf_config, self.hf_config.model_type, name, param)
+        )
+        buffer_size += param_size
+        return buffer_size
+
+    def _update_bucket_expert_weights_from_distributed(
+        self,
+        meta: WeightUpdateMeta,
+        named_tensors: List[Tuple[str, nn.Parameter | torch.Tensor]],
+    ):
+        """Gather a bucket of MoE expert weights and broadcast them.
+
+        This function handles the distributed update for a bucket of Mixture-of-Experts
+        (MoE) parameters. Since expert parameters are sharded across the expert
+        parallel group, this function first performs an `all_gather` to collect all
+        shards from all expert ranks.
+
+        Once the full expert parameters are reconstructed on the pipeline parallel
+        head, it converts them to the HuggingFace format and calls
+        `_update_bucket_weights_from_distributed` to perform the actual broadcast
+        to the inference engine.
+        """
+
+        # Early exit when chunk size is relatively small
+        if not named_tensors:
+            return
+
+        group = mpu.get_expert_model_parallel_group()
+        world_size = mpu.get_expert_model_parallel_world_size()
+
+        names = [name for name, _ in named_tensors]
+        all_names: List[List[str]] = [None] * world_size
+        dist.all_gather_object(all_names, names, group=group)
+
+        for rank_names in all_names:
+            assert len(named_tensors) == len(
+                rank_names
+            ), f"mismatch names length: {len(named_tensors)} != {len(rank_names)}"
+
+        gathered_params = [[] for _ in range(world_size)]
+        handles = []
+        for idx, (_, tensor) in enumerate(named_tensors):
+            params = [
+                torch.empty_like(tensor.data, device=current_platform.current_device())
+                for _ in range(world_size)
+            ]
+            handle = dist.all_gather(params, tensor.data, group=group, async_op=True)
+            handles.append(handle)
+            for ep_rank, rank_names in enumerate(all_names):
+                gathered_params[ep_rank].append((rank_names[idx], params[ep_rank]))
+
+        for handle in handles:
+            handle.wait()
+
+        named_tensors.clear()
+        if not self.is_pipeline_parallel_head():
+            return
+
+        gathered_params = sum(gathered_params, [])
+
+        converted_hf_tensors = []
+        for name, param in gathered_params:
+            converted_hf_tensors.extend(
+                convert_to_hf(self.tf_config, self.hf_config.model_type, name, param)
+            )
+        return self._update_bucket_weights_from_distributed(meta, converted_hf_tensors)
+
+    def _impl_update_expert_weight_from_distributed(
+        self,
+        meta: WeightUpdateMeta,
+        name: str,
+        param: nn.Parameter | torch.Tensor,
+        named_tensors: List[Tuple[str, nn.Parameter | torch.Tensor]],
+        buffer_size: int,
+        weight_chunked_mem_size: int,
+    ) -> int:
+        param = all_gather_param(name, param)
+        param = remove_padding(name, param, self.hf_config.vocab_size)
+
+        param_size = param.numel() * param.element_size()
+        if (
+            buffer_size + param_size
+        ) * mpu.get_expert_model_parallel_world_size() > weight_chunked_mem_size:
+            self._update_bucket_expert_weights_from_distributed(meta, named_tensors)
+            buffer_size = 0
+
+        named_tensors.append((name, param))
+        buffer_size += param_size
+        return buffer_size
+
+    def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
+        assert meta.type == current_platform.communication_backend
+
+        # NOTE: Processes launched with torchrun will set the following env var to True,
+        # which blocks creating another TCP store for weight update.
+        os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
+        if self.is_pipeline_parallel_head():
+            assert meta.alloc_mode is not None
+
+            fut = self.rollout_engine.init_weights_update_group(meta)
+
+            self.logger.info(
+                f"Initializing weight update group: type={meta.type} "
+                f"init_method=tcp://{meta.nccl_master_address}:{meta.nccl_master_port} "
+                f"group={self.weight_update_group_name}"
+            )
+            self.weight_update_group = init_custom_process_group(
+                backend=current_platform.communication_backend,
+                world_size=meta.alloc_mode.gen.world_size + 1,
+                init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
+                rank=0,
+                group_name=self.weight_update_group_name,
+                timeout=NCCL_DEFAULT_TIMEOUT,
+            )
+
+            fut.result()
+
+    def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
+        num_moe_experts = self.tf_config.num_moe_experts
+        weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
+
+        buffer_size = 0
+        converted_named_tensors = []
+
+        for name, param in get_named_parameters(self.model, num_moe_experts):
+            if ".experts." in name:
+                continue
+            buffer_size = self._impl_update_weight_from_distributed(
+                meta,
+                name,
+                param,
+                converted_named_tensors,
+                buffer_size,
+                weight_chunked_mem_size,
+            )
+
+        # Only pipeline parallel heads CAN contain named tensors here
+        if converted_named_tensors:
+            self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
+
+        dist.barrier(device_ids=[self.device.index])
+
+        buffer_size = 0
+        named_tensors = []
+
+        for name, param in get_named_parameters(self.model, num_moe_experts):
+            if ".experts." not in name:
+                continue
+            buffer_size = self._impl_update_expert_weight_from_distributed(
+                meta,
+                name,
+                param,
+                named_tensors,
+                buffer_size,
+                weight_chunked_mem_size,
+            )
+
+        if named_tensors:
+            # This function will early return if not pipeline parallel head
+            self._update_bucket_expert_weights_from_distributed(meta, named_tensors)
+
+        dist.barrier(device_ids=[self.device.index])
+        current_platform.synchronize()
+
+    def _update_weights_from_disk(self, meta: WeightUpdateMeta):
+        fut = Future()
+
+        if dist.get_rank() == 0:
+            fut = self.rollout_engine.update_weights_from_disk(meta)
+
+        self._save_model_to_hf(meta.path, self.tokenizer, None)
+        # dist.barrier() are called when _save_model_to_hf finished
+
+        if dist.get_rank() == 0:
+            update_name = names.update_weights_from_disk(
+                self.config.experiment_name,
+                self.config.trial_name,
+                self.get_version(),
+            )
+            name_resolve.add(
+                update_name, str(datetime.now().timestamp()), keepalive_ttl=120
+            )
+
+            fut.result()
+
+        dist.barrier(device_ids=[self.device.index])
+        current_platform.synchronize()
+
+    def update_weights(self, meta: WeightUpdateMeta):
+        if meta.type == current_platform.communication_backend:
+            assert self.weight_update_group_initialized
+            self._update_weights_from_distributed(meta)
         elif meta.type == "disk":
-            self._save_model_to_hf(meta.path, self.tokenizer, None)
-            # dist.barrier() are called when _save_model_to_hf finished
-            if dist.get_rank() == 0:
-                update_name = names.update_weights_from_disk(
-                    self.config.experiment_name,
-                    self.config.trial_name,
-                    self.get_version(),
-                )
-                name_resolve.add(
-                    update_name, str(datetime.now().timestamp()), keepalive_ttl=120
-                )
+            self._update_weights_from_disk(meta)
         else:
             raise ValueError(f"Unknown weight update type {meta.type}")
 
-    def get_param_specs(
-        self, weight_chunked_mem_mb: int = 1024
-    ) -> List[List[ParamSpec]]:
-        raise NotImplementedError()
+    def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
+        if self.rollout_engine is not None and self.rollout_engine != engine:
+            self.logger.warning(
+                f"Connected rollout engine changed from {self.rollout_engine} to {engine}."
+            )
+        self.rollout_engine = engine
+
+        if (
+            meta.type == current_platform.communication_backend
+            and not self.weight_update_group_initialized
+        ):
+            self._init_weight_update_from_distributed(meta)
+            self.weight_update_group_initialized = True
+
+        dist.barrier(device_ids=[self.device.index])
+        current_platform.synchronize()
 
     def set_version(self, version: int):
         self._version = version

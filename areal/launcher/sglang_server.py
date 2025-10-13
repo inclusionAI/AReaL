@@ -22,7 +22,7 @@ from areal.api.cli_args import (
 )
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
-from areal.utils.launcher import TRITON_CACHE_PATH
+from areal.utils.launcher import TRITON_CACHE_PATH, apply_sglang_patch
 from areal.utils.network import find_free_ports, gethostip
 
 logger = logging.getLogger("SGLangServer Wrapper")
@@ -129,6 +129,9 @@ class SGLangServerWrapper:
         self.allocation_mode = allocation_mode
         self.server_process = None
         self.n_gpus_per_node = n_gpus_per_node
+
+        if self.config.enable_fast_load or self.config.enable_multithread_load:
+            apply_sglang_patch()
 
     def run(self):
         gpus_per_server = self.allocation_mode.gen_instance_size

@@ -134,17 +134,16 @@ def main(args):
         rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
+    weight_update_meta = get_model_update_meta(config)
+
     # Initialize train engine
     actor.initialize(None, ft_spec)
+    actor.connect_engine(rollout, weight_update_meta)
+
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
         ref = FSDPPPOActor(config=config.ref)
         ref.initialize(None, ft_spec)
-
-    # NOTE: Weight update meta only requires address and free port of rank 0,
-    # but `WeightUpdateMeta.from_fsdp_xccl` has to be executed on all ranks
-    weight_update_meta = get_model_update_meta(config, actor)
-    weight_update_meta = weight_update_meta[0]
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -254,15 +253,12 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
-            if dist.get_rank() == 0:
-                future = rollout.update_weights(weight_update_meta)
-            actor.upload_weights(weight_update_meta)
-            if dist.get_rank() == 0:
-                future.result()
-            dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
+            actor.update_weights(weight_update_meta)
+
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
+
+        rollout.resume()
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
