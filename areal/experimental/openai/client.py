@@ -78,6 +78,9 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         self.chat_template_type = chat_template_type
         self.messages_delimiter_start = messages_delimiter_start
         self.messages_delimiter_end = messages_delimiter_end
+        # LRU cache for vision preprocessing to avoid recomputation across turns
+        self._mm_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._mm_cache_cap = 256
 
     async def create(
         self,
@@ -285,16 +288,37 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             try:
                 if images_pil and getattr(self, "processor", None) is not None:
                     proc = getattr(self, "processor")
-                    image_inputs = proc.image_processor(images_pil, return_tensors="pt")
-                    mm: Dict[str, Any] = {}
-                    # Common keys from vision processors
-                    if "pixel_values" in image_inputs:
-                        mm["pixel_values"] = image_inputs["pixel_values"]
-                    if "image_grid_thw" in image_inputs:
-                        mm["image_grid_thw"] = image_inputs["image_grid_thw"]
-                    if mm:
-                        # Wrap into a list to match engine expectations
-                        self._cache[completion_id].multi_modal_input = [mm]
+                    # Build batched preprocessing, but reuse cached entries per image when available
+                    mm_list: List[Dict[str, Any]] = []
+                    to_process: List[int] = []
+                    # Track indices that need computation
+                    for idx, b64 in enumerate(images_b64):
+                        if b64 in self._mm_cache:
+                            mm_list.append(self._mm_cache[b64])
+                        else:
+                            mm_list.append({})  # placeholder to fill later
+                            to_process.append(idx)
+                    # Compute only for miss entries in one batch to leverage vectorized processor
+                    if to_process:
+                        imgs = [images_pil[i] for i in to_process]
+                        image_inputs = proc.image_processor(imgs, return_tensors="pt")
+                        # Split batched outputs into per-image dicts
+                        for j, idx in enumerate(to_process):
+                            per: Dict[str, Any] = {}
+                            if "pixel_values" in image_inputs:
+                                per["pixel_values"] = image_inputs["pixel_values"][j:j+1]
+                            if "image_grid_thw" in image_inputs:
+                                per["image_grid_thw"] = image_inputs["image_grid_thw"][j:j+1]
+                            mm_list[idx] = per
+                            # Update LRU cache
+                            key = images_b64[idx]
+                            self._mm_cache[key] = per
+                            self._mm_cache.move_to_end(key)
+                            if len(self._mm_cache) > self._mm_cache_cap:
+                                self._mm_cache.popitem(last=False)
+                    # Attach if any entry is non-empty
+                    if any(bool(d) for d in mm_list):
+                        self._cache[completion_id].multi_modal_input = mm_list
             except Exception:
                 # Best-effort; do not fail cache on multimodal packing
                 pass
