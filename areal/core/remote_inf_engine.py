@@ -312,7 +312,7 @@ class RemoteInfEngine:
         self.executor = ProcessPoolExecutor(max_workers=1)
 
         self.workflow_executor = WorkflowExecutor(
-            config=config,
+            config=self.config,
             inference_engine=self,
         )
         self.workflow_executor.initialize(
