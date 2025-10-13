@@ -141,6 +141,9 @@ class LocalLauncher:
                 + cmd[i]
             )
             c = f"{c} 2>&1 | tee -a {self.log_path_of(job_name)}"
+            # SGLang will somehow remove quotes in the command, so we need to escape the quotes
+            c = c.replace('"', '\\"')
+            
             logger.info("Starting local process with command: %s", c)
             process = subprocess.Popen(
                 c, shell=isinstance(c, str), stdout=sys.stdout, stderr=sys.stdout
