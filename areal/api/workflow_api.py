@@ -557,9 +557,9 @@ class WorkflowExecutor:
                 pass
 
     def pause(self):
-        """Suspend request submission for async rollout.
+        """Pause request submission for async rollout.
 
-        See :meth:`~areal.api.engine_api.InferenceEngine.suspend` for detailed documentation.
+        See :meth:`~areal.api.engine_api.InferenceEngine.pause` for detailed documentation.
         """
         self.paused.set()
 
