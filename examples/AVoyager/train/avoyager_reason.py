@@ -191,8 +191,19 @@ class AVoyagerWorkflow(RolloutWorkflow):
 
             first_completion = True
             for comp in all_completions[i]:
-                res = completions_with_rewards[comp.id].to_tensor_dict()
-                
+                cc = completions_with_rewards[comp.id]
+                res = cc.to_tensor_dict()
+                # Safety check: ensure image token ids exist in input_ids when multi_modal_input is present
+                mm = getattr(cc, "multi_modal_input", None)
+                if mm is not None:
+                    image_token_id = self.tokenizer.convert_tokens_to_ids("<|image_pad|>")
+                    tok_list = res["input_ids"][0].tolist()
+                    image_tok_cnt = sum(1 for t in tok_list if t == image_token_id)
+                    assert image_tok_cnt > 0, (
+                        f"[AVoyager] input_ids contains no <|image_pad|> tokens while multi_modal_input present. "
+                        f"cid={cc.completion.id}"
+                    )
+
                 res["begin_of_trajectory"]=torch.tensor([int(first_completion)])
                 # for k, v in stats[i].items():
                 #     res[k] = torch.tensor([v])
