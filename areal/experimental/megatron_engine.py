@@ -620,7 +620,7 @@ class MegatronEngine(TrainEngine):
             name_resolve.add(
                 update_name, str(datetime.now().timestamp()), keepalive_ttl=120
             )
-            
+
             fut.result()
 
         dist.barrier(device_ids=[self.device.index])
@@ -644,7 +644,7 @@ class MegatronEngine(TrainEngine):
 
         if meta.type == "disk":
             return
-        
+
         if not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True

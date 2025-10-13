@@ -187,7 +187,7 @@ def apply_sglang_patch():
             if line.startswith("Location: "):
                 target_path = str(Path(line.split(": ")[1]) / "sglang")
                 break
-    
+
     if not target_path or not os.path.exists(target_path):
         raise RuntimeError("Could not determine the installation path of SGLang.")
 
@@ -206,7 +206,10 @@ def apply_sglang_patch():
     output = (result.stdout or "") + (result.stderr or "")
     if result.returncode == 0:
         logger.info(f"Applied SGLang patch {patch_path} to {target_path}")
-    elif "Reversed (or previously applied) patch detected" in output or "Skipping patch." in output:
+    elif (
+        "Reversed (or previously applied) patch detected" in output
+        or "Skipping patch." in output
+    ):
         logger.warning(
             f"SGLang patch {patch_path} appears to be already applied for {target_path}."
         )
