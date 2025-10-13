@@ -1481,6 +1481,9 @@ def get_reward_norm(config: PPOActorConfig):
 def get_adv_norm(config: PPOActorConfig):
     if config.adv_norm:
         if config.adv_norm.adv_norm_mode == "mix":
+            assert (
+                config.reward_bias == 0.0
+            ), "When using mixed adv norm (MAPO), reward_bias should be 0.0 to ensure binary reward."
             return MAPOAdvNorm(config.adv_norm)
         else:
             return Normalization(config.adv_norm)
