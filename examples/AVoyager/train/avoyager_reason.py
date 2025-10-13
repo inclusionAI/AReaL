@@ -40,7 +40,7 @@ from areal.api.workflow_api import RolloutWorkflow
 from areal.api.cli_args import GRPOConfig
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.utils.data import concat_padded_tensors, broadcast_tensor_container,tensor_container_to
+from areal.utils.data import concat_padded_tensors, broadcast_tensor_container,tensor_container_to, cycle_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
@@ -299,18 +299,23 @@ def main(args):
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
     actor.initialize(None, ft_spec)
-    ref = None
+    if config.actor.kl_ctl > 0 and config.ref is not None:
+        ref = FSDPPPOActor(config=config.ref)
+        ref.create_process_group(parallel_strategy=parallel_strategy)
+        ref.initialize(None, ft_spec)
 
     # NOTE: Weight update meta only requires address and free port of rank 0,
     # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
 
-    weight_update_meta = WeightUpdateMeta.from_disk(
-            config.experiment_name,
-            config.trial_name,
-            config.cluster.fileroot
+    weight_update_meta = [
+        WeightUpdateMeta.from_fsdp_xccl(
+            AllocationMode.from_str(config.allocation_mode), actor
         )
+    ]
+    dist.broadcast_object_list(weight_update_meta, src=0)
+    weight_update_meta = weight_update_meta[0]
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -357,7 +362,7 @@ def main(args):
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    data_generator = itertools.cycle(train_dataloader)
+    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -386,7 +391,6 @@ def main(args):
                         should_accept=lambda sample: True,
                     )
                 batch = tensor_container_to(batch, actor.device)
-                batch = redistribute(batch, group=actor.data_parallel_group).data
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
