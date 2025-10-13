@@ -575,10 +575,10 @@ async def run_agent(
     stats["score"] = reward
     
     print(f"Qid={qid} rank={rank} pred_answer: {pred_answer} pred_choice: {pred_choice} gt_choices: {gt_choices} reward: {reward} stats: {stats}", flush=True)
-    if reward>0.0 or stats["turns"]>=2:
-        print(f"Full reasoning for Qid={qid}:\n" + "\n".join(
-            [f"[{h['type']}]: {h['text']}" for h in process["history"] if h.get("type") in ["act", "grounding"] and "text" in h]
-        ) + "\n")
+    # if reward>1:
+    #     print(f"Full reasoning for Qid={qid}:\n" + "\n".join(
+    #         [f"[{h['type']}]: {h['text']}" for h in process["history"] if h.get("type") in ["act", "grounding"] and "text" in h]
+    #     ) + "\n")
 
     # if save_path is not None:
     #     import os, json, sys
