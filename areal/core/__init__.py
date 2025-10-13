@@ -1,11 +1,13 @@
-"""Core AREAL components."""
+"""Core components for AREAL."""
 
-from areal.core.remote_inf_engine import (
+from .remote_inf_engine import (
     RemoteInfBackendProtocol,
     RemoteInfEngine,
 )
+from .staleness_controller import StalenessController
 
 __all__ = [
     "RemoteInfBackendProtocol",
     "RemoteInfEngine",
+    "StalenessController",
 ]
