@@ -328,7 +328,7 @@ def filter_batch_fn_DAPO(
     # Expand the group mask to individual samples
     mask = valid_groups.repeat_interleave(group_size)
 
-    # In case all group is filtered out, only return only the first group to avoid infinite loop of dynamic sampling (although not gradient in this case)
+    # In case all groups are filtered out, keep the first group to prevent an infinite loop in the data collection process (though this group will not contribute to the gradient).
     if not mask.any():
         mask[:group_size] = True
         valid_groups[0] = True
