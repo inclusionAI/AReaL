@@ -122,7 +122,7 @@ allocation_mode: sglang:d4+fsdp:d2c2
 
 ### 3. Change Lightweight Optimizer
 
-Depending on the training engine, areal support different optimizers.
+Depending on the training engine, AReaL supports different optimizers.
 
 | Optimizer       | FSDP | Megatron | Name      |
 | --------------- | ---- | -------- | --------- |
