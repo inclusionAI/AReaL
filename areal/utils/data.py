@@ -224,16 +224,10 @@ def concat_padded_tensors(
 def aggregate_metric_dicts(
     dicts: List[Dict[str, Any]], pad_value: float = 0.0
 ) -> Dict[str, Any]:
-    """Aggregate multiple dictionaries containing tensors and numeric values.
-
-    This function handles different value types:
-    - Tensors: concatenated and padded to max length
-    - Numeric values: summed across dictionaries
-    - Other types: kept as lists
+    """Aggregate multiple dictionaries containing numeric values.
 
     Args:
         dicts: List of dictionaries to aggregate
-        pad_value: Value to use for padding tensors
 
     Returns:
         Aggregated dictionary with the same keys
