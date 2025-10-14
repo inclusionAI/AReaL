@@ -839,14 +839,6 @@ class _LLMParallelParser:
             AllocationValidationError: When validation rules are violated
             ValueError: When parsing fails
         """
-        # Check for common syntax errors and provide helpful messages
-        if "." in expression and ":" not in expression:
-            # User likely used dot notation instead of colon
-            raise ValueError(
-                f"Invalid allocation mode syntax: '{expression}'\n"
-                f"Please use colon ':' instead of dot '.' to separate backend and dimensions.\n"
-                f"Example: 'sglang:d4+fsdp:d4' instead of 'sglang.d4+fsdp.d4'"
-            )
 
         try:
             tree = self.parser.parse(expression)
