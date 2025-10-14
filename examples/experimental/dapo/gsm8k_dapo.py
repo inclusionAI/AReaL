@@ -217,8 +217,8 @@ def main(args):
             if config.actor.dynamic_sampling:
                 with stats_tracker.record_timing("rollout_refill_dapo_batch_buffers"):
                     # Filter the current batch by groups
-                    # at least one group will be kept, don't worry for infinite loop
-                    # max try: train_dataloader_batch_size(batch_size)/1(min kept)=train_dataloader_batch_size
+                    # In the worst-case scenario where each new batch contributes only one group (the minimum kept),
+                    # it will take `train_dataloader_batch_size` retries to fill the target batch.
                     filtered_batch, sampling_stat = filter_batch(
                         filter_batch_fn_DAPO, new_batch, config.actor.group_size
                     )
