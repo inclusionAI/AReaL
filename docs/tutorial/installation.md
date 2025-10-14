@@ -73,6 +73,12 @@ cd AReaL
 bash examples/env/setup-pip-deps.sh
 ```
 
+**Note**: Installing with `examples/env/setup-pip-deps.sh` will install
+`flash_attn==2.8.3` since it does not require compilation with torch version 2.8.0.
+However, `flash_attn==2.8.3` is not compatible with Megatron training backend. If you
+want to use Megatron training backend, please compile and install `flash_attn==2.8.1` in
+your custom environment, or use docker installation instead.
+
 <!-- NO SGLang patch now
 > The SGLang patch is applied via `examples/env/setup-container-deps.sh` or `examples/env/setup-pip-deps.sh`. To confirm whether it has been applied, run `git status` in the `/sglang` directory (for Docker) or `AReaL/sglang` (for custom setups).
 -->
