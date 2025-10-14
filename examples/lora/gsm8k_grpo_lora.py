@@ -198,6 +198,10 @@ def main(args):
 
         with stats_tracker.record_timing("rollout"):
             batch = None
+            # NOTE: Currently, if we use multiple ranks for LoRA rollout,
+            # the algorithm performance will drop significantly. This may be
+            # due to some concurrency issues. Use a single rank for rollout
+            # as a temporary workaround.
             if dist.get_rank() == 0:
                 if config.async_training:
                     batch = rollout.prepare_batch(

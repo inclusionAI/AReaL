@@ -18,11 +18,7 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.openai import ArealOpenAI
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import (
-    broadcast_tensor_container,
-    cycle_dataloader,
-    tensor_container_to,
-)
+from areal.utils.data import cycle_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -260,29 +256,18 @@ def main(args):
         )
 
         with stats_tracker.record_timing("rollout"):
-            batch = None
-            if actor.is_data_parallel_head():
-                if config.async_training:
-                    batch = rollout.prepare_batch(
-                        train_dataloader,
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
-                    )
-                else:
-                    batch = rollout.rollout_batch(
-                        next(data_generator),
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
-                    )
-                batch = tensor_container_to(batch, actor.device)
-            batch = broadcast_tensor_container(
-                batch,
-                src_rank=actor.current_data_parallel_head(),
-                group=actor.context_and_model_parallel_group,
-            )
-        # Create barrier to synchronize all rollout processes.
-        dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
+            if config.async_training:
+                batch = actor.prepare_batch(
+                    train_dataloader,
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
+            else:
+                batch = actor.rollout_batch(
+                    next(data_generator),
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
