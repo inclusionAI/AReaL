@@ -558,7 +558,7 @@ def slurm_main(config, run_id: int = 0):
         trainer_cmds = []
         for i in range(trainer_n_nodes):
             # In slurm, we launch trainer in the granularity of nodes with torchrun command.
-            bash_cmds = additional_bash_cmds or []
+            bash_cmds = (additional_bash_cmds or []).copy()
             # Here $head_node_ip is the IP address of the first node in the job array.
             # $trainer_port is a free port on the head node.
             # Both of them are obtained in by the SBATCH script.
@@ -567,15 +567,18 @@ def slurm_main(config, run_id: int = 0):
                     "torchrun",
                     f"--nnodes={trainer_n_nodes}",
                     f"--nproc-per-node={nproc_per_node}",
-                    f"--node-rank {i}",
-                    "--master-addr $head_node_ip",
-                    "--master-port $trainer_port",
+                    f"--node-rank={i}",
+                    "--master-addr=$head_node_ip",
+                    "--master-port=$trainer_port",
                     extra_args,
                 ]
             )
             bash_cmds.append(torchrun_cmd)
             bash_cmds_str = ";\n".join(bash_cmds)
+            # handle double quotes in bash commands
+            bash_cmds_str = bash_cmds_str.replace('"', '\\"')
             trainer_cmds.append(f'bash -c "{bash_cmds_str}"')
+
         if trainer_n_nodes:
             logger.info(
                 f"Trainer commands for the first trainer node:\n{trainer_cmds[0]}"

@@ -3,7 +3,7 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import uvloop
 import yaml
@@ -1014,7 +1014,7 @@ class SlurmLauncherConfig:
         default="--mpi=pmi2 -K --chdir $PWD",
         metadata={"help": "Additional arguments to pass to the srun command."},
     )
-    additional_bash_cmds: Optional[List[str]] = field(
+    additional_bash_cmds: List[str] | None = field(
         default=None,
         metadata={
             "help": "Additional bash commands to setup the container before running "
