@@ -328,9 +328,10 @@ def filter_batch_fn_DAPO(
     # Expand the group mask to individual samples
     mask = valid_groups.repeat_interleave(group_size)
 
-    # In case all group is filtered out, return the original data (although not gradient in this case)
+    # In case all group is filtered out, only return only the first group to avoid infinite loop of dynamic sampling (although not gradient in this case)
     if not mask.any():
-        return data, dict(n_group_kept=0, n_group_filtered=num_groups)
+        mask[:group_size] = True
+        valid_groups[0] = True
 
     n_group_kept = int(valid_groups.sum().item())
     n_group_filtered = int(num_groups - n_group_kept)
