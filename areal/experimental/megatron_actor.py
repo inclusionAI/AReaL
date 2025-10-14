@@ -179,7 +179,7 @@ class PPOActor:
 
     def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
         if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
-            data, sampling_stat = filter_batch(data, self.group_size)
+            data, sampling_stat = filter_batch(filter_batch_fn_DAPO, data, self.group_size)
 
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
