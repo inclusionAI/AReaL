@@ -2,7 +2,6 @@ import os
 import sys
 from copy import deepcopy
 
-import debugpy
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -15,23 +14,21 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
-    aggregate_dicts,
+    aggregate_metric_dicts,
     broadcast_tensor_container,
+    concat_padded_tensors,
     cycle_dataloader,
     tensor_container_to,
     truncate_dict_to_batch_size,
 )
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
-from areal.utils.functional import filter_batch
+from areal.utils.functional import filter_batch, filter_batch_fn_DAPO
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
-
-debugpy.listen(("0.0.0.0", 5678))
-debugpy.wait_for_client()
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
@@ -184,7 +181,7 @@ def main(args):
             steps_per_epoch=steps_per_epoch,
         )
         # Initialize batch collection
-        collected_batches = []
+        collected_batches, sampling_stats = [], []
         while True:
             with stats_tracker.record_timing("rollout"):
                 new_batch = None
@@ -220,37 +217,47 @@ def main(args):
             if config.actor.dynamic_sampling:
                 with stats_tracker.record_timing("rollout_refill_dapo_batch_buffers"):
                     # Filter the current batch by groups
+                    # at least one group will be kept, don't worry for infinite loop
+                    # max try: train_dataloader_batch_size(batch_size)/1(min kept)=train_dataloader_batch_size
                     filtered_batch, sampling_stat = filter_batch(
-                        new_batch, config.actor.group_size
+                        filter_batch_fn_DAPO, new_batch, config.actor.group_size
                     )
+                    sampling_stats.append(sampling_stat)
 
                     # Add filtered batch to collection
                     collected_batches.append(filtered_batch)
 
-                    # Aggregate all collected batches
-                    aggregated_batch = aggregate_dicts(collected_batches)
-
+                    # Aggregate all filter/clean batches
+                    aggregated_batch = concat_padded_tensors(collected_batches)
+                    total_batch_size = len(new_batch["rewards"])
+                    # just for sanity check
+                    assert (
+                        total_batch_size
+                        == train_dataloader_batch_size * config.actor.group_size
+                    )
                     # Check if we have collected enough samples
-                    if (
-                        len(aggregated_batch["rewards"])
-                        >= config.train_dataset.batch_size
-                    ):
+                    if len(aggregated_batch["rewards"]) >= total_batch_size:
+                        sampling_stats = aggregate_metric_dicts(sampling_stats)
+                        keep_ratio = float(sampling_stats["n_group_kept"]) / float(
+                            sampling_stats["n_group_filtered"]
+                            + sampling_stats["n_group_kept"]
+                        )
+                        sampling_stats = {
+                            "keep_ratio": keep_ratio,
+                            "filer_ratio": 1.0 - keep_ratio,
+                        }
                         # Log the sampling statistics
                         stats_logger.commit(
                             epoch=epoch,
                             step=step,
                             global_step=global_step,
-                            data=sampling_stat,
+                            data=sampling_stats,
                         )
-
                         # Truncate batch to train_batch_size
                         batch = truncate_dict_to_batch_size(
-                            aggregated_batch, config.train_dataset.batch_size
+                            data=aggregated_batch, batch_size=total_batch_size
                         )
                         break
-                    else:
-                        # Continue collecting more samples
-                        batch = aggregated_batch
             else:
                 # For non-dynamic sampling, just use the current batch
                 batch = new_batch

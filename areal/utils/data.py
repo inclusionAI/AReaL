@@ -221,7 +221,7 @@ def concat_padded_tensors(
     return result
 
 
-def aggregate_dicts(
+def aggregate_metric_dicts(
     dicts: List[Dict[str, Any]], pad_value: float = 0.0
 ) -> Dict[str, Any]:
     """Aggregate multiple dictionaries containing tensors and numeric values.
@@ -255,16 +255,8 @@ def aggregate_dicts(
         if not values:
             continue
 
-        # Check if all values are tensors
-        if all(torch.is_tensor(v) for v in values):
-            # For tensors, use concat_padded_tensors
-            # Create list of single-item dicts for concat_padded_tensors
-            tensor_dicts = [{key: v} for v in values]
-            aggregated = concat_padded_tensors(tensor_dicts, pad_value=pad_value)
-            result[key] = aggregated[key]
-
         # Check if all values are numeric (int, float)
-        elif all(isinstance(v, (int, float)) for v in values):
+        if all(isinstance(v, (int, float)) for v in values):
             # Sum numeric values
             result[key] = sum(values)
 
