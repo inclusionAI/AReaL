@@ -576,6 +576,12 @@ def slurm_main(config, run_id: int = 0):
             bash_cmds.append(torchrun_cmd)
             bash_cmds_str = ";\n".join(bash_cmds)
             trainer_cmds.append(f'bash -c "{bash_cmds_str}"')
+        if trainer_n_nodes:
+            logger.info(
+                f"Trainer commands for the first trainer node:\n{trainer_cmds[0]}"
+            )
+        else:
+            logger.warn("No trainer commands")
         return trainer_cmds
 
     if allocation_mode.type_ != AllocationType.LLM_SERVER_ONLY:
