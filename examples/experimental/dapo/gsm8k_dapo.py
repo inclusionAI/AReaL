@@ -2,6 +2,7 @@ import os
 import sys
 from copy import deepcopy
 
+import debugpy
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -14,17 +15,23 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
+    aggregate_dicts,
     broadcast_tensor_container,
     cycle_dataloader,
     tensor_container_to,
+    truncate_dict_to_batch_size,
 )
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
+from areal.utils.functional import filter_batch
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
+
+debugpy.listen(("0.0.0.0", 5678))
+debugpy.wait_for_client()
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
@@ -69,9 +76,15 @@ def main(args):
     )
 
     # Create dataset and dataloaders
+    train_dataloader_batch_size = (
+        config.train_dataset.batch_size // actor.data_parallel_world_size
+    )
+    valid_dataloader_batch_size = (
+        config.valid_dataset.batch_size // actor.data_parallel_world_size
+    )
     train_dataloader = StatefulDataLoader(
         train_dataset,
-        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
+        batch_size=train_dataloader_batch_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -79,7 +92,7 @@ def main(args):
     )
     valid_dataloader = StatefulDataLoader(
         valid_dataset,
-        batch_size=config.valid_dataset.batch_size // actor.data_parallel_world_size,
+        batch_size=valid_dataloader_batch_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
         collate_fn=lambda x: x,
@@ -170,31 +183,78 @@ def main(args):
             epoch_step=step,
             steps_per_epoch=steps_per_epoch,
         )
+        # Initialize batch collection
+        collected_batches = []
+        while True:
+            with stats_tracker.record_timing("rollout"):
+                new_batch = None
+                if actor.is_data_parallel_head():
+                    if config.async_training:
+                        new_batch = rollout.prepare_batch(
+                            train_dataloader,
+                            workflow=workflow,
+                            should_accept=lambda sample: True,
+                        )
+                    else:
+                        new_batch = rollout.rollout_batch(
+                            next(data_generator),
+                            workflow=workflow,
+                            should_accept=lambda sample: True,
+                        )
+                    new_batch = tensor_container_to(new_batch, actor.device)
+                new_batch = broadcast_tensor_container(
+                    new_batch,
+                    src_rank=actor.current_data_parallel_head(),
+                    group=actor.context_and_model_parallel_group,
+                )
 
-        with stats_tracker.record_timing("rollout"):
-            batch = None
-            if actor.is_data_parallel_head():
-                if config.async_training:
-                    batch = rollout.prepare_batch(
-                        train_dataloader,
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
+            # Create barrier to synchronize all rollout processes.
+            dist.barrier(device_ids=[actor.device.index])
+            current_platform.synchronize()
+
+            with stats_tracker.record_timing("compute_advantage"):
+                actor.compute_advantages(new_batch)
+                log_gpu_stats("compute advantages")
+
+            # Collect the batch and process it immediately
+            if config.actor.dynamic_sampling:
+                with stats_tracker.record_timing("rollout_refill_dapo_batch_buffers"):
+                    # Filter the current batch by groups
+                    filtered_batch, sampling_stat = filter_batch(
+                        new_batch, config.actor.group_size
                     )
-                else:
-                    batch = rollout.rollout_batch(
-                        next(data_generator),
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
-                    )
-                batch = tensor_container_to(batch, actor.device)
-            batch = broadcast_tensor_container(
-                batch,
-                src_rank=actor.current_data_parallel_head(),
-                group=actor.context_and_model_parallel_group,
-            )
-        # Create barrier to synchronize all rollout processes.
-        dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
+
+                    # Add filtered batch to collection
+                    collected_batches.append(filtered_batch)
+
+                    # Aggregate all collected batches
+                    aggregated_batch = aggregate_dicts(collected_batches)
+
+                    # Check if we have collected enough samples
+                    if (
+                        len(aggregated_batch["rewards"])
+                        >= config.train_dataset.batch_size
+                    ):
+                        # Log the sampling statistics
+                        stats_logger.commit(
+                            epoch=epoch,
+                            step=step,
+                            global_step=global_step,
+                            data=sampling_stat,
+                        )
+
+                        # Truncate batch to train_batch_size
+                        batch = truncate_dict_to_batch_size(
+                            aggregated_batch, config.train_dataset.batch_size
+                        )
+                        break
+                    else:
+                        # Continue collecting more samples
+                        batch = aggregated_batch
+            else:
+                # For non-dynamic sampling, just use the current batch
+                batch = new_batch
+                break
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -206,10 +266,6 @@ def main(args):
             with stats_tracker.record_timing("ref_logp"):
                 batch["ref_logp"] = ref.compute_logp(batch)
                 log_gpu_stats("ref logp")
-
-        with stats_tracker.record_timing("compute_advantage"):
-            actor.compute_advantages(batch)
-            log_gpu_stats("compute advantages")
 
         with (
             stats_tracker.record_timing("train_step"),

@@ -221,6 +221,96 @@ def concat_padded_tensors(
     return result
 
 
+def aggregate_dicts(
+    dicts: List[Dict[str, Any]], pad_value: float = 0.0
+) -> Dict[str, Any]:
+    """Aggregate multiple dictionaries containing tensors and numeric values.
+
+    This function handles different value types:
+    - Tensors: concatenated and padded to max length
+    - Numeric values: summed across dictionaries
+    - Other types: kept as lists
+
+    Args:
+        dicts: List of dictionaries to aggregate
+        pad_value: Value to use for padding tensors
+
+    Returns:
+        Aggregated dictionary with the same keys
+    """
+    if not dicts:
+        return {}
+
+    # Get all unique keys from all dictionaries
+    all_keys = set()
+    for d in dicts:
+        all_keys.update(d.keys())
+
+    result = {}
+
+    for key in all_keys:
+        # Collect all values for this key
+        values = [d.get(key) for d in dicts if key in d]
+
+        if not values:
+            continue
+
+        # Check if all values are tensors
+        if all(torch.is_tensor(v) for v in values):
+            # For tensors, use concat_padded_tensors
+            # Create list of single-item dicts for concat_padded_tensors
+            tensor_dicts = [{key: v} for v in values]
+            aggregated = concat_padded_tensors(tensor_dicts, pad_value=pad_value)
+            result[key] = aggregated[key]
+
+        # Check if all values are numeric (int, float)
+        elif all(isinstance(v, (int, float)) for v in values):
+            # Sum numeric values
+            result[key] = sum(values)
+
+        else:
+            # For mixed or other types, keep as list
+            result[key] = values
+
+    return result
+
+
+def truncate_dict_to_batch_size(
+    data: Dict[str, Any], batch_size: int
+) -> Dict[str, Any]:
+    """Truncate a dictionary containing tensors and numeric values to specified batch size.
+
+    This function handles different value types:
+    - Tensors: take first batch_size elements along the first dimension
+    - Numeric values: keep as is (no truncation)
+    - Other types: keep as is (no truncation)
+
+    Args:
+        data: Dictionary to truncate
+        batch_size: Target batch size for truncation
+
+    Returns:
+        Truncated dictionary
+    """
+    if not data:
+        return {}
+
+    result = {}
+
+    for key, value in data.items():
+        if torch.is_tensor(value) and len(value.shape) > 0:
+            # For tensors, take first batch_size elements along first dimension
+            if value.shape[0] > batch_size:
+                result[key] = value[:batch_size]
+            else:
+                result[key] = value
+        else:
+            # For numeric values and other types, keep as is
+            result[key] = value
+
+    return result
+
+
 def unpack_sequence(
     x: torch.Tensor,
     cu_seqlens: Optional[torch.Tensor] = None,

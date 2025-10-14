@@ -13,7 +13,6 @@ from areal.utils.data import (
     split_padded_tensor_dict_into_mb_list,
 )
 from areal.utils.functional import (
-    dynamic_sampling,
     gather_logprobs,
     gather_logprobs_entropy,
     ppo_actor_loss_fn,
@@ -45,7 +44,6 @@ class PPOActor:
         self.mask_no_eos_with_zero = config.mask_no_eos_with_zero
 
         self.temperature = config.temperature
-        self.dynamic_sampling = config.dynamic_sampling
 
     @torch.no_grad()
     def compute_logp(
@@ -160,8 +158,6 @@ class PPOActor:
         data["logprobs"] = old_logp
 
     def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
-        if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
-            data, sampling_stat = dynamic_sampling(data, self.group_size)
 
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]

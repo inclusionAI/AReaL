@@ -281,7 +281,11 @@ def ppo_critic_loss_fn(
     return value_loss, stat
 
 
-def dynamic_sampling(
+def filter_batch(filter_batch_fn, data: Dict[str, Any], group_size: int):
+    return filter_batch_fn(data, group_size)
+
+
+def filter_batch_fn(
     data: Dict[str, Any], group_size: int
 ) -> Tuple[Dict[str, Any], Dict[str, int]]:
     """Filter samples by group when all rewards in a group are equal.
