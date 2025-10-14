@@ -244,7 +244,7 @@ def main(args):
                         )
                         sampling_stats = {
                             "keep_ratio": keep_ratio,
-                            "filer_ratio": 1.0 - keep_ratio,
+                            "filter_ratio": 1.0 - keep_ratio,
                         }
                         # Log the sampling statistics
                         stats_logger.commit(
