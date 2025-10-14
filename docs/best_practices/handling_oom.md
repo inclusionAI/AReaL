@@ -130,8 +130,7 @@ Depending on the training engine, AReaL supports different optimizers.
 | SGD             | ✅   | ✅       | sgd       |
 | AdamW_bf16      | ✅   | ❌       | adam_bf16 |
 
-When encounted OOM, you may change to lightweight optimizer by state
-`actor.optimizer.type: name` in the yaml.
+When encountering an OOM error, you can switch to a more lightweight optimizer by setting `actor.optimizer.type: <name>` in your YAML configuration file.
 
 ## Resolving Weight Update OOM Errors
 
