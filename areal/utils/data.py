@@ -222,7 +222,7 @@ def concat_padded_tensors(
 
 
 def aggregate_metric_dicts(
-    dicts: List[Dict[str, Any]], pad_value: float = 0.0
+    dicts: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
     """Aggregate multiple dictionaries containing numeric values.
 
