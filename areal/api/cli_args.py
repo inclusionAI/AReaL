@@ -3,7 +3,7 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import uvloop
 import yaml
@@ -1013,6 +1013,13 @@ class SlurmLauncherConfig:
     srun_additional_args: str = field(
         default="--mpi=pmi2 -K --chdir $PWD",
         metadata={"help": "Additional arguments to pass to the srun command."},
+    )
+    additional_bash_cmds: Optional[List[str]] = field(
+        default=None,
+        metadata={
+            "help": "Additional bash commands to setup the container before running "
+            "the torchrun command."
+        },
     )
     container_type: str = field(
         default="apptainer",

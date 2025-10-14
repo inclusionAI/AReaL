@@ -549,24 +549,34 @@ def slurm_main(config, run_id: int = 0):
         trainer_n_nodes = n_nodes - n_backend_nodes
         gpus_per_node = config.cluster.n_gpus_per_node
 
-    # Here $head_node_ip is the IP address of the first node in the job array.
-    # $trainer_port is a free port on the head node.
-    # Both of them are obtained in by the SBATCH script.
-    trainer_cmd_template = (
-        f"torchrun --nnodes={{nnodes}} --nproc-per-node={{nproc_per_node}} --node-rank {{node_rank}} "
-        f"--master-addr $head_node_ip --master-port $trainer_port {' '.join(sys.argv[1:])}"
-    )
-
-    trainer_cmds = []
-    for i in range(trainer_n_nodes):
-        # In slurm, we launch trainer in the granularity of nodes with torchrun command.
-        trainer_cmds.append(
-            trainer_cmd_template.format(
-                nnodes=trainer_n_nodes,
-                nproc_per_node=config.cluster.n_gpus_per_node,
-                node_rank=i,
+    def _build_trainer_cmds(
+        trainer_n_nodes: int,
+        nproc_per_node: int,
+        additional_bash_cmds: Optional[List[str]] = None,
+    ) -> List[str]:
+        extra_args = " ".join(sys.argv[1:])
+        trainer_cmds = []
+        for i in range(trainer_n_nodes):
+            # In slurm, we launch trainer in the granularity of nodes with torchrun command.
+            bash_cmds = additional_bash_cmds or []
+            # Here $head_node_ip is the IP address of the first node in the job array.
+            # $trainer_port is a free port on the head node.
+            # Both of them are obtained in by the SBATCH script.
+            torchrun_cmd = " ".join(
+                [
+                    "torchrun",
+                    f"--nnodes={trainer_n_nodes}",
+                    f"--nproc-per-node={nproc_per_node}",
+                    f"--node-rank {i}",
+                    "--master-addr $head_node_ip",
+                    "--master-port $trainer_port",
+                    extra_args,
+                ]
             )
-        )
+            bash_cmds.append(torchrun_cmd)
+            bash_cmds_str = ";\n".join(bash_cmds)
+            trainer_cmds.append(f'bash -c "{bash_cmds_str}"')
+        return trainer_cmds
 
     if allocation_mode.type_ != AllocationType.LLM_SERVER_ONLY:
         # launch trainers
@@ -580,7 +590,11 @@ def slurm_main(config, run_id: int = 0):
             _env_vars["NCCL_NVLS_ENABLE"] = "0"
         launcher.submit_array(
             job_name="trainer",
-            cmd=trainer_cmds,
+            cmd=_build_trainer_cmds(
+                trainer_n_nodes,
+                config.cluster.n_gpus_per_node,
+                config.launcher.slurm.additional_bash_cmds,
+            ),
             count=trainer_n_nodes,
             nodes=trainer_n_nodes,
             n_gpus_per_node=gpus_per_node,
