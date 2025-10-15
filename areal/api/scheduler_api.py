@@ -1,36 +1,28 @@
 import abc
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import List, Literal
+
+from areal.api.engine_api import Scheduling
 
 
 @dataclass
 class Worker:
     id: str
     ip: str
-    ports: List[str] = field(default_factory=list)
-
-
-@dataclass
-class ContainerSpec:
-    cpu: int = 0
-    gpu: int = 0
-    mem: int = 0
-    container_image: str = ""
-    cmd: str = ""
-    env_vars: Dict[str, str] = field(default_factory=dict)
-    port_count: int = 2
+    serve_port: str
+    extra_ports: List[str] = field(default_factory=list)
 
 
 @dataclass
 class ScheduleStrategy:
-    type: str = ""
-    uid: str = ""
+    type: Literal["colocation", "separation", ""] = ""
+    target: str = ""
 
 
 @dataclass
-class SchedulingConfig:
+class Job:
     replicas: int = 0
-    specs: List[ContainerSpec] = field(default_factory=list)
+    tasks: List[Scheduling] = field(default_factory=list)
     schedule_strategy: ScheduleStrategy | None = None
     role: str = ""
 
@@ -38,11 +30,11 @@ class SchedulingConfig:
 class Scheduler(abc.ABC):
     def create_workers(self, worker_key, scheduler_config, *args, **kwargs) -> None:
         """
-        Start workers, return job id
+        Start workers
         """
         raise NotImplementedError()
 
-    def get_workers(self, worker_key, timeout=None) -> List[Worker]:
+    def get_workers(self, role: str, timeout=None) -> List[Worker]:
         """
         Wait and return worker list, including scheduling results such as ip and engine ports
         (worker id, ip, ports)
