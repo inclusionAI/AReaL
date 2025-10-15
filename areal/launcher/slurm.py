@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import areal.utils.logging as logging
 from areal.api.alloc_mode import AllocationMode, AllocationType
@@ -101,10 +101,10 @@ class SlurmLauncher:
         mem_per_task: int,  # MB
         container_image: str,
         srun_additional_args: str = "",
-        container_mounts: Optional[str] = None,
-        env_vars: Optional[Dict | List[Dict]] = None,
-        nodelist: Optional[str] = None,
-        exclude: Optional[str] = None,
+        container_mounts: str | None = None,
+        env_vars: Dict | List[Dict] | None = None,
+        nodelist: str | None = None,
+        exclude: str | None = None,
     ):
         """Submits and launch a job array with SBATCH.
         Note that a job array has one (unique) slurm name, and one (unique) slurm id.
@@ -552,7 +552,7 @@ def slurm_main(config, run_id: int = 0):
     def _build_trainer_cmds(
         trainer_n_nodes: int,
         nproc_per_node: int,
-        additional_bash_cmds: Optional[List[str]] = None,
+        additional_bash_cmds: List[str] | None = None,
     ) -> List[str]:
         extra_args = " ".join(sys.argv[1:])
         trainer_cmds = []
