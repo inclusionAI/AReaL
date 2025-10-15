@@ -7,11 +7,7 @@ import torch.distributed as dist
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import (
-    GenerationHyperparameters,
-    GRPOConfig,
-    load_expr_config,
-)
+from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
