@@ -136,6 +136,10 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 self.send_response(HTTPStatus.OK)
                 self.end_headers()
                 self.wfile.write(cloudpickle.dumps(result))
+            elif self.path == "/health":
+                self.send_response(HTTPStatus.OK)
+                self.end_headers()
+                self.wfile.write(b"OK")
             else:
                 self.send_response(HTTPStatus.NOT_FOUND)
                 self.end_headers()

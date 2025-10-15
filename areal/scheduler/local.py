@@ -169,6 +169,8 @@ class LocalScheduler(Scheduler):
     def get_workers(self, worker_role, timeout: float = 60.0) -> List[Worker]:
         workers = []
         for worker_id in self.engine_workers.get(worker_role, []):
+            if not self.rpc_client.check_health(worker_id, timeout):
+                raise TimeoutError(f"Worker {worker_id} check health timeout")
             ip, port = self.rpc_client.get_info(worker_id)
             worker = Worker(id=worker_id, ip=ip, worker_ports=[str(port)])
             workers.append(worker)

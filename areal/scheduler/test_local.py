@@ -50,8 +50,6 @@ actor_workers = shcheduler.get_workers("actor", timeout=300)
 print("[wht debug] rollout workers:", rollout_workers)
 print("[wht debug] actor workers:", actor_workers)
 
-time.sleep(20)
-
 
 rollout = RemoteSGLangEngine(config.rollout)
 with ThreadPoolExecutor(max_workers=len(rollout_workers)) as executor:
