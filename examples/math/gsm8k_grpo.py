@@ -1,14 +1,17 @@
 import os
 import sys
 from copy import deepcopy
+from typing import Callable
 
 import torch.distributed as dist
+from datasets import Dataset
+from torch.utils.data import DistributedSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import GRPOConfig, load_expr_config
+from areal.api.cli_args import DatasetConfig, GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
-from areal.dataset import get_custom_dataset
+from areal.dataset import get_complete_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
@@ -49,41 +52,51 @@ def main(args):
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
-    train_dataset = get_custom_dataset(
-        path=config.train_dataset.path,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
-        split="train",
-        max_length=config.train_dataset.max_length,
-        type=config.train_dataset.type,
-        tokenizer=tokenizer,
-    )
-    valid_dataset = get_custom_dataset(
-        path=config.valid_dataset.path,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
-        split="test",
-        max_length=config.valid_dataset.max_length,
-        type=config.valid_dataset.type,
-        tokenizer=tokenizer,
-    )
+    def _get_dataset(split: str, dataset_config: DatasetConfig) -> Dataset:
+        return get_complete_custom_dataset(
+            path=dataset_config.path,
+            split=split,
+            max_length=dataset_config.max_length,
+            type=dataset_config.type,
+            tokenizer=tokenizer,
+        )
+
+    train_dataset = _get_dataset(split="train", dataset_config=config.train_dataset)
+    valid_dataset = _get_dataset(split="test", dataset_config=config.valid_dataset)
 
     # Create dataset and dataloaders
-    train_dataloader = StatefulDataLoader(
+    def create_dataloader(
+        dataset,
+        rank: int,
+        world_size: int,
+        dataset_config: DatasetConfig,
+        collate_fn: Callable | None = None,
+    ):
+        return StatefulDataLoader(
+            dataset,
+            batch_size=dataset_config.batch_size,
+            sampler=DistributedSampler(
+                dataset,
+                world_size,
+                rank,
+                shuffle=dataset_config.shuffle,
+                drop_last=dataset_config.drop_last,
+            ),
+            num_workers=dataset_config.num_workers,
+            collate_fn=collate_fn or (lambda x: x),
+        )
+
+    train_dataloader = create_dataloader(
         train_dataset,
-        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
-        shuffle=config.train_dataset.shuffle,
-        num_workers=config.train_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.train_dataset.drop_last,
+        rank=actor.data_parallel_rank,
+        world_size=actor.data_parallel_world_size,
+        dataset_config=config.train_dataset,
     )
-    valid_dataloader = StatefulDataLoader(
+    valid_dataloader = create_dataloader(
         valid_dataset,
-        batch_size=config.valid_dataset.batch_size // actor.data_parallel_world_size,
-        shuffle=config.valid_dataset.shuffle,
-        num_workers=config.valid_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.valid_dataset.drop_last,
+        rank=actor.data_parallel_rank,
+        world_size=actor.data_parallel_world_size,
+        dataset_config=config.valid_dataset,
     )
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,

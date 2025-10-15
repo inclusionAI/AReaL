@@ -128,8 +128,6 @@ def get_geometry3k_rl_dataset(
     path: str,
     split: str,
     processor,
-    rank: int,
-    world_size: int,
     max_length: Optional[int] = None,
 ):
     dataset = load_dataset(path=path, split=split)
@@ -186,5 +184,4 @@ def get_geometry3k_rl_dataset(
 
         dataset = dataset.filter(filter_length)
 
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset

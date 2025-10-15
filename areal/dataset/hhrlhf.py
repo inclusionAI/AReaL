@@ -8,8 +8,6 @@ def get_hhrlhf_rw_dataset(
     path: str,
     split: str,
     tokenizer,
-    rank: int,
-    world_size: int,
     max_length: Optional[int] = None,
 ):
     dataset = load_dataset(path=path, split=split)
@@ -28,5 +26,4 @@ def get_hhrlhf_rw_dataset(
             and (len(x["rejected_ids"]) <= max_length)
         )
 
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset

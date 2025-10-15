@@ -74,8 +74,6 @@ def get_torl_data_rl_dataset(
     path: str,
     split: str,
     tokenizer,
-    rank: int,
-    world_size: int,
     max_length: Optional[int] = None,
 ):
     prepare_torl_data(rank)
@@ -101,5 +99,4 @@ def get_torl_data_rl_dataset(
 
         dataset = dataset.filter(filter_length)
 
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset

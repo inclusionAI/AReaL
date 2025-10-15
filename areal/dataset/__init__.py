@@ -1,5 +1,9 @@
 from typing import TYPE_CHECKING, Optional
 
+from datasets.distributed import split_dataset_by_node
+
+from areal.utils import logging
+
 if TYPE_CHECKING:
     from datasets import Dataset
     from transformers.processing_utils import ProcessorMixin
@@ -7,11 +11,11 @@ if TYPE_CHECKING:
 
 VALID_DATASETS = ["gsm8k", "clevr_count_70k", "geometry3k", "hh-rlhf", "torl_data"]
 
+logger = logging.getLogger("Dataset")
 
-def get_custom_dataset(
+
+def get_complete_custom_dataset(
     path: str,
-    rank: int,
-    world_size: int,
     type: str = "sft",
     split: Optional[str] = None,
     max_length: Optional[int] = None,
@@ -27,8 +31,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             tokenizer=tokenizer,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -39,8 +41,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             tokenizer=tokenizer,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -51,8 +51,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             processor=processor,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -63,8 +61,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             processor=processor,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -75,8 +71,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             processor=processor,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -87,8 +81,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             processor=processor,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -99,8 +91,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             tokenizer=tokenizer,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -111,8 +101,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             tokenizer=tokenizer,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -121,3 +109,30 @@ def get_custom_dataset(
             f"Dataset {path} with split {split} and training type {type} is not supported. "
             f"Supported datasets are: {VALID_DATASETS}. "
         )
+
+
+def get_custom_dataset(
+    path: str,
+    rank: int,
+    world_size: int,
+    type: str = "sft",
+    split: Optional[str] = None,
+    max_length: Optional[int] = None,
+    tokenizer: Optional["PreTrainedTokenizerFast"] = None,
+    processor: Optional["ProcessorMixin"] = None,
+    **kwargs,
+) -> "Dataset":
+    logger.warning(
+        "get_custom_dataset is deprecated and will be removed in version 0.4.0. "
+        "Please use get_complete_custom_dataset and DistributedSampler instead."
+    )
+    dataset = get_complete_custom_dataset(
+        path=path,
+        type=type,
+        split=split,
+        max_length=max_length,
+        tokenizer=tokenizer,
+        processor=processor,
+        **kwargs,
+    )
+    return split_dataset_by_node(dataset, rank=rank, world_size=world_size)

@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional, Union
 
 import torch.distributed as dist
 from datasets import load_dataset
-from datasets.distributed import split_dataset_by_node
 from PIL.Image import Image as ImageObject
 
 from areal.utils import logging
@@ -37,8 +36,6 @@ def get_clevr_count_70k_sft_dataset(
     path: str,
     split: str,
     processor,
-    rank: int,
-    world_size: int,
     max_length: Optional[int] = None,
 ):
     """
@@ -138,7 +135,7 @@ def get_clevr_count_70k_sft_dataset(
         # FIXME: processor process data extremely slowly in transformers > 4.53.1
         num_proc = max(1, min(os.cpu_count(), DATASET_NUM_PROC))
         logger.warning("Please set HF_HOME to your NFS directory")
-        if rank == 0:
+        if int(os.getenv("RANK", "0")) == 0:
             # First process data in rank 0, and use HF cache to load pre-processed dataset in other ranks
             dataset = _do_preprocess(path, split, processor, max_length, num_proc)
         dist.barrier()
@@ -148,8 +145,6 @@ def get_clevr_count_70k_sft_dataset(
 
     # If use multiprocessing, it will load dataset in HF cache
     dataset = _do_preprocess(path, split, processor, max_length, num_proc)
-
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset
 
 
@@ -157,8 +152,6 @@ def get_clevr_count_70k_rl_dataset(
     path: str,
     split: str,
     processor,
-    rank: int,
-    world_size: int,
     max_length: Optional[int] = None,
 ):
     def _do_preprocess(
@@ -232,7 +225,7 @@ def get_clevr_count_70k_rl_dataset(
         # FIXME: processor process data extremely slowly in transformers > 4.53.1
         num_proc = max(1, min(os.cpu_count(), DATASET_NUM_PROC))
         logger.warning("Please set HF_HOME to your NFS directory")
-        if rank == 0:
+        if int(os.getenv("RANK", "0")) == 0:
             # First process data in rank 0, and use HF cache to load pre-processed dataset in other ranks
             dataset = _do_preprocess(path, split, processor, max_length, num_proc)
         dist.barrier()
@@ -242,6 +235,4 @@ def get_clevr_count_70k_rl_dataset(
 
     # If use multiprocessing, it will load dataset in HF cache
     dataset = _do_preprocess(path, split, processor, max_length, num_proc)
-
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset
