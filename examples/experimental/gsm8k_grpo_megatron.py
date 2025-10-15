@@ -15,11 +15,7 @@ from areal.experimental.api.cli_args import ExperimentalGRPOConfig as GRPOConfig
 from areal.experimental.megatron_actor import MegatronPPOActor
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import (
-    broadcast_tensor_container,
-    cycle_dataloader,
-    tensor_container_to,
-)
+from areal.utils.data import cycle_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -180,27 +176,18 @@ def main(args):
         )
 
         with stats_tracker.record_timing("rollout"):
-            # NOTE: Megatron will ignore inputs from non data parallel heads.
-            # However, methods such as `compute_advantages` and `ppo_update`
-            # still requires data integrity to be called on every training process.
-            # Therefore, we still need to broadcast batch across context+model parallel group.
-            batch = None
-            if actor.is_data_parallel_head():
-                if config.async_training:
-                    batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
-                else:
-                    batch = rollout.rollout_batch(
-                        next(data_generator), workflow=workflow
-                    )
-                batch = tensor_container_to(batch, actor.device)
-            batch = broadcast_tensor_container(
-                batch,
-                src_rank=actor.current_data_parallel_head(),
-                group=actor.context_and_model_parallel_group,
-            )
-        # Create barrier to synchronize all rollout processes.
-        dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
+            if config.async_training:
+                batch = actor.prepare_batch(
+                    train_dataloader,
+                    granularity=actor.config.group_size,
+                    workflow=workflow,
+                )
+            else:
+                batch = actor.rollout_batch(
+                    next(data_generator),
+                    granularity=actor.config.group_size,
+                    workflow=workflow,
+                )
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
