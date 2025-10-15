@@ -79,10 +79,6 @@ However, `flash_attn==2.8.3` is not compatible with Megatron training backend. I
 want to use Megatron training backend, please compile and install `flash_attn==2.8.1` in
 your custom environment, or use docker installation instead.
 
-<!-- NO SGLang patch now
-> The SGLang patch is applied via `examples/env/setup-container-deps.sh` or `examples/env/setup-pip-deps.sh`. To confirm whether it has been applied, run `git status` in the `/sglang` directory (for Docker) or `AReaL/sglang` (for custom setups).
--->
-
 ## (Optional) Launch Ray Cluster for Distributed Training
 
 On the first node, start the Ray Head:
