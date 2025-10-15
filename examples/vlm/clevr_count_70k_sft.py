@@ -7,7 +7,7 @@ from datasets import Dataset
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import DatasetConfig, SFTConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
-from areal.dataset import get_complete_custom_dataset
+from areal.dataset import get_custom_dataset
 from areal.engine.sft.lm_engine import FSDPLMEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
@@ -39,19 +39,19 @@ def main_sft():
 
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
 
-    def _get_dataset(split: str, dataset_config: DatasetConfig) -> Dataset:
-        return get_complete_custom_dataset(
-            path=dataset_config.path,
-            split=split,
-            max_length=dataset_config.max_length,
-            type=dataset_config.type,
-            tokenizer=tokenizer,
-            processor=processor,
-        )
-
     # Create dataset and dataloaders
-    train_dataset = _get_dataset(split="train", dataset_config=config.train_dataset)
-    valid_dataset = _get_dataset(split="test", dataset_config=config.valid_dataset)
+    train_dataset = get_custom_dataset(
+        split="train",
+        dataset_config=config.train_dataset,
+        tokenizer=tokenizer,
+        processor=processor,
+    )
+    valid_dataset = get_custom_dataset(
+        split="test",
+        dataset_config=config.valid_dataset,
+        tokenizer=tokenizer,
+        processor=processor,
+    )
 
     train_dataloader = create_dataloader(
         train_dataset,
@@ -60,7 +60,6 @@ def main_sft():
         dataset_config=config.train_dataset,
         collate_fn=pad_sequences_to_tensors,
     )
-
     valid_dataloader = create_dataloader(
         valid_dataset,
         rank=engine.data_parallel_rank,

@@ -5,7 +5,7 @@ import torch.distributed as dist
 from datasets import Dataset
 
 from areal.api.cli_args import DatasetConfig, GRPOConfig, load_expr_config
-from areal.dataset import get_complete_custom_dataset
+from areal.dataset import get_custom_dataset
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.utils import seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
@@ -35,17 +35,10 @@ def main(args):
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
 
-    def _get_dataset(split: str, dataset_config: DatasetConfig) -> Dataset:
-        return get_complete_custom_dataset(
-            path=dataset_config.path,
-            split=split,
-            max_length=dataset_config.max_length,
-            type=dataset_config.type,
-            tokenizer=tokenizer,
-        )
-
     # Create dataset and dataloaders
-    valid_dataset = _get_dataset(split="test", dataset_config=config.valid_dataset)
+    valid_dataset = get_custom_dataset(
+        split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
+    )
     valid_dataloader = create_dataloader(
         valid_dataset,
         rank=rank,

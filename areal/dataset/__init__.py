@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, Optional
 
 from datasets.distributed import split_dataset_by_node
 
+from areal.api.cli_args import DatasetConfig
 from areal.utils import logging
 
 if TYPE_CHECKING:
@@ -14,13 +15,13 @@ VALID_DATASETS = ["gsm8k", "clevr_count_70k", "geometry3k", "hh-rlhf", "torl_dat
 logger = logging.getLogger("Dataset")
 
 
-def get_complete_custom_dataset(
+def _get_custom_dataset(
     path: str,
     type: str = "sft",
-    split: Optional[str] = None,
-    max_length: Optional[int] = None,
-    tokenizer: Optional["PreTrainedTokenizerFast"] = None,
-    processor: Optional["ProcessorMixin"] = None,
+    split: str | None = None,
+    max_length: int | None = None,
+    tokenizer: "PreTrainedTokenizerFast" | None = None,
+    processor: "ProcessorMixin" | None = None,
     **kwargs,
 ) -> "Dataset":
 
@@ -111,22 +112,22 @@ def get_complete_custom_dataset(
         )
 
 
-def get_custom_dataset(
+def get_custom_dataset_legacy(
     path: str,
     rank: int,
     world_size: int,
     type: str = "sft",
-    split: Optional[str] = None,
-    max_length: Optional[int] = None,
-    tokenizer: Optional["PreTrainedTokenizerFast"] = None,
-    processor: Optional["ProcessorMixin"] = None,
+    split: str | None = None,
+    max_length: int | None = None,
+    tokenizer: "PreTrainedTokenizerFast" | None = None,
+    processor: "ProcessorMixin" | None = None,
     **kwargs,
 ) -> "Dataset":
     logger.warning(
-        "get_custom_dataset is deprecated and will be removed in version 0.4.0. "
-        "Please use get_complete_custom_dataset and DistributedSampler instead."
+        "get_custom_dataset using rank and world_size is deprecated. "
+        "Please use DistributedSampler in dataloader instead for distributed training."
     )
-    dataset = get_complete_custom_dataset(
+    dataset = _get_custom_dataset(
         path=path,
         type=type,
         split=split,
@@ -136,3 +137,40 @@ def get_custom_dataset(
         **kwargs,
     )
     return split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+
+
+def get_custom_dataset(
+    split: str | None = None,
+    dataset_config: DatasetConfig | None = None,
+    tokenizer: "PreTrainedTokenizerFast" | None = None,
+    processor: "ProcessorMixin" | None = None,
+    **kwargs,
+) -> "Dataset":
+    if "rank" in kwargs:
+        # compatibility for legacy get_custom_dataset
+        return get_custom_dataset_legacy(
+            split=split,
+            tokenizer=tokenizer,
+            processor=processor,
+            **kwargs,
+        )
+
+    if dataset_config is not None:
+        return _get_custom_dataset(
+            path=dataset_config.path,
+            type=dataset_config.type,
+            split=split,
+            max_length=dataset_config.max_length,
+            tokenizer=tokenizer,
+            processor=processor,
+            **kwargs,
+        )
+
+    # try to pass arguments directly to legacy get_custom_dataset
+    logger.warning("dataset_config is not provided")
+    return _get_custom_dataset(
+        split=split,
+        tokenizer=tokenizer,
+        processor=processor,
+        **kwargs,
+    )

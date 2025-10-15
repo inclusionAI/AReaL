@@ -17,7 +17,7 @@ from areal.api.cli_args import (
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
-from areal.dataset import get_complete_custom_dataset
+from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.openai import ArealOpenAI
@@ -180,17 +180,10 @@ def main(args):
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
-    def _get_dataset(split: str, dataset_config: DatasetConfig) -> Dataset:
-        return get_complete_custom_dataset(
-            path=dataset_config.path,
-            split=split,
-            max_length=dataset_config.max_length,
-            type=dataset_config.type,
-            tokenizer=tokenizer,
-        )
-
     # Create dataset and dataloaders
-    train_dataset = _get_dataset(split="train", dataset_config=config.train_dataset)
+    train_dataset = get_custom_dataset(
+        split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
+    )
     train_dataloader = create_dataloader(
         train_dataset,
         rank=actor.data_parallel_rank,

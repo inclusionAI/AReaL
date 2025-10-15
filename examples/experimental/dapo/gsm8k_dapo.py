@@ -8,7 +8,7 @@ from datasets import Dataset
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import DatasetConfig, GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
-from areal.dataset import get_complete_custom_dataset
+from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
@@ -51,7 +51,7 @@ def main(args):
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
     def _get_dataset(split: str, dataset_config: DatasetConfig) -> Dataset:
-        return get_complete_custom_dataset(
+        return get_custom_dataset(
             path=dataset_config.path,
             split=split,
             max_length=dataset_config.max_length,
