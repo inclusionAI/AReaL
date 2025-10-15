@@ -22,7 +22,7 @@ def create_dataloader(
         dataset_config: The dataset config.
         collate_fn: The collate function to use.
     """
-    if dataset_config.batch_size % world_size == 0:
+    if dataset_config.batch_size % world_size != 0:
         raise ValueError(
             f"batch size({dataset_config.batch_size}) must be divisible by world_size({world_size})!"
         )
