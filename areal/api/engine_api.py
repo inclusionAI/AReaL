@@ -555,3 +555,15 @@ class InferenceEngine(abc.ABC):
     def resume(self):
         """Resume request submission for async rollout."""
         raise NotImplementedError()
+
+    def get_scheduling_config(self) -> List[Scheduling]:
+        """Get the scheduling configuration for the engine.
+
+        This includes configuration such as container image, CPU/GPU/memory size.
+
+        Returns
+        -------
+        Scheduling
+            The scheduling configuration for the engine
+        """
+        raise NotImplementedError()
