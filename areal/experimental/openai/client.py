@@ -259,6 +259,13 @@ class ArealOpenAI(AsyncOpenAI):
             raise KeyError(f"Completion with ID {completion_id} not found in cache")
         self._completion_cache[completion_id].reward = reward
 
+    def set_final_reward(self, reward: float) -> None:
+        """Set reward for the most recent completion."""
+        if not self._completion_cache:
+            raise RuntimeError("No completions in cache to set reward for")
+        last_comp_id = next(reversed(self._completion_cache))
+        self._completion_cache[last_comp_id].reward = reward
+
     def apply_reward_discount(self, turn_discount: float = 1.0) -> None:
         """Apply backward discounted rewards across cached completions.
 
