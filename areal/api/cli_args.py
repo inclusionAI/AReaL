@@ -170,7 +170,7 @@ class OptimizerConfig:
         },
     )
     lr: float = field(default=1e-3, metadata={"help": "Learning rate"})
-    weight_decay: float = field(default=0.0, metadata={"help": "Weight decay"})
+    weight_decay: float = field(default=0.01, metadata={"help": "Weight decay"})
     beta1: float = field(
         default=0.9,
         metadata={
