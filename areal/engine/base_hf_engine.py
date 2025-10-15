@@ -20,7 +20,7 @@ from transformers import (
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
-from areal.api.engine_api import TrainEngine
+from areal.api.engine_api import Scheduling, TrainEngine
 from areal.api.io_struct import FinetuneSpec
 from areal.platforms import current_platform
 from areal.utils import logging
@@ -45,6 +45,7 @@ from areal.utils.model import (
     is_valid_vision_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
+from areal.utils.scheduler import scheduling_specs_to_schedulings
 
 
 class BaseHFEngine(TrainEngine):
@@ -605,3 +606,6 @@ class BaseHFEngine(TrainEngine):
         unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
         reordered = reorder_list(unpacked, mb_list.backward_indices)
         return pad_and_stack_tensors_along_first_dim(reordered)
+
+    def get_scheduling_config(self) -> List[Scheduling]:
+        return scheduling_specs_to_schedulings(self.config.scheduling_specs)

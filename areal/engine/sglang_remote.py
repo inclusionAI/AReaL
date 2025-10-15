@@ -27,6 +27,7 @@ from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
+from areal.utils.scheduler import scheduling_specs_to_schedulings
 
 RID_CACHE_SIZE = 128
 
@@ -433,8 +434,7 @@ class RemoteSGLangEngine(InferenceEngine):
         return self.workflow_executor.resume()
 
     def get_scheduling_config(self) -> List[Scheduling]:
-        # 部署 launcher/sglang_server.py, local_scheduler 注入一个ENGINE_PORTS的端口环境变量,里面有两个端口
-        raise NotImplementedError()
+        return scheduling_specs_to_schedulings(self.config.scheduling_specs)
 
 
 def update_weights_from_disk(

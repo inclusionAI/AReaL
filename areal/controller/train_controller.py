@@ -62,9 +62,6 @@ class DistributedTrainController(TrainController):
         # after get workers, all rpc server is ready
         self.workers = self.scheduler.get_workers(self.role, timeout=1800)
 
-        logger.info(f"Start to create process group")
-        self.create_process_group(self.alloc_mode.train)
-
         logger.info(f"Start to initialize engine")
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
             futures = [
