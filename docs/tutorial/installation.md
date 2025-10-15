@@ -74,9 +74,9 @@ bash examples/env/setup-pip-deps.sh
 ```
 
 **Note**: Installing with `examples/env/setup-pip-deps.sh` will install
-`flash_attn==2.8.3` since it does not require compilation with torch version 2.8.0.
-However, `flash_attn==2.8.3` is not compatible with Megatron training backend. If you
-want to use Megatron training backend, please compile and install `flash_attn==2.8.1` in
+`flash-attn==2.8.3` since it does not require compilation with torch version 2.8.0.
+However, `flash-attn==2.8.3` is not compatible with Megatron training backend. If you
+want to use Megatron training backend, please compile and install `flash-attn==2.8.1` in
 your custom environment, or use docker installation instead.
 
 ## (Optional) Launch Ray Cluster for Distributed Training
