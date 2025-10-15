@@ -80,7 +80,10 @@ class MathAgent:
         agent = OpenAIAgent(
             name="RLVR",
         )
-        run_config = RunConfig(model_provider=OpenAIProvider(openai_client=client))
+        run_config = RunConfig(
+            model_provider=OpenAIProvider(openai_client=client, use_responses=False),
+            tracing_disabled=True,
+        )
 
         result = await OpenAIRunner.run(
             agent, input=data["messages"][-1]["content"], run_config=run_config

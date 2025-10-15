@@ -82,6 +82,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
         top_p: Optional[float] | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
+        **_: dict,
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
         # Extract and validate supported parameters
