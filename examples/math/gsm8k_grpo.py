@@ -1,12 +1,9 @@
 import os
 import sys
 from copy import deepcopy
-from typing import Callable
 
 import torch.distributed as dist
 from datasets import Dataset
-from torch.utils.data import DistributedSampler
-from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import DatasetConfig, GRPOConfig, load_expr_config
@@ -21,6 +18,7 @@ from areal.utils.data import (
     cycle_dataloader,
     tensor_container_to,
 )
+from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -61,31 +59,9 @@ def main(args):
             tokenizer=tokenizer,
         )
 
+    # Create dataset and dataloaders
     train_dataset = _get_dataset(split="train", dataset_config=config.train_dataset)
     valid_dataset = _get_dataset(split="test", dataset_config=config.valid_dataset)
-
-    # Create dataset and dataloaders
-    def create_dataloader(
-        dataset,
-        rank: int,
-        world_size: int,
-        dataset_config: DatasetConfig,
-        collate_fn: Callable | None = None,
-    ):
-        return StatefulDataLoader(
-            dataset,
-            batch_size=dataset_config.batch_size,
-            sampler=DistributedSampler(
-                dataset,
-                world_size,
-                rank,
-                shuffle=dataset_config.shuffle,
-                drop_last=dataset_config.drop_last,
-            ),
-            num_workers=dataset_config.num_workers,
-            collate_fn=collate_fn or (lambda x: x),
-        )
-
     train_dataloader = create_dataloader(
         train_dataset,
         rank=actor.data_parallel_rank,
