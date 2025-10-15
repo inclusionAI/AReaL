@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from datasets.distributed import split_dataset_by_node
 
@@ -20,8 +20,8 @@ def _get_custom_dataset(
     type: str = "sft",
     split: str | None = None,
     max_length: int | None = None,
-    tokenizer: "PreTrainedTokenizerFast" | None = None,
-    processor: "ProcessorMixin" | None = None,
+    tokenizer: Optional["PreTrainedTokenizerFast"] = None,
+    processor: Optional["ProcessorMixin"] = None,
     **kwargs,
 ) -> "Dataset":
 
@@ -119,8 +119,8 @@ def get_custom_dataset_legacy(
     type: str = "sft",
     split: str | None = None,
     max_length: int | None = None,
-    tokenizer: "PreTrainedTokenizerFast" | None = None,
-    processor: "ProcessorMixin" | None = None,
+    tokenizer: Optional["PreTrainedTokenizerFast"] = None,
+    processor: Optional["ProcessorMixin"] = None,
     **kwargs,
 ) -> "Dataset":
     logger.warning(
@@ -142,8 +142,8 @@ def get_custom_dataset_legacy(
 def get_custom_dataset(
     split: str | None = None,
     dataset_config: DatasetConfig | None = None,
-    tokenizer: "PreTrainedTokenizerFast" | None = None,
-    processor: "ProcessorMixin" | None = None,
+    tokenizer: Optional["PreTrainedTokenizerFast"] = None,
+    processor: Optional["ProcessorMixin"] = None,
     **kwargs,
 ) -> "Dataset":
     if "rank" in kwargs:
