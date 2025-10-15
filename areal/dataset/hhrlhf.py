@@ -1,7 +1,6 @@
 from typing import Optional
 
 from datasets import load_dataset
-from datasets.distributed import split_dataset_by_node
 
 
 def get_hhrlhf_rw_dataset(

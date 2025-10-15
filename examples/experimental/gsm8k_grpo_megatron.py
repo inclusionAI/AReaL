@@ -2,12 +2,11 @@ import os
 import sys
 from copy import deepcopy
 
-from datasets import Dataset
 from megatron.core import parallel_state as mpu
 from torch import distributed as dist
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import DatasetConfig, load_expr_config
+from areal.api.cli_args import load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.sglang_remote import RemoteSGLangEngine

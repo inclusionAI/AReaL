@@ -5,10 +5,9 @@ from copy import deepcopy
 
 import torch
 import torch.distributed as dist
-from datasets import Dataset
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import DatasetConfig, load_expr_config
+from areal.api.cli_args import load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor

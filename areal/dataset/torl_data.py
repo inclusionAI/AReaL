@@ -4,7 +4,6 @@ from typing import Optional
 
 import requests
 from datasets import load_dataset
-from datasets.distributed import split_dataset_by_node
 
 """
 Data columns (total 5 columns):

@@ -4,12 +4,10 @@ import sys
 from dataclasses import dataclass, field
 
 import torch.distributed as dist
-from datasets import Dataset
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
-    DatasetConfig,
     GenerationHyperparameters,
     GRPOConfig,
     load_expr_config,

@@ -130,7 +130,10 @@ Depending on the training engine, AReaL supports different optimizers.
 | SGD             | ✅   | ✅       | sgd       |
 | AdamW_bf16      | ✅   | ❌       | adam_bf16 |
 
-When encountering an OOM error, you can switch to a more memory-efficient optimizer. `SGD` and `AdamW_bf16` are more lightweight than the default `AdamW`. You can switch by setting `actor.optimizer.type: <name>` in your YAML configuration file (e.g., `actor.optimizer.type: sgd`).
+When encountering an OOM error, you can switch to a more memory-efficient optimizer.
+`SGD` and `AdamW_bf16` are more lightweight than the default `AdamW`. You can switch by
+setting `actor.optimizer.type: <name>` in your YAML configuration file (e.g.,
+`actor.optimizer.type: sgd`).
 
 ## Resolving Weight Update OOM Errors
 

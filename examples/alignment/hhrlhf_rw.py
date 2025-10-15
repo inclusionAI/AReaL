@@ -2,10 +2,9 @@ import os
 import sys
 
 import torch.distributed as dist
-from datasets import Dataset
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import DatasetConfig, RWConfig, load_expr_config
+from areal.api.cli_args import RWConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
 from areal.engine.rw.rw_engine import FSDPRWEngine
