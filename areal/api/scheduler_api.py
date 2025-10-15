@@ -8,9 +8,10 @@ from areal.api.engine_api import Scheduling
 @dataclass
 class Worker:
     id: str
+    # worker and engine deploy on the same machine, so ip are the same
     ip: str
-    serve_port: str
-    extra_ports: List[str] = field(default_factory=list)
+    worker_ports: List[str] = field(default_factory=list)
+    engine_ports: List[str] = field(default_factory=list)
 
 
 @dataclass

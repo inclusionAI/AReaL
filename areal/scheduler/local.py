@@ -391,7 +391,7 @@ class LocalScheduler(Scheduler):
         workers = []
         for worker_id in self.engine_workers.get(worker_role, []):
             ip, port = self.rpc_client.get_info(worker_id)
-            worker = Worker(id=worker_id, ip=ip, ports=[str(port)])
+            worker = Worker(id=worker_id, ip=ip, worker_ports=[str(port)])
             workers.append(worker)
         return workers
 
