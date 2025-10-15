@@ -120,6 +120,18 @@ allocation_mode: sglang:d4+fsdp:d2c2
 > - These work: `1, 2, 4, 8`
 > - These don't: `16, 32`
 
+### 3. Switch to a Lightweight Optimizer
+
+Depending on the training engine, AReaL supports different optimizers.
+
+| Optimizer       | FSDP | Megatron | Name      |
+| --------------- | ---- | -------- | --------- |
+| AdamW (default) | ✅   | ✅       | adam      |
+| SGD             | ✅   | ✅       | sgd       |
+| AdamW_bf16      | ✅   | ❌       | adam_bf16 |
+
+When encountering an OOM error, you can switch to a more memory-efficient optimizer. `SGD` and `AdamW_bf16` are more lightweight than the default `AdamW`. You can switch by setting `actor.optimizer.type: <name>` in your YAML configuration file (e.g., `actor.optimizer.type: sgd`).
+
 ## Resolving Weight Update OOM Errors
 
 Weight updates can eat up a lot of memory, especially when using NCCL synchronization
