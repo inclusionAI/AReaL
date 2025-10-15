@@ -2,12 +2,13 @@ import os
 import sys
 
 import torch.distributed as dist
-from torchdata.stateful_dataloader import StatefulDataLoader
+from datasets import Dataset
 
-from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.dataset import get_custom_dataset
+from areal.api.cli_args import DatasetConfig, GRPOConfig, load_expr_config
+from areal.dataset import get_complete_custom_dataset
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.utils import seeding, stats_tracker
+from areal.utils.dataloader import create_dataloader
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.printing import tabulate_stats
 from areal.utils.stats_logger import StatsLogger
@@ -34,24 +35,22 @@ def main(args):
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
 
-    valid_dataset = get_custom_dataset(
-        path=config.valid_dataset.path,
-        rank=rank,
-        world_size=world_size,
-        split="test",
-        max_length=config.valid_dataset.max_length,
-        type=config.valid_dataset.type,
-        tokenizer=tokenizer,
-    )
+    def _get_dataset(split: str, dataset_config: DatasetConfig) -> Dataset:
+        return get_complete_custom_dataset(
+            path=dataset_config.path,
+            split=split,
+            max_length=dataset_config.max_length,
+            type=dataset_config.type,
+            tokenizer=tokenizer,
+        )
 
     # Create dataset and dataloaders
-    valid_dataloader = StatefulDataLoader(
+    valid_dataset = _get_dataset(split="test", dataset_config=config.valid_dataset)
+    valid_dataloader = create_dataloader(
         valid_dataset,
-        batch_size=config.valid_dataset.batch_size // world_size,
-        shuffle=config.valid_dataset.shuffle,
-        num_workers=config.valid_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.valid_dataset.drop_last,
+        rank=rank,
+        world_size=world_size,
+        dataset_config=config.valid_dataset,
     )
 
     # Initialize inference engine

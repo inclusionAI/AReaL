@@ -4,15 +4,20 @@ import sys
 from dataclasses import dataclass, field
 
 import torch.distributed as dist
-from torchdata.stateful_dataloader import StatefulDataLoader
+from datasets import Dataset
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
+from areal.api.cli_args import (
+    DatasetConfig,
+    GenerationHyperparameters,
+    GRPOConfig,
+    load_expr_config,
+)
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
-from areal.dataset import get_custom_dataset
+from areal.dataset import get_complete_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.openai import ArealOpenAI
@@ -23,6 +28,7 @@ from areal.utils.data import (
     cycle_dataloader,
     tensor_container_to,
 )
+from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -174,23 +180,22 @@ def main(args):
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
-    train_dataset = get_custom_dataset(
-        path=config.train_dataset.path,
+    def _get_dataset(split: str, dataset_config: DatasetConfig) -> Dataset:
+        return get_complete_custom_dataset(
+            path=dataset_config.path,
+            split=split,
+            max_length=dataset_config.max_length,
+            type=dataset_config.type,
+            tokenizer=tokenizer,
+        )
+
+    # Create dataset and dataloaders
+    train_dataset = _get_dataset(split="train", dataset_config=config.train_dataset)
+    train_dataloader = create_dataloader(
+        train_dataset,
         rank=actor.data_parallel_rank,
         world_size=actor.data_parallel_world_size,
-        split="train",
-        max_length=config.train_dataset.max_length,
-        type=config.train_dataset.type,
-        tokenizer=tokenizer,
-    )
-    # Create dataset and dataloaders
-    train_dataloader = StatefulDataLoader(
-        train_dataset,
-        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
-        shuffle=config.train_dataset.shuffle,
-        num_workers=config.train_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.train_dataset.drop_last,
+        dataset_config=config.train_dataset,
     )
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
