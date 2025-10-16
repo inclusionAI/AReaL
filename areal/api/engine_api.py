@@ -1,7 +1,7 @@
 import abc
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional
 
 import torch
 import torch.distributed as dist
@@ -31,7 +31,7 @@ class Scheduling:
     exclude: str | None = None
     partition: str | None = None
     container_image: str | None = None
-    type: str | None = None
+    type: Literal["worker", "engine"] = None
     env_vars: Dict[str, str] = field(default_factory=dict)
     # time utils from "https://slurm.schedmd.com/sbatch.html"
     time_limit: Optional[str] = None  # see  "--time" option for format

@@ -44,12 +44,14 @@ class DistributedTrainController(TrainController):
         alloc_mode_str: str,
         ft_spec: FinetuneSpec,
         schedule_strategy: ScheduleStrategy,
-        group_size: int = 1,
+        **kwargs,
     ):
         """Initialize environments for distributed training and load models."""
         self.alloc_mode = AllocationMode.from_str(alloc_mode_str)
         self.ft_spec = ft_spec
-        self.group_size = group_size
+
+        # todo: group size is a sampling parameter and an attribute of the data, should be moved to DistributedBatch
+        self.group_size = kwargs.get("group_size", 1)
 
         job = Job(
             replicas=self.alloc_mode.train.world_size,
