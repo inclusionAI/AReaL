@@ -7,6 +7,7 @@ import torch.distributed as dist
 from agents import Agent as OpenAIAgent
 from agents import OpenAIProvider, RunConfig
 from agents import Runner as OpenAIRunner
+from agents import SQLiteSession
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PreTrainedTokenizerFast
 
@@ -19,6 +20,7 @@ from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.openai import ArealOpenAI
+from areal.experimental.openai.agent_patch import AReaLOpenAIClientContext
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
@@ -62,7 +64,7 @@ def gsm8k_reward_fn(result, answer):
     return int(process_results(result, answer)[0])
 
 
-class MathAgent:
+class MultiturnMathAgent:
     def __init__(
         self,
         tokenizer: PreTrainedTokenizerFast,
@@ -77,27 +79,34 @@ class MathAgent:
         self.async_reward_fn = AsyncRewardWrapper(gsm8k_reward_fn)
 
     async def run_agent(self, data, client: ArealOpenAI):
-        agent = OpenAIAgent(
-            name="RLVR",
-        )
+        num_turns_left = self.max_turns
         run_config = RunConfig(
             model_provider=OpenAIProvider(openai_client=client, use_responses=False),
             tracing_disabled=True,
         )
-
-        result = await OpenAIRunner.run(
-            agent, input=data["messages"][-1]["content"], run_config=run_config
+        agent = OpenAIAgent(
+            name="RLVR",
         )
+        session = SQLiteSession("math")
+        async with AReaLOpenAIClientContext(run_config):
+            content = data["messages"][-1]["content"]
+            reward = 0
+            while num_turns_left > 0:
+                result = await OpenAIRunner.run(agent, input=content, session=session)
+                reward = await self.async_reward_fn(
+                    result=result.final_output, answer=data["answer"]
+                )
+                client.set_final_reward(reward)
+                if reward == 1:
+                    break
+                else:
+                    content = "Your answer is either wrong or not parsable to the reward function. You may misunderstand the original question. "
+                    "Please carefully read the original question, check the preivous errors, and try to answer it again."
+                num_turns_left -= 1
+            return reward
 
-        reward = await self.async_reward_fn(
-            result=result.final_output, answer=data["answer"]
-        )
-        client.set_final_reward(reward)
 
-        return reward
-
-
-class MultiturnRLVRWorkflow(RolloutWorkflow):
+class MultiturnRLVRAgentWorkflow(RolloutWorkflow):
     def __init__(
         self,
         gconfig: GenerationHyperparameters,
@@ -119,7 +128,7 @@ class MultiturnRLVRWorkflow(RolloutWorkflow):
 
         # Search hyper-parameters
         self.n_trajs = n_trajs
-        self.agent = MathAgent(
+        self.agent = MultiturnMathAgent(
             tokenizer=self.tokenizer,
             max_tokens_per_turn=self.gconfig.max_new_tokens,
             max_turns=max_turns,
@@ -207,7 +216,7 @@ def main(args):
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-    workflow = MultiturnRLVRWorkflow(
+    workflow = MultiturnRLVRAgentWorkflow(
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         n_trajs=config.n_trajs,
