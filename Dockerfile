@@ -25,6 +25,7 @@ RUN pip install git+https://github.com/fzyzcjy/torch_memory_saver.git --no-cache
 RUN pip install ray[default]
 RUN pip install httpx[http2] wandb pylatexenc blobfile accelerate "mcp[cli]"
 
+# TODO: migrate to NVIDIA-NeMo's Megatron-Bridge
 # mbridge
 RUN pip install git+https://github.com/ISEEKYAN/mbridge.git --no-deps
 RUN pip install git+https://github.com/fanshiqing/grouped_gemm@v1.1.4

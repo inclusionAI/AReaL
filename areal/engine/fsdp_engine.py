@@ -8,7 +8,6 @@ from typing import Any, Callable, Dict, List, Tuple
 
 import torch
 import torch.distributed as dist
-import torch.distributed.nn.functional as dist_F
 from peft import (
     LoraConfig,
     TaskType,
@@ -26,7 +25,6 @@ from transformers import (
     PreTrainedTokenizerFast,
     ProcessorMixin,
     get_constant_schedule_with_warmup,
-    get_cosine_schedule_with_warmup,
     get_linear_schedule_with_warmup,
 )
 
@@ -45,7 +43,7 @@ from areal.utils.data import (
     unpack_sequence,
 )
 from areal.utils.distributed import init_custom_process_group
-from areal.utils.fsdp import fsdp2_load_full_state_dict
+from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
@@ -527,8 +525,8 @@ class FSDPEngine(BaseHFEngine):
             else:
                 logits = logits[:-pad_length] if pad_length > 0 else logits
                 loss = loss_fn(logits, mb_input)
-            loss_scale = loss_weight_fn(mb_input) / total_loss_weight
 
+            loss_scale = loss_weight_fn(mb_input) / total_loss_weight
             # Scale loss for accumulation
             # To reverse the gradient averaging for SP groups
             loss_scale *= self.parallel_helper.dp_size
@@ -585,7 +583,6 @@ class FSDPEngine(BaseHFEngine):
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
-            ulysses_pad_size = 0
             if self.parallel_helper.sp_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
@@ -594,7 +591,7 @@ class FSDPEngine(BaseHFEngine):
                     (
                         ulysses_input_ids,
                         ulysses_position_ids,
-                        ulysses_pad_size,
+                        _,
                     ) = ulysses_pad(
                         input_ids, position_ids, sp_size=self.parallel_helper.sp_size
                     )
@@ -603,7 +600,7 @@ class FSDPEngine(BaseHFEngine):
                     (
                         ulysses_input_ids,
                         ulysses_position_ids,
-                        ulysses_pad_size,
+                        _,
                     ) = ulysses_pad_and_slice_inputs(
                         input_ids,
                         position_ids,
@@ -629,16 +626,13 @@ class FSDPEngine(BaseHFEngine):
 
             logits = outputs.logits.squeeze(0)
             if self.parallel_helper.sp_size > 1:
-                # Gather and remove Ulysses padding
-                gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
-                logits = torch.cat(gathered_logits, dim=0)
-                logits = logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
-            # Remove original padding
-            logits = logits[:-pad_length] if pad_length > 0 else logits
-            loss = loss_fn(logits, mb_input)
+                loss = loss_fn(logits, inputs)
+            else:
+                logits = logits[:-pad_length] if pad_length > 0 else logits
+                loss = loss_fn(logits, mb_input)
 
-            # Simple weight calculation (could be improved)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
+
             # eval_batch does not run backward, the grad will not be averaged over DP group
             # so we shouldn't multiple dp_size in loss_scale
             total_loss += loss.clone().detach() * loss_scale
@@ -703,26 +697,32 @@ class FSDPEngine(BaseHFEngine):
                 ):
                     ulysses_position_ids = ulysses_position_ids.contiguous()
 
-                inputs = padded_mb_input.copy()
-                inputs["input_ids"] = ulysses_input_ids
-                if ulysses_position_ids is not None:
-                    inputs["position_ids"] = ulysses_position_ids
+                inputs = ulysses_prepare_inputs(
+                    padded_mb_input,
+                    ulysses_input_ids,
+                    ulysses_position_ids,
+                    self.parallel_helper.sp_size,
+                )
             else:
                 inputs = padded_mb_input
 
             outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
-            if self.parallel_helper.sp_size > 1:
-                # Gather and remove Ulysses padding
-                gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
-                logits = torch.cat(gathered_logits, dim=0)
-                logits = logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
-            # Remove original padding
-            logits = logits[:-pad_length] if pad_length > 0 else logits
 
             if post_hook:
-                result = post_hook(logits, mb_input)
+                if self.parallel_helper.sp_size > 1:
+                    # When Ulysses SP is enabled, post_hook will gather logits internally.
+                    result = post_hook(logits, inputs)
+                    # Remove Ulysses padding and original padding
+                    result = (
+                        result[:-ulysses_pad_size] if ulysses_pad_size > 0 else result
+                    )
+                    result = result[:-pad_length] if pad_length > 0 else result
+                else:
+                    # Remove original padding
+                    logits = logits[:-pad_length] if pad_length > 0 else logits
+                    result = post_hook(logits, mb_input)
                 results.append(result)
             else:
                 results.append(logits)
