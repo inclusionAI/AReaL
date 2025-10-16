@@ -272,6 +272,7 @@ class RecoverHandler:
     def _get_weight_format(self, engine: TrainEngine) -> str:
         from areal.experimental.megatron_engine import MegatronEngine
 
+        # TODO: Enable DCP format for FSDP
         return "dcp" if isinstance(engine, MegatronEngine) else "hf"
 
     def _save_checkpoint(
