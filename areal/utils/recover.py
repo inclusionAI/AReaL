@@ -11,7 +11,6 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.api.cli_args import RecoverConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta, StepInfo, WeightUpdateMeta
-from areal.experimental.megatron_engine import MegatronEngine
 from areal.utils import logging, timeutil
 from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
@@ -271,6 +270,8 @@ class RecoverHandler:
             )
 
     def _get_weight_format(self, engine: TrainEngine) -> str:
+        from areal.experimental.megatron_engine import MegatronEngine
+
         return "dcp" if isinstance(engine, MegatronEngine) else "hf"
 
     def _save_checkpoint(
