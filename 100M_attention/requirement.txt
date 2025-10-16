@@ -1,0 +1,19 @@
+# Requirements for standalone SFT training with custom positional encoding
+# Install with: pip install -r requirements_standalone.txt
+
+# Core dependencies
+torch>=2.0.0
+transformers>=4.36.0
+datasets>=2.14.0
+accelerate>=0.25.0
+peft>=0.7.0
+
+# Optional but recommended
+bitsandbytes>=0.41.0  # For 8-bit/4-bit quantization
+tensorboard>=2.14.0   # For logging
+sentencepiece>=0.1.99  # For some tokenizers
+protobuf>=3.20.0
+
+# For specific models
+# tiktoken  # For GPT-4 style tokenizers
+# einops    # For some model architectures
