@@ -270,6 +270,9 @@ class RecoverHandler:
                 f"This should not be a resumed experiment!"
             )
 
+    def _get_weight_format(self, engine: TrainEngine) -> str:
+        return "dcp" if isinstance(engine, MegatronEngine) else "hf"
+
     def _save_checkpoint(
         self,
         engine: TrainEngine,
@@ -284,10 +287,7 @@ class RecoverHandler:
             self.config.fileroot,
             name=name,
         )
-        if isinstance(engine, MegatronEngine):
-            weight_format = "dcp"
-        else:
-            weight_format = "hf"
+        weight_format = self._get_weight_format(engine)
         with_optim = True
         meta = SaveLoadMeta(
             path=path,
@@ -315,10 +315,7 @@ class RecoverHandler:
         )
         if not os.path.exists(path):
             raise FileNotFoundError(f"Checkpoint path {path} does not exist.")
-        if isinstance(engine, MegatronEngine):
-            weight_format = "dcp"
-        else:
-            weight_format = "hf"
+        weight_format = self._get_weight_format(engine)
         with_optim = True
         meta = SaveLoadMeta(
             path=path,
