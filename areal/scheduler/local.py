@@ -54,6 +54,12 @@ class LocalScheduler(Scheduler):
                     gpu=task.gpu,
                     env_vars=envs,
                 )
+
+                if task.type == "worker":
+                    worker_id = f"worker_{uuid.uuid4().hex[:8]}"
+                    self.rpc_client.register(worker_id, "localhost", ports[0])
+                    self.engine_workers.setdefault(job.role, []).append(worker_id)
+
             logger.info(f"Submitted {replicas} tasks for command: {task.cmd}")
 
 
