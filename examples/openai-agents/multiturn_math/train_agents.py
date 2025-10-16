@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import torch.distributed as dist
 from agents import Agent as OpenAIAgent
-from agents import OpenAIProvider, RunConfig
+from agents import ModelSettings, OpenAIProvider, RunConfig
 from agents import Runner as OpenAIRunner
 from agents import SQLiteSession
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -80,7 +80,7 @@ class MultiturnMathAgent:
 
     async def run_agent(self, data, client: ArealOpenAI):
         num_turns_left = self.max_turns
-        run_config = RunConfig(
+        base_run_config = RunConfig(
             model_provider=OpenAIProvider(openai_client=client, use_responses=False),
             tracing_disabled=True,
         )
@@ -88,11 +88,19 @@ class MultiturnMathAgent:
             name="RLVR",
         )
         session = SQLiteSession("math")
-        async with AReaLOpenAIClientContext(run_config):
+        async with AReaLOpenAIClientContext(base_run_config):
             content = data["messages"][-1]["content"]
             reward = 0
             while num_turns_left > 0:
-                result = await OpenAIRunner.run(agent, input=content, session=session)
+                run_config = RunConfig(
+                    model_settings=ModelSettings(
+                        temperature=1.0,
+                        extra_args={"max_completion_tokens": self.max_tokens_per_turn},
+                    )
+                )
+                result = await OpenAIRunner.run(
+                    agent, input=content, session=session, run_config=run_config
+                )
                 reward = await self.async_reward_fn(
                     result=result.final_output, answer=data["answer"]
                 )
