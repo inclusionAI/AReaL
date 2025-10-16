@@ -11,6 +11,7 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.api.cli_args import RecoverConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta, StepInfo, WeightUpdateMeta
+from areal.experimental.megatron_engine import MegatronEngine
 from areal.utils import logging, timeutil
 from areal.utils.evaluator import Evaluator
 from areal.utils.saver import Saver
@@ -283,7 +284,10 @@ class RecoverHandler:
             self.config.fileroot,
             name=name,
         )
-        weight_format = "hf"
+        if isinstance(engine, MegatronEngine):
+            weight_format = "dcp"
+        else:
+            weight_format = "hf"
         with_optim = True
         meta = SaveLoadMeta(
             path=path,
@@ -311,7 +315,10 @@ class RecoverHandler:
         )
         if not os.path.exists(path):
             raise FileNotFoundError(f"Checkpoint path {path} does not exist.")
-        weight_format = "hf"
+        if isinstance(engine, MegatronEngine):
+            weight_format = "dcp"
+        else:
+            weight_format = "hf"
         with_optim = True
         meta = SaveLoadMeta(
             path=path,
