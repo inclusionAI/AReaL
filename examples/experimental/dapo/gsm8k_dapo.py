@@ -1,3 +1,4 @@
+import dataclasses
 import os
 import sys
 from copy import deepcopy
@@ -13,17 +14,14 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
-    aggregate_metric_dicts,
     broadcast_tensor_container,
-    concat_padded_tensors,
     cycle_dataloader,
     tensor_container_to,
-    truncate_dict_to_batch_size,
 )
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
-from areal.utils.functional import filter_batch, filter_batch_fn_DAPO
+from areal.utils.functional import filter_batch_fn_DAPO_per_group
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
@@ -162,87 +160,45 @@ def main(args):
             steps_per_epoch=steps_per_epoch,
         )
         # Initialize batch collection
-        collected_batches, sampling_stats = [], []
-        while True:
-            with stats_tracker.record_timing("rollout"):
-                new_batch = None
-                if actor.is_data_parallel_head():
-                    if config.async_training:
-                        new_batch = rollout.prepare_batch(
-                            train_dataloader,
-                            workflow=workflow,
-                            should_accept=lambda sample: True,
-                        )
-                    else:
-                        new_batch = rollout.rollout_batch(
-                            next(data_generator),
-                            workflow=workflow,
-                            should_accept=lambda sample: True,
-                        )
-                    new_batch = tensor_container_to(new_batch, actor.device)
-                new_batch = broadcast_tensor_container(
-                    new_batch,
-                    src_rank=actor.current_data_parallel_head(),
-                    group=actor.context_and_model_parallel_group,
-                )
 
-            # Create barrier to synchronize all rollout processes.
-            dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
-
-            with stats_tracker.record_timing("compute_advantage"):
-                actor.compute_advantages(new_batch)
-                log_gpu_stats("compute advantages")
-
-            # Collect the batch and process it immediately
-            if config.actor.dynamic_sampling:
-                with stats_tracker.record_timing("rollout_refill_dapo_batch_buffers"):
-                    # Filter the current batch by groups
-                    # In the worst-case scenario where each new batch contributes only one group (the minimum kept),
-                    # it will take `train_dataloader_batch_size` retries to fill the target batch.
-                    filtered_batch, sampling_stat = filter_batch(
-                        filter_batch_fn_DAPO, new_batch, config.actor.group_size
+        with stats_tracker.record_timing("rollout"):
+            if actor.is_data_parallel_head():
+                if config.async_training:
+                    batch = rollout.prepare_batch(
+                        train_dataloader,
+                        workflow=workflow,
+                        should_accept=(
+                            filter_batch_fn_DAPO_per_group
+                            if config.actor.dynamic_sampling
+                            else None
+                        ),
                     )
-                    sampling_stats.append(sampling_stat)
-
-                    # Add filtered batch to collection
-                    collected_batches.append(filtered_batch)
-
-                    # Aggregate all filter/clean batches
-                    aggregated_batch = concat_padded_tensors(collected_batches)
-                    total_batch_size = len(new_batch["rewards"])
-                    # just for sanity check
-                    assert (
-                        total_batch_size
-                        == train_dataloader_batch_size * config.actor.group_size
+                else:
+                    batch = rollout.rollout_batch(
+                        next(data_generator),
+                        workflow=workflow,
+                        should_accept=(
+                            filter_batch_fn_DAPO_per_group
+                            if config.actor.dynamic_sampling
+                            else None
+                        ),
                     )
-                    # Check if we have collected enough samples
-                    if len(aggregated_batch["rewards"]) >= total_batch_size:
-                        sampling_stats = aggregate_metric_dicts(sampling_stats)
-                        keep_ratio = float(sampling_stats["n_group_kept"]) / float(
-                            sampling_stats["n_group_filtered"]
-                            + sampling_stats["n_group_kept"]
-                        )
-                        sampling_stats = {
-                            "keep_ratio": keep_ratio,
-                            "filter_ratio": 1.0 - keep_ratio,
-                        }
-                        # Log the sampling statistics
-                        stats_logger.commit(
-                            epoch=epoch,
-                            step=step,
-                            global_step=global_step,
-                            data=sampling_stats,
-                        )
-                        # Truncate batch to train_batch_size
-                        batch = truncate_dict_to_batch_size(
-                            data=aggregated_batch, batch_size=total_batch_size
-                        )
-                        break
-            else:
-                # For non-dynamic sampling, just use the current batch
-                batch = new_batch
-                break
+                new_batch = tensor_container_to(new_batch, actor.device)
+            batch = broadcast_tensor_container(
+                new_batch,
+                src_rank=actor.current_data_parallel_head(),
+                group=actor.context_and_model_parallel_group,
+            )
+
+        # Create barrier to synchronize all rollout processes.
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
+        # record nums of group acceptance
+        stats_logger.commit(dataclasses.asdict(rollout.workflow_executor.rollout_stat))
+
+        with stats_tracker.record_timing("compute_advantage"):
+            actor.compute_advantages(new_batch)
+            log_gpu_stats("compute advantages")
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):

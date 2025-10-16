@@ -240,7 +240,7 @@ class _TimedResult:
 class _RolloutTaskInput:
     data: Dict[str, Any]
     workflow: RolloutWorkflow
-    should_accept: Callable | None = None
+    should_accept: Callable | Dict[str, Any] = None
 
 
 @dataclass
