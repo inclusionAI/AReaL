@@ -2,7 +2,6 @@ from io import BytesIO
 from typing import Any, Dict, Optional, Union
 
 from datasets import load_dataset
-from datasets.distributed import split_dataset_by_node
 from PIL import Image
 from PIL.Image import Image as ImageObject
 from torchvision import transforms
@@ -45,8 +44,6 @@ def get_geometry3k_sft_dataset(
     path: str,
     split: str,
     processor,
-    rank: int,
-    world_size: int,
     max_length: Optional[int] = None,
 ):
     """
@@ -120,7 +117,6 @@ def get_geometry3k_sft_dataset(
         # Filter out sequences longer than max_length
         dataset = dataset.filter(lambda x: len(x["input_ids"]) <= max_length)
 
-    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset
 
 

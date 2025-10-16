@@ -39,7 +39,7 @@ def download(url, save_path):
     print(f"Downloaded {url} to {save_path}")
 
 
-def prepare_torl_data(rank):
+def prepare_torl_data(rank: int):
     if rank == 0 and (not os.path.exists("/tmp/areal/torl_data/_SUCCESS")):
         os.makedirs("/tmp/areal/torl_data", exist_ok=True)
         for url, save_path in TORL_DATA_URLS:
@@ -62,8 +62,6 @@ def get_torl_data_sft_dataset(
     path: str,
     split: str,
     tokenizer,
-    rank: int,
-    world_size: int,
     max_length: Optional[int] = None,
 ):
     raise NotImplementedError("ToRL dataset not supported in SFT training")
@@ -75,7 +73,7 @@ def get_torl_data_rl_dataset(
     tokenizer,
     max_length: Optional[int] = None,
 ):
-    prepare_torl_data(rank)
+    prepare_torl_data(int(os.getenv("RANK", "0")))
     # Load parquet dataset instead of json
     dataset = load_dataset("parquet", data_files=path, split="train")
 
