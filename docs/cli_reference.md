@@ -72,6 +72,8 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 ### Others
 
 - [Scheduler Configuration](section-scheduler)
+- [SkyPilotLauncherCluster Configuration](section-sky-pilot-launcher-cluster)
+- [SkyPilotLauncher Configuration](section-sky-pilot-launcher)
 
 ______________________________________________________________________
 
@@ -597,15 +599,16 @@ Configuration for cluster specification and distributed computing setup.
 
 Configuration for launching the LLM server and trainer processes.
 
-| Parameter                       | Type                                            | Default      | Description                                                                                      |
-| ------------------------------- | ----------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------ |
-| `inference_server_cpus_per_gpu` | integer                                         | `4`          | Number of CPUs allocated per GPU for inference server.                                           |
-| `inference_server_mem_per_gpu`  | integer                                         | `32768`      | Memory allocated per GPU for inference server in MB.                                             |
-| `trainer_cpus_per_gpu`          | integer                                         | `4`          | Number of CPUs allocated per GPU for training.                                                   |
-| `trainer_mem_per_gpu`           | integer                                         | `32768`      | Memory allocated per GPU for training in MB.                                                     |
-| `inference_server_env_vars`     | string                                          | `""`         | Environment variables for inference server, separated by commas. Example: 'ENV1=val1,ENV2=val2'. |
-| `trainer_env_vars`              | string                                          | `""`         | Environment variables for training, separated by commas. Example: 'ENV1=val1,ENV2=val2'.         |
-| `slurm`                         | [`SlurmLauncherConfig`](section-slurm-launcher) | **Required** | Slurm launcher configuration.                                                                    |
+| Parameter                       | Type                                                   | Default      | Description                                                                                      |
+| ------------------------------- | ------------------------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------ |
+| `inference_server_cpus_per_gpu` | integer                                                | `4`          | Number of CPUs allocated per GPU for inference server.                                           |
+| `inference_server_mem_per_gpu`  | integer                                                | `32768`      | Memory allocated per GPU for inference server in MB.                                             |
+| `trainer_cpus_per_gpu`          | integer                                                | `4`          | Number of CPUs allocated per GPU for training.                                                   |
+| `trainer_mem_per_gpu`           | integer                                                | `32768`      | Memory allocated per GPU for training in MB.                                                     |
+| `inference_server_env_vars`     | string                                                 | `""`         | Environment variables for inference server, separated by commas. Example: 'ENV1=val1,ENV2=val2'. |
+| `trainer_env_vars`              | string                                                 | `""`         | Environment variables for training, separated by commas. Example: 'ENV1=val1,ENV2=val2'.         |
+| `slurm`                         | [`SlurmLauncherConfig`](section-slurm-launcher)        | **Required** | Slurm launcher configuration.                                                                    |
+| `skypilot`                      | [`SkyPilotLauncherConfig`](section-sky-pilot-launcher) | **Required** | SkyPilot launcher configuration.                                                                 |
 
 (section-name-resolve)=
 
@@ -756,3 +759,43 @@ Configuration for worker scheduling. Used in the single-controller mode. Experim
 | `reward_functioncall_config`  | `Dict` | **Required**                        | -           |
 | `reward_model_path`           | string | `""`                                | -           |
 | `reward_model_service_url`    | string | `"http://localhost:30000/classify"` | -           |
+
+(section-sky-pilot-launcher-cluster)=
+
+## SkyPilotLauncherCluster Configuration
+
+Configuration for launching the training jobs with SkyPilot.
+
+| Parameter          | Type           | Default      | Description                                                                                                      |
+| ------------------ | -------------- | ------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `name`             | string \| None | `None`       | Optional task name displayed in SkyPilot.                                                                        |
+| `workdir`          | string \| None | `None`       | Local path or git repo spec to sync as working directory (mirrors SkyPilot YAML workdir).                        |
+| `infra`            | string \| None | `None`       | Infrastructure spec <cloud>/<region>/<zone> or k8s\[/context\] (resources.infra).                                |
+| `accelerator_type` | string \| None | `None`       | Accelerator request, e.g. 'H100', 'A100'. Number of GPUs on the node is determined by `cluster.n_gpus_per_node`. |
+| `accelerator_args` | string \| None | `None`       | Additional accelerator args (YAML/JSON string) (resources.accelerator_args).                                     |
+| `use_spot`         | boolean        | `False`      | Whether to use spot/preemptible instances (resources.use_spot).                                                  |
+| `disk_size`        | string \| None | `None`       | Boot disk size with optional unit, e.g. '256', '256GB' (resources.disk_size).                                    |
+| `disk_tier`        | string         | `"medium"`   | Disk performance tier (resources.disk_tier). **Choices:** `low`, `medium`, `high`, `ultra`, `best`               |
+| `network_tier`     | string         | `"standard"` | Network tier (resources.network_tier). **Choices:** `standard`, `best`                                           |
+| `ports`            | string \| None | `None`       | Ports to expose, supports single '8080', range '10052-10100', or comma list (resources.ports).                   |
+| `image_id`         | string \| None | `None`       | Custom base or docker image id (resources.image_id).                                                             |
+| `labels`           | string \| None | `None`       | Instance/pod labels as key=value pairs joined by commas (resources.labels).                                      |
+| `any_of`           | string \| None | `None`       | YAML/JSON string list of candidate resource dicts (resources.any_of).                                            |
+| `ordered`          | string \| None | `None`       | YAML/JSON string list of ordered resource dicts (resources.ordered).                                             |
+| `job_recovery`     | string \| None | `None`       | Job recovery strategy spec (resources.job_recovery). Provide JSON/YAML.                                          |
+| `autostop`         | string \| None | `None`       | Autostop configuration: true/false/10/10h or JSON object (resources.autostop).                                   |
+| `envs`             | string \| None | `None`       | Environment variables (envs) as KEY=VAL pairs joined by commas.                                                  |
+| `secrets`          | string \| None | `None`       | Secrets usable in setup/run as KEY=VAL pairs joined by commas (will be redacted).                                |
+| `volumes`          | string \| None | `None`       | Kubernetes volume mappings (volumes) as YAML/JSON string or shorthand mount spec.                                |
+| `file_mounts`      | string \| None | `None`       | File mounts mapping remote_path:local_path lines or JSON/YAML string (file_mounts).                              |
+
+(section-sky-pilot-launcher)=
+
+## SkyPilotLauncher Configuration
+
+Configuration class: SkyPilotLauncherConfig
+
+| Parameter          | Type                                                                  | Default      | Description                                          |
+| ------------------ | --------------------------------------------------------------------- | ------------ | ---------------------------------------------------- |
+| `inference_server` | [`SkyPilotLauncherClusterConfig`](section-sky-pilot-launcher-cluster) | **Required** | SkyPilot cluster configuration for inference server. |
+| `trainer`          | [`SkyPilotLauncherClusterConfig`](section-sky-pilot-launcher-cluster) | **Required** | SkyPilot cluster configuration for trainer.          |

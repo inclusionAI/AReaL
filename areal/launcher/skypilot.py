@@ -21,6 +21,7 @@ from areal.api.cli_args import (
     LauncherConfig,
     RecoverConfig,
     SGLangConfig,
+    SkyPilotLauncherClusterConfig,
     SkyPilotLauncherConfig,
     parse_cli_args,
     to_structured_cfg,
@@ -99,6 +100,14 @@ def _default_workdir(skypilot_cfg: SkyPilotLauncherConfig) -> str:
     return str(Path.cwd())
 
 
+def _build_resources(
+    allocation_mode: AllocationMode,
+    cluster_spec_config: ClusterSpecConfig,
+    sky_cluster_cfg: SkyPilotLauncherClusterConfig,
+) -> sky.Resources:
+    pass
+
+
 RunSpec = Union[str, Callable[[int, List[str]], str]]
 
 
@@ -108,20 +117,10 @@ class SkyPilotLauncher:
         experiment_name: str,
         trial_name: str,
         total_nodes: int,
-        skypilot_cfg: SkyPilotLauncherConfig,
     ):
         self.experiment_name = experiment_name
         self.trial_name = trial_name
         self.total_nodes = total_nodes
-        self.skypilot_cfg = skypilot_cfg
-        self.cluster_name = skypilot_cfg.name or _readable_cluster_name(
-            experiment_name, trial_name
-        )
-        self._cluster_ready = False
-        self.jobs: Dict[int, JobInfo] = {}
-        self._job_meta: Dict[int, Dict[str, Any]] = {}
-        self._job_groups: Dict[str, set[int]] = {}
-        self.ensure_cluster()
 
     @staticmethod
     def _build_resources(cfg: SkyPilotLauncherConfig) -> sky.Resources:

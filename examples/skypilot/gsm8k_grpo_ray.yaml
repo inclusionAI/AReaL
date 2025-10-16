@@ -8,13 +8,13 @@ async_training: true
 
 cluster:
   n_nodes: 2
-  n_gpus_per_node: 8
+  n_gpus_per_node: 1
   fileroot: /storage/experiments
   name_resolve:
     type: ray
     ray_actor_name: ray_kv_store
 
-allocation_mode: sglang.d8p1t1+d8p1t1
+allocation_mode: sglang.d1+d1
 
 rollout:
   experiment_name: ${experiment_name}
@@ -97,7 +97,7 @@ sglang:
 
 # datasets
 train_dataset:
-  batch_size: 512
+  batch_size: 4
   shuffle: true
   pin_memory: true
   num_workers: 4
@@ -106,7 +106,7 @@ train_dataset:
   max_length: 1024
 
 valid_dataset:
-  batch_size: 512
+  batch_size: 4
   shuffle: true
   pin_memory: true
   num_workers: 4

@@ -108,11 +108,9 @@ gcloud auth application-default login
 
 ### Kubernetes setup
 
-```bash
-# Ensure your kubeconfig is at ~/.kube/config
-mkdir -p ~/.kube
-cp /path/to/kubeconfig ~/.kube/config
-```
+Check
+[here](https://docs.skypilot.co/en/latest/reference/kubernetes/kubernetes-setup.html)
+for a comprehensive guide on how to set up a kubernetes cluster for SkyPilot.
 
 ### Verify
 
@@ -121,8 +119,10 @@ sky check
 ```
 
 If `GCP: enabled` or `Kubernetes: enabled` are shown, you're ready to use SkyPilot with
-AReaL. Check [here](../examples/skypilot.md) for a detailed example to run AReaL with
-SkyPilot. For more options and details for SkyPilot, see the official
+AReaL. Check
+[here](https://github.com/inclusionAI/AReaL/blob/main/examples/skypilot/README.md) for a
+detailed example to run AReaL with SkyPilot. For more options and details for SkyPilot,
+see the official
 [SkyPilot installation guide](https://docs.skypilot.co/en/latest/getting-started/installation.html).
 
 ## (Optional) Launch Ray Cluster for Distributed Training

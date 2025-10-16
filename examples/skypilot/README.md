@@ -3,93 +3,99 @@
 This README includes examples and guidelines to running AReaL experiments with SkyPilot.
 Make sure you have SkyPilot properly installed following
 [our installation guide](../../docs/tutorial/installation.md#optional-install-skypilot)
-before running this example.
+before running this example. Note that all command lines shown in this file are assumed
+to be execute under the root of AReaL repository.
 
-## Setup Shared Storage
+## Running a Single Node Experiment
 
-AReaL requires a shared file system (such as NFS) for basic functionalities such as name
-resolve and distributed checkpointing. The following guideline shows how to use SkyPilot
-volumes to setup a high-performance shared storage.
-
-1. **Define the volume.** Create a YAML file describing the volume you want SkyPilot to
-   manage. The example below provisions a 100 GiB ReadWriteMany Persistent Volume Claim
-   on a Kubernetes cluster. Adjust the storage class, namespace, or size to match your
-   environment.
+To run a single node experiment, you only need to setup the node with SkyPilot and
+launch the experiment with AReaL local launcher. [The following file](local.yaml) shows
+a SkyPilot yaml that could launch a simple GSM8K GRPO experiment in a single command
+line. This example runs on GCP, but could be easily migrated to other cloud or K8S
+cluster by changing `resource.infra` field in SkyPilot YAML file.
 
 ```yaml
-# storage-volume.yaml
-name: areal-shared-storage
-type: k8s-pvc
-infra: kubernetes            # or k8s/context if you manage contexts manually
-size: 100Gi                  # requested capacity
-labels:
-    project: areal
-config:
-    storage_class_name: csi-mounted-fs-path-sc
-    access_mode: ReadWriteMany
+name: areal-test-skypilot
+
+resources:
+  infra: gcp
+  accelerators: A100:2
+  autostop:
+    idle_minutes: 10
+    down: true
+  cpus: 8+
+  memory: 32GB+
+  disk_size: 256GB
+  image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.3.4
+
+num_nodes: 1
+
+workdir: .
+
+run: |
+  python3 -m areal.launcher.local examples/math/gsm8k_grpo.py \
+    --config examples/math/gsm8k_grpo.yaml \
+    experiment_name=gsm8k-grpo \
+    trial_name=trial0 \
+    cluster.n_gpus_per_node=2 \
+    allocation_mode=sglang.d1+d1 \
+    train_dataset.batch_size=4 \
+    actor.mb_spec.max_tokens_per_mb=4096
 ```
 
-2. **Create the volume.** Apply the definition once; SkyPilot will reuse the volume for
-   future launches.
+To run the experiment, execute:
 
 ```bash
-sky volumes apply storage-volume.yaml
-sky volumes ls -v  # optional: confirm status and mount info
+sky launch -c areal-test examples/skypilot/local.yaml
 ```
 
-3. **Mount the volume in your tasks.** Add a `volumes` section to your SkyPilot YAML so
-   every node in the cluster sees the shared path.
+## Running a Multi-Node Experiment
 
-```yaml
-volumes:
-  /storage: areal-shared-storage
-```
-
-Then in your AReaL yaml file, you could use the shared storage by configuring fileroot
-and NFS record root used by NFS name resolve:
-
-```yaml
-cluster:
-  # ...
-  fileroot: /storage/experiments
-  name_resolve:
-    # If you use a ray cluster, you can use KV store implemented in Ray
-    # by setting `type: ray`.
-    type: nfs
-    nfs_record_root: /tmp/areal/name_resolve
-```
-
-To remove the volume when you no longer need it, run
-`sky volumes delete areal-shared-storage`. For more information, checkout
-[SkyPilot Volume Documentation](https://docs.skypilot.co/en/latest/reference/volumes.html).
-
-## Option 1: Running AReaL with Ray Launcher
+### Option 1: Running AReaL with Ray Launcher
 
 The following example shows how to setup a ray cluster with SkyPilot and then use AReaL
-to run GRPO with GSM8K dataset on 2 8xH100 nodes.
+to run GRPO with GSM8K dataset on 2 nodes, each with 1 A100 GPU. This example runs on
+GCP, but could be easily migrated to other cloud or K8S cluster by changing
+`resource.infra` field in SkyPilot YAML file.
 
-### Example SkyPilot Cluster Spec
-
-First, prepare your SkyPilot yaml:
+Specify the resources and image used to run the experiment.
 
 ```yaml
 resources:
-  accelerators: H100:8
-  image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.3.3
+  infra: gcp
+  accelerators: A100:1
+  image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.3.4
   memory: 256+
   cpus: 32+
 
 num_nodes: 2
 
 workdir: .
+```
 
-volumes:
-  # shared storage setup by SkyPilot Volume
-  /storage: areal-shared-storage
+Designate shared storage. You could either use an existing cloud bucket or volume:
 
-setup: |
-  pip3 install -e .
+```yaml
+file_mounts:
+  /storage: gs://areal-default
+```
 
+or create a new bucket or volume with SkyPilot:
+
+```yaml
+file_mounts:
+  /storage:
+    name: areal-test
+    store: gcs
+```
+
+For more information about shared storage with SkyPilot, check
+[SkyPilot Cloud Buckets](https://docs.skypilot.co/en/latest/reference/storage.html) and
+[SkyPilot Volume](https://docs.skypilot.co/en/latest/reference/volumes.html).
+
+Next, prepare commands used to setup ray cluster and run the experiment.
+
+```yaml
 run: |
   # Get the Head node's IP and total number of nodes (environment variables injected by SkyPilot).
   head_ip=$(echo "$SKYPILOT_NODE_IPS" | head -n1)
@@ -99,8 +105,8 @@ run: |
     echo "Starting Ray head node..."
     ray start --head --port=6379
 
-    while [ $(ray nodes | grep NODE_ID | wc -l) -lt $num_nodes ]; do
-      echo "Waiting for all nodes to join..."
+    while [ $(ray status | grep node_ | wc -l) -lt $num_nodes ]; do
+      echo "Waiting for all nodes to join... Current nodes: $(ray status | grep node_ | wc -l) / $num_nodes"
       sleep 5
     done
 
@@ -109,13 +115,13 @@ run: |
             --config examples/skypilot/gsm8k_grpo_ray.yaml \
             experiment_name=<your experiment name> \
             trial_name=<your trial name> \
-            trainer_env_vars="WANDB_API_KEY=$WANDB_API_KEY"
+            +trainer_env_vars="WANDB_API_KEY=$WANDB_API_KEY"
   else
     sleep 10
     echo "Starting Ray worker node..."
     ray start --address $head_ip:6379
     sleep 5
-    fi
+  fi
 
   echo "Node setup complete for rank $SKYPILOT_NODE_RANK."
 ```
@@ -126,7 +132,7 @@ Then you are ready to run AReaL with command line:
 
 ```bash
 export WANDB_API_KEY=<your-wandb-api-key>
-sky launch -c areal --secret WANDB_API_KEY examples/skypilot/ray_cluster.yaml
+sky launch -c areal-test --secret WANDB_API_KEY examples/skypilot/ray_cluster.yaml
 ```
 
 You should be able to see your AReaL running and producing training logs in your

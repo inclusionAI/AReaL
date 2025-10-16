@@ -1,19 +1,17 @@
+
 resources:
-  accelerators: H100:8
-  image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.3.3
-  memory: 256+
-  cpus: 32+
+  infra: gcp
+  accelerators: A100:1
+  image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.3.4
+  memory: 32+
+  cpus: 8+
 
 num_nodes: 2
 
 workdir: .
 
-volumes:
-  # shared storage setup by SkyPilot Volume
-  /storage: areal-shared-storage
-
-setup: |
-  pip3 install -e .
+file_mounts:
+  /storage: gs://areal-default
 
 run: |
   # Get the Head node's IP and total number of nodes (environment variables injected by SkyPilot).
@@ -24,8 +22,8 @@ run: |
     echo "Starting Ray head node..."
     ray start --head --port=6379
 
-    while [ $(ray nodes | grep NODE_ID | wc -l) -lt $num_nodes ]; do
-      echo "Waiting for all nodes to join..."
+    while [ $(ray status | grep node_ | wc -l) -lt $num_nodes ]; do
+      echo "Waiting for all nodes to join... Current nodes: $(ray summary nodes --format=json | jq '.cluster.node_summary.total') / $num_nodes"
       sleep 5
     done
 
@@ -34,12 +32,13 @@ run: |
             --config examples/skypilot/gsm8k_grpo_ray.yaml \
             experiment_name=<your experiment name> \
             trial_name=<your trial name> \
-            trainer_env_vars="WANDB_API_KEY=$WANDB_API_KEY"
+            stats_logger.wandb.mode=online \
+            +trainer_env_vars="WANDB_API_KEY=$WANDB_API_KEY"
   else
     sleep 10
     echo "Starting Ray worker node..."
     ray start --address $head_ip:6379
     sleep 5
-    fi
+  fi
 
   echo "Node setup complete for rank $SKYPILOT_NODE_RANK."

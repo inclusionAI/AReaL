@@ -990,7 +990,7 @@ class SlurmLauncherConfig:
 
 
 @dataclass
-class SkyPilotLauncherConfig:
+class SkyPilotLauncherClusterConfig:
     """Configuration for launching the training jobs with SkyPilot."""
 
     # Basic task metadata
@@ -1012,10 +1012,10 @@ class SkyPilotLauncherConfig:
             "help": "Infrastructure spec <cloud>/<region>/<zone> or k8s[/context] (resources.infra).",
         },
     )
-    accelerators: str | None = field(
+    accelerator_type: str | None = field(
         default=None,
         metadata={
-            "help": "Accelerator request, e.g. 'H100:8'. Currently only single-type requests supported (resources.accelerators).",
+            "help": "Accelerator request, e.g. 'H100', 'A100'. Number of GPUs on the node is determined by `cluster.n_gpus_per_node`.",
         },
     )
     accelerator_args: str | None = field(
@@ -1023,20 +1023,6 @@ class SkyPilotLauncherConfig:
         metadata={
             "help": "Additional accelerator args (YAML/JSON string) (resources.accelerator_args).",
         },
-    )
-    cpus: str | None = field(
-        default=None,
-        metadata={"help": "vCPU spec per node, e.g. '4+', '16' (resources.cpus)."},
-    )
-    memory: str | None = field(
-        default=None,
-        metadata={
-            "help": "Memory spec per node, e.g. '32+', '64GB' (resources.memory)."
-        },
-    )
-    instance_type: str | None = field(
-        default=None,
-        metadata={"help": "Explicit instance type (resources.instance_type)."},
     )
     use_spot: bool = field(
         default=False,
@@ -1135,9 +1121,16 @@ class SkyPilotLauncherConfig:
         },
     )
 
-    config: str | None = field(
-        default=None,
-        metadata={"help": "Advanced config overrides (config.*) as YAML/JSON string."},
+
+@dataclass
+class SkyPilotLauncherConfig:
+    inference_server: SkyPilotLauncherClusterConfig = field(
+        default_factory=SkyPilotLauncherClusterConfig,
+        metadata={"help": "SkyPilot cluster configuration for inference server."},
+    )
+    trainer: SkyPilotLauncherClusterConfig = field(
+        default_factory=SkyPilotLauncherClusterConfig,
+        metadata={"help": "SkyPilot cluster configuration for trainer."},
     )
 
 
