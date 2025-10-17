@@ -1,6 +1,6 @@
-"""Unit tests for StalenessController.
+"""Unit tests for StalenessManager.
 
-This module provides comprehensive test coverage for the StalenessController class,
+This module provides comprehensive test coverage for the StalenessManager class,
 including capacity calculations, thread safety, and state transitions.
 """
 
@@ -9,15 +9,15 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from areal.core.staleness_controller import StalenessController
+from areal.core.staleness_manager import StalenessManager
 
 
-class TestStalenessControllerBasics:
-    """Test basic functionality of StalenessController."""
+class TestStalenessManagerBasics:
+    """Test basic functionality of StalenessManager."""
 
     def test_initialization(self):
         """Test controller initialization with various parameters."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=10,
             consumer_batch_size=4,
             max_staleness=2,
@@ -34,7 +34,7 @@ class TestStalenessControllerBasics:
 
     def test_initial_capacity_full(self):
         """Test that initial capacity equals max_concurrent_rollouts."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=10,
             consumer_batch_size=4,
             max_staleness=2,
@@ -46,7 +46,7 @@ class TestStalenessControllerBasics:
 
     def test_initial_capacity_with_large_staleness(self):
         """Test capacity with large staleness allowance."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=100,
             consumer_batch_size=32,
             max_staleness=10,
@@ -64,7 +64,7 @@ class TestCapacityCalculations:
 
     def test_concurrency_limit(self):
         """Test that concurrency limit is enforced."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=5,
             consumer_batch_size=2,
             max_staleness=10,  # Very high, won't be limiting factor
@@ -79,7 +79,7 @@ class TestCapacityCalculations:
 
     def test_staleness_limit(self):
         """Test that staleness limit is enforced."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=100,  # Very high, won't be limiting factor
             consumer_batch_size=4,
             max_staleness=2,
@@ -92,7 +92,7 @@ class TestCapacityCalculations:
 
     def test_staleness_increases_with_version(self):
         """Test that allowed capacity increases with version."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=1000,
             consumer_batch_size=4,
             max_staleness=2,
@@ -111,7 +111,7 @@ class TestCapacityCalculations:
 
     def test_capacity_with_running_rollouts(self):
         """Test capacity calculation with running rollouts."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=10,
             consumer_batch_size=4,
             max_staleness=2,
@@ -129,7 +129,7 @@ class TestCapacityCalculations:
 
     def test_capacity_with_accepted_rollouts(self):
         """Test capacity calculation with accepted rollouts."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=20,
             consumer_batch_size=4,
             max_staleness=2,
@@ -149,7 +149,7 @@ class TestCapacityCalculations:
 
     def test_capacity_at_limit(self):
         """Test capacity when at exactly the limit."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=5,
             consumer_batch_size=2,
             max_staleness=5,  # Make staleness not limiting
@@ -166,7 +166,7 @@ class TestCapacityCalculations:
 
     def test_capacity_can_be_negative(self):
         """Test that capacity can be negative when over limit."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=3,
             consumer_batch_size=2,
             max_staleness=1,
@@ -181,7 +181,7 @@ class TestCapacityCalculations:
 
     def test_min_values_are_enforced(self):
         """Test that minimum values of 1 are enforced."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=0,  # Should become 1
             consumer_batch_size=0,  # Should become 1
             max_staleness=0,
@@ -198,7 +198,7 @@ class TestRolloutLifecycle:
 
     def test_submit_increments_counters(self):
         """Test that submitting a rollout increments both submitted and running."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=10,
             consumer_batch_size=4,
             max_staleness=2,
@@ -213,7 +213,7 @@ class TestRolloutLifecycle:
 
     def test_accept_updates_counters(self):
         """Test that accepting a rollout updates counters correctly."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=10,
             consumer_batch_size=4,
             max_staleness=2,
@@ -229,7 +229,7 @@ class TestRolloutLifecycle:
 
     def test_reject_updates_counters(self):
         """Test that rejecting a rollout updates counters correctly."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=10,
             consumer_batch_size=4,
             max_staleness=2,
@@ -245,7 +245,7 @@ class TestRolloutLifecycle:
 
     def test_multiple_rollouts_lifecycle(self):
         """Test multiple rollouts going through their lifecycle."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=10,
             consumer_batch_size=4,
             max_staleness=2,
@@ -270,7 +270,7 @@ class TestRolloutLifecycle:
 
     def test_accept_without_submit_is_invalid(self):
         """Test that accepting without submitting leads to incorrect state."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=10,
             consumer_batch_size=4,
             max_staleness=2,
@@ -286,11 +286,11 @@ class TestRolloutLifecycle:
 
 
 class TestThreadSafety:
-    """Test thread safety of StalenessController operations."""
+    """Test thread safety of StalenessManager operations."""
 
     def test_concurrent_submissions(self):
         """Test that concurrent submissions are thread-safe."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=1000,
             consumer_batch_size=32,
             max_staleness=10,
@@ -316,7 +316,7 @@ class TestThreadSafety:
 
     def test_concurrent_mixed_operations(self):
         """Test concurrent mixed operations (submit, accept, reject)."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=1000,
             consumer_batch_size=32,
             max_staleness=10,
@@ -353,7 +353,7 @@ class TestThreadSafety:
 
     def test_concurrent_capacity_checks(self):
         """Test that concurrent capacity checks don't cause race conditions."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=100,
             consumer_batch_size=32,
             max_staleness=10,
@@ -377,7 +377,7 @@ class TestThreadSafety:
 
     def test_concurrent_get_stats(self):
         """Test that concurrent get_stats calls are thread-safe."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=100,
             consumer_batch_size=32,
             max_staleness=10,
@@ -412,7 +412,7 @@ class TestEdgeCases:
 
     def test_zero_max_staleness(self):
         """Test with zero staleness (immediate consumption required)."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=100,
             consumer_batch_size=8,
             max_staleness=0,
@@ -428,7 +428,7 @@ class TestEdgeCases:
 
     def test_very_large_version(self):
         """Test with very large version numbers."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=10000,
             consumer_batch_size=64,
             max_staleness=10,
@@ -441,7 +441,7 @@ class TestEdgeCases:
 
     def test_single_rollout_batch_size(self):
         """Test with batch size of 1."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=10,
             consumer_batch_size=1,
             max_staleness=2,
@@ -453,7 +453,7 @@ class TestEdgeCases:
 
     def test_all_rollouts_rejected(self):
         """Test scenario where all rollouts are rejected."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=10,
             consumer_batch_size=4,
             max_staleness=2,
@@ -475,7 +475,7 @@ class TestEdgeCases:
 
     def test_mixed_acceptance_rate(self):
         """Test with a realistic mixed acceptance rate."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=20,
             consumer_batch_size=8,
             max_staleness=3,
@@ -509,7 +509,7 @@ class TestRealWorldScenarios:
 
     def test_typical_training_scenario(self):
         """Test a typical training scenario with version progression."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=32,
             consumer_batch_size=16,
             max_staleness=2,
@@ -541,7 +541,7 @@ class TestRealWorldScenarios:
 
     def test_burst_load_scenario(self):
         """Test handling burst load of rollouts."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=50,
             consumer_batch_size=32,
             max_staleness=5,
@@ -570,7 +570,7 @@ class TestRealWorldScenarios:
 
     def test_slow_consumption_scenario(self):
         """Test scenario where rollouts are consumed slower than generated."""
-        controller = StalenessController(
+        controller = StalenessManager(
             max_concurrent_rollouts=100,
             consumer_batch_size=8,
             max_staleness=3,  # Limited staleness
@@ -605,7 +605,7 @@ def test_parametrized_initialization(
     max_concurrent_rollouts, consumer_batch_size, max_staleness
 ):
     """Test initialization with various parameter combinations."""
-    controller = StalenessController(
+    controller = StalenessManager(
         max_concurrent_rollouts=max_concurrent_rollouts,
         consumer_batch_size=consumer_batch_size,
         max_staleness=max_staleness,
@@ -623,7 +623,7 @@ def test_parametrized_initialization(
 @pytest.mark.parametrize("version", [0, 1, 10, 100, 1000])
 def test_parametrized_version_progression(version):
     """Test capacity calculation across different versions."""
-    controller = StalenessController(
+    controller = StalenessManager(
         max_concurrent_rollouts=1000,
         consumer_batch_size=32,
         max_staleness=5,

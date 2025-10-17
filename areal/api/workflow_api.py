@@ -17,7 +17,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
-from areal.core.staleness_controller import StalenessController
+from areal.core.staleness_manager import StalenessManager
 from areal.experimental.openai.types import CompletionWithTokenLogpReward
 from areal.utils import logging
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
@@ -256,7 +256,7 @@ class WorkflowExecutor:
         self,
         config: InferenceEngineConfig,
         inference_engine: "InferenceEngine",
-        staleness_controller: StalenessController | None = None,
+        staleness_manager: StalenessManager | None = None,
     ):
         self.max_concurrent_rollouts = (
             config.max_concurrent_rollouts or config.consumer_batch_size
@@ -271,7 +271,7 @@ class WorkflowExecutor:
 
         # Use provided staleness controller or create a default one
         # The controller will be properly initialized in initialize()
-        self.staleness_controller = staleness_controller
+        self.staleness_manager = staleness_manager
 
         qsize = config.queue_size or self.max_concurrent_rollouts * 16
         self.input_queue = queue.Queue(maxsize=qsize)
@@ -287,7 +287,7 @@ class WorkflowExecutor:
         self.logger = logger
 
         # Initialize staleness controller if not provided
-        if self.staleness_controller is None:
+        if self.staleness_manager is None:
             if train_data_parallel_size is not None:
                 dp_world_size = train_data_parallel_size
             else:
@@ -305,7 +305,7 @@ class WorkflowExecutor:
             )
             consumer_batch_size = max(1, self.consumer_batch_size // dp_world_size)
 
-            self.staleness_controller = StalenessController(
+            self.staleness_manager = StalenessManager(
                 max_concurrent_rollouts=max_concurrent_rollouts,
                 consumer_batch_size=consumer_batch_size,
                 max_staleness=self.config.max_head_offpolicyness,
@@ -322,7 +322,7 @@ class WorkflowExecutor:
 
     def get_capacity(self):
         version = self.inference_engine.get_version()
-        capacity = self.staleness_controller.get_capacity(version)
+        capacity = self.staleness_manager.get_capacity(version)
         return capacity
 
     def _rollout_thread(self):
@@ -356,9 +356,9 @@ class WorkflowExecutor:
                         create_time=time.monotonic_ns(), task=task, task_input=x
                     )
                     # Notify staleness controller
-                    self.staleness_controller.on_rollout_submitted()
+                    self.staleness_manager.on_rollout_submitted()
                     if self.config.enable_rollout_tracing:
-                        stat = self.staleness_controller.get_stats()
+                        stat = self.staleness_manager.get_stats()
                         self.logger.info(
                             f"Submit rollout rid {rid}. "
                             f"Submit: {stat.submitted}, "
@@ -414,9 +414,9 @@ class WorkflowExecutor:
 
                     if should_accept_traj:
                         # Notify staleness controller of accepted rollout
-                        self.staleness_controller.on_rollout_accepted()
+                        self.staleness_manager.on_rollout_accepted()
                         if self.config.enable_rollout_tracing:
-                            stat = self.staleness_controller.get_stats()
+                            stat = self.staleness_manager.get_stats()
                             self.logger.info(
                                 f"Finish and accept rollout {task_rid}. "
                                 f"Submit: {stat.submitted}, "
@@ -434,9 +434,9 @@ class WorkflowExecutor:
                     else:
                         # Rollout completed but was rejected
                         # Only decrement running count since it was never accepted
-                        self.staleness_controller.on_rollout_rejected()
+                        self.staleness_manager.on_rollout_rejected()
                         if self.config.enable_rollout_tracing:
-                            stat = self.staleness_controller.get_stats()
+                            stat = self.staleness_manager.get_stats()
                             self.logger.info(
                                 f"Finish but reject rollout {task_rid}. "
                                 f"Submit: {stat.submitted}, "

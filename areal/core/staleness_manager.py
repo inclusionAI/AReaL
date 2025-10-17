@@ -1,6 +1,6 @@
-"""Staleness-aware capacity controller for rollout generation.
+"""Staleness-aware capacity manager for rollout generation.
 
-This module provides the StalenessController class which manages capacity
+This module provides the StalenessManager class which manages capacity
 and staleness constraints for asynchronous rollout generation in RL training.
 """
 
@@ -9,10 +9,10 @@ from threading import Lock
 from areal.api.io_struct import RolloutStat
 
 
-class StalenessController:
+class StalenessManager:
     """Controls rollout capacity based on staleness and concurrency constraints.
 
-    The controller ensures that:
+    The manager ensures that:
     1. The number of concurrent rollouts doesn't exceed the configured maximum
     2. Rollouts don't become too stale (off-policy) by limiting acceptance based on
        the current model version and maximum allowed offpolicyness
