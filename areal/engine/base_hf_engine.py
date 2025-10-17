@@ -14,14 +14,11 @@ from transformers import (
     PretrainedConfig,
     PreTrainedTokenizerFast,
     ProcessorMixin,
-    get_constant_schedule_with_warmup,
-    get_linear_schedule_with_warmup,
 )
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import TrainEngine
-from areal.api.io_struct import FinetuneSpec
 from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.data import (
@@ -35,7 +32,6 @@ from areal.utils.data import (
     unpack_sequence,
     unsqueeze_mb_list,
 )
-from areal.utils.fsdp import get_cosine_schedule_with_warmup
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.model import (
     disable_dropout_in_model,
@@ -158,7 +154,7 @@ class BaseHFEngine(TrainEngine):
                 model = AutoModelForImageTextToText.from_pretrained(
                     pretrained_model_name_or_path=self.config.path,
                     trust_remote_code=True,
-                    torch_dtype=dtype,
+                    dtype=dtype,
                     attn_implementation=self.config.attn_impl,
                 )
                 if self.config.disable_dropout:
@@ -183,92 +179,36 @@ class BaseHFEngine(TrainEngine):
 
     def _create_llm_actor_or_critic(self):
         dtype = getattr(torch, self.config.dtype)
-        if not self.config.is_critic:
-            if self.config.init_from_scratch:
-                # initialize model from config
-                # NOTE: VLM cannot directly load state dict using this
-                # random initialized model, so otherwise we call
-                # from_pretrained rather than loading weights into this random model.
-                model = AutoModelForCausalLM.from_config(
-                    self.model_config,
-                    torch_dtype=dtype,
-                    attn_implementation=self.config.attn_impl,
-                )
-            else:
-                model = AutoModelForCausalLM.from_pretrained(
-                    pretrained_model_name_or_path=self.config.path,
-                    trust_remote_code=True,
-                    torch_dtype=dtype,
-                    attn_implementation=self.config.attn_impl,
-                )
+
+        if self.config.is_critic:
+            model_class = AutoModelForTokenClassification
+            model_kwargs = {"num_labels": 1}
         else:
-            if self.config.init_from_scratch:
-                model = AutoModelForTokenClassification.from_config(
-                    self.model_config,
-                    torch_dtype=dtype,
-                    num_labels=1,
-                    attn_implementation=self.config.attn_impl,
-                )
-            else:
-                model = AutoModelForTokenClassification.from_pretrained(
-                    pretrained_model_name_or_path=self.config.path,
-                    trust_remote_code=True,
-                    torch_dtype=dtype,
-                    num_labels=1,
-                    attn_implementation=self.config.attn_impl,
-                )
+            model_class = AutoModelForCausalLM
+            model_kwargs = {}
+
+        common_kwargs = {
+            "dtype": dtype,
+            "attn_implementation": self.config.attn_impl,
+        }
+        model_kwargs.update(common_kwargs)
+
+        if self.config.init_from_scratch:
+            # initialize model from config
+            # NOTE: VLM cannot directly load state dict using this
+            # random initialized model, so otherwise we call
+            # from_pretrained rather than loading weights into this random model.
+            model = model_class.from_config(
+                self.model_config,
+                **model_kwargs,
+            )
+        else:
+            model = model_class.from_pretrained(
+                pretrained_model_name_or_path=self.config.path,
+                trust_remote_code=True,
+                **model_kwargs,
+            )
         return model
-
-    def create_optimizer(self, ft_spec: FinetuneSpec):
-        if self.optimizer_config is None:
-            return
-        assert self.model is not None
-        # Set up optimizer
-        tik = time.perf_counter()
-        assert (
-            self.optimizer_config.type == "adam"
-        ), "Only AdamW optimizer is supported in this engine."
-        lr = self.optimizer_config.lr
-        weight_decay = self.optimizer_config.weight_decay
-        beta1 = self.optimizer_config.beta1
-        beta2 = self.optimizer_config.beta2
-        eps = self.optimizer_config.eps
-
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=lr,
-            weight_decay=weight_decay,
-            betas=(beta1, beta2),
-            eps=eps,
-        )
-        total_train_steps = ft_spec.total_train_steps
-        num_warmup_steps = int(
-            self.optimizer_config.warmup_steps_proportion * total_train_steps
-        )
-
-        if self.optimizer_config.lr_scheduler_type == "cosine":
-            self.lr_scheduler = get_cosine_schedule_with_warmup(
-                self.optimizer,
-                num_warmup_steps,
-                total_train_steps,
-                min_lr_ratio=self.optimizer_config.min_lr_ratio,
-            )
-        elif self.optimizer_config.lr_scheduler_type == "linear":
-            self.lr_scheduler = get_linear_schedule_with_warmup(
-                self.optimizer,
-                num_warmup_steps,
-                total_train_steps,
-            )
-        elif self.optimizer_config.lr_scheduler_type == "constant":
-            self.lr_scheduler = get_constant_schedule_with_warmup(
-                self.optimizer,
-                num_warmup_steps,
-            )
-        else:
-            raise ValueError(
-                f"Unknown lr scheduler type {self.optimizer_config.lr_scheduler_type}"
-            )
-        self.logger.info(f"Create optimizer time: {time.perf_counter() - tik}")
 
     def destroy(self):
         """Destroy the engine and release GPU memory."""
@@ -316,6 +256,7 @@ class BaseHFEngine(TrainEngine):
 
     def prepare_mb_list(self, input_: Dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
+        input_ = input_.copy()
 
         if is_qwen2_vl_model(self.model_config.model_type):
             # Create the special t,h,w position IDs for qwen 2.5 VL

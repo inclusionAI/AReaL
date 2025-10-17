@@ -283,6 +283,7 @@ def local_main(config, run_id: int = 0):
         f"run_id={run_id}, is_recover_run={is_recover_run}"
     )
 
+    server_addrs = []
     if alloc_mode.gen_backend in ("sglang", "vllm"):
         # Launcher should launch llm servers according to allocation mode.
         if alloc_mode.gen_backend == "sglang":
@@ -311,7 +312,7 @@ def local_main(config, run_id: int = 0):
         seed_arg = spec["seed_arg"]
         module = spec["module"]
         server_cmd = (
-            f"python3 -m {module} {' '.join(sys.argv[2:])} {seed_arg}={base_seed}"
+            f"python3 -m {module} {' '.join(sys.argv[1:])} {seed_arg}={base_seed}"
         )
 
         # Launch inference servers.
@@ -328,19 +329,19 @@ def local_main(config, run_id: int = 0):
             ),
         )
 
-    # Get llm server addresses by name resolve
-    try:
-        server_addrs = wait_llm_server_addrs(
-            config.experiment_name,
-            config.trial_name,
-            n_rollout_servers=alloc_mode.gen.dp_size,
-        )
-        logger.info(
-            f"LLM inference server launched at: AREAL_LLM_SERVER_ADDRS={','.join(server_addrs)}"
-        )
-    except (TimeoutError, KeyboardInterrupt) as e:
-        launcher.stop_all(signal="SIGINT")
-        raise e
+        # Get llm server addresses by name resolve
+        try:
+            server_addrs = wait_llm_server_addrs(
+                config.experiment_name,
+                config.trial_name,
+                n_rollout_servers=alloc_mode.gen.dp_size,
+            )
+            logger.info(
+                f"LLM inference server launched at: AREAL_LLM_SERVER_ADDRS={','.join(server_addrs)}"
+            )
+        except (TimeoutError, KeyboardInterrupt) as e:
+            launcher.stop_all(signal="SIGINT")
+            raise e
 
     # Launch trainer entrypoint
     if alloc_mode.type_ != AllocationType.LLM_SERVER_ONLY:
@@ -349,6 +350,14 @@ def local_main(config, run_id: int = 0):
             nprocs = 1
         else:
             gpu = nprocs = alloc_mode.train.world_size
+        _env_vars = dict(
+            AREAL_LLM_SERVER_ADDRS=",".join(server_addrs),
+            AREAL_RECOVER_RUN=str(int(is_recover_run)),
+        )
+        if alloc_mode.gen_backend == "sglang":
+            # Required by NCCL weight update group.
+            _env_vars["NCCL_CUMEM_ENABLE"] = "0"
+            _env_vars["NCCL_NVLS_ENABLE"] = "0"
         launcher.submit(
             job_name="trainer",
             cmd=f"torchrun --nnodes 1 --nproc-per-node {nprocs} --master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} {' '.join(sys.argv[1:])}",
@@ -358,8 +367,7 @@ def local_main(config, run_id: int = 0):
                     config.cluster.cluster_name,
                     config.launcher.trainer_env_vars,
                 ),
-                AREAL_LLM_SERVER_ADDRS=",".join(server_addrs),
-                AREAL_RECOVER_RUN=str(int(is_recover_run)),
+                **_env_vars,
             ),
         )
 

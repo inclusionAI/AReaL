@@ -7,15 +7,13 @@ import torch
 from transformers import AutoTokenizer
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
-from areal.experimental.api.cli_args import (
-    ExperimentalTrainEngineConfig as TrainEngineConfig,
-)
-from areal.experimental.api.cli_args import (
+from areal.api.cli_args import (
     MegatronEngineConfig,
     OptimizerConfig,
+    TrainEngineConfig,
 )
-from areal.experimental.megatron_engine import MegatronEngine
+from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
+from areal.engine.megatron_engine import MegatronEngine
 from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.device import log_gpu_stats
@@ -23,9 +21,9 @@ from areal.utils.device import log_gpu_stats
 logger = logging.getLogger("MegatronEngine Test")
 
 VOCAB_SIZE = 100
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen3-1.7B"
+    MODEL_PATH = "Qwen/Qwen3-0.6B"
 
 
 @pytest.fixture(scope="module")

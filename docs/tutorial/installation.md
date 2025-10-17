@@ -24,7 +24,7 @@ The following hardware configuration has been extensively tested:
 | Git LFS                  | Required for downloading models, datasets, and AReaL code. See [installation guide](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage) |
 | Docker                   |                                                                                                 27.5.1                                                                                                 |
 | NVIDIA Container Toolkit |                                         See [installation guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)                                          |
-| AReaL Image              |                                                  `ghcr.io/inclusionai/areal-runtime:v0.3.0.post2` (includes runtime dependencies and Ray components)                                                   |
+| AReaL Image              |                                                     `ghcr.io/inclusionai/areal-runtime:v0.3.4` (includes runtime dependencies and Ray components)                                                      |
 
 **Note**: This tutorial does not cover the installation of NVIDIA Drivers, CUDA, or
 shared storage mounting, as these depend on your specific node configuration and system
@@ -42,11 +42,11 @@ We recommend using Docker with our provided image. The Dockerfile is available i
 top-level directory of the AReaL repository.
 
 ```bash
-docker pull ghcr.io/inclusionai/areal-runtime:v0.3.0.post2
+docker pull ghcr.io/inclusionai/areal-runtime:v0.3.4
 docker run -it --name areal-node1 \
    --privileged --gpus all --network host \
    --shm-size 700g -v /path/to/mount:/path/to/mount \
-   ghcr.io/inclusionai/areal-runtime:v0.3.0.post2 \
+   ghcr.io/inclusionai/areal-runtime:v0.3.4 \
    /bin/bash
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
@@ -73,9 +73,11 @@ cd AReaL
 bash examples/env/setup-pip-deps.sh
 ```
 
-<!-- NO SGLang patch now
-> The SGLang patch is applied via `examples/env/setup-container-deps.sh` or `examples/env/setup-pip-deps.sh`. To confirm whether it has been applied, run `git status` in the `/sglang` directory (for Docker) or `AReaL/sglang` (for custom setups).
--->
+**Note**: Installing with `examples/env/setup-pip-deps.sh` will install
+`flash-attn==2.8.3` since it does not require compilation with torch version 2.8.0.
+However, `flash-attn==2.8.3` is not compatible with Megatron training backend. If you
+want to use Megatron training backend, please compile and install `flash-attn==2.8.1` in
+your custom environment, or use docker installation instead.
 
 ## (Optional) Install SkyPilot
 

@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import areal.utils.logging as logging
 from areal.api.alloc_mode import AllocationMode, AllocationType
@@ -101,10 +101,10 @@ class SlurmLauncher:
         mem_per_task: int,  # MB
         container_image: str,
         srun_additional_args: str = "",
-        container_mounts: Optional[str] = None,
-        env_vars: Optional[Dict | List[Dict]] = None,
-        nodelist: Optional[str] = None,
-        exclude: Optional[str] = None,
+        container_mounts: str | None = None,
+        env_vars: Dict | List[Dict] | None = None,
+        nodelist: str | None = None,
+        exclude: str | None = None,
     ):
         """Submits and launch a job array with SBATCH.
         Note that a job array has one (unique) slurm name, and one (unique) slurm id.
@@ -488,7 +488,7 @@ def slurm_main(config, run_id: int = 0):
             seed_arg = spec["seed_arg"]
             module = spec["module"]
             backend_server_cmd_template = (
-                f"python3 -m {module} {' '.join(sys.argv[2:])} {seed_arg}={{seed}}"
+                f"python3 -m {module} {' '.join(sys.argv[1:])} {seed_arg}={{seed}}"
             )
 
             backend_cmds = []
@@ -549,30 +549,61 @@ def slurm_main(config, run_id: int = 0):
         trainer_n_nodes = n_nodes - n_backend_nodes
         gpus_per_node = config.cluster.n_gpus_per_node
 
-    # Here $head_node_ip is the IP address of the first node in the job array.
-    # $trainer_port is a free port on the head node.
-    # Both of them are obtained in by the SBATCH script.
-    trainer_cmd_template = (
-        f"torchrun --nnodes={{nnodes}} --nproc-per-node={{nproc_per_node}} --node-rank {{node_rank}} "
-        f"--master-addr $head_node_ip --master-port $trainer_port {' '.join(sys.argv[1:])}"
-    )
-
-    trainer_cmds = []
-    for i in range(trainer_n_nodes):
-        # In slurm, we launch trainer in the granularity of nodes with torchrun command.
-        trainer_cmds.append(
-            trainer_cmd_template.format(
-                nnodes=trainer_n_nodes,
-                nproc_per_node=config.cluster.n_gpus_per_node,
-                node_rank=i,
+    def _build_trainer_cmds(
+        trainer_n_nodes: int,
+        nproc_per_node: int,
+        additional_bash_cmds: List[str] | None = None,
+    ) -> List[str]:
+        extra_args = " ".join(sys.argv[1:])
+        trainer_cmds = []
+        for i in range(trainer_n_nodes):
+            # In slurm, we launch trainer in the granularity of nodes with torchrun command.
+            bash_cmds = (additional_bash_cmds or []).copy()
+            # Here $head_node_ip is the IP address of the first node in the job array.
+            # $trainer_port is a free port on the head node.
+            # Both of them are obtained in by the SBATCH script.
+            torchrun_cmd = " ".join(
+                [
+                    "torchrun",
+                    f"--nnodes={trainer_n_nodes}",
+                    f"--nproc-per-node={nproc_per_node}",
+                    f"--node-rank={i}",
+                    "--master-addr=$head_node_ip",
+                    "--master-port=$trainer_port",
+                    extra_args,
+                ]
             )
-        )
+            bash_cmds.append(torchrun_cmd)
+            bash_cmds_str = ";\n".join(bash_cmds)
+            # handle double quotes in bash commands
+            bash_cmds_str = bash_cmds_str.replace('"', '\\"')
+            trainer_cmds.append(f'bash -c "{bash_cmds_str}"')
+
+        if trainer_n_nodes:
+            logger.info(
+                f"Trainer commands for the first trainer node:\n{trainer_cmds[0]}"
+            )
+        else:
+            logger.warn("No trainer commands")
+        return trainer_cmds
 
     if allocation_mode.type_ != AllocationType.LLM_SERVER_ONLY:
         # launch trainers
+        _env_vars = dict(
+            AREAL_LLM_SERVER_ADDRS=",".join(llm_addrs),
+            AREAL_RECOVER_RUN=str(int(is_recover_run)),
+        )
+        if allocation_mode.gen_backend == "sglang":
+            # Required by NCCL weight update group.
+            _env_vars["NCCL_CUMEM_ENABLE"] = "0"
+            _env_vars["NCCL_NVLS_ENABLE"] = "0"
         launcher.submit_array(
             job_name="trainer",
-            cmd=trainer_cmds,
+            cmd=_build_trainer_cmds(
+                trainer_n_nodes,
+                config.cluster.n_gpus_per_node,
+                config.launcher.slurm.additional_bash_cmds,
+            ),
             count=trainer_n_nodes,
             nodes=trainer_n_nodes,
             n_gpus_per_node=gpus_per_node,
@@ -588,8 +619,7 @@ def slurm_main(config, run_id: int = 0):
                     config.cluster.cluster_name,
                     config.launcher.trainer_env_vars,
                 ),
-                AREAL_LLM_SERVER_ADDRS=",".join(llm_addrs),
-                AREAL_RECOVER_RUN=str(int(is_recover_run)),
+                **_env_vars,
             ),
         )
 

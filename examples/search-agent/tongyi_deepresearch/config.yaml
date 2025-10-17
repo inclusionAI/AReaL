@@ -101,7 +101,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   type: rl
-  path: path to ASearcher-LRM-35k.jsonl
+  path: inclusionAI__Asearcher-train-data/ASearcher-LRM-35k.jsonl
 
 # Utilities
 saver:
@@ -134,7 +134,7 @@ stats_logger:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   wandb:
-    mode: online
+    mode: disabled
 
 # Launcher
 launcher:
@@ -147,7 +147,7 @@ launcher:
     trainer_image:  /storage/images/areal-25.08-v0.3.3-v3.sif
     inference_server_image:  /storage/images/areal-25.08-v0.3.3-v3.sif
 
-  trainer_env_vars: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,WANDB_API_KEY=<your wandb api key>,SERPER_KEY_ID=<your serper key>,JINA_API_KEYS=<your jina key>
+  trainer_env_vars: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 judge_engine:
   experiment_name: llm-judge

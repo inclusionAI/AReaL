@@ -38,7 +38,7 @@ def mock_padded_data():
 @pytest.mark.parametrize("max_tokens_per_mb", [24, 36, 48, 100])
 @pytest.mark.parametrize("n_mbs", [1, 2, 4, 8])
 def test_micro_batch_split(mock_padded_data, n_mbs, max_tokens_per_mb):
-    mb_spec = MicroBatchSpec(n_mbs, max_tokens_per_mb)
+    mb_spec = MicroBatchSpec(n_mbs=n_mbs, max_tokens_per_mb=max_tokens_per_mb)
 
     # Unpad and split to microbatches
     packed_data = pack_tensor_dict(mock_padded_data)

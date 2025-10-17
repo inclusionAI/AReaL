@@ -4,7 +4,6 @@ import sys
 from dataclasses import dataclass, field
 
 import torch.distributed as dist
-from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
@@ -23,6 +22,7 @@ from areal.utils.data import (
     cycle_dataloader,
     tensor_container_to,
 )
+from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -74,7 +74,7 @@ class MultiTurnMathAgent:
         self.async_reward_fn = AsyncRewardWrapper(gsm8k_reward_fn)
 
     async def run_agent(self, data, client: ArealOpenAI):
-        messages = data["messages"]
+        messages = data["messages"].copy()
         num_turns_left = self.max_turns
         completions = []
         while num_turns_left > 0:
@@ -108,7 +108,7 @@ class MultiturnRLVRWorkflow(RolloutWorkflow):
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
         dump_dir: str | None = None,
-        rollout_stat_scope: bool = "rollout",
+        rollout_stat_scope: str = "rollout",
         n_trajs: int = 1,
         max_tokens: int = 32768,
         max_turns: int = 8,
@@ -174,23 +174,15 @@ def main(args):
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
+    # Create dataset and dataloaders
     train_dataset = get_custom_dataset(
-        path=config.train_dataset.path,
+        split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
+    )
+    train_dataloader = create_dataloader(
+        train_dataset,
         rank=actor.data_parallel_rank,
         world_size=actor.data_parallel_world_size,
-        split="train",
-        max_length=config.train_dataset.max_length,
-        type=config.train_dataset.type,
-        tokenizer=tokenizer,
-    )
-    # Create dataset and dataloaders
-    train_dataloader = StatefulDataLoader(
-        train_dataset,
-        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
-        shuffle=config.train_dataset.shuffle,
-        num_workers=config.train_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.train_dataset.drop_last,
+        dataset_config=config.train_dataset,
     )
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
@@ -201,15 +193,11 @@ def main(args):
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
-    actor.initialize(None, ft_spec)
 
-    weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_xccl(
-            AllocationMode.from_str(config.allocation_mode), actor
-        )
-    ]
-    dist.broadcast_object_list(weight_update_meta, src=0)
-    weight_update_meta = weight_update_meta[0]
+    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
+
+    actor.initialize(None, ft_spec)
+    actor.connect_engine(rollout, weight_update_meta)
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -310,13 +298,7 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
-            if dist.get_rank() == 0:
-                future = rollout.update_weights(weight_update_meta)
-            actor.upload_weights(weight_update_meta)
-            if dist.get_rank() == 0:
-                future.result()
-            dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
+            actor.update_weights(weight_update_meta)
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)

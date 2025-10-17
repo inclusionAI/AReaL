@@ -64,10 +64,6 @@ actor:
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
   dynamic_sampling: false
-  reward_norm:
-    mean_level: batch
-    std_level: batch
-    group_size: 1
   adv_norm:
     mean_level: batch
     std_level: batch
@@ -145,7 +141,7 @@ stats_logger:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   wandb:
-    mode: online
+    mode: disabled
 
 n_trajs: 2
 max_turns: 8

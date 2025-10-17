@@ -11,24 +11,23 @@ from typing import List
 
 import torch.distributed as dist
 from datasets import load_dataset
-from datasets.distributed import split_dataset_by_node
-from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import (
     GenerationHyperparameters,
+    GRPOConfig,
     InferenceEngineConfig,
     load_expr_config,
 )
 from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
+from areal.engine.ppo.actor import MegatronPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.experimental.api.cli_args import ExperimentalGRPOConfig as GRPOConfig
-from areal.experimental.megatron_actor import MegatronPPOActor
 from areal.experimental.openai import ArealOpenAI
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
 from areal.utils.data import broadcast_tensor_container, tensor_container_to
+from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -62,7 +61,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         self,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
-        rollout_stat_scope: bool = "rollout",
+        rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
         n_trajs: int = 1,
         max_tokens: int = 32768,
@@ -170,14 +169,14 @@ class AgentRLConfig(GRPOConfig):
     judge_engine: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
 
 
-def get_search_dataset(dataset_path, tokenizer, rank=0, world_size=1):
+def get_search_dataset(dataset_path, tokenizer):
     dataset = load_dataset(
         path="json",
         split="train",
         data_files=dataset_path,
     )
     # dataset = dataset.filter(lambda x: len(tokenizer.encode(x["question"])) <= 1024)
-    return split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+    return dataset
 
 
 def main(args):
@@ -196,18 +195,11 @@ def main(args):
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
     # Create dataset and dataloaders
-    train_dataloader = StatefulDataLoader(
-        get_search_dataset(
-            config.train_dataset.path,
-            tokenizer,
-            actor.data_parallel_rank,
-            actor.data_parallel_world_size,
-        ),
-        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
-        shuffle=config.train_dataset.shuffle,
-        num_workers=config.train_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.train_dataset.drop_last,
+    train_dataloader = create_dataloader(
+        get_search_dataset(config.train_dataset.path, tokenizer),
+        rank=actor.data_parallel_rank,
+        world_size=actor.data_parallel_world_size,
+        dataset_config=config.train_dataset,
     )
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
@@ -224,12 +216,14 @@ def main(args):
     judge_engine.config.max_head_offpolicyness = int(1e12)
     judge_engine.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
-    actor.initialize(
-        None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
-    )
     weight_update_meta = WeightUpdateMeta.from_disk(
         config.experiment_name, config.trial_name, config.cluster.fileroot
     )
+
+    actor.initialize(
+        None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
+    )
+    actor.connect_engine(rollout, weight_update_meta)
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -337,13 +331,7 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
-            if dist.get_rank() == 0:
-                future = rollout.update_weights(weight_update_meta)
-            actor.upload_weights(weight_update_meta)
-            if dist.get_rank() == 0:
-                future.result()
-            dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
+            actor.update_weights(weight_update_meta)
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)

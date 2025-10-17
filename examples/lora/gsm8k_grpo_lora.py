@@ -4,7 +4,6 @@ from copy import deepcopy
 from typing import Dict
 
 import torch.distributed as dist
-from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
@@ -21,6 +20,7 @@ from areal.utils.data import (
     get_batch_size,
     tensor_container_to,
 )
+from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -68,42 +68,26 @@ def main(args):
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
-    # NOTE: special design for lora, only rank 0 submits rollout
+    # Create dataset and dataloaders
     train_dataset = get_custom_dataset(
-        path=config.train_dataset.path,
-        rank=0,
-        world_size=1,
-        split="train",
-        max_length=config.train_dataset.max_length,
-        type=config.train_dataset.type,
-        tokenizer=tokenizer,
+        split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
     )
     valid_dataset = get_custom_dataset(
-        path=config.valid_dataset.path,
-        rank=0,
-        world_size=1,
-        split="test",
-        max_length=config.valid_dataset.max_length,
-        type=config.valid_dataset.type,
-        tokenizer=tokenizer,
+        split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
     )
 
-    # Create dataset and dataloaders
-    train_dataloader = StatefulDataLoader(
+    # NOTE: special design for lora, only rank 0 submits rollout
+    train_dataloader = create_dataloader(
         train_dataset,
-        batch_size=config.train_dataset.batch_size,
-        shuffle=config.train_dataset.shuffle,
-        num_workers=config.train_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.train_dataset.drop_last,
+        rank=0,
+        world_size=1,
+        dataset_config=config.train_dataset,
     )
-    valid_dataloader = StatefulDataLoader(
+    valid_dataloader = create_dataloader(
         valid_dataset,
-        batch_size=config.valid_dataset.batch_size,
-        shuffle=config.valid_dataset.shuffle,
-        num_workers=config.valid_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.valid_dataset.drop_last,
+        rank=0,
+        world_size=1,
+        dataset_config=config.valid_dataset,
     )
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
@@ -119,19 +103,21 @@ def main(args):
     eval_rollout.config.max_head_offpolicyness = int(1e12)
     eval_rollout.initialize()
 
-    actor.initialize(None, ft_spec)
-    ref = None
-    if config.actor.kl_ctl > 0 and config.ref is not None:
-        ref = FSDPPPOActor(config=config.ref)
-        ref.create_process_group(parallel_strategy=parallel_strategy)
-        ref.initialize(None, ft_spec)
-
     weight_update_meta = WeightUpdateMeta.from_disk(
         config.saver.experiment_name,
         config.saver.trial_name,
         config.saver.fileroot,
         use_lora=True,
     )
+
+    actor.initialize(None, ft_spec)
+    actor.connect_engine(rollout, weight_update_meta)
+
+    ref = None
+    if config.actor.kl_ctl > 0 and config.ref is not None:
+        ref = FSDPPPOActor(config=config.ref)
+        ref.create_process_group(parallel_strategy=parallel_strategy)
+        ref.initialize(None, ft_spec)
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -245,14 +231,7 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
-            # actor.upload_weights first - this operation takes time
-            # that allows sglang to schedule pending requests into running state,
-            # making sglang pause_generation work properly
-            actor.upload_weights(weight_update_meta)
-            if dist.get_rank() == 0:
-                rollout.update_weights(weight_update_meta).result()
-            dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
+            actor.update_weights(weight_update_meta)
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)

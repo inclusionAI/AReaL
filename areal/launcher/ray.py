@@ -379,7 +379,7 @@ def ray_main(config, run_id: int = 0):
         base_seed = config.sglang.random_seed
         sglang_args_list = [
             [
-                sys.argv[2:]
+                sys.argv[1:]
                 + [f"sglang.random_seed={base_seed + i * n_servers_per_node}"]
             ]
             for i in range(n_sglang_nodes)
@@ -459,7 +459,7 @@ def ray_main(config, run_id: int = 0):
 
         base_seed = config.vllm.seed
         vllm_args_list = [
-            [sys.argv[2:] + [f"vllm.seed={base_seed + i}"]]
+            [sys.argv[1:] + [f"vllm.seed={base_seed + i}"]]
             for i in range(n_vllm_servers)
         ]
         vllm_entry_point = str(
@@ -534,6 +534,14 @@ def ray_main(config, run_id: int = 0):
                 )
             return env_vars
 
+        _env_vars = dict(
+            AREAL_LLM_SERVER_ADDRS=",".join(llm_addrs),
+            AREAL_RECOVER_RUN=str(int(is_recover_run)),
+        )
+        if allocation_mode.gen_backend == "sglang":
+            # Required by NCCL weight update group.
+            _env_vars["NCCL_CUMEM_ENABLE"] = "0"
+            _env_vars["NCCL_NVLS_ENABLE"] = "0"
         launcher.submit_array(
             job_name="trainer",
             file_path=trainer_entry_point,
@@ -549,8 +557,7 @@ def ray_main(config, run_id: int = 0):
                     config.cluster.cluster_name,
                     config.launcher.trainer_env_vars,
                 ),
-                AREAL_LLM_SERVER_ADDRS=",".join(llm_addrs),
-                AREAL_RECOVER_RUN=str(int(is_recover_run)),
+                **_env_vars,
             ),
             env_hook=partial(torch_env_hook, trainer_n_nodes * n_gpus_per_node),
         )

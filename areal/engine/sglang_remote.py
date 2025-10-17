@@ -20,6 +20,7 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     ModelRequest,
     ModelResponse,
+    ParamSpec,
     WeightUpdateMeta,
 )
 from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
@@ -34,11 +35,6 @@ RID_CACHE_SIZE = 128
 class RemoteSGLangEngine(InferenceEngine):
 
     def __init__(self, config: InferenceEngineConfig):
-        if current_platform.communication_backend == "nccl":
-            # Required by NCCL weight update group.
-            os.environ["NCCL_CUMEM_ENABLE"] = "0"
-            os.environ["NCCL_NVLS_ENABLE"] = "0"
-
         self.config = config
 
         self.rid_to_address = {}
@@ -102,11 +98,13 @@ class RemoteSGLangEngine(InferenceEngine):
                         timeout=1,
                     )
                     self.logger.info(f"Get server addresses from name_resolve.")
-                except TimeoutError:
+                except (TimeoutError, RuntimeError):
+                    # RuntimeError happens when name_resolve is not properly configured.
                     pass
         if not self.addresses and os.getenv("AREAL_LLM_SERVER_ADDRS"):
             # When addr is not provided, fallback to reading addrs from env var
             self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
+            self.logger.info(f"Get server addresses from environment variable.")
         if not self.addresses:
             raise RuntimeError(
                 "No configured SGLang servers. Please pass in SGLang server addresses by arguments "
@@ -288,85 +286,92 @@ class RemoteSGLangEngine(InferenceEngine):
         )
         return response
 
-    def update_weights(self, meta: WeightUpdateMeta):
-        for addr in self.addresses:
-            res = requests.post(f"http://{addr}/pause_generation")
-            res.raise_for_status()
+    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
+        # No need to init group for non-NCCL update
+        assert meta.type == current_platform.communication_backend
+        assert (
+            not self.distributed_weight_update_initialized
+        ), "Weight update group already initialized."
 
-        # The above http request may require some time to be scheduled and executed.
-        # The following line waits until all requests are indeed dropped.
-        time.sleep(self.config.pause_grace_period)
-
-        tik = time.perf_counter()
-        fut = Future()
-        if meta.type == current_platform.communication_backend:
-            fut = self.executor.submit(
-                update_weights_from_distributed,
-                meta,
-                self.addresses,
-                self.config.request_timeout,
-                not self.distributed_weight_update_initialized,
-            )
-
-            def callback(fut):
-                self.logger.info(
-                    f"Distributed update weights done in {time.perf_counter() - tik}s"
-                )
-                self.distributed_weight_update_initialized = True
-
-            fut.add_done_callback(callback)
-        elif meta.type == "disk":
-            # Update weights from disk
-            # Use ProcessPool to bypass python GIL for running async coroutines
-            if self.config.experiment_name is None or self.config.trial_name is None:
-                raise RuntimeError(
-                    f"Experiment and trial names must be set for disk-based weight updates."
-                )
-            endpoints = ["update_weights_from_disk"]
-            payloads = [dict(model_path=str(meta.path), abort_all_requests=True)]
-            lora_name = "lora_1"
-            if meta.use_lora:
-                endpoints = []
-                payloads = []
-                if self.lora_init:
-                    endpoints.append("unload_lora_adapter")
-                    payloads.append(dict(lora_name=lora_name))
-                else:
-                    self.lora_init = True
-                endpoints.append("load_lora_adapter")
-                payloads.append(dict(lora_name=lora_name, lora_path=str(meta.path)))
-
-            fut = self.executor.submit(
-                update_weights_from_disk,
-                self.config.experiment_name,
-                self.config.trial_name,
-                self.get_version(),
-                self.addresses,
-                meta.path,
-                self.config.request_retries,
-                self.config.request_timeout,
-                endpoints,
-                payloads,
-            )
-
-            def callback(fut):
-                respond_time = fut.result()
-                self.logger.info(
-                    f"Loading weights from disk done in {(time.perf_counter() - tik):.2f}s. "
-                    f"Respond time: {respond_time:.2f}s."
-                )
-                shutil.rmtree(meta.path, ignore_errors=True)
-
-            fut.add_done_callback(callback)
-        else:
-            raise NotImplementedError(f"Unsupported weight update type: {meta.type}")
+        fut = self.executor.submit(
+            init_weights_update_group_remote,
+            meta,
+            self.addresses,
+            self.config.request_timeout,
+        )
 
         def callback(fut):
-            for addr in self.addresses:
-                res = requests.post(f"http://{addr}/continue_generation")
-                res.raise_for_status()
+            self.logger.info(
+                f"Initialized NCCL group for distributed weight update for {meta.nccl_group_name}."
+            )
+            self.distributed_weight_update_initialized = True
 
         fut.add_done_callback(callback)
+
+        return fut
+
+    def update_weights_from_distributed(
+        self, meta: WeightUpdateMeta, param_specs: List[ParamSpec]
+    ) -> Future[None]:
+        assert meta.type == current_platform.communication_backend
+
+        fut = self.executor.submit(
+            update_weights_from_distributed,
+            meta,
+            param_specs,
+            self.addresses,
+            self.config.request_timeout,
+        )
+
+        return fut
+
+    def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
+        assert meta.type == "disk"
+
+        tik = time.perf_counter()
+
+        # Use ProcessPool to bypass python GIL for running async coroutines
+        if self.config.experiment_name is None or self.config.trial_name is None:
+            raise RuntimeError(
+                f"Experiment and trial names must be set for disk-based weight updates."
+            )
+        endpoints = ["update_weights_from_disk"]
+        payloads = [dict(model_path=str(meta.path), abort_all_requests=True)]
+        lora_name = "lora_1"
+        if meta.use_lora:
+            endpoints = []
+            payloads = []
+            if self.lora_init:
+                endpoints.append("unload_lora_adapter")
+                payloads.append(dict(lora_name=lora_name))
+            else:
+                self.lora_init = True
+            endpoints.append("load_lora_adapter")
+            payloads.append(dict(lora_name=lora_name, lora_path=str(meta.path)))
+
+        fut = self.executor.submit(
+            update_weights_from_disk,
+            self.config.experiment_name,
+            self.config.trial_name,
+            self.get_version(),
+            self.addresses,
+            meta.path,
+            self.config.request_retries,
+            self.config.request_timeout,
+            endpoints,
+            payloads,
+        )
+
+        def callback(fut):
+            respond_time = fut.result()
+            self.logger.info(
+                f"Loading weights from disk done in {(time.perf_counter() - tik):.2f}s. "
+                f"Respond time: {respond_time:.2f}s."
+            )
+            shutil.rmtree(meta.path, ignore_errors=True)
+
+        fut.add_done_callback(callback)
+
         return fut
 
     def submit(
@@ -413,6 +418,25 @@ class RemoteSGLangEngine(InferenceEngine):
             workflow_builder=workflow_builder,
             should_accept=should_accept,
         )
+
+    def pause_generation(self):
+        """Pause the generation of inference engine.
+
+        Used during updating weights from distributed or disk.
+        """
+        for addr in self.addresses:
+            res = requests.post(f"http://{addr}/pause_generation")
+            res.raise_for_status()
+
+        # The above http request may require some time to be scheduled and executed.
+        # The following line waits until all requests are indeed dropped.
+        time.sleep(self.config.pause_grace_period)
+
+    def continue_generation(self):
+        """Continue the generation of inference engine."""
+        for addr in self.addresses:
+            res = requests.post(f"http://{addr}/continue_generation")
+            res.raise_for_status()
 
     def pause(self):
         """Pause request submission for async rollout. Used during evaluation to prevent data over generation."""
@@ -469,33 +493,38 @@ def update_weights_from_disk(
     return uvloop.run(_fn())
 
 
-def update_weights_from_distributed(
+def init_weights_update_group_remote(
     meta: WeightUpdateMeta,
     addresses: List[str],
     request_timeout,
-    init_group: bool,
 ):
-    nccl_param_specs = [
-        spec for param_specs in meta.nccl_param_specs for spec in param_specs
-    ]
-
     async def _fn():
-        if init_group:
-            await asyncio.gather(
-                *[
-                    ainit_weights_update_group(addr, i, meta, request_timeout)
-                    for i, addr in enumerate(addresses)
-                ]
-            )
+        await asyncio.gather(
+            *[
+                ainit_weights_update_group(addr, i, meta, request_timeout)
+                for i, addr in enumerate(addresses)
+            ]
+        )
+
+    return uvloop.run(_fn())
+
+
+def update_weights_from_distributed(
+    meta: WeightUpdateMeta,
+    param_specs: List[ParamSpec],
+    addresses: List[str],
+    request_timeout,
+):
+    async def _fn():
         await asyncio.gather(
             *[
                 arequest_with_retry(
                     addr=addr,
                     endpoint="/update_weights_from_distributed",
                     payload={
-                        "names": [pspec.name for pspec in nccl_param_specs],
-                        "dtypes": [pspec.dtype for pspec in nccl_param_specs],
-                        "shapes": [pspec.shape for pspec in nccl_param_specs],
+                        "names": [pspec.name for pspec in param_specs],
+                        "dtypes": [pspec.dtype for pspec in param_specs],
+                        "shapes": [pspec.shape for pspec in param_specs],
                         "group_name": meta.nccl_group_name,
                         "abort_all_requests": True,
                     },

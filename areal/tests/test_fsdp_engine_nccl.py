@@ -20,9 +20,9 @@ from areal.utils import network
 
 EXPR_NAME = "test_fsdp_engine_nccl"
 TRIAL_NAME = "trial_nccl"
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen2-0.5B"
+    MODEL_PATH = "Qwen/Qwen3-0.6B"
 PORT = 13998
 DIST_PORT = 15998
 GROUP_NAME = "test_nccl_group"
@@ -88,6 +88,9 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     os.environ["LOCAL_RANK"] = "0"
     os.environ["MASTER_ADDR"] = HOST
     os.environ["MASTER_PORT"] = str(MASTER_PORT)
+    # required by sglang
+    os.environ["NCCL_CUMEM_ENABLE"] = "0"
+    os.environ["NCCL_NVLS_ENABLE"] = "0"
 
     # Initialize FSDPEngine
     engine_config = TrainEngineConfig(
@@ -110,17 +113,13 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
     # Get WeightUpdateMeta
     meta = WeightUpdateMeta.from_fsdp_xccl(
         AllocationMode.from_str("sglang.d1p1t1+d1p1t1"),
-        engine,
         nccl_group_name=GROUP_NAME,
     )
 
+    engine.connect_engine(remote_engine, meta)
+
     # Broadcast weights
-    future = remote_engine.update_weights(meta)
-    print("got future", flush=True)
-    engine.upload_weights(meta)
-    print("uploaded wexights to remote engine", flush=True)
-    # Wait for remote engine to finish
-    future.result(timeout=120)
-    print("got result", flush=True)
+    engine.update_weights(meta)
+    print("uploaded weights to remote engine", flush=True)
     remote_engine.destroy()
     engine.destroy()

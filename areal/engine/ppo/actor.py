@@ -6,6 +6,7 @@ import torch
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
+from areal.engine.megatron_engine import MegatronEngine
 from areal.utils import stats_tracker
 from areal.utils.data import (
     KLEstimator,
@@ -22,7 +23,6 @@ from areal.utils.functional import (
 
 
 class PPOActor:
-
     def __init__(self, config: PPOActorConfig, engine: TrainEngine):
         self.config = config
         self.engine = engine
@@ -54,9 +54,11 @@ class PPOActor:
         data: Dict[str, Any],
         temperature: Optional[float] = None,
     ) -> torch.Tensor | None:
-
         def calc_logprobs(logits, input_data):
-            labels = torch.roll(input_data["input_ids"], shifts=-1, dims=-1)
+            labels = input_data.get(
+                "rolled_input_ids",
+                torch.roll(input_data["input_ids"], shifts=-1, dims=-1),
+            )
             logprobs = gather_logprobs(logits, labels, temperature or 1.0)
             return logprobs
 
@@ -76,7 +78,6 @@ class PPOActor:
 
         # Reward Penalty on length
         if self.config.overlong_reward_penalty:
-
             overlong_tokens = self.config.overlong_tokens
             overlong_penalty_factor = self.config.overlong_penalty_factor
 
@@ -163,7 +164,6 @@ class PPOActor:
         data["logprobs"] = old_logp
 
     def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
-
         if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
             data, sampling_stat = dynamic_sampling(data, self.group_size)
 
@@ -276,6 +276,23 @@ class PPOActor:
 
 
 class FSDPPPOActor(FSDPEngine):
+    def __init__(self, config: PPOActorConfig):
+        super().__init__(config)
+        self.actor = PPOActor(config, self)
+
+    @torch.no_grad()
+    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
+        return self.actor.compute_logp(*args, **kwargs)
+
+    @torch.no_grad()
+    def compute_advantages(self, *args, **kwargs) -> None:
+        self.actor.compute_advantages(*args, **kwargs)
+
+    def ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
+        return self.actor.ppo_update(*args, **kwargs)
+
+
+class MegatronPPOActor(MegatronEngine):
 
     def __init__(self, config: PPOActorConfig):
         super().__init__(config)
@@ -304,15 +321,18 @@ def grpo_loss_fn(
 ):
     """Loss function for actor step, all inputs should be splitted into
     pipeline micro batches, returns loss and logging stats."""
-    input_ids = input_data["input_ids"]
+    # Use rolled input_ids. Ulysses SP will roll input_ids in ulysses_prepare_inputs().
+    labels = input_data.get(
+        "rolled_input_ids",
+        torch.roll(input_data["input_ids"], shifts=-1, dims=-1),
+    )
     old_logp = input_data["logprobs"]
     advantages = input_data["advantages"]
-    loss_mask = input_data["loss_mask"].bool()
+    # Use full loss_mask. Ulysses SP will slice loss_mask in ulysses_prepare_inputs().
+    loss_mask = input_data.get("full_loss_mask", input_data["loss_mask"]).bool()
     prox_logp = input_data["prox_logp"]
 
-    logprobs, entropy = gather_logprobs_entropy(
-        logits, torch.roll(input_ids, shifts=-1, dims=-1), temperature
-    )
+    logprobs, entropy = gather_logprobs_entropy(logits, labels, temperature)
     entropy = entropy.detach()
     loss, stat = ppo_actor_loss_fn(
         logprobs=logprobs,

@@ -32,10 +32,6 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 def main() -> None:
     config, _ = cli_args.load_expr_config(sys.argv[1:], GRPOConfig)
     assert isinstance(config, GRPOConfig)
-    local_model_path = config.actor.path.replace("/", "__")
-    local_model_path = os.path.join("/storage/openpsi/models", local_model_path)
-    if os.path.exists(local_model_path):
-        config.actor.path = local_model_path
 
     rank = int(os.environ.get("RANK", "0"))
 
@@ -75,19 +71,14 @@ def main() -> None:
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
+    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
+
     actor.initialize(None, ft_spec)
+    actor.connect_engine(rollout, weight_update_meta)
 
     ref = FSDPPPOActor(config=config.ref)
     ref.create_process_group(parallel_strategy=parallel_strategy)
     ref.initialize(None, ft_spec)
-
-    weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_xccl(
-            AllocationMode.from_str(config.allocation_mode), actor
-        )
-    ]
-    dist.broadcast_object_list(weight_update_meta, src=0)
-    weight_update_meta = weight_update_meta[0]
 
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(cast(int, tokenizer.pad_token_id))
@@ -135,15 +126,7 @@ def main() -> None:
             actor.step_lr_scheduler()
 
             rollout.pause()
-            if dist.get_rank() == 0:
-                future = rollout.update_weights(weight_update_meta)
-            else:
-                future = None
-            actor.upload_weights(weight_update_meta)
-            if future is not None:
-                future.result()
-            dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
+            actor.update_weights(weight_update_meta)
             rollout.resume()
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)

@@ -18,9 +18,9 @@ from areal.utils.hf_utils import load_hf_tokenizer
 
 EXPR_NAME = "test_sglang_engine"
 TRIAL_NAME = "trial_0"
-MODEL_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
+MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen2-0.5B"
+    MODEL_PATH = "Qwen/Qwen3-0.6B"
 PORT, DIST_PORT = network.find_free_ports(2)
 HOST = network.gethostip()
 # set a large timeout since we may need to download the model from hub
@@ -206,11 +206,10 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
     inf_engine = RemoteSGLangEngine(config)
     inf_engine.initialize()
     inf_engine.set_version(100)
+    update_weight_meta = WeightUpdateMeta(type="disk", path=str(path))
+    engine.connect_engine(inf_engine, update_weight_meta)
     engine.set_version(100)
     # test update weights
-    path = tmp_path_factory.mktemp("upload_weights_from_disk")
-    update_weight_meta = WeightUpdateMeta(type="disk", path=str(path))
-    future = inf_engine.update_weights(update_weight_meta)
-    engine.upload_weights(update_weight_meta)
-    future.result()
+    tmp_path_factory.mktemp("upload_weights_from_disk")
+    engine.update_weights(update_weight_meta)
     inf_engine.destroy()
