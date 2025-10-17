@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Tuple
 
 import torch
 import torch.distributed as dist
+import torch.distributed.nn.functional as dist_F
 from peft import (
     LoraConfig,
     TaskType,
@@ -725,6 +726,15 @@ class FSDPEngine(BaseHFEngine):
                     result = post_hook(logits, mb_input)
                 results.append(result)
             else:
+                if self.parallel_helper.sp_size > 1:
+                    # Gather and remove Ulysses padding
+                    gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
+                    logits = torch.cat(gathered_logits, dim=0)
+                    logits = (
+                        logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
+                    )
+                # Remove original padding
+                logits = logits[:-pad_length] if pad_length > 0 else logits
                 results.append(logits)
 
         res = aggregate_fn(results)
