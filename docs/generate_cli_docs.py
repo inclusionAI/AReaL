@@ -8,7 +8,6 @@ documentation with appropriate categorization and hyperlinks.
 """
 
 import inspect
-import platform
 import sys
 import types
 from dataclasses import MISSING as DATACLASSES_MISSING
@@ -23,11 +22,8 @@ from omegaconf import MISSING as OMEGACONF_MISSING
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-try:
-    # Import the entire module to discover all dataclasses
-    import areal.api.cli_args as cli_args_module
-except ImportError as e:
-    cli_args_module = None
+# Import the entire module to discover all dataclasses
+import areal.api.cli_args as cli_args_module
 
 
 def discover_dataclasses() -> Dict[str, Any]:
@@ -372,8 +368,5 @@ def main():
 
 
 if __name__ == "__main__":
-    if platform.system() == "Windows":
-        print("Detected Windows OS, skipping.")
-        sys.exit(0)
     success = main()
     sys.exit(0 if success else 1)
