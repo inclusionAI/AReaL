@@ -23,17 +23,15 @@ run: |
     ray start --head --port=6379
 
     while [ $(ray status | grep node_ | wc -l) -lt $num_nodes ]; do
-      echo "Waiting for all nodes to join... Current nodes: $(ray summary nodes --format=json | jq '.cluster.node_summary.total') / $num_nodes"
+      echo "Waiting for all nodes to join... Current nodes: $(ray status | grep node_ | wc -l) / $num_nodes"
       sleep 5
     done
 
     echo "Executing training script on head node..."
     python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
             --config examples/skypilot/gsm8k_grpo_ray.yaml \
-            experiment_name=<your experiment name> \
-            trial_name=<your trial name> \
-            stats_logger.wandb.mode=online \
-            +trainer_env_vars="WANDB_API_KEY=$WANDB_API_KEY"
+            experiment_name=gsm8k-grpo \
+            trial_name=trial0
   else
     sleep 10
     echo "Starting Ray worker node..."

@@ -113,9 +113,8 @@ run: |
     echo "Executing training script on head node..."
     python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
             --config examples/skypilot/gsm8k_grpo_ray.yaml \
-            experiment_name=<your experiment name> \
-            trial_name=<your trial name> \
-            +trainer_env_vars="WANDB_API_KEY=$WANDB_API_KEY"
+            experiment_name=gsm8k-grpo \
+            trial_name=trial0
   else
     sleep 10
     echo "Starting Ray worker node..."
