@@ -51,7 +51,7 @@ sky launch -c areal-test examples/skypilot/local.yaml
 
 ## Running a Multi-Node Experiment
 
-### Option 1: Running AReaL with Ray Launcher
+### Running AReaL with Ray Launcher
 
 The following example shows how to setup a ray cluster with SkyPilot and then use AReaL
 to run GRPO with GSM8K dataset on 2 nodes, each with 1 A100 GPU. This example runs on
@@ -130,25 +130,20 @@ run: |
 Then you are ready to run AReaL with command line:
 
 ```bash
-export WANDB_API_KEY=<your-wandb-api-key>
-sky launch -c areal-test --secret WANDB_API_KEY examples/skypilot/ray_cluster.yaml
+sky launch -c areal-test examples/skypilot/ray_cluster.yaml
 ```
 
 You should be able to see your AReaL running and producing training logs in your
 terminal.
 
-<!--- TODO: add logging screenshots --->
+Successfully launched 2 nodes on GCP and deployed a ray cluster:
+<img align="center" alt="Launching Ray Cluster" src="ray_launch.png" width="100%">
 
-## Option 2: Running AReaL with SkyPilot Launcher
+Successfully ran a training step:
+<img align="center" alt="Running a train step" src="train_step_success.png" width="100%">
 
-<!--- TODO: to be finished and tested --->
+### Running AReaL with SkyPilot Launcher
 
-You could also run a multi-node AReaL experiment in a single command, without having to
-launch the Ray cluster:
-
-```bash
-python3 -m areal.launcher.skypilot examples/math/gsm8k_grpo.py \
-    --config examples/skypilot/gsm8k_grpo_skypilot.yaml \
-    experiment_name=<your experiment name> \
-    trial_name=<your trial name>
-```
+AReaL plans to support a SkyPilot native launcher with
+[SkyPilot Python SDK](https://docs.skypilot.co/en/latest/reference/api.html), which is
+currently under development.
