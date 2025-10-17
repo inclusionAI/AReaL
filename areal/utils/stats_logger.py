@@ -65,7 +65,6 @@ class StatsLogger:
             force=True,
             id=f"{self.config.experiment_name}_{self.config.trial_name}_{suffix}",
             resume="allow",
-            settings=wandb.Settings(start_method="fork"),
         )
 
         swanlab_config = self.config.swanlab
