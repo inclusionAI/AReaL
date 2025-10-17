@@ -28,15 +28,20 @@ resources:
   disk_size: 256GB
   image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.3.4
 
+
 num_nodes: 1
 
 workdir: .
 
+envs:
+  EXPERIMENT_NAME: my-areal-experiment
+  TRIAL_NAME: my-trial-name
+
 run: |
   python3 -m areal.launcher.local examples/math/gsm8k_grpo.py \
     --config examples/math/gsm8k_grpo.yaml \
-    experiment_name=gsm8k-grpo \
-    trial_name=trial0 \
+    experiment_name=$EXPERIMENT_NAME \
+    trial_name=$TRIAL_NAME \
     cluster.n_gpus_per_node=2 \
     allocation_mode=sglang.d1+d1 \
     train_dataset.batch_size=4 \
@@ -96,6 +101,10 @@ For more information about shared storage with SkyPilot, check
 Next, prepare commands used to setup ray cluster and run the experiment.
 
 ```yaml
+envs:
+  EXPERIMENT_NAME: my-areal-experiment
+  TRIAL_NAME: my-trial-name
+
 run: |
   # Get the Head node's IP and total number of nodes (environment variables injected by SkyPilot).
   head_ip=$(echo "$SKYPILOT_NODE_IPS" | head -n1)
@@ -113,8 +122,8 @@ run: |
     echo "Executing training script on head node..."
     python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
             --config examples/skypilot/gsm8k_grpo_ray.yaml \
-            experiment_name=gsm8k-grpo \
-            trial_name=trial0
+            experiment_name=$EXPERIMENT_NAME \
+            trial_name=$TRIAL_NAME
   else
     sleep 10
     echo "Starting Ray worker node..."
