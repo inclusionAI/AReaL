@@ -3,7 +3,7 @@ from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.transformer import TransformerConfig
 from transformers import PretrainedConfig
 
-from areal.experimental.model.common import (
+from areal.models.mcore.common import (
     check_and_construct_configs,
     hf_to_mcore_base_args,
 )

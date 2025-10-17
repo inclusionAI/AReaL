@@ -8,6 +8,8 @@ from typing import Dict, List
 import uvloop
 import yaml
 
+from areal.utils.pkg_version import is_version_less
+
 uvloop.install()
 from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
@@ -162,13 +164,31 @@ class OptimizerConfig:
 
     type: str = field(
         default="adam",
-        metadata={"help": "Optimizer type", "choices": ["adam"]},
+        metadata={
+            "help": "Optimizer type. Adam_bf16 currently only supported FSDP Engine.",
+            "choices": ["adam", "sgd", "adam_bf16"],
+        },
     )
-    lr: float = field(default=2e-5, metadata={"help": "Learning rate"})
-    weight_decay: float = field(default=0.05, metadata={"help": "Weight decay"})
-    beta1: float = field(default=0.9, metadata={"help": "Adam beta1 parameter"})
-    beta2: float = field(default=0.95, metadata={"help": "Adam beta2 parameter"})
-    eps: float = field(default=1e-5, metadata={"help": "Adam epsilon parameter"})
+    lr: float = field(default=1e-3, metadata={"help": "Learning rate"})
+    weight_decay: float = field(default=0.01, metadata={"help": "Weight decay"})
+    beta1: float = field(
+        default=0.9,
+        metadata={
+            "help": "Adam beta1 parameter. Only effective when optimizer_type is adam/adam_bf16"
+        },
+    )
+    beta2: float = field(
+        default=0.999,
+        metadata={
+            "help": "Adam beta2 parameter. Only effective when optimizer_type is adam/adam_bf16"
+        },
+    )
+    eps: float = field(
+        default=1e-8,
+        metadata={
+            "help": "Adam epsilon parameter. Only effective when optimizer_type is adam/adam_bf16"
+        },
+    )
     min_lr_ratio: float = field(
         default=0.0,
         metadata={
@@ -232,6 +252,67 @@ class FSDPEngineConfig:
     )
 
 
+# These configurations are used by Megatron Bridge to build Megatron models.
+@dataclass
+class DistributedDataParallelConfig:
+    """Configuration for Megatron's DistributedDataParallel.
+    Refer to Megatron-LM documentation for details.
+    """
+
+    grad_reduce_in_fp32: bool = True
+    overlap_grad_reduce: bool = False
+    overlap_param_gather: bool = False
+    align_param_gather: bool = False
+    use_distributed_optimizer: bool = True
+    check_for_nan_in_grad: bool = False
+    bucket_size: int | None = None
+    average_in_collective: bool = False
+    fp8_param_gather: bool = False
+
+
+@dataclass
+class MegatronEngineConfig:
+    """Configuration for Megatron-LM training framework.
+    Refer to Megatron-LM documentation for implementation details.
+    """
+
+    # Distributed Training Configuration
+    wrap_with_ddp: bool = True
+    use_torch_fsdp2: bool = False  # TODO: pending test
+    use_custom_fsdp: bool = False  # TODO: pending test
+    ddp: DistributedDataParallelConfig = field(
+        default_factory=DistributedDataParallelConfig
+    )
+    # Don't use MegatronOptimizerConfig here because OmegaConf
+    # does not recognize the annotation "torch.dtype"
+    overlap_param_gather_with_optimizer_step: bool = False
+
+    # Precision Configuration
+    use_precision_aware_optimizer: bool = False
+    main_grads_dtype: str = "float32"
+    main_params_dtype: str = "float32"
+    exp_avg_dtype: str = "float32"
+    exp_avg_sq_dtype: str = "float32"
+
+    # Checkpointing Configuration
+    async_save: bool = False
+    use_checkpoint_opt_param_scheduler: bool = True
+
+    # Deterministic Option
+    # NOTE: This option forces torch to use deterministic algorithms,
+    # which makes sure that two forward passes with the same input
+    # will produce the same output. However, it may have a performance impact.
+    # It is recommended to set this option to True for RL training on MoE models for stability.
+    use_deterministic_algorithms: bool = False
+
+    # Gradient checkpointing options, only effective when gradient_checkpointing=True
+    recompute_granularity: str | None = "full"
+    recompute_method: str | None = "uniform"
+    recompute_num_layers: int | None = 1
+    distribute_saved_activations: bool | None = None
+    recompute_modules: List[str] | None = None
+
+
 @dataclass
 class TrainEngineConfig:
     """Core configuration for model training, including optimization and backend settings."""
@@ -270,7 +351,7 @@ class TrainEngineConfig:
         default=False, metadata={"help": "Disable dropout layers during training"}
     )
     gradient_checkpointing: bool = field(
-        default=True, metadata={"help": "Enable gradient checkpointing"}
+        default=False, metadata={"help": "Enable gradient checkpointing"}
     )
     dtype: str = field(default="bfloat16", metadata={"help": "Parameter data type."})
     grad_reduce_dtype: str = field(
@@ -286,6 +367,7 @@ class TrainEngineConfig:
         default="", metadata={"help": "Training backend (refer to documentation)"}
     )
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
+    megatron: MegatronEngineConfig = field(default_factory=MegatronEngineConfig)
 
     # Lora
     use_lora: bool = field(
@@ -632,6 +714,8 @@ class SGLangConfig:
         # convert to flags
         flags = []
         for k, v in args.items():
+            if is_version_less("sglang", "0.4.10.post2") and "max_loaded_loras" in k:
+                continue
             if v is None or v is False or v == "":
                 continue
             if v is True:
@@ -991,6 +1075,13 @@ class SlurmLauncherConfig:
     srun_additional_args: str = field(
         default="--mpi=pmi2 -K --chdir $PWD",
         metadata={"help": "Additional arguments to pass to the srun command."},
+    )
+    additional_bash_cmds: List[str] | None = field(
+        default=None,
+        metadata={
+            "help": "Additional bash commands to setup the container before running "
+            "the torchrun command."
+        },
     )
     container_type: str = field(
         default="apptainer",

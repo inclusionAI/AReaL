@@ -23,26 +23,12 @@ from torch import nn
 from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
-from areal.api.cli_args import MicroBatchSpec
+from areal.api.cli_args import MicroBatchSpec, TrainEngineConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
-from areal.experimental.api.cli_args import (
-    ExperimentalTrainEngineConfig as TrainEngineConfig,
-)
-from areal.experimental.model.hf_load import load_weights_from_hf_with_mbridge_fast
-from areal.experimental.model.hf_save import save_weights_to_hf_with_mbridge_fast
-from areal.experimental.model.registry import make_hf_and_mcore_config, make_mcore_model
-from areal.experimental.utils.mcore.determinisitc import set_deterministic_algorithms
-from areal.experimental.utils.mcore.packed_context_parallel import (
-    packed_context_parallel_forward,
-)
-from areal.experimental.utils.megatron import (
-    all_gather_param,
-    convert_to_hf,
-    get_named_parameters,
-    remove_padding,
-)
-from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
+from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
+from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
+from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.data import (
@@ -60,6 +46,17 @@ from areal.utils.data import (
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
+from areal.utils.mcore.determinisitc import set_deterministic_algorithms
+from areal.utils.mcore.packed_context_parallel import (
+    packed_context_parallel_forward,
+)
+from areal.utils.megatron import (
+    all_gather_param,
+    convert_to_hf,
+    get_named_parameters,
+    remove_padding,
+)
+from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
@@ -162,7 +159,6 @@ class MegatronEngine(TrainEngine):
         ):
             model_config.param_sync_func = self.model.start_param_sync
         model_config.finalize_model_grads_func = finalize_model_grads
-
         self.create_optimizer(ft_spec)
 
     def _make_parallel_strategy(
@@ -241,13 +237,18 @@ class MegatronEngine(TrainEngine):
             return
         assert self.model is not None
 
-        assert (
-            self.optimizer_config.type == "adam"
-        ), "Only AdamW optimizer is supported in this engine."
+        assert self.optimizer_config.type in [
+            "adam",
+            "sgd",
+        ], "Only AdamW/sgd optimizer is supported in this engine."
+        if self.optimizer_config.type == "sgd":
+            self.logger.warning(
+                f"Using the 'sgd' optimizer with Megatron may be less stable. Consider using the 'adam' (AdamW) optimizer for improved stability."
+            )
 
         # Make megatron optimizer config
         mcore_opt_config = MCoreOptimizerConfig(
-            optimizer="adam",
+            optimizer=self.optimizer_config.type,
             lr=self.optimizer_config.lr,
             min_lr=self.optimizer_config.min_lr_ratio * self.optimizer_config.lr,
             weight_decay=self.optimizer_config.weight_decay,
@@ -556,6 +557,11 @@ class MegatronEngine(TrainEngine):
             fut.result()
 
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
+        if dist.get_rank() == 0:
+            self.rollout_engine.pause_generation()
+
+        dist.barrier(device_ids=[self.device.index])
+
         num_moe_experts = self.tf_config.num_moe_experts
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
@@ -598,6 +604,11 @@ class MegatronEngine(TrainEngine):
         if named_tensors:
             # This function will early return if not pipeline parallel head
             self._update_bucket_expert_weights_from_distributed(meta, named_tensors)
+
+        dist.barrier(device_ids=[self.device.index])
+
+        if dist.get_rank() == 0:
+            self.rollout_engine.continue_generation()
 
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()

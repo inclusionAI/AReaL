@@ -568,6 +568,17 @@ class InferenceEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    def pause_generation(self):
+        """Pause the generation of inference engine.
+
+        Used during updating weights from distributed or disk.
+        """
+        raise NotImplementedError()
+
+    def continue_generation(self):
+        """Continue the generation of inference engine."""
+        raise NotImplementedError()
+
     def pause(self):
         """Pause request submission for async rollout.
 

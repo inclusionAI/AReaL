@@ -2,13 +2,14 @@ import os
 import sys
 from copy import deepcopy
 
-import torch.distributed as dist
+from megatron.core import parallel_state as mpu
+from torch import distributed as dist
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
-from areal.engine.ppo.actor import FSDPPPOActor
+from areal.engine.ppo.actor import MegatronPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
@@ -45,8 +46,7 @@ def main(args):
     parallel_strategy = allocation_mode.train
     assert parallel_strategy is not None
 
-    # Initialize train engine
-    actor = FSDPPPOActor(config=config.actor)
+    actor = MegatronPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
     # Create dataset and dataloaders
@@ -59,14 +59,14 @@ def main(args):
 
     train_dataloader = create_dataloader(
         train_dataset,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
+        rank=mpu.get_data_parallel_rank(),
+        world_size=mpu.get_data_parallel_world_size(),
         dataset_config=config.train_dataset,
     )
     valid_dataloader = create_dataloader(
         valid_dataset,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
+        rank=mpu.get_data_parallel_rank(),
+        world_size=mpu.get_data_parallel_world_size(),
         dataset_config=config.valid_dataset,
     )
     ft_spec = FinetuneSpec(
@@ -83,16 +83,23 @@ def main(args):
     eval_rollout.config.max_head_offpolicyness = int(1e12)
     eval_rollout.initialize()
 
-    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
+    # Initialize train engine
+    actor.initialize(
+        None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
+    )
 
-    actor.initialize(None, ft_spec)
+    weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
+        allocation_mode,
+        nccl_group_name=actor.weight_update_group_name,
+    )
     actor.connect_engine(rollout, weight_update_meta)
 
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
-        ref = FSDPPPOActor(config=config.ref)
-        ref.create_process_group(parallel_strategy=parallel_strategy)
-        ref.initialize(None, ft_spec)
+        ref = MegatronPPOActor(config=config.ref)
+        ref.initialize(
+            None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
+        )
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -156,19 +163,17 @@ def main(args):
         )
 
         with stats_tracker.record_timing("rollout"):
+            # NOTE: Megatron will ignore inputs from non data parallel heads.
+            # However, methods such as `compute_advantages` and `ppo_update`
+            # still requires data integrity to be called on every training process.
+            # Therefore, we still need to broadcast batch across context+model parallel group.
             batch = None
             if actor.is_data_parallel_head():
                 if config.async_training:
-                    batch = rollout.prepare_batch(
-                        train_dataloader,
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
-                    )
+                    batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
                 else:
                     batch = rollout.rollout_batch(
-                        next(data_generator),
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
+                        next(data_generator), workflow=workflow
                     )
                 batch = tensor_container_to(batch, actor.device)
             batch = broadcast_tensor_container(
@@ -257,7 +262,7 @@ def main(args):
 
         # Upload statistics to the logger (e.g., wandb)
         stats[0].update(
-            stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+            stats_tracker.export_all(reduce_group=mpu.get_data_parallel_group())
         )
         stats_logger.commit(epoch, step, global_step, stats)
 
@@ -273,6 +278,7 @@ def main(args):
     if ref is not None:
         ref.destroy()
     actor.destroy()
+    actor.destroy_process_groups()
 
 
 if __name__ == "__main__":
