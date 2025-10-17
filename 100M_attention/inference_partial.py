@@ -499,6 +499,12 @@ def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description=__doc__)
 	parser.add_argument("--prompt", type=str, default="Hello, world!", help="Prompt to feed the model.")
 	parser.add_argument(
+		"--prompt-file",
+		type=str,
+		default=None,
+		help="Path to a text file containing the prompt. If provided, overrides --prompt.",
+	)
+	parser.add_argument(
 		"--model-name-or-path",
 		type=str,
 		default="gpt2",
@@ -580,6 +586,22 @@ def main() -> None:
 		run_self_test(device)
 		return
 
+	# Load prompt from file if specified
+	if args.prompt_file:
+		LOGGER.info("Loading prompt from file: %s", args.prompt_file)
+		try:
+			with open(args.prompt_file, 'r', encoding='utf-8') as f:
+				prompt = f.read().strip()
+			LOGGER.info("Loaded prompt from file (length: %d characters)", len(prompt))
+		except FileNotFoundError:
+			LOGGER.error("Prompt file not found: %s", args.prompt_file)
+			return
+		except Exception as e:
+			LOGGER.error("Error reading prompt file: %s", e)
+			return
+	else:
+		prompt = args.prompt
+
 	model, tokenizer = load_model_and_tokenizer(
 		model_name_or_path=args.model_name_or_path,
 		device=device,
@@ -615,7 +637,7 @@ def main() -> None:
 	result = generate_text(
 		model=model,
 		tokenizer=tokenizer,
-		prompt=args.prompt,
+		prompt=prompt,
 		max_new_tokens=args.max_new_tokens,
 		temperature=args.temperature,
 		top_p=args.top_p,
