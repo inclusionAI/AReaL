@@ -1,34 +1,15 @@
-import getpass
-import os
-import re
-import signal as signal_module
-import subprocess
-import time
 import uuid
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List
 
-import psutil
-
-from areal.api.alloc_mode import AllocationMode, AllocationType
-from areal.api.cli_args import (
-    ClusterSpecConfig,
-    LauncherConfig,
-    RecoverConfig,
-    SGLangConfig,
-    to_structured_cfg,
-)
-from areal.api.scheduler_api import Scheduler, Worker, Job, ScheduleStrategy
-from areal.platforms import current_platform
-from areal.scheduler.rpc.rpc_client import RPCClient
-from areal.scheduler.rpc.rpc_server import build_rpc_server_start_command
-from areal.utils import logging, name_resolve, names
-from areal.utils.launcher import JobException, JobInfo, JobState, get_env_vars
-from areal.utils.network import find_free_ports, gethostip
-from areal.utils.recover import check_if_recover
+from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.launcher.local import LocalLauncher
+from areal.scheduler.rpc.rpc_client import RPCClient
+from areal.utils import logging
+from areal.utils.network import find_free_ports
 
 logger = logging.getLogger("LocalScheduler")
+
 
 class LocalScheduler(Scheduler):
     def __init__(self, config):
@@ -43,15 +24,27 @@ class LocalScheduler(Scheduler):
 
     def create_workers(self, job: Job, *args, **kwargs) -> None:
         replicas = job.replicas
-        for task in job.tasks:
-            for _ in range(replicas):
+        master_port = find_free_ports(1, port_range=(10000, 50000))[0]
+
+        for index in range(replicas):
+            for task in job.tasks:
                 ports = find_free_ports(task.port_count, port_range=(10000, 50000))
                 envs = task.env_vars if task.env_vars else {}
-                envs["ENGINE_PORTS"] = ",".join(map(str, ports))
+                envs["PORT_LIST"] = ",".join(map(str, ports))
+                if job.role != "rollout":
+                    envs.update(
+                        {
+                            "RANK": index,
+                            "LOCAL_RANK": 0,
+                            "WORLD_SIZE": replicas,
+                            "MASTER_ADDR": "localhost",
+                            "MASTER_PORT": master_port,
+                        }
+                    )
                 self.launcher.submit(
                     job_name="llm_server",
                     cmd=task.cmd,
-                    gpu=task.gpu,
+                    gpu=task.gpu * replicas,
                     env_vars=envs,
                 )
 
@@ -61,7 +54,6 @@ class LocalScheduler(Scheduler):
                     self.engine_workers.setdefault(job.role, []).append(worker_id)
 
             logger.info(f"Submitted {replicas} tasks for command: {task.cmd}")
-
 
         # config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
         # config.recover = to_structured_cfg(config.recover, RecoverConfig)

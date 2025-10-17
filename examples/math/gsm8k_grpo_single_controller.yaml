@@ -72,6 +72,17 @@ actor:
     mean_level: batch
     std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
+  scheduling_specs:
+    - type: worker
+      gpu: 1
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
+#    - type: engine
+#      gpu: 1
+#      cmd: python3 -m areal.scheduler.rpc.rpc_client
+#      # you can customize environment variables here
+#      env_vars:
+#        # if use ling max v2, need to specify USE_MAX_V2 = 1
+#        USE_MAX_V2: 1
 
 ref:
   experiment_name: ${experiment_name}

@@ -121,7 +121,9 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                     logger.error("Call received but engine is none.")
                     return
                 action, args, kwargs = cloudpickle.loads(data)
+
                 method = getattr(EngineRPCServer.engine, action)
+
                 # NOTE: DO NOT print args here, args may be a very huge tensor
                 if isinstance(EngineRPCServer.engine, InferenceEngine):
                     device = "cpu"
@@ -131,8 +133,14 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 args, kwargs = process_input_to_distributed_batch(
                     device, *args, **kwargs
                 )
-                result = method(*args, **kwargs)
-                result = process_output_to_distributed_batch(result)
+                if (
+                    check_attribute_type(type(EngineRPCServer.engine), action)
+                    == "method"
+                ):
+                    result = method(*args, **kwargs)
+                    result = process_output_to_distributed_batch(result)
+                else:
+                    result = method
                 self.send_response(HTTPStatus.OK)
                 self.end_headers()
                 self.wfile.write(cloudpickle.dumps(result))
@@ -161,29 +169,35 @@ def start_rpc_server(port):
     server.serve_forever()
 
 
-def get_server_ports(ports_str: str) -> int:
-    ports = [p.strip() for p in ports_str.split(",")]
-    word_size = int(os.environ.get("WORLD_SIZE", "1"))
-    rank = int(os.environ.get("RANK", "0"))
-    if len(ports) < word_size:
-        raise ValueError(
-            f"Not enough ports for the world size {word_size}, got {ports_str}"
-        )
-    return int(ports[rank])
+def check_attribute_type(cls, attr_name):
+    if hasattr(cls, attr_name):
+        attr = getattr(cls, attr_name)  # 从类获取
+        if isinstance(attr, property):
+            return "property"
+        elif callable(attr):
+            return "method"
+        else:
+            raise f"unsupported attr, type: {type(attr)}, name: {attr_name}"
+    raise f"attr not found, name: {attr_name}"
 
 
-def build_rpc_server_start_command(port):
-    return f"python3 -m areal.scheduler.rpc.rpc_server --rpc_ports {port}"
+def get_server_port(port: int) -> int:
+    if port:
+        return port
+    port_list = os.environ.get("PORT_LIST", "").strip()
+
+    ports = [p.strip() for p in port_list.split(",")]
+    # use the first port as serve port
+    return int(ports[0])
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--rpc_ports", type=str, required=True)
+    parser.add_argument("--port", type=int, required=False)
 
     args, unknown = parser.parse_known_args()
-    port = get_server_ports(args.rpc_ports)
+    port = get_server_port(args.port)
 
     logger.info(f"About to start RPC server on {port}")
-
     start_rpc_server(port)

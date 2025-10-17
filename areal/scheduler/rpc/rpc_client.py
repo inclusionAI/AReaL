@@ -49,7 +49,7 @@ class RPCClient:
             raise RuntimeError(
                 f"Failed to create engine, {resp.status_code}, {resp.content}"
             )
-        
+
     def check_health(self, worker_id: str, timeout: int = 20) -> bool:
         ip, port = self._addrs[worker_id]
         url = f"http://{ip}:{port}/health"

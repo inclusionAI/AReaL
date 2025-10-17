@@ -1,4 +1,4 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from typing import Any, Callable, Dict, List
 
@@ -66,21 +66,28 @@ class DistributedTrainController(TrainController):
 
         logger.info(f"Start to initialize engine")
         with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
-            futures = [
+            create_engine: Callable[..., Any] = partial(
+                create_engine_with_retry,
+                self.scheduler.create_engine,
+                60,  # max_retries
+                10,  # retry_delay
+            )
+            futures: List[Future] = [
                 executor.submit(
-                    partial(
-                        create_engine_with_retry,
-                        self.scheduler.create_engine,
-                        worker.id,
-                        self.train_engine,
-                        None,
-                        self.ft_spec,
-                    )
+                    create_engine,
+                    worker.id,
+                    self.train_engine,
+                    None,
+                    self.ft_spec,
+                    self.alloc_mode.train,
                 )
                 for worker in self.workers
             ]
-
-            wait_future_ordered(futures, exit_on_exception=True)
+            try:
+                wait_future_ordered(futures, exit_on_exception=True)
+            except Exception as e:
+                logger.error(f"Failed to initialize engine: {e}")
+                raise
 
         logger.info(f"Start to get rank info from engine")
         self.engine_dp_ranks = rpc_call(
