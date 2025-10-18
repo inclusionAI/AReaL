@@ -13,7 +13,6 @@ from areal.experimental.utils.mcore.functional import _VocabParallelEntropy
 from areal.utils import stats_tracker
 from areal.utils.data import Normalization, split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import (
-    filter_batch,
     gather_logprobs,
     gather_logprobs_entropy,
     ppo_actor_loss_fn,
@@ -178,9 +177,6 @@ class PPOActor:
         data["logprobs"] = old_logp
 
     def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
-        if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
-            data, sampling_stat = filter_batch(filter_batch_fn_DAPO, data, self.group_size)
-
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]
