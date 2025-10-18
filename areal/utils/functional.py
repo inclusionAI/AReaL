@@ -6,8 +6,11 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.distributed.nn.functional as dist_F
+from megatron.core import parallel_state as mpu
+from megatron.core import tensor_parallel
 
 from areal.platforms import is_npu_available
+from areal.utils.mcore.functional import _VocabParallelEntropy
 from areal.utils.ulysses import (
     get_ulysses_sequence_parallel_group,
     get_ulysses_sequence_parallel_world_size,
@@ -43,10 +46,18 @@ def gather_logprobs(
     temperature: float = 1.0,
     chunk_size: int = 1024,
 ):
-    batch_size = logits.shape[0]
+    # Megatron path
+    if mpu.is_initialized() and mpu.get_tensor_model_parallel_world_size() > 1:
+        # NOTE: When tensor parallelism is enabled, logits are parallelized across TP ranks.
+        # If we explicitly gather logits, it will significantly increase GPU memory usage.
+        # Therefore here we use a utility function from megatron to avoid this.
+        _logits = logits.float() / temperature
+        logprobs = -tensor_parallel.vocab_parallel_cross_entropy(
+            vocab_parallel_logits=_logits, target=labels
+        )
+        return logprobs
 
-    if batch_size <= chunk_size:
-        return _gather_logprobs(logits, labels, temperature)
+    batch_size = logits.shape[0]
 
     log_probs_labels_list = []
 
@@ -59,7 +70,15 @@ def gather_logprobs(
 
         log_probs_labels_list.append(chunk_log_probs)
 
-    return torch.cat(log_probs_labels_list)
+    logprobs = torch.cat(log_probs_labels_list)
+
+    # Ulysses SP path
+    if get_ulysses_sequence_parallel_world_size() > 1:
+        sp_group = get_ulysses_sequence_parallel_group()
+        logprobs = dist_F.all_gather(logprobs, group=sp_group)
+        logprobs = torch.cat(logprobs, dim=-1)
+
+    return logprobs
 
 
 def gather_logprobs_entropy(
@@ -68,6 +87,16 @@ def gather_logprobs_entropy(
     temperature: float = 1.0,
     chunk_size: int = 1024,
 ):
+    # Megatron path
+    if mpu.is_initialized() and mpu.get_tensor_model_parallel_world_size() > 1:
+        # TODO: check GPU memory usage
+        _logits = logits.float() / temperature
+        entropy = _VocabParallelEntropy.apply(_logits)
+        logprobs = -tensor_parallel.vocab_parallel_cross_entropy(
+            vocab_parallel_logits=_logits, target=labels
+        )
+        return logprobs, entropy
+
     batch_size = logits.shape[0]
     log_probs_labels_list = []
     entropy_list = []
@@ -87,6 +116,7 @@ def gather_logprobs_entropy(
     logprobs = torch.cat(log_probs_labels_list)
     entropy = torch.cat(entropy_list)
 
+    # Ulysses SP path
     if get_ulysses_sequence_parallel_world_size() > 1:
         sp_group = get_ulysses_sequence_parallel_group()
         logprobs = dist_F.all_gather(logprobs, group=sp_group)

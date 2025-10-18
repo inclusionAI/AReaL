@@ -1,167 +1,46 @@
 import functools
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 import torch
+from tensordict import TensorDict
 
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
-from areal.engine.megatron_engine import MegatronEngine
+from areal.engine.ppo.actor import PPOActor
 from areal.utils import stats_tracker
-from areal.utils.data import (
-    KLEstimator,
-    Normalization,
-    split_padded_tensor_dict_into_mb_list,
-)
+from areal.utils.data import split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import (
+    dynamic_sampling,
     gather_logprobs,
     gather_logprobs_entropy,
     ppo_actor_loss_fn,
     reward_overlong_penalty,
 )
+from recipe.AEnt.aent_args import AEntPPOActorConfig
+from recipe.AEnt.functional import gather_logprobs_clamped_entropy
 
 
-class PPOActor:
-    def __init__(self, config: PPOActorConfig, engine: TrainEngine):
-        self.config = config
-        self.engine = engine
+class AEntPPOActor(PPOActor):
 
-        self.reward_bias = config.reward_bias
-        self.reward_scaling = config.reward_scaling
-        self.reward_clip = config.reward_clip
+    def __init__(self, config: AEntPPOActorConfig, engine: TrainEngine):
+        super().__init__(config, engine)
+        self.entropy_coeff = config.aent.entropy_coeff
+        self.entropy_clamp = config.aent.entropy_clamp
+        self.adaptive_coeff = config.aent.adaptive_coeff
+        if self.adaptive_coeff:
+            self.entropy_high = config.aent.entropy_high
+            self.entropy_low = config.aent.entropy_low
+            self.coeff_lr = config.aent.coeff_lr
+            self.coeff_box_high = config.aent.coeff_box_high
+            self.coeff_box_low = config.aent.coeff_box_low
+            self.warmup_steps = config.aent.warmup_steps
 
-        self.group_size = config.group_size
-
-        self.kl_ctl = config.kl_ctl
-        self.kl_estimator = KLEstimator(config.kl_estimator)
-
-        self.adv_norm = Normalization(config.adv_norm) if config.adv_norm else None
-        self.reward_norm = (
-            Normalization(config.reward_norm) if config.reward_norm else None
-        )
-
-        self.discount = config.discount
-        self.gae_lambda = config.gae_lambda
-        self.mask_no_eos_with_zero = config.mask_no_eos_with_zero
-
-        self.temperature = config.temperature
-
-    @torch.no_grad()
-    def compute_logp(
-        self,
-        data: Dict[str, Any],
-        temperature: Optional[float] = None,
-    ) -> torch.Tensor | None:
-        def calc_logprobs(logits, input_data):
-            labels = input_data.get(
-                "rolled_input_ids",
-                torch.roll(input_data["input_ids"], shifts=-1, dims=-1),
-            )
-            logprobs = gather_logprobs(logits, labels, temperature or 1.0)
-            return logprobs
-
-        self.engine.eval()
-        return self.engine.forward(
-            input_=data,
-            post_hook=calc_logprobs,
-            aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
-        )
-
-    def compute_advantages(self, data: Dict[str, Any]) -> None:
-        bs = data["input_ids"].shape[0]
-        max_seqlen = data["input_ids"].shape[1]
-        batch_indices = torch.arange(
-            bs, device=data["input_ids"].device, dtype=torch.long
-        )
-
-        # Reward Penalty on length
-        if self.config.overlong_reward_penalty:
-            overlong_tokens = self.config.overlong_tokens
-            overlong_penalty_factor = self.config.overlong_penalty_factor
-
-            data = reward_overlong_penalty(
-                data,
-                overlong_tokens=overlong_tokens,
-                overlong_penalty_factor=overlong_penalty_factor,
-                max_response_length=self.config.max_new_tokens,
-            )
-
-        # Reward Scaling
-        reward_score = data["rewards"]
-        reward_score = (reward_score + self.reward_bias) * self.reward_scaling
-        reward_score = torch.clip(
-            reward_score, max=self.reward_clip, min=-self.reward_clip
-        )
-        if self.reward_norm:
-            reward_score = self.reward_norm(reward_score)
-
-        loss_mask = data["loss_mask"].float()
-        loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
-        # Apply the mask to log probabilities.
-        if not self.config.use_decoupled_loss and self.config.recompute_logprob:
-            # Overwrite logprobs produced by the inference engine
-            old_logp = data["logprobs"] = data["prox_logp"]
-        else:
-            old_logp = torch.roll(data["logprobs"], shifts=-1, dims=-1)
-            if not self.config.use_decoupled_loss:
-                # prox logp not available, use inferenced logp
-                data["prox_logp"] = old_logp
-        ref_logp = data.get("ref_logp", torch.zeros_like(old_logp))
-        ref_logp *= loss_mask
-        old_logp *= loss_mask
-
-        # Compute KL-regularized rewards.
-        attn_mask = data["attention_mask"]
-        seqlens = attn_mask.sum(-1).long()
-        seq_no_eos_mask = seqlens == attn_mask.shape[1]
-        rewards = -self.kl_ctl * self.kl_estimator(old_logp, ref_logp)
-        kl_rewards = rewards.clone()
-        # KL rewards at the next token after eos is zero.
-        rewards[batch_indices, seqlens - 1] = 0
-        indices = torch.clip(seqlens - 2, min=0)
-        if self.mask_no_eos_with_zero:
-            rewards[batch_indices, indices] += torch.where(
-                seq_no_eos_mask, 0, reward_score
-            )
-        else:
-            rewards[batch_indices, indices] += reward_score
-
-        # Compute GAE.
-        if "values" not in data:
-            values = torch.zeros_like(rewards)
-        else:
-            values = data["values"]
-        advantages_reversed = [
-            torch.zeros(bs, dtype=torch.float32, device=values.device)
-        ]
-        lastgaelam = 0
-        nextvalues = values[:, max_seqlen - 1] * seq_no_eos_mask
-        for t in reversed(range(max_seqlen - 1)):
-            delta = rewards[:, t] + self.discount * nextvalues - values[:, t]
-            newgaelam = delta + self.discount * self.gae_lambda * lastgaelam
-
-            # Skip tokens that do not contribute to the loss
-            mask = loss_mask[:, t]
-            nextvalues = nextvalues * (1 - mask) + values[:, t] * mask
-            lastgaelam = lastgaelam * (1 - mask) + newgaelam * mask
-            advantages_reversed.append(lastgaelam)
-
-        advantages = torch.stack(advantages_reversed[::-1], dim=1)
-        data["returns"] = advantages + values
-
-        # Optionally perform advantage normalization.
-        if self.adv_norm is not None:
-            advantages = self.adv_norm(advantages, loss_mask)
-
-        # Store data in the dict.
-        data["advantages"] = advantages
-        data["kl_rewards"] = kl_rewards
-        data["tot_rewards"] = rewards
-        data["loss_mask"] = loss_mask
-        # because we have rolled old_logp by -1
-        data["logprobs"] = old_logp
-
-    def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
+    def aent_ppo_update(
+        self, data: TensorDict, global_step: int
+    ) -> List[Dict[str, float]]:
+        if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
+            data, sampling_stat = dynamic_sampling(data, self.group_size)
 
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
@@ -250,14 +129,17 @@ class PPOActor:
             data,
             mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
         )
+        ent_trace = []
         for mb in mb_inputs.mbs:
             train_stat = self.engine.train_batch(
                 mb,
                 loss_fn=functools.partial(
-                    grpo_loss_fn,
+                    aent_grpo_loss_fn,
                     temperature=self.temperature,
                     eps_clip=self.config.eps_clip,
                     eps_clip_higher=self.config.eps_clip_higher,
+                    entropy_coeff=self.entropy_coeff,
+                    entropy_clamp=self.entropy_clamp,
                     c_clip=self.config.c_clip,
                     behav_imp_weight_cap=self.config.behav_imp_weight_cap,
                 ),
@@ -267,14 +149,25 @@ class PPOActor:
             all_stats.append(
                 stats_tracker.export(reduce_group=self.engine.data_parallel_group)
             )
+            ent_trace.append(float(all_stats[-1]["grpo_actor/entropy/avg"]))
+        if self.adaptive_coeff and global_step > self.warmup_steps:
+            entropy = sum(ent_trace) / len(ent_trace)
+            self.entropy_coeff -= self.coeff_lr * (
+                min(0, entropy - self.entropy_low) + max(0, entropy - self.entropy_high)
+            )
+            self.entropy_coeff = min(
+                max(self.entropy_coeff, self.coeff_box_low), self.coeff_box_high
+            )
+
         all_stats[0].update(global_stats)
         return all_stats
 
 
-class FSDPPPOActor(FSDPEngine):
-    def __init__(self, config: PPOActorConfig):
+class FSDPAEntPPOActor(FSDPEngine):
+
+    def __init__(self, config: AEntPPOActorConfig):
         super().__init__(config)
-        self.actor = PPOActor(config, self)
+        self.actor = AEntPPOActor(config, self)
 
     @torch.no_grad()
     def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
@@ -284,53 +177,40 @@ class FSDPPPOActor(FSDPEngine):
     def compute_advantages(self, *args, **kwargs) -> None:
         self.actor.compute_advantages(*args, **kwargs)
 
-    def ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
-        return self.actor.ppo_update(*args, **kwargs)
+    def aent_ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
+        return self.actor.aent_ppo_update(*args, **kwargs)
 
 
-class MegatronPPOActor(MegatronEngine):
-
-    def __init__(self, config: PPOActorConfig):
-        super().__init__(config)
-        self.actor = PPOActor(config, self)
-
-    @torch.no_grad()
-    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
-        return self.actor.compute_logp(*args, **kwargs)
-
-    @torch.no_grad()
-    def compute_advantages(self, *args, **kwargs) -> None:
-        self.actor.compute_advantages(*args, **kwargs)
-
-    def ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
-        return self.actor.ppo_update(*args, **kwargs)
-
-
-def grpo_loss_fn(
+# AEnt regularized grpo loss
+def aent_grpo_loss_fn(
     logits: torch.Tensor,
     input_data: Dict,
     temperature: float,
     eps_clip: float,
+    entropy_coeff: float,
+    entropy_clamp: float,
     eps_clip_higher: float | None,
     c_clip: float | None,
     behav_imp_weight_cap: float | None,
 ):
-    """Loss function for actor step, all inputs should be splitted into
-    pipeline micro batches, returns loss and logging stats."""
-    # Use rolled input_ids. Ulysses SP will roll input_ids in ulysses_prepare_inputs().
     labels = input_data.get(
         "rolled_input_ids",
         torch.roll(input_data["input_ids"], shifts=-1, dims=-1),
     )
     old_logp = input_data["logprobs"]
     advantages = input_data["advantages"]
-    # Use full loss_mask. Ulysses SP will slice loss_mask in ulysses_prepare_inputs().
+    # Use unsliced/full loss_mask.
+    # Ulysses SP will slice loss_mask in ulysses_prepare_inputs().
     loss_mask = input_data.get("full_loss_mask", input_data["loss_mask"]).bool()
     prox_logp = input_data["prox_logp"]
 
-    logprobs, entropy = gather_logprobs_entropy(logits, labels, temperature)
-    entropy = entropy.detach()
-    loss, stat = ppo_actor_loss_fn(
+    if entropy_clamp > 0:
+        logprobs, clamped_entropy = gather_logprobs_clamped_entropy(
+            logits, labels, entropy_clamp, temperature
+        )
+    else:
+        logprobs, clamped_entropy = gather_logprobs_entropy(logits, labels, temperature)
+    ppo_loss, stat = ppo_actor_loss_fn(
         logprobs=logprobs,
         old_logprobs=old_logp,
         advantages=advantages,
@@ -341,6 +221,9 @@ def grpo_loss_fn(
         proximal_logprobs=prox_logp,
         behav_imp_weight_cap=behav_imp_weight_cap,
     )
+    # add AEnt's clamped entropy regularizer
+    clamped_entropy_loss = clamped_entropy_loss_fn(clamped_entropy, loss_mask)
+    loss = ppo_loss - entropy_coeff * clamped_entropy_loss
 
     # Log training statistics
     stats_tracker.denominator(
@@ -355,7 +238,7 @@ def grpo_loss_fn(
         approx_kl=stat["approx_kl"],
         new_logp=logprobs.detach(),
         old_logp=old_logp,
-        entropy=entropy.float(),
+        entropy=clamped_entropy.float(),
         actor_loss=stat["loss"],
         clip_ratio=stat["clip_mask"].float(),
         dual_clip_ratio=stat["dual_clip_mask"].float(),
@@ -385,3 +268,11 @@ def grpo_loss_fn(
         denominator="clipped_tokens",
     )
     return loss
+
+
+def clamped_entropy_loss_fn(clamped_entropy: torch.Tensor, loss_mask: torch.Tensor):
+    loss_mask_count = loss_mask.count_nonzero() or 1
+    clamped_ent_loss = (
+        torch.where(loss_mask.bool(), clamped_entropy, 0.0).sum() / loss_mask_count
+    )
+    return clamped_ent_loss
