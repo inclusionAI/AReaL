@@ -14,10 +14,10 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
-    aggregate_metric_dicts,
     broadcast_tensor_container,
     concat_padded_tensors,
     cycle_dataloader,
+    get_batch_size,
     tensor_container_to,
     truncate_dict_to_batch_size,
 )
@@ -27,7 +27,7 @@ from areal.utils.functional import filter_batch, filter_batch_fn_DAPO
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
-from areal.utils.stats_logger import StatsLogger
+from areal.utils.stats_logger import StatsLogger, log_sampling_stats
 from areal.workflow.rlvr import RLVRWorkflow
 
 
@@ -41,6 +41,7 @@ def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
 
+    assert config.actor.dynamic_sampling in ["none", "static", "dynamic"]
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
@@ -171,6 +172,7 @@ def main(args):
     max_steps = total_epochs * steps_per_epoch
 
     data_generator = cycle_dataloader(train_dataloader)
+
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -214,48 +216,39 @@ def main(args):
                 log_gpu_stats("compute advantages")
 
             # Collect the batch and process it immediately
-            if config.actor.dynamic_sampling:
-                with stats_tracker.record_timing("rollout_refill_dapo_batch_buffers"):
-                    # Filter the current batch by groups
-                    # In the worst-case scenario where each new batch contributes only one group (the minimum kept),
-                    # it will take `train_dataloader_batch_size` retries to fill the target batch.
-                    filtered_batch, sampling_stat = filter_batch(
-                        filter_batch_fn_DAPO, new_batch, config.actor.group_size
-                    )
-                    sampling_stats.append(sampling_stat)
+            if config.actor.dynamic_sampling in ["static", "dynamic"]:
+                # Filter the current batch by groups
+                filtered_batch, sampling_stat = filter_batch(
+                    filter_batch_fn_DAPO, new_batch, config.actor.group_size
+                )
+                sampling_stats.append(sampling_stat)
 
+                if config.actor.dynamic_sampling == "static":
+                    # Statistic sampling: No need to refill for static sampling, result in smaller(variant) batch size
+                    batch = filtered_batch
+                    # Log sampling statistics for static sampling
+                    log_sampling_stats(
+                        sampling_stats, epoch, step, global_step, stats_logger
+                    )
+                    break
+                else:
+                    # Dynamic sampling: keep collecting batches until we reach the target batch size
                     # Add filtered batch to collection
                     collected_batches.append(filtered_batch)
 
                     # Aggregate all filter/clean batches
                     aggregated_batch = concat_padded_tensors(collected_batches)
-                    total_batch_size = len(new_batch["rewards"])
-                    # just for sanity check
-                    assert (
-                        total_batch_size
-                        == train_dataloader_batch_size * config.actor.group_size
-                    )
+                    expected_batch_size = get_batch_size(new_batch)
+                    aggregated_batch_size = get_batch_size(aggregated_batch)
                     # Check if we have collected enough samples
-                    if len(aggregated_batch["rewards"]) >= total_batch_size:
-                        sampling_stats = aggregate_metric_dicts(sampling_stats)
-                        keep_ratio = float(sampling_stats["n_group_kept"]) / float(
-                            sampling_stats["n_group_filtered"]
-                            + sampling_stats["n_group_kept"]
-                        )
-                        sampling_stats = {
-                            "keep_ratio": keep_ratio,
-                            "filter_ratio": 1.0 - keep_ratio,
-                        }
-                        # Log the sampling statistics
-                        stats_logger.commit(
-                            epoch=epoch,
-                            step=step,
-                            global_step=global_step,
-                            data=sampling_stats,
+                    if aggregated_batch_size >= expected_batch_size:
+                        # Log sampling statistics for dynamic sampling
+                        log_sampling_stats(
+                            sampling_stats, epoch, step, global_step, stats_logger
                         )
                         # Truncate batch to train_batch_size
                         batch = truncate_dict_to_batch_size(
-                            data=aggregated_batch, batch_size=total_batch_size
+                            data=aggregated_batch, batch_size=expected_batch_size
                         )
                         break
             else:

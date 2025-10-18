@@ -1,7 +1,7 @@
 import getpass
 import os
 import time
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import swanlab
 import torch.distributed as dist
@@ -147,3 +147,66 @@ class StatsLogger:
         path = f"{config.fileroot}/logs/{getpass.getuser()}/{config.experiment_name}/{config.trial_name}"
         os.makedirs(path, exist_ok=True)
         return path
+
+
+def aggregate_metric_dicts(dicts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate multiple dictionaries containing numeric values.
+
+    Args:
+        dicts: List of dictionaries to aggregate
+
+    Returns:
+        Aggregated dictionary with the same keys
+    """
+    if not dicts:
+        return {}
+
+    # Get all unique keys from all dictionaries
+    all_keys = set()
+    for d in dicts:
+        all_keys.update(d.keys())
+
+    result = {}
+
+    for key in all_keys:
+        # Collect all values for this key
+        values = [d.get(key) for d in dicts if key in d]
+
+        if not values:
+            continue
+
+        # Check if all values are numeric (int, float)
+        if all(isinstance(v, (int, float)) for v in values):
+            # Sum numeric values
+            result[key] = sum(values)
+
+        else:
+            # For mixed or other types, keep as list
+            result[key] = values
+
+    return result
+
+
+def log_sampling_stats(
+    sampling_stats_list: list,
+    epoch: int,
+    step: int,
+    global_step: int,
+    stats_logger: StatsLogger,
+):
+    """Helper function to log sampling statistics for both static and dynamic sampling."""
+    sampling_stats = aggregate_metric_dicts(sampling_stats_list)
+    keep_ratio = float(sampling_stats["n_group_kept"]) / float(
+        sampling_stats["n_group_filtered"] + sampling_stats["n_group_kept"]
+    )
+    sampling_stats = {
+        "keep_ratio": keep_ratio,
+        "filter_ratio": 1.0 - keep_ratio,
+    }
+    # Log the sampling statistics
+    stats_logger.commit(
+        epoch=epoch,
+        step=step,
+        global_step=global_step,
+        data=sampling_stats,
+    )
