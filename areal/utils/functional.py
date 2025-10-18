@@ -311,7 +311,11 @@ def ppo_critic_loss_fn(
     return value_loss, stat
 
 
-def dynamic_sampling(
+def filter_batch(filter_batch_fn, data: Dict[str, Any], group_size: int):
+    return filter_batch_fn(data, group_size)
+
+
+def filter_batch_fn_DAPO(
     data: Dict[str, Any], group_size: int
 ) -> Tuple[Dict[str, Any], Dict[str, int]]:
     """Filter samples by group when all rewards in a group are equal.
@@ -354,9 +358,10 @@ def dynamic_sampling(
     # Expand the group mask to individual samples
     mask = valid_groups.repeat_interleave(group_size)
 
-    # In case all group is filtered out, return the original data (although not gradient in this case)
+    # In case all groups are filtered out, keep the first group to prevent an infinite loop in the data collection process (though this group will not contribute to the gradient).
     if not mask.any():
-        return data, dict(n_group_kept=0, n_group_filtered=num_groups)
+        mask[:group_size] = True
+        valid_groups[0] = True
 
     n_group_kept = int(valid_groups.sum().item())
     n_group_filtered = int(num_groups - n_group_kept)

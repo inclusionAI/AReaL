@@ -486,12 +486,10 @@ class PPOActorConfig(TrainEngineConfig):
         },
     )
     # Advanced Options
-    dynamic_sampling: bool = field(
-        default=False,
+    dynamic_sampling: str = field(
+        default="none",
         metadata={
-            "help": "Enable dynamic sampling (within DAPO). If enabled, groups with the same reward will be masked out. "
-            "Note that enabling this option will lead to variable batch sizes. If you want to use a constant batch size with dynamic filtering, "
-            "you should use the `should_accept` parameter in `rollout_batch` and `prepare_batch`."
+            "help": "Dynamic sampling strategy ​(within DAPO). Select from none,dynamic and static. See the doc for more details"
         },
     )
 

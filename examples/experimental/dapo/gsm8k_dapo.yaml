@@ -14,7 +14,7 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: sglang.d4+fsdp.d4
+allocation_mode: sglang:d4+fsdp:d4
 
 rollout:
   experiment_name: ${experiment_name}
@@ -67,7 +67,7 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
-  dynamic_sampling: true
+  dynamic_sampling: 'dynamic'
   reward_norm:
     mean_level: group
     std_level: group
