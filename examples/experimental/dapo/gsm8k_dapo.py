@@ -63,8 +63,6 @@ def main(args):
     )
 
     # Create dataset and dataloaders
-    train_dataset.batch_size // actor.data_parallel_world_size
-    valid_dataset.batch_size // actor.data_parallel_world_size
     train_dataloader = create_dataloader(
         train_dataset,
         rank=actor.data_parallel_rank,
