@@ -5,7 +5,6 @@ from copy import deepcopy
 
 import torch
 import torch.distributed as dist
-from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import load_expr_config
@@ -16,6 +15,7 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.reward.math_parser import process_results
 from areal.utils import logging, seeding, stats_tracker
 from areal.utils.data import broadcast_tensor_container, tensor_container_to
+from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -61,40 +61,24 @@ def main(args):
 
     # Load datasets
     train_dataset = get_custom_dataset(
-        path=config.train_dataset.path,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
-        split="train",
-        max_length=config.train_dataset.max_length,
-        type=config.train_dataset.type,
-        tokenizer=tokenizer,
+        split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
     )
     valid_dataset = get_custom_dataset(
-        path=config.valid_dataset.path,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
-        split="test",
-        max_length=config.valid_dataset.max_length,
-        type=config.valid_dataset.type,
-        tokenizer=tokenizer,
+        split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
     )
 
     # Create dataloaders
-    train_dataloader = StatefulDataLoader(
+    train_dataloader = create_dataloader(
         train_dataset,
-        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
-        shuffle=config.train_dataset.shuffle,
-        num_workers=config.train_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.train_dataset.drop_last,
+        rank=actor.data_parallel_rank,
+        world_size=actor.data_parallel_world_size,
+        dataset_config=config.train_dataset,
     )
-    valid_dataloader = StatefulDataLoader(
+    valid_dataloader = create_dataloader(
         valid_dataset,
-        batch_size=config.valid_dataset.batch_size // actor.data_parallel_world_size,
-        shuffle=config.valid_dataset.shuffle,
-        num_workers=config.valid_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.valid_dataset.drop_last,
+        rank=actor.data_parallel_rank,
+        world_size=actor.data_parallel_world_size,
+        dataset_config=config.valid_dataset,
     )
 
     ft_spec = FinetuneSpec(

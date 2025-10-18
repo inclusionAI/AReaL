@@ -626,13 +626,14 @@ Configuration for distributed name resolution and service discovery.
 
 Configuration for launching the training jobs with Slurm.
 
-| Parameter                | Type           | Default                        | Description                                                       |
-| ------------------------ | -------------- | ------------------------------ | ----------------------------------------------------------------- |
-| `srun_additional_args`   | string         | `"--mpi=pmi2 -K --chdir $PWD"` | Additional arguments to pass to the srun command.                 |
-| `container_type`         | string         | `"apptainer"`                  | Type of containers used in slurm **Choices:** `apptainer`, `none` |
-| `mount`                  | string         | `"/storage:/storage"`          | Mount path for slurm.                                             |
-| `trainer_image`          | string \| None | `None`                         | slurm image for trainers.                                         |
-| `inference_server_image` | string \| None | `None`                         | slurm image for LLM inference.                                    |
+| Parameter                | Type                   | Default                        | Description                                                                          |
+| ------------------------ | ---------------------- | ------------------------------ | ------------------------------------------------------------------------------------ |
+| `srun_additional_args`   | string                 | `"--mpi=pmi2 -K --chdir $PWD"` | Additional arguments to pass to the srun command.                                    |
+| `additional_bash_cmds`   | list of string \| None | `None`                         | Additional bash commands to setup the container before running the torchrun command. |
+| `container_type`         | string                 | `"apptainer"`                  | Type of containers used in slurm **Choices:** `apptainer`, `none`                    |
+| `mount`                  | string                 | `"/storage:/storage"`          | Mount path for slurm.                                                                |
+| `trainer_image`          | string \| None         | `None`                         | slurm image for trainers.                                                            |
+| `inference_server_image` | string \| None         | `None`                         | slurm image for LLM inference.                                                       |
 
 (section-evaluator)=
 

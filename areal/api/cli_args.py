@@ -1012,6 +1012,13 @@ class SlurmLauncherConfig:
         default="--mpi=pmi2 -K --chdir $PWD",
         metadata={"help": "Additional arguments to pass to the srun command."},
     )
+    additional_bash_cmds: List[str] | None = field(
+        default=None,
+        metadata={
+            "help": "Additional bash commands to setup the container before running "
+            "the torchrun command."
+        },
+    )
     container_type: str = field(
         default="apptainer",
         metadata={
