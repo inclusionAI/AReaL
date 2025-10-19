@@ -489,7 +489,7 @@ class PPOActorConfig(TrainEngineConfig):
     dynamic_sampling: str = field(
         default="none",
         metadata={
-            "help": "Dynamic sampling strategy ​(within DAPO). Select from none,dynamic and static. See the doc for more details"
+            "help": "Dynamic sampling strategy (within DAPO). Select from `none`, `dynamic` and `static`. See the doc for more details"
         },
     )
 
