@@ -29,6 +29,7 @@ from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
 from areal.utils.scheduler import scheduling_specs_to_schedulings
 
+
 RID_CACHE_SIZE = 128
 
 
@@ -392,7 +393,6 @@ class RemoteSGLangEngine(InferenceEngine):
                     should_accept=should_accept,
                 )
             return None
-
 
     def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
         return self.workflow_executor.wait(count, timeout=timeout)

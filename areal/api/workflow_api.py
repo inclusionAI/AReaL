@@ -337,7 +337,7 @@ class WorkflowExecutor:
                 while not self.paused.is_set() and self.input_queue.qsize() > 0:
                     x = self.input_queue.get_nowait()
                     x: _RolloutTaskInput
-                    self.logger.debug(f"Get data from puller: {x.data}")
+                    self.logger.info(f"Get data from puller: {x.data}, type: {type(x.data)}")
                     task = asyncio.create_task(
                         x.workflow.arun_episode(self.inference_engine, x.data),
                         name=str(rid),

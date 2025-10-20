@@ -29,7 +29,7 @@ class Job:
 
 
 class Scheduler(abc.ABC):
-    def create_workers(self, job: Job, *args, **kwargs):
+    def create_workers(self, job: Job, *args, **kwargs) -> None:
         """
         Start workers
         """

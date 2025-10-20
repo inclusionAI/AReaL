@@ -46,12 +46,12 @@ def process_input_to_distributed_batch(to_device, *args, **kwargs):
     for i in range(len(args)):
         if isinstance(args[i], DistributedBatch):
             args = list(args)
-            args[i] = args[i].get_data()
+            args[i] = args[i].to_list()
             args = tuple(args)
 
     for k in list(kwargs.keys()):
         if isinstance(kwargs[k], DistributedBatch):
-            kwargs[k] = kwargs[k].get_data()
+            kwargs[k] = kwargs[k].to_list()
 
     args = tuple(tensor_container_to_safe(list(args), to_device))
     kwargs = tensor_container_to_safe(kwargs, to_device)
@@ -133,6 +133,12 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 args, kwargs = process_input_to_distributed_batch(
                     device, *args, **kwargs
                 )
+
+                if action == "rollout_batch" and len(args) >= 2 and isinstance(args[1], tuple):
+                    logger.info(f"Processing rollout_batch args structure: unpacking args[1] from tuple to single element")
+                    new_args = (args[0], args[1][0]) + args[2:] if len(args) > 2 else (args[0], args[1][0])
+                    args = new_args
+
                 if (
                     check_attribute_type(type(EngineRPCServer.engine), action)
                     == "method"
@@ -180,12 +186,10 @@ def check_attribute_type(cls, attr_name):
             raise f"unsupported attr, type: {type(attr)}, name: {attr_name}"
     raise f"attr not found, name: {attr_name}"
 
-
 def get_server_port(port: int) -> int:
     if port:
         return port
     port_list = os.environ.get("PORT_LIST", "").strip()
-
     ports = [p.strip() for p in port_list.split(",")]
     # use the first port as serve port
     return int(ports[0])
@@ -193,7 +197,6 @@ def get_server_port(port: int) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-
     parser.add_argument("--port", type=int, required=False)
 
     args, unknown = parser.parse_known_args()

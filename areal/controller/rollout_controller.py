@@ -15,6 +15,8 @@ from areal.controller.utils import create_engine_with_retry, rpc_call
 from areal.utils.data import concat_padded_tensors
 from areal.utils import logging
 from areal.utils.http import wait_future_ordered
+from areal.controller.batch import DistributedBatchMemory
+
 
 logger = logging.getLogger("DistributedRolloutController")
 
@@ -35,43 +37,56 @@ class DistributedRolloutController(RolloutController):
 
     def initialize(
         self,
-        alloc_mode_str: str,
+        config,
         target: str,
     ):
-        self.alloc_mode = AllocationMode.from_str(alloc_mode_str)
+        self.alloc_mode = AllocationMode.from_str(config.allocation_mode)
         self.dp_world_size = self.alloc_mode.gen.world_size // self.alloc_mode.gen.dp_size
+
+        tasks = self.inf_engine.get_scheduling_config()
+        tasks[0].cmd = "python3 -m areal.scheduler.rpc.rpc_server"
 
         job = Job(
             replicas=self.alloc_mode.gen.world_size,
-            tasks=self.inf_engine.get_scheduling_config(),
+            tasks=tasks,
             schedule_strategy=ScheduleStrategy(type="colocation", target=target) if target else None,
             role=self.role,
         )
         logger.info(f"Start to create job: {job}")
-        self.scheduler.create_workers(job)
+        self.scheduler.create_workers(job, config=config)
+        logger.info(f"[dzq_debug] create_worker finished.")
 
         workers = self.scheduler.get_workers(self.role, timeout=1800)
         self.dp_head_workers = [worker for idx, worker in enumerate(workers) if idx % self.dp_world_size == 0]
         assert len(self.dp_head_workers) == self.alloc_mode.gen.dp_size
-
-        engine_addrs = [f"{w.ip}:{w.serve_port}" for w in self.dp_head_workers]
+        logger.info(f"[dzq_debug] create_worker finished. {len(self.dp_head_workers)} "
+                    f"w0:{self.dp_head_workers[0]},"
+                    f"w1: {self.dp_head_workers[1]}")
         with ThreadPoolExecutor(max_workers=len(self.dp_head_workers)) as executor:
+            create_engine: Callable[..., Any] = partial(
+                create_engine_with_retry,
+                self.scheduler.create_engine,
+                60,  # max_retries
+                10,  # retry_delay
+            )
+
             futures = [
                 executor.submit(
-                    partial(
-                        create_engine_with_retry,
-                        self.scheduler.create_engine,
+                        create_engine,
                         worker.id,
                         self.inf_engine,
                         None,
-                        engine_addrs,
+                        None,
                         self.dp_world_size,
-                    )
                 )
                 for worker in self.dp_head_workers
             ]
 
-            wait_future_ordered(futures, exit_on_exception=True)
+            try:
+                wait_future_ordered(futures, exit_on_exception=True)
+            except Exception as e:
+                logger.error(f"Failed to initialize engine: {e}")
+                raise
 
     def destroy(self):
         self.scheduler.delete_workers()
@@ -97,14 +112,18 @@ class DistributedRolloutController(RolloutController):
     ) -> DistributedBatch:
         """Submit a batch of requests to the inference engine and wait for the results."""
         batches = data.chunk(self.alloc_mode.gen.dp_size)
-        results = self.custom_function_call("rollout_distributed_batch", batches, workflow)
-        assert len(results) > 0
-        size = int(results[0]["input_ids"].shape[0])
-        bs = size * len(results)
-        padded = concat_padded_tensors(results)
+        batch_results = self.custom_function_call("rollout_batch", batches, workflow) # [DistributedBatchMemory]
+        assert len(batch_results) > 0
+        size = int(batch_results[0]["input_ids"].shape[0])
+        bs = size * len(batch_results)
+        # results 转成List(Dict[key, tensor])
+        list_results = []
+        for result in batch_results:
+            list_results.append(result.get_data())
+        padded = concat_padded_tensors(list_results)
         if isinstance(padded, dict):
             padded = TensorDict(padded, batch_size=[bs])
-        return DistributedBatch.concat(padded.to_dict())
+        return DistributedBatchMemory.from_dict(padded.to_dict())
 
     def set_version(self, version: int) -> None:
         self.custom_function_call("set_version", None, version)

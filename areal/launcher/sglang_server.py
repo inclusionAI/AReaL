@@ -171,18 +171,8 @@ class SGLangServerWrapper:
                 server_local_idx * ports_per_server + 10000,
                 (server_local_idx + 1) * ports_per_server + 10000,
             )
-            engine_ports = os.getenv("PORT_LIST", "")
-            server_port, dist_init_port = 0, 0
-            if engine_ports != "":
-                ports = engine_ports.split(",")
-                if len(ports) == 2:
-                    server_port = int(ports[0])
-                    dist_init_port = int(ports[1])
-                    logger.info(
-                        f"SGLang server get ports from env, engine_ports: {engine_ports}"
-                    )
-            else:
-                server_port, dist_init_port = find_free_ports(2, port_range)
+
+            server_port, dist_init_port = find_free_ports(2, port_range)
 
             if cross_nodes:
                 n_nodes = n_nodes_per_server
