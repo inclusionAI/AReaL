@@ -488,11 +488,15 @@ class FSDPEngine(BaseHFEngine):
             Redistributed and broadcast batch available on all ranks
         """
         if batch is not None:
-            batch = redistribute(
+            redist = redistribute(
                 batch,
                 granularity=granularity,
                 group=self.data_parallel_group,
-            ).data
+            )
+            batch = redist.data
+
+        dist.barrier(device_ids=[self.device.index])
+        current_platform.synchronize()
 
         batch = broadcast_tensor_container(
             batch,
