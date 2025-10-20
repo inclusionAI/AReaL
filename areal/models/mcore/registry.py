@@ -8,14 +8,11 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.transformer import TransformerConfig
 from transformers import AutoConfig, PretrainedConfig
 
-from areal.experimental.api.cli_args import MegatronEngineConfig
-from areal.experimental.model.qwen3 import (
+from areal.api.cli_args import MegatronEngineConfig
+from areal.models.mcore.qwen3 import (
     hf_to_mcore_config_qwen3_dense,
     make_mcore_layer_specs_qwen3_dense,
 )
-from areal.utils import logging
-
-logger = logging.getLogger("areal.experimental.model.registry")
 
 
 # Model registry for different architectures

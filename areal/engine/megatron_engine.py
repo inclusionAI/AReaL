@@ -24,7 +24,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
-from areal.api.cli_args import MicroBatchSpec
+from areal.api.cli_args import MicroBatchSpec, TrainEngineConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
@@ -45,6 +45,9 @@ from areal.experimental.utils.megatron import (
     remove_padding,
 )
 from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
+from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
+from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
+from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.data import (
@@ -64,6 +67,17 @@ from areal.utils.data import (
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
+from areal.utils.mcore.determinisitc import set_deterministic_algorithms
+from areal.utils.mcore.packed_context_parallel import (
+    packed_context_parallel_forward,
+)
+from areal.utils.megatron import (
+    all_gather_param,
+    convert_to_hf,
+    get_named_parameters,
+    remove_padding,
+)
+from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.redistributor import redistribute

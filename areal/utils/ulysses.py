@@ -100,7 +100,7 @@ def _unpad_tensor(x: Tensor, dim: int, padding_size: int) -> Tensor:
         return x
     slc = [slice(None)] * len(x.shape)
     slc[dim] = slice(0, -padding_size)
-    return x[slc]
+    return x[tuple(slc)]
 
 
 def slice_input_tensor(
@@ -118,7 +118,7 @@ def slice_input_tensor(
     parts = x.size(dim) // sp_world_size
     slc = [slice(None)] * len(x.shape)
     slc[dim] = slice(sp_rank * parts, (sp_rank + 1) * parts)
-    return x[slc].contiguous()
+    return x[tuple(slc)].contiguous()
 
 
 def all_to_all_tensor(

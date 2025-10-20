@@ -4,8 +4,6 @@ import sys
 import torch
 import torch.distributed as dist
 from datasets import load_dataset
-from datasets.distributed import split_dataset_by_node
-from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo
@@ -14,7 +12,10 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import cycle_dataloader
+from areal.utils.data import (
+    cycle_dataloader,
+)
+from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -53,14 +54,14 @@ def data_extract_prompt_fn(data):
     return data["prompt"]
 
 
-def get_boba_math_dataset(path, tokenizer, rank, world_size):
+def get_boba_math_dataset(path, tokenizer):
     dataset = load_dataset(
         path="json",
         split="train",
         data_files=path,
     )
     dataset = dataset.filter(lambda x: len(tokenizer.encode(x["prompt"])) <= 1024)
-    return split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+    return dataset
 
 
 def boba_reward_fn(
@@ -95,20 +96,13 @@ def main(args):
         config.train_dataset.batch_size >= world_size
     ), f"batch size({config.train_dataset.batch_size}) must larger or equal than world_size({world_size})!"
 
-    train_dataset = get_boba_math_dataset(
-        config.train_dataset.path,
-        tokenizer,
+    # Create dataset and dataloaders
+    train_dataset = get_boba_math_dataset(config.train_dataset.path, tokenizer)
+    train_dataloader = create_dataloader(
+        train_dataset,
         rank=actor.data_parallel_rank,
         world_size=world_size,
-    )
-    # Create dataset and dataloaders
-    train_dataloader = StatefulDataLoader(
-        train_dataset,
-        batch_size=config.train_dataset.batch_size // world_size,
-        shuffle=config.train_dataset.shuffle,
-        num_workers=config.train_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.train_dataset.drop_last,
+        dataset_config=config.train_dataset,
     )
 
     device = torch.device(int(os.environ["LOCAL_RANK"]))

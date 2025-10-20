@@ -3,6 +3,7 @@ import sys
 from copy import deepcopy
 
 import torch.distributed as dist
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
@@ -13,9 +14,10 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
+    broadcast_tensor_container,
     cycle_dataloader,
+    tensor_container_to,
 )
-from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -23,6 +25,8 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
+from recipe.AEnt.actor import FSDPAEntPPOActor
+from recipe.AEnt.aent_args import AEntGRPOConfig
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
@@ -32,8 +36,8 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 
 
 def main(args):
-    config, _ = load_expr_config(args, GRPOConfig)
-    config: GRPOConfig
+    config, _ = load_expr_config(args, AEntGRPOConfig)
+    config: AEntGRPOConfig
 
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
@@ -44,28 +48,44 @@ def main(args):
     assert parallel_strategy is not None
 
     # Initialize train engine
-    actor = FSDPPPOActor(config=config.actor)
+    actor = FSDPAEntPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
-    # Create dataset and dataloaders
     train_dataset = get_custom_dataset(
-        split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
+        path=config.train_dataset.path,
+        rank=actor.data_parallel_rank,
+        world_size=actor.data_parallel_world_size,
+        split="train",
+        max_length=config.train_dataset.max_length,
+        type=config.train_dataset.type,
+        tokenizer=tokenizer,
     )
     valid_dataset = get_custom_dataset(
-        split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
+        path=config.valid_dataset.path,
+        rank=actor.data_parallel_rank,
+        world_size=actor.data_parallel_world_size,
+        split="test",
+        max_length=config.valid_dataset.max_length,
+        type=config.valid_dataset.type,
+        tokenizer=tokenizer,
     )
 
-    train_dataloader = create_dataloader(
+    # Create dataset and dataloaders
+    train_dataloader = StatefulDataLoader(
         train_dataset,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
-        dataset_config=config.train_dataset,
+        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
+        shuffle=config.train_dataset.shuffle,
+        num_workers=config.train_dataset.num_workers,
+        collate_fn=lambda x: x,
+        drop_last=config.train_dataset.drop_last,
     )
-    valid_dataloader = create_dataloader(
+    valid_dataloader = StatefulDataLoader(
         valid_dataset,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
-        dataset_config=config.valid_dataset,
+        batch_size=config.valid_dataset.batch_size // actor.data_parallel_world_size,
+        shuffle=config.valid_dataset.shuffle,
+        num_workers=config.valid_dataset.num_workers,
+        collate_fn=lambda x: x,
+        drop_last=config.valid_dataset.drop_last,
     )
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
@@ -154,20 +174,29 @@ def main(args):
         )
 
         with stats_tracker.record_timing("rollout"):
-            if config.async_training:
-                batch = actor.prepare_batch(
-                    train_dataloader,
-                    granularity=actor.config.group_size,
-                    workflow=workflow,
-                    should_accept=lambda sample: True,
-                )
-            else:
-                batch = actor.rollout_batch(
-                    next(data_generator),
-                    granularity=actor.config.group_size,
-                    workflow=workflow,
-                    should_accept=lambda sample: True,
-                )
+            batch = None
+            if actor.is_data_parallel_head():
+                if config.async_training:
+                    batch = rollout.prepare_batch(
+                        train_dataloader,
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
+                else:
+                    batch = rollout.rollout_batch(
+                        next(data_generator),
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
+                batch = tensor_container_to(batch, actor.device)
+            batch = broadcast_tensor_container(
+                batch,
+                src_rank=actor.current_data_parallel_head(),
+                group=actor.context_and_model_parallel_group,
+            )
+        # Create barrier to synchronize all rollout processes.
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -188,7 +217,7 @@ def main(args):
             stats_tracker.record_timing("train_step"),
             stats_tracker.scope("grpo_actor"),
         ):
-            stats = actor.ppo_update(batch)
+            stats = actor.aent_ppo_update(batch, global_step)
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
