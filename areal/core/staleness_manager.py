@@ -59,7 +59,7 @@ class StalenessManager:
         to determine how many new rollouts can be accepted.
 
         The capacity calculation ensures:
-        1. Total concurrent rollouts (running + accepted) don't exceed max_concurrent_rollouts
+        1. The number of running rollouts doesn't exceed max_concurrent_rollouts
         2. Samples don't become too stale by limiting based on:
            - current_version: The current model version
            - max_staleness: Maximum allowed version difference
