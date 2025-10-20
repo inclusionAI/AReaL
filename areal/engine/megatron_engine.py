@@ -673,7 +673,8 @@ class MegatronEngine(TrainEngine):
         """Validate that rollout engine has been connected via connect_engine()."""
         if self.rollout_engine is None:
             raise RuntimeError(
-                "Rollout engine not connected. Call connect_engine() before using rollout methods."
+                "Rollout engine not connected. Call connect_engine()"
+                " before using rollout/update_weight methods."
             )
 
     def _broadcast_and_redistribute_batch(
@@ -688,14 +689,19 @@ class MegatronEngine(TrainEngine):
         2. Broadcasting to context and model parallel group
         3. Synchronization barriers
 
-        Args:
-            batch: Batch data from data parallel head, None for other ranks
-            granularity: Granularity for redistribution within data parallel group.
-                - For single-turn rollouts: Use actor.config.group_size (GRPO grouping)
-                - For multi-turn rollouts: Use 1 (default, per-completion redistribution)
-                - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
+        Parameters
+        ----------
+        batch : Dict[str, Any] | None
+            Batch data from data parallel head, None for other ranks
+        granularity : int, default=1
+            Granularity for redistribution within data parallel group.
+            - For single-turn rollouts: Use actor.config.group_size (GRPO grouping)
+            - For multi-turn rollouts: Use 1 (default, per-completion redistribution)
+            - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
 
-        Returns:
+        Returns
+        -------
+        Dict[str, Any]
             Redistributed and broadcast batch available on all ranks
         """
         if batch is not None:
@@ -734,21 +740,31 @@ class MegatronEngine(TrainEngine):
 
         Must call connect_engine() before using this method.
 
-        Args:
-            data: Input data batch for rollout generation
-            granularity: Granularity for redistribution within data parallel group.
-                - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
-                - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
-                - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
-            workflow: Workflow defining rollout logic
-            workflow_builder: Builder function for workflow
-            should_accept: Filter function for accepting samples
+        Parameters
+        ----------
+        data : List[Dict[str, Any]]
+            Input data batch for rollout generation
+        granularity : int, default=1
+            Granularity for redistribution within data parallel group.
+            - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
+            - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
+            - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
+        workflow : RolloutWorkflow, optional
+            Workflow defining rollout logic
+        workflow_builder : Callable, optional
+            Builder function for workflow
+        should_accept : Callable, optional
+            Filter function for accepting samples
 
-        Returns:
+        Returns
+        -------
+        Dict[str, Any]
             Generated rollout batch on all ranks
 
-        Raises:
-            RuntimeError: If rollout engine not connected via connect_engine()
+        Raises
+        ------
+        RuntimeError
+            If rollout engine not connected via connect_engine()
         """
         self._check_rollout_engine_connected()
 
@@ -779,21 +795,31 @@ class MegatronEngine(TrainEngine):
 
         Must call connect_engine() before using this method.
 
-        Args:
-            dataloader: Dataloader to pull samples from
-            granularity: Granularity for redistribution within data parallel group.
-                - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
-                - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
-                - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
-            workflow: Workflow defining rollout logic
-            workflow_builder: Builder function for workflow
-            should_accept: Filter function for accepting samples based on staleness
+        Parameters
+        ----------
+        dataloader : StatefulDataLoader
+            Dataloader to pull samples from
+        granularity : int, default=1
+            Granularity for redistribution within data parallel group.
+            - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
+            - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
+            - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
+        workflow : RolloutWorkflow, optional
+            Workflow defining rollout logic
+        workflow_builder : Callable, optional
+            Builder function for workflow
+        should_accept : Callable, optional
+            Filter function for accepting samples based on staleness
 
-        Returns:
+        Returns
+        -------
+        Dict[str, Any]
             Prepared rollout batch on all ranks
 
-        Raises:
-            RuntimeError: If rollout engine not connected via connect_engine()
+        Raises
+        ------
+        RuntimeError
+            If rollout engine not connected via connect_engine()
         """
         self._check_rollout_engine_connected()
 
