@@ -445,13 +445,15 @@ class WorkflowExecutor:
                 await asyncio.sleep(ROLLOUT_POLL_SLEEP_TIME)
         finally:
             # Cancel remaining tasks
-            for task_obj in rollout_tasks.values():
-                if not task_obj.task.done():
-                    task_obj.task.cancel()
-                    try:
-                        await task_obj.task
-                    except asyncio.CancelledError:
-                        pass
+            pending_tasks = [
+                task_obj.task
+                for task_obj in rollout_tasks.values()
+                if not task_obj.task.done()
+            ]
+            if pending_tasks:
+                for task in pending_tasks:
+                    task.cancel()
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
 
     def submit(
         self,
