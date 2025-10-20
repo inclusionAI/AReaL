@@ -698,7 +698,7 @@ class MegatronEngine(TrainEngine):
         Returns:
             Redistributed and broadcast batch available on all ranks
         """
-        if batch is not None and granularity is not None:
+        if batch is not None:
             batch = redistribute(
                 batch,
                 granularity=granularity,
