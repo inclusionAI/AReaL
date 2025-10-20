@@ -5,7 +5,6 @@ import queue
 import random
 import threading
 import time
-import traceback
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
@@ -444,8 +443,6 @@ class WorkflowExecutor:
                             )
 
                 await asyncio.sleep(ROLLOUT_POLL_SLEEP_TIME)
-        except Exception:
-            traceback.print_exc()
         finally:
             # Cancel remaining tasks
             for task_obj in rollout_tasks.values():
