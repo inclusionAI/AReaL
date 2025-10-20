@@ -21,7 +21,7 @@ from areal.experimental.openai.types import CompletionWithTokenLogpReward
 from areal.utils import logging
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 
-from .staleness_controller import StalenessController
+from .staleness_manager import StalenessManager
 
 ROLLOUT_POLL_WAIT_TIME = 0.05
 
@@ -225,7 +225,7 @@ class WorkflowExecutor:
         self,
         config: InferenceEngineConfig,
         inference_engine: "InferenceEngine",
-        staleness_controller: StalenessController | None = None,
+        staleness_controller: StalenessManager | None = None,
     ):
         self.max_concurrent_rollouts = (
             config.max_concurrent_rollouts or config.consumer_batch_size
@@ -274,7 +274,7 @@ class WorkflowExecutor:
             )
             consumer_batch_size = max(1, self.consumer_batch_size // dp_world_size)
 
-            self.staleness_controller = StalenessController(
+            self.staleness_controller = StalenessManager(
                 max_concurrent_rollouts=max_concurrent_rollouts,
                 consumer_batch_size=consumer_batch_size,
                 max_staleness=self.config.max_head_offpolicyness,
