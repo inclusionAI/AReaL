@@ -738,8 +738,6 @@ class RemoteInfEngine:
         # The following line waits until all requests are indeed dropped.
         time.sleep(self.config.pause_grace_period)
 
-        return self.workflow_executor.pause()
-
     def resume(self):
         """Resume request submission for async rollout."""
         try:
@@ -753,6 +751,12 @@ class RemoteInfEngine:
         except NotImplementedError:
             self.logger.warning("Backend does not support resume operation")
 
+    def pause(self):
+        """Pause request submission for async rollout. Used during evaluation to prevent data over generation."""
+        return self.workflow_executor.pause()
+
+    def resume(self):
+        """Resume request submission for async rollout."""
         return self.workflow_executor.resume()
 
 
