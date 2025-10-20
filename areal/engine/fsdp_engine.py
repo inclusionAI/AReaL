@@ -456,8 +456,8 @@ class FSDPEngine(BaseHFEngine):
         """Validate that rollout engine has been connected via connect_engine()."""
         if self.rollout_engine is None:
             raise RuntimeError(
-                "Rollout engine not connected. Call connect_engine() "
-                "before using rollout/update_weight methods."
+                "Rollout engine not connected. Call connect_engine()"
+                " before using rollout/update_weight methods."
             )
 
     def _broadcast_and_redistribute_batch(
