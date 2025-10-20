@@ -25,11 +25,13 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
     WeightUpdateRequests,
 )
-from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
+from areal.api.workflow_api import RolloutWorkflow
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
+
+from .workflow_executor import WorkflowExecutor
 
 RID_CACHE_SIZE = 128
 
@@ -312,7 +314,7 @@ class RemoteInfEngine:
         self.executor = ProcessPoolExecutor(max_workers=1)
 
         self.workflow_executor = WorkflowExecutor(
-            config=config,
+            config=self.config,
             inference_engine=self,
         )
         self.workflow_executor.initialize(
@@ -366,8 +368,12 @@ class RemoteInfEngine:
         ModelResponse
             The generated response from the model
         """
+        # Create a shallow copy of the input request
+        # we are going to modify it in-place
+        req = req.copy()
+
         # Validate n_samples
-        gconfig = req.gconfig.new()
+        gconfig = req.gconfig
         if gconfig.n_samples != 1:
             raise ValueError(
                 "Inference engines do not support n_samples > 1. "
@@ -457,6 +463,11 @@ class RemoteInfEngine:
             # Update request for next iteration
             req.input_ids += gen_result.output_tokens
             req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
+            assert req.gconfig.max_new_tokens >= 0, (
+                req.gconfig.max_new_tokens,
+                len(gen_result.output_tokens),
+                len(gen_result.input_tokens),
+            )
 
         # Final abort handling
         if stop_reason == "abort":

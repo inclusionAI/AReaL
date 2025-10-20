@@ -15,7 +15,7 @@ from areal.api.io_struct import (
     WeightUpdateRequests,
 )
 from areal.api.workflow_api import RolloutWorkflow
-from areal.core.remote_inf_engine import RemoteInfEngine
+from areal.core import RemoteInfEngine
 from areal.platforms import current_platform
 
 
@@ -156,6 +156,7 @@ class RemotevLLMEngine(InferenceEngine):
     """
 
     def __init__(self, config: InferenceEngineConfig):
+        self.config = config
         # Pure composition - create internal engine with vLLM backend
         self._engine = RemoteInfEngine(config, VLLMBackend())
 

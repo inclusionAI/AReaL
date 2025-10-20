@@ -149,7 +149,9 @@ def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
 
     # wait for some time
     time.sleep(10)
-    assert engine.workflow_executor.output_queue.qsize() == min(bs * 2, bs * (ofp + 1))
+    assert engine._engine.workflow_executor.output_queue.qsize() == min(
+        bs * 2, bs * (ofp + 1)
+    )
 
     # Update model version
     engine.set_version(1)
@@ -160,7 +162,9 @@ def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
         engine.submit(data, workflow=workflow)
     # wait for some time
     time.sleep(5)
-    assert engine.workflow_executor.output_queue.qsize() == min(bs * 4, bs * (ofp + 2))
+    assert engine._engine.workflow_executor.output_queue.qsize() == min(
+        bs * 4, bs * (ofp + 2)
+    )
 
     # exit
     engine.destroy()
