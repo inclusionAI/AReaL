@@ -492,7 +492,7 @@ class FSDPEngine(BaseHFEngine):
                 batch,
                 granularity=granularity,
                 group=self.data_parallel_group,
-            )
+            ).data
 
         batch = broadcast_tensor_container(
             batch,

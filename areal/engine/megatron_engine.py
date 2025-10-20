@@ -28,23 +28,6 @@ from areal.api.cli_args import MicroBatchSpec, TrainEngineConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
-from areal.experimental.api.cli_args import (
-    ExperimentalTrainEngineConfig as TrainEngineConfig,
-)
-from areal.experimental.model.hf_load import load_weights_from_hf_with_mbridge_fast
-from areal.experimental.model.hf_save import save_weights_to_hf_with_mbridge_fast
-from areal.experimental.model.registry import make_hf_and_mcore_config, make_mcore_model
-from areal.experimental.utils.mcore.determinisitc import set_deterministic_algorithms
-from areal.experimental.utils.mcore.packed_context_parallel import (
-    packed_context_parallel_forward,
-)
-from areal.experimental.utils.megatron import (
-    all_gather_param,
-    convert_to_hf,
-    get_named_parameters,
-    remove_padding,
-)
-from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
@@ -720,7 +703,7 @@ class MegatronEngine(TrainEngine):
                 batch,
                 granularity=granularity,
                 group=self.data_parallel_group,
-            )
+            ).data
 
         batch = broadcast_tensor_container(
             batch,
