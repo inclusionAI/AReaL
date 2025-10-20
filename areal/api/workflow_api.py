@@ -17,7 +17,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import RolloutStat
+from areal.core.staleness_manager import StalenessManager
 from areal.experimental.openai.types import CompletionWithTokenLogpReward
 from areal.utils import logging
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
@@ -256,23 +256,27 @@ class WorkflowExecutor:
         self,
         config: InferenceEngineConfig,
         inference_engine: "InferenceEngine",
+        staleness_manager: StalenessManager | None = None,
     ):
         self.max_concurrent_rollouts = (
             config.max_concurrent_rollouts or config.consumer_batch_size
         )
+        self.consumer_batch_size = config.consumer_batch_size
+
         self.config = config
         self.exiting = threading.Event()
         self.paused = threading.Event()
-        self.lock = threading.Lock()
 
         self.inference_engine = inference_engine
+
+        # Use provided staleness manager or create a default one
+        # The manager will be properly initialized in initialize()
+        self.staleness_manager = staleness_manager
 
         qsize = config.queue_size or self.max_concurrent_rollouts * 16
         self.input_queue = queue.Queue(maxsize=qsize)
         self.output_queue = queue.Queue(maxsize=qsize)
         self.result_cache: List[_TimedResult] = []
-
-        self.rollout_stat = RolloutStat()
 
         # For trajectory format checking
         self._expected_trajectory_keys: set | None = None
@@ -282,18 +286,31 @@ class WorkflowExecutor:
             logger = logging.getLogger("WorkflowExecutor")
         self.logger = logger
 
-        if train_data_parallel_size is not None:
-            self.dp_world_size = train_data_parallel_size
-        else:
-            if dist.is_initialized():
-                if not mpu.is_initialized():
-                    self.dp_world_size = dist.get_world_size()
-                else:
-                    self.dp_world_size = mpu.get_data_parallel_world_size()
+        # Initialize staleness manager if not provided
+        if self.staleness_manager is None:
+            if train_data_parallel_size is not None:
+                dp_world_size = train_data_parallel_size
             else:
-                self.dp_world_size = 1
+                if dist.is_initialized():
+                    if not mpu.is_initialized():
+                        dp_world_size = dist.get_world_size()
+                    else:
+                        dp_world_size = mpu.get_data_parallel_world_size()
+                else:
+                    dp_world_size = 1
 
-        self.rollout_tasks: Dict[str, _RolloutTask] = {}
+            # Apply data parallel scaling
+            max_concurrent_rollouts = max(
+                1, self.max_concurrent_rollouts // dp_world_size
+            )
+            consumer_batch_size = max(1, self.consumer_batch_size // dp_world_size)
+
+            self.staleness_manager = StalenessManager(
+                max_concurrent_rollouts=max_concurrent_rollouts,
+                consumer_batch_size=consumer_batch_size,
+                max_staleness=self.config.max_head_offpolicyness,
+            )
+
         self.rollout_thread = threading.Thread(
             target=self._rollout_thread, daemon=True
         )  # set daemon=True to automatically exit when error occurs
@@ -304,17 +321,8 @@ class WorkflowExecutor:
         self.rollout_thread.join()
 
     def get_capacity(self):
-        with self.lock:
-            max_concurrent_rollouts = max(
-                1, self.max_concurrent_rollouts // self.dp_world_size
-            )
-            capacity = max_concurrent_rollouts - len(self.rollout_tasks)
-            # Staleness control
-            version = self.inference_engine.get_version()
-            ofp = self.config.max_head_offpolicyness
-            sample_cnt = self.rollout_stat.accepted + self.rollout_stat.running
-            consumer_bs = max(1, self.config.consumer_batch_size // self.dp_world_size)
-            capacity = min(capacity, (ofp + version + 1) * consumer_bs - sample_cnt)
+        version = self.inference_engine.get_version()
+        capacity = self.staleness_manager.get_capacity(version)
         return capacity
 
     def _rollout_thread(self):
@@ -325,14 +333,13 @@ class WorkflowExecutor:
             traceback.print_exc()
 
     async def _rollout_thread_async(self):
-        rollout_tasks = self.rollout_tasks
+        rollout_tasks: Dict[str, _RolloutTask] = {}
         rid = 0
         try:
             while not self.exiting.is_set():
                 # Check capacity
                 capacity = self.get_capacity()
                 # Create new rollout task
-                self.lock.acquire()
                 while (
                     capacity > 0
                     and not self.paused.is_set()
@@ -348,19 +355,19 @@ class WorkflowExecutor:
                     rollout_tasks[str(rid)] = _RolloutTask(
                         create_time=time.monotonic_ns(), task=task, task_input=x
                     )
-                    self.rollout_stat.submitted += 1
-                    self.rollout_stat.running += 1
+                    # Notify staleness manager
+                    self.staleness_manager.on_rollout_submitted()
                     if self.config.enable_rollout_tracing:
+                        stat = self.staleness_manager.get_stats()
                         self.logger.info(
                             f"Submit rollout rid {rid}. "
-                            f"Submit: {self.rollout_stat.submitted}, "
-                            f"running: {self.rollout_stat.running}, "
-                            f"accepted: {self.rollout_stat.accepted}."
+                            f"Submit: {stat.submitted}, "
+                            f"running: {stat.running}, "
+                            f"accepted: {stat.accepted}."
                         )
                     capacity -= 1
                     rid += 1
                 tasks = [x.task for x in rollout_tasks.values()]
-                self.lock.release()
 
                 # Wait for rollout completion
                 done = []
@@ -396,26 +403,25 @@ class WorkflowExecutor:
                         )
                     assert traj is None or isinstance(traj, dict), traj
                     task_rid = task.get_name()
-                    with self.lock:
-                        task_obj = rollout_tasks.pop(task_rid)
-                        self.rollout_stat.accepted += 1
-                        self.rollout_stat.running -= 1
-                        if self.config.enable_rollout_tracing:
-                            self.logger.info(
-                                f"Finish rollout {task_rid}. "
-                                f"Submit: {self.rollout_stat.submitted}, "
-                                f"running: {self.rollout_stat.running}, "
-                                f"accepted: {self.rollout_stat.accepted}."
-                            )
+                    task_obj = rollout_tasks.pop(task_rid)
 
                     task_input = task_obj.task_input
-                    if traj is not None and (
+                    # Check if trajectory should be accepted
+                    should_accept_traj = traj is not None and (
                         task_input.should_accept is None
                         or task_input.should_accept(traj)
-                    ):
+                    )
+
+                    if should_accept_traj:
+                        # Notify staleness manager of accepted rollout
+                        self.staleness_manager.on_rollout_accepted()
                         if self.config.enable_rollout_tracing:
+                            stat = self.staleness_manager.get_stats()
                             self.logger.info(
-                                f"Accept rollout result of task {task_rid}."
+                                f"Finish and accept rollout {task_rid}. "
+                                f"Submit: {stat.submitted}, "
+                                f"running: {stat.running}, "
+                                f"accepted: {stat.accepted}."
                             )
                         try:
                             self.output_queue.put_nowait(
@@ -426,24 +432,30 @@ class WorkflowExecutor:
                                 "Output queue full. Please increase queue_size."
                             )
                     else:
+                        # Rollout completed but was rejected
+                        # Only decrement running count since it was never accepted
+                        self.staleness_manager.on_rollout_rejected()
                         if self.config.enable_rollout_tracing:
-                            self.logger.info(f"Rollout is rejected.")
-                        with self.lock:
-                            self.rollout_stat.accepted -= 1
+                            stat = self.staleness_manager.get_stats()
+                            self.logger.info(
+                                f"Finish but reject rollout {task_rid}. "
+                                f"Submit: {stat.submitted}, "
+                                f"running: {stat.running}, "
+                                f"accepted: {stat.accepted}."
+                            )
 
                 await asyncio.sleep(1)
         except Exception:
             traceback.print_exc()
         finally:
             # Cancel remaining tasks
-            with self.lock:
-                for task_obj in rollout_tasks.values():
-                    if not task_obj.task.done():
-                        task_obj.task.cancel()
-                        try:
-                            await task_obj.task
-                        except asyncio.CancelledError:
-                            pass
+            for task_obj in rollout_tasks.values():
+                if not task_obj.task.done():
+                    task_obj.task.cancel()
+                    try:
+                        await task_obj.task
+                    except asyncio.CancelledError:
+                        pass
 
     def submit(
         self,
