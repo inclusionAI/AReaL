@@ -1,5 +1,10 @@
 from typing import TYPE_CHECKING, Optional
 
+from datasets.distributed import split_dataset_by_node
+
+from areal.api.cli_args import DatasetConfig
+from areal.utils import logging
+
 if TYPE_CHECKING:
     from datasets import Dataset
     from transformers.processing_utils import ProcessorMixin
@@ -7,14 +12,14 @@ if TYPE_CHECKING:
 
 VALID_DATASETS = ["gsm8k", "clevr_count_70k", "geometry3k", "hh-rlhf", "torl_data"]
 
+logger = logging.getLogger("Dataset")
 
-def get_custom_dataset(
+
+def _get_custom_dataset(
     path: str,
-    rank: int,
-    world_size: int,
     type: str = "sft",
-    split: Optional[str] = None,
-    max_length: Optional[int] = None,
+    split: str | None = None,
+    max_length: int | None = None,
     tokenizer: Optional["PreTrainedTokenizerFast"] = None,
     processor: Optional["ProcessorMixin"] = None,
     **kwargs,
@@ -27,8 +32,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             tokenizer=tokenizer,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -39,8 +42,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             tokenizer=tokenizer,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -51,8 +52,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             processor=processor,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -63,8 +62,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             processor=processor,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -75,8 +72,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             processor=processor,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -87,8 +82,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             processor=processor,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -99,8 +92,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             tokenizer=tokenizer,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -111,8 +102,6 @@ def get_custom_dataset(
             path=path,
             split=split,
             tokenizer=tokenizer,
-            rank=rank,
-            world_size=world_size,
             max_length=max_length,
             **kwargs,
         )
@@ -121,3 +110,67 @@ def get_custom_dataset(
             f"Dataset {path} with split {split} and training type {type} is not supported. "
             f"Supported datasets are: {VALID_DATASETS}. "
         )
+
+
+def get_custom_dataset_legacy(
+    path: str,
+    rank: int,
+    world_size: int,
+    type: str = "sft",
+    split: str | None = None,
+    max_length: int | None = None,
+    tokenizer: Optional["PreTrainedTokenizerFast"] = None,
+    processor: Optional["ProcessorMixin"] = None,
+    **kwargs,
+) -> "Dataset":
+    logger.warning(
+        "get_custom_dataset using rank and world_size is deprecated. "
+        "Please use DistributedSampler in dataloader instead for distributed training."
+    )
+    dataset = _get_custom_dataset(
+        path=path,
+        type=type,
+        split=split,
+        max_length=max_length,
+        tokenizer=tokenizer,
+        processor=processor,
+        **kwargs,
+    )
+    return split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+
+
+def get_custom_dataset(
+    split: str | None = None,
+    dataset_config: DatasetConfig | None = None,
+    tokenizer: Optional["PreTrainedTokenizerFast"] = None,
+    processor: Optional["ProcessorMixin"] = None,
+    **kwargs,
+) -> "Dataset":
+    if "rank" in kwargs:
+        # compatibility for legacy get_custom_dataset
+        return get_custom_dataset_legacy(
+            split=split,
+            tokenizer=tokenizer,
+            processor=processor,
+            **kwargs,
+        )
+
+    if dataset_config is not None:
+        return _get_custom_dataset(
+            path=dataset_config.path,
+            type=dataset_config.type,
+            split=split,
+            max_length=dataset_config.max_length,
+            tokenizer=tokenizer,
+            processor=processor,
+            **kwargs,
+        )
+
+    # try to pass arguments directly to legacy get_custom_dataset
+    logger.warning("dataset_config is not provided")
+    return _get_custom_dataset(
+        split=split,
+        tokenizer=tokenizer,
+        processor=processor,
+        **kwargs,
+    )

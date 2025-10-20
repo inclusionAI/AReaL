@@ -22,7 +22,12 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy
 from torch.distributed.tensor import DTensor
-from transformers import PreTrainedTokenizerFast, ProcessorMixin
+from transformers import (
+    PreTrainedTokenizerFast,
+    ProcessorMixin,
+    get_constant_schedule_with_warmup,
+    get_linear_schedule_with_warmup,
+)
 
 from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
@@ -39,8 +44,9 @@ from areal.utils.data import (
     unpack_sequence,
 )
 from areal.utils.distributed import init_custom_process_group
-from areal.utils.fsdp import fsdp2_load_full_state_dict
+from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
+from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
@@ -349,6 +355,11 @@ class FSDPEngine(BaseHFEngine):
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         """Broadcast parameters (chunked) from rank 0 (FSDP2 compatible)."""
 
+        if dist.get_rank() == 0:
+            self.rollout_engine.pause_generation()
+
+        dist.barrier(device_ids=[self.device.index])
+
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
         buffer_size = 0
@@ -378,6 +389,11 @@ class FSDPEngine(BaseHFEngine):
             self._update_bucket_weights_from_distributed(meta, named_tensors)
 
         dist.barrier(device_ids=[self.device.index])
+
+        if dist.get_rank() == 0:
+            self.rollout_engine.continue_generation()
+
+        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
 
     def _update_weights_from_disk(self, meta: WeightUpdateMeta):
@@ -390,8 +406,6 @@ class FSDPEngine(BaseHFEngine):
         # dist.barrier() are called when _save_model_to_hf finished
 
         if dist.get_rank() == 0:
-            fut.result()
-
             update_name = names.update_weights_from_disk(
                 self.config.experiment_name,
                 self.config.trial_name,
@@ -400,6 +414,8 @@ class FSDPEngine(BaseHFEngine):
             name_resolve.add(
                 update_name, str(datetime.now().timestamp()), keepalive_ttl=120
             )
+
+            fut.result()
 
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
@@ -420,7 +436,10 @@ class FSDPEngine(BaseHFEngine):
             )
         self.rollout_engine = engine
 
-        if not self.weight_update_group_initialized:
+        if (
+            meta.type == current_platform.communication_backend
+            and not self.weight_update_group_initialized
+        ):
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 
@@ -507,8 +526,8 @@ class FSDPEngine(BaseHFEngine):
             else:
                 logits = logits[:-pad_length] if pad_length > 0 else logits
                 loss = loss_fn(logits, mb_input)
-            loss_scale = loss_weight_fn(mb_input) / total_loss_weight
 
+            loss_scale = loss_weight_fn(mb_input) / total_loss_weight
             # Scale loss for accumulation
             # To reverse the gradient averaging for SP groups
             loss_scale *= self.parallel_helper.dp_size
@@ -565,7 +584,6 @@ class FSDPEngine(BaseHFEngine):
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
-            ulysses_pad_size = 0
             if self.parallel_helper.sp_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
@@ -574,7 +592,7 @@ class FSDPEngine(BaseHFEngine):
                     (
                         ulysses_input_ids,
                         ulysses_position_ids,
-                        ulysses_pad_size,
+                        _,
                     ) = ulysses_pad(
                         input_ids, position_ids, sp_size=self.parallel_helper.sp_size
                     )
@@ -583,7 +601,7 @@ class FSDPEngine(BaseHFEngine):
                     (
                         ulysses_input_ids,
                         ulysses_position_ids,
-                        ulysses_pad_size,
+                        _,
                     ) = ulysses_pad_and_slice_inputs(
                         input_ids,
                         position_ids,
@@ -609,16 +627,13 @@ class FSDPEngine(BaseHFEngine):
 
             logits = outputs.logits.squeeze(0)
             if self.parallel_helper.sp_size > 1:
-                # Gather and remove Ulysses padding
-                gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
-                logits = torch.cat(gathered_logits, dim=0)
-                logits = logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
-            # Remove original padding
-            logits = logits[:-pad_length] if pad_length > 0 else logits
-            loss = loss_fn(logits, mb_input)
+                loss = loss_fn(logits, inputs)
+            else:
+                logits = logits[:-pad_length] if pad_length > 0 else logits
+                loss = loss_fn(logits, mb_input)
 
-            # Simple weight calculation (could be improved)
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
+
             # eval_batch does not run backward, the grad will not be averaged over DP group
             # so we shouldn't multiple dp_size in loss_scale
             total_loss += loss.clone().detach() * loss_scale
@@ -683,28 +698,43 @@ class FSDPEngine(BaseHFEngine):
                 ):
                     ulysses_position_ids = ulysses_position_ids.contiguous()
 
-                inputs = padded_mb_input.copy()
-                inputs["input_ids"] = ulysses_input_ids
-                if ulysses_position_ids is not None:
-                    inputs["position_ids"] = ulysses_position_ids
+                inputs = ulysses_prepare_inputs(
+                    padded_mb_input,
+                    ulysses_input_ids,
+                    ulysses_position_ids,
+                    self.parallel_helper.sp_size,
+                )
             else:
                 inputs = padded_mb_input
 
             outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
-            if self.parallel_helper.sp_size > 1:
-                # Gather and remove Ulysses padding
-                gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
-                logits = torch.cat(gathered_logits, dim=0)
-                logits = logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
-            # Remove original padding
-            logits = logits[:-pad_length] if pad_length > 0 else logits
 
             if post_hook:
-                result = post_hook(logits, mb_input)
+                if self.parallel_helper.sp_size > 1:
+                    # When Ulysses SP is enabled, post_hook will gather logits internally.
+                    result = post_hook(logits, inputs)
+                    # Remove Ulysses padding and original padding
+                    result = (
+                        result[:-ulysses_pad_size] if ulysses_pad_size > 0 else result
+                    )
+                    result = result[:-pad_length] if pad_length > 0 else result
+                else:
+                    # Remove original padding
+                    logits = logits[:-pad_length] if pad_length > 0 else logits
+                    result = post_hook(logits, mb_input)
                 results.append(result)
             else:
+                if self.parallel_helper.sp_size > 1:
+                    # Gather and remove Ulysses padding
+                    gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
+                    logits = torch.cat(gathered_logits, dim=0)
+                    logits = (
+                        logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
+                    )
+                # Remove original padding
+                logits = logits[:-pad_length] if pad_length > 0 else logits
                 results.append(logits)
 
         res = aggregate_fn(results)
@@ -712,3 +742,77 @@ class FSDPEngine(BaseHFEngine):
         unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
         reordered = reorder_list(unpacked, mb_list.backward_indices)
         return pad_and_stack_tensors_along_first_dim(reordered)
+
+    def create_optimizer(self, ft_spec: FinetuneSpec):
+        if self.optimizer_config is None:
+            return
+        assert self.model is not None
+        # Set up optimizer
+        tik = time.perf_counter()
+        assert self.optimizer_config.type in [
+            "adam",
+            "adam_bf16",
+            "sgd",
+        ], "Only adam/adam_bf16/sgd optimizer is supported in this engine."
+        if self.optimizer_config.type in ["sgd", "adam_bf16"]:
+            self.logger.warning(
+                f"Using the '{self.optimizer_config.type}' optimizer with FSDP may be less stable. Consider using the 'adam' (AdamW) optimizer for improved stability and performance."
+            )
+        lr = self.optimizer_config.lr
+        weight_decay = self.optimizer_config.weight_decay
+        beta1 = self.optimizer_config.beta1
+        beta2 = self.optimizer_config.beta2
+        eps = self.optimizer_config.eps
+        if self.optimizer_config.type == "adam":
+            self.optimizer = torch.optim.AdamW(
+                self.model.parameters(),
+                lr=lr,
+                weight_decay=weight_decay,
+                betas=(beta1, beta2),
+                eps=eps,
+                fused=True,
+            )
+        elif self.optimizer_config.type == "adam_bf16":
+            self.optimizer = AnyPrecisionAdamW(
+                self.model.parameters(),
+                lr=lr,
+                weight_decay=weight_decay,
+                betas=(beta1, beta2),
+                eps=eps,
+                momentum_dtype="bfloat16",
+                variance_dtype="bfloat16",
+            )
+        else:
+            self.optimizer = torch.optim.SGD(
+                self.model.parameters(),
+                lr=lr,
+                weight_decay=weight_decay,
+            )
+        total_train_steps = ft_spec.total_train_steps
+        num_warmup_steps = int(
+            self.optimizer_config.warmup_steps_proportion * total_train_steps
+        )
+
+        if self.optimizer_config.lr_scheduler_type == "cosine":
+            self.lr_scheduler = get_cosine_schedule_with_warmup(
+                self.optimizer,
+                num_warmup_steps,
+                total_train_steps,
+                min_lr_ratio=self.optimizer_config.min_lr_ratio,
+            )
+        elif self.optimizer_config.lr_scheduler_type == "linear":
+            self.lr_scheduler = get_linear_schedule_with_warmup(
+                self.optimizer,
+                num_warmup_steps,
+                total_train_steps,
+            )
+        elif self.optimizer_config.lr_scheduler_type == "constant":
+            self.lr_scheduler = get_constant_schedule_with_warmup(
+                self.optimizer,
+                num_warmup_steps,
+            )
+        else:
+            raise ValueError(
+                f"Unknown lr scheduler type {self.optimizer_config.lr_scheduler_type}"
+            )
+        self.logger.info(f"Create optimizer time: {time.perf_counter() - tik}")

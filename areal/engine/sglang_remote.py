@@ -264,9 +264,13 @@ class RemoteSGLangEngine(InferenceEngine):
         )
 
     def pause(self):
-        """Pause request submission for async rollout."""
         return self._engine.pause()
 
     def resume(self):
-        """Resume request submission for async rollout."""
         return self._engine.resume()
+
+    def pause_generation(self):
+        return self._engine.pause_generation()
+
+    def resume_generation(self):
+        return self._engine.resume_generation()
