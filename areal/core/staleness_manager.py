@@ -10,7 +10,7 @@ from areal.api.io_struct import RolloutStat
 
 
 class StalenessManager:
-    """Controls rollout capacity based on staleness and concurrency constraints.
+    """Manages rollout capacity based on staleness and concurrency constraints.
 
     The manager ensures that:
     1. The number of concurrent rollouts doesn't exceed the configured maximum
@@ -33,7 +33,7 @@ class StalenessManager:
         consumer_batch_size: int,
         max_staleness: int,
     ):
-        """Initialize the staleness controller.
+        """Initialize the staleness manager.
 
         Parameters
         ----------

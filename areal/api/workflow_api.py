@@ -269,8 +269,8 @@ class WorkflowExecutor:
 
         self.inference_engine = inference_engine
 
-        # Use provided staleness controller or create a default one
-        # The controller will be properly initialized in initialize()
+        # Use provided staleness manager or create a default one
+        # The manager will be properly initialized in initialize()
         self.staleness_manager = staleness_manager
 
         qsize = config.queue_size or self.max_concurrent_rollouts * 16
@@ -286,7 +286,7 @@ class WorkflowExecutor:
             logger = logging.getLogger("WorkflowExecutor")
         self.logger = logger
 
-        # Initialize staleness controller if not provided
+        # Initialize staleness manager if not provided
         if self.staleness_manager is None:
             if train_data_parallel_size is not None:
                 dp_world_size = train_data_parallel_size
@@ -355,7 +355,7 @@ class WorkflowExecutor:
                     rollout_tasks[str(rid)] = _RolloutTask(
                         create_time=time.monotonic_ns(), task=task, task_input=x
                     )
-                    # Notify staleness controller
+                    # Notify staleness manager
                     self.staleness_manager.on_rollout_submitted()
                     if self.config.enable_rollout_tracing:
                         stat = self.staleness_manager.get_stats()
@@ -413,7 +413,7 @@ class WorkflowExecutor:
                     )
 
                     if should_accept_traj:
-                        # Notify staleness controller of accepted rollout
+                        # Notify staleness manager of accepted rollout
                         self.staleness_manager.on_rollout_accepted()
                         if self.config.enable_rollout_tracing:
                             stat = self.staleness_manager.get_stats()
