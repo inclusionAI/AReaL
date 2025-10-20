@@ -1,0 +1,14 @@
+python stand_alone_sft.py \
+            --model_name_or_path "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct" \
+            --dataset_path "alpaca_en_demo.json" \
+            --output_dir "checkpoint/" \
+            --use_custom_pos_encoding \
+            --custom_pos_period 128000 \
+            --max_length 2048 \
+            --num_train_epochs 3 \
+            --per_device_train_batch_size 2 \
+            --gradient_accumulation_steps 4 \
+            --learning_rate 5e-5 \
+            --bf16 \
+            --logging_steps 10 \
+            --save_steps 100
