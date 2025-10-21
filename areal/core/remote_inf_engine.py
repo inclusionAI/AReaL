@@ -409,7 +409,7 @@ class RemoteInfEngine:
 
         # Create a new session because we don't know whether this method
         # is called in the workflow thread or the main thread.
-        session = aiohttp.ClientSession(
+        async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(
                 total=self.config.request_timeout,
                 sock_connect=self.config.request_timeout,
@@ -417,61 +417,62 @@ class RemoteInfEngine:
             ),
             read_bufsize=1024 * 1024 * 10,
             connector=get_default_connector(),
-        )
+        ) as session:
 
-        # Deal with rollout interruption
-        stop_reason = None
-        while (
-            stop_reason not in ["stop", "tool_calls", "length"]
-            and len(accumulated_output_tokens) < gconfig.max_new_tokens
-        ):
-            # Request is interrupted, wait for some time to avoid interfering
-            # with update weights requests
-            while self.workflow_executor.paused.is_set():
-                await asyncio.sleep(0.5)
+            # Deal with rollout interruption
+            stop_reason = None
+            while (
+                stop_reason not in ["stop", "tool_calls", "length"]
+                and len(accumulated_output_tokens) < gconfig.max_new_tokens
+            ):
+                # Request is interrupted, wait for some time to avoid interfering
+                # with update weights requests
+                while self.workflow_executor.paused.is_set():
+                    await asyncio.sleep(0.5)
 
-            # Build request using backend
-            http_req = self.backend.build_generation_request(req, self.lora_initialized)
+                # Build request using backend
+                http_req = self.backend.build_generation_request(
+                    req, self.lora_initialized
+                )
 
-            # Loop until the generation is complete
-            result = await arequest_with_retry(
-                session=session,
-                addr=server_addr,
-                endpoint=http_req.endpoint,
-                payload=http_req.payload,
-                method=http_req.method,
-                max_retries=self.config.request_retries,
-                timeout=self.config.request_timeout,
-            )
+                # Loop until the generation is complete
+                result = await arequest_with_retry(
+                    session=session,
+                    addr=server_addr,
+                    endpoint=http_req.endpoint,
+                    payload=http_req.payload,
+                    method=http_req.method,
+                    max_retries=self.config.request_retries,
+                    timeout=self.config.request_timeout,
+                )
 
-            # Parse response using backend
-            gen_result = self.backend.parse_generation_response(result)
-            stop_reason = gen_result.stop_reason
+                # Parse response using backend
+                gen_result = self.backend.parse_generation_response(result)
+                stop_reason = gen_result.stop_reason
 
-            # Update accumulated outputs
-            accumulated_output_tokens.extend(gen_result.output_tokens)
-            accumulated_output_logprobs.extend(gen_result.output_logprobs)
-            accumulated_versions.extend(
-                [self.get_version()] * len(gen_result.output_tokens)
-            )
+                # Update accumulated outputs
+                accumulated_output_tokens.extend(gen_result.output_tokens)
+                accumulated_output_logprobs.extend(gen_result.output_logprobs)
+                accumulated_versions.extend(
+                    [self.get_version()] * len(gen_result.output_tokens)
+                )
 
-            # Update request for next iteration
-            req.input_ids += gen_result.output_tokens
-            req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
-            assert req.gconfig.max_new_tokens >= 0, (
-                req.gconfig.max_new_tokens,
-                len(gen_result.output_tokens),
-                len(gen_result.input_tokens),
-            )
+                # Update request for next iteration
+                req.input_ids += gen_result.output_tokens
+                req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
+                assert req.gconfig.max_new_tokens >= 0, (
+                    req.gconfig.max_new_tokens,
+                    len(gen_result.output_tokens),
+                    len(req.input_ids),
+                )
 
-        # Final abort handling
-        if stop_reason == "abort":
-            # If stop_reason is "abort", the only reason we exit the loop is
-            # len(accumulated_output_tokens) >= gconfig.max_new_tokens
-            # so the actual reason is length
-            stop_reason = "length"
+            # Final abort handling
+            if stop_reason == "abort":
+                # If stop_reason is "abort", the only reason we exit the loop is
+                # len(accumulated_output_tokens) >= gconfig.max_new_tokens
+                # so the actual reason is length
+                stop_reason = "length"
 
-        await session.close()
         latency = time.perf_counter() - start_time
 
         response = ModelResponse(
@@ -777,7 +778,7 @@ def _update_weights_from_disk(
         )
         save_timestamp = float(name_resolve.wait(update_name, timeout=120))
         load_timestamp = datetime.now().timestamp()
-        session = aiohttp.ClientSession(
+        async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(
                 total=request_timeout,
                 sock_connect=request_timeout,
@@ -785,28 +786,28 @@ def _update_weights_from_disk(
             ),
             read_bufsize=1024 * 1024 * 10,
             connector=get_default_connector(),
-        )
+        ) as session:
 
-        # Get requests from backend
-        weight_reqs = backend.build_disk_weight_update_requests(meta, lora_initialized)
+            # Get requests from backend
+            weight_reqs = backend.build_disk_weight_update_requests(
+                meta, lora_initialized
+            )
 
-        # Execute all requests
-        for http_req in weight_reqs.requests:
-            jobs = [
-                arequest_with_retry(
-                    addr=addr,
-                    session=session,
-                    endpoint=http_req.endpoint,
-                    payload=http_req.payload,
-                    method=http_req.method,
-                    max_retries=request_retries,
-                    timeout=request_timeout,
-                )
-                for addr in addresses
-            ]
-            await asyncio.gather(*jobs)
-
-        await session.close()
+            # Execute all requests
+            for http_req in weight_reqs.requests:
+                jobs = [
+                    arequest_with_retry(
+                        addr=addr,
+                        session=session,
+                        endpoint=http_req.endpoint,
+                        payload=http_req.payload,
+                        method=http_req.method,
+                        max_retries=request_retries,
+                        timeout=request_timeout,
+                    )
+                    for addr in addresses
+                ]
+                await asyncio.gather(*jobs)
 
         return load_timestamp - save_timestamp
 
