@@ -23,7 +23,8 @@ from areal.api.io_struct import (
     ParamSpec,
     WeightUpdateMeta,
 )
-from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
+from areal.api.workflow_api import RolloutWorkflow
+from areal.core.workflow_executor import WorkflowExecutor
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
