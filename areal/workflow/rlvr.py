@@ -16,7 +16,7 @@ from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
-from realhf.api.core.data_api import load_hf_tokenizer
+from areal.utils.hf_utils import load_hf_tokenizer
 
 logger = logging.getLogger("RLVR workflow")
 
@@ -49,12 +49,11 @@ class RLVRWorkflow(RolloutWorkflow):
     ):
         self.reward_fn = reward_fn
         self.gconfig = gconfig
-        self._tokenizer_str = None
-        self._tokenizer_obj = None
-
+        self.tokenizer_path = ""
+        self.tokenizer = None
         # Handle tokenizer parameter
         if isinstance(tokenizer, str):
-            self._tokenizer_str = tokenizer
+            self.tokenizer_path = tokenizer
         elif isinstance(tokenizer, PreTrainedTokenizerFast):
             self.tokenizer = tokenizer
 
@@ -71,7 +70,7 @@ class RLVRWorkflow(RolloutWorkflow):
         if self.async_reward_fn is None:
             self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
         if self.tokenizer is None:
-            self.tokenizer = load_hf_tokenizer(self._tokenizer_str)
+            self.tokenizer = load_hf_tokenizer(self.tokenizer_path)
 
         input_ids = self.get_input_ids_fn(
             self.data_extract_prompt_fn(data), self.tokenizer, self.enable_thinking

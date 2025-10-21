@@ -230,7 +230,7 @@ def main(args):
                 # log_gpu_stats("ref logp")
 
         with stats_tracker.record_timing("compute_advantage"):
-            actor.compute_advantages(batch)
+            batch = actor.compute_advantages(batch)
             # actor.compute_advantages(batch)
             # log_gpu_stats("compute advantages")
 
@@ -238,7 +238,7 @@ def main(args):
             stats_tracker.record_timing("train_step"),
             stats_tracker.scope("grpo_actor"),
         ):
-            actor.custom_function_call("ppo_update", batch)
+            actor.ppo_update(batch)
             # stats = actor.ppo_update(batch)
             actor.step_lr_scheduler()
             # log_gpu_stats("ppo update")

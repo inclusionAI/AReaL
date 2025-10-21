@@ -16,6 +16,7 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.scheduler_api import Job, Scheduler, ScheduleStrategy, Worker
+from areal.controller.batch import DistributedBatchMemory
 from areal.controller.utils import create_engine_with_retry, rpc_call
 from areal.utils import logging
 from areal.utils.http import wait_future_ordered
@@ -164,6 +165,21 @@ class DistributedTrainController(TrainController):
 
         return train_stats
 
+    def ppo_update(
+        self,
+        input_: DistributedBatch,
+    ) -> List[Dict[str, float]]:
+
+        batches = self._align_batches_with_dp(input_, True)
+        train_stats = rpc_call(
+            self.scheduler,
+            self.workers,
+            "ppo_update",
+            batches,
+        )
+
+        return train_stats
+
     def eval_batch(
         self,
         input_: DistributedBatch,
@@ -211,8 +227,7 @@ class DistributedTrainController(TrainController):
             *args,
             **kwargs,
         )
-
-        return advantages
+        return DistributedBatchMemory.concat(advantages)
 
     def forward(
         self,

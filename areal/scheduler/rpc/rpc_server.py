@@ -182,7 +182,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 args, kwargs = process_input_to_distributed_batch(
                     device, method, *args, **kwargs
                 )
-
+                logger.info(f"Processing call args structure: {args}, {kwargs}")
                 if (
                     check_attribute_type(type(EngineRPCServer.engine), action)
                     == "method"

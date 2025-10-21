@@ -2,10 +2,7 @@ import uuid
 from collections import defaultdict
 from typing import Dict, List
 
-from areal.api.scheduler_api import Job, Scheduler, Worker
-import psutil
-
-from areal.api.alloc_mode import AllocationMode, AllocationType
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
@@ -13,17 +10,13 @@ from areal.api.cli_args import (
     SGLangConfig,
     to_structured_cfg,
 )
-from areal.api.scheduler_api import Scheduler, Worker, Job, ScheduleStrategy
-from areal.platforms import current_platform
-from areal.scheduler.rpc.rpc_client import RPCClient
-from areal.utils import logging, name_resolve, names
-from areal.utils.launcher import JobException, JobInfo, JobState, get_env_vars
-from areal.utils.network import find_free_ports, gethostip
-from areal.utils.recover import check_if_recover
+from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.launcher.local import LocalLauncher
 from areal.scheduler.rpc.rpc_client import RPCClient
-from areal.utils import logging
-from areal.utils.network import find_free_ports
+from areal.utils import logging, name_resolve, names
+from areal.utils.launcher import get_env_vars
+from areal.utils.network import find_free_ports, gethostip
+from areal.utils.recover import check_if_recover
 
 logger = logging.getLogger("LocalScheduler")
 
@@ -66,7 +59,7 @@ class LocalScheduler(Scheduler):
                 self.launcher.submit(
                     job_name="llm_server",
                     cmd=task.cmd,
-                    gpu=task.gpu * replicas,
+                    gpu=task.gpu,
                     env_vars=envs,
                 )
 
@@ -137,7 +130,9 @@ class LocalScheduler(Scheduler):
                     ports = find_free_ports(task.port_count, port_range=(10000, 50000))
                     envs = task.env_vars if task.env_vars else {}
                     envs["PORT_LIST"] = ",".join(map(str, ports))
-                    envs["AREAL_LLM_SERVER_ADDRS"] = server_addrs[i % alloc_mode.gen.dp_size]
+                    envs["AREAL_LLM_SERVER_ADDRS"] = server_addrs[
+                        i % alloc_mode.gen.dp_size
+                    ]
                     envs["AREAL_RECOVER_RUN"] = str(int(is_recover_run))
                     self.launcher.submit(
                         job_name="rollout_worker",
