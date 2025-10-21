@@ -18,7 +18,7 @@ class RolloutWorkflow:
     ) -> (
         Dict[str, Any]
         | None
-        | Dict[str, CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]
+        | Dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward]
     ):
         """Run a single episode of the workflow.
 
