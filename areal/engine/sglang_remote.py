@@ -273,5 +273,5 @@ class RemoteSGLangEngine(InferenceEngine):
     def pause_generation(self):
         return self._engine.pause_generation()
 
-    def resume_generation(self):
-        return self._engine.resume_generation()
+    def continue_generation(self):
+        return self._engine.continue_generation()

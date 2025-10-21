@@ -721,7 +721,7 @@ class RemoteInfEngine:
             should_accept=should_accept,
         )
 
-    def pause(self):
+    def pause_generation(self):
         """Pause request submission for async rollout."""
         try:
             pause_req = self.backend.get_pause_request()
@@ -738,7 +738,7 @@ class RemoteInfEngine:
         # The following line waits until all requests are indeed dropped.
         time.sleep(self.config.pause_grace_period)
 
-    def resume(self):
+    def continue_generation(self):
         """Resume request submission for async rollout."""
         try:
             resume_req = self.backend.get_resume_request()
