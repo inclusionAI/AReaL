@@ -19,10 +19,11 @@ model and validates the positional-encoding swap:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 import torch
 from torch import nn
@@ -49,6 +50,33 @@ class GenerationResult:
 	prompt: str
 	generated_text: str
 	full_text: str
+
+
+def load_prompts_from_jsonl(file_path: str) -> List[str]:
+	"""Load prompts from a JSONL file.
+	
+	Args:
+		file_path: Path to the JSONL file where each line contains a JSON object with a "prompt" field.
+		
+	Returns:
+		List of prompts extracted from the file.
+	"""
+	prompts = []
+	with open(file_path, 'r', encoding='utf-8') as f:
+		for line_num, line in enumerate(f, 1):
+			line = line.strip()
+			if not line:
+				continue
+			try:
+				data = json.loads(line)
+				if 'prompt' not in data:
+					LOGGER.warning(f"Line {line_num}: Missing 'prompt' field, skipping")
+					continue
+				prompts.append(data['prompt'])
+			except json.JSONDecodeError as e:
+				LOGGER.warning(f"Line {line_num}: Failed to parse JSON: {e}")
+				continue
+	return prompts
 
 
 class CustomPositionalEncoding(nn.Module):
@@ -415,6 +443,91 @@ def generate_text(
 	return GenerationResult(prompt=prompt, generated_text=generated_text, full_text=full_text)
 
 
+def generate_text_batch(
+	model: PreTrainedModel,
+	tokenizer: PreTrainedTokenizerBase,
+	prompts: List[str],
+	max_new_tokens: int = 64,
+	temperature: float = 0.8,
+	top_p: float = 0.95,
+	top_k: int = 0,
+	do_sample: bool = True,
+	use_chat_template: bool = False,
+) -> List[GenerationResult]:
+	"""Generate text from a batch of prompts.
+	
+	Args:
+		model: The language model to use for generation
+		tokenizer: The tokenizer for the model
+		prompts: List of prompt texts
+		max_new_tokens: Maximum number of new tokens to generate
+		temperature: Sampling temperature
+		top_p: Nucleus sampling parameter
+		top_k: Top-k sampling parameter
+		do_sample: Whether to use sampling or greedy decoding
+		use_chat_template: If True, format prompts as chat messages for instruct models
+		
+	Returns:
+		List of GenerationResult objects
+	"""
+	if len(prompts) == 0:
+		return []
+	
+	# Format prompts if using chat template
+	formatted_prompts = []
+	for prompt in prompts:
+		if use_chat_template:
+			if hasattr(tokenizer, 'apply_chat_template') and tokenizer.chat_template is not None:
+				messages = [{"role": "user", "content": prompt}]
+				formatted_prompt = tokenizer.apply_chat_template(
+					messages,
+					tokenize=False,
+					add_generation_prompt=True
+				)
+			else:
+				formatted_prompt = prompt
+		else:
+			formatted_prompt = prompt
+		formatted_prompts.append(formatted_prompt)
+	
+	# Tokenize all prompts with padding
+	inputs = tokenizer(
+		formatted_prompts,
+		return_tensors="pt",
+		padding=True,
+		truncation=True,
+	)
+	input_ids = inputs["input_ids"].to(model.device)
+	attention_mask = inputs["attention_mask"].to(model.device)
+
+	with torch.no_grad():
+		generated_ids = model.generate(
+			input_ids=input_ids,
+			attention_mask=attention_mask,
+			max_new_tokens=max_new_tokens,
+			do_sample=do_sample,
+			temperature=temperature,
+			top_p=top_p,
+			top_k=top_k if top_k > 0 else None,
+			pad_token_id=tokenizer.pad_token_id,
+			eos_token_id=tokenizer.eos_token_id,
+		)
+
+	# Decode each generated sequence
+	results = []
+	for i, (prompt, formatted_prompt) in enumerate(zip(prompts, formatted_prompts)):
+		full_text = tokenizer.decode(generated_ids[i], skip_special_tokens=True)
+		# Extract only the generated portion
+		generated_text = full_text[len(formatted_prompt):] if not use_chat_template else full_text.split(formatted_prompt)[-1]
+		results.append(GenerationResult(
+			prompt=prompt,
+			generated_text=generated_text,
+			full_text=full_text
+		))
+	
+	return results
+
+
 def _self_test_gpt2(device: torch.device, max_length: int) -> None:
 	config = GPT2Config(
 		n_positions=max_length,
@@ -505,6 +618,24 @@ def parse_args() -> argparse.Namespace:
 		help="Path to a text file containing the prompt. If provided, overrides --prompt.",
 	)
 	parser.add_argument(
+		"--prompt-jsonl",
+		type=str,
+		default=None,
+		help="Path to a JSONL file containing prompts. Each line should be a JSON object with a 'prompt' field. Enables batched generation.",
+	)
+	parser.add_argument(
+		"--batch-size",
+		type=int,
+		default=8,
+		help="Batch size for processing prompts from JSONL file.",
+	)
+	parser.add_argument(
+		"--output-jsonl",
+		type=str,
+		default=None,
+		help="Path to save generation results in JSONL format. If not specified, results are printed to stdout.",
+	)
+	parser.add_argument(
 		"--model-name-or-path",
 		type=str,
 		default="gpt2",
@@ -586,12 +717,27 @@ def main() -> None:
 		run_self_test(device)
 		return
 
-	# Load prompt from file if specified
-	if args.prompt_file:
+	# Load prompts
+	prompts = []
+	if args.prompt_jsonl:
+		# Load prompts from JSONL file for batched generation
+		LOGGER.info("Loading prompts from JSONL file: %s", args.prompt_jsonl)
+		try:
+			prompts = load_prompts_from_jsonl(args.prompt_jsonl)
+			LOGGER.info("Loaded %d prompts from JSONL file", len(prompts))
+		except FileNotFoundError:
+			LOGGER.error("JSONL file not found: %s", args.prompt_jsonl)
+			return
+		except Exception as e:
+			LOGGER.error("Error reading JSONL file: %s", e)
+			return
+	elif args.prompt_file:
+		# Load single prompt from text file
 		LOGGER.info("Loading prompt from file: %s", args.prompt_file)
 		try:
 			with open(args.prompt_file, 'r', encoding='utf-8') as f:
 				prompt = f.read().strip()
+			prompts = [prompt]
 			LOGGER.info("Loaded prompt from file (length: %d characters)", len(prompt))
 		except FileNotFoundError:
 			LOGGER.error("Prompt file not found: %s", args.prompt_file)
@@ -600,7 +746,8 @@ def main() -> None:
 			LOGGER.error("Error reading prompt file: %s", e)
 			return
 	else:
-		prompt = args.prompt
+		# Use the command line prompt
+		prompts = [args.prompt]
 
 	model, tokenizer = load_model_and_tokenizer(
 		model_name_or_path=args.model_name_or_path,
@@ -634,21 +781,77 @@ def main() -> None:
 	else:
 		LOGGER.info("Custom positional encoding injected at %s", replaced_name)
 
-	result = generate_text(
-		model=model,
-		tokenizer=tokenizer,
-		prompt=prompt,
-		max_new_tokens=args.max_new_tokens,
-		temperature=args.temperature,
-		top_p=args.top_p,
-		top_k=args.top_k,
-		do_sample=not args.greedy,
-		use_chat_template=args.use_chat_template,
-	)
-
-	LOGGER.info("Prompt: %s", result.prompt)
-	LOGGER.info("Generated continuation: %s", result.generated_text)
-	print(result.full_text)
+	# Perform generation
+	all_results = []
+	
+	if len(prompts) == 1:
+		# Single prompt generation
+		result = generate_text(
+			model=model,
+			tokenizer=tokenizer,
+			prompt=prompts[0],
+			max_new_tokens=args.max_new_tokens,
+			temperature=args.temperature,
+			top_p=args.top_p,
+			top_k=args.top_k,
+			do_sample=not args.greedy,
+			use_chat_template=args.use_chat_template,
+		)
+		all_results = [result]
+		LOGGER.info("Prompt: %s", result.prompt)
+		LOGGER.info("Generated continuation: %s", result.generated_text)
+		print(result.full_text)
+	else:
+		# Batched generation
+		LOGGER.info("Processing %d prompts with batch size %d", len(prompts), args.batch_size)
+		batch_size = args.batch_size
+		
+		for i in range(0, len(prompts), batch_size):
+			batch_prompts = prompts[i:i + batch_size]
+			LOGGER.info("Processing batch %d/%d (size: %d)", 
+						i // batch_size + 1, 
+						(len(prompts) + batch_size - 1) // batch_size,
+						len(batch_prompts))
+			
+			batch_results = generate_text_batch(
+				model=model,
+				tokenizer=tokenizer,
+				prompts=batch_prompts,
+				max_new_tokens=args.max_new_tokens,
+				temperature=args.temperature,
+				top_p=args.top_p,
+				top_k=args.top_k,
+				do_sample=not args.greedy,
+				use_chat_template=args.use_chat_template,
+			)
+			all_results.extend(batch_results)
+		
+		LOGGER.info("Completed generation for %d prompts", len(all_results))
+	
+	# Save or print results
+	if args.output_jsonl:
+		LOGGER.info("Saving results to: %s", args.output_jsonl)
+		with open(args.output_jsonl, 'w', encoding='utf-8') as f:
+			for result in all_results:
+				output_obj = {
+					'prompt': result.prompt,
+					'generated_text': result.generated_text,
+					'full_text': result.full_text,
+				}
+				f.write(json.dumps(output_obj, ensure_ascii=False) + '\n')
+		LOGGER.info("Results saved successfully")
+	elif len(prompts) > 1:
+		# Print all results for multiple prompts
+		for i, result in enumerate(all_results, 1):
+			print(f"\n{'='*80}")
+			print(f"Result {i}/{len(all_results)}")
+			print(f"{'='*80}")
+			print(f"Prompt: {result.prompt}")
+			print(f"Generated: {result.generated_text}")
+			print(f"Full text: {result.full_text}")
+		print(f"\n{'='*80}")
+		print(f"Total: {len(all_results)} results")
+		print(f"{'='*80}")
 
 
 if __name__ == "__main__":
