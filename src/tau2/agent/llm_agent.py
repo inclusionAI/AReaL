@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from loguru import logger
 from pydantic import BaseModel
@@ -63,6 +63,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
         allow_format_retry: bool = True,
+        completion_fn: Optional[Callable] = None,
     ):
         """
         Initialize the LLMAgent.
@@ -71,6 +72,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         self.llm = llm
         self.llm_args = deepcopy(llm_args) if llm_args is not None else {}
         self.allow_format_retry = allow_format_retry
+        self.completion_fn = completion_fn
 
     @property
     def system_prompt(self) -> str:
@@ -91,9 +93,9 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         """
         if message_history is None:
             message_history = []
-        assert all(is_valid_agent_history_message(m) for m in message_history), (
-            "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
-        )
+        assert all(
+            is_valid_agent_history_message(m) for m in message_history
+        ), "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
         return LLMAgentState(
             system_messages=[SystemMessage(role="system", content=self.system_prompt)],
             messages=message_history,
@@ -114,6 +116,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
             model=self.llm,
             tools=self.tools,
             messages=messages,
+            completion_fn=self.completion_fn,
             **self.llm_args,
         )
         valid, error_msg = validate_message_format(assistant_message, solo=False)
@@ -130,6 +133,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
                 model=self.llm,
                 tools=self.tools,
                 messages=retry_messages,
+                completion_fn=self.completion_fn,
                 **self.llm_args,
             )
             assistant_message.errors = [error]
@@ -194,20 +198,22 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         llm_args: Optional[dict] = None,
         provide_function_args: bool = True,
         allow_format_retry: bool = True,
+        completion_fn: Optional[Callable] = None,
     ):
         """
         Initialize the LLMAgent.
         If provide_function_args is True, the resolution steps will include the function arguments.
         """
         super().__init__(tools=tools, domain_policy=domain_policy)
-        assert self.check_valid_task(task), (
-            f"Task {task.id} is not valid. Cannot run GT agent."
-        )
+        assert self.check_valid_task(
+            task
+        ), f"Task {task.id} is not valid. Cannot run GT agent."
         self.task = task
         self.llm = llm
         self.llm_args = deepcopy(llm_args) if llm_args is not None else {}
         self.provide_function_args = provide_function_args
         self.allow_format_retry = allow_format_retry
+        self.completion_fn = completion_fn
 
     @classmethod
     def check_valid_task(cls, task: Task) -> bool:
@@ -243,9 +249,9 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         """
         if message_history is None:
             message_history = []
-        assert all(is_valid_agent_history_message(m) for m in message_history), (
-            "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
-        )
+        assert all(
+            is_valid_agent_history_message(m) for m in message_history
+        ), "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
         return LLMAgentState(
             system_messages=[SystemMessage(role="system", content=self.system_prompt)],
             messages=message_history,
@@ -266,6 +272,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
             model=self.llm,
             tools=self.tools,
             messages=messages,
+            completion_fn=self.completion_fn,
             **self.llm_args,
         )
         valid, error_msg = validate_message_format(assistant_message, solo=False)
@@ -281,6 +288,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
                 model=self.llm,
                 tools=self.tools,
                 messages=retry_messages,
+                completion_fn=self.completion_fn,
                 **self.llm_args,
             )
             assistant_message.errors = [error]
@@ -378,20 +386,22 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
         allow_format_retry: bool = True,
+        completion_fn: Optional[Callable] = None,
     ):
         """
         Initialize the LLMAgent.
         """
         super().__init__(tools=tools, domain_policy=domain_policy)
-        assert self.check_valid_task(task), (
-            f"Task {task.id} is not valid. Cannot run GT agent."
-        )
+        assert self.check_valid_task(
+            task
+        ), f"Task {task.id} is not valid. Cannot run GT agent."
         self.task = task
         self.llm = llm
         self.llm_args = llm_args if llm_args is not None else {}
         self.add_stop_tool()
         self.validate_tools()
         self.allow_format_retry = allow_format_retry
+        self.completion_fn = completion_fn
 
     def add_stop_tool(self) -> None:
         """Add the stop tool to the tools."""
@@ -483,9 +493,9 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         """
         if message_history is None:
             message_history = []
-        assert all(is_valid_agent_history_message(m) for m in message_history), (
-            "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
-        )
+        assert all(
+            is_valid_agent_history_message(m) for m in message_history
+        ), "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
         return LLMAgentState(
             system_messages=[SystemMessage(role="system", content=self.system_prompt)],
             messages=message_history,
@@ -511,6 +521,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
             tools=self.tools,
             messages=messages,
             tool_choice="required",
+            completion_fn=self.completion_fn,
             **self.llm_args,
         )
         valid, error_msg = validate_message_format(assistant_message, solo=True)
@@ -527,6 +538,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
                 tools=self.tools,
                 messages=retry_messages,
                 tool_choice="required",
+                completion_fn=self.completion_fn,
                 **self.llm_args,
             )
             assistant_message.errors = [error]

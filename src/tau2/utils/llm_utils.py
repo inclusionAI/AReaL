@@ -1,14 +1,14 @@
 import json
 import os
 import re
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import litellm
+from dotenv import load_dotenv
 from litellm import completion, completion_cost
 from litellm.caching.caching import Cache
 from litellm.main import ModelResponse, Usage
 from loguru import logger
-from dotenv import load_dotenv
 
 from tau2.config import (
     DEFAULT_LLM_CACHE_TYPE,
@@ -228,6 +228,7 @@ def generate(
     messages: list[Message],
     tools: Optional[list[Tool]] = None,
     tool_choice: Optional[str] = None,
+    completion_fn: Optional[Callable] = None,
     **kwargs: Any,
 ) -> UserMessage | AssistantMessage:
     """
@@ -257,8 +258,9 @@ def generate(
     if tools and tool_choice is None:
         logger.debug("Tool choice is None, setting to auto")
         tool_choice = "auto"
+    completion_fn = completion_fn or completion
     try:
-        response = completion(
+        response = completion_fn(
             model=model,
             messages=litellm_messages,
             tools=tools,
@@ -280,9 +282,9 @@ def generate(
     except Exception as e:
         logger.error(e)
         raise e
-    assert response.message.role == "assistant", (
-        "The response should be an assistant message"
-    )
+    assert (
+        response.message.role == "assistant"
+    ), "The response should be an assistant message"
     content = response.message.content
     tool_calls = response.message.tool_calls or []
     tool_calls = [

@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 from loguru import logger
 
@@ -72,9 +72,11 @@ class UserSimulator(BaseUser):
         instructions: Optional[UserInstructions] = None,
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
+        completion_fn: Optional[Callable] = None,
     ):
         super().__init__(instructions=instructions, llm=llm, llm_args=llm_args)
         self.tools = tools
+        self.completion_fn = completion_fn
 
     @property
     def global_simulation_guidelines(self) -> str:
@@ -106,9 +108,9 @@ class UserSimulator(BaseUser):
         """
         if message_history is None:
             message_history = []
-        assert all(is_valid_user_history_message(m) for m in message_history), (
-            "Invalid user message history. User messages must be of type UserMessage, AssistantMessage, or ToolMessage to User."
-        )
+        assert all(
+            is_valid_user_history_message(m) for m in message_history
+        ), "Invalid user message history. User messages must be of type UserMessage, AssistantMessage, or ToolMessage to User."
 
         user_state = UserState(
             system_messages=[SystemMessage(role="system", content=self.system_prompt)],
@@ -160,6 +162,7 @@ class UserSimulator(BaseUser):
             messages=messages,
             tools=self.tools,
             tool_choice="auto",
+            completion_fn=self.completion_fn,
             **self.llm_args,
         )
 
