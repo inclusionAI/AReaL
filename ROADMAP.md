@@ -1,96 +1,47 @@
 # AReaL Roadmap
 
-This roadmap outlines the planned features and improvements for AReaL. We welcome
-community feedback and contributions to help shape the future direction of the project.
+This roadmap outlines the planned features and improvements for AReaL in the next
+quarter. We welcome community feedback and contributions to help shape the future
+direction of the project.
 
 **Latest Release:** Check [releases](https://github.com/inclusionAI/AReaL/releases) for
-the most recent version
+the most recent version.
 
-## 2025 Q3 Roadmap
-
-For detailed Q3 2025 roadmap, see
-[GitHub Issue #257](https://github.com/inclusionAI/AReaL/issues/257).
+## 2025 Q4 Roadmap (due June 30, 2026)
 
 ### High Priority
 
-**🎯 Core Features**
+**🔧 Core Features**
 
-- [ ] Enhanced context parallelism support for long-context training
-- [ ] Improved LoRA training integration with FSDP
-- [ ] Zero-bubble pipeline parallelism implementation
-- [ ] Expert parallelism optimization for MoE models
-
-**⚡ Performance & Scalability**
-
-- [ ] Weight update latency optimization
-- [ ] Asynchronous rollout performance improvements
-- [ ] Memory usage optimization for large-scale training
-- [ ] Better GPU utilization monitoring and profiling tools
-
-**🔧 Developer Experience**
-
-- [ ] Simplified local development setup
-- [ ] Better error messages and debugging tools
+- [ ] Single-controller mode: https://github.com/inclusionAI/AReaL/issues/260
 - [ ] Interactive tutorial notebooks
-- [ ] Video tutorials and walkthroughs
-
-### Medium Priority
-
-**🧠 Algorithm Support**
-
-- [ ] Additional RL algorithms (DAPO variants, LitePPO improvements)
-- [ ] Multi-objective RL support
-- [ ] Curriculum learning integration
-- [ ] Online evaluation during training
-
-**📊 Monitoring & Observability**
-
-- [ ] Real-time training dashboard
-- [ ] Enhanced metrics tracking (beyond W&B/SwanLab)
-- [ ] Automatic anomaly detection in training
-- [ ] Better checkpoint management and recovery
+- [ ] Organize common training scripts into trainers (e.g., `GRPOTrainer`, `SFTTrainer`)
+  to reduce code duplication in example scripts
 
 **🌐 Ecosystem Integration**
 
-- [ ] Better HuggingFace Hub integration
-- [ ] Support for additional model families (Llama 3.x, Gemma variants)
-- [ ] Integration with popular evaluation frameworks
-- [ ] OpenAI-compatible API for inference
-
-### Lower Priority / Future Considerations
-
-**🔬 Research Features**
-
-- [ ] Multi-modal RL (vision-language-action)
-- [ ] Federated RL support
-- [ ] Meta-learning capabilities
-- [ ] Offline RL enhancements
+- [ ] OpenAI-agents and Camel-AI compatible API for agentic workflow building
+- [ ] Integration with popular inference/training frameworks: ollama, litellm, etc.
+- [ ] Additional VLM model support, especially Vision-MoE models
 
 **📚 Documentation & Examples**
 
-- [ ] More domain-specific examples (tool use, code generation, search)
-- [ ] Case studies from production deployments
-- [ ] Performance tuning guides for different hardware setups
-- [ ] Migration guides from other frameworks
+- [ ] More domain-specific examples (terminal use, tau2 bench)
+- [ ] Performance tuning guides for different hardware and model setups
 
-**🏗️ Infrastructure**
+**🏗️ Infrastructure**s
 
+- [ ] Simplified package management and image building
 - [ ] Kubernetes deployment support
 - [ ] Auto-scaling based on workload
-- [ ] Cost optimization tools
 - [ ] Multi-cloud support enhancements
+- [ ] Better monitoring and profiling tools
 
-## Community Requests
+## Historical Roadmaps
 
-The following features have been requested by the community. Upvote existing issues or
-create new ones to help us prioritize:
+### 2025 Q3
 
-- **Model Support:** Additional model architectures (check
-  [issues with `area/model` label](https://github.com/inclusionAI/AReaL/labels/area%2Fmodel))
-- **Dataset Integration:** New benchmark datasets (check
-  [issues with `area/dataset` label](https://github.com/inclusionAI/AReaL/labels/area%2Fdataset))
-- **Workflow Templates:** Pre-built workflows for common use cases
-- **Deployment:** Production deployment best practices and tooling
+[GitHub Issue #257](https://github.com/inclusionAI/AReaL/issues/257).
 
 ## How to Influence the Roadmap
 
@@ -111,56 +62,17 @@ We value community input! Here's how you can help shape AReaL's future:
 
 ### 🛠️ Contribute Implementation
 
-1. **Pick an Issue:** Look for issues labeled
-   [`help wanted`](https://github.com/inclusionAI/AReaL/labels/help%20wanted) or
-   [`good first issue`](https://github.com/inclusionAI/AReaL/labels/good%20first%20issue)
-1. **Discuss Approach:** Comment on the issue to discuss your implementation plan
-1. **Submit a PR:** Follow our [contributing guide](CONTRIBUTING.md) to submit your
-   changes
-1. **Collaborate:** Work with maintainers to refine and merge your contribution
-
-### 📣 Share Feedback
-
-- **What's working well?** Let us know in
-  [Discussions](https://github.com/inclusionAI/AReaL/discussions)
-- **What's painful?** File bug reports or usability issues
-- **What's missing?** Request features you need for your projects
+Check our [contribution guide](CONTRIBUTING.md).
 
 ## Release Cycle
 
-**Minor Releases:** Weekly - Bug fixes and small improvements
+**Minor Releases:** Bi-weekly - Bug fixes, small improvements, and new features
 
-**Major Releases:** Monthly - New features and significant changes
+**Major Releases:** Quarterly - Important milestones and significant changes
 
-**Breaking Changes:** Announced well in advance with migration guides
+## Historical Milestones
 
-## Completed Milestones
-
-### v0.3 (boba²) - June 2025
-
-- ✅ Fully asynchronous RL training (2.77× speedup)
-- ✅ Multi-turn agentic RL training simplified
-- ✅ Research paper published ([arxiv](https://arxiv.org/pdf/2505.24298))
-
-### v0.2 (boba) - March 2025
-
-- ✅ SGLang support for faster inference
-- ✅ State-of-the-art 7B and 32B math reasoning models
-- ✅ Performance optimizations
-
-### v0.1 - February 2025
-
-- ✅ Initial release
-- ✅ 1.5B and 7B model training pipelines
-- ✅ GRPO, PPO, RLOO algorithm support
-- ✅ FSDP and Megatron backend support
-
-### AReaL-lite - July 2025
-
-- ✅ Algorithm-first API redesign
-- ✅ 80% code reduction while maintaining 90% functionality
-- ✅ Single-file customization support
-- ✅ Improved developer experience
+Check [our historical milestone summaries since open-source](docs/version_history.md).
 
 ## Long-Term Vision
 
@@ -173,16 +85,9 @@ agentic AI systems** that is:
 1. **Performant:** Industry-leading training speed and efficiency
 1. **Open:** Fully open-source with transparent development
 
-## Stay Updated
-
-- **GitHub Releases:** [Watch releases](https://github.com/inclusionAI/AReaL/releases)
-- **Discussions:** [Join discussions](https://github.com/inclusionAI/AReaL/discussions)
-- **WeChat Group:** [Join our community](./assets/wechat_qrcode.png)
-- **Documentation:** [Read the docs](https://inclusionai.github.io/AReaL/)
-
 ______________________________________________________________________
 
-**Last Updated:** 2025-01-21
+**Last Updated:** 2025-10-21
 
 **Questions about the roadmap?** Open a discussion in
 [GitHub Discussions](https://github.com/inclusionAI/AReaL/discussions) or ask in our
