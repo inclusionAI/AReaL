@@ -36,7 +36,7 @@ def check_trajectory_format(
     data: (
         Dict[str, Any]
         | None
-        | Dict[str, CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]
+        | Dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward]
     ),
     batch_size: int | None = None,
     expected_keys: set | None = None,
