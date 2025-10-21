@@ -14,7 +14,7 @@ cluster:
     type: ray
     ray_actor_name: ray_kv_store
 
-allocation_mode: sglang.d1+d1
+allocation_mode: sglang.d8+d8
 
 rollout:
   experiment_name: ${experiment_name}

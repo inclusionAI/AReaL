@@ -135,7 +135,8 @@ run: |
             experiment_name=gsm8k-grpo \
             trial_name=trial0 \
             cluster.n_nodes=$SKYPILOT_NUM_NODES \
-            cluster.n_gpus_per_node=$SKYPILOT_NUM_GPUS_PER_NODE
+            cluster.n_gpus_per_node=$SKYPILOT_NUM_GPUS_PER_NODE \
+            allocation_mode=sglang.d8+d8
   else
     sleep 10
     echo "Starting Ray worker node..."
