@@ -58,7 +58,7 @@ class RolloutWorkflow:
 
         Returns
         -------
-        Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward]
+        Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]
             The trajectory result, None if rejected, or a dictionary of completion results
         """
         raise NotImplementedError()
@@ -79,7 +79,7 @@ def check_trajectory_format(
     This function validates trajectory data to ensure it conforms to one of three expected formats:
 
     1. **None**: Indicates a rejected trajectory that will not be used for training
-    2. **Dict[str, CompletionWithTokenLogpReward]**: Completion results from the workflow
+    2. **Dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward]**: Completion/Response results from the workflow
     3. **Dict[str, torch.Tensor]**: Tensor format with specific shape and key requirements
 
     For tensor format validation, the function ensures:
@@ -96,11 +96,11 @@ def check_trajectory_format(
 
     Parameters
     ----------
-    data : Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward]
+    data : Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward]
         The trajectory data to validate. Can be:
 
         - ``None`` for rejected trajectories
-        - Dictionary mapping strings to ``CompletionWithTokenLogpReward`` objects
+        - Dictionary mapping strings to ``CompletionWithTokenLogpReward`` or ``ResponseWithTokenLogpReward`` objects
         - Dictionary mapping strings to PyTorch tensors or other data types
 
     batch_size : int | None, optional
