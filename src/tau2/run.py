@@ -3,7 +3,7 @@ import multiprocessing
 import random
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -93,7 +93,7 @@ def make_run_name(config: RunConfig) -> str:
     return f"{get_now()}_{config.domain}_{agent_name}_{user_name}"
 
 
-def run_domain(config: RunConfig) -> Results:
+def run_domain(config: RunConfig, **kwargs: Any) -> Results:
     """
     Run simulations for a domain
     """
@@ -146,6 +146,7 @@ def run_domain(config: RunConfig) -> Results:
         max_concurrency=config.max_concurrency,
         seed=config.seed,
         log_level=config.log_level,
+        **kwargs,
     )
     metrics = compute_metrics(simulation_results)
     ConsoleDisplay.display_agent_metrics(metrics)
@@ -171,6 +172,7 @@ def run_tasks(
     max_concurrency: int = 1,
     seed: Optional[int] = 300,
     log_level: Optional[str] = "INFO",
+    **kwargs: Any,
 ) -> Results:
     """
     Runs tasks for a given domain.
@@ -344,6 +346,7 @@ def run_tasks(
                 max_errors=max_errors,
                 evaluation_type=evaluation_type,
                 seed=seed,
+                **kwargs,
             )
             simulation.trial = trial
             if console_display:
@@ -390,6 +393,7 @@ def run_task(
     max_errors: int = 10,
     evaluation_type: EvaluationType = EvaluationType.ALL,
     seed: Optional[int] = None,
+    **kwargs: Any,
 ) -> SimulationRun:
     """
     Runs tasks for a given domain.
@@ -420,6 +424,10 @@ def run_task(
     logger.info(
         f"STARTING SIMULATION: Domain: {domain}, Task: {task.id}, Agent: {agent}, User: {user}"
     )
+    completion_fn = kwargs.get("completion_fn", None)
+    agent_completion_fn = kwargs.get("agent_completion_fn", completion_fn)
+    user_completion_fn = kwargs.get("user_completion_fn", completion_fn)
+
     environment_constructor = registry.get_env_constructor(domain)
     environment = environment_constructor()
     AgentConstructor = registry.get_agent_constructor(agent)
@@ -431,6 +439,7 @@ def run_task(
             domain_policy=environment.get_policy(),
             llm=llm_agent,
             llm_args=llm_args_agent,
+            completion_fn=agent_completion_fn,
         )
     elif issubclass(AgentConstructor, LLMGTAgent):
         agent = AgentConstructor(
@@ -439,6 +448,7 @@ def run_task(
             llm=llm_agent,
             llm_args=llm_args_agent,
             task=task,
+            completion_fn=agent_completion_fn,
         )
     elif issubclass(AgentConstructor, LLMSoloAgent):
         solo_mode = True
@@ -450,6 +460,7 @@ def run_task(
             llm=llm_agent,
             llm_args=llm_args_agent,
             task=task,
+            completion_fn=agent_completion_fn,
         )
     else:
         raise ValueError(
@@ -471,6 +482,7 @@ def run_task(
         instructions=str(task.user_scenario),
         llm=llm_user,
         llm_args=llm_args_user,
+        completion_fn=user_completion_fn,
     )
 
     orchestrator = Orchestrator(
