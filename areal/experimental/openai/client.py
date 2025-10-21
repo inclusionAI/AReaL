@@ -619,7 +619,7 @@ class ArealOpenAI(AsyncOpenAI):
             If an unsupported ``style`` is provided.
         """
         # Use the generic helper function
-        return self.export_items_helper(self._response_cache, style, self.api_type)
+        return self.export_items_helper(self._cache, style, self.api_type)
 
     @staticmethod
     def export_items_helper(
