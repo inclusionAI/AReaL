@@ -334,8 +334,8 @@ def test_gsm8k_grpo_megatron(tmp_path_factory):
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
 
-    example_file = "examples/experimental/gsm8k_grpo_megatron.py"
-    config_name = "examples/experimental/configs/gsm8k_grpo_megatron.yaml"
+    example_file = "examples/math/gsm8k_grpo_megatron.py"
+    config_name = "examples/math/gsm8k_grpo_megatron.yaml"
     loop = asyncio.get_event_loop()
     return_code, success = loop.run_until_complete(
         run_example(
@@ -369,8 +369,8 @@ def test_gsm8k_sft_megatron(tmp_path_factory):
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
 
-    example_file = "examples/experimental/gsm8k_sft_megatron.py"
-    config_name = "examples/experimental/configs/gsm8k_sft_megatron.yaml"
+    example_file = "examples/math/gsm8k_sft_megatron.py"
+    config_name = "examples/math/gsm8k_sft_megatron.yaml"
     loop = asyncio.get_event_loop()
     return_code, success = loop.run_until_complete(
         run_example(

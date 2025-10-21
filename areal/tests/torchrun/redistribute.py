@@ -6,9 +6,9 @@ import random
 import torch
 import torch.distributed as dist
 
+from areal.core.dist_rollout import redistribute
 from areal.platforms import current_platform
 from areal.utils.data import concat_padded_tensors, tensor_container_to
-from areal.utils.redistributor import redistribute
 
 
 def main(args):
