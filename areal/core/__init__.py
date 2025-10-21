@@ -4,12 +4,16 @@ from .remote_inf_engine import (
     RemoteInfBackendProtocol,
     RemoteInfEngine,
 )
-from .staleness_controller import StalenessController
-from .workflow_executor import WorkflowExecutor
+from .staleness_manager import StalenessManager
+from .workflow_executor import (
+    WorkflowExecutor,
+    check_trajectory_format,
+)
 
 __all__ = [
     "RemoteInfBackendProtocol",
     "RemoteInfEngine",
-    "StalenessController",
+    "StalenessManager",
     "WorkflowExecutor",
+    "check_trajectory_format",
 ]
