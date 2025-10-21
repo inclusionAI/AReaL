@@ -7,7 +7,7 @@ direction of the project.
 **Latest Release:** Check [releases](https://github.com/inclusionAI/AReaL/releases) for
 the most recent version.
 
-## 2025 Q4 Roadmap (due June 30, 2026)
+## 2025 Q4 Roadmap (due January 31, 2026)
 
 ### High Priority
 
@@ -29,7 +29,7 @@ the most recent version.
 - [ ] More domain-specific examples (terminal use, tau2 bench)
 - [ ] Performance tuning guides for different hardware and model setups
 
-**🏗️ Infrastructure**s
+**🏗️ Infrastructure**
 
 - [ ] Simplified package management and image building
 - [ ] Kubernetes deployment support
