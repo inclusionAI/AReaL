@@ -6,10 +6,11 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Union
 
 from openai import AsyncOpenAI
-from openai._types import NOT_GIVEN, Body, NotGiven
+from openai._types import NOT_GIVEN, Body, NotGiven, Omit, omit
 from openai.resources.chat.completions.completions import (
     AsyncCompletions as BaseAsyncCompletions,
 )
+from openai.resources.responses.responses import AsyncResponses as BaseAsyncResponses
 from openai.types.chat import (
     ChatCompletion,
     ChatCompletionMessage,
@@ -21,12 +22,26 @@ from openai.types.chat.chat_completion_tool_choice_option_param import (
     ChatCompletionToolChoiceOptionParam,
 )
 from openai.types.completion_usage import CompletionUsage
+from openai.types.responses import response_create_params
+from openai.types.responses.response import Response
+from openai.types.responses.response_input_param import ResponseInputParam
+from openai.types.responses.response_output_message import ResponseOutputMessage
+from openai.types.responses.response_output_text import ResponseOutputText
+from openai.types.responses.response_usage import (
+    InputTokensDetails,
+    OutputTokensDetails,
+    ResponseUsage,
+)
+from openai.types.responses.tool_param import ToolParam
 from openai.types.shared_params.metadata import Metadata
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import ModelRequest
 from areal.experimental.openai.tool_call_parser import process_tool_calls
-from areal.experimental.openai.types import CompletionWithTokenLogpReward
+from areal.experimental.openai.types import (
+    CompletionWithTokenLogpReward,
+    ResponseWithTokenLogpReward,
+)
 from areal.utils import logging
 
 if TYPE_CHECKING:
@@ -153,7 +168,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             input_ids=prompt_token_ids,
             gconfig=gconfig,
             rid=str(uuid.uuid4()),
-            metadata=metadata,
+            metadata=None if metadata is NOT_GIVEN else metadata,
             tokenizer=self.tokenizer,
         )
 
@@ -214,6 +229,219 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         return chat_completion
 
 
+class AsyncResponsesWithReward(BaseAsyncResponses):
+    """Extended AsyncResponses that adds caching and reward functionality."""
+
+    def __init__(
+        self,
+        client,
+        engine: "InferenceEngine",
+        tokenizer: "PreTrainedTokenizerFast",
+        cache: Dict[str, ResponseWithTokenLogpReward],
+        tool_call_parser: Optional[str] = None,
+        chat_template_type: str = "hf",
+        messages_delimiter_start: str = "<|im_start|>",
+        messages_delimiter_end: str = "<|im_end|>",
+    ):
+        super().__init__(client)
+        self.engine = engine
+        self.tokenizer = tokenizer
+        self.tool_call_parser = tool_call_parser
+        self._cache = cache
+        self.chat_template_type = chat_template_type
+        self.messages_delimiter_start = messages_delimiter_start
+        self.messages_delimiter_end = messages_delimiter_end
+
+    async def create(
+        self,
+        *,
+        input: Union[str, ResponseInputParam] | Omit = omit,
+        instructions: str | None | Omit = omit,
+        max_output_tokens: int | None | Omit = omit,
+        metadata: Metadata | None | Omit = omit,
+        tool_choice: response_create_params.ToolChoice | Omit = omit,
+        tools: Iterable[ToolParam] | Omit = omit,
+        temperature: float | None | Omit = omit,
+        top_p: float | None | Omit = omit,
+        extra_body: Body | None = None,
+        **_: dict,
+    ) -> Response:
+        """Override create method to use AReaL engine"""
+        if extra_body is None:
+            extra_body = {}
+
+        # Build a simple messages list compatible with tokenizer chat template
+        messages_list: List[Dict] = []
+        if input is omit or input is None:
+            raise ValueError("input is required for Responses.create")
+        if isinstance(input, str):
+            messages_list = [
+                {"role": "user", "content": input},
+            ]
+        else:
+            # Best-effort extraction: consume any message-type items and concatenate input_text blocks
+            for item in input:
+                try:
+                    if (
+                        isinstance(item, dict)
+                        and item.get("type", "message") == "message"
+                    ):
+                        role = item.get("role", "user")
+                        content_list = item.get("content", []) or []
+                        text_parts: List[str] = []
+                        for c in content_list:
+                            if isinstance(c, dict) and c.get("type") in (
+                                "input_text",
+                                "text",
+                            ):
+                                # input_text param uses key 'text'
+                                if "text" in c and isinstance(c["text"], str):
+                                    text_parts.append(c["text"])
+                        if text_parts:
+                            messages_list.append(
+                                {"role": role, "content": "\n".join(text_parts)}
+                            )
+                except Exception:
+                    continue
+            if not messages_list:
+                raise ValueError(
+                    "Unsupported Responses input format: expected str or list of message items with input_text."
+                )
+
+        # Apply chat template
+        tools = list(tools) if tools is not omit else None
+        if self.chat_template_type == "hf":
+            prompt_token_ids = self.tokenizer.apply_chat_template(
+                messages_list,
+                tools=tools,
+                add_generation_prompt=True,
+                tokenize=True,
+                **extra_body.get("chat_template_kwargs", {}),
+            )
+        elif self.chat_template_type == "concat":
+            # By default, follows Qwen3 chat template.
+            start, end = self.messages_delimiter_start, self.messages_delimiter_end
+            message_strs: List[str] = []
+            for msg in messages_list:
+                message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
+            message_strs.append(f"{start}assistant\n")
+            prompt_token_ids = self.tokenizer.encode("".join(message_strs))
+        else:
+            raise ValueError(
+                f"Unsupported chat_template_type {self.chat_template_type}"
+            )
+
+        # Map sampling params
+        temp = 1.0 if temperature is omit else (temperature or 0.0)
+        top_p_val = None if top_p is omit else (top_p or 1.0)
+        max_new_tokens = 512
+        if max_output_tokens is not omit and max_output_tokens is not None:
+            max_new_tokens = max_output_tokens
+
+        # TODO: stop and frequency_penalty mapping if needed
+        # TODO: For now, we do not support them in Responses API
+
+        # Create generation config and request
+        gconfig = GenerationHyperparameters(
+            n_samples=1,
+            temperature=temp,
+            max_new_tokens=max_new_tokens,
+            top_p=top_p_val,
+            stop=None,
+            greedy=temp == 0,
+            frequency_penalty=0.0,
+            stop_token_ids=list(
+                set([self.tokenizer.eos_token_id, self.tokenizer.pad_token_id])
+            ),
+        )
+
+        model_request = ModelRequest(
+            input_ids=prompt_token_ids,
+            gconfig=gconfig,
+            rid=str(uuid.uuid4()),
+            metadata=None if metadata is omit else metadata,
+            tokenizer=self.tokenizer,
+        )
+
+        # Call inference engine
+        engine_resp = await self.engine.agenerate(model_request)
+        output_text = self.tokenizer.decode(engine_resp.output_tokens)
+
+        # Build Responses API objects
+        resp_id = f"resp-{uuid.uuid4().hex[:29]}"
+        msg_id = f"msg-{uuid.uuid4().hex[:29]}"
+        current_time = float(int(datetime.datetime.now().timestamp()))
+
+        output_message = ResponseOutputMessage(
+            id=msg_id,
+            role="assistant",
+            status="completed",
+            type="message",
+            content=[
+                ResponseOutputText(
+                    annotations=[],
+                    text=output_text,
+                    type="output_text",
+                )
+            ],
+        )
+
+        usage = ResponseUsage(
+            input_tokens=len(engine_resp.input_tokens),
+            input_tokens_details=InputTokensDetails(cached_tokens=0),
+            output_tokens=len(engine_resp.output_tokens),
+            output_tokens_details=OutputTokensDetails(
+                reasoning_tokens=0
+            ),  # TODO: fill reasoning tokens if needed
+            total_tokens=len(engine_resp.input_tokens) + len(engine_resp.output_tokens),
+        )
+
+        response = Response(
+            id=resp_id,
+            created_at=current_time,
+            error=None,
+            incomplete_details=None,
+            instructions=None if instructions is omit else instructions,
+            metadata=None if metadata is omit else metadata,
+            model="None",
+            object="response",
+            output=[output_message],
+            parallel_tool_calls=False,
+            temperature=temperature,
+            tool_choice=tool_choice if tool_choice is not omit else "none",
+            tools=tools,
+            top_p=top_p,
+            background=None,
+            conversation=None,
+            max_output_tokens=max_new_tokens,
+            max_tool_calls=None,
+            previous_response_id=None,
+            prompt=None,
+            prompt_cache_key=None,
+            reasoning=None,
+            safety_identifier=None,
+            service_tier=None,
+            status="completed",
+            text=None,
+            top_logprobs=None,
+            truncation=None,
+            usage=usage,
+            user=None,
+        )
+
+        # Cache the response with its input data
+        self._cache[resp_id] = ResponseWithTokenLogpReward(
+            response=deepcopy(response),
+            model_response=engine_resp,  # Should not deepcopy response because of tokenizer
+            input_data=(
+                deepcopy(input) if input is not omit else ""
+            ),  # Store a copy of the input data
+            chat_template_type=self.chat_template_type,
+        )
+
+        return response
+
+
 class ArealOpenAI(AsyncOpenAI):
     """Extended AsyncOpenAI client that uses AReaL's inference engine and supports reward setting."""
 
@@ -225,96 +453,121 @@ class ArealOpenAI(AsyncOpenAI):
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
         messages_delimiter_end: str = "<|im_end|>",
+        use_responses: bool = True,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
-        # Use an ordered dict to maintain insertion order of completions
-        self._completion_cache: OrderedDict[str, CompletionWithTokenLogpReward] = (
-            OrderedDict()
-        )
+        self.use_responses = use_responses
 
-        # Override chat.completions with our extended implementation
-        self.chat.completions = AsyncCompletionsWithReward(
-            self,
-            engine,
-            tokenizer,
-            self._completion_cache,
-            tool_call_parser=self.tool_call_parser,
-            chat_template_type=chat_template_type,
-            messages_delimiter_start=messages_delimiter_start,
-            messages_delimiter_end=messages_delimiter_end,
-        )
+        if self.use_responses:  # Use Responses API
+            # Use an ordered dict to maintain insertion order of responses
+            self._response_cache: OrderedDict[str, ResponseWithTokenLogpReward] = (
+                OrderedDict()
+            )
+            self._cache = self._response_cache
+            # Override responses with our extended implementation
+            self.responses = AsyncResponsesWithReward(
+                self,
+                engine,
+                tokenizer,
+                self._response_cache,
+                tool_call_parser=self.tool_call_parser,
+                chat_template_type=chat_template_type,
+                messages_delimiter_start=messages_delimiter_start,
+                messages_delimiter_end=messages_delimiter_end,
+            )
+        else:  # Use Completions API
+            # Use an ordered dict to maintain insertion order of completions
+            self._cache: OrderedDict[str, CompletionWithTokenLogpReward] = OrderedDict()
+            self._cache = self._cache
+            # Override chat.completions with our extended implementation
+            self.chat.completions = AsyncCompletionsWithReward(
+                self,
+                engine,
+                tokenizer,
+                self._cache,
+                tool_call_parser=self.tool_call_parser,
+                chat_template_type=chat_template_type,
+                messages_delimiter_start=messages_delimiter_start,
+                messages_delimiter_end=messages_delimiter_end,
+            )
+
+    @property
+    def api_type(self):
+        """API type used by this client."""
+        return "responses" if self.use_responses else "completions"
 
     def get_completions(
         self, completion_id: str
     ) -> Optional[CompletionWithTokenLogpReward]:
         """Get completion with its reward from cache."""
-        return self._completion_cache.get(completion_id)
+        return self._cache.get(completion_id)
 
-    def set_reward(self, completion_id: str, reward: float) -> None:
+    def set_reward(self, id: str, reward: float) -> None:
         """Set reward for a specific completion by its ID."""
-        if completion_id not in self._completion_cache:
-            raise KeyError(f"Completion with ID {completion_id} not found in cache")
-        self._completion_cache[completion_id].reward = reward
+        if id not in self._cache:
+            raise KeyError(
+                f"{self.api_type.capitalize()} with ID {id} not found in cache"
+            )
+        self._cache[id].reward = reward
 
     def set_final_reward(self, reward: float) -> None:
         """Set reward for the most recent completion."""
-        if not self._completion_cache:
-            raise RuntimeError("No completions in cache to set reward for")
-        last_comp_id = next(reversed(self._completion_cache))
-        self._completion_cache[last_comp_id].reward = reward
+        if not self._cache:
+            raise RuntimeError(f"No {self.api_type} in cache to set reward for")
+        last_comp_id = next(reversed(self._cache))
+        self._cache[last_comp_id].reward = reward
 
     def apply_reward_discount(self, turn_discount: float = 1.0) -> None:
-        """Apply backward discounted rewards across cached completions.
+        """Apply backward discounted rewards across cached completions/responses.
 
-        This method iterates over the cached completions in reverse creation
+        This method iterates over the cached completions/responses in reverse creation
         (insertion) order and applies a geometric discount to propagate reward
-        signal backward in time. The most recent completion is treated as the
+        signal backward in time. The most recent completion/response is treated as the
         starting point. If it does not have an explicit reward, a warning is
         logged and a default reward of ``0.0`` is used. For each earlier
-        completion, its reward is initialized to ``0.0`` if unset, then the
-        discounted reward from the next later completion is added:
+        completion/response, its reward is initialized to ``0.0`` if unset, then the
+        discounted reward from the next later completion/response is added:
 
         ``reward[i] += reward[i+1] * turn_discount``.
 
-        Typically called before exporting completions in 'individual' style
-        to each completion is assigned with a valid reward value.
+        Typically called before exporting completions/responses in 'individual' style
+        to each completion/response is assigned with a valid reward value.
 
         Parameters
         ----------
         turn_discount : float, optional
             The per-turn discount factor applied when propagating reward
-            backward from a later completion to an earlier one, by default 1.0.
+            backward from a later completion/response to an earlier one, by default 1.0.
 
         Returns
         -------
-        Dict[str, CompletionWithTokenLogpReward]
-            A shallow copy of the completion cache after rewards have been
+        Dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward]
+            A shallow copy of the completion/response cache after rewards have been
             updated in-place.
         """
-        # Assign rewards to completions in cache based on their created time
-        comp_time_sequence = list(
-            reversed([comp for _, comp in self._completion_cache.items()])
-        )
-        # Check if the last-created completion has a reward set
-        if comp_time_sequence:
-            if comp_time_sequence[0].reward is None:
+        # Assign rewards to items in cache based on their creation order
+        item_time_sequence = list(reversed([item for _, item in self._cache.items()]))
+
+        # Check if the last-created item has a reward set
+        if item_time_sequence:
+            if item_time_sequence[0].reward is None:
                 logger.warning(
-                    "The most recent completion does not have a reward set. "
-                    "All completions will have None reward."
+                    f"The most recent {self.api_type} does not have a reward set. "
+                    f"All {self.api_type}s will have None reward."
                 )
-                comp_time_sequence[0].reward = 0.0
+                item_time_sequence[0].reward = 0.0
             # Propagate rewards backwards with discounting if reward is not set
-            for i in range(1, len(comp_time_sequence)):
-                if comp_time_sequence[i].reward is None:
-                    comp_time_sequence[i].reward = 0.0
-                comp_time_sequence[i].reward += (
-                    comp_time_sequence[i - 1].reward * turn_discount
+            for i in range(1, len(item_time_sequence)):
+                if item_time_sequence[i].reward is None:
+                    item_time_sequence[i].reward = 0.0
+                item_time_sequence[i].reward += (
+                    item_time_sequence[i - 1].reward * turn_discount
                 )
-        return dict(**self._completion_cache)
+        return dict(**self._cache)
 
     def export_completions(
         self, style: str = "concat"
@@ -348,15 +601,89 @@ class ArealOpenAI(AsyncOpenAI):
         ValueError
             If an unsupported ``style`` is provided.
         """
-        if len(self._completion_cache) == 0:
+        # Use the generic helper function
+        return self.export_items_helper(self._cache, style, self.api_type)
+
+    def get_responses(self, response_id: str) -> Optional[ResponseWithTokenLogpReward]:
+        """Get response with its reward from cache."""
+        return self._cache.get(response_id)
+
+    def export_responses(
+        self, style: str = "concat"
+    ) -> Dict[str, ResponseWithTokenLogpReward]:
+        """Export cached responses in different formats.
+
+        When ``style='concat'``, this method constructs a conversation tree by
+        linking responses whose input data form a strict-prefix
+        relationship. The longest-prefix rule is used to determine each node's
+        parent. It then returns only leaf-node responses (those without
+        children). No reward propagation is performed here.
+
+        When ``style='individual'``, all cached responses are returned as-is
+        without constructing the tree.
+
+        Parameters
+        ----------
+        style : str, optional
+            The export style, either ``'concat'`` (build tree and return leaves)
+            or ``'individual'`` (return all), by default 'concat'.
+
+        Returns
+        -------
+        Dict[str, ResponseWithTokenLogpReward]
+            A mapping from response ID to response objects. For
+            ``'concat'``, this contains only leaf nodes. For ``'individual'``,
+            this contains all cached responses.
+
+        Raises
+        ------
+        ValueError
+            If an unsupported ``style`` is provided.
+        """
+        # Use the generic helper function
+        return self.export_items_helper(self._response_cache, style, self.api_type)
+
+    @staticmethod
+    def export_items_helper(
+        cache: Dict[
+            str, Union[CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]
+        ],
+        style: str = "concat",
+        item_type: str = "completion",
+    ) -> Dict[str, Union[CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]]:
+        """Export cached items in different formats.
+
+        This is a generic implementation that works for both completions and responses.
+
+        Parameters
+        ----------
+        cache : Dict[str, Union[CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]]
+            The cache containing items to export
+        style : str, optional
+            The export style, either 'concat' (build tree and return leaves)
+            or 'individual' (return all), by default 'concat'
+        item_type : str
+            The type of items being processed ("completion" or "response")
+
+        Returns
+        -------
+        Dict[str, Union[CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]]
+            A mapping from item ID to item objects.
+
+        Raises
+        ------
+        ValueError
+            If an unsupported style is provided.
+        """
+        if len(cache) == 0:
             return {}
 
         if style == "concat":
-            for comp in self._completion_cache.values():
-                if comp.chat_template_type != "concat":
+            for item in cache.values():
+                if item.chat_template_type != "concat":
                     raise ValueError(
-                        "Cannot export completions in 'concat' style when "
-                        'comp.chat_template_type != "concat" for any completion. '
+                        f"Cannot export {item_type}s in 'concat' style when "
+                        f'item.chat_template_type != "concat" for any {item_type}. '
                         "This is because when applying chat template using some tokenizers, "
                         "there might be some tokens added or removed (e.g. think tokens), "
                         "making it impossible to construct the conversation tree. "
@@ -372,21 +699,29 @@ class ArealOpenAI(AsyncOpenAI):
                         return False
                 return True
 
-            # Precompute normalized messages
+            # Precompute normalized data
             meta = {}
-            for cid, comp in self._completion_cache.items():
-                meta[cid] = {
-                    "norm_msgs": comp.messages or [],
-                    "obj": comp,
+            for item_id, item in cache.items():
+                if item_type == "completion":
+                    norm_data = item.messages or []
+                else:  # response
+                    norm_data = item.input_data
+                meta[item_id] = {
+                    "norm_data": norm_data,
+                    "obj": item,
                 }
 
             # 1) Construct parent-child relationships using longest prefix rule
-            # Sort potential children by (message length asc, created asc) so parents are available
+            # Sort potential children by (data length asc, created asc) so parents are available
             ordered = sorted(
                 meta.items(),
                 key=lambda kv: (
-                    len(kv[1]["norm_msgs"]),
-                    kv[1]["obj"].completion.created,
+                    len(kv[1]["norm_data"]),
+                    (
+                        kv[1]["obj"].completion.created
+                        if item_type == "completion"
+                        else kv[1]["obj"].response.created_at
+                    ),
                 ),
             )
 
@@ -395,15 +730,15 @@ class ArealOpenAI(AsyncOpenAI):
                 info["obj"].parent = None
 
             for child_id, child_info in ordered:
-                child_msgs = child_info["norm_msgs"]
+                child_data = child_info["norm_data"]
                 best_parent = None
                 best_len = -1
                 for parent_id, parent_info in ordered:
                     if parent_id == child_id:
                         continue
-                    parent_msgs = parent_info["norm_msgs"]
-                    if _is_prefix(parent_msgs, child_msgs):
-                        plen = len(parent_msgs)
+                    parent_data = parent_info["norm_data"]
+                    if _is_prefix(parent_data, child_data):
+                        plen = len(str(parent_data))
                         # choose the longest prefix
                         if plen > best_len:
                             best_parent = parent_info["obj"]
@@ -411,23 +746,32 @@ class ArealOpenAI(AsyncOpenAI):
                 child_info["obj"].parent = best_parent
 
             # Build children mapping to find leaf nodes.
-            children_map: Dict[str, List[CompletionWithTokenLogpReward]] = defaultdict(
-                list
-            )
+            children_map: Dict[
+                str,
+                List[Union[CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]],
+            ] = defaultdict(list)
             for _, info in meta.items():
                 obj = info["obj"]
                 if obj.parent is not None:
-                    children_map[obj.parent.completion.id].append(obj)
+                    if item_type == "completion":
+                        children_map[obj.parent.completion.id].append(obj)
+                    else:  # response
+                        children_map[obj.parent.response.id].append(obj)
 
             # Return only leaf nodes (nodes without children)
             parents_with_children = set(children_map.keys())
-            leaf_only: Dict[str, CompletionWithTokenLogpReward] = {}
-            for cid, info in meta.items():
+            leaf_only: Dict[
+                str, Union[CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]
+            ] = {}
+            for item_id, info in meta.items():
                 obj = info["obj"]
-                if obj.completion.id not in parents_with_children:
-                    leaf_only[cid] = obj
+                obj_id = (
+                    obj.completion.id if item_type == "completion" else obj.response.id
+                )
+                if obj_id not in parents_with_children:
+                    leaf_only[item_id] = obj
             return leaf_only
         elif style == "individual":
-            return dict(**self._completion_cache)
+            return dict(**cache)
         else:
-            raise ValueError(f"Invalid export completions style {style}")
+            raise ValueError(f"Invalid export {item_type}s style {style}")
