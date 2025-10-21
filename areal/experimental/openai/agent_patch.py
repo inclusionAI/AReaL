@@ -22,7 +22,6 @@ class AReaLOpenAIClientContext:
         cls = self.__class__
         async with cls._lock:
             if cls._active_contexts == 0:
-                # print("🚀 First context entered. Applying patch to OpenAIRunner.run.")
                 cls._original_run = OpenAIRunner.run
                 OpenAIRunner.run = cls._patched_run
 
@@ -40,7 +39,6 @@ class AReaLOpenAIClientContext:
             cls._active_contexts -= 1
 
             if cls._active_contexts == 0:
-                # print("🔴 Last context exited. Restoring original OpenAIRunner.run.")
                 if cls._original_run:
                     OpenAIRunner.run = cls._original_run
                     cls._original_run = None
