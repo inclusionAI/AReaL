@@ -1,7 +1,6 @@
 
 resources:
-  infra: gcp
-  accelerators: A100:1
+  accelerators: A100:8
   image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.3.4
   memory: 32+
   cpus: 8+
@@ -11,19 +10,20 @@ num_nodes: 2
 workdir: .
 
 file_mounts:
-  /storage: gs://areal-default
+  /storage: # Should be consistent with the storage paths set in gsm8k_grpo_ray.yaml
+    source: s3://my-bucket/  # or gs://, https://<azure_storage_account>.blob.core.windows.net/<container>, r2://, cos://<region>/<bucket>, oci://<bucket_name>
+    mode: MOUNT  # MOUNT or COPY or MOUNT_CACHED. Defaults to MOUNT. Optional.
 
 run: |
   # Get the Head node's IP and total number of nodes (environment variables injected by SkyPilot).
   head_ip=$(echo "$SKYPILOT_NODE_IPS" | head -n1)
-  num_nodes=$(echo "$SKYPILOT_NODE_IPS" | wc -l)
 
   if [ "$SKYPILOT_NODE_RANK" = "0" ]; then
     echo "Starting Ray head node..."
     ray start --head --port=6379
 
-    while [ $(ray status | grep node_ | wc -l) -lt $num_nodes ]; do
-      echo "Waiting for all nodes to join... Current nodes: $(ray status | grep node_ | wc -l) / $num_nodes"
+    while [ $(ray status | grep node_ | wc -l) -lt $SKYPILOT_NUM_NODES ]; do
+      echo "Waiting for all nodes to join... Current nodes: $(ray status | grep node_ | wc -l) / $SKYPILOT_NUM_NODES"
       sleep 5
     done
 
@@ -31,7 +31,9 @@ run: |
     python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
             --config examples/skypilot/gsm8k_grpo_ray.yaml \
             experiment_name=gsm8k-grpo \
-            trial_name=trial0
+            trial_name=trial0 \
+            cluster.n_nodes=$SKYPILOT_NUM_NODES \
+            cluster.n_gpus_per_node=$SKYPILOT_NUM_GPUS_PER_NODE
   else
     sleep 10
     echo "Starting Ray worker node..."
