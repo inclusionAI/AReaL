@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from loguru import logger
 from pydantic import BaseModel
@@ -59,6 +59,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         domain_policy: str,
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
+        completion_fn: Optional[Callable] = None,
     ):
         """
         Initialize the LLMAgent.
@@ -66,6 +67,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         super().__init__(tools=tools, domain_policy=domain_policy)
         self.llm = llm
         self.llm_args = deepcopy(llm_args) if llm_args is not None else {}
+        self.completion_fn = completion_fn
 
     @property
     def system_prompt(self) -> str:
@@ -109,6 +111,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
             model=self.llm,
             tools=self.tools,
             messages=messages,
+            completion_fn=self.completion_fn,
             **self.llm_args,
         )
         state.messages.append(assistant_message)
@@ -166,6 +169,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
         provide_function_args: bool = True,
+        completion_fn: Optional[Callable] = None,
     ):
         """
         Initialize the LLMAgent.
@@ -179,6 +183,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         self.llm = llm
         self.llm_args = deepcopy(llm_args) if llm_args is not None else {}
         self.provide_function_args = provide_function_args
+        self.completion_fn = completion_fn
 
     @classmethod
     def check_valid_task(cls, task: Task) -> bool:
@@ -237,6 +242,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
             model=self.llm,
             tools=self.tools,
             messages=messages,
+            completion_fn=self.completion_fn,
             **self.llm_args,
         )
         state.messages.append(assistant_message)
@@ -327,6 +333,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         task: Task,
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
+        completion_fn: Optional[Callable] = None,
     ):
         """
         Initialize the LLMAgent.
@@ -340,6 +347,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         self.llm_args = llm_args if llm_args is not None else {}
         self.add_stop_tool()
         self.validate_tools()
+        self.completion_fn = completion_fn
 
     def add_stop_tool(self) -> None:
         """Add the stop tool to the tools."""
@@ -458,6 +466,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
             tools=self.tools,
             messages=messages,
             tool_choice="required",
+            completion_fn=self.completion_fn,
             **self.llm_args,
         )
         if not assistant_message.is_tool_call():

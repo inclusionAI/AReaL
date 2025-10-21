@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import litellm
 from litellm import completion, completion_cost
@@ -182,6 +182,7 @@ def generate(
     messages: list[Message],
     tools: Optional[list[Tool]] = None,
     tool_choice: Optional[str] = None,
+    completion_fn: Optional[Callable] = None,
     **kwargs: Any,
 ) -> UserMessage | AssistantMessage:
     """
@@ -203,10 +204,11 @@ def generate(
         kwargs["thinking"] = {"type": "disabled"}
     litellm_messages = to_litellm_messages(messages)
     tools = [tool.openai_schema for tool in tools] if tools else None
+    completion_fn = completion_fn or completion
     if tools and tool_choice is None:
         tool_choice = "auto"
     try:
-        response = completion(
+        response = completion_fn(
             model=model,
             messages=litellm_messages,
             tools=tools,

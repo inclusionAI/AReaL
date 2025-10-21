@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 from loguru import logger
 
@@ -72,9 +72,11 @@ class UserSimulator(BaseUser):
         instructions: Optional[UserInstructions] = None,
         llm: Optional[str] = None,
         llm_args: Optional[dict] = None,
+        completion_fn: Optional[Callable] = None,
     ):
         super().__init__(instructions=instructions, llm=llm, llm_args=llm_args)
         self.tools = tools
+        self.completion_fn = completion_fn
 
     @property
     def global_simulation_guidelines(self) -> str:
@@ -159,6 +161,7 @@ class UserSimulator(BaseUser):
             model=self.llm,
             messages=messages,
             tools=self.tools,
+            completion_fn=self.completion_fn,
             **self.llm_args,
         )
 
