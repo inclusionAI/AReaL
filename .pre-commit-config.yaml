@@ -23,17 +23,17 @@ repos:
   #     - id: check-json
   #       name: Check JSON files
 
-  # - repo: https://github.com/executablebooks/mdformat
-  #   rev: 0.7.17
-  #   hooks:
-  #     - id: mdformat
-  #       args:
-  #         - --wrap=88
-  #       additional_dependencies:
-  #         - mdformat-gfm
-  #         - mdformat-tables
-  #         - mdformat-frontmatter
-  #       exclude: ^docs/algorithms/.*\.md$
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 0.7.17
+    hooks:
+      - id: mdformat
+        args:
+          - --wrap=88
+        additional_dependencies:
+          - mdformat-gfm
+          - mdformat-tables
+          - mdformat-frontmatter
+        exclude: ^docs/algorithms/.*\.md$
 
   - repo: https://github.com/pycqa/autoflake
     rev: v2.3.1

@@ -192,14 +192,15 @@ jb build docs
 
 ## Checklist Before Requesting Review
 
-- [ ] My code follows the project's code style (Black, isort, autoflake)
+- [ ] Code is formatted (pre-commit hooks pass)
+- [ ] Tests pass locally
+- [ ] Documentation updated if needed
+- [ ] Commit messages follow conventions
+- [ ] Branch is up to date with main
+- [ ] No critical issues raised by AI reviewers (`/gemini review`)
 - [ ] I have performed a self-review of my code
 - [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have made corresponding changes to the documentation
 - [ ] My changes generate no new warnings
-- [ ] I have added tests that prove my fix is effective or that my feature works
-- [ ] New and existing unit tests pass locally with my changes
-- [ ] Any dependent changes have been merged and published
 - [ ] I have linked this PR to the related issue
 - [ ] I have checked my code and corrected any misspellings
 

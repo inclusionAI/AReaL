@@ -3,12 +3,8 @@
 This roadmap outlines the planned features and improvements for AReaL. We welcome
 community feedback and contributions to help shape the future direction of the project.
 
-## Current Status
-
 **Latest Release:** Check [releases](https://github.com/inclusionAI/AReaL/releases) for
 the most recent version
-
-**Active Development:** AReaL-lite lightweight framework with algorithm-first design
 
 ## 2025 Q3 Roadmap
 
