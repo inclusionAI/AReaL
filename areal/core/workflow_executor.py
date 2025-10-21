@@ -64,7 +64,7 @@ def check_trajectory_format(
 
     Parameters
     ----------
-    data : Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]
+    data : Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward]
         The trajectory data to validate. Can be:
 
         - ``None`` for rejected trajectories
