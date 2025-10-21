@@ -37,7 +37,7 @@ class RolloutWorkflow:
 
         Returns
         -------
-        Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]
+        Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward]
             The trajectory result, None if rejected, or a dictionary of completion results
         """
         raise NotImplementedError()
