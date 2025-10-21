@@ -9,21 +9,21 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
+from areal.api.io_struct import FinetuneSpec
+from areal.api.scheduler_api import ScheduleStrategy
+from areal.controller.batch import DistributedBatchMemory
+from areal.controller.rollout_controller import DistributedRolloutController
+from areal.controller.train_controller import DistributedTrainController
 from areal.dataset import get_custom_dataset
+from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.reward.gsm8k_reward import gsm8k_reward_fn
 from areal.scheduler.local import LocalScheduler
-from areal.utils import name_resolve, logging
+from areal.utils import logging, name_resolve
 from areal.utils.data import cycle_dataloader
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
-from areal.controller.rollout_controller import DistributedRolloutController
-from areal.controller.batch import DistributedBatchMemory
-from areal.reward.gsm8k_reward import gsm8k_reward_fn
-from areal.engine.ppo.actor import FSDPPPOActor
-from areal.api.io_struct import FinetuneSpec
-from areal.controller.train_controller import DistributedTrainController
-from areal.api.scheduler_api import ScheduleStrategy
 
 logger = logging.getLogger("trainer_rollout_controller")
 
@@ -52,7 +52,7 @@ logger.info("Rollout controller initialize success...")
 
 # init train controller
 actor = None
-enable_training = False
+enable_training = True
 if enable_training:
     train_engine = FSDPPPOActor(config=config.actor)
     ft_spec = FinetuneSpec(

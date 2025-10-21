@@ -1,5 +1,6 @@
 import argparse
 import gzip
+import inspect
 import os
 import traceback
 from http import HTTPStatus
@@ -42,21 +43,69 @@ def tensor_container_to_safe(
         return d
 
 
-def process_input_to_distributed_batch(to_device, *args, **kwargs):
-    for i in range(len(args)):
-        if isinstance(args[i], DistributedBatch):
-            args = list(args)
-            args[i] = args[i].to_list()
-            args = tuple(args)
+def process_input_to_distributed_batch(to_device, method, *args, **kwargs):
+    """Process input arguments, converting DistributedBatch based on method signature.
 
-    for k in list(kwargs.keys()):
-        if isinstance(kwargs[k], DistributedBatch):
-            kwargs[k] = kwargs[k].to_list()
+    This function inspects the method signature to determine whether each parameter
+    expects a dict or list format, then converts DistributedBatch instances accordingly.
+    """
+    # Get method signature
+    try:
+        sig = inspect.signature(method)
+        parameters = sig.parameters
+    except (ValueError, TypeError):
+        # Fallback to list if signature inspection fails
+        parameters = {}
 
-    args = tuple(tensor_container_to_safe(list(args), to_device))
-    kwargs = tensor_container_to_safe(kwargs, to_device)
+    def convert_distributed_batch(obj, param_name=None):
+        """Convert DistributedBatch based on expected parameter type."""
+        if not isinstance(obj, DistributedBatch):
+            return obj
 
-    return args, kwargs
+        # Determine expected type from parameter annotation
+        expected_type = None
+        if param_name and param_name in parameters:
+            param = parameters[param_name]
+            if param.annotation != inspect.Parameter.empty:
+                annotation = param.annotation
+                if annotation == dict or (
+                    hasattr(annotation, "__origin__") and annotation.__origin__ is dict
+                ):
+                    expected_type = "dict"
+                elif annotation == list or (
+                    hasattr(annotation, "__origin__") and annotation.__origin__ is list
+                ):
+                    expected_type = "list"
+
+        # Convert based on expected type or fallback to list
+        if expected_type == "list":
+            return obj.to_list()
+        else:
+            return obj.get_data()
+
+    # Process args
+    new_args = list(args)
+    for i, arg in enumerate(new_args):
+        logger.info(f"Processing arg {i}: {arg}")
+        if isinstance(arg, DistributedBatch):
+            # Try to get parameter name for positional arguments
+            param_names = list(parameters.keys())
+            param_name = param_names[i] if i < len(param_names) else None
+            new_args[i] = convert_distributed_batch(arg, param_name)
+
+    # Process kwargs
+    new_kwargs = {}
+    for key, value in kwargs.items():
+        if isinstance(value, DistributedBatch):
+            new_kwargs[key] = convert_distributed_batch(value, key)
+        else:
+            new_kwargs[key] = value
+
+    # Apply device transfer
+    new_args = tuple(tensor_container_to_safe(new_args, to_device))
+    new_kwargs = tensor_container_to_safe(new_kwargs, to_device)
+
+    return new_args, new_kwargs
 
 
 def process_output_to_distributed_batch(result):
@@ -131,7 +180,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                     device = EngineRPCServer.engine.device
 
                 args, kwargs = process_input_to_distributed_batch(
-                    device, *args, **kwargs
+                    device, method, *args, **kwargs
                 )
 
                 if (
@@ -180,6 +229,7 @@ def check_attribute_type(cls, attr_name):
         else:
             raise f"unsupported attr, type: {type(attr)}, name: {attr_name}"
     raise f"attr not found, name: {attr_name}"
+
 
 def get_server_port(port: int) -> int:
     if port:

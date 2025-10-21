@@ -178,6 +178,42 @@ class DistributedTrainController(TrainController):
 
         return eval_stats
 
+    def compute_logp(
+        self,
+        input_: DistributedBatch,
+        *args,
+        **kwargs,
+    ):
+        batches = self._align_batches_with_dp(input_, False)
+        logps = rpc_call(
+            self.scheduler,
+            self.workers,
+            "compute_logp",
+            batches,
+            *args,
+            **kwargs,
+        )
+        logger.info(f"debug: type logps: {type(logps)}")
+        return logps
+
+    def compute_advantages(
+        self,
+        input_: DistributedBatch,
+        *args,
+        **kwargs,
+    ):
+        batches = self._align_batches_with_dp(input_, False)
+        advantages = rpc_call(
+            self.scheduler,
+            self.workers,
+            "compute_advantages",
+            batches,
+            *args,
+            **kwargs,
+        )
+
+        return advantages
+
     def forward(
         self,
         input_: DistributedBatch,
