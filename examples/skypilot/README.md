@@ -71,7 +71,7 @@ Specify the resources and image used to run the experiment.
 
 ```yaml
 resources:
-  accelerators: A100:1
+  accelerators: A100:8
   image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.3.4
   memory: 256+
   cpus: 32+
