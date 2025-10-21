@@ -70,7 +70,9 @@ def rpc_call(
         raise ValueError(
             f"Batches length ({len(batches)}) must match workers count ({len(workers)})"
         )
-    logger.info(f"Start to rpc call, method: {method}")
+    logger.info(
+        f"Start to rpc call, method: {method}, batches: {batches}, args: {args}, kwargs: {kwargs}"
+    )
 
     with ThreadPoolExecutor(max_workers=len(workers)) as executor:
         futures = []

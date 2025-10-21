@@ -130,7 +130,7 @@ class DistributedTrainController(TrainController):
         self.custom_function_call("step_lr_scheduler")
 
     def custom_function_call(self, method: str, *args, **kwargs):
-        return rpc_call(self.scheduler, self.workers, method, None, args, kwargs)
+        return rpc_call(self.scheduler, self.workers, method, None, *args, **kwargs)
 
     def _align_batches_with_dp(
         self, input_: DistributedBatch, rebalance=True

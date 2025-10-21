@@ -1,22 +1,20 @@
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, List
 
-from tensordict import TensorDict, stack
+from tensordict import TensorDict
 
 from areal.api.cli_args import InferenceEngineConfig
-from areal.api.controller_api import RolloutController, DistributedBatch
+from areal.api.controller_api import DistributedBatch, RolloutController
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import AllocationMode, WeightUpdateMeta
-from areal.api.workflow_api import RolloutWorkflow
-
 from areal.api.scheduler_api import Job, Scheduler, ScheduleStrategy, Worker
-from areal.controller.utils import create_engine_with_retry, rpc_call
-from areal.utils.data import concat_padded_tensors
-from areal.utils import logging
-from areal.utils.http import wait_future_ordered
+from areal.api.workflow_api import RolloutWorkflow
 from areal.controller.batch import DistributedBatchMemory
-
+from areal.controller.utils import create_engine_with_retry, rpc_call
+from areal.utils import logging
+from areal.utils.data import concat_padded_tensors
+from areal.utils.http import wait_future_ordered
 
 logger = logging.getLogger("DistributedRolloutController")
 
@@ -41,7 +39,9 @@ class DistributedRolloutController(RolloutController):
         target: str,
     ):
         self.alloc_mode = AllocationMode.from_str(config.allocation_mode)
-        self.dp_world_size = self.alloc_mode.gen.world_size // self.alloc_mode.gen.dp_size
+        self.dp_world_size = (
+            self.alloc_mode.gen.world_size // self.alloc_mode.gen.dp_size
+        )
 
         tasks = self.inf_engine.get_scheduling_config()
         tasks[0].cmd = "python3 -m areal.scheduler.rpc.rpc_server"
@@ -49,7 +49,9 @@ class DistributedRolloutController(RolloutController):
         job = Job(
             replicas=self.alloc_mode.gen.world_size,
             tasks=tasks,
-            schedule_strategy=ScheduleStrategy(type="colocation", target=target) if target else None,
+            schedule_strategy=(
+                ScheduleStrategy(type="colocation", target=target) if target else None
+            ),
             role=self.role,
         )
         logger.info(f"Start to create job: {job}")
@@ -57,11 +59,17 @@ class DistributedRolloutController(RolloutController):
         logger.info(f"create_worker finished.")
 
         workers = self.scheduler.get_workers(self.role, timeout=1800)
-        self.dp_head_workers = [worker for idx, worker in enumerate(workers) if idx % self.dp_world_size == 0]
+        self.dp_head_workers = [
+            worker
+            for idx, worker in enumerate(workers)
+            if idx % self.dp_world_size == 0
+        ]
         assert len(self.dp_head_workers) == self.alloc_mode.gen.dp_size
-        logger.info(f"create_worker finished. {len(self.dp_head_workers)} "
-                    f"w0:{self.dp_head_workers[0]},"
-                    f"w1: {self.dp_head_workers[1]}")
+        logger.info(
+            f"create_worker finished. {len(self.dp_head_workers)} "
+            f"w0:{self.dp_head_workers[0]},"
+            f"w1: {self.dp_head_workers[1]}"
+        )
         with ThreadPoolExecutor(max_workers=len(self.dp_head_workers)) as executor:
             create_engine: Callable[..., Any] = partial(
                 create_engine_with_retry,
@@ -72,12 +80,12 @@ class DistributedRolloutController(RolloutController):
 
             futures = [
                 executor.submit(
-                        create_engine,
-                        worker.id,
-                        self.inf_engine,
-                        None,
-                        None,
-                        self.dp_world_size,
+                    create_engine,
+                    worker.id,
+                    self.inf_engine,
+                    None,
+                    None,
+                    self.dp_world_size,
                 )
                 for worker in self.dp_head_workers
             ]
@@ -106,13 +114,13 @@ class DistributedRolloutController(RolloutController):
         return None
 
     def rollout_batch(
-        self,
-        data: DistributedBatch,
-        workflow: RolloutWorkflow
+        self, data: DistributedBatch, workflow: RolloutWorkflow
     ) -> DistributedBatch:
         """Submit a batch of requests to the inference engine and wait for the results."""
         batches = data.chunk(self.alloc_mode.gen.dp_size)
-        batch_results = self.custom_function_call("rollout_batch", batches, workflow) # [DistributedBatchMemory]
+        batch_results = self.custom_function_call(
+            "rollout_batch", batches, workflow
+        )  # [DistributedBatchMemory]
         assert len(batch_results) > 0
         size = int(batch_results[0]["input_ids"].shape[0])
         bs = size * len(batch_results)
@@ -143,10 +151,12 @@ class DistributedRolloutController(RolloutController):
         batches = data.chunk(self.alloc_mode.gen.dp_size)
         self.custom_function_call("submit", batches)
 
-    def wait(self, counts: List[int], timeout: float | None = None)->DistributedBatch:
+    def wait(self, counts: List[int], timeout: float | None = None) -> DistributedBatch:
         assert len(counts) == len(self.dp_head_workers)
         results = self.custom_function_call("wait", counts, timeout)
         return DistributedBatch.concat(results)
 
     def custom_function_call(self, method: str, batches, *args, **kwargs):
-        return rpc_call(self.scheduler, self.dp_head_workers, method, batches, args, kwargs)
+        return rpc_call(
+            self.scheduler, self.dp_head_workers, method, batches, *args, **kwargs
+        )

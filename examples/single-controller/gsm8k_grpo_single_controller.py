@@ -245,19 +245,21 @@ def main(args):
 
         # pause inference for updating weights, save, and evaluation
         rollout.pause()
-    #
-    #     with stats_tracker.record_timing("update_weights"):
-    #         if dist.get_rank() == 0:
-    #             future = rollout.update_weights(weight_update_meta)
-    #         actor.upload_weights(weight_update_meta)
-    #         if dist.get_rank() == 0:
-    #             future.result()
-    #         dist.barrier(device_ids=[actor.device.index])
-    #         current_platform.synchronize()
-    #
-    #         actor.set_version(global_step + 1)
-    #         rollout.set_version(global_step + 1)
-    #         eval_rollout.set_version(global_step + 1)
+
+        with stats_tracker.record_timing("update_weights"):
+            if dist.get_rank() == 0:
+                future = rollout.update_weights(weight_update_meta)
+            actor.upload_weights(weight_update_meta)
+            if dist.get_rank() == 0:
+                future.result()
+
+            # todo: 同步语句需要在upload_weights和upload_weights接口中包掉
+            # dist.barrier(device_ids=[actor.device.index])
+            # current_platform.synchronize()
+
+            actor.set_version(global_step + 1)
+            rollout.set_version(global_step + 1)
+            eval_rollout.set_version(global_step + 1)
     #
     #     with stats_tracker.record_timing("save"):
     #         saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)

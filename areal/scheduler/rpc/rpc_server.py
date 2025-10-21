@@ -170,6 +170,9 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                     logger.error("Call received but engine is none.")
                     return
                 action, args, kwargs = cloudpickle.loads(data)
+                logger.info(
+                    f"Received call for action: {action} with args: {args} kwargs: {kwargs}"
+                )
 
                 method = getattr(EngineRPCServer.engine, action)
 

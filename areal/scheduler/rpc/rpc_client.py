@@ -92,6 +92,7 @@ class RPCClient:
             the deserialized result from the rpc server
         """
         req = (method, args, kwargs)
+        logger.info(f"send call to {worker_id}, method={method}, req={req}")
         serialized_data = cloudpickle.dumps(req)
 
         return self._call_engine_with_serialized_data(
