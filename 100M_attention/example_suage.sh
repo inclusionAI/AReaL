@@ -1,0 +1,1 @@
+python inference_partial_batch.py --prompt-jsonl example.jsonl --batch-size 16 --output-jsonl results.jsonl --model-name-or-path /storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct
