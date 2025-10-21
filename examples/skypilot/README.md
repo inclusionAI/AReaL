@@ -9,9 +9,10 @@ to be execute under the root of AReaL repository.
 ## Running a Single Node Experiment
 
 To run a single node experiment, you only need to setup the node with SkyPilot and
-launch the experiment with AReaL local launcher. [The following file](single_node.sky.yaml) shows
-a SkyPilot yaml that could launch a simple GSM8K GRPO experiment in a single command
-line. This example is tested on both GCP and a K8S cluster.
+launch the experiment with AReaL local launcher.
+[The following file](single_node.sky.yaml) shows a SkyPilot yaml that could launch a
+simple GSM8K GRPO experiment in a single command line. This example is tested on both
+GCP and a K8S cluster.
 
 ```yaml
 name: areal-test-skypilot
@@ -53,7 +54,9 @@ To run the experiment, execute:
 sky launch -c areal-test examples/skypilot/single_node.sky.yaml
 ```
 
-To designate the cloud or infrastructure you wish to run your experiment on by adding `--infra xxx`. For example:
+To designate the cloud or infrastructure you wish to run your experiment on by adding
+`--infra xxx`. For example:
+
 ```bash
 sky launch -c areal-test examples/skypilot/single_node.sky.yaml --infra gcp
 sky launch -c areal-test examples/skypilot/single_node.sky.yaml --infra aws
@@ -65,7 +68,8 @@ sky launch -c areal-test examples/skypilot/single_node.sky.yaml --infra k8s
 ### Running AReaL with Ray Launcher
 
 The following example shows how to setup a ray cluster with SkyPilot and then use AReaL
-to run GRPO with GSM8K dataset on 2 nodes, each with 1 A100 GPU. This example is tested on GCP and a K8S cluster.
+to run GRPO with GSM8K dataset on 2 nodes, each with 1 A100 GPU. This example is tested
+on GCP and a K8S cluster.
 
 Specify the resources and image used to run the experiment.
 
@@ -142,7 +146,10 @@ run: |
   echo "Node setup complete for rank $SKYPILOT_NODE_RANK."
 ```
 
-**Note**: If you are running on a cluster in which nodes are connected via infiniband, you might need an additional config field to the example yaml file for the experiment to run:
+**Note**: If you are running on a cluster in which nodes are connected via infiniband,
+you might need an additional config field to the example yaml file for the experiment to
+run:
+
 ```yaml
 config:
   kubernetes:
@@ -163,7 +170,9 @@ Then you are ready to run AReaL with command line:
 sky launch -c areal-test examples/skypilot/ray_cluster.sky.yaml
 ```
 
-To designate the cloud or infrastructure you wish to run your experiment on by adding `--infra xxx`. For example:
+To designate the cloud or infrastructure you wish to run your experiment on by adding
+`--infra xxx`. For example:
+
 ```bash
 sky launch -c areal-test examples/skypilot/ray_cluster.sky.yaml --infra gcp
 sky launch -c areal-test examples/skypilot/ray_cluster.sky.yaml --infra aws
@@ -178,8 +187,6 @@ Successfully launched 2 nodes on GCP and deployed a ray cluster:
 
 Successfully ran a training step:
 <img align="center" alt="Running a train step" src="train_step_success.png" width="100%">
-
-
 
 ### Running AReaL with SkyPilot Launcher
 
