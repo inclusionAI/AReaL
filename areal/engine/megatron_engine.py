@@ -673,7 +673,7 @@ class MegatronEngine(TrainEngine):
 
     def _check_rollout_engine_connected(self):
         """Validate that rollout engine has been connected via connect_engine()."""
-        if self.rollout_engine is None or self.rollout_coordinator:
+        if self.rollout_engine is None or self.rollout_coordinator is None:
             raise RuntimeError(
                 "Rollout engine not connected. Call connect_engine()"
                 " before using rollout/update_weight methods."
