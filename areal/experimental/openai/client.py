@@ -442,16 +442,13 @@ class ArealOpenAI(AsyncOpenAI):
 
         if self.use_responses:  # Use Responses API
             # Use an ordered dict to maintain insertion order of responses
-            self._response_cache: OrderedDict[str, ResponseWithTokenLogpReward] = (
-                OrderedDict()
-            )
-            self._cache = self._response_cache
+            self._cache: OrderedDict[str, ResponseWithTokenLogpReward] = OrderedDict()
             # Override responses with our extended implementation
             self.responses = AsyncResponsesWithReward(
                 self,
                 engine,
                 tokenizer,
-                self._response_cache,
+                self._cache,
                 tool_call_parser=self.tool_call_parser,
                 chat_template_type=chat_template_type,
                 messages_delimiter_start=messages_delimiter_start,
@@ -460,7 +457,6 @@ class ArealOpenAI(AsyncOpenAI):
         else:  # Use Completions API
             # Use an ordered dict to maintain insertion order of completions
             self._cache: OrderedDict[str, CompletionWithTokenLogpReward] = OrderedDict()
-            self._cache = self._cache
             # Override chat.completions with our extended implementation
             self.chat.completions = AsyncCompletionsWithReward(
                 self,
