@@ -2,7 +2,6 @@ from __future__ import annotations  # noqa
 
 from typing import TYPE_CHECKING, Any, Dict
 
-from areal.api.engine_api import InferenceEngine
 from areal.experimental.openai.types import CompletionWithTokenLogpReward
 
 if TYPE_CHECKING:

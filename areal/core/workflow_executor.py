@@ -5,9 +5,8 @@ import queue
 import random
 import threading
 import time
-import traceback
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List
+from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
 import torch
 import torch.distributed as dist
@@ -16,14 +15,18 @@ from megatron.core import parallel_state as mpu
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
-from areal.api.engine_api import InferenceEngine
+from areal.api.workflow_api import RolloutWorkflow
+from areal.core.staleness_manager import StalenessManager
 from areal.experimental.openai.types import CompletionWithTokenLogpReward
 from areal.utils import logging
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 
-from .staleness_manager import StalenessManager
+if TYPE_CHECKING:
+    from areal.api.engine_api import InferenceEngine
+
 
 ROLLOUT_POLL_WAIT_TIME = 0.05
+ROLLOUT_POLL_SLEEP_TIME = 1
 
 
 def check_trajectory_format(
@@ -125,7 +128,7 @@ def check_trajectory_format(
     WorkflowExecutor : Class that uses this function when ``check_trajectory_format`` is enabled
     """
     if logger is None:
-        logger = logging.getLogger("Workflow API")
+        logger = logging.getLogger(__name__)
     if data is None:
         return True
 
@@ -225,7 +228,7 @@ class WorkflowExecutor:
         self,
         config: InferenceEngineConfig,
         inference_engine: "InferenceEngine",
-        staleness_controller: StalenessManager | None = None,
+        staleness_manager: StalenessManager | None = None,
     ):
         self.max_concurrent_rollouts = (
             config.max_concurrent_rollouts or config.consumer_batch_size
@@ -238,9 +241,9 @@ class WorkflowExecutor:
 
         self.inference_engine = inference_engine
 
-        # Use provided staleness controller or create a default one
-        # The controller will be properly initialized in initialize()
-        self.staleness_controller = staleness_controller
+        # Use provided staleness manager or create a default one
+        # The manager will be properly initialized in initialize()
+        self.staleness_manager = staleness_manager
 
         qsize = config.queue_size or self.max_concurrent_rollouts * 16
         self.input_queue = queue.Queue(maxsize=qsize)
@@ -250,13 +253,17 @@ class WorkflowExecutor:
         # For trajectory format checking
         self._expected_trajectory_keys: set | None = None
 
+        # For thread exception handling
+        self._thread_exception_lock = threading.Lock()
+        self._thread_exception: Exception | None = None
+
     def initialize(self, logger=None, train_data_parallel_size: int | None = None):
         if logger is None:
-            logger = logging.getLogger("WorkflowExecutor")
+            logger = logging.getLogger(__name__)
         self.logger = logger
 
-        # Initialize staleness controller if not provided
-        if self.staleness_controller is None:
+        # Initialize staleness manager if not provided
+        if self.staleness_manager is None:
             if train_data_parallel_size is not None:
                 dp_world_size = train_data_parallel_size
             else:
@@ -274,7 +281,7 @@ class WorkflowExecutor:
             )
             consumer_batch_size = max(1, self.consumer_batch_size // dp_world_size)
 
-            self.staleness_controller = StalenessManager(
+            self.staleness_manager = StalenessManager(
                 max_concurrent_rollouts=max_concurrent_rollouts,
                 consumer_batch_size=consumer_batch_size,
                 max_staleness=self.config.max_head_offpolicyness,
@@ -291,15 +298,37 @@ class WorkflowExecutor:
 
     def get_capacity(self):
         version = self.inference_engine.get_version()
-        capacity = self.staleness_controller.get_capacity(version)
+        capacity = self.staleness_manager.get_capacity(version)
         return capacity
+
+    def _check_thread_health(self):
+        """Check if the rollout thread has encountered a fatal error.
+
+        Raises
+        ------
+        RuntimeError
+            If the rollout thread has died due to an exception.
+        """
+        with self._thread_exception_lock:
+            if self._thread_exception is not None:
+                raise RuntimeError(
+                    "Rollout thread has died due to an exception. "
+                    "No further rollouts can be processed."
+                ) from self._thread_exception
 
     def _rollout_thread(self):
         """Thread that runs the rollout loop."""
         try:
             uvloop.run(self._rollout_thread_async())
-        except Exception:
-            traceback.print_exc()
+        except Exception as e:
+            # Store exception with lock for thread-safe access
+            with self._thread_exception_lock:
+                self._thread_exception = e
+            self.logger.error(
+                f"Rollout thread failed with exception: {e}", exc_info=True
+            )
+            # Signal that we're exiting due to error
+            self.exiting.set()
 
     async def _rollout_thread_async(self):
         rollout_tasks: Dict[str, _RolloutTask] = {}
@@ -324,10 +353,10 @@ class WorkflowExecutor:
                     rollout_tasks[str(rid)] = _RolloutTask(
                         create_time=time.monotonic_ns(), task=task, task_input=x
                     )
-                    # Notify staleness controller
-                    self.staleness_controller.on_rollout_submitted()
+                    # Notify staleness manager
+                    self.staleness_manager.on_rollout_submitted()
                     if self.config.enable_rollout_tracing:
-                        stat = self.staleness_controller.get_stats()
+                        stat = self.staleness_manager.get_stats()
                         self.logger.info(
                             f"Submit rollout rid {rid}. "
                             f"Submit: {stat.submitted}, "
@@ -382,10 +411,10 @@ class WorkflowExecutor:
                     )
 
                     if should_accept_traj:
-                        # Notify staleness controller of accepted rollout
-                        self.staleness_controller.on_rollout_accepted()
+                        # Notify staleness manager of accepted rollout
+                        self.staleness_manager.on_rollout_accepted()
                         if self.config.enable_rollout_tracing:
-                            stat = self.staleness_controller.get_stats()
+                            stat = self.staleness_manager.get_stats()
                             self.logger.info(
                                 f"Finish and accept rollout {task_rid}. "
                                 f"Submit: {stat.submitted}, "
@@ -403,9 +432,9 @@ class WorkflowExecutor:
                     else:
                         # Rollout completed but was rejected
                         # Only decrement running count since it was never accepted
-                        self.staleness_controller.on_rollout_rejected()
+                        self.staleness_manager.on_rollout_rejected()
                         if self.config.enable_rollout_tracing:
-                            stat = self.staleness_controller.get_stats()
+                            stat = self.staleness_manager.get_stats()
                             self.logger.info(
                                 f"Finish but reject rollout {task_rid}. "
                                 f"Submit: {stat.submitted}, "
@@ -413,18 +442,18 @@ class WorkflowExecutor:
                                 f"accepted: {stat.accepted}."
                             )
 
-                await asyncio.sleep(1)
-        except Exception:
-            traceback.print_exc()
+                await asyncio.sleep(ROLLOUT_POLL_SLEEP_TIME)
         finally:
             # Cancel remaining tasks
-            for task_obj in rollout_tasks.values():
-                if not task_obj.task.done():
-                    task_obj.task.cancel()
-                    try:
-                        await task_obj.task
-                    except asyncio.CancelledError:
-                        pass
+            pending_tasks = [
+                task_obj.task
+                for task_obj in rollout_tasks.values()
+                if not task_obj.task.done()
+            ]
+            if pending_tasks:
+                for task in pending_tasks:
+                    task.cancel()
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
 
     def submit(
         self,
@@ -437,6 +466,9 @@ class WorkflowExecutor:
 
         See :meth:`~areal.api.engine_api.InferenceEngine.submit` for detailed documentation.
         """
+        # Check if rollout thread has died before accepting new work
+        self._check_thread_health()
+
         try:
             if workflow is None:
                 workflow = workflow_builder()
@@ -455,6 +487,9 @@ class WorkflowExecutor:
         tik = time.perf_counter()
         timeout = timeout or float(7 * 24 * 3600)
         while not self.exiting.is_set() and time.perf_counter() - tik < timeout:
+            # Check thread health to detect failures early
+            self._check_thread_health()
+
             while True:
                 # Drain all outputs.
                 try:
@@ -468,6 +503,8 @@ class WorkflowExecutor:
                 time.sleep(ROLLOUT_POLL_WAIT_TIME)
         accepted = len(self.result_cache)
         if self.exiting.is_set():
+            # Check if exiting due to an exception
+            self._check_thread_health()
             raise RuntimeError("Rollout engine is exiting, cannot wait for results.")
         if accepted < count:
             raise TimeoutError(
