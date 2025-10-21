@@ -248,9 +248,7 @@ class Tau2Workflow(RolloutWorkflow):
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
-    async def _run_one_episode(
-        self, client: ArealOpenAI, data: Dict[str, Any], rid: str
-    ):
+    async def _run_one_episode(self, client: ArealOpenAI, data: Dict[str, Any]):
         task_id = data["task_id"]
         env = AgentGymEnv(
             domain=self.econfig.domain,
@@ -280,7 +278,6 @@ class Tau2Workflow(RolloutWorkflow):
                 tools=tools_schema,
                 temperature=self.gconfig.temperature,
                 max_completion_tokens=self.gconfig.max_new_tokens,
-                greedy=self.gconfig.greedy,
                 top_p=self.gconfig.top_p,
                 stop=self.gconfig.stop,
                 stop_token_ids=self.gconfig.stop_token_ids,
@@ -411,7 +408,7 @@ def main(args):
         econfig=config.econfig,
         gconfig=config.gconfig,
         tokenizer=tokenizer,
-        enable_thinking=False,
+        # enable_thinking=False,
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
@@ -420,7 +417,7 @@ def main(args):
         econfig=config.econfig,
         gconfig=config.gconfig.new(temperature=0.6),
         tokenizer=tokenizer,
-        enable_thinking=False,
+        # enable_thinking=False,
         rollout_stat_scope="eval-rollout",
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated-eval"
