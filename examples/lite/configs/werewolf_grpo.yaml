@@ -12,9 +12,9 @@ seed: 1
 total_train_epochs: 1
 tokenizer_path: ${actor.path}
 async_training: true
-opp_server_addrs: 33.180.160.33:16922,33.180.160.33:19176,33.180.160.33:25822,33.180.160.33:27625,33.180.160.33:31144,33.180.160.33:41656,33.180.160.33:47551
+opp_server_addrs: 33.180.161.96:12141,33.180.161.96:22270,33.180.161.96:24344,33.180.161.96:33657,33.180.161.96:37246,33.180.161.96:39830,33.180.161.96:44116
 # opp_tokenizer_path: /storage/openpsi/models/Qwen__Qwen3-8B
-# teacher_server_addrs: 33.180.162.249:16022,33.180.162.249:18157,33.180.162.249:25449,33.180.162.249:32136,33.180.162.249:37084,33.180.162.249:43790,33.180.162.249:46694 #t14b
+teacher_server_addrs: 33.180.162.187:11007,33.180.162.187:11953,33.180.162.187:16200,33.180.162.187:24198,33.180.162.187:28606,33.180.162.187:32491,33.180.162.187:36145 #t14b
 # teacher_server_addrs: 33.180.160.212:11008,33.180.160.212:31199,33.180.160.212:34101,33.180.160.212:34794,33.180.160.212:42075,33.180.160.212:43070,33.180.160.212:47802 #t7b
 # teacher_tokenizer_path: ""
 role: villager
@@ -33,16 +33,14 @@ gconfig:
   min_new_tokens: 0
   max_new_tokens: 2048
   greedy: false
-  temperature: 1.0
+  temperature: 0.8
 
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   paths: null
-  # path: /storage/openpsi/models/Qwen__Qwen2.5-7B-Instruct
-  # path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo-14/villager4-abl/default/epoch0epochstep59globalstep59
-  # path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo-14/villager4-t7b/default/epoch0epochstep59globalstep59
-  path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo-14/villager4-t14b/default/epoch0epochstep59globalstep59
+  path: /storage/openpsi/models/Qwen__Qwen2.5-7B-Instruct
+  # path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo-14/villager4-t32b/default/epoch0epochstep59globalstep59
   init_from_scratch: false
   disable_dropout: true
   dtype: bfloat16
@@ -50,8 +48,8 @@ actor:
     max_tokens_per_mb: 10240
   optimizer:
     type: adam
-    # lr: 1e-6
-    lr: 1e-20
+    lr: 3e-6
+    # lr: 1e-20
     gradient_clipping: 1.0
     lr_scheduler_type: cosine
     min_lr_ratio: 0.6
@@ -90,11 +88,11 @@ sglang:
   mem_fraction_static: 0.8
 
 train_dataset:
-  batch_size: 512
+  batch_size: 32
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/users/xmy/inclusionAI/AReaL/data/Werewolf_placeholder_512.jsonl
+  path: /storage/openpsi/users/xmy/inclusionAI/AReaL/data/Werewolf_placeholder_8k.jsonl
   type: rl
 
 saver:

@@ -91,5 +91,5 @@ export WANDB_BASE_URL=http://8.150.1.98:8080
 python -m areal.launcher.local examples/lite/infer_only.py \
     --config examples/lite/configs/infer_only.yaml \
     stats_logger.wandb.mode=disabled \
-    trial_name=opp-t14b
+    trial_name=opp-t32b
 """

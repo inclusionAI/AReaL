@@ -36,8 +36,8 @@ actor:
     # - /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo-14/villager3-abl/default/epoch0epochstep59globalstep59
     # - /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo-14/villager4-abl/default/epoch0epochstep49globalstep49
     # - /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo-14/villager4-abl/default/epoch0epochstep59globalstep59
-  path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo-14/werewolf4-t14b/default/epoch0epochstep59globalstep59
-  # path: /storage/openpsi/models/Qwen__Qwen2.5-7B-Instruct
+  # path: /storage/openpsi/experiments/checkpoints/admin/xmy-werewolf-sppo-14/werewolf4-t14b/default/epoch0epochstep59globalstep59
+  path: /storage/openpsi/models/Qwen__Qwen2.5-7B-Instruct
   init_from_scratch: false
   disable_dropout: true
   dtype: bfloat16

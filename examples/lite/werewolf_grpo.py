@@ -295,8 +295,8 @@ export WANDB_BASE_URL=http://8.150.1.98:8080
 python -m areal.launcher.slurm examples/lite/werewolf_grpo.py \
     --config examples/lite/configs/werewolf_grpo.yaml \
     stats_logger.wandb.mode=online \
-    experiment_name=xmy-werewolf-comp-14 \
-    trial_name=werewolf-t14b-vs4-villager-t14b
+    experiment_name=xmy-werewolf-sppo-15 \
+    trial_name=villager1-t32b
 
 python -m areal.launcher.slurm examples/lite/gsm8k_grpo.py \
     --config examples/lite/configs/gsm8k_grpo.yaml \

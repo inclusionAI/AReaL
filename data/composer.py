@@ -1,8 +1,8 @@
 import json
 
 INPUT = 'Werewolf_placeholder.jsonl'
-OUTPUT = 'Werewolf_placeholder_3k.jsonl'
-TARGET_LINES = 3000
+OUTPUT = 'Werewolf_placeholder_8k.jsonl'
+TARGET_LINES = 8000
 
 # Read original examples
 # with open(INPUT, 'r', encoding='utf-8') as f:
