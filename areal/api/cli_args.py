@@ -1126,6 +1126,7 @@ class BaseExperimentConfig:
             "For benchmarking purposes only. None indicates normal training."
         },
     )
+    weight_update_mode: str = field(default="disk")
     total_train_n_seqs: int | None = field(
         default=None,
         metadata={

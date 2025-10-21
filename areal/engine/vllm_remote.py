@@ -399,6 +399,7 @@ class RemotevLLMEngine(InferenceEngine):
             workflow=workflow,
             workflow_builder=workflow_builder,
             should_accept=should_accept,
+            single_rank_load = single_rank_load,
         )
 
     def pause_generation(self):

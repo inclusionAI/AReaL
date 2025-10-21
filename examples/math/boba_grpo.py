@@ -5,6 +5,7 @@ import torch
 import torch.distributed as dist
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo
@@ -160,12 +161,6 @@ def main(args):
         ref = FSDPPPOActor(config=config.ref)
         ref.initialize(None, ft_spec)
 
-    # NOTE: Weight update meta only requires address and free port of rank 0,
-    # but `WeightUpdateMeta.from_fsdp_xccl` has to be executed on all ranks
-    weight_update_meta = get_model_update_meta(config, actor)
-    if config.train_dataset.single_rank_load:
-        dist.broadcast_object_list(weight_update_meta, src=0)
-    weight_update_meta = weight_update_meta[0]
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
