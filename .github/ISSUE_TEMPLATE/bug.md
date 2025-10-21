@@ -9,9 +9,6 @@ assignees: ''
 ## Checklist
 
 - [ ] The error occurs when using our provided Docker image.
-
-<!-- - [ ] I've checked the tutorial, particularly the [troubleshooting section](https://github.com/inclusionAI/AReaL/blob/main/examples/README_zh.md#troubleshooting). -->
-
 - [ ] I can consistently reproduce the bug across multiple trials or random seeds.
 - [ ] If the error causes experiment abortion, I've verified that this error is the root
   cause, not a secondary error caused by peer workers.
