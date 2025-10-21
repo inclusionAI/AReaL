@@ -4,6 +4,7 @@ import sys
 import torch
 import torch.distributed as dist
 from datasets import load_dataset
+from datasets.distributed import split_dataset_by_node
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo
@@ -57,14 +58,14 @@ def data_extract_prompt_fn(data):
     return data["prompt"]
 
 
-def get_boba_math_dataset(path, tokenizer):
+def get_boba_math_dataset(path, tokenizer,rank, world_size):
     dataset = load_dataset(
         path="json",
         split="train",
         data_files=path,
     )
     dataset = dataset.filter(lambda x: len(tokenizer.encode(x["prompt"])) <= 1024)
-    return dataset
+    return split_dataset_by_node(dataset, rank=rank, world_size=world_size)
 
 
 def boba_reward_fn(
@@ -104,7 +105,14 @@ def main(args):
     ), f"batch size({config.train_dataset.batch_size}) must larger or equal than world_size({world_size})!"
 
     # Create dataset and dataloaders
-    train_dataset = get_boba_math_dataset(config.train_dataset.path, tokenizer)
+    if config.train_dataset.single_rank_load:
+        train_dataset = get_boba_math_dataset(
+            config.train_dataset.path, tokenizer, rank=0, world_size=1
+        )
+    else:
+        train_dataset = get_boba_math_dataset(
+            config.train_dataset.path, tokenizer, rank=actor.data_parallel_rank, world_size=world_size
+        )
     if is_init_dataloader(config.train_dataset.single_rank_load, rank):
         train_dataloader = create_dataloader(
             train_dataset,
@@ -112,6 +120,9 @@ def main(args):
             world_size=world_size,
             dataset_config=config.train_dataset,
         )
+        if config.train_dataset.single_rank_load :
+            config.rollout.consumer_batch_size *= world_size
+            config.rollout.max_concurrent_rollouts *= world_size
     else:
         # Create empty dataloader for other ranks when using single rank load
         train_dataloader = StatefulDataLoader([])
@@ -251,7 +262,7 @@ def main(args):
         if config.train_dataset.single_rank_load:
             batch = distributed_batch(
                 batch,
-                rank,
+                actor.data_parallel_rank,
                 config.train_dataset.batch_size,
                 device,
                 world_size,

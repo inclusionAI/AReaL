@@ -224,7 +224,7 @@ def concat_padded_tensors(
 
 def distributed_batch(
     batch: List[Dict[str, Any]],
-    rank,
+    dp_rank,
     batch_size,
     device,
     world_size,
@@ -233,7 +233,7 @@ def distributed_batch(
     """
     Broadcast data when using single controller (single_rank_load==True)
     """
-    if rank == 0:
+    if dist.get_rank() == 0:
         if balance_batch_enabled:
             batch = balance_batch(batch, world_size)
         batch = [batch]
@@ -244,10 +244,10 @@ def distributed_batch(
     dist.broadcast_object_list(batch, src=0)
 
     if balance_batch_enabled:
-        return batch[0][rank]
+        return batch[0][dp_rank]
 
     local_bsz = batch_size // world_size
-    start, end = rank * local_bsz, (rank + 1) * local_bsz
+    start, end = dp_rank * local_bsz, (dp_rank + 1) * local_bsz
     batch = concat_padded_tensors(batch[0][start:end])
     return batch
 

@@ -28,7 +28,7 @@ def create_dataloader(
         )
     return StatefulDataLoader(
         dataset,
-        batch_size=dataset_config.batch_size // world_size,
+        batch_size=dataset_config.batch_size if dataset_config.single_rank_load else dataset_config.batch_size // world_size,
         sampler=DistributedSampler(
             dataset,
             world_size,
