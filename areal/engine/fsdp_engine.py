@@ -35,16 +35,15 @@ from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core.dist_rollout import DistRolloutCoordinator
 from areal.engine.base_hf_engine import BaseHFEngine
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names, pkg_version
 from areal.utils.data import (
-    broadcast_tensor_container,
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
     reorder_list,
-    tensor_container_to,
     unpack_sequence,
 )
 from areal.utils.distributed import init_custom_process_group
@@ -53,7 +52,6 @@ from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
-from areal.utils.redistributor import redistribute
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
     set_ulysses_sequence_parallel_group,
@@ -70,6 +68,7 @@ class FSDPEngine(BaseHFEngine):
         self.cpu_offload: CPUOffloadPolicy | None = None
 
         self.rollout_engine: InferenceEngine | None = None
+        self.rollout_coordinator: DistRolloutCoordinator | None = None
 
         self.parallel_helper: ParallelHelper
         self.world_mesh: DeviceMesh
@@ -441,6 +440,9 @@ class FSDPEngine(BaseHFEngine):
                 f"Connected rollout engine changed from {self.rollout_engine} to {engine}."
             )
         self.rollout_engine = engine
+        self.rollout_coordinator = DistRolloutCoordinator(
+            rollout_engine=engine, train_engine=self
+        )
 
         if (
             meta.type == current_platform.communication_backend
@@ -454,60 +456,11 @@ class FSDPEngine(BaseHFEngine):
 
     def _check_rollout_engine_connected(self):
         """Validate that rollout engine has been connected via connect_engine()."""
-        if self.rollout_engine is None:
+        if self.rollout_engine is None or self.rollout_coordinator:
             raise RuntimeError(
                 "Rollout engine not connected. Call connect_engine()"
                 " before using rollout/update_weight methods."
             )
-
-    def _broadcast_and_redistribute_batch(
-        self,
-        batch: Dict[str, Any] | None,
-        granularity: int = 1,
-    ) -> Dict[str, Any]:
-        """Broadcast and redistribute batch across distributed workers.
-
-        This helper encapsulates:
-        1. Redistribution within data parallel group (for load balancing)
-        2. Broadcasting to context and model parallel group
-        3. Synchronization barriers
-
-        Parameters
-        ----------
-        batch : Dict[str, Any] | None
-            Batch data from data parallel head, None for other ranks
-        granularity : int, default=1
-            Granularity for redistribution within data parallel group.
-            - For single-turn rollouts: Use actor.config.group_size (GRPO grouping)
-            - For multi-turn rollouts: Use 1 (default, per-completion redistribution)
-            - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
-
-        Returns
-        -------
-        Dict[str, Any]
-            Redistributed and broadcast batch available on all ranks
-        """
-        if batch is not None:
-            redist = redistribute(
-                batch,
-                granularity=granularity,
-                group=self.data_parallel_group,
-            )
-            batch = redist.data
-
-        dist.barrier(device_ids=[self.device.index])
-        current_platform.synchronize()
-
-        batch = broadcast_tensor_container(
-            batch,
-            src_rank=self.current_data_parallel_head(),
-            group=self.context_and_model_parallel_group,
-        )
-
-        dist.barrier(device_ids=[self.device.index])
-        current_platform.synchronize()
-
-        return batch
 
     def rollout_batch(
         self,
@@ -517,55 +470,14 @@ class FSDPEngine(BaseHFEngine):
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ) -> Dict[str, Any]:
-        """Generate rollout batch with distributed coordination (synchronous).
-
-        This method orchestrates distributed rollout generation:
-        - Only data parallel heads generate rollouts (avoid redundancy)
-        - Results are transferred to device and redistributed
-        - Batch is broadcast to all workers
-        - Synchronization barriers ensure consistency
-
-        Must call connect_engine() before using this method.
-
-        Parameters
-        ----------
-        data : List[Dict[str, Any]]
-            Input data batch for rollout generation
-        granularity : int, default=1
-            Granularity for redistribution within data parallel group.
-            - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
-            - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
-            - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
-        workflow : RolloutWorkflow, optional
-            Workflow defining rollout logic
-        workflow_builder : Callable, optional
-            Builder function for workflow
-        should_accept : Callable, optional
-            Filter function for accepting samples
-
-        Returns
-        -------
-        Dict[str, Any]
-            Generated rollout batch on all ranks
-
-        Raises
-        ------
-        RuntimeError
-            If rollout engine not connected via connect_engine()
-        """
         self._check_rollout_engine_connected()
-
-        batch = None
-        if self.is_data_parallel_head():
-            batch = self.rollout_engine.rollout_batch(
-                data,
-                workflow=workflow,
-                workflow_builder=workflow_builder,
-                should_accept=should_accept,
-            )
-            batch = tensor_container_to(batch, self.device)
-
-        return self._broadcast_and_redistribute_batch(batch, granularity=granularity)
+        return self.rollout_coordinator.rollout_batch(
+            data,
+            granularity=granularity,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
+            should_accept=should_accept,
+        )
 
     def prepare_batch(
         self,
@@ -575,52 +487,14 @@ class FSDPEngine(BaseHFEngine):
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ) -> Dict[str, Any]:
-        """Prepare async rollout batch with distributed coordination.
-
-        Similar to rollout_batch but uses prepare_batch for async training,
-        where rollout generation happens concurrently with training.
-
-        Must call connect_engine() before using this method.
-
-        Parameters
-        ----------
-        dataloader : StatefulDataLoader
-            Dataloader to pull samples from
-        granularity : int, default=1
-            Granularity for redistribution within data parallel group.
-            - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
-            - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
-            - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
-        workflow : RolloutWorkflow, optional
-            Workflow defining rollout logic
-        workflow_builder : Callable, optional
-            Builder function for workflow
-        should_accept : Callable, optional
-            Filter function for accepting samples based on staleness
-
-        Returns
-        -------
-        Dict[str, Any]
-            Prepared rollout batch on all ranks
-
-        Raises
-        ------
-        RuntimeError
-            If rollout engine not connected via connect_engine()
-        """
         self._check_rollout_engine_connected()
-
-        batch = None
-        if self.is_data_parallel_head():
-            batch = self.rollout_engine.prepare_batch(
-                dataloader,
-                workflow=workflow,
-                workflow_builder=workflow_builder,
-                should_accept=should_accept,
-            )
-            batch = tensor_container_to(batch, self.device)
-
-        return self._broadcast_and_redistribute_batch(batch, granularity=granularity)
+        return self.rollout_coordinator.prepare_batch(
+            dataloader,
+            granularity=granularity,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
+            should_accept=should_accept,
+        )
 
     def train_batch(
         self,
