@@ -783,19 +783,25 @@ def _update_weights_from_disk(
         weight_reqs = backend.build_disk_weight_update_requests(meta, lora_initialized)
 
         # Execute all requests
-        for http_req in weight_reqs.requests:
-            jobs = [
-                arequest_with_retry(
-                    addr=addr,
-                    endpoint=http_req.endpoint,
-                    payload=http_req.payload,
-                    method=http_req.method,
-                    max_retries=request_retries,
-                    timeout=request_timeout,
-                )
-                for addr in addresses
-            ]
-            await asyncio.gather(*jobs)
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=request_timeout),
+            read_bufsize=1024 * 1024 * 10,
+            connector=get_default_connector(),
+        ) as session:
+            for http_req in weight_reqs.requests:
+                jobs = [
+                    arequest_with_retry(
+                        session=session,
+                        addr=addr,
+                        endpoint=http_req.endpoint,
+                        payload=http_req.payload,
+                        method=http_req.method,
+                        max_retries=request_retries,
+                        timeout=request_timeout,
+                    )
+                    for addr in addresses
+                ]
+                await asyncio.gather(*jobs)
 
         return load_timestamp - save_timestamp
 
@@ -811,20 +817,26 @@ def _init_weights_update_group_remote(
     """Helper to initialize weight update group in a separate process."""
 
     async def _fn():
-        jobs = []
-        for i, addr in enumerate(addresses):
-            http_req = backend.build_init_weights_group_request(addr, i, meta)
-            jobs.append(
-                arequest_with_retry(
-                    addr=addr,
-                    endpoint=http_req.endpoint,
-                    payload=http_req.payload,
-                    method=http_req.method,
-                    max_retries=1,
-                    timeout=request_timeout,
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=request_timeout),
+            read_bufsize=1024 * 1024 * 10,
+            connector=get_default_connector(),
+        ) as session:
+            jobs = []
+            for i, addr in enumerate(addresses):
+                http_req = backend.build_init_weights_group_request(addr, i, meta)
+                jobs.append(
+                    arequest_with_retry(
+                        session=session,
+                        addr=addr,
+                        endpoint=http_req.endpoint,
+                        payload=http_req.payload,
+                        method=http_req.method,
+                        max_retries=1,
+                        timeout=request_timeout,
+                    )
                 )
-            )
-        await asyncio.gather(*jobs)
+            await asyncio.gather(*jobs)
 
     return uvloop.run(_fn())
 
@@ -845,18 +857,24 @@ def _update_weights_from_distributed(
         )
 
         # Execute all requests sequentially (they may have dependencies)
-        for http_req in weight_reqs.requests:
-            jobs = [
-                arequest_with_retry(
-                    addr=addr,
-                    endpoint=http_req.endpoint,
-                    payload=http_req.payload,
-                    method=http_req.method,
-                    max_retries=1,
-                    timeout=request_timeout,
-                )
-                for addr in addresses
-            ]
-            await asyncio.gather(*jobs)
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=request_timeout),
+            read_bufsize=1024 * 1024 * 10,
+            connector=get_default_connector(),
+        ) as session:
+            for http_req in weight_reqs.requests:
+                jobs = [
+                    arequest_with_retry(
+                        session=session,
+                        addr=addr,
+                        endpoint=http_req.endpoint,
+                        payload=http_req.payload,
+                        method=http_req.method,
+                        max_retries=1,
+                        timeout=request_timeout,
+                    )
+                    for addr in addresses
+                ]
+                await asyncio.gather(*jobs)
 
     return uvloop.run(_fn())
