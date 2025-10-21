@@ -120,8 +120,8 @@ class RLVRAgentWorkflow(RolloutWorkflow):
         responses_with_reward = {}
         for client in clients:
             client.apply_reward_discount(turn_discount=0.9)
-            completions = client.export_responses(style="individual")
-            responses_with_reward.update(completions)
+            responses = client.export_responses(style="individual")
+            responses_with_reward.update(responses)
         return responses_with_reward
 
 
