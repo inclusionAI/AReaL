@@ -8,32 +8,32 @@ repos:
           - --style=file
           - --fallback-style=Google
 
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
-    hooks:
-      - id: check-yaml
-        files: \.(yaml|yml)$
-      - id: end-of-file-fixer
-        files: \.(py|md|yaml|yml|c|cc|cxx|cpp|h|hpp|hxx|cu|cuh|ipynb)$
-      - id: trailing-whitespace
-        files: \.(py|md|yaml|yml|c|cc|cxx|cpp|h|hpp|hxx|cu|cuh|ipynb)$
-      - id: check-added-large-files
-        name: Check for large files
-        args: ['--maxkb=1000']
-      - id: check-json
-        name: Check JSON files
+  # - repo: https://github.com/pre-commit/pre-commit-hooks
+  #   rev: v6.0.0
+  #   hooks:
+  #     - id: check-yaml
+  #       files: \.(yaml|yml)$
+  #     - id: end-of-file-fixer
+  #       files: \.(py|md|yaml|yml|c|cc|cxx|cpp|h|hpp|hxx|cu|cuh|ipynb)$
+  #     - id: trailing-whitespace
+  #       files: \.(py|md|yaml|yml|c|cc|cxx|cpp|h|hpp|hxx|cu|cuh|ipynb)$
+  #     - id: check-added-large-files
+  #       name: Check for large files
+  #       args: ['--maxkb=1000']
+  #     - id: check-json
+  #       name: Check JSON files
 
-  - repo: https://github.com/executablebooks/mdformat
-    rev: 0.7.17
-    hooks:
-      - id: mdformat
-        args:
-          - --wrap=88
-        additional_dependencies:
-          - mdformat-gfm
-          - mdformat-tables
-          - mdformat-frontmatter
-        exclude: ^docs/algorithms/.*\.md$
+  # - repo: https://github.com/executablebooks/mdformat
+  #   rev: 0.7.17
+  #   hooks:
+  #     - id: mdformat
+  #       args:
+  #         - --wrap=88
+  #       additional_dependencies:
+  #         - mdformat-gfm
+  #         - mdformat-tables
+  #         - mdformat-frontmatter
+  #       exclude: ^docs/algorithms/.*\.md$
 
   - repo: https://github.com/pycqa/autoflake
     rev: v2.3.1

@@ -1,0 +1,111 @@
+name: Welcome First-Time Contributors
+
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  welcome:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Welcome first-time issue creator
+        if: github.event_name == 'issues'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const creator = issue.user.login;
+
+            // Check if this is the user's first issue
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              creator: creator,
+              state: 'all'
+            });
+
+            if (issues.data.length === 1) {
+              const message = `👋 Welcome to AReaL, @${creator}!
+
+Thank you for opening your first issue! We appreciate you taking the time to contribute to the project.
+
+**What happens next?**
+- A maintainer will review your issue and may ask for additional information
+- If this is a bug report, please ensure you've filled out all sections of the template
+- If this is a feature request, feel free to discuss it in more detail
+
+**Getting Started:**
+- 📚 Check out our [Contributing Guide](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CONTRIBUTING.md)
+- 🎯 Browse [good first issues](https://github.com/${context.repo.owner}/${context.repo.repo}/labels/good%20first%20issue) if you'd like to contribute code
+- 💬 Join the discussion in [GitHub Discussions](https://github.com/${context.repo.owner}/${context.repo.repo}/discussions)
+- 📖 Read our [documentation](https://inclusionai.github.io/AReaL/)
+
+**Need help?** Don't hesitate to ask questions in this issue or in our community channels!
+
+Welcome aboard! 🚀`;
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: message
+              });
+            }
+
+      - name: Welcome first-time PR contributor
+        if: github.event_name == 'pull_request_target'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const creator = pr.user.login;
+
+            // Check if this is the user's first PR
+            const prs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              creator: creator
+            });
+
+            if (prs.data.length === 1) {
+              const message = `🎉 Congratulations on your first pull request to AReaL, @${creator}!
+
+Thank you for contributing to the project! We're excited to review your changes.
+
+**Before we merge:**
+- ✅ Make sure all CI checks pass (formatting, tests)
+- 📝 Ensure you've filled out the PR template completely
+- 🔗 Link to the related issue (use "Fixes #123" in the description)
+- 🧪 Describe how you tested your changes
+
+**Helpful Resources:**
+- 📚 [Contributing Guide](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CONTRIBUTING.md) - Development workflow and guidelines
+- 🎨 [Code Formatting](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CONTRIBUTING.md#code-formatting) - How to fix formatting issues
+- 🧪 [Testing Guide](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CONTRIBUTING.md#testing-requirements) - How to run tests
+
+**CI Checks Failing?**
+- **Formatting:** Run \`pre-commit run --all-files\` to fix formatting issues
+- **Tests:** Run \`pytest -s -v areal/tests/\` locally to debug test failures
+- **Need help?** Ask questions in the PR comments - we're here to help!
+
+**What's next?**
+- A maintainer will review your PR (usually within a few days)
+- We may request changes or ask questions
+- Once approved, we'll merge your contribution!
+
+Thank you for making AReaL better! 🙏`;
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: message
+              });
+            }

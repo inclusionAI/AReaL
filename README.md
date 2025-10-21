@@ -166,9 +166,88 @@ For comprehensive setup instructions, see
 - [Customize Agentic/RVLR rollout workflows with AReaL-lite](https://inclusionai.github.io/AReaL/customization/agent.html)
 - [Customize algorithms with AReaL-lite](https://inclusionai.github.io/AReaL/customization/algorithm.html)
 
+## 🤝 Contributing
+
+We warmly welcome contributions from the community! Whether you're fixing bugs, adding
+features, improving documentation, or helping others, your contribution is valued.
+
+### 🌟 Ways to Contribute
+
+- **🐛 Report Bugs:** Found an issue?
+  [Create a bug report](https://github.com/inclusionAI/AReaL/issues/new?template=bug.md)
+- **✨ Suggest Features:** Have an idea?
+  [Submit a feature request](https://github.com/inclusionAI/AReaL/issues/new?template=feature.md)
+- **📝 Improve Docs:** Help us make documentation clearer and more comprehensive
+- **💻 Submit Code:** Fix bugs, add features, or improve performance
+- **💬 Help Others:** Answer questions in
+  [Discussions](https://github.com/inclusionAI/AReaL/discussions)
+
+### 🚀 Quick Start for Contributors
+
+```bash
+# Fork and clone the repository
+git clone https://github.com/YOUR-USERNAME/AReaL
+cd AReaL
+
+# Install in development mode
+pip install -e ".[dev]"
+
+# Set up pre-commit hooks for automatic formatting
+pip install pre-commit
+pre-commit install
+
+# Find a good first issue and start contributing!
+```
+
+### 📚 Contributor Resources
+
+- **[Contributing Guide](CONTRIBUTING.md)** - Complete contribution workflow and
+  guidelines
+- **[Good First Issues](https://github.com/inclusionAI/AReaL/labels/good%20first%20issue)**
+  \- Beginner-friendly tasks to get started
+- **[Help Wanted](https://github.com/inclusionAI/AReaL/labels/help%20wanted)** - Issues
+  where we need community help
+- **[Development Setup](docs/contributing/development-setup.md)** - Detailed environment
+  setup guide
+- **[Testing Guide](docs/contributing/testing-guide.md)** - How to write and run tests
+- **[Code Style Guide](docs/contributing/code-style.md)** - Coding standards and best
+  practices
+
+### 🎓 Contributor Skill Levels
+
+**Beginners:** Start with documentation improvements, adding tests, or
+[good first issues](https://github.com/inclusionAI/AReaL/labels/good%20first%20issue)
+
+**Intermediate:** Contribute datasets, reward functions, or workflow customizations
+
+**Advanced:** Implement new algorithms, optimize training backends, or enhance
+distributed systems
+
+See our [Contributing Guide](CONTRIBUTING.md) for detailed pathways for each skill
+level.
+
+### 💬 Community & Support
+
+- **[GitHub Discussions](https://github.com/inclusionAI/AReaL/discussions)** - Ask
+  questions, share ideas, and connect with the community
+- **[WeChat Group](./assets/wechat_qrcode.png)** - Join our WeChat community (微信群)
+- **[Project Roadmap](ROADMAP.md)** - See what we're working on and what's planned
+
+### 🌟 Recognition
+
+All contributors are valued and recognized! Your contributions will be:
+
+- Listed in release notes
+- Acknowledged in the project
+- Part of building state-of-the-art AI agents
+
+Thank you for making AReaL better! 🙏
+
 ## 🗺️ Future Roadmap
 
-- [2025 Q3 Roadmap](https://github.com/inclusionAI/AReaL/issues/257)
+- **[2025 Q3 Roadmap](https://github.com/inclusionAI/AReaL/issues/257)** - Current
+  priorities
+- **[Full Roadmap](ROADMAP.md)** - Long-term vision and planned features
 
 AReaL is under active development with planned minor releases weekly and major releases
 monthly. We warmly welcome community engagement and contributions. We are also
