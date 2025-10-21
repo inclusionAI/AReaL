@@ -134,11 +134,6 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                     device, *args, **kwargs
                 )
 
-                if action == "rollout_batch" and len(args) >= 2 and isinstance(args[1], tuple):
-                    logger.info(f"Processing rollout_batch args structure: unpacking args[1] from tuple to single element")
-                    new_args = (args[0], args[1][0]) + args[2:] if len(args) > 2 else (args[0], args[1][0])
-                    args = new_args
-
                 if (
                     check_attribute_type(type(EngineRPCServer.engine), action)
                     == "method"

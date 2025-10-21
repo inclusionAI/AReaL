@@ -54,12 +54,12 @@ class DistributedRolloutController(RolloutController):
         )
         logger.info(f"Start to create job: {job}")
         self.scheduler.create_workers(job, config=config)
-        logger.info(f"[dzq_debug] create_worker finished.")
+        logger.info(f"create_worker finished.")
 
         workers = self.scheduler.get_workers(self.role, timeout=1800)
         self.dp_head_workers = [worker for idx, worker in enumerate(workers) if idx % self.dp_world_size == 0]
         assert len(self.dp_head_workers) == self.alloc_mode.gen.dp_size
-        logger.info(f"[dzq_debug] create_worker finished. {len(self.dp_head_workers)} "
+        logger.info(f"create_worker finished. {len(self.dp_head_workers)} "
                     f"w0:{self.dp_head_workers[0]},"
                     f"w1: {self.dp_head_workers[1]}")
         with ThreadPoolExecutor(max_workers=len(self.dp_head_workers)) as executor:

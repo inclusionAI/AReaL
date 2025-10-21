@@ -75,10 +75,8 @@ def rpc_call(
     with ThreadPoolExecutor(max_workers=len(workers)) as executor:
         futures = []
         for i, worker in enumerate(workers):
-            # 构建调用参数
             if batches is not None:
-                # 当有batch参数时：将batch作为第一位置参数
-                worker_args = (batches[i],) + args
+                worker_args = (batches[i], *args)
                 future = executor.submit(
                     scheduler.call_engine, worker.id, method, *worker_args, **kwargs
                 )
