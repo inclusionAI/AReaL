@@ -81,7 +81,7 @@ class MultiturnMathAgent:
     async def run_agent(self, data, client: ArealOpenAI):
         num_turns_left = self.max_turns
         base_run_config = RunConfig(
-            model_provider=OpenAIProvider(openai_client=client, use_responses=False),
+            model_provider=OpenAIProvider(openai_client=client),
             tracing_disabled=True,
         )
         agent = OpenAIAgent(
@@ -162,12 +162,12 @@ class MultiturnRLVRAgentWorkflow(RolloutWorkflow):
         for reward in rewards:
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
-        completions_with_reward = {}
+        responses_with_reward = {}
         for client in clients:
             client.apply_reward_discount(turn_discount=0.9)
-            completions = client.export_completions(style="individual")
-            completions_with_reward.update(completions)
-        return completions_with_reward
+            responses = client.export_responses(style="individual")
+            responses_with_reward.update(responses)
+        return responses_with_reward
 
 
 def main(args):

@@ -18,7 +18,10 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import RolloutStat
-from areal.experimental.openai.types import CompletionWithTokenLogpReward
+from areal.experimental.openai.types import (
+    CompletionWithTokenLogpReward,
+    ResponseWithTokenLogpReward,
+)
 from areal.utils import logging
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 
@@ -33,7 +36,11 @@ class RolloutWorkflow:
 
     async def arun_episode(
         self, engine: "InferenceEngine", data: Dict[str, Any]
-    ) -> Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward]:
+    ) -> (
+        Dict[str, Any]
+        | None
+        | Dict[str, CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]
+    ):
         """Run a single episode of the workflow.
 
         Note
@@ -58,7 +65,11 @@ class RolloutWorkflow:
 
 
 def check_trajectory_format(
-    data: Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward],
+    data: (
+        Dict[str, Any]
+        | None
+        | Dict[str, CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]
+    ),
     batch_size: int | None = None,
     expected_keys: set | None = None,
     logger: Any = None,
@@ -167,7 +178,10 @@ def check_trajectory_format(
         raise ValueError("Data dict cannot be empty")
 
     # Check if all values are CompletionWithTokenLogpReward
-    if all(isinstance(v, CompletionWithTokenLogpReward) for v in data.values()):
+    if all(
+        isinstance(v, (CompletionWithTokenLogpReward, ResponseWithTokenLogpReward))
+        for v in data.values()
+    ):
         return True
 
     # Check required keys
@@ -388,7 +402,13 @@ class WorkflowExecutor:
                                 )
 
                     if isinstance(traj, dict) and all(
-                        isinstance(v, CompletionWithTokenLogpReward)
+                        isinstance(
+                            v,
+                            (
+                                CompletionWithTokenLogpReward,
+                                ResponseWithTokenLogpReward,
+                            ),
+                        )
                         for v in traj.values()
                     ):
                         traj = concat_padded_tensors(

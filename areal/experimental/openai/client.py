@@ -6,7 +6,7 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Union
 
 from openai import AsyncOpenAI
-from openai._types import NOT_GIVEN, Body, NotGiven, Omit, omit
+from openai._types import NOT_GIVEN, Body, NotGiven
 from openai.resources.chat.completions.completions import (
     AsyncCompletions as BaseAsyncCompletions,
 )
@@ -255,14 +255,14 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
     async def create(
         self,
         *,
-        input: Union[str, ResponseInputParam] | Omit = omit,
-        instructions: str | None | Omit = omit,
-        max_output_tokens: int | None | Omit = omit,
-        metadata: Metadata | None | Omit = omit,
-        tool_choice: response_create_params.ToolChoice | Omit = omit,
-        tools: Iterable[ToolParam] | Omit = omit,
-        temperature: float | None | Omit = omit,
-        top_p: float | None | Omit = omit,
+        input: Union[str, ResponseInputParam] | NotGiven = NOT_GIVEN,
+        instructions: str | None | NotGiven = NOT_GIVEN,
+        max_output_tokens: int | None | NotGiven = NOT_GIVEN,
+        metadata: Metadata | None | NotGiven = NOT_GIVEN,
+        tool_choice: response_create_params.ToolChoice | NotGiven = NOT_GIVEN,
+        tools: Iterable[ToolParam] | NotGiven = NOT_GIVEN,
+        temperature: float | None | NotGiven = NOT_GIVEN,
+        top_p: float | None | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
         **_: dict,
     ) -> Response:
@@ -272,44 +272,22 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
         # Build a simple messages list compatible with tokenizer chat template
         messages_list: List[Dict] = []
-        if input is omit or input is None:
+        if input is NOT_GIVEN or input is None:
             raise ValueError("input is required for Responses.create")
+
         if isinstance(input, str):
             messages_list = [
                 {"role": "user", "content": input},
             ]
+        elif isinstance(input, list):
+            messages_list = deepcopy(input)
         else:
-            # Best-effort extraction: consume any message-type items and concatenate input_text blocks
-            for item in input:
-                try:
-                    if (
-                        isinstance(item, dict)
-                        and item.get("type", "message") == "message"
-                    ):
-                        role = item.get("role", "user")
-                        content_list = item.get("content", []) or []
-                        text_parts: List[str] = []
-                        for c in content_list:
-                            if isinstance(c, dict) and c.get("type") in (
-                                "input_text",
-                                "text",
-                            ):
-                                # input_text param uses key 'text'
-                                if "text" in c and isinstance(c["text"], str):
-                                    text_parts.append(c["text"])
-                        if text_parts:
-                            messages_list.append(
-                                {"role": role, "content": "\n".join(text_parts)}
-                            )
-                except Exception:
-                    continue
-            if not messages_list:
-                raise ValueError(
-                    "Unsupported Responses input format: expected str or list of message items with input_text."
-                )
+            raise ValueError(
+                "Unsupported Responses input format: expected str or list of message items with input_text."
+            )
 
         # Apply chat template
-        tools = list(tools) if tools is not omit else None
+        tools = list(tools) if tools is not NOT_GIVEN else None
         if self.chat_template_type == "hf":
             prompt_token_ids = self.tokenizer.apply_chat_template(
                 messages_list,
@@ -332,10 +310,10 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             )
 
         # Map sampling params
-        temp = 1.0 if temperature is omit else (temperature or 0.0)
-        top_p_val = None if top_p is omit else (top_p or 1.0)
+        temp = 1.0 if temperature is NOT_GIVEN else (temperature or 0.0)
+        top_p_val = 1.0 if top_p is NOT_GIVEN else (top_p or 1.0)
         max_new_tokens = 512
-        if max_output_tokens is not omit and max_output_tokens is not None:
+        if max_output_tokens is not NOT_GIVEN and max_output_tokens is not None:
             max_new_tokens = max_output_tokens
 
         # TODO: stop and frequency_penalty mapping if needed
@@ -359,7 +337,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             input_ids=prompt_token_ids,
             gconfig=gconfig,
             rid=str(uuid.uuid4()),
-            metadata=None if metadata is omit else metadata,
+            metadata=None if metadata is NOT_GIVEN else metadata,
             tokenizer=self.tokenizer,
         )
 
@@ -401,16 +379,16 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             created_at=current_time,
             error=None,
             incomplete_details=None,
-            instructions=None if instructions is omit else instructions,
-            metadata=None if metadata is omit else metadata,
+            instructions=None if instructions is NOT_GIVEN else instructions,
+            metadata=None if metadata is NOT_GIVEN else metadata,
             model="None",
             object="response",
             output=[output_message],
             parallel_tool_calls=False,
-            temperature=temperature,
-            tool_choice=tool_choice if tool_choice is not omit else "none",
+            temperature=temp,
+            tool_choice=tool_choice if tool_choice is not NOT_GIVEN else "none",
             tools=tools,
-            top_p=top_p,
+            top_p=top_p_val,
             background=None,
             conversation=None,
             max_output_tokens=max_new_tokens,
@@ -434,7 +412,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             response=deepcopy(response),
             model_response=engine_resp,  # Should not deepcopy response because of tokenizer
             input_data=(
-                deepcopy(input) if input is not omit else ""
+                deepcopy(input) if input is not NOT_GIVEN else ""
             ),  # Store a copy of the input data
             chat_template_type=self.chat_template_type,
         )
