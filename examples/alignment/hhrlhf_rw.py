@@ -2,7 +2,6 @@ import os
 import sys
 
 import torch.distributed as dist
-from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import RWConfig, load_expr_config
@@ -16,6 +15,7 @@ from areal.utils.data import (
     pad_sequences_to_tensors,
     tensor_container_to,
 )
+from areal.utils.dataloader import create_dataloader
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
@@ -47,41 +47,28 @@ def main(args):
     engine.create_process_group(parallel_strategy=parallel_strategy)
 
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
+
     train_dataset = get_custom_dataset(
-        path=config.train_dataset.path,
-        rank=engine.data_parallel_rank,
-        world_size=engine.data_parallel_world_size,
-        split="train",
-        max_length=config.train_dataset.max_length,
-        type=config.train_dataset.type,
-        tokenizer=tokenizer,
+        split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
     )
     valid_dataset = get_custom_dataset(
-        path=config.valid_dataset.path,
-        rank=engine.data_parallel_rank,
-        world_size=engine.data_parallel_world_size,
-        split="test",
-        max_length=config.valid_dataset.max_length,
-        type=config.valid_dataset.type,
-        tokenizer=tokenizer,
+        split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
     )
 
     # Create dataset and dataloaders
-    train_dataloader = StatefulDataLoader(
+    train_dataloader = create_dataloader(
         train_dataset,
-        batch_size=config.train_dataset.batch_size // engine.data_parallel_world_size,
-        shuffle=config.train_dataset.shuffle,
-        num_workers=config.train_dataset.num_workers,
+        rank=engine.data_parallel_rank,
+        world_size=engine.data_parallel_world_size,
+        dataset_config=config.train_dataset,
         collate_fn=rw_modeling_colate_fn,
-        drop_last=config.train_dataset.drop_last,
     )
-    valid_dataloader = StatefulDataLoader(
+    valid_dataloader = create_dataloader(
         valid_dataset,
-        batch_size=config.valid_dataset.batch_size // engine.data_parallel_world_size,
-        shuffle=config.valid_dataset.shuffle,
-        num_workers=config.valid_dataset.num_workers,
+        rank=engine.data_parallel_rank,
+        world_size=engine.data_parallel_world_size,
+        dataset_config=config.valid_dataset,
         collate_fn=rw_modeling_colate_fn,
-        drop_last=config.valid_dataset.drop_last,
     )
 
     # Initialize engine

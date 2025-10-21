@@ -23,7 +23,8 @@ from areal.api.io_struct import (
     ParamSpec,
     WeightUpdateMeta,
 )
-from areal.api.workflow_api import RolloutWorkflow, WorkflowExecutor
+from areal.api.workflow_api import RolloutWorkflow
+from areal.core.workflow_executor import WorkflowExecutor
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
@@ -51,10 +52,9 @@ class RemotevLLMEngine(InferenceEngine):
         self._version = 0
 
         self.lock = Lock()
-        self.workflow_executor = WorkflowExecutor(
-            config=config,
-            inference_engine=self,
-        )
+
+        # Workflow executor will be initialized in initialize()
+        self.workflow_executor: WorkflowExecutor
 
     def _wait_for_server(self, address):
         base_url = f"http://{address}"
@@ -124,6 +124,12 @@ class RemotevLLMEngine(InferenceEngine):
         self.server_idx = random.randint(0, len(self.addresses) - 1)
         self.logger.info("Servers are all ready!")
         self.executor = ProcessPoolExecutor(max_workers=1)
+
+        # Create workflow executor
+        self.workflow_executor = WorkflowExecutor(
+            config=self.config,
+            inference_engine=self,
+        )
         self.workflow_executor.initialize(
             logger=self.logger, train_data_parallel_size=train_data_parallel_size
         )

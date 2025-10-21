@@ -4,7 +4,7 @@ import gc
 import os
 from concurrent.futures import Future
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import mbridge
 import torch
@@ -20,29 +20,18 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.transformer import TransformerConfig
 from megatron.core.utils import get_model_config
 from torch import nn
+from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
-from areal.api.cli_args import MicroBatchSpec
+from areal.api.cli_args import MicroBatchSpec, TrainEngineConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
-from areal.experimental.api.cli_args import (
-    ExperimentalTrainEngineConfig as TrainEngineConfig,
-)
-from areal.experimental.model.hf_load import load_weights_from_hf_with_mbridge_fast
-from areal.experimental.model.hf_save import save_weights_to_hf_with_mbridge_fast
-from areal.experimental.model.registry import make_hf_and_mcore_config, make_mcore_model
-from areal.experimental.utils.mcore.determinisitc import set_deterministic_algorithms
-from areal.experimental.utils.mcore.packed_context_parallel import (
-    packed_context_parallel_forward,
-)
-from areal.experimental.utils.megatron import (
-    all_gather_param,
-    convert_to_hf,
-    get_named_parameters,
-    remove_padding,
-)
-from areal.experimental.utils.megatron_checkpointer import MegatronCheckpointManager
+from areal.api.workflow_api import RolloutWorkflow
+from areal.core.dist_rollout import DistRolloutCoordinator
+from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
+from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
+from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.data import (
@@ -60,6 +49,17 @@ from areal.utils.data import (
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
+from areal.utils.mcore.determinisitc import set_deterministic_algorithms
+from areal.utils.mcore.packed_context_parallel import (
+    packed_context_parallel_forward,
+)
+from areal.utils.megatron import (
+    all_gather_param,
+    convert_to_hf,
+    get_named_parameters,
+    remove_padding,
+)
+from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
@@ -80,6 +80,7 @@ class MegatronEngine(TrainEngine):
         self.bridge = None
         self.process_group_initialized = False
         self.rollout_engine: InferenceEngine | None = None
+        self.rollout_coordinator: DistRolloutCoordinator | None = None
         self.weight_update_group_initialized: bool = False
         self.weight_update_group_name: str
         self._version: int = 0
@@ -641,6 +642,7 @@ class MegatronEngine(TrainEngine):
         current_platform.synchronize()
 
     def update_weights(self, meta: WeightUpdateMeta):
+        self._check_rollout_engine_connected()
         if meta.type == current_platform.communication_backend:
             assert self.weight_update_group_initialized
             self._update_weights_from_distributed(meta)
@@ -655,6 +657,9 @@ class MegatronEngine(TrainEngine):
                 f"Connected rollout engine changed from {self.rollout_engine} to {engine}."
             )
         self.rollout_engine = engine
+        self.rollout_coordinator = DistRolloutCoordinator(
+            rollout_engine=engine, train_engine=self
+        )
 
         if (
             meta.type == current_platform.communication_backend
@@ -665,6 +670,48 @@ class MegatronEngine(TrainEngine):
 
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+
+    def _check_rollout_engine_connected(self):
+        """Validate that rollout engine has been connected via connect_engine()."""
+        if self.rollout_engine is None or self.rollout_coordinator is None:
+            raise RuntimeError(
+                "Rollout engine not connected. Call connect_engine()"
+                " before using rollout/update_weight methods."
+            )
+
+    def rollout_batch(
+        self,
+        data: List[Dict[str, Any]],
+        granularity: int = 1,
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
+    ) -> Dict[str, Any]:
+        self._check_rollout_engine_connected()
+        return self.rollout_coordinator.rollout_batch(
+            data,
+            granularity=granularity,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
+            should_accept=should_accept,
+        )
+
+    def prepare_batch(
+        self,
+        dataloader: StatefulDataLoader,
+        granularity: int = 1,
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
+        should_accept: Callable | None = None,
+    ) -> Dict[str, Any]:
+        self._check_rollout_engine_connected()
+        return self.rollout_coordinator.prepare_batch(
+            dataloader,
+            granularity=granularity,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
+            should_accept=should_accept,
+        )
 
     def set_version(self, version: int):
         self._version = version

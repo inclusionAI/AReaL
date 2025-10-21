@@ -11,29 +11,26 @@ from typing import List
 
 import torch.distributed as dist
 from datasets import load_dataset
-from datasets.distributed import split_dataset_by_node
-from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import (
     GenerationHyperparameters,
+    GRPOConfig,
     InferenceEngineConfig,
     load_expr_config,
 )
 from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
+from areal.engine.ppo.actor import MegatronPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.experimental.api.cli_args import ExperimentalGRPOConfig as GRPOConfig
-from areal.experimental.megatron_actor import MegatronPPOActor
 from areal.experimental.openai import ArealOpenAI
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import broadcast_tensor_container, tensor_container_to
+from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
-from areal.utils.redistributor import redistribute
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
@@ -170,14 +167,14 @@ class AgentRLConfig(GRPOConfig):
     judge_engine: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
 
 
-def get_search_dataset(dataset_path, tokenizer, rank=0, world_size=1):
+def get_search_dataset(dataset_path, tokenizer):
     dataset = load_dataset(
         path="json",
         split="train",
         data_files=dataset_path,
     )
     # dataset = dataset.filter(lambda x: len(tokenizer.encode(x["question"])) <= 1024)
-    return split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+    return dataset
 
 
 def main(args):
@@ -196,18 +193,11 @@ def main(args):
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
     # Create dataset and dataloaders
-    train_dataloader = StatefulDataLoader(
-        get_search_dataset(
-            config.train_dataset.path,
-            tokenizer,
-            actor.data_parallel_rank,
-            actor.data_parallel_world_size,
-        ),
-        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
-        shuffle=config.train_dataset.shuffle,
-        num_workers=config.train_dataset.num_workers,
-        collate_fn=lambda x: x,
-        drop_last=config.train_dataset.drop_last,
+    train_dataloader = create_dataloader(
+        get_search_dataset(config.train_dataset.path, tokenizer),
+        rank=actor.data_parallel_rank,
+        world_size=actor.data_parallel_world_size,
+        dataset_config=config.train_dataset,
     )
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
@@ -288,34 +278,20 @@ def main(args):
         )
 
         with stats_tracker.record_timing("rollout"):
-            batch = None
-            if actor.is_data_parallel_head():
-                if config.async_training:
-                    batch = rollout.prepare_batch(
-                        train_dataloader,
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
-                    )
-                else:
-                    batch = rollout.rollout_batch(
-                        next(data_generator),
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
-                    )
-                batch = tensor_container_to(batch, actor.device)
-                batch = redistribute(
-                    batch,
-                    group=actor.data_parallel_group,
+            if config.async_training:
+                batch = actor.prepare_batch(
+                    train_dataloader,
                     granularity=config.n_trajs,
-                ).data
-            batch = broadcast_tensor_container(
-                batch,
-                src_rank=actor.current_data_parallel_head(),
-                group=actor.context_and_model_parallel_group,
-            )
-        # Create barrier to synchronize all rollout processes.
-        dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
+            else:
+                batch = actor.rollout_batch(
+                    next(data_generator),
+                    granularity=config.n_trajs,
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):

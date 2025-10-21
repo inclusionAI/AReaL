@@ -27,7 +27,7 @@ def image2base64(images: List[ImageObject] | ImageObject) -> List[str] | str:
 model_id = "google/gemma-3-4b-it"
 
 model = Gemma3ForConditionalGeneration.from_pretrained(
-    model_id, torch_dtype=torch.bfloat16
+    pretrained_model_name_or_path=model_id, dtype=torch.bfloat16
 ).to("cuda")
 model.eval()
 
