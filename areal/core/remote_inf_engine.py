@@ -778,36 +778,24 @@ def _update_weights_from_disk(
         )
         save_timestamp = float(name_resolve.wait(update_name, timeout=120))
         load_timestamp = datetime.now().timestamp()
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(
-                total=request_timeout,
-                sock_connect=request_timeout,
-                connect=request_timeout,
-            ),
-            read_bufsize=1024 * 1024 * 10,
-            connector=get_default_connector(),
-        ) as session:
 
-            # Get requests from backend
-            weight_reqs = backend.build_disk_weight_update_requests(
-                meta, lora_initialized
-            )
+        # Get requests from backend
+        weight_reqs = backend.build_disk_weight_update_requests(meta, lora_initialized)
 
-            # Execute all requests
-            for http_req in weight_reqs.requests:
-                jobs = [
-                    arequest_with_retry(
-                        addr=addr,
-                        session=session,
-                        endpoint=http_req.endpoint,
-                        payload=http_req.payload,
-                        method=http_req.method,
-                        max_retries=request_retries,
-                        timeout=request_timeout,
-                    )
-                    for addr in addresses
-                ]
-                await asyncio.gather(*jobs)
+        # Execute all requests
+        for http_req in weight_reqs.requests:
+            jobs = [
+                arequest_with_retry(
+                    addr=addr,
+                    endpoint=http_req.endpoint,
+                    payload=http_req.payload,
+                    method=http_req.method,
+                    max_retries=request_retries,
+                    timeout=request_timeout,
+                )
+                for addr in addresses
+            ]
+            await asyncio.gather(*jobs)
 
         return load_timestamp - save_timestamp
 

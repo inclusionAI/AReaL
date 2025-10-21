@@ -39,7 +39,7 @@ class ModelRequest:
             gconfig=self.gconfig.new(),
             metadata=self.metadata.copy(),
             tokenizer=self.tokenizer,
-            image_data=self.image_data,
+            image_data=self.image_data.copy() if self.image_data is not None else None,
             processor=self.processor,
         )
 
