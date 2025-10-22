@@ -35,7 +35,7 @@ class AnyPrecisionAdamW(torch.optim.Optimizer):
         lr: float = 1e-3,
         betas: Tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
-        weight_decay: float = 0.0,
+        weight_decay: float = 0.01,
         use_kahan_summation: bool = True,
         momentum_dtype: str = "bfloat16",
         variance_dtype: str = "bfloat16",

@@ -221,46 +221,6 @@ def concat_padded_tensors(
     return result
 
 
-def aggregate_metric_dicts(
-    dicts: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """Aggregate multiple dictionaries containing numeric values.
-
-    Args:
-        dicts: List of dictionaries to aggregate
-
-    Returns:
-        Aggregated dictionary with the same keys
-    """
-    if not dicts:
-        return {}
-
-    # Get all unique keys from all dictionaries
-    all_keys = set()
-    for d in dicts:
-        all_keys.update(d.keys())
-
-    result = {}
-
-    for key in all_keys:
-        # Collect all values for this key
-        values = [d.get(key) for d in dicts if key in d]
-
-        if not values:
-            continue
-
-        # Check if all values are numeric (int, float)
-        if all(isinstance(v, (int, float)) for v in values):
-            # Sum numeric values
-            result[key] = sum(values)
-
-        else:
-            # For mixed or other types, keep as list
-            result[key] = values
-
-    return result
-
-
 def truncate_dict_to_batch_size(
     data: Dict[str, Any], batch_size: int
 ) -> Dict[str, Any]:

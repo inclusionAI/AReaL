@@ -15,14 +15,14 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import (
     GenerationHyperparameters,
+    GRPOConfig,
     InferenceEngineConfig,
     load_expr_config,
 )
 from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
+from areal.engine.ppo.actor import MegatronPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.experimental.api.cli_args import ExperimentalGRPOConfig as GRPOConfig
-from areal.experimental.megatron_actor import MegatronPPOActor
 from areal.experimental.openai import ArealOpenAI
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker

@@ -5,11 +5,10 @@ import torch.distributed as dist
 from megatron.core import parallel_state as mpu
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import load_expr_config
+from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.dataset import get_custom_dataset
-from areal.experimental.api.cli_args import ExperimentalSFTConfig as SFTConfig
-from areal.experimental.megatron_lm_engine import MegatronLMEngine
+from areal.engine.sft.lm_engine import MegatronLMEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
