@@ -70,7 +70,8 @@ Pebble
 timeout-decorator
 prettytable
 gymnasium>=1.1.1
-swanlab[dashboard]
+swanboard==0.1.9b1
+swanlab[dashboard]==0.6.12
 torchdata
 autoflake==2.3.1
 tensordict
