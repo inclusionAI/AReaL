@@ -32,6 +32,17 @@ class ModelRequest:
     image_data: Optional[List[ImageObject | str]] = field(default_factory=list)
     processor: Optional["AutoProcessor"] = None
 
+    def copy(self):
+        return ModelRequest(
+            rid=self.rid,
+            input_ids=self.input_ids.copy(),
+            gconfig=self.gconfig.new(),
+            metadata=self.metadata.copy(),
+            tokenizer=self.tokenizer,
+            image_data=self.image_data.copy() if self.image_data is not None else None,
+            processor=self.processor,
+        )
+
 
 @dataclass
 class ModelResponse:
@@ -155,6 +166,31 @@ class WeightUpdateMeta:
             nccl_group_name=nccl_group_name,
             weight_chunked_mem_mb=weight_chunked_mem_mb,
         )
+
+
+@dataclass
+class HttpRequest:
+    """Represents an HTTP request to be sent to a remote inference server."""
+
+    endpoint: str
+    payload: Dict[str, Any]
+    method: str = "POST"
+
+
+@dataclass
+class HttpGenerationResult:
+    """Parsed result from a generation response."""
+
+    output_tokens: List[int]
+    output_logprobs: List[float]
+    stop_reason: str
+
+
+@dataclass
+class WeightUpdateRequests:
+    """Collection of HTTP requests needed for a weight update operation."""
+
+    requests: List[HttpRequest]
 
 
 @dataclass
