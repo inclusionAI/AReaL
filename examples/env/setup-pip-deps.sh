@@ -15,4 +15,4 @@ uv pip install vllm==0.10.2
 # Package used for calculating math reward
 uv pip install -e evaluation/latex2sympy
 # Install AReaL in upgrade mode to ensure package version dependencies are met. 
-uv pip install -U -e .[dev]
+uv pip install --prerelease=allow -U -e .[dev]
