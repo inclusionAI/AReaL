@@ -241,6 +241,173 @@ class Orchestrator:
 
         self.environment.sync_tools()
 
+    async def ainitialize(self):
+        """
+        Initialize the orchestrator.
+        - If the tasks specifies an initial state, use it to initialize the environment.
+        - Initialize the agent and user states.
+        - Send the first message (default message from the agent to the user).
+        """
+        initial_state = self.task.initial_state
+        initialization_data = (
+            initial_state.initialization_data if initial_state is not None else None
+        )
+        initialization_actions = (
+            initial_state.initialization_actions if initial_state is not None else None
+        )
+        message_history = (
+            deepcopy(initial_state.message_history)
+            if initial_state is not None and initial_state.message_history is not None
+            else []
+        )
+        for msg in message_history:
+            msg.turn_idx = None
+
+        # Add timestamps to the message history
+        message_history = self._add_timestamps(message_history)
+
+        if self.solo_mode:
+            assert self.environment.solo_mode, "Environment should be in solo mode"
+            assert isinstance(self.agent, LLMSoloAgent), (
+                "Agent must be a LLMSoloAgent in solo mode"
+            )
+            assert isinstance(self.user, DummyUser), (
+                "User must be a DummyUser in solo mode"
+            )
+
+        # Initialize Environment state
+        self._initialize_environment(
+            initialization_data=initialization_data,
+            initialization_actions=initialization_actions,
+            message_history=message_history,
+        )
+
+        # Set seeds for the agent, user
+        if self.seed is not None:
+            self.agent.set_seed(self.seed)
+            self.user.set_seed(self.seed)
+
+        # Initialize the agent and user states
+        if len(message_history) > 0:
+            self.validate_message_history(message_history)
+
+            last_message = message_history[-1]
+            # Last message is an assistant message
+            if isinstance(last_message, AssistantMessage):
+                self.from_role = Role.AGENT
+                if not last_message.is_tool_call():  # Last message is for the user
+                    self.to_role = Role.USER
+                else:  # Last message is for the environment
+                    self.to_role = Role.ENV
+                self.agent_state = self.agent.get_init_state(
+                    message_history=[
+                        msg
+                        for msg in message_history
+                        if is_valid_agent_history_message(msg)
+                    ]
+                )
+                self.user_state = self.user.get_init_state(
+                    message_history=[
+                        msg
+                        for msg in message_history[:-1]
+                        if is_valid_user_history_message(msg)
+                    ]
+                )
+                self.message = last_message
+                if self.agent.is_stop(last_message):
+                    self.done = True
+                    self.termination_reason = TerminationReason.AGENT_STOP
+            # Last message is a user message
+            elif isinstance(last_message, UserMessage):
+                self.from_role = Role.USER
+                if not last_message.is_tool_call():  # Last message is for the agent
+                    self.to_role = Role.AGENT
+                else:  # Last message is for the environment
+                    self.to_role = Role.ENV
+                self.user_state = self.user.get_init_state(
+                    message_history=[
+                        msg
+                        for msg in message_history
+                        if is_valid_user_history_message(msg)
+                    ]
+                )
+                self.agent_state = self.agent.get_init_state(
+                    message_history=[
+                        msg
+                        for msg in message_history[:-1]
+                        if is_valid_agent_history_message(msg)
+                    ]
+                )
+                self.message = last_message
+                self.done = UserSimulator.is_stop(last_message)
+                if self.done:
+                    self.termination_reason = TerminationReason.USER_STOP
+            # Last message is a tool message
+            elif isinstance(last_message, ToolMessage):
+                self.from_role = Role.ENV
+                if last_message.requestor == "assistant":
+                    self.to_role = Role.AGENT
+                    self.agent_state = self.agent.get_init_state(
+                        message_history=[
+                            msg
+                            for msg in message_history[:-1]
+                            if is_valid_agent_history_message(msg)
+                        ]
+                    )
+                    self.user_state = self.user.get_init_state(
+                        message_history=[
+                            msg
+                            for msg in message_history
+                            if is_valid_user_history_message(msg)
+                        ]
+                    )
+                else:
+                    self.to_role = Role.USER
+                    self.agent_state = self.agent.get_init_state(
+                        message_history=[
+                            msg
+                            for msg in message_history
+                            if is_valid_agent_history_message(msg)
+                        ]
+                    )
+                    self.user_state = self.user.get_init_state(
+                        message_history=[
+                            msg
+                            for msg in message_history[:-1]
+                            if is_valid_user_history_message(msg)
+                        ]
+                    )
+                self.message = last_message
+            else:
+                raise ValueError(
+                    f"Last message should be of type AssistantMessage, UserMessage, or ToolMessage, got {type(last_message)}"
+                )
+            self.trajectory = message_history
+
+        else:
+            self.agent_state = self.agent.get_init_state()
+            self.user_state = self.user.get_init_state()
+            if not self.solo_mode:
+                first_message = deepcopy(DEFAULT_FIRST_AGENT_MESSAGE)
+                first_message.timestamp = get_now()
+                self.trajectory = [first_message]
+                self.message = first_message
+                self.from_role = Role.AGENT
+                self.to_role = Role.USER
+            else:
+                first_message, agent_state = await self.agent.agenerate_next_message(
+                    None, self.agent_state
+                )
+                self.trajectory = [first_message]
+                self.message = first_message
+                self.from_role = Role.AGENT
+                self.to_role = Role.ENV
+                self.done = self.agent.is_stop(first_message)
+                if self.done:
+                    self.termination_reason = TerminationReason.AGENT_STOP
+
+        self.environment.sync_tools()
+
     def run(self) -> SimulationRun:
         """
         Run the simulation.
@@ -253,6 +420,46 @@ class Orchestrator:
         self.initialize()
         while not self.done:
             self.step()
+            if self.step_count >= self.max_steps:
+                self.done = True
+                self.termination_reason = TerminationReason.MAX_STEPS
+            if self.num_errors >= self.max_errors:
+                self.done = True
+                self.termination_reason = TerminationReason.TOO_MANY_ERRORS
+        duration = time.perf_counter() - start
+        messages = self.get_trajectory()
+        res = get_cost(messages)
+        if res is None:
+            agent_cost, user_cost = None, None
+        else:
+            agent_cost, user_cost = res
+        simulation_run = SimulationRun(
+            id=str(uuid.uuid4()),
+            task_id=self.task.id,
+            start_time=start_time,
+            end_time=get_now(),
+            duration=duration,
+            termination_reason=self.termination_reason.value,
+            reward_info=None,
+            user_cost=user_cost,
+            agent_cost=agent_cost,
+            messages=messages,
+            seed=self.seed,
+        )
+        return simulation_run
+
+    async def arun(self) -> SimulationRun:
+        """
+        Run the simulation.
+
+        Returns:
+            SimulationRun: The simulation run.
+        """
+        start_time = get_now()
+        start = time.perf_counter()
+        await self.ainitialize()
+        while not self.done:
+            await self.astep()
             if self.step_count >= self.max_steps:
                 self.done = True
                 self.termination_reason = TerminationReason.MAX_STEPS
@@ -317,6 +524,85 @@ class Orchestrator:
             self.from_role == Role.USER or self.from_role == Role.ENV
         ) and self.to_role == Role.AGENT:
             agent_msg, self.agent_state = self.agent.generate_next_message(
+                self.message, self.agent_state
+            )
+            agent_msg.validate()
+            if self.agent.is_stop(agent_msg):
+                self.done = True
+                self.termination_reason = TerminationReason.AGENT_STOP
+            self.trajectory.append(agent_msg)
+            self.message = agent_msg
+            self.from_role = Role.AGENT
+            if agent_msg.is_tool_call():
+                self.to_role = Role.ENV
+            else:
+                self.to_role = Role.USER
+        # AGENT/USER -> ENV
+        elif self.from_role in [Role.AGENT, Role.USER] and self.to_role == Role.ENV:
+            if not self.message.is_tool_call():
+                raise ValueError("Agent or User should send tool call to environment")
+            tool_msgs = []
+            for tool_call in self.message.tool_calls:
+                tool_msg = self.environment.get_response(tool_call)
+                tool_msgs.append(tool_msg)
+            assert len(self.message.tool_calls) == len(tool_msgs), (
+                "Number of tool calls and tool messages should be the same"
+            )
+            self.trajectory.extend(tool_msgs)
+            if (
+                len(tool_msgs) > 1
+            ):  # Packaging multiple tool messages into a MultiToolMessage
+                self.message = MultiToolMessage(
+                    role="tool",
+                    tool_messages=tool_msgs,
+                )
+            else:
+                self.message = tool_msgs[0]
+            self.to_role = self.from_role
+            self.from_role = Role.ENV
+        else:
+            raise ValueError(
+                f"Invalid role combination. From role: {self.from_role}, To role: {self.to_role}"
+            )
+        self.step_count += 1
+        self.environment.sync_tools()
+
+    async def astep(self):
+        """
+        Perform one step of the simulation.
+        Sends self.message from self.from_role to self.to_role
+        This can either be a message from agent to user/environment, environment to agent, or user to agent
+        Updates self.trajectory
+        """
+        if self.done:
+            raise ValueError("Simulation is done")
+        logger.debug(
+            f"Step {self.step_count}. Sending message from {self.from_role} to {self.to_role}"
+        )
+        logger.debug(
+            f"Step {self.step_count}.\nFrom role: {self.from_role}\nTo role: {self.to_role}\nMessage: {self.message}"
+        )
+        # AGENT/ENV -> USER
+        if self.from_role in [Role.AGENT, Role.ENV] and self.to_role == Role.USER:
+            user_msg, self.user_state = await self.user.agenerate_next_message(
+                self.message, self.user_state
+            )
+            user_msg.validate()
+            if UserSimulator.is_stop(user_msg):
+                self.done = True
+                self.termination_reason = TerminationReason.USER_STOP
+            self.trajectory.append(user_msg)
+            self.message = user_msg
+            self.from_role = Role.USER
+            if user_msg.is_tool_call():
+                self.to_role = Role.ENV
+            else:
+                self.to_role = Role.AGENT
+        # USER/ENV -> AGENT
+        elif (
+            self.from_role == Role.USER or self.from_role == Role.ENV
+        ) and self.to_role == Role.AGENT:
+            agent_msg, self.agent_state = await self.agent.agenerate_next_message(
                 self.message, self.agent_state
             )
             agent_msg.validate()

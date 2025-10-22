@@ -11,6 +11,7 @@ from tau2.data_model.message import (
     UserMessage,
 )
 from tau2.environment.tool import Tool
+from tau2.utils.llm_utils import agenerate, generate
 
 # Define TypeVar for the agent state type
 AgentState = TypeVar("AgentState")
@@ -37,6 +38,20 @@ class BaseAgent(ABC, Generic[AgentState]):
     ) -> tuple[AssistantMessage, AgentState]:
         """
         Generate the next message from a user/tool message(s) and an agent state.
+        Args:
+            message: The user message or tool message(s).
+            state: The agent state.
+
+        Returns:
+            A tuple of an assistant message and an agent state.
+        """
+        raise NotImplementedError
+
+    async def agenerate_next_message(
+        self, message: ValidAgentInputMessage, state: AgentState
+    ) -> tuple[AssistantMessage, AgentState]:
+        """
+        Generate the next message from a user/tool message(s) and an agent state asynchronously.
         Args:
             message: The user message or tool message(s).
             state: The agent state.

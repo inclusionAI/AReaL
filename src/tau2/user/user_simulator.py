@@ -21,7 +21,7 @@ from tau2.user.base import (
     is_valid_user_history_message,
 )
 from tau2.utils import DATA_DIR
-from tau2.utils.llm_utils import generate
+from tau2.utils.llm_utils import agenerate, generate
 
 GLOBAL_USER_SIM_GUIDELINES_DIR = DATA_DIR / "tau2" / "user_simulator"
 
@@ -137,6 +137,11 @@ class UserSimulator(BaseUser):
     ) -> Tuple[UserMessage, UserState]:
         return self._generate_next_message(message, state)
 
+    async def agenerate_next_message(
+        self, message: ValidUserInputMessage, state: UserState
+    ) -> Tuple[UserMessage, UserState]:
+        return await self._generate_next_message(message, state)
+
     def _generate_next_message(
         self, message: ValidUserInputMessage, state: UserState
     ) -> Tuple[UserMessage, UserState]:
@@ -193,6 +198,62 @@ class UserSimulator(BaseUser):
         state.messages.append(user_message)
         return user_message, state
 
+    async def _agenerate_next_message(
+        self, message: ValidUserInputMessage, state: UserState
+    ) -> Tuple[UserMessage, UserState]:
+        """Get the response from the user simulator.
+
+        Args:
+            message: The assistant or tool message.
+            state: The user simulator's state.
+
+        Returns:
+            A tuple containing the user message and the updated user state.
+        """
+        # Updating state with new message
+        if isinstance(message, MultiToolMessage):
+            state.messages.extend(message.tool_messages)
+        else:
+            state.messages.append(message)
+        messages = state.system_messages + state.flip_roles()
+
+        # Generate response
+        assistant_message = await agenerate(
+            model=self.llm,
+            messages=messages,
+            tools=self.tools,
+            completion_fn=self.completion_fn,
+            **self.llm_args,
+        )
+
+        user_response = assistant_message.content
+        logger.debug(f"Response: {user_response}")
+
+        user_message = UserMessage(
+            role="user",
+            content=user_response,
+            cost=assistant_message.cost,
+            usage=assistant_message.usage,
+            raw_data=assistant_message.raw_data,
+        )
+
+        # flip the requestor of the tool calls
+        if assistant_message.tool_calls is not None:
+            user_message.tool_calls = []
+            for tool_call in assistant_message.tool_calls:
+                user_message.tool_calls.append(
+                    ToolCall(
+                        id=tool_call.id,
+                        name=tool_call.name,
+                        arguments=tool_call.arguments,
+                        requestor="user",
+                    )
+                )
+
+        # Updating state with response
+        state.messages.append(user_message)
+        return user_message, state
+
 
 class DummyUser(UserSimulator):
     """A dummy user to run a agent solo simulation."""
@@ -209,6 +270,11 @@ class DummyUser(UserSimulator):
         pass
 
     def generate_next_message(
+        self, message: ValidUserInputMessage, state: UserState
+    ) -> tuple[UserMessage, UserState]:
+        raise NotImplementedError("DummyUser does not support generate_next_message")
+
+    async def agenerate_next_message(
         self, message: ValidUserInputMessage, state: UserState
     ) -> tuple[UserMessage, UserState]:
         raise NotImplementedError("DummyUser does not support generate_next_message")

@@ -19,7 +19,7 @@ from tau2.data_model.message import (
 )
 from tau2.data_model.tasks import Action, Task
 from tau2.environment.tool import Tool, as_tool
-from tau2.utils.llm_utils import generate
+from tau2.utils.llm_utils import agenerate, generate
 
 AGENT_INSTRUCTION = """
 You are a customer service agent that helps the user according to the <policy> provided below.
@@ -108,6 +108,27 @@ class LLMAgent(LocalAgent[LLMAgentState]):
             state.messages.append(message)
         messages = state.system_messages + state.messages
         assistant_message = generate(
+            model=self.llm,
+            tools=self.tools,
+            messages=messages,
+            completion_fn=self.completion_fn,
+            **self.llm_args,
+        )
+        state.messages.append(assistant_message)
+        return assistant_message, state
+
+    async def agenerate_next_message(
+        self, message: ValidAgentInputMessage, state: LLMAgentState
+    ) -> tuple[AssistantMessage, LLMAgentState]:
+        """
+        Respond to a user or tool message.
+        """
+        if isinstance(message, MultiToolMessage):
+            state.messages.extend(message.tool_messages)
+        else:
+            state.messages.append(message)
+        messages = state.system_messages + state.messages
+        assistant_message = await agenerate(
             model=self.llm,
             tools=self.tools,
             messages=messages,
@@ -239,6 +260,27 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
             state.messages.append(message)
         messages = state.system_messages + state.messages
         assistant_message = generate(
+            model=self.llm,
+            tools=self.tools,
+            messages=messages,
+            completion_fn=self.completion_fn,
+            **self.llm_args,
+        )
+        state.messages.append(assistant_message)
+        return assistant_message, state
+
+    async def agenerate_next_message(
+        self, message: ValidAgentInputMessage, state: LLMAgentState
+    ) -> tuple[AssistantMessage, LLMAgentState]:
+        """
+        Respond to a user or tool message.
+        """
+        if isinstance(message, MultiToolMessage):
+            state.messages.extend(message.tool_messages)
+        else:
+            state.messages.append(message)
+        messages = state.system_messages + state.messages
+        assistant_message = await agenerate(
             model=self.llm,
             tools=self.tools,
             messages=messages,
@@ -462,6 +504,35 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
             state.messages.append(message)
         messages = state.system_messages + state.messages
         assistant_message = generate(
+            model=self.llm,
+            tools=self.tools,
+            messages=messages,
+            tool_choice="required",
+            completion_fn=self.completion_fn,
+            **self.llm_args,
+        )
+        if not assistant_message.is_tool_call():
+            raise ValueError("LLMSoloAgent only supports tool calls.")
+        message = self._check_if_stop_toolcall(assistant_message)
+        state.messages.append(assistant_message)
+        return assistant_message, state
+
+    async def agenerate_next_message(
+        self, message: Optional[ValidAgentInputMessage], state: LLMAgentState
+    ) -> tuple[AssistantMessage, LLMAgentState]:
+        """
+        Respond to a user or tool message.
+        """
+        if isinstance(message, UserMessage):
+            raise ValueError("LLMSoloAgent does not support user messages.")
+        if isinstance(message, MultiToolMessage):
+            state.messages.extend(message.tool_messages)
+        elif message is None:
+            assert len(state.messages) == 0, "Message history should be empty"
+        else:
+            state.messages.append(message)
+        messages = state.system_messages + state.messages
+        assistant_message = await agenerate(
             model=self.llm,
             tools=self.tools,
             messages=messages,

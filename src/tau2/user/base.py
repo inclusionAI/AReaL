@@ -114,10 +114,25 @@ class BaseUser(ABC):
         pass
 
     @abstractmethod
-    async def generate_next_message(
+    def generate_next_message(
         self, message: ValidUserInputMessage, state: UserState
     ) -> tuple[UserMessage, UserState]:
         """Generate the next message from an assistant message.
+
+        Args:
+            message: The agent message.
+            state: The state of the user simulator.
+
+        Returns:
+            A tuple containing the user message and the new state of the user simulator.
+        """
+        pass
+
+    @abstractmethod
+    async def agenerate_next_message(
+        self, message: ValidUserInputMessage, state: UserState
+    ) -> tuple[UserMessage, UserState]:
+        """Generate the next message from an assistant message asynchronously.
 
         Args:
             message: The agent message.

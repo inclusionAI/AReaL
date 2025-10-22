@@ -3,7 +3,7 @@ import re
 from typing import Any, Callable, Optional
 
 import litellm
-from litellm import completion, completion_cost
+from litellm import acompletion, completion, completion_cost
 from litellm.caching.caching import Cache
 from litellm.main import ModelResponse, Usage
 from loguru import logger
@@ -177,26 +177,13 @@ def to_litellm_messages(messages: list[Message]) -> list[dict]:
     return litellm_messages
 
 
-def generate(
+def _get_completion_args(
     model: str,
     messages: list[Message],
     tools: Optional[list[Tool]] = None,
     tool_choice: Optional[str] = None,
-    completion_fn: Optional[Callable] = None,
     **kwargs: Any,
-) -> UserMessage | AssistantMessage:
-    """
-    Generate a response from the model.
-
-    Args:
-        model: The model to use.
-        messages: The messages to send to the model.
-        tools: The tools to use.
-        tool_choice: The tool choice to use.
-        **kwargs: Additional arguments to pass to the model.
-
-    Returns: A tuple containing the message and the cost.
-    """
+) -> dict:
     if kwargs.get("num_retries") is None:
         kwargs["num_retries"] = DEFAULT_MAX_RETRIES
 
@@ -204,20 +191,19 @@ def generate(
         kwargs["thinking"] = {"type": "disabled"}
     litellm_messages = to_litellm_messages(messages)
     tools = [tool.openai_schema for tool in tools] if tools else None
-    completion_fn = completion_fn or completion
     if tools and tool_choice is None:
         tool_choice = "auto"
-    try:
-        response = completion_fn(
-            model=model,
-            messages=litellm_messages,
-            tools=tools,
-            tool_choice=tool_choice,
-            **kwargs,
-        )
-    except Exception as e:
-        logger.error(e)
-        raise e
+
+    return {
+        "model": model,
+        "messages": litellm_messages,
+        "tools": tools,
+        "tool_choice": tool_choice,
+        **kwargs,
+    }
+
+
+def _get_message_from_response(response: ModelResponse) -> AssistantMessage:
     cost = get_response_cost(response)
     usage = get_response_usage(response)
     response = response.choices[0]
@@ -252,6 +238,74 @@ def generate(
         raw_data=response.to_dict(),
     )
     return message
+
+
+def generate(
+    model: str,
+    messages: list[Message],
+    tools: Optional[list[Tool]] = None,
+    tool_choice: Optional[str] = None,
+    completion_fn: Optional[Callable] = None,
+    **kwargs: Any,
+) -> UserMessage | AssistantMessage:
+    """
+    Generate a response from the model.
+
+    Args:
+        model: The model to use.
+        messages: The messages to send to the model.
+        tools: The tools to use.
+        tool_choice: The tool choice to use.
+        **kwargs: Additional arguments to pass to the model.
+
+    Returns: A tuple containing the message and the cost.
+    """
+    completion_args = _get_completion_args(
+        model, messages, tools, tool_choice, **kwargs
+    )
+    completion_fn = completion_fn or completion
+
+    try:
+        response = completion_fn(**completion_args)
+    except Exception as e:
+        logger.error(e)
+        raise e
+
+    return _get_message_from_response(response)
+
+
+async def agenerate(
+    model: str,
+    messages: list[Message],
+    tools: Optional[list[Tool]] = None,
+    tool_choice: Optional[str] = None,
+    completion_fn: Optional[Callable] = None,
+    **kwargs: Any,
+) -> UserMessage | AssistantMessage:
+    """
+    Generate a response from the model asynchronously.
+
+    Args:
+        model: The model to use.
+        messages: The messages to send to the model.
+        tools: The tools to use.
+        tool_choice: The tool choice to use.
+        **kwargs: Additional arguments to pass to the model.
+
+    Returns: A tuple containing the message and the cost.
+    """
+    completion_args = _get_completion_args(
+        model, messages, tools, tool_choice, **kwargs
+    )
+    completion_fn = completion_fn or acompletion
+
+    try:
+        response = await completion_fn(**completion_args)
+    except Exception as e:
+        logger.error(e)
+        raise e
+
+    return _get_message_from_response(response)
 
 
 def get_cost(messages: list[Message]) -> tuple[float, float] | None:
