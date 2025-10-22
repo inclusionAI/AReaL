@@ -511,9 +511,7 @@ class RemoteInfEngine:
             A future object representing the asynchronous initialization operation
         """
         assert meta.type == current_platform.communication_backend
-        assert not self.distributed_weight_update_initialized, (
-            "Weight update group already initialized."
-        )
+        assert not self.distributed_weight_update_initialized
 
         fut = self.executor.submit(
             _init_weights_update_group_remote,
