@@ -14,7 +14,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.workflow_api import RolloutWorkflow
-from areal.core.async_task_runner import AsyncTaskRunner
+from areal.core.async_task_runner import AsyncTaskRunner, TaskQueueFullError
 from areal.core.staleness_manager import StalenessManager
 from areal.experimental.openai.types import CompletionWithTokenLogpReward
 from areal.utils import logging
@@ -457,12 +457,10 @@ class WorkflowExecutor:
         workflow_fn = self._create_workflow_task(task_input)
         try:
             self.runner.submit(workflow_fn)
-        except RuntimeError as e:
+        except TaskQueueFullError:
             # Convert RuntimeError from AsyncTaskRunner to queue.Full for
             # backward compatibility
-            if "Input queue full" in str(e):
-                raise queue.Full("Input queue full. Please increase queue_size.")
-            raise
+            raise queue.Full("Input queue full. Please increase queue_size.")
 
         # Notify staleness manager of submission only after successful submission
         self.staleness_manager.on_rollout_submitted()

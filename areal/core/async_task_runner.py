@@ -11,12 +11,12 @@ that processes tasks from an input queue and places results in an output queue.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 import queue
 import random
 import threading
 import time
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import Generic, TypeVar
 
 import uvloop
@@ -27,6 +27,12 @@ T = TypeVar("T")
 # Polling configuration
 DEFAULT_POLL_WAIT_TIME = 0.05  # 50ms
 DEFAULT_POLL_SLEEP_TIME = 1.0  # 1 second
+
+
+class TaskQueueFullError(RuntimeError):
+    """Raised when an AsyncTaskRunner queue is full."""
+
+    pass
 
 
 @dataclass
@@ -345,7 +351,7 @@ class AsyncTaskRunner(Generic[T]):
                         # This is a critical error that should stop the runner.
                         # Re-add task so it can be cancelled in finally.
                         running_tasks[tid] = task_obj
-                        raise RuntimeError(
+                        raise TaskQueueFullError(
                             "Output queue full. Please increase max_queue_size."
                         )
 
@@ -409,7 +415,7 @@ class AsyncTaskRunner(Generic[T]):
         try:
             self.input_queue.put_nowait(task_input)
         except queue.Full:
-            raise RuntimeError(
+            raise TaskQueueFullError(
                 "Input queue full. Please increase max_queue_size or "
                 "wait for tasks to complete."
             )
