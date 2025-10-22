@@ -18,4 +18,4 @@ uv pip install -e evaluation/latex2sympy
 uv pip install --prerelease=allow -U -e .[dev]
 
 pip uninstall transformers -y
-uv pip install transformers==4.56.1
+pip install transformers==4.56.1
