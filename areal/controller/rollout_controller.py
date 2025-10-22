@@ -102,10 +102,16 @@ class DistributedRolloutController(RolloutController):
     def __del__(self):
         self.destroy()
 
-    def update_weights(self, meta: WeightUpdateMeta) -> None:
+    def update_weights(self, meta: WeightUpdateMeta, **kwargs) -> None:
         """Update weights in the inference engine."""
+        rank = kwargs.get("rank")
+        if rank is not None:
+            server_idx = int(rank)
+            dp_head_workers = [self.dp_head_workers[server_idx]]
+            rpc_call(self.scheduler, dp_head_workers, "update_weights", None, meta)
+            return
+
         self.custom_function_call("update_weights", None, meta)
-        return None
 
     def prepare_batch(self, data: DistributedBatch, workflow: RolloutWorkflow) -> None:
         """Asynchronously submit a request to the inference engine. Exits immediately."""

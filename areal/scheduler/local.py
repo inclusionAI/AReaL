@@ -130,9 +130,7 @@ class LocalScheduler(Scheduler):
                     ports = find_free_ports(task.port_count, port_range=(10000, 50000))
                     envs = task.env_vars if task.env_vars else {}
                     envs["PORT_LIST"] = ",".join(map(str, ports))
-                    envs["AREAL_LLM_SERVER_ADDRS"] = server_addrs[
-                        i % alloc_mode.gen.dp_size
-                    ]
+                    envs["AREAL_LLM_SERVER_ADDRS"] = ",".join(server_addrs)
                     envs["AREAL_RECOVER_RUN"] = str(int(is_recover_run))
                     self.launcher.submit(
                         job_name="rollout_worker",

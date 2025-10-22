@@ -111,8 +111,7 @@ class DistributedTrainController(TrainController):
         ret: List[List[List[ParamSpec]]] = self.custom_function_call(
             "get_param_specs", weight_chunked_mem_mb
         )
-        flattened = [inner for outer in ret for inner in outer]
-        return flattened
+        return ret[0]
 
     def set_version(self, version: int):
         return self.custom_function_call("set_version", version)

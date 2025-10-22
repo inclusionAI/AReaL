@@ -1,11 +1,12 @@
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.api.io_struct import FinetuneSpec, StepInfo
+from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.scheduler_api import ScheduleStrategy
 from areal.controller.batch import DistributedBatchMemory
 from areal.controller.rollout_controller import DistributedRolloutController
@@ -20,6 +21,7 @@ from areal.utils.data import (
     cycle_dataloader,
 )
 from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.http import wait_future_ordered
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
@@ -120,6 +122,15 @@ def main(args):
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
 
+    param_specs = actor.get_param_specs()
+    weight_update_meta = WeightUpdateMeta(
+        type="nccl",
+        alloc_mode=allocation_mode,
+        nccl_master_address="127.0.0.1",
+        nccl_master_port=41653,
+        nccl_param_specs=param_specs,
+        nccl_group_name="update_weight_group",
+    )
     # weight_update_meta = [
     #     WeightUpdateMeta.from_fsdp_xccl(
     #         AllocationMode.from_str(config.allocation_mode), actor
@@ -247,11 +258,17 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
-            if dist.get_rank() == 0:
-                future = rollout.update_weights(weight_update_meta)
-            actor.upload_weights(weight_update_meta)
-            if dist.get_rank() == 0:
-                future.result()
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                upload_future = executor.submit(
+                    actor.upload_weights, weight_update_meta
+                )
+                update_future = executor.submit(
+                    rollout.update_weights, weight_update_meta, rank=0
+                )
+                wait_future_ordered([upload_future, update_future])
+            logger.info(
+                f"{update_future} update weight succeeded (parallel), step: {step}, epoch: {epoch}"
+            )
 
             # todo: 同步语句需要在upload_weights和upload_weights接口中包掉
             # dist.barrier(device_ids=[actor.device.index])
@@ -259,7 +276,7 @@ def main(args):
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
-            eval_rollout.set_version(global_step + 1)
+            # eval_rollout.set_version(global_step + 1)
     #
     #     with stats_tracker.record_timing("save"):
     #         saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
