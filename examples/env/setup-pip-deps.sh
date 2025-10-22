@@ -2,7 +2,7 @@
 # basic dependencies
 pip install uv
 uv pip install -U pip
-uv pip uninstall pynvml cugraph-dgl dask-cuda cugraph-service-server raft-dask cugraph cuml cugraph-pyg -y
+uv pip uninstall pynvml cugraph-dgl dask-cuda cugraph-service-server raft-dask cugraph cuml cugraph-pyg -- -y
 uv pip install torch==2.8.0 torchaudio torchvision "deepspeed>=0.17.2" pynvml
 uv pip install flashinfer-python==0.3.1 --no-build-isolation
 uv pip install "sglang[all]==0.5.2" 
