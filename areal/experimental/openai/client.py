@@ -2,9 +2,18 @@ import datetime
 import os
 import uuid
 from collections import OrderedDict, defaultdict
+from collections.abc import Iterable
 from copy import deepcopy
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Union
+from typing import TYPE_CHECKING
 
+from areal.api.cli_args import GenerationHyperparameters
+from areal.api.io_struct import ModelRequest
+from areal.experimental.openai.tool_call_parser import process_tool_calls
+from areal.experimental.openai.types import (
+    CompletionWithTokenLogpReward,
+    ResponseWithTokenLogpReward,
+)
+from areal.utils import logging
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN, Body, NotGiven
 from openai.resources.chat.completions.completions import (
@@ -35,15 +44,6 @@ from openai.types.responses.response_usage import (
 from openai.types.responses.tool_param import ToolParam
 from openai.types.shared_params.metadata import Metadata
 
-from areal.api.cli_args import GenerationHyperparameters
-from areal.api.io_struct import ModelRequest
-from areal.experimental.openai.tool_call_parser import process_tool_calls
-from areal.experimental.openai.types import (
-    CompletionWithTokenLogpReward,
-    ResponseWithTokenLogpReward,
-)
-from areal.utils import logging
-
 if TYPE_CHECKING:
     from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
@@ -59,16 +59,17 @@ logger = logging.getLogger("AReaLOpenAI Client")
 class AsyncCompletionsWithReward(BaseAsyncCompletions):
     """Extended AsyncCompletions that adds caching and reward functionality."""
 
-    # Class-level set to track which parameters have been warned about (shared across all instances)
-    _warned_parameters: Set[str] = set()
+    # Class-level set to track which parameters have been warned about
+    # (shared across all instances)
+    _warned_parameters: set[str] = set()
 
     def __init__(
         self,
         client,
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
-        cache: Dict[str, CompletionWithTokenLogpReward],
-        tool_call_parser: Optional[str] = None,
+        cache: dict[str, CompletionWithTokenLogpReward],
+        tool_call_parser: str | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
         messages_delimiter_end: str = "<|im_end|>",
@@ -86,16 +87,16 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         self,
         *,
         messages: Iterable[ChatCompletionMessageParam],
-        frequency_penalty: Optional[float] | NotGiven = NOT_GIVEN,
-        max_completion_tokens: Optional[int] | NotGiven = NOT_GIVEN,
-        max_tokens: Optional[int] | NotGiven = NOT_GIVEN,
-        metadata: Optional[Metadata] | NotGiven = NOT_GIVEN,
-        stop: Union[Optional[str], List[str], None] | NotGiven = NOT_GIVEN,
-        store: Optional[bool] | NotGiven = NOT_GIVEN,
-        temperature: Optional[float] | NotGiven = NOT_GIVEN,
+        frequency_penalty: float | None | NotGiven = NOT_GIVEN,
+        max_completion_tokens: int | None | NotGiven = NOT_GIVEN,
+        max_tokens: int | None | NotGiven = NOT_GIVEN,
+        metadata: Metadata | None | NotGiven = NOT_GIVEN,
+        stop: str | None | list[str] | None | NotGiven = NOT_GIVEN,
+        store: bool | None | NotGiven = NOT_GIVEN,
+        temperature: float | None | NotGiven = NOT_GIVEN,
         tool_choice: ChatCompletionToolChoiceOptionParam | NotGiven = NOT_GIVEN,
         tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
-        top_p: Optional[float] | NotGiven = NOT_GIVEN,
+        top_p: float | None | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
         **_: dict,
     ) -> ChatCompletion:
@@ -155,7 +156,9 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             stop=(
                 stop_tokens
                 if isinstance(stop_tokens, list)
-                else [stop_tokens] if stop_tokens else None
+                else [stop_tokens]
+                if stop_tokens
+                else None
             ),
             greedy=temp == 0,
             frequency_penalty=frequency_penalty,
@@ -168,7 +171,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             input_ids=prompt_token_ids,
             gconfig=gconfig,
             rid=str(uuid.uuid4()),
-            metadata=None if metadata is NOT_GIVEN else metadata,
+            metadata=metadata if metadata is not NOT_GIVEN else {},
             tokenizer=self.tokenizer,
         )
 
@@ -237,8 +240,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         client,
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
-        cache: Dict[str, ResponseWithTokenLogpReward],
-        tool_call_parser: Optional[str] = None,
+        cache: dict[str, ResponseWithTokenLogpReward],
+        tool_call_parser: str | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
         messages_delimiter_end: str = "<|im_end|>",
@@ -255,7 +258,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
     async def create(
         self,
         *,
-        input: Union[str, ResponseInputParam] | NotGiven = NOT_GIVEN,
+        input: str | ResponseInputParam | NotGiven = NOT_GIVEN,
         instructions: str | None | NotGiven = NOT_GIVEN,
         max_output_tokens: int | None | NotGiven = NOT_GIVEN,
         metadata: Metadata | None | NotGiven = NOT_GIVEN,
@@ -271,7 +274,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             extra_body = {}
 
         # Build a simple messages list compatible with tokenizer chat template
-        messages_list: List[Dict] = []
+        messages_list: list[dict] = []
         if input is NOT_GIVEN or input is None:
             raise ValueError("input is required for Responses.create")
 
@@ -283,7 +286,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             messages_list = deepcopy(input)
         else:
             raise ValueError(
-                "Unsupported Responses input format: expected str or list of message items with input_text."
+                "Unsupported Responses input format: "
+                "expected str or list of message items with input_text."
             )
 
         # Apply chat template
@@ -299,7 +303,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         elif self.chat_template_type == "concat":
             # By default, follows Qwen3 chat template.
             start, end = self.messages_delimiter_start, self.messages_delimiter_end
-            message_strs: List[str] = []
+            message_strs: list[str] = []
             for msg in messages_list:
                 message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
             message_strs.append(f"{start}assistant\n")
@@ -410,7 +414,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         # Cache the response with its input data
         self._cache[resp_id] = ResponseWithTokenLogpReward(
             response=deepcopy(response),
-            model_response=engine_resp,  # Should not deepcopy response because of tokenizer
+            model_response=engine_resp,  # Should not deepcopy because of tokenizer
             input_data=(
                 deepcopy(input) if input is not NOT_GIVEN else ""
             ),  # Store a copy of the input data
@@ -421,13 +425,16 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
 
 class ArealOpenAI(AsyncOpenAI):
-    """Extended AsyncOpenAI client that uses AReaL's inference engine and supports reward setting."""
+    """
+    Extended AsyncOpenAI client that uses AReaL's inference engine
+    and supports reward setting.
+    """
 
     def __init__(
         self,
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
-        tool_call_parser: Optional[str] = None,
+        tool_call_parser: str | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
         messages_delimiter_end: str = "<|im_end|>",
@@ -476,7 +483,7 @@ class ArealOpenAI(AsyncOpenAI):
 
     def get_completions(
         self, completion_id: str
-    ) -> Optional[CompletionWithTokenLogpReward]:
+    ) -> CompletionWithTokenLogpReward | None:
         """Get completion with its reward from cache."""
         return self._cache.get(completion_id)
 
@@ -545,7 +552,7 @@ class ArealOpenAI(AsyncOpenAI):
 
     def export_completions(
         self, style: str = "concat"
-    ) -> Dict[str, CompletionWithTokenLogpReward]:
+    ) -> dict[str, CompletionWithTokenLogpReward]:
         """Export cached completions in different formats.
 
         When ``style='concat'``, this method constructs a conversation tree by
@@ -578,13 +585,13 @@ class ArealOpenAI(AsyncOpenAI):
         # Use the generic helper function
         return self.export_items_helper(self._cache, style, self.api_type)
 
-    def get_responses(self, response_id: str) -> Optional[ResponseWithTokenLogpReward]:
+    def get_responses(self, response_id: str) -> ResponseWithTokenLogpReward | None:
         """Get response with its reward from cache."""
         return self._cache.get(response_id)
 
     def export_responses(
         self, style: str = "concat"
-    ) -> Dict[str, ResponseWithTokenLogpReward]:
+    ) -> dict[str, ResponseWithTokenLogpReward]:
         """Export cached responses in different formats.
 
         When ``style='concat'``, this method constructs a conversation tree by
@@ -619,19 +626,19 @@ class ArealOpenAI(AsyncOpenAI):
 
     @staticmethod
     def export_items_helper(
-        cache: Dict[
-            str, Union[CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]
-        ],
+        cache: dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward],
         style: str = "concat",
         item_type: str = "completion",
-    ) -> Dict[str, Union[CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]]:
+    ) -> dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward]:
         """Export cached items in different formats.
 
         This is a generic implementation that works for both completions and responses.
 
         Parameters
         ----------
-        cache : Dict[str, Union[CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]]
+        cache : Dict[str, Union[
+            CompletionWithTokenLogpReward, ResponseWithTokenLogpReward
+        ]]
             The cache containing items to export
         style : str, optional
             The export style, either 'concat' (build tree and return leaves)
@@ -658,13 +665,14 @@ class ArealOpenAI(AsyncOpenAI):
                     raise ValueError(
                         f"Cannot export {item_type}s in 'concat' style when "
                         f'item.chat_template_type != "concat" for any {item_type}. '
-                        "This is because when applying chat template using some tokenizers, "
-                        "there might be some tokens added or removed (e.g. think tokens), "
+                        "This is because when applying chat template using some "
+                        "tokenizers, there might be some tokens added or removed "
+                        "(e.g. think tokens), "
                         "making it impossible to construct the conversation tree. "
                         "Please use 'individual' style instead."
                     )
 
-            def _is_prefix(a: List[Dict], b: List[Dict]) -> bool:
+            def _is_prefix(a: list[dict], b: list[dict]) -> bool:
                 # True if a is a strict prefix of b
                 if len(a) >= len(b):
                     return False
@@ -686,7 +694,8 @@ class ArealOpenAI(AsyncOpenAI):
                 }
 
             # 1) Construct parent-child relationships using longest prefix rule
-            # Sort potential children by (data length asc, created asc) so parents are available
+            # Sort potential children by (data length asc, created asc)
+            # so parents are available
             ordered = sorted(
                 meta.items(),
                 key=lambda kv: (
@@ -720,9 +729,9 @@ class ArealOpenAI(AsyncOpenAI):
                 child_info["obj"].parent = best_parent
 
             # Build children mapping to find leaf nodes.
-            children_map: Dict[
+            children_map: dict[
                 str,
-                List[Union[CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]],
+                list[CompletionWithTokenLogpReward | ResponseWithTokenLogpReward],
             ] = defaultdict(list)
             for _, info in meta.items():
                 obj = info["obj"]
@@ -734,8 +743,8 @@ class ArealOpenAI(AsyncOpenAI):
 
             # Return only leaf nodes (nodes without children)
             parents_with_children = set(children_map.keys())
-            leaf_only: Dict[
-                str, Union[CompletionWithTokenLogpReward, ResponseWithTokenLogpReward]
+            leaf_only: dict[
+                str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward
             ] = {}
             for item_id, info in meta.items():
                 obj = info["obj"]
