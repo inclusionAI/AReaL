@@ -20,7 +20,7 @@ from tau2.data_model.message import (
 )
 from tau2.data_model.tasks import Action, Task
 from tau2.environment.tool import Tool, as_tool
-from tau2.utils.llm_utils import generate
+from tau2.utils.llm_utils import agenerate
 
 AGENT_INSTRUCTION = """
 You are a customer service agent that helps the user according to the <policy> provided below.
@@ -93,15 +93,15 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         """
         if message_history is None:
             message_history = []
-        assert all(
-            is_valid_agent_history_message(m) for m in message_history
-        ), "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
+        assert all(is_valid_agent_history_message(m) for m in message_history), (
+            "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
+        )
         return LLMAgentState(
             system_messages=[SystemMessage(role="system", content=self.system_prompt)],
             messages=message_history,
         )
 
-    def generate_next_message(
+    async def agenerate_next_message(
         self, message: ValidAgentInputMessage, state: LLMAgentState
     ) -> tuple[AssistantMessage, LLMAgentState]:
         """
@@ -112,7 +112,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
         else:
             state.messages.append(message)
         messages = state.system_messages + state.messages
-        assistant_message = generate(
+        assistant_message = await agenerate(
             model=self.llm,
             tools=self.tools,
             messages=messages,
@@ -129,7 +129,7 @@ class LLMAgent(LocalAgent[LLMAgentState]):
                     role="system", content=f"Error: {error}. Try again."
                 )  # TODO: Check if it is better to use a UserMessage instead of a SystemMessage.
             )
-            assistant_message = generate(
+            assistant_message = await agenerate(
                 model=self.llm,
                 tools=self.tools,
                 messages=retry_messages,
@@ -205,9 +205,9 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         If provide_function_args is True, the resolution steps will include the function arguments.
         """
         super().__init__(tools=tools, domain_policy=domain_policy)
-        assert self.check_valid_task(
-            task
-        ), f"Task {task.id} is not valid. Cannot run GT agent."
+        assert self.check_valid_task(task), (
+            f"Task {task.id} is not valid. Cannot run GT agent."
+        )
         self.task = task
         self.llm = llm
         self.llm_args = deepcopy(llm_args) if llm_args is not None else {}
@@ -249,15 +249,15 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         """
         if message_history is None:
             message_history = []
-        assert all(
-            is_valid_agent_history_message(m) for m in message_history
-        ), "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
+        assert all(is_valid_agent_history_message(m) for m in message_history), (
+            "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
+        )
         return LLMAgentState(
             system_messages=[SystemMessage(role="system", content=self.system_prompt)],
             messages=message_history,
         )
 
-    def generate_next_message(
+    async def agenerate_next_message(
         self, message: ValidAgentInputMessage, state: LLMAgentState
     ) -> tuple[AssistantMessage, LLMAgentState]:
         """
@@ -268,7 +268,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
         else:
             state.messages.append(message)
         messages = state.system_messages + state.messages
-        assistant_message = generate(
+        assistant_message = await agenerate(
             model=self.llm,
             tools=self.tools,
             messages=messages,
@@ -284,7 +284,7 @@ class LLMGTAgent(LocalAgent[LLMAgentState]):
             retry_messages.append(
                 SystemMessage(role="system", content=f"Error: {error_msg}. Try again.")
             )
-            assistant_message = generate(
+            assistant_message = await agenerate(
                 model=self.llm,
                 tools=self.tools,
                 messages=retry_messages,
@@ -392,9 +392,9 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         Initialize the LLMAgent.
         """
         super().__init__(tools=tools, domain_policy=domain_policy)
-        assert self.check_valid_task(
-            task
-        ), f"Task {task.id} is not valid. Cannot run GT agent."
+        assert self.check_valid_task(task), (
+            f"Task {task.id} is not valid. Cannot run GT agent."
+        )
         self.task = task
         self.llm = llm
         self.llm_args = llm_args if llm_args is not None else {}
@@ -493,15 +493,15 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         """
         if message_history is None:
             message_history = []
-        assert all(
-            is_valid_agent_history_message(m) for m in message_history
-        ), "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
+        assert all(is_valid_agent_history_message(m) for m in message_history), (
+            "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
+        )
         return LLMAgentState(
             system_messages=[SystemMessage(role="system", content=self.system_prompt)],
             messages=message_history,
         )
 
-    def generate_next_message(
+    async def agenerate_next_message(
         self, message: Optional[ValidAgentInputMessage], state: LLMAgentState
     ) -> tuple[AssistantMessage, LLMAgentState]:
         """
@@ -516,7 +516,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
         else:
             state.messages.append(message)
         messages = state.system_messages + state.messages
-        assistant_message = generate(
+        assistant_message = await agenerate(
             model=self.llm,
             tools=self.tools,
             messages=messages,
@@ -533,7 +533,7 @@ class LLMSoloAgent(LocalAgent[LLMAgentState]):
             retry_messages.append(
                 SystemMessage(role="system", content=f"Error: {error_msg}. Try again.")
             )
-            assistant_message = generate(
+            assistant_message = await agenerate(
                 model=self.llm,
                 tools=self.tools,
                 messages=retry_messages,

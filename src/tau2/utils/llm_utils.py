@@ -223,7 +223,7 @@ def check_self_hosted_model(model: str) -> tuple[bool, Optional[str], Optional[s
         return False, None, None
 
 
-def generate(
+async def agenerate(
     model: str,
     messages: list[Message],
     tools: Optional[list[Tool]] = None,
@@ -260,7 +260,7 @@ def generate(
         tool_choice = "auto"
     completion_fn = completion_fn or completion
     try:
-        response = completion_fn(
+        response = await completion_fn(
             model=model,
             messages=litellm_messages,
             tools=tools,
@@ -282,9 +282,9 @@ def generate(
     except Exception as e:
         logger.error(e)
         raise e
-    assert (
-        response.message.role == "assistant"
-    ), "The response should be an assistant message"
+    assert response.message.role == "assistant", (
+        "The response should be an assistant message"
+    )
     content = response.message.content
     tool_calls = response.message.tool_calls or []
     tool_calls = [

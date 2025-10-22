@@ -21,7 +21,7 @@ from tau2.user.base import (
     is_valid_user_history_message,
 )
 from tau2.utils import DATA_DIR
-from tau2.utils.llm_utils import generate
+from tau2.utils.llm_utils import agenerate
 
 GLOBAL_USER_SIM_GUIDELINES_DIR = DATA_DIR / "tau2" / "user_simulator"
 
@@ -132,12 +132,12 @@ class UserSimulator(BaseUser):
             or OUT_OF_SCOPE in message.content
         )
 
-    def generate_next_message(
+    async def agenerate_next_message(
         self, message: ValidUserInputMessage, state: UserState
     ) -> Tuple[UserMessage, UserState]:
-        return self._generate_next_message(message, state)
+        return await self._agenerate_next_message(message, state)
 
-    def _generate_next_message(
+    async def _agenerate_next_message(
         self, message: ValidUserInputMessage, state: UserState
     ) -> Tuple[UserMessage, UserState]:
         """Get the response from the user simulator.
@@ -157,7 +157,7 @@ class UserSimulator(BaseUser):
         messages = state.system_messages + state.flip_roles()
 
         # Generate response
-        assistant_message = generate(
+        assistant_message = await agenerate(
             model=self.llm,
             messages=messages,
             tools=self.tools,
@@ -209,7 +209,7 @@ class DummyUser(UserSimulator):
     def set_seed(self, seed: int):
         pass
 
-    def generate_next_message(
+    async def agenerate_next_message(
         self, message: ValidUserInputMessage, state: UserState
     ) -> tuple[UserMessage, UserState]:
         raise NotImplementedError("DummyUser does not support generate_next_message")

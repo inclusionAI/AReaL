@@ -74,7 +74,7 @@ class Orchestrator:
         self.to_role: Optional[Role] = None
         self.message: Optional[Message] = None
 
-    def initialize(self):
+    async def ainitialize(self):
         """
         Initialize the orchestrator.
         - If the tasks specifies an initial state, use it to initialize the environment.
@@ -231,9 +231,10 @@ class Orchestrator:
                 self.to_role = Role.USER
             else:
                 self.agent_state = self.agent.get_init_state()
-                first_message, self.agent_state = self.agent.generate_next_message(
-                    None, self.agent_state
-                )
+                (
+                    first_message,
+                    self.agent_state,
+                ) = await self.agent.agenerate_next_message(None, self.agent_state)
                 self.trajectory = [first_message]
                 self.message = first_message
                 # In solo mode, there is no user, so if the message is not a tool call, then we end and report an agent error
@@ -322,7 +323,7 @@ class Orchestrator:
                     f"{self.from_role.value} can only send tool calls. {self.message}"
                 )
 
-    def run(self) -> SimulationRun:
+    async def arun(self) -> SimulationRun:
         """
         Run the simulation.
 
@@ -331,9 +332,9 @@ class Orchestrator:
         """
         start_time = get_now()
         start = time.perf_counter()
-        self.initialize()
+        await self.ainitialize()
         while not self.done:
-            self.step()
+            await self.astep()
             # Checking for maximum steps and errors only if the last message is not to the environment
             if self.to_role == Role.ENV:
                 continue
@@ -385,7 +386,7 @@ class Orchestrator:
         )
         return simulation_run
 
-    def step(self):
+    async def astep(self):
         """
         Perform one step of the simulation.
         Sends self.message from self.from_role to self.to_role
@@ -402,7 +403,7 @@ class Orchestrator:
         )
         # AGENT/ENV -> USER
         if self.from_role in [Role.AGENT, Role.ENV] and self.to_role == Role.USER:
-            user_msg, self.user_state = self.user.generate_next_message(
+            user_msg, self.user_state = await self.user.agenerate_next_message(
                 self.message, self.user_state
             )
             user_msg.validate()
@@ -420,7 +421,7 @@ class Orchestrator:
         elif (
             self.from_role == Role.USER or self.from_role == Role.ENV
         ) and self.to_role == Role.AGENT:
-            agent_msg, self.agent_state = self.agent.generate_next_message(
+            agent_msg, self.agent_state = await self.agent.agenerate_next_message(
                 self.message, self.agent_state
             )
             agent_msg.validate()

@@ -122,7 +122,7 @@ class BaseUser(ABC):
         pass
 
     @abstractmethod
-    async def generate_next_message(
+    async def agenerate_next_message(
         self, message: ValidUserInputMessage, state: UserState
     ) -> tuple[UserMessage, UserState]:
         """Generate the next message from an assistant message.

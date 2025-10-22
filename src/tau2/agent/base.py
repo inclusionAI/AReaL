@@ -40,7 +40,7 @@ class BaseAgent(ABC, Generic[AgentState]):
     """
 
     @abstractmethod
-    def generate_next_message(
+    async def agenerate_next_message(
         self, message: ValidAgentInputMessage, state: AgentState
     ) -> tuple[AssistantMessage, AgentState]:
         """
