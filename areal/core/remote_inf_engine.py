@@ -1,20 +1,22 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from concurrent.futures import Future, ProcessPoolExecutor
+from datetime import datetime
+from threading import Lock
+from typing import Any, Protocol
 import asyncio
 import os
 import random
 import shutil
 import time
 import uuid
-from collections.abc import Callable
-from concurrent.futures import Future, ProcessPoolExecutor
-from datetime import datetime
-from threading import Lock
-from typing import Any, Optional, Protocol
 
+from torchdata.stateful_dataloader import StatefulDataLoader
 import aiohttp
 import requests
 import torch.distributed as dist
 import uvloop
-from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.io_struct import (
@@ -662,7 +664,7 @@ class RemoteInfEngine:
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: Optional["RolloutWorkflow"] = None,
+        workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
     ) -> dict[str, Any]:

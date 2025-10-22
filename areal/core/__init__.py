@@ -1,5 +1,7 @@
 """Core components for AREAL."""
 
+from __future__ import annotations
+
 from .remote_inf_engine import (
     RemoteInfBackendProtocol,
     RemoteInfEngine,

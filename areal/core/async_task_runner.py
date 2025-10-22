@@ -10,14 +10,14 @@ that processes tasks from an input queue and places results in an output queue.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Generic, TypeVar
 import asyncio
 import queue
 import random
 import threading
 import time
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Generic, TypeVar
 
 import uvloop
 

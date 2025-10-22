@@ -205,6 +205,8 @@ split-on-trailing-comma = true
 combine-as-imports = false
 force-wrap-aliases = false
 lines-after-imports = 2
+from-first = true
+required-imports = ["from __future__ import annotations"]
 
 # The following tools are remained as legacy.
 # We will use `ruff` instead in future development

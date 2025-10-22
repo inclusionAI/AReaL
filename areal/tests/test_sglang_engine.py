@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import subprocess
 import sys
@@ -15,6 +17,7 @@ from areal.api.io_struct import WeightUpdateMeta
 from areal.utils import network
 from areal.utils.data import get_batch_size
 from areal.utils.hf_utils import load_hf_tokenizer
+
 
 EXPR_NAME = "test_sglang_engine"
 TRIAL_NAME = "trial_0"
